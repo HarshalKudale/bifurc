@@ -22,36 +22,29 @@ fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 interface PanelDef {
     /** Human-readable name for the screenshot file */
     name: string;
-    /** Exact visible nav label */
-    navLabel: string;
+    /** Exact visible label / aria-label */
+    label: string;
+    /** Where to find the panel trigger */
+    trigger: "sidebar" | "titlebar" | "bottom";
     /** For duplicated labels like REST/SOAP/gRPC, which visible match to use */
-    navOccurrence?: number;
+    occurrence?: number;
     /** Opens a new draft tab after navigating (for tab-based panels) */
     openNewTab?: boolean;
 }
 
 const PANELS: PanelDef[] = [
-    // ── Routing (flat) ─────────────────────────────────────────────────────
-    { name: "01-mappings", navLabel: "Mappings" },
-    { name: "02-proxy-rules", navLabel: "Proxy Rules" },
-    { name: "03-capture", navLabel: "Capture" },
-
-    // ── API (flat) ──────────────────────────────────────────────────────────
-    { name: "04-requests", navLabel: "Requests", openNewTab: true },
-    { name: "05-mocks", navLabel: "Mocks", openNewTab: true },
-
-    // ── Realtime (flat) ─────────────────────────────────────────────────────
-    { name: "06-websocket", navLabel: "WebSocket", openNewTab: true },
-    { name: "07-webhooks", navLabel: "Webhooks", openNewTab: true },
-
-    // ── Tools (flat) ───────────────────────────────────────────────────────
-    { name: "14-environments", navLabel: "Environments" },
-
-    // ── Discovery (flat) ───────────────────────────────────────────────────
-    { name: "16-services", navLabel: "Services" },
-
-    // ── Monitoring (flat) ──────────────────────────────────────────────────
-    { name: "17-health-bar", navLabel: "Health Bar" },
+    { name: "01-services", label: "Services", trigger: "sidebar" },
+    { name: "02-health-bar", label: "Health Bar", trigger: "sidebar" },
+    { name: "03-mappings", label: "Mappings", trigger: "sidebar" },
+    { name: "04-proxy-rules", label: "Proxy Rules", trigger: "sidebar" },
+    { name: "05-capture", label: "Capture", trigger: "sidebar" },
+    { name: "06-requests", label: "Requests", trigger: "sidebar", openNewTab: true },
+    { name: "07-mocks", label: "Mocks", trigger: "sidebar", openNewTab: true },
+    { name: "08-websocket", label: "WebSocket", trigger: "sidebar", openNewTab: true },
+    { name: "09-webhooks", label: "Webhooks", trigger: "sidebar", openNewTab: true },
+    { name: "10-workspace", label: "Workspace", trigger: "titlebar" },
+    { name: "11-environments", label: "Manage Environments", trigger: "titlebar" },
+    { name: "12-settings", label: "Settings", trigger: "bottom" },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -82,14 +75,39 @@ function escapeRegex(input: string): string {
 }
 
 async function clickNavItem(page: import("@playwright/test").Page, label: string, occurrence = 0) {
-    const sidebar = page.locator("nav").first();
-    const btn = sidebar.getByRole("button", { name: new RegExp(`^${escapeRegex(label)}(?:\\s|$)`, "i") }).nth(occurrence);
+    const btn = page.getByRole("button", { name: new RegExp(`^${escapeRegex(label)}(?:\\s|$)`, "i") }).nth(occurrence);
     await btn.waitFor({ state: "attached", timeout: 5000 });
     await btn.evaluate((el: Element) => {
         (el as HTMLElement).scrollIntoView({ block: "center" });
         (el as HTMLElement).click();
     });
     await page.waitForTimeout(600);
+}
+
+async function openPanel(page: import("@playwright/test").Page, panel: PanelDef) {
+    if (panel.trigger === "titlebar") {
+        const btn = page.getByRole("button", { name: new RegExp(escapeRegex(panel.label), "i") }).nth(panel.occurrence ?? 0);
+        await btn.waitFor({ state: "visible", timeout: 5000 });
+        await btn.evaluate((el: Element) => {
+            (el as HTMLElement).scrollIntoView({ block: "center" });
+            (el as HTMLElement).click();
+        });
+        await page.waitForTimeout(600);
+        return;
+    }
+
+    if (panel.trigger === "bottom") {
+        const btn = page.getByRole("button", { name: new RegExp(`^${escapeRegex(panel.label)}$`, "i") }).last();
+        await btn.waitFor({ state: "visible", timeout: 5000 });
+        await btn.evaluate((el: Element) => {
+            (el as HTMLElement).scrollIntoView({ block: "center" });
+            (el as HTMLElement).click();
+        });
+        await page.waitForTimeout(600);
+        return;
+    }
+
+    await clickNavItem(page, panel.label, panel.occurrence ?? 0);
 }
 
 // ── Test ───────────────────────────────────────────────────────────────────
@@ -107,7 +125,7 @@ test("screenshot tour of all sidebar panels", async ({ page, electronApp }) => {
     for (const panel of PANELS) {
         console.log(`\nNavigating to: ${panel.name}`);
 
-        await clickNavItem(page, panel.navLabel, panel.navOccurrence ?? 0);
+        await openPanel(page, panel);
 
         // 2. For tab-based panels, open a new draft tab by clicking the + button
         if (panel.openNewTab) {

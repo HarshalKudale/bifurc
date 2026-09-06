@@ -30,7 +30,16 @@ export function registerGrpcHandlers() {
     kind: "grpcRequests",
     configKey: "grpcRequests" as any,
     folderConfigKey: "grpcRequestFolders" as any,
-    getNameEntry: (req) => ({ name: req.name }),
+    validate: (req) => {
+      if (!req.serviceName || !req.serviceName.trim()) throw new Error("serviceName is required for gRPC requests");
+      if (!req.methodName || !req.methodName.trim()) throw new Error("methodName is required for gRPC requests");
+    },
+    getNameEntry: (req) => ({
+      name: req.name,
+      serverAddress: req.serverAddress,
+      serviceName: req.serviceName,
+      methodName: req.methodName,
+    }),
   });
 
   registerEntityCrudHandlers<SavedGrpcMock>({
@@ -43,7 +52,11 @@ export function registerGrpcHandlers() {
       if (!mock.serviceName || !mock.serviceName.trim()) throw new Error("serviceName is required for gRPC mocks");
       if (!mock.methodName || !mock.methodName.trim()) throw new Error("methodName is required for gRPC mocks");
     },
-    getNameEntry: (mock) => ({ name: mock.name }),
+    getNameEntry: (mock) => ({
+      name: mock.name,
+      serviceName: mock.serviceName,
+      methodName: mock.methodName,
+    }),
   });
 
   ipcMain.handle("grpc:addProto", async (_e, proto: Omit<SavedProtoFile, "id" | "createdAt">) => {
