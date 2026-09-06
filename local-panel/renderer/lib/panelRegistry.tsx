@@ -163,7 +163,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
-        alwaysVisible: true,
+        showInSidebar: false,
         helpText: strings.environments.helpText,
     },
     {
@@ -173,6 +173,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
+        showInSidebar: false,
         helpText: strings.workspace.helpText,
     },
     {
@@ -182,6 +183,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
+        showInSidebar: false,
         helpText: strings.panels.auditHelp,
     },
 

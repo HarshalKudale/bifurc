@@ -5,6 +5,7 @@ import { Cloud, CloudOff, ArrowUp, ArrowDown, Link, Unlink, GitBranch, RefreshCw
 import { Button, Input, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
 import PanelLayout from "@/components/ui/PanelLayout";
 import ImportExportModal from "@/components/modals/ImportExportModal";
+import AuditLogPanel from "@/panels/AuditLogPanel";
 
 
 interface Props {
@@ -160,11 +161,13 @@ export default function WorkspacePanel({ config, onConfigChange, onWorkspaceDele
 
   return (
     <>
-      <PanelLayout title={strings.workspace.title} subtitle={strings.workspace.subtitle}>
-        <div className="flex flex-col gap-6">
+      <PanelLayout title={strings.workspace.title} subtitle={strings.workspace.subtitle} noPadding>
+        <div className="flex flex-col lg:flex-row flex-1 h-full min-h-0 divide-y lg:divide-y-0 lg:divide-x divide-border overflow-hidden">
+          {/* Left Column: Workspace Settings */}
+          <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6 md:py-6 flex flex-col gap-6 min-w-0">
 
-          {/* -- Details --------------------------------------------------- */}
-          <section>
+            {/* -- Details --------------------------------------------------- */}
+            <section>
             <SectionLabel>{strings.workspace.sectionDetails}</SectionLabel>
             <SectionCard>
               <SettingsRow title={strings.workspace.workspaceName} desc="">
@@ -394,16 +397,22 @@ export default function WorkspacePanel({ config, onConfigChange, onWorkspaceDele
           </section>
         </div>
 
-        <ImportExportModal
-          open={ieModalMode !== null}
-          mode={ieModalMode ?? "export"}
-          wsId={wsId}
-          onClose={() => setIeModalMode(null)}
-          onImportDone={handleImportDone}
-        />
-      </PanelLayout>
-    </>
-  );
+        {/* Right Column: Workspace Audit Log */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
+          <AuditLogPanel activeWorkspaceId={wsId} embedded />
+        </div>
+      </div>
+
+      <ImportExportModal
+        open={ieModalMode !== null}
+        mode={ieModalMode ?? "export"}
+        wsId={wsId}
+        onClose={() => setIeModalMode(null)}
+        onImportDone={handleImportDone}
+      />
+    </PanelLayout>
+  </>
+);
 }
 
 // -- Helpers -------------------------------------------------------------------

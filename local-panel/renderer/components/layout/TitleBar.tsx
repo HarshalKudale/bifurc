@@ -1,9 +1,11 @@
 import React, { useRef, useState } from "react";
-import { AppConfig } from "@/types";
+import { AppConfig, Workspace } from "@/types";
+import { Panel } from "@/lib/panelRegistry";
 import ServerToggle from "@/components/layout/ServerToggle";
+import WorkspaceSelector from "@/components/layout/WorkspaceSelector";
 import EnvSelector from "@/components/sidebar/EnvSelector";
 import { strings } from "@/lib/strings";
-import { Menu, ChevronRight } from "@/lib/icons";
+import { Settings, Globe } from "@/lib/icons";
 import iconUrl from "@/icon.png";
 import HelpTooltip from "@/components/common/HelpTooltip";
 
@@ -18,6 +20,14 @@ interface Props {
   onServerStop: () => Promise<void>;
   onEnvChange: (id: string | null) => Promise<void>;
   onManageEnvs: () => void;
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
+  onWorkspaceChange: (id: string) => void;
+  onWorkspaceCreate: () => void;
+  onWorkspaceRename: (id: string, name: string) => void;
+  onWorkspaceDelete: (id: string) => void;
+  activePanel: Panel;
+  onOpenWorkspaceSettings: () => void;
 }
 
 export default function TitleBar({
@@ -29,11 +39,17 @@ export default function TitleBar({
   onServerStop,
   onEnvChange,
   onManageEnvs,
+  workspaces,
+  activeWorkspaceId,
+  onWorkspaceChange,
+  onWorkspaceCreate,
+  onWorkspaceRename,
+  onWorkspaceDelete,
+  activePanel,
+  onOpenWorkspaceSettings,
 }: Props) {
   const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
   const envDropdownRef = useRef<HTMLDivElement>(null);
-
-  const activeWorkspaceId = config.activeWorkspaceId ?? "";
 
   const wsEnvironments = (config.environments ?? []).filter(
     (e) => e.workspaceId === activeWorkspaceId
@@ -60,6 +76,35 @@ export default function TitleBar({
         {strings.titleBar.appName}
       </span>
 
+      {/* Divider between App identity and Workspace */}
+      <div className="h-4 w-px bg-border/80 mx-1 flex-shrink-0" />
+
+      {/* Workspace Selector */}
+      <WorkspaceSelector
+        workspaces={workspaces}
+        activeId={activeWorkspaceId}
+        onSelect={onWorkspaceChange}
+        onCreate={onWorkspaceCreate}
+        onRename={onWorkspaceRename}
+        onDelete={onWorkspaceDelete}
+      />
+
+      {/* Workspace Settings / Config button */}
+      <button
+        type="button"
+        onClick={onOpenWorkspaceSettings}
+        title={strings.panels.sectionWorkspace}
+        aria-label={strings.panels.sectionWorkspace}
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer select-none flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
+          activePanel === "workspace"
+            ? "border-signal/40 bg-signal/15 text-signal"
+            : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        }`}
+      >
+        <Settings size={13} />
+      </button>
+
       <div className="flex-1" />
 
       {/* Help tooltip */}
@@ -84,6 +129,22 @@ export default function TitleBar({
           setEnvDropdownOpen(false);
         }}
       />
+
+      {/* Environment Manage button */}
+      <button
+        type="button"
+        onClick={onManageEnvs}
+        title={strings.titleBar.manageEnvironments}
+        aria-label={strings.titleBar.manageEnvironments}
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer select-none flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
+          activePanel === "environments"
+            ? "border-signal/40 bg-signal/15 text-signal"
+            : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        }`}
+      >
+        <Globe size={13} />
+      </button>
 
       {/* Server play/stop */}
       <ServerToggle

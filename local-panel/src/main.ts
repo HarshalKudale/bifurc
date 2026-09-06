@@ -119,9 +119,9 @@ function computeDefaultZoomForDisplay(): number {
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
-    height: 720,
+    height: 780,
     minWidth: 1400,
-    minHeight: 720,
+    minHeight: 800,
     title: "Local Panel",
     icon: getAppIcon(),
     backgroundColor: "#1c1e27",

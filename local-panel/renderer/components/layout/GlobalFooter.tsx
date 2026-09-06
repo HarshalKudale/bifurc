@@ -78,7 +78,6 @@ export default function GlobalFooter({
     // Publish is available whenever there are local changes - no remote required
     // (backend commits locally and only pushes if a remote is configured)
     const publishDisabled = outgoingCount === 0 || publishing || isSyncing;
-    const shouldRender = !!rightContent || hasRemote || outgoingCount > 0 || isSyncing;
 
     const handlePublish = async () => {
         setPublishing(true);
@@ -161,8 +160,6 @@ export default function GlobalFooter({
     };
 
     // -- Render -------------------------------------------------------------
-
-    if (!shouldRender) return null;
 
     return (
         <div className="border-t border-border bg-background flex min-h-11 h-11 items-center gap-3 px-4 flex-shrink-0 select-none z-20">

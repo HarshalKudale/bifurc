@@ -9,6 +9,7 @@ import { Button, Input, Select } from "@/components/ui";
 
 interface Props {
   activeWorkspaceId: string;
+  embedded?: boolean;
 }
 
 const ENTITY_OPTIONS: { value: AuditEntity | ""; label: string }[] = [
@@ -60,7 +61,7 @@ function absoluteTime(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
-export default function AuditLogPanel({ activeWorkspaceId }: Props) {
+export default function AuditLogPanel({ activeWorkspaceId, embedded }: Props) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -143,18 +144,22 @@ export default function AuditLogPanel({ activeWorkspaceId }: Props) {
 
   return (
     <>
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="flex flex-col flex-1 overflow-hidden min-w-0">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-border flex items-center gap-3 flex-shrink-0">
+        <div className={`${embedded ? "px-4 py-3" : "px-6 py-4"} border-b border-border flex items-center gap-3 flex-shrink-0 bg-surface/50`}>
           <div className="flex-1 min-w-0">
-            <h1 className="text-base font-semibold text-foreground">{strings.auditLog.title}</h1>
+            <h1 className={`${embedded ? "text-sm" : "text-base"} font-semibold text-foreground`}>
+              {strings.auditLog.title}
+            </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {strings.auditLog.subtitle} {total} {strings.auditLog.entries}
+              {embedded
+                ? `${total} ${strings.auditLog.entries}`
+                : `${strings.auditLog.subtitle} ${total} ${strings.auditLog.entries}`}
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Button variant="secondary" icon={<Download size={12} />} onClick={() => handleExport("json")} disabled={exporting}>JSON</Button>
-            <Button variant="secondary" icon={<Download size={12} />} onClick={() => handleExport("csv")} disabled={exporting}>CSV</Button>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <Button variant="secondary" size="sm" icon={<Download size={11} />} onClick={() => handleExport("json")} disabled={exporting}>JSON</Button>
+            <Button variant="secondary" size="sm" icon={<Download size={11} />} onClick={() => handleExport("csv")} disabled={exporting}>CSV</Button>
           </div>
         </div>
 
