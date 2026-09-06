@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppConfig, LocalMapping } from "@/types";
 import Modal from "@/components/common/Modal";
-import SearchInput from "@/components/common/SearchInput";
 import PanelHeader from "@/components/layout/PanelHeader";
 import { strings } from "@/lib/strings";
 import { flatEntityRelPath } from "@/lib/utils";
@@ -48,7 +47,6 @@ export default function MappingsPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<FormState>>({});
-  const [search, setSearch] = useState("");
 
 
   useEffect(() => {
@@ -144,15 +142,7 @@ export default function MappingsPanel({
   };
 
 
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? config.mappings.filter(
-      (m) =>
-        m.domain.toLowerCase().includes(q) ||
-        m.target.toLowerCase().includes(q) ||
-        (m.label ?? "").toLowerCase().includes(q)
-    )
-    : config.mappings;
+
 
   const syncDotColor = (syncSt: string | undefined) => {
     if (syncSt === "new" || syncSt === "deleted") return "red" as const;
@@ -245,17 +235,14 @@ export default function MappingsPanel({
           title={strings.mappings.title}
           subtitle={strings.mappings.subtitle}
           actions={
-            <>
-              <SearchInput value={search} onChange={setSearch} placeholder={strings.mappings.searchPlaceholder} />
-              <Button variant="primary" onClick={openAdd}>{strings.mappings.addMapping}</Button>
-            </>
+            <Button variant="primary" onClick={openAdd}>{strings.mappings.addMapping}</Button>
           }
         />
 
         <div className="flex-1 overflow-y-auto p-6">
           <DataTable
             columns={columns}
-            data={filtered}
+            data={config.mappings}
             rowKey={(m) => m.id}
             emptyState={emptyNode}
           />

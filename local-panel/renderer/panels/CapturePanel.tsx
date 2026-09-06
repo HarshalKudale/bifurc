@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Group as PanelGroup, Panel, Separator as ResizeHandle } from "react-resizable-panels";
 import { RequestLogEntry, MockRule, SavedRequest, AppConfig } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import PanelHeader from "@/components/layout/PanelHeader";
 import CaptureTable from "@/components/capture/CaptureTable";
 import CaptureDetail from "@/components/capture/CaptureDetail";
@@ -61,7 +60,6 @@ interface CtxMenuState {
 
 export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChange, onOpenInMocks, onOpenInRequests, onStatsChange }: Props) {
   const [entries, setEntries] = useState<RequestLogEntry[]>(() => loadPersistedEntries(activeWorkspaceId));
-  const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
@@ -129,21 +127,12 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
     setEntries((prev) => prev.filter((e) => !ids.has(e.id)));
   }, []);
 
-  const q = search.trim().toLowerCase();
   const visible = useMemo(
     () => entries.filter((e) => {
       if (typeFilter !== "all" && deriveType(e) !== typeFilter) return false;
-      if (!q) return true;
-      return (
-        e.url.toLowerCase().includes(q) ||
-        e.method.toLowerCase().includes(q) ||
-        e.host.toLowerCase().includes(q) ||
-        (e.target ?? "").toLowerCase().includes(q) ||
-        String(e.status ?? "").includes(q) ||
-        fulfilledBy(e.via).toLowerCase().includes(q)
-      );
+      return true;
     }),
-    [entries, q, typeFilter],
+    [entries, typeFilter],
   );
 
   const typeCounts = useMemo(() => {
@@ -361,7 +350,6 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
                 {strings.capture.selectedCount.replace("{count}", String(selectedIds.size))}
               </span>
             )}
-            <SearchInput value={search} onChange={setSearch} placeholder={strings.capture.searchPlaceholder} />
             <button
               onClick={() => setPaused((v) => !v)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${paused

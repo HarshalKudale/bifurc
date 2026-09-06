@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { RequestLogEntry, MockRule, ReplayResult } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import RestTab from "@/components/rest/RestTab";
 import ReplayResultModal from "@/components/capture/ReplayResultModal";
 import ViaBadge, { VIA_LABEL } from "@/components/common/ViaBadge";
@@ -34,7 +33,6 @@ interface Props {
 
 export default function LogsPanel({ onMockAdded }: Props) {
   const [entries, setEntries] = useState<RequestLogEntry[]>([]);
-  const [search, setSearch] = useState("");
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
@@ -98,18 +96,6 @@ export default function LogsPanel({ onMockAdded }: Props) {
     })(),
   });
 
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? entries.filter((e) =>
-        e.url.toLowerCase().includes(q) ||
-        e.method.toLowerCase().includes(q) ||
-        e.host.toLowerCase().includes(q) ||
-        (e.target ?? "").toLowerCase().includes(q) ||
-        String(e.status ?? "").includes(q) ||
-        VIA_LABEL[e.via].toLowerCase().includes(q)
-      )
-    : entries;
-
   if (mockEntry) {
     return (
       <RestTab
@@ -131,7 +117,6 @@ export default function LogsPanel({ onMockAdded }: Props) {
           <p className="text-xs text-muted-foreground mt-0.5">{strings.logs.subtitle}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <SearchInput value={search} onChange={setSearch} placeholder={strings.logs.searchPlaceholder} />
           <button
             onClick={() => setPaused((v) => !v)}
             className={`px-3 py-1.5 rounded border text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
@@ -147,14 +132,12 @@ export default function LogsPanel({ onMockAdded }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto font-mono text-xs">
-        {filtered.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-16">
             <div className="opacity-15 mb-3"><Clipboard size={36} /></div>
             <div className="text-sm font-medium text-foreground font-sans mb-1">{strings.logs.noEntries}</div>
             <p className="text-xs text-muted-foreground font-sans">
-              {entries.length === 0
-                ? strings.logs.emptyHint
-                : strings.logs.noMatch}
+              {strings.logs.emptyHint}
             </p>
           </div>
         ) : (
@@ -171,7 +154,7 @@ export default function LogsPanel({ onMockAdded }: Props) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((e) => (
+              {entries.map((e) => (
                 <tr
                   key={e.id}
                   className="border-b border-border/30 hover:bg-surface transition-colors group"

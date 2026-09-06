@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { AppConfig, SavedSoapMock, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import SoapTab, { SoapTabHandle } from "@/components/soap/SoapTab";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -38,7 +37,6 @@ export default function SoapMocksPanel({ config, onConfigChange, activeEnv = nul
     const mocks = config.soapMocks ?? [];
     const folders = config.soapMockFolders ?? [];
 
-    const [search, setSearch] = usePersistedState(`soap-mocks:${config.activeWorkspaceId}:search`, "");
     const [sidebarOpen, setSidebarOpen] = usePersistedState(`soap-mocks:${config.activeWorkspaceId}:sidebar-open`, true);
 
     const {
@@ -129,18 +127,14 @@ export default function SoapMocksPanel({ config, onConfigChange, activeEnv = nul
     };
 
     const folderViewItems: FolderTreeItem[] = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        return (q
-            ? mocks.filter((m) => m.name.toLowerCase().includes(q) || (m.soapActionPattern ?? "").toLowerCase().includes(q))
-            : mocks
-        ).map((m): FolderTreeItem => ({
+        return mocks.map((m): FolderTreeItem => ({
             id: m.id,
             name: m.name || m.soapActionPattern || strings.soap.mockLabel,
             folderId: m.folderId ?? null,
             isActive: activeTab === m.id,
             isEnabled: m.enabled,
         }));
-    }, [mocks, search, activeTab]);
+    }, [mocks, activeTab]);
 
     const folderStatusMap = useMemo(() => calculateFolderStatus(mocks, folders), [mocks, folders]);
 
@@ -149,7 +143,9 @@ export default function SoapMocksPanel({ config, onConfigChange, activeEnv = nul
     const sidebarContent = (
         <>
             <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.soap.collapseSidebar}>
-                <SearchInput value={search} onChange={setSearch} placeholder={strings.soap.searchMocks} />
+                <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+                    {strings.soap.mocks}
+                </span>
             </SidebarHeader>
             <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
                 {draftTabIds.length > 0 && (

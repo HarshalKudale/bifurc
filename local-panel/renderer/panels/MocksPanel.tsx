@@ -9,7 +9,6 @@ import {
   Environment,
   ApiProtocol,
 } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import RestTab from "@/components/rest/RestTab";
 import GraphQLTab from "@/components/graphql/GraphQLTab";
 import GrpcTab from "@/components/grpc/GrpcTab";
@@ -167,7 +166,6 @@ export default function MocksPanel({
     ];
   }, [restMocks, graphqlMocks, grpcMocks, soapMocks]);
 
-  const [search, setSearch] = usePersistedState(`mocks:${config.activeWorkspaceId}:search`, "");
   const [sidebarOpen, setSidebarOpen] = usePersistedState(`mocks:${config.activeWorkspaceId}:sidebar-open`, true);
   const [selectedFolderId, setSelectedFolderId] = usePersistedState<string | null>(`mocks:${config.activeWorkspaceId}:selected-folder`, null);
 
@@ -490,13 +488,9 @@ export default function MocksPanel({
 
   // Uniform folder tree items combining all 4 protocols
   const folderViewItems: FolderTreeItem[] = useMemo(() => {
-    const q = search.trim().toLowerCase();
     const items: FolderTreeItem[] = [];
 
     allItemsMap.forEach((it) => {
-      if (q && !it.name.toLowerCase().includes(q) && !it.summary.toLowerCase().includes(q) && !it.methodBadge.toLowerCase().includes(q)) {
-        return;
-      }
       items.push({
         id: it.id,
         name: it.name || it.summary,
@@ -510,7 +504,7 @@ export default function MocksPanel({
     });
 
     return items;
-  }, [allItemsMap, blocksFolder, search, activeTab]);
+  }, [allItemsMap, blocksFolder, activeTab]);
 
   const folderStatusMap = useMemo(() => calculateFolderStatus(allEntities as any, folders), [allEntities, folders]);
 
@@ -519,7 +513,9 @@ export default function MocksPanel({
   const sidebarContent = (
     <>
       <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.mocks.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.mocks.searchPlaceholder} />
+        <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+          {strings.nav.mocks}
+        </span>
       </SidebarHeader>
       <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
         {draftTabIds.length > 0 && (

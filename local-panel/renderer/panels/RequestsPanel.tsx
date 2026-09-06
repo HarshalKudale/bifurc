@@ -10,7 +10,6 @@ import {
   Environment,
   ApiProtocol,
 } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import RestTab from "@/components/rest/RestTab";
 import GraphQLTab from "@/components/graphql/GraphQLTab";
@@ -168,7 +167,6 @@ export default function RequestsPanel({
     ];
   }, [restRequests, graphqlRequests, grpcRequests, soapRequests]);
 
-  const [search, setSearch] = usePersistedState(`requests:${config.activeWorkspaceId}:search`, "");
   const [sidebarOpen, setSidebarOpen] = usePersistedState(`requests:${config.activeWorkspaceId}:sidebar-open`, true);
   const [selectedFolderId, setSelectedFolderId] = usePersistedState<string | null>(`requests:${config.activeWorkspaceId}:selected-folder`, null);
   const [runnerFolderIds, setRunnerFolderIds] = useState<Set<string>>(new Set());
@@ -458,14 +456,9 @@ export default function RequestsPanel({
 
   // Uniform folder tree items combining all 4 protocols + runners
   const folderViewItems: FolderTreeItem[] = useMemo(() => {
-    const q = search.trim().toLowerCase();
-
     const items: FolderTreeItem[] = [];
 
     allItemsMap.forEach((it) => {
-      if (q && !it.name.toLowerCase().includes(q) && !it.summary.toLowerCase().includes(q) && !it.methodBadge.toLowerCase().includes(q)) {
-        return;
-      }
       items.push({
         id: it.id,
         name: it.name || it.summary,
@@ -490,14 +483,16 @@ export default function RequestsPanel({
       }));
 
     return [...items, ...runnerItems];
-  }, [allItemsMap, folders, search, activeTab, runnerFolderIds]);
+  }, [allItemsMap, folders, activeTab, runnerFolderIds]);
 
   // -- Sidebar ------------------------------------------------------------
 
   const sidebarContent = (
     <>
       <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.mocks.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.requests.searchPlaceholder} />
+        <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+          {strings.nav.requests}
+        </span>
       </SidebarHeader>
       <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
         {draftTabIds.length > 0 && (

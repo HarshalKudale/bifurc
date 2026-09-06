@@ -14,6 +14,8 @@ import { Panel, enabledPanels, PANEL_HELP } from "@/lib/panelRegistry";
 import { renderPanel, PanelRenderContext } from "@/lib/panelFactory";
 import { useSidebarVisibility } from "@/lib/useSidebarVisibility";
 import { usePersistedState } from "@/lib/usePersistedState";
+import SearchModal from "@/components/search/SearchModal";
+import { readStorage, writeStorage } from "@/lib/storage";
 
 const EMPTY_CONFIG: AppConfig = {
   port: 80,
@@ -108,6 +110,102 @@ export default function App() {
   const handleEntityPathChange = useCallback((filePath: string) => {
     setOpenedEntityPath(filePath);
   }, []);
+
+  // Search modal state
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [searchModalMode, setSearchModalMode] = useState<"current" | "global">("current");
+
+  // Global search shortcut: Ctrl+K / Cmd+K (current mode), Ctrl+Shift+K / Cmd+Shift+K (global mode)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+      if (isCtrlOrCmd && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          setSearchModalMode("global");
+          setSearchModalOpen(true);
+        } else {
+          setSearchModalMode("current");
+          setSearchModalOpen(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  const getStorageKeyForPanel = useCallback((p: Panel): string | null => {
+    switch (p) {
+      case "requests":
+      case "req-rest":
+      case "req-graphql":
+      case "req-soap":
+      case "req-grpc":
+        return "requests";
+      case "mocks":
+      case "mock-rest":
+      case "mock-graphql":
+      case "mock-soap":
+      case "mock-grpc":
+        return "mocks";
+      case "rules":
+        return "rules";
+      case "sockets":
+        return "ws";
+      case "webhooks":
+        return "webhooks";
+      default:
+        return null;
+    }
+  }, []);
+
+  const handleSearchSelectTab = useCallback(
+    (targetPanel: Panel, tabId: string) => {
+      const storageKey = getStorageKeyForPanel(targetPanel);
+      if (storageKey) {
+        writeStorage(`${storageKey}:activeTab`, tabId);
+      }
+      setPanel(targetPanel);
+      window.dispatchEvent(
+        new CustomEvent("localpanel:open-tab", {
+          detail: { panel: targetPanel, tabId },
+        })
+      );
+    },
+    [getStorageKeyForPanel, setPanel]
+  );
+
+  const handleSearchOpenEntity = useCallback(
+    (targetPanel: Panel, entityId: string, _entityType: string, _original?: any) => {
+      const storageKey = getStorageKeyForPanel(targetPanel);
+      if (storageKey) {
+        const openKey = `${storageKey}:openTabs`;
+        const activeKey = `${storageKey}:activeTab`;
+        const currentOpen = readStorage<string[]>(openKey, []);
+        if (!currentOpen.includes(entityId)) {
+          writeStorage(openKey, [...currentOpen, entityId]);
+        }
+        writeStorage(activeKey, entityId);
+      }
+      setPanel(targetPanel);
+      window.dispatchEvent(
+        new CustomEvent("localpanel:open-tab", {
+          detail: { panel: targetPanel, tabId: entityId },
+        })
+      );
+    },
+    [getStorageKeyForPanel, setPanel]
+  );
+
+  const handleSearchNavigatePanel = useCallback(
+    (targetPanel: Panel, target?: any) => {
+      if (targetPanel === "mappings" && typeof target === "string") {
+        setMappingPrefill(target);
+      }
+      setPanel(targetPanel);
+    },
+    [setPanel]
+  );
 
   // Derive workspace-scoped view from full config
   const wsId = config.activeWorkspaceId;
@@ -589,6 +687,10 @@ export default function App() {
         }}
         activePanel={panel}
         onOpenWorkspaceSettings={() => setPanel("workspace")}
+        onOpenSearch={(m) => {
+          setSearchModalMode(m ?? "current");
+          setSearchModalOpen(true);
+        }}
       />
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -625,6 +727,19 @@ export default function App() {
         syncStatus={syncStatus}
         onPublishPanel={handlePublishPanel}
         rightContent={footerRightContent}
+      />
+
+      {/* Unified Search Modal */}
+      <SearchModal
+        open={searchModalOpen}
+        initialMode={searchModalMode}
+        activePanel={panel}
+        config={wsConfig}
+        services={services}
+        onClose={() => setSearchModalOpen(false)}
+        onSelectTab={handleSearchSelectTab}
+        onOpenEntity={handleSearchOpenEntity}
+        onNavigatePanel={handleSearchNavigatePanel}
       />
     </div>
   );

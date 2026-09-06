@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { AppConfig, SavedGrpcMock, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import GrpcTab from "@/components/grpc/GrpcTab";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -40,7 +39,6 @@ export default function GrpcMocksPanel({ config, onConfigChange, activeEnv = nul
     const mocks = config.grpcMocks ?? [];
     const folders = config.grpcMockFolders ?? [];
 
-    const [search, setSearch] = usePersistedState(`grpc-mocks:${config.activeWorkspaceId}:search`, "");
     const [sidebarOpen, setSidebarOpen] = usePersistedState(`grpc-mocks:${config.activeWorkspaceId}:sidebar-open`, true);
     const [mockServerRunning, setMockServerRunning] = useState(false);
     const [mockServerPort, setMockServerPort] = useState(config.grpcMockServerPort ?? 9102);
@@ -154,18 +152,14 @@ export default function GrpcMocksPanel({ config, onConfigChange, activeEnv = nul
     };
 
     const folderViewItems: FolderTreeItem[] = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        const filtered = q
-            ? mocks.filter((m) => m.name.toLowerCase().includes(q) || m.serviceName.toLowerCase().includes(q) || m.methodName.toLowerCase().includes(q))
-            : mocks;
-        return filtered.map((m): FolderTreeItem => ({
+        return mocks.map((m): FolderTreeItem => ({
             id: m.id,
             name: m.name || `${m.serviceName}/${m.methodName}` || strings.grpc.unnamed,
             folderId: m.folderId ?? null,
             isActive: activeTab === m.id,
             isEnabled: m.enabled,
         }));
-    }, [mocks, search, activeTab]);
+    }, [mocks, activeTab]);
 
     const folderStatusMap = useMemo(() => calculateFolderStatus(mocks, folders), [mocks, folders]);
 
@@ -176,7 +170,9 @@ export default function GrpcMocksPanel({ config, onConfigChange, activeEnv = nul
     const sidebarContent = (
         <>
             <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.grpc.collapseSidebar}>
-                <SearchInput value={search} onChange={setSearch} placeholder={strings.grpc.searchMocks} />
+                <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+                    {strings.grpc.mocks}
+                </span>
             </SidebarHeader>
             {/* Mock server toggle */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border">

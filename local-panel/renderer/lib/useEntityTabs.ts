@@ -106,6 +106,24 @@ export function useEntityTabs<T extends { id: string }>({
     setActiveTab(id);
   }, []);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<{ panel: string; tabId: string }>;
+      if (!custom.detail?.tabId) return;
+      const targetPanel = custom.detail.panel;
+      if (
+        targetPanel === storageKey ||
+        targetPanel === entityKind ||
+        (storageKey === "requests" && targetPanel.startsWith("req")) ||
+        (storageKey === "mocks" && targetPanel.startsWith("mock"))
+      ) {
+        openTab(custom.detail.tabId);
+      }
+    };
+    window.addEventListener("localpanel:open-tab", handler);
+    return () => window.removeEventListener("localpanel:open-tab", handler);
+  }, [storageKey, entityKind, openTab]);
+
   const openNewTab = useCallback(() => {
     const existingEmpty = openTabs.find((id) => isDraft(id) && !id.startsWith(extraDraftPrefixes[0] ?? "__none__") && !loadDraft(id));
     if (existingEmpty) { setActiveTab(existingEmpty); return; }

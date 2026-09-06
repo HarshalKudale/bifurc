@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { AppConfig, SavedGraphQLMock, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import GraphQLTab from "@/components/graphql/GraphQLTab";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -38,7 +37,6 @@ export default function GraphQLMocksPanel({ config, onConfigChange, activeEnv = 
     const mocks = config.graphqlMocks ?? [];
     const folders = config.graphqlMockFolders ?? [];
 
-    const [search, setSearch] = usePersistedState(`graphql-mocks:${config.activeWorkspaceId}:search`, "");
     const [sidebarOpen, setSidebarOpen] = usePersistedState(`graphql-mocks:${config.activeWorkspaceId}:sidebar-open`, true);
 
     const {
@@ -113,12 +111,6 @@ export default function GraphQLMocksPanel({ config, onConfigChange, activeEnv = 
         await reloadConfig();
     }, [loadedEntities, config.activeWorkspaceId, reloadConfig]);
 
-    const filteredMocks = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        if (!q) return mocks;
-        return mocks.filter((m) => m.name.toLowerCase().includes(q) || m.operationName.toLowerCase().includes(q));
-    }, [mocks, search]);
-
     const draftTabIds = openTabs.filter(isDraft);
 
     const tabLabel = (tabId: string) => {
@@ -134,14 +126,14 @@ export default function GraphQLMocksPanel({ config, onConfigChange, activeEnv = 
     };
 
     const folderViewItems: FolderTreeItem[] = useMemo(() => {
-        return filteredMocks.map((m): FolderTreeItem => ({
+        return mocks.map((m): FolderTreeItem => ({
             id: m.id,
             name: m.name || m.operationName || strings.graphql.untitled,
             folderId: m.folderId ?? null,
             isActive: activeTab === m.id,
             isEnabled: m.enabled,
         }));
-    }, [filteredMocks, activeTab]);
+    }, [mocks, activeTab]);
 
     const folderStatusMap = useMemo(() => calculateFolderStatus(mocks, folders), [mocks, folders]);
 
@@ -150,7 +142,9 @@ export default function GraphQLMocksPanel({ config, onConfigChange, activeEnv = 
     const sidebarContent = (
         <>
             <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.graphql.collapseSidebar}>
-                <SearchInput value={search} onChange={setSearch} placeholder={strings.graphql.searchMocks} />
+                <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+                    {strings.graphql.mocks}
+                </span>
             </SidebarHeader>
             <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
                 {draftTabIds.length > 0 && (

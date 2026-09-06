@@ -1,6 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppConfig, SavedWsConnection, Folder as FolderType, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
 import { UrlBar, TabStrip, BottomBar } from "@/components/editor/RequestTab";
@@ -518,7 +517,6 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
   const connections = config.wsConnections ?? [];
   const folders = config.wsFolders ?? [];
 
-  const [search, setSearch] = usePersistedState(`sockets:${config.activeWorkspaceId}:search`, "");
   const [sidebarOpen, setSidebarOpen] = usePersistedState(`sockets:${config.activeWorkspaceId}:sidebar-open`, true);
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
   const tabRefs = useRef<Record<string, WsEditorHandle | null>>({});
@@ -550,16 +548,21 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
     }).catch(() => { });
   }, [activeTab, config.activeWorkspaceId]);
 
-  const filteredConnections = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return connections;
-    return connections.filter((c) => c.name.toLowerCase().includes(q) || c.url.toLowerCase().includes(q));
-  }, [connections, search]);
-
   const openTab = useCallback((id: string) => {
     setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setActiveTab(id);
   }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<{ panel: string; tabId: string }>;
+      if (custom.detail?.panel === "sockets" && custom.detail.tabId) {
+        openTab(custom.detail.tabId);
+      }
+    };
+    window.addEventListener("localpanel:open-tab", handler);
+    return () => window.removeEventListener("localpanel:open-tab", handler);
+  }, [openTab]);
 
   const openNewTab = useCallback(() => {
     const existingEmpty = openTabs.find((id) => isDraft(id) && !loadDraft(id));
@@ -684,10 +687,7 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
 
   // Folder view items
   const folderViewItems: FolderTreeItem[] = useMemo(() =>
-    (search.trim()
-      ? connections.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.url.toLowerCase().includes(search.toLowerCase()))
-      : connections
-    ).map((c): FolderTreeItem => ({
+    connections.map((c): FolderTreeItem => ({
       id: c.id,
       name: c.name || c.url.slice(0, 40),
       folderId: c.folderId ?? null,
@@ -695,7 +695,7 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
       isEnabled: true,
       relPath: entityRelPath("sockets", c, folders),
     })),
-    [connections, folders, search, activeTab],
+    [connections, folders, activeTab],
   );
 
   // -- Sidebar --------------------------------------------------------------
@@ -703,7 +703,9 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
   const sidebarContent = (
     <>
       <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.titleBar.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.sockets.searchPlaceholder} />
+        <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+          {strings.panels.sectionWebsocket}
+        </span>
       </SidebarHeader>
 
       <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>

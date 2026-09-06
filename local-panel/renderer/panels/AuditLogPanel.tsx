@@ -177,11 +177,9 @@ export default function AuditLogPanel({ activeWorkspaceId, embedded }: Props) {
           <span className="text-muted-foreground text-xs">–</span>
           <Input inputSize="sm" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
 
-          <Input inputSize="sm" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search by name…" className="w-40" />
-
-          {(entityFilter || actionFilter || searchText || fromDate || toDate) && (
+          {(entityFilter || actionFilter || fromDate || toDate) && (
             <button
-              onClick={() => { setEntityFilter(""); setActionFilter(""); setSearchText(""); setFromDate(""); setToDate(""); }}
+              onClick={() => { setEntityFilter(""); setActionFilter(""); setFromDate(""); setToDate(""); }}
               className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer"
             >
               Clear

@@ -1,6 +1,5 @@
-import React, { useState } from "react";
+import React from "react";
 import { AppConfig, ServiceInfo } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import { RefreshCw, Zap } from "@/lib/icons";
 import { Button, Badge, EmptyState, DataTable, PanelLayout, SectionCard } from "@/components/ui";
 import { strings } from "@/lib/strings";
@@ -27,8 +26,6 @@ export default function ServicesPanel({
   onOpenCapture,
   onOpenSettings,
 }: Props) {
-  const [search, setSearch] = useState("");
-
   const portToMapping = new Map(
     config.mappings.map((m) => {
       const parts = m.target.split(":");
@@ -37,17 +34,6 @@ export default function ServicesPanel({
     })
   );
 
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? services.filter(
-        (s) =>
-          String(s.port).includes(q) ||
-          s.processName.toLowerCase().includes(q) ||
-          s.address.toLowerCase().includes(q) ||
-          (portToMapping.get(s.port)?.domain ?? "").toLowerCase().includes(q) ||
-          (portToMapping.get(s.port)?.label ?? "").toLowerCase().includes(q)
-      )
-    : services;
   const runningService = services.find((s) => !portToMapping.has(s.port)) ?? services[0] ?? null;
   const directHostHint = config.port === 80 ? "myapp.localhost" : `myapp.localhost:${config.port}`;
 
@@ -110,10 +96,7 @@ export default function ServicesPanel({
       title={strings.services.title}
       subtitle={strings.services.subtitle}
       actions={
-        <>
-          <SearchInput value={search} onChange={setSearch} placeholder={strings.services.searchPlaceholder} />
-          <Button variant="secondary" icon={<RefreshCw size={12} />} onClick={onRefresh}>{strings.services.refresh}</Button>
-        </>
+        <Button variant="secondary" icon={<RefreshCw size={12} />} onClick={onRefresh}>{strings.services.refresh}</Button>
       }
     >
       <SectionCard className="mb-5">
@@ -172,16 +155,16 @@ export default function ServicesPanel({
         </div>
       </SectionCard>
 
-      {filtered.length === 0 ? (
+      {services.length === 0 ? (
         <EmptyState
           icon={<Zap size={36} />}
-          title={q ? strings.services.noMatching : strings.services.noServices}
-          description={q ? strings.services.noMatchingHint : strings.services.noServicesHint}
+          title={strings.services.noServices}
+          description={strings.services.noServicesHint}
         />
       ) : (
         <DataTable
           columns={columns}
-          data={filtered}
+          data={services}
           rowKey={(s) => String(s.port)}
         />
       )}

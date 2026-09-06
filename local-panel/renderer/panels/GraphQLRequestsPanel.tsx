@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { AppConfig, SavedGraphQLRequest, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import GraphQLTab from "@/components/graphql/GraphQLTab";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -37,7 +36,6 @@ export default function GraphQLRequestsPanel({ config, onConfigChange, activeEnv
     const requests = config.graphqlRequests ?? [];
     const folders = config.graphqlRequestFolders ?? [];
 
-    const [search, setSearch] = usePersistedState(`graphql-requests:${config.activeWorkspaceId}:search`, "");
     const [sidebarOpen, setSidebarOpen] = usePersistedState(`graphql-requests:${config.activeWorkspaceId}:sidebar-open`, true);
 
     const {
@@ -112,12 +110,6 @@ export default function GraphQLRequestsPanel({ config, onConfigChange, activeEnv
         await reloadConfig();
     }, [loadedEntities, config.activeWorkspaceId, reloadConfig]);
 
-    const filteredRequests = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        if (!q) return requests;
-        return requests.filter((r) => r.name.toLowerCase().includes(q) || r.endpointUrl.toLowerCase().includes(q));
-    }, [requests, search]);
-
     const draftTabIds = openTabs.filter(isDraft);
 
     const tabLabel = (tabId: string) => {
@@ -133,21 +125,23 @@ export default function GraphQLRequestsPanel({ config, onConfigChange, activeEnv
     };
 
     const folderViewItems: FolderTreeItem[] = useMemo(() => {
-        return filteredRequests.map((r): FolderTreeItem => ({
+        return requests.map((r): FolderTreeItem => ({
             id: r.id,
             name: r.name || r.endpointUrl?.slice(0, 40) || strings.graphql.untitled,
             folderId: r.folderId ?? null,
             isActive: activeTab === r.id,
             isEnabled: true,
         }));
-    }, [filteredRequests, activeTab]);
+    }, [requests, activeTab]);
 
     // -- Sidebar ------------------------------------------------------------
 
     const sidebarContent = (
         <>
             <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.graphql.collapseSidebar}>
-                <SearchInput value={search} onChange={setSearch} placeholder={strings.graphql.searchRequests} />
+                <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+                    {strings.graphql.requests}
+                </span>
             </SidebarHeader>
             <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
                 {draftTabIds.length > 0 && (

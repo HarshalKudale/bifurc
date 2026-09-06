@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { AppConfig, ProxyRule } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import RuleTab, { RuleTabHandle, RuleSavePayload } from "@/components/rules/RuleTab";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -32,7 +31,6 @@ export default function ProxyRulesPanel({
   const rules = config.proxyRules ?? [];
   const folders = config.ruleFolders ?? [];
 
-  const [search, setSearch] = usePersistedState(`rules:${config.activeWorkspaceId}:search`, "");
   const [sidebarOpen, setSidebarOpen] = usePersistedState(`rules:${config.activeWorkspaceId}:sidebar-open`, true);
 
   const {
@@ -148,11 +146,7 @@ export default function ProxyRulesPanel({
   // -- Folder tree items --------------------------------------------------
 
   const folderViewItems: FolderTreeItem[] = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (q
-      ? rules.filter((r) => r.name.toLowerCase().includes(q) || r.pattern.toLowerCase().includes(q))
-      : rules
-    ).map((r): FolderTreeItem => ({
+    return rules.map((r): FolderTreeItem => ({
       id: r.id,
       name: r.name || r.pattern.slice(0, 40) || strings.proxyRules.newRule,
       folderId: r.folderId ?? null,
@@ -160,7 +154,7 @@ export default function ProxyRulesPanel({
       isEnabled: r.enabled,
       relPath: entityRelPath("rules", r, folders),
     }));
-  }, [rules, folders, search, activeTab]);
+  }, [rules, folders, activeTab]);
 
   const folderStatusMap = useMemo(() => calculateFolderStatus(rules, folders), [rules, folders]);
 
@@ -171,7 +165,9 @@ export default function ProxyRulesPanel({
   const sidebarContent = (
     <>
       <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.proxyRules.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.proxyRules.searchPlaceholder} />
+        <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+          {strings.nav.proxyRules}
+        </span>
       </SidebarHeader>
       <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
         {draftTabIds.length > 0 && (

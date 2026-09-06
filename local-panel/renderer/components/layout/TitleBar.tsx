@@ -5,7 +5,7 @@ import ServerToggle from "@/components/layout/ServerToggle";
 import WorkspaceSelector from "@/components/layout/WorkspaceSelector";
 import EnvSelector from "@/components/sidebar/EnvSelector";
 import { strings } from "@/lib/strings";
-import { Settings, Globe } from "@/lib/icons";
+import { Settings, Globe, Search } from "@/lib/icons";
 import iconUrl from "@/icon.png";
 import HelpTooltip from "@/components/common/HelpTooltip";
 
@@ -28,6 +28,7 @@ interface Props {
   onWorkspaceDelete: (id: string) => void;
   activePanel: Panel;
   onOpenWorkspaceSettings: () => void;
+  onOpenSearch: (mode?: "current" | "global") => void;
 }
 
 export default function TitleBar({
@@ -47,6 +48,7 @@ export default function TitleBar({
   onWorkspaceDelete,
   activePanel,
   onOpenWorkspaceSettings,
+  onOpenSearch,
 }: Props) {
   const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
   const envDropdownRef = useRef<HTMLDivElement>(null);
@@ -105,7 +107,25 @@ export default function TitleBar({
         <Settings size={13} />
       </button>
 
-      <div className="flex-1" />
+      {/* Search trigger button */}
+      <div className="flex-1 flex justify-center px-2 min-w-0">
+        <button
+          type="button"
+          onClick={() => onOpenSearch("current")}
+          title="Search (Ctrl+K or Ctrl+Shift+K)"
+          aria-label="Search"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          className="w-full max-w-[320px] flex items-center justify-between h-8 px-3 rounded-md border border-border/80 bg-card/60 hover:bg-surface-2 hover:border-signal/40 text-muted-foreground hover:text-foreground transition-all cursor-pointer select-none text-xs group"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Search size={13} className="text-muted-foreground group-hover:text-signal transition-colors flex-shrink-0" />
+            <span className="truncate text-muted-foreground/80 group-hover:text-foreground transition-colors">Search...</span>
+          </div>
+          <kbd className="text-[10px] bg-surface border border-border px-1.5 py-0.5 rounded text-muted-foreground font-mono group-hover:text-foreground group-hover:border-signal/30 transition-colors">
+            Ctrl K
+          </kbd>
+        </button>
+      </div>
 
       {/* Help tooltip */}
       <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>

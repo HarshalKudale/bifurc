@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { AppConfig, SavedSoapRequest, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import SoapTab, { SoapTabHandle } from "@/components/soap/SoapTab";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -38,7 +37,6 @@ export default function SoapRequestsPanel({ config, onConfigChange, activeEnv = 
     const requests = config.soapRequests ?? [];
     const folders = config.soapRequestFolders ?? [];
 
-    const [search, setSearch] = usePersistedState(`soap-requests:${config.activeWorkspaceId}:search`, "");
     const [sidebarOpen, setSidebarOpen] = usePersistedState(`soap-requests:${config.activeWorkspaceId}:sidebar-open`, true);
 
     const {
@@ -135,25 +133,23 @@ export default function SoapRequestsPanel({ config, onConfigChange, activeEnv = 
     };
 
     const folderViewItems: FolderTreeItem[] = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        return (q
-            ? requests.filter((r) => r.name.toLowerCase().includes(q) || r.endpointUrl.toLowerCase().includes(q))
-            : requests
-        ).map((r): FolderTreeItem => ({
+        return requests.map((r): FolderTreeItem => ({
             id: r.id,
             name: r.name || r.endpointUrl?.slice(0, 40) || strings.soap.requestLabel,
             folderId: r.folderId ?? null,
             isActive: activeTab === r.id,
             isEnabled: true,
         }));
-    }, [requests, search, activeTab]);
+    }, [requests, activeTab]);
 
     // -- Sidebar ------------------------------------------------------------
 
     const sidebarContent = (
         <>
             <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.soap.collapseSidebar}>
-                <SearchInput value={search} onChange={setSearch} placeholder={strings.soap.searchRequests} />
+                <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+                    {strings.soap.requests}
+                </span>
             </SidebarHeader>
             <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
                 {draftTabIds.length > 0 && (

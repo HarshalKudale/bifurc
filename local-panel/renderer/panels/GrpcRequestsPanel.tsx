@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { AppConfig, SavedGrpcRequest, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import GrpcTab from "@/components/grpc/GrpcTab";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
@@ -40,7 +39,6 @@ export default function GrpcRequestsPanel({ config, onConfigChange, activeEnv = 
     const requests = config.grpcRequests ?? [];
     const folders = config.grpcRequestFolders ?? [];
 
-    const [search, setSearch] = usePersistedState(`grpc-requests:${config.activeWorkspaceId}:search`, "");
     const [sidebarOpen, setSidebarOpen] = usePersistedState(`grpc-requests:${config.activeWorkspaceId}:sidebar-open`, true);
 
     const {
@@ -128,18 +126,14 @@ export default function GrpcRequestsPanel({ config, onConfigChange, activeEnv = 
     };
 
     const folderViewItems: FolderTreeItem[] = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        const filtered = q
-            ? requests.filter((r) => r.name.toLowerCase().includes(q) || r.serviceName.toLowerCase().includes(q) || r.methodName.toLowerCase().includes(q))
-            : requests;
-        return filtered.map((r): FolderTreeItem => ({
+        return requests.map((r): FolderTreeItem => ({
             id: r.id,
             name: r.name || `${r.serviceName}/${r.methodName}` || strings.grpc.unnamed,
             folderId: r.folderId ?? null,
             isActive: activeTab === r.id,
             isEnabled: true,
         }));
-    }, [requests, search, activeTab]);
+    }, [requests, activeTab]);
 
     const draftTabIds = openTabs.filter(isDraft);
 
@@ -148,7 +142,9 @@ export default function GrpcRequestsPanel({ config, onConfigChange, activeEnv = 
     const sidebarContent = (
         <>
             <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.grpc.collapseSidebar}>
-                <SearchInput value={search} onChange={setSearch} placeholder={strings.grpc.searchRequests} />
+                <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+                    {strings.grpc.requests}
+                </span>
             </SidebarHeader>
             <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
                 {draftTabIds.length > 0 && (

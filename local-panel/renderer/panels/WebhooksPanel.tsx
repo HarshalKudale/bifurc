@@ -1,6 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppConfig, SavedWebhook, Folder, WebhookPayload } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
 import { loadDraft, useDraftPersist, clearDraft, getDraftIds } from "@/lib/useDraftPersist";
@@ -359,7 +358,6 @@ export default function WebhooksPanel({
   const folders = config.webhookFolders ?? [];
   const webhookPort = config.webhookPort ?? 9101;
 
-  const [search, setSearch] = usePersistedState(`webhooks:${config.activeWorkspaceId}:search`, "");
   const [sidebarOpen, setSidebarOpen] = usePersistedState(`webhooks:${config.activeWorkspaceId}:sidebar-open`, true);
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
   const tabRefs = useRef<Record<string, WebhookEditorHandle | null>>({});
@@ -500,6 +498,17 @@ export default function WebhooksPanel({
     setActiveTab(id);
   }, []);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<{ panel: string; tabId: string }>;
+      if (custom.detail?.panel === "webhooks" && custom.detail.tabId) {
+        openTab(custom.detail.tabId);
+      }
+    };
+    window.addEventListener("localpanel:open-tab", handler);
+    return () => window.removeEventListener("localpanel:open-tab", handler);
+  }, [openTab]);
+
   const openNewTab = useCallback(() => {
     const existingEmpty = openTabs.find((id) => isDraftId(id) && !loadDraft(id));
     if (existingEmpty) { setActiveTab(existingEmpty); return; }
@@ -611,10 +620,7 @@ export default function WebhooksPanel({
   // -- Folder view items -----------------------------------------------------
 
   const folderViewItems: FolderTreeItem[] = useMemo(() =>
-    (search.trim()
-      ? webhooks.filter((h) => h.name.toLowerCase().includes(search.toLowerCase()) || h.urlSuffix.toLowerCase().includes(search.toLowerCase()))
-      : webhooks
-    ).map((h): FolderTreeItem => ({
+    webhooks.map((h): FolderTreeItem => ({
       id: h.id,
       name: h.name || h.urlSuffix || strings.webhooks.webhook,
       folderId: h.folderId ?? null,
@@ -622,7 +628,7 @@ export default function WebhooksPanel({
       isEnabled: activeTabs.has(h.id),
       relPath: entityRelPath("webhooks", h, folders),
     })),
-    [webhooks, folders, search, activeTab, activeTabs],
+    [webhooks, folders, activeTab, activeTabs],
   );
 
   const folderStatusMap = useMemo(() => {
@@ -639,7 +645,9 @@ export default function WebhooksPanel({
   const sidebarContent = (
     <>
       <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.titleBar.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.webhooks.searchPlaceholder} />
+        <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
+          {strings.panels.sectionWebhooks}
+        </span>
       </SidebarHeader>
       {/* Webhook server toggle */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
