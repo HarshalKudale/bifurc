@@ -10,60 +10,53 @@ interface Props {
   onClick: () => void;
 }
 
-export default function NavItem({ id, label, icon, active, badge, collapsed, onClick }: Props) {
+export default function NavItem({ id, label, icon, active, badge, onClick }: Props) {
   // Support both ID and normalized label for data-testid
   const testId = `nav-${id ?? label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
-
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        data-testid={testId}
-        onClick={onClick}
-        title={label}
-        className={`relative flex items-center justify-center w-8 h-8 rounded-md transition-all duration-150 cursor-pointer ${
-          active
-            ? "bg-signal/15 text-signal border border-signal/35 shadow-[var(--glow-signal-sm)]"
-            : "text-muted-foreground hover:bg-surface-2 hover:text-foreground border border-transparent"
-        }`}
-      >
-        <span
-          className={`w-4 flex items-center justify-center flex-shrink-0 transition-colors ${
-            active ? "text-signal" : "text-muted-foreground group-hover:text-foreground"
-          }`}
-        >
-          {icon}
-        </span>
-      </button>
-    );
-  }
 
   return (
     <button
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className={`group relative flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium w-full text-left transition-all duration-150 cursor-pointer whitespace-nowrap ${
+      title={label}
+      aria-label={label}
+      className={`group relative flex flex-col items-center justify-center w-full min-h-[58px] py-2 px-1 rounded-lg transition-all duration-150 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
         active
-          ? "bg-signal/15 text-signal font-semibold border border-signal/35 shadow-[var(--glow-signal-sm)]"
-          : "text-muted-foreground hover:bg-surface-2 hover:text-foreground border border-transparent"
+          ? "bg-signal/15 text-signal border border-signal/25"
+          : "text-muted-foreground hover:bg-surface-2/70 hover:text-foreground border border-transparent"
       }`}
     >
+      {/* Active left indicator bar */}
+      {active && (
+        <span
+          className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-signal"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Big icon on top */}
       <span
-        className={`w-4 flex items-center justify-center flex-shrink-0 transition-colors ${
+        className={`flex items-center justify-center flex-shrink-0 mb-1 transition-colors [&>svg]:w-5 [&>svg]:h-5 ${
           active ? "text-signal" : "text-muted-foreground group-hover:text-foreground"
         }`}
       >
         {icon}
       </span>
-      <span className="flex-1 truncate">{label}</span>
-      {badge !== undefined && (
+
+      {/* Title below icon */}
+      <span
+        className={`text-[10px] font-medium leading-tight text-center truncate max-w-full px-0.5 tracking-tight transition-colors ${
+          active ? "text-signal font-semibold" : "text-muted-foreground group-hover:text-foreground"
+        }`}
+      >
+        {label}
+      </span>
+
+      {/* Top-right badge count */}
+      {badge !== undefined && badge > 0 && (
         <span
-          className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none transition-colors ${
-            active
-              ? "bg-signal/25 text-signal border border-signal/40"
-              : "bg-surface-2 text-muted-foreground"
-          }`}
+          className="absolute top-1 right-1 min-w-[15px] h-3.5 px-1 rounded-full text-[9px] font-bold flex items-center justify-center bg-signal text-background shadow-sm leading-none"
         >
           {badge}
         </span>

@@ -59,7 +59,6 @@ const EMPTY_CONFIG: AppConfig = {
 export default function App() {
   const [colorMode, setColorMode] = useColorMode();
   const [panel, setPanel] = usePersistedState<Panel>("app:active-panel", "services");
-  const [sidebarOpen, setSidebarOpen] = usePersistedState("app:sidebar-open", false);
   const [config, setConfig] = useState<AppConfig>(EMPTY_CONFIG);
   const { visibility, setPanelVisible, isPanelVisible } = useSidebarVisibility();
   const [wsLoading, setWsLoading] = useState<string | null>("Loading workspace…");
@@ -69,8 +68,6 @@ export default function App() {
   const [mappingPrefill, setMappingPrefill] = useState<string | undefined>();
   const [pendingOpenRequest, setPendingOpenRequest] = useState<Omit<SavedRequest, "id" | "createdAt" | "workspaceId"> | null>(null);
   const [pendingMockInitial, setPendingMockInitial] = useState<Partial<MockRule> | null>(null);
-
-
 
   // Per-entity sync status (clean/modified/new/deleted)
   const [entitySyncStatus, setEntitySyncStatus] = useState<Record<string, "clean" | "modified" | "new" | "deleted">>({});
@@ -85,28 +82,22 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [openedEntityPath, setOpenedEntityPath] = useState<string>("");
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
-  // Remember whether the left sidebar was open when history was opened
-  const [sidebarWasOpen, setSidebarWasOpen] = useState(false);
 
   const openHistory = useCallback((filePath: string) => {
     // Toggle: if already open for same path, close it
     if (historyOpen && openedEntityPath === filePath) {
       setHistoryOpen(false);
-      if (sidebarWasOpen) setSidebarOpen(true);
       return;
     }
     setOpenedEntityPath(filePath);
     if (!historyOpen) {
-      setSidebarWasOpen(sidebarOpen);
-      setSidebarOpen(false);
       setHistoryOpen(true);
     }
-  }, [historyOpen, openedEntityPath, sidebarOpen, sidebarWasOpen]);
+  }, [historyOpen, openedEntityPath]);
 
   const closeHistory = useCallback(() => {
     setHistoryOpen(false);
-    if (sidebarWasOpen) setSidebarOpen(true);
-  }, [sidebarWasOpen]);
+  }, []);
 
   // After any save, bump the reload key so the history sidebar refreshes
   const bumpHistoryReload = useCallback(() => {
@@ -526,8 +517,6 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
       <TitleBar
-        sidebarOpen={sidebarOpen}
-        onSidebarToggle={() => setSidebarOpen((v) => !v)}
         config={config}
         serverRunning={serverRunning}
         serverError={serverError}
@@ -552,11 +541,8 @@ export default function App() {
       />
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left Sidebar */}
-        <nav
-          className="bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden sidebar-collapse"
-          style={{ width: sidebarOpen ? "192px" : "48px" }}
-        >
+        {/* Left Sidebar - single state, always visible */}
+        <nav className="w-[74px] bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden">
           <AppSidebar
             entries={visiblePanels}
             activePanel={panel}
@@ -564,7 +550,6 @@ export default function App() {
             badges={navBadges}
             workspaces={config.workspaces ?? []}
             activeWorkspaceId={config.activeWorkspaceId}
-            collapsed={!sidebarOpen}
             onWorkspaceChange={async (id) => {
               clearWorkspaceContext("Switching workspace…");
               try {

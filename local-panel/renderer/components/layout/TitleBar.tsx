@@ -8,8 +8,8 @@ import iconUrl from "@/icon.png";
 import HelpTooltip from "@/components/common/HelpTooltip";
 
 interface Props {
-  sidebarOpen: boolean;
-  onSidebarToggle: () => void;
+  sidebarOpen?: boolean;
+  onSidebarToggle?: () => void;
   config: AppConfig;
   serverRunning: boolean;
   serverError: string | null;
@@ -21,8 +21,6 @@ interface Props {
 }
 
 export default function TitleBar({
-  sidebarOpen,
-  onSidebarToggle,
   config,
   serverRunning,
   serverError,
@@ -50,18 +48,6 @@ export default function TitleBar({
       } as React.CSSProperties}
     >
       <div className="absolute inset-x-0 bottom-0 h-px bg-border" />
-
-      {/* Sidebar toggle */}
-      <button
-        type="button"
-        className="w-7 h-7 flex items-center justify-center rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer flex-shrink-0"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        onClick={onSidebarToggle}
-        aria-label={sidebarOpen ? strings.titleBar.collapseSidebar : strings.titleBar.expandSidebar}
-        title={sidebarOpen ? strings.titleBar.collapseSidebar : strings.titleBar.expandSidebar}
-      >
-        {sidebarOpen ? <Menu size={14} /> : <ChevronRight size={14} />}
-      </button>
 
       {/* App identity */}
       <img

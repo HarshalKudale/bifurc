@@ -70,7 +70,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "services",
         label: strings.nav.services,
-        icon: <Zap size={14} />,
+        icon: <Zap size={20} />,
         section: strings.panels.sectionApplications,
         sectionType: "flat",
         enabled: true,
@@ -79,7 +79,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "healthbar",
         label: strings.panels.sectionHealthBar,
-        icon: <Activity size={14} />,
+        icon: <Activity size={20} />,
         section: strings.panels.sectionApplications,
         sectionType: "flat",
         enabled: true,
@@ -90,7 +90,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "mappings",
         label: strings.nav.mappings,
-        icon: <ArrowLeftRight size={14} />,
+        icon: <ArrowLeftRight size={20} />,
         section: strings.nav.routing,
         sectionType: "flat",
         enabled: true,
@@ -99,7 +99,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "rules",
         label: strings.nav.proxyRules,
-        icon: <Settings size={14} />,
+        icon: <Settings size={20} />,
         section: strings.nav.routing,
         sectionType: "flat",
         enabled: true,
@@ -108,7 +108,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "capture",
         label: strings.nav.capture,
-        icon: <Clipboard size={14} />,
+        icon: <Clipboard size={20} />,
         section: strings.nav.routing,
         sectionType: "flat",
         enabled: true,
@@ -119,7 +119,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "requests",
         label: strings.nav.requests,
-        icon: <ArrowUpRight size={14} />,
+        icon: <ArrowUpRight size={20} />,
         section: strings.panels.sectionApi,
         sectionType: "flat",
         enabled: true,
@@ -128,7 +128,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "mocks",
         label: strings.nav.mocks,
-        icon: <Layers size={14} />,
+        icon: <Layers size={20} />,
         section: strings.panels.sectionApi,
         sectionType: "flat",
         enabled: true,
@@ -139,7 +139,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "sockets",
         label: strings.panels.sectionWebsocket,
-        icon: <Radio size={14} />,
+        icon: <Radio size={20} />,
         section: strings.panels.sectionRealtime,
         sectionType: "flat",
         enabled: true,
@@ -148,7 +148,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "webhooks",
         label: strings.panels.sectionWebhooks,
-        icon: <Webhook size={14} />,
+        icon: <Webhook size={20} />,
         section: strings.panels.sectionRealtime,
         sectionType: "flat",
         enabled: true,
@@ -159,7 +159,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "environments",
         label: strings.nav.environments,
-        icon: <Globe size={14} />,
+        icon: <Globe size={20} />,
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
@@ -169,7 +169,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "workspace",
         label: strings.panels.sectionWorkspace,
-        icon: <Layers size={14} />,
+        icon: <Layers size={20} />,
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
@@ -178,7 +178,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "audit",
         label: strings.panels.sectionAuditLog,
-        icon: <ClipboardList size={14} />,
+        icon: <ClipboardList size={20} />,
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
@@ -190,7 +190,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "settings",
         label: strings.nav.settings,
-        icon: <Settings size={14} />,
+        icon: <Settings size={20} />,
         section: strings.nav.config,
         sectionType: "flat",
         enabled: true,

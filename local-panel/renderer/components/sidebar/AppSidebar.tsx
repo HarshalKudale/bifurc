@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from "react";
 import { Panel, PanelEntry } from "@/lib/panelRegistry";
 import { Workspace } from "@/types";
 import NavItem from "@/components/sidebar/NavItem";
-import NavSection from "@/components/sidebar/NavSection";
 import { Plus, Pencil, Trash2, Settings } from "@/lib/icons";
 import { strings } from "@/lib/strings";
 import { Button, Input } from "@/components/ui";
@@ -18,7 +17,7 @@ interface Props {
     onWorkspaceCreate: () => void;
     onWorkspaceRename: (id: string, name: string) => void;
     onWorkspaceDelete: (id: string) => void;
-    collapsed: boolean;
+    collapsed?: boolean;
 }
 
 /** Generate up to 2-letter initials from a workspace name */
@@ -31,7 +30,6 @@ export default function AppSidebar({
     entries, activePanel, onPanelSelect, badges,
     workspaces, activeWorkspaceId,
     onWorkspaceChange, onWorkspaceCreate, onWorkspaceRename, onWorkspaceDelete,
-    collapsed,
 }: Props) {
     const [wsSwitcherOpen, setWsSwitcherOpen] = useState(false);
     const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -76,107 +74,6 @@ export default function AppSidebar({
         setWsSwitcherOpen(false);
     };
 
-    // Group entries by section (preserving insertion order)
-    type Section = { label: string; type: "flat" | "collapsible"; items: PanelEntry[] };
-    const sections: Section[] = [];
-    const sectionMap = new Map<string, Section>();
-    for (const entry of entries) {
-        let sec = sectionMap.get(entry.section);
-        if (!sec) {
-            sec = { label: entry.section, type: entry.sectionType, items: [] };
-            sectionMap.set(entry.section, sec);
-            sections.push(sec);
-        }
-        sec.items.push(entry);
-    }
-
-    // ── Collapsed (icon-only) mode ───────────────────────────────────────
-    if (collapsed) {
-        return (
-            <div className="w-12 flex flex-col h-full overflow-hidden items-center">
-                {/* Nav icons (scrollable) */}
-                <div className="flex-1 overflow-y-auto overflow-x-hidden pt-2 py-1 flex flex-col items-center gap-0.5">
-                    {sections.map((section) => {
-                        if (section.type === "collapsible") {
-                            return (
-                                <NavSection
-                                    key={section.label}
-                                    label={section.label}
-                                    items={section.items.map((e) => ({ id: e.id, label: e.label, icon: e.icon }))}
-                                    activePanel={activePanel}
-                                    badges={badges as Record<string, number | undefined>}
-                                    onSelect={(id) => onPanelSelect(id as Panel)}
-                                    storageKey={section.label.toLowerCase()}
-                                    collapsed
-                                />
-                            );
-                        }
-                        return (
-                            <React.Fragment key={section.label}>
-                                {/* Thin separator line instead of section header */}
-                                <div className="w-6 border-t border-border/40 my-1" />
-                                {section.items.map((n) => (
-                                    <NavItem
-                                        key={n.id}
-                                        id={n.id}
-                                        label={n.label}
-                                        icon={n.icon}
-                                        active={activePanel === n.id}
-                                        badge={badges[n.id]}
-                                        collapsed
-                                        onClick={() => onPanelSelect(n.id)}
-                                    />
-                                ))}
-                            </React.Fragment>
-                        );
-                    })}
-                </div>
-
-                {/* Sticky workspace footer (icon-only) */}
-                <div className="flex-shrink-0 border-t border-border bg-surface py-2 flex flex-col items-center gap-1.5 relative">
-                    {/* Settings icon */}
-                    <button
-                        type="button"
-                        className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface ${
-                            activePanel === "settings"
-                                ? "text-signal bg-card"
-                                : "text-muted-foreground hover:text-foreground hover:bg-card"
-                        }`}
-                        onClick={() => onPanelSelect("settings")}
-                        title={strings.nav.settings}
-                        aria-label={strings.nav.settings}
-                        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-                    >
-                        <Settings size={14} />
-                    </button>
-
-                    {/* Workspace avatar */}
-                    <button
-                        type="button"
-                        className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-card transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-                        onClick={() => setWsSwitcherOpen((v) => !v)}
-                        aria-haspopup="menu"
-                        aria-expanded={wsSwitcherOpen}
-                        title={activeWs?.name ?? strings.sidebar.workspace}
-                        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-                    >
-                        <span
-                            className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0 select-none"
-                            style={{ background: "var(--c-signal)", color: "var(--c-background)" }}
-                        >
-                            {wsInitials(activeWs?.name ?? "")}
-                        </span>
-                    </button>
-
-                    {/* Workspace switcher dropdown */}
-                    {wsSwitcherOpen && renderWorkspaceSwitcher()}
-                </div>
-            </div>
-        );
-    }
-
-    // ── Expanded mode ────────────────────────────────────────────────────
-
     function renderWorkspaceSwitcher() {
         return (
             <>
@@ -186,7 +83,7 @@ export default function AppSidebar({
                 />
                 <div
                     ref={switcherRef}
-                    className="absolute bottom-full left-0 z-50 bg-card border border-border rounded-md shadow-2xl py-1 animate-scale-in"
+                    className="absolute bottom-full left-1 z-50 bg-card border border-border rounded-md shadow-2xl py-1 animate-scale-in"
                     style={{ minWidth: "192px" }}
                 >
                     <Button
@@ -311,87 +208,64 @@ export default function AppSidebar({
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
-
-            {/* -- Nav sections (scrollable) ------------------------------- */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1">
-                {sections.map((section) => {
-                    if (section.type === "collapsible") {
-                        return (
-                            <NavSection
-                                key={section.label}
-                                label={section.label}
-                                items={section.items.map((e) => ({ id: e.id, label: e.label, icon: e.icon }))}
-                                activePanel={activePanel}
-                                badges={badges as Record<string, number | undefined>}
-                                onSelect={(id) => onPanelSelect(id as Panel)}
-                                storageKey={section.label.toLowerCase()}
-                            />
-                        );
-                    }
-                    return (
-                        <React.Fragment key={section.label}>
-                            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground px-2.5 pt-3 pb-1 whitespace-nowrap">
-                                {section.label}
-                            </div>
-                            {section.items.map((n) => (
-                                <NavItem
-                                    key={n.id}
-                                    id={n.id}
-                                    label={n.label}
-                                    icon={n.icon}
-                                    active={activePanel === n.id}
-                                    badge={badges[n.id]}
-                                    onClick={() => onPanelSelect(n.id)}
-                                />
-                            ))}
-                        </React.Fragment>
-                    );
-                })}
+            {/* Flat list of individual nav items (scrollable) */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 flex flex-col items-center gap-1.5">
+                {entries.map((n) => (
+                    <NavItem
+                        key={n.id}
+                        id={n.id}
+                        label={n.label}
+                        icon={n.icon}
+                        active={activePanel === n.id}
+                        badge={badges[n.id]}
+                        onClick={() => onPanelSelect(n.id)}
+                    />
+                ))}
             </div>
 
-            {/* -- Sticky workspace footer --------------------------------- */}
-            <div className="flex-shrink-0 border-t border-border bg-surface relative">
-                <div className="flex items-center gap-1.5 px-2 py-2">
+            {/* Sticky workspace footer */}
+            <div className="flex-shrink-0 border-t border-border bg-surface p-1.5 flex flex-col items-center gap-1 relative w-full">
+                {/* Settings icon button */}
+                <button
+                    type="button"
+                    className={`w-full min-h-[40px] py-1 px-1 flex flex-col items-center justify-center rounded-lg transition-colors cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
+                        activePanel === "settings"
+                            ? "bg-signal/15 text-signal border border-signal/25"
+                            : "text-muted-foreground hover:text-foreground hover:bg-surface-2/70 border border-transparent"
+                    }`}
+                    onClick={() => onPanelSelect("settings")}
+                    title={strings.nav.settings}
+                    aria-label={strings.nav.settings}
+                    style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                >
+                    <Settings size={18} />
+                    <span className="text-[9px] font-medium leading-tight mt-0.5 tracking-tight truncate max-w-full">
+                        {strings.nav.settings}
+                    </span>
+                </button>
 
-                    {/* Avatar + name -> opens workspace switcher */}
-                    <button
-                        type="button"
-                        className="flex min-h-10 items-center gap-2 flex-1 min-w-0 rounded-md hover:bg-card px-2 py-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-                        onClick={() => setWsSwitcherOpen((v) => !v)}
-                        aria-haspopup="menu"
-                        aria-expanded={wsSwitcherOpen}
-                        title={strings.sidebar.switchWorkspace}
-                        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                {/* Workspace avatar button */}
+                <button
+                    type="button"
+                    className="w-full min-h-[40px] py-1 px-1 flex flex-col items-center justify-center rounded-lg hover:bg-surface-2/70 transition-colors cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35"
+                    onClick={() => setWsSwitcherOpen((v) => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={wsSwitcherOpen}
+                    title={activeWs?.name ?? strings.sidebar.workspace}
+                    style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                >
+                    <span
+                        className="w-5 h-5 rounded flex items-center justify-center text-[9px] font-bold flex-shrink-0 select-none shadow-sm"
+                        style={{ background: "var(--c-signal)", color: "var(--c-background)" }}
                     >
-                        <span
-                            className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0 select-none"
-                            style={{ background: "var(--c-signal)", color: "var(--c-background)" }}
-                        >
-                            {wsInitials(activeWs?.name ?? "")}
-                        </span>
-                        <span className="text-xs text-foreground font-medium truncate flex-1 text-left">
-                            {activeWs?.name ?? strings.sidebar.workspace}
-                        </span>
-                    </button>
+                        {wsInitials(activeWs?.name ?? "")}
+                    </span>
+                    <span className="text-[9px] text-muted-foreground font-medium leading-tight mt-0.5 tracking-tight truncate max-w-full">
+                        {activeWs?.name ?? strings.sidebar.workspace}
+                    </span>
+                </button>
 
-                    {/* Global Settings button */}
-                    <button
-                        type="button"
-                        className={`w-8 h-8 flex items-center justify-center rounded-md transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface flex-shrink-0 ${
-                            activePanel === "settings"
-                                ? "text-signal bg-card"
-                                : "text-muted-foreground hover:text-foreground hover:bg-card"
-                        }`}
-                        onClick={() => onPanelSelect("settings")}
-                        title={strings.nav.settings}
-                        aria-label={strings.nav.settings}
-                        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-                    >
-                        <Settings size={14} />
-                    </button>
-                </div>
-
-                {/* Workspace switcher dropdown - opens upward */}
+                {/* Workspace switcher dropdown */}
                 {wsSwitcherOpen && renderWorkspaceSwitcher()}
             </div>
         </div>

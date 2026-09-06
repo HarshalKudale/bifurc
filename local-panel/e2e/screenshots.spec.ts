@@ -45,7 +45,7 @@ const PANELS: PanelDef[] = [
     { name: "07-webhooks", navLabel: "Webhooks", openNewTab: true },
 
     // ── Tools (flat) ───────────────────────────────────────────────────────
-    { name: "14-environments", navLabel: "Envs & Vars" },
+    { name: "14-environments", navLabel: "Environments" },
 
     // ── Discovery (flat) ───────────────────────────────────────────────────
     { name: "16-services", navLabel: "Services" },

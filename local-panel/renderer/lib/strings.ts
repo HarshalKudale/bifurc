@@ -14,7 +14,7 @@ export const strings = {
     requests: "Requests",
     mocks: "Mocks",
     sockets: "Sockets",
-    environments: "Envs & Vars",
+    environments: "Environments",
     settings: "Settings",
   },
 
