@@ -162,7 +162,7 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
       const responseTime = Date.now() - sendStart;
       const ct = res.headers["content-type"];
       const resMode = ct ? contentTypeToMode(ct) : state.resMode;
-      dispatch({ type: "SEND_SUCCESS", result: res, resMode });
+      dispatch({ type: "SEND_SUCCESS", result: res, resMode, durationMs: responseTime });
 
       if (state.postScript.trim()) {
         const post = await runPostScript(
@@ -333,9 +333,7 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
   const handleAction = tabType === "request" ? handleSend : handleTest;
   const methods = tabType === "request" ? METHODS : MOCK_METHODS;
 
-  const titleLabel = label ?? (tabType === "request"
-    ? (draftTabId ? strings.requests.newRequest : strings.requests.editRequest)
-    : (draftTabId ? strings.mocks.newMock : strings.mocks.editMock));
+  const titleLabel = label ?? (tabType === "request" ? "REST" : "REST MOCK");
 
   const namePlaceholder = tabType === "request" ? strings.requests.requestNamePlaceholder : strings.mocks.mockName;
   const urlPlaceholder = tabType === "request" ? strings.requests.urlPlaceholder : strings.mocks.urlPatternPlaceholder;
@@ -471,7 +469,7 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         sendErr={tabType === "request" ? state.sendErr : undefined}
         result={tabType === "request" ? state.result : undefined}
         resBodyText={tabType === "request" ? resBodyText : undefined}
-        onCreateMock={tabType === "request" && onCreateMock ? handleCreateMock : undefined}
+        durationMs={tabType === "request" ? state.durationMs : undefined}
         postScript={tabType === "request" ? state.postScript : undefined}
         onPostScriptChange={tabType === "request" ? (v) => dispatch({ type: "SET_FIELD", field: "postScript", value: v }) : undefined}
         scriptErr={tabType === "request" ? state.scriptErr : undefined}
@@ -526,6 +524,8 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         reverting={reverting}
         syncTitle={syncTitle}
         revertTitle={revertTitle}
+        onCreateMock={tabType === "request" && onCreateMock ? handleCreateMock : undefined}
+        createMockDisabled={!state.result || state.loading}
         extraLeft={
           tabType === "mock" ? (
             !state.resBody.trim()

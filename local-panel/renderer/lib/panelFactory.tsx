@@ -151,57 +151,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onStatsChange={ctx.onStatsChange}
         />
     ),
-    "mock-rest": (ctx) => (
-        <MocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            pendingMockInitial={ctx.pendingMockInitial}
-            onPendingConsumed={ctx.onPendingMockConsumed}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            onEntityPathChange={ctx.handleEntityPathChange}
-            historyOpen={ctx.historyOpen}
-            onAfterSave={ctx.bumpHistoryReload}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("mocks", ctx.wsConfig.mockFolders ?? [])}
-            onPublishFolder={ctx.makePublishFolder("mocks", ctx.wsConfig.mockFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("mocks", ctx.wsConfig.mockFolders ?? [])}
-        />
-    ),
-    "mock-graphql": (ctx) => (
-        <GraphQLMocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("graphqlMocks", ctx.wsConfig.graphqlMockFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("graphqlMocks", ctx.wsConfig.graphqlMockFolders ?? [])}
-        />
-    ),
-    "mock-soap": (ctx) => (
-        <SoapMocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("soapMocks", ctx.wsConfig.soapMockFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("soapMocks", ctx.wsConfig.soapMockFolders ?? [])}
-        />
-    ),
-    "mock-grpc": (ctx) => (
-        <GrpcMocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("grpcMocks", ctx.wsConfig.grpcMockFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("grpcMocks", ctx.wsConfig.grpcMockFolders ?? [])}
-        />
-    ),
-    "req-rest": (ctx) => (
+    requests: (ctx) => (
         <RequestsPanel
             config={ctx.wsConfig}
             onConfigChange={ctx.handleWsConfigChange}
@@ -219,39 +169,31 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onRestoreItem={ctx.makeRestoreItem("requests", ctx.wsConfig.requestFolders ?? [])}
         />
     ),
-    "req-graphql": (ctx) => (
-        <GraphQLRequestsPanel
+    mocks: (ctx) => (
+        <MocksPanel
             config={ctx.wsConfig}
             onConfigChange={ctx.handleWsConfigChange}
+            pendingMockInitial={ctx.pendingMockInitial}
+            onPendingConsumed={ctx.onPendingMockConsumed}
             activeEnv={ctx.activeEnv}
             onHistoryOpen={ctx.openHistory}
+            onEntityPathChange={ctx.handleEntityPathChange}
+            historyOpen={ctx.historyOpen}
+            onAfterSave={ctx.bumpHistoryReload}
             entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("graphqlRequests", ctx.wsConfig.graphqlRequestFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("graphqlRequests", ctx.wsConfig.graphqlRequestFolders ?? [])}
+            onPublishItem={ctx.makePublishItem("mocks", ctx.wsConfig.mockFolders ?? [])}
+            onPublishFolder={ctx.makePublishFolder("mocks", ctx.wsConfig.mockFolders ?? [])}
+            onRestoreItem={ctx.makeRestoreItem("mocks", ctx.wsConfig.mockFolders ?? [])}
         />
     ),
-    "req-soap": (ctx) => (
-        <SoapRequestsPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("soapRequests", ctx.wsConfig.soapRequestFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("soapRequests", ctx.wsConfig.soapRequestFolders ?? [])}
-        />
-    ),
-    "req-grpc": (ctx) => (
-        <GrpcRequestsPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("grpcRequests", ctx.wsConfig.grpcRequestFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("grpcRequests", ctx.wsConfig.grpcRequestFolders ?? [])}
-        />
-    ),
+    "mock-rest": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "mock-graphql": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "mock-soap": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "mock-grpc": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "req-rest": (ctx) => PANEL_RENDERERS.requests(ctx),
+    "req-graphql": (ctx) => PANEL_RENDERERS.requests(ctx),
+    "req-soap": (ctx) => PANEL_RENDERERS.requests(ctx),
+    "req-grpc": (ctx) => PANEL_RENDERERS.requests(ctx),
     sockets: (ctx) => (
         <WebSocketsPanel
             config={ctx.wsConfig}
@@ -331,9 +273,16 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
  * placeholder instead. This allows compile-time toggling of in-progress panels.
  */
 export function renderPanel(panelId: Panel, ctx: PanelRenderContext): React.ReactNode {
-    if (!isPanelEnabled(panelId)) {
+    let normalizedId = panelId;
+    if (panelId === "req-rest" || panelId === "req-graphql" || panelId === "req-soap" || panelId === "req-grpc") {
+        normalizedId = "requests";
+    } else if (panelId === "mock-rest" || panelId === "mock-graphql" || panelId === "mock-soap" || panelId === "mock-grpc") {
+        normalizedId = "mocks";
+    }
+
+    if (!isPanelEnabled(normalizedId)) {
         return <DisabledPanel />;
     }
-    const renderer = PANEL_RENDERERS[panelId];
+    const renderer = PANEL_RENDERERS[normalizedId];
     return renderer ? renderer(ctx) : <DisabledPanel />;
 }

@@ -39,7 +39,7 @@ export default function ProxyRulesPanel({
     openTabs, activeTab, setActiveTab,
     loadedEntities, setLoadedEntities,
     tabRefs, isDraft,
-    openTab, openNewTab, closeTab, replaceTab, closeOtherTabs, closeAllTabs,
+    openTab, openNewTab, closeTab, replaceTab, reorderTabs, closeOtherTabs, closeAllTabs,
   } = useEntityTabs<ProxyRule>({
     storageKey: "rules",
     draftPrefix: DRAFT_PREFIX,
@@ -221,6 +221,7 @@ export default function ProxyRulesPanel({
         onTabClick={setActiveTab}
         onTabClose={closeTab}
         onNewTab={openNewTab}
+        onReorderTabs={reorderTabs}
         newTabTitle={strings.proxyRules.newTab}
         closeTabTitle={strings.proxyRules.closeTab}
         onCloseOthers={closeOtherTabs}

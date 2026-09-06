@@ -259,7 +259,7 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         <div className="flex flex-col h-full overflow-hidden">
             {/* Title bar */}
             <EditorTitleBar
-                label={tabType === "request" ? strings.grpc.requestTitle : strings.grpc.mockTitle}
+                label={tabType === "request" ? "GRPC" : "GRPC MOCK"}
                 namePlaceholder={tabType === "request" ? strings.grpc.requestNamePlaceholder : strings.grpc.mockNamePlaceholder}
                 name={state.name}
                 onNameChange={(v) => set("name")(v)}

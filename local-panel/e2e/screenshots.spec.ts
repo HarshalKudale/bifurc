@@ -36,19 +36,13 @@ const PANELS: PanelDef[] = [
     { name: "02-proxy-rules", navLabel: "Proxy Rules" },
     { name: "03-capture", navLabel: "Capture" },
 
-    // ── Mock (collapsible) ─────────────────────────────────────────────────
-    { name: "04-mock-rest", navLabel: "REST", navOccurrence: 0, openNewTab: true },
-    { name: "05-mock-graphql", navLabel: "GraphQL", navOccurrence: 0, openNewTab: true },
-    { name: "06-mock-soap", navLabel: "SOAP", navOccurrence: 0, openNewTab: true },
-    { name: "07-mock-grpc", navLabel: "gRPC", navOccurrence: 0, openNewTab: true },
+    // ── API (flat) ──────────────────────────────────────────────────────────
+    { name: "04-requests", navLabel: "Requests", openNewTab: true },
+    { name: "05-mocks", navLabel: "Mocks", openNewTab: true },
 
-    // ── Request (collapsible) ──────────────────────────────────────────────
-    { name: "08-req-rest", navLabel: "REST", navOccurrence: 1, openNewTab: true },
-    { name: "09-req-graphql", navLabel: "GraphQL", navOccurrence: 1, openNewTab: true },
-    { name: "10-req-soap", navLabel: "SOAP", navOccurrence: 1, openNewTab: true },
-    { name: "11-req-grpc", navLabel: "gRPC", navOccurrence: 1, openNewTab: true },
-    { name: "12-websocket", navLabel: "WebSocket", openNewTab: true },
-    { name: "13-webhooks", navLabel: "Webhooks", openNewTab: true },
+    // ── Realtime (flat) ─────────────────────────────────────────────────────
+    { name: "06-websocket", navLabel: "WebSocket", openNewTab: true },
+    { name: "07-webhooks", navLabel: "Webhooks", openNewTab: true },
 
     // ── Tools (flat) ───────────────────────────────────────────────────────
     { name: "14-environments", navLabel: "Envs & Vars" },

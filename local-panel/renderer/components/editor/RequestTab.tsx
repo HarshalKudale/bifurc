@@ -168,6 +168,9 @@ export interface BottomBarProps {
   historyTitle?: string;
   /** Extra nodes after the folder picker */
   extraLeft?: React.ReactNode;
+  /** Action to create a mock from current request/response */
+  onCreateMock?: () => void;
+  createMockDisabled?: boolean;
 }
 
 export function BottomBar({
@@ -175,6 +178,7 @@ export function BottomBar({
   saveLabel, saveDisabled, saving, savingLabel,
   onSync, onRevert, onHistory, syncDisabled, revertDisabled, historyDisabled, syncing, reverting,
   syncTitle, revertTitle, historyTitle, extraLeft,
+  onCreateMock, createMockDisabled = true,
 }: BottomBarProps) {
   return (
     <div className="flex items-center justify-between px-4 py-2.5 border-t border-border flex-shrink-0 bg-background/30">
@@ -229,6 +233,17 @@ export function BottomBar({
         {extraLeft}
       </div>
       <div className="flex items-center gap-2">
+        {onCreateMock && (
+          <button
+            type="button"
+            onClick={onCreateMock}
+            disabled={createMockDisabled}
+            title={strings.requests.createMockTitle}
+            className="px-3 py-1.5 rounded border border-amber/40 bg-amber/10 hover:bg-amber/20 disabled:opacity-40 disabled:cursor-not-allowed text-amber text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <span>{strings.requests.createMock}</span>
+          </button>
+        )}
         <button
           onClick={onCancel}
           className="px-3 py-1.5 rounded border border-border bg-card hover:bg-surface-2 text-muted-foreground text-xs font-medium transition-all cursor-pointer"

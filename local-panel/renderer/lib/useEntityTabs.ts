@@ -13,7 +13,8 @@ interface Options<T> {
   draftPrefix: string;
   extraDraftPrefixes?: string[];
   workspaceId: string;
-  entityKind: "mocks" | "requests" | "rules" | "runners";
+  entityKind: "mocks" | "requests" | "rules" | "runners" | string;
+  resolveEntityKind?: (id: string) => string;
   entities: T[];
 }
 
@@ -32,6 +33,8 @@ interface EntityTabsResult<T> {
   closeAllTabs: () => void;
   /** Replace a draft tab id with the newly saved entity id. */
   replaceTab: (draftId: string, savedId: string) => void;
+  /** Reorder open tabs by dragging fromId to toId position. */
+  reorderTabs: (fromId: string, toId: string, edge?: "left" | "right") => void;
 }
 
 export function useEntityTabs<T extends { id: string }>({
@@ -40,6 +43,7 @@ export function useEntityTabs<T extends { id: string }>({
   extraDraftPrefixes = [],
   workspaceId,
   entityKind,
+  resolveEntityKind,
   entities,
 }: Options<T>): EntityTabsResult<T> {
   const isDraft = useCallback(
@@ -87,14 +91,15 @@ export function useEntityTabs<T extends { id: string }>({
   useEffect(() => {
     if (!activeTab || isDraft(activeTab)) return;
     if (loadedEntities[activeTab]) return;
-    window.api.loadEntity(workspaceId, entityKind, activeTab).then((res) => {
+    const kind = resolveEntityKind ? resolveEntityKind(activeTab) : entityKind;
+    window.api.loadEntity(workspaceId, kind, activeTab).then((res) => {
       if (res.ok && res.entity) {
         const entity = res.entity as T;
         setLoadedEntities((prev) => ({ ...prev, [activeTab]: entity }));
         tabRefs.current[activeTab]?.refresh?.(entity as unknown as MockRule | SavedRequest);
       }
     }).catch(() => {});
-  }, [activeTab, workspaceId]);
+  }, [activeTab, workspaceId, resolveEntityKind, entityKind]);
 
   const openTab = useCallback((id: string) => {
     setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
@@ -146,6 +151,23 @@ export function useEntityTabs<T extends { id: string }>({
     setActiveTab(savedId);
   }, []);
 
+  const reorderTabs = useCallback((fromId: string, toId: string, edge: "left" | "right" = "left") => {
+    if (fromId === toId) return;
+    setOpenTabs((prev) => {
+      const fromIndex = prev.indexOf(fromId);
+      if (fromIndex === -1) return prev;
+      const withoutFrom = prev.filter((id) => id !== fromId);
+      let targetIndex = withoutFrom.indexOf(toId);
+      if (targetIndex === -1) return prev;
+      if (edge === "right") {
+        targetIndex += 1;
+      }
+      const next = [...withoutFrom];
+      next.splice(targetIndex, 0, fromId);
+      return next;
+    });
+  }, []);
+
   return {
     openTabs,
     activeTab,
@@ -160,5 +182,6 @@ export function useEntityTabs<T extends { id: string }>({
     closeOtherTabs,
     closeAllTabs,
     replaceTab,
+    reorderTabs,
   };
 }

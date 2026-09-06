@@ -104,6 +104,7 @@ export interface ResponsePaneProps {
   sendErr?: string | null;
   result?: { status: number; headers: Record<string, string>; body: string } | null;
   resBodyText?: string;
+  durationMs?: number | null;
   onCreateMock?(): void;
   postScript?: string;
   onPostScriptChange?(v: string): void;
@@ -147,7 +148,7 @@ export default function EditorTab({
   streamingMode, onStreamingModeChange,
   streamingChunkDelay, onStreamingChunkDelayChange,
   streamingChunkSeparator, onStreamingChunkSeparatorChange,
-  loading, sendErr, result, resBodyText, onCreateMock,
+  loading, sendErr, result, resBodyText, durationMs, onCreateMock,
   postScript, onPostScriptChange,
   scriptErr,
   testScript, onTestScriptChange,
@@ -176,11 +177,6 @@ export default function EditorTab({
         ]}
         active={reqTab}
         onChange={onReqTabChange}
-        prefix={
-          <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-r border-border whitespace-nowrap">
-            {strings.editor.request}
-          </span>
-        }
         suffix={
           reqReadOnly
             ? <span className="px-3 text-[9px] text-muted-foreground italic opacity-60">{strings.editor.readOnly}</span>
@@ -255,16 +251,11 @@ export default function EditorTab({
       <div className="flex flex-col h-full overflow-hidden">
         <TabStrip
           tabs={[
-            { id: "body" as const, label: strings.editor.body },
+            { id: "body" as const, label: strings.editor.response },
             { id: "headers" as const, label: `${strings.editor.headers}${resHeaderCount > 0 ? ` (${resHeaderCount})` : ""}` },
           ]}
           active={resTab}
           onChange={onResTabChange}
-          prefix={
-            <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-r border-border whitespace-nowrap">
-              {strings.editor.response}
-            </span>
-          }
           suffix={
             <div className="flex items-center gap-2 pr-3">
               <span className="text-[10px] text-muted-foreground flex-shrink-0">{strings.editor.delay}</span>
@@ -408,18 +399,13 @@ export default function EditorTab({
       <div className="flex flex-col h-full overflow-hidden">
         <TabStrip
           tabs={[
-            { id: "body" as const, label: strings.editor.body },
+            { id: "body" as const, label: strings.editor.response },
             { id: "headers" as const, label: strings.editor.headers },
             { id: "post-script" as const, label: `${strings.editor.postScript}${postScriptDot}` },
             { id: "tests" as const, label: `${strings.editor.tests}${testScriptDot}${testBadge}` },
           ]}
           active={resTab}
           onChange={onResTabChange}
-          prefix={
-            <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-r border-border whitespace-nowrap">
-              {strings.editor.response}
-            </span>
-          }
           suffix={
             <div className="flex items-center gap-2 pr-3">
               {result && (
@@ -427,14 +413,10 @@ export default function EditorTab({
                   {result.status}
                 </span>
               )}
-              {result && onCreateMock && (
-                <button
-                  onClick={onCreateMock}
-                  title={strings.requests.createMockTitle}
-                  className="px-2.5 py-1 rounded border border-amber/30 bg-amber/10 hover:bg-amber/20 text-amber text-[10px] font-semibold cursor-pointer whitespace-nowrap flex-shrink-0"
-                >
-                  {strings.requests.createMock}
-                </button>
+              {result && durationMs != null && (
+                <span className="text-xs font-mono text-muted-foreground">
+                  {durationMs}ms
+                </span>
               )}
             </div>
           }

@@ -268,12 +268,12 @@ export default function App() {
 
   const handleOpenInRequests = useCallback((req: Omit<SavedRequest, "id" | "createdAt" | "workspaceId">) => {
     setPendingOpenRequest(req);
-    setPanel("req-rest");
+    setPanel("requests");
   }, []);
 
   const handleOpenMockEditor = useCallback((initial: Partial<MockRule>) => {
     setPendingMockInitial(initial);
-    setPanel("mock-rest");
+    setPanel("mocks");
   }, []);
 
   // -- Publish helpers --------------------------------------------------------
@@ -348,6 +348,8 @@ export default function App() {
 
   // Map from panel name to the git folder kind used for a bulk publish
   const PANEL_PUBLISH_KIND: Partial<Record<Panel, string>> = {
+    requests: "requests",
+    mocks: "mocks",
     "mock-rest": "mocks",
     "req-rest": "requests",
     sockets: "sockets",
@@ -392,13 +394,15 @@ export default function App() {
   const activeEnv = mergeEnvVars(globalEnv, selectedActiveEnv);
 
   const cnt = (n: number) => n > 0 ? n : undefined;
+  const totalRequests = (wsConfig.requests ?? []).length + (wsConfig.graphqlRequests ?? []).length + (wsConfig.grpcRequests ?? []).length + (wsConfig.soapRequests ?? []).length;
+  const totalMocks = (wsConfig.mocks ?? []).length + (wsConfig.graphqlMocks ?? []).length + (wsConfig.grpcMocks ?? []).length + (wsConfig.soapMocks ?? []).length;
   const navBadges: Partial<Record<Panel, number | undefined>> = {
     mappings: cnt((wsConfig.mappings ?? []).length),
     rules: cnt((wsConfig.proxyRules ?? []).length),
-    "mock-rest": cnt((wsConfig.mocks ?? []).length),
-    "req-rest": cnt((wsConfig.requests ?? []).length),
-    "req-soap": cnt((wsConfig.soapRequests ?? []).length),
-    "mock-soap": cnt((wsConfig.soapMocks ?? []).length),
+    requests: cnt(totalRequests),
+    mocks: cnt(totalMocks),
+    "mock-rest": cnt(totalMocks),
+    "req-rest": cnt(totalRequests),
     sockets: cnt((wsConfig.wsConnections ?? []).length),
     webhooks: cnt((wsConfig.webhooks ?? []).length),
     environments: cnt((wsConfig.environments ?? []).filter((e) => e.id !== "__global__").length),
@@ -429,8 +433,10 @@ export default function App() {
             <span className="opacity-50">newest first · last 200 kept</span>
           </>
         );
-      case "mock-rest": return <span>{pl(wsConfig.mocks?.length ?? 0, "mock")}</span>;
-      case "req-rest": return <span>{pl(wsConfig.requests?.length ?? 0, "request")}</span>;
+      case "mocks":
+      case "mock-rest": return <span>{pl(totalMocks, "mock")}</span>;
+      case "requests":
+      case "req-rest": return <span>{pl(totalRequests, "request")}</span>;
       case "sockets": return <span>{pl(wsConfig.wsConnections?.length ?? 0, "socket")}</span>;
       case "webhooks": return <span>{pl(wsConfig.webhooks?.length ?? 0, "webhook")}</span>;
       case "mappings": return <span>{pl(wsConfig.mappings?.length ?? 0, "mapping")}</span>;
@@ -439,7 +445,7 @@ export default function App() {
       case "services": return <span>{pl(services.length, "service")}</span>;
       default: return null;
     }
-  }, [panel, captureStats, wsConfig, services]);
+  }, [panel, captureStats, totalMocks, totalRequests, wsConfig, services]);
 
   // -- Panel render context - single bag for the panel factory ----------------
   const panelRenderCtx: PanelRenderContext = useMemo(() => ({

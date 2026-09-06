@@ -210,7 +210,7 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
     return (
         <div className="flex flex-col h-full overflow-hidden">
             <EditorTitleBar
-                label={label ?? (tabType === "request" ? strings.graphql.requestTitle : strings.graphql.mockTitle)}
+                label={label ?? (tabType === "request" ? "GRAPHQL" : "GRAPHQL MOCK")}
                 namePlaceholder={tabType === "request" ? strings.graphql.requestNamePlaceholder : strings.graphql.mockNamePlaceholder}
                 name={state.name}
                 onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}

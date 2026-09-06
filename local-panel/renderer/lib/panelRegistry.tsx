@@ -25,6 +25,8 @@ export type Panel =
     | "mappings"
     | "rules"
     | "capture"
+    | "requests"
+    | "mocks"
     | "mock-rest"
     | "mock-graphql"
     | "mock-soap"
@@ -113,48 +115,32 @@ export const PANEL_REGISTRY: PanelEntry[] = [
         helpText: strings.capture.helpText,
     },
 
-    // --- Request (flat) -------------------------------------------------------
+    // --- API (flat) -----------------------------------------------------------
     {
-        id: "req-rest",
-        label: strings.panels.sectionRest,
+        id: "requests",
+        label: strings.nav.requests,
         icon: <ArrowUpRight size={14} />,
-        section: strings.panels.sectionRequest,
+        section: strings.panels.sectionApi,
         sectionType: "flat",
         enabled: true,
-        helpText: strings.requests.helpText,
+        helpText: strings.panels.requestsHelp,
     },
     {
-        id: "req-graphql",
-        label: strings.panels.sectionGraphql,
-        icon: <Braces size={14} />,
-        section: strings.panels.sectionRequest,
+        id: "mocks",
+        label: strings.nav.mocks,
+        icon: <Layers size={14} />,
+        section: strings.panels.sectionApi,
         sectionType: "flat",
         enabled: true,
-        helpText: strings.panels.graphqlRequestHelp,
+        helpText: strings.panels.mocksHelp,
     },
-    {
-        id: "req-soap",
-        label: strings.panels.sectionSoap,
-        icon: <FileCode size={14} />,
-        section: strings.panels.sectionRequest,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.soapRequestHelp,
-    },
-    {
-        id: "req-grpc",
-        label: strings.panels.sectionGrpc,
-        icon: <Network size={14} />,
-        section: strings.panels.sectionRequest,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.grpcRequestHelp,
-    },
+
+    // --- Realtime (flat) ------------------------------------------------------
     {
         id: "sockets",
         label: strings.panels.sectionWebsocket,
         icon: <Radio size={14} />,
-        section: strings.panels.sectionRequest,
+        section: strings.panels.sectionRealtime,
         sectionType: "flat",
         enabled: true,
         helpText: strings.sockets.helpText,
@@ -163,48 +149,10 @@ export const PANEL_REGISTRY: PanelEntry[] = [
         id: "webhooks",
         label: strings.panels.sectionWebhooks,
         icon: <Webhook size={14} />,
-        section: strings.panels.sectionRequest,
+        section: strings.panels.sectionRealtime,
         sectionType: "flat",
         enabled: true,
         helpText: strings.panels.webhooksHelp,
-    },
-
-    // --- Mock (flat) ------------------------------------------------------------
-    {
-        id: "mock-rest",
-        label: strings.panels.sectionRest,
-        icon: <ArrowUpRight size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.mocks.helpText,
-    },
-    {
-        id: "mock-graphql",
-        label: strings.panels.sectionGraphql,
-        icon: <Braces size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.graphqlMockHelp,
-    },
-    {
-        id: "mock-soap",
-        label: strings.panels.sectionSoap,
-        icon: <FileCode size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.soapMockHelp,
-    },
-    {
-        id: "mock-grpc",
-        label: strings.panels.sectionGrpc,
-        icon: <Network size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.grpcMockHelp,
     },
 
     // --- Workspace (flat) ---------------------------------------------------------

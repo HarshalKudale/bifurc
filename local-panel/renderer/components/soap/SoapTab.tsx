@@ -199,7 +199,7 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
         <div className="flex flex-col h-full overflow-hidden">
             {/* Title bar */}
             <EditorTitleBar
-                label={label ?? (tabType === "request" ? strings.soap.requestTitle : strings.soap.mockTitle)}
+                label={label ?? (tabType === "request" ? "SOAP" : "SOAP MOCK")}
                 namePlaceholder={tabType === "request" ? strings.soap.requestNamePlaceholder : strings.soap.mockNamePlaceholder}
                 name={state.name}
                 onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}

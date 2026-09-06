@@ -188,7 +188,7 @@ const WebhookEditor = forwardRef<WebhookEditorHandle, WebhookEditorProps>(functi
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface">
       <EditorTitleBar
-        label={isNew ? strings.webhooks.newWebhook : strings.webhooks.webhook}
+        label="WEBHOOK"
         namePlaceholder={strings.webhooks.namePlaceholder}
         name={name}
         onNameChange={setName}
@@ -518,6 +518,21 @@ export default function WebhooksPanel({
     });
   }, [deregisterWebhook]);
 
+  const handleReorderTabs = useCallback((fromId: string, toId: string, edge: "left" | "right" = "left") => {
+    if (fromId === toId) return;
+    setOpenTabs((prev) => {
+      const fromIndex = prev.indexOf(fromId);
+      if (fromIndex === -1) return prev;
+      const withoutFrom = prev.filter((id) => id !== fromId);
+      let targetIndex = withoutFrom.indexOf(toId);
+      if (targetIndex === -1) return prev;
+      if (edge === "right") targetIndex += 1;
+      const next = [...withoutFrom];
+      next.splice(targetIndex, 0, fromId);
+      return next;
+    });
+  }, []);
+
   useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab });
 
   // -- Save handlers ---------------------------------------------------------
@@ -719,30 +734,24 @@ export default function WebhooksPanel({
               isDraft: isDraftId(id),
               isModified: dirtyTabs[id],
               renderTab: isDraftId(id) ? undefined : (isActive) => (
-                <span className="flex items-center gap-1.5">
-                  {dirtyTabs[id] && <span className="text-[10px] text-signal opacity-80 flex-shrink-0 leading-none">*</span>}
+                <div className="flex items-center gap-1.5 min-w-0">
                   {activeTabs.has(id) && (
                     <span
                       className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                       style={{ background: "var(--c-signal)", boxShadow: "0 0 4px var(--c-signal)" }}
                     />
                   )}
-                  <span className={`max-w-[140px] truncate text-xs font-medium ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                  <span className={`truncate text-xs font-medium ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
                     {tabLabel(id)}
                   </span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); closeTab(id); }}
-                    className="w-4 h-4 flex items-center justify-center rounded hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors ml-0.5 flex-shrink-0 cursor-pointer"
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
+                </div>
               ),
             }))}
             activeTab={activeTab}
             onTabClick={openTab}
             onTabClose={closeTab}
             onNewTab={openNewTab}
+            onReorderTabs={handleReorderTabs}
             newTabTitle={strings.webhooks.newTab}
             onCloseOthers={(id) => {
               openTabs.filter((t) => t !== id).forEach(closeTab);

@@ -228,20 +228,22 @@ describe("APPLY_CURL action", () => {
 // ── Send lifecycle ─────────────────────────────────────────────────────────
 
 describe("SEND_* actions", () => {
-  it("SEND_START sets loading=true and clears errors", () => {
-    const s0: TabState = { ...initState(REQ, null, "request"), sendErr: "old error" };
+  it("SEND_START sets loading=true and clears errors and durationMs", () => {
+    const s0: TabState = { ...initState(REQ, null, "request"), sendErr: "old error", durationMs: 120 };
     const s1 = tabReducer(s0, { type: "SEND_START" });
     expect(s1.loading).toBe(true);
     expect(s1.sendErr).toBeNull();
     expect(s1.result).toBeNull();
+    expect(s1.durationMs).toBeNull();
   });
 
-  it("SEND_SUCCESS sets result and loading=false", () => {
+  it("SEND_SUCCESS sets result, durationMs and loading=false", () => {
     const s0 = tabReducer(initState(REQ, null, "request"), { type: "SEND_START" });
     const result = { status: 200, headers: { "content-type": "application/json" }, body: btoa("{}") };
-    const s1 = tabReducer(s0, { type: "SEND_SUCCESS", result, resMode: "json" });
+    const s1 = tabReducer(s0, { type: "SEND_SUCCESS", result, resMode: "json", durationMs: 85 });
     expect(s1.loading).toBe(false);
     expect(s1.result?.status).toBe(200);
+    expect(s1.durationMs).toBe(85);
     expect(s1.resTab).toBe("body");
     expect(s1.resMode).toBe("json");
   });

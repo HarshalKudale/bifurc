@@ -66,10 +66,13 @@ export interface MockRule {
   streamingMode?: "none" | "sse" | "chunked";  // default "none"
   streamingChunkDelay?: number;  // ms between chunks (default 100)
   streamingChunkSeparator?: string;  // delimiter to split body into chunks
+  protocol?: "rest";
   createdAt: number;
   folderId?: string | null;
   workspaceId: string;
 }
+
+export type ApiProtocol = "rest" | "graphql" | "grpc" | "soap";
 
 export interface SavedRequest {
   id: string;
@@ -78,6 +81,7 @@ export interface SavedRequest {
   url: string;
   headers: Record<string, string>;
   body: string;    // plain text
+  protocol?: "rest";
   preScript?: string;
   postScript?: string;
   testScript?: string;
@@ -117,6 +121,7 @@ export interface SavedGrpcRequest {
   protoFileId?: string | null;
   useReflection: boolean;
   streamingType: "unary" | "server" | "client" | "bidi";
+  protocol?: "grpc";
   preScript?: string;
   postScript?: string;
   testScript?: string;
@@ -138,6 +143,7 @@ export interface SavedGrpcMock {
   errorCode?: number;
   errorMessage?: string;
   protoFileId: string;
+  protocol?: "grpc";
   createdAt: number;
   folderId?: string | null;
   workspaceId: string;
@@ -161,6 +167,7 @@ export interface SavedSoapRequest {
   body: string;
   wsdlId?: string | null;
   operationName?: string;
+  protocol?: "soap";
   preScript?: string;
   postScript?: string;
   testScript?: string;
@@ -182,6 +189,7 @@ export interface SavedSoapMock {
   responseBody: string;
   responseDelay?: number;
   wsdlId?: string | null;
+  protocol?: "soap";
   createdAt: number;
   folderId?: string | null;
   workspaceId: string;
@@ -205,6 +213,7 @@ export interface SavedGraphQLRequest {
   query: string;
   variables: string;
   operationName: string;
+  protocol?: "graphql";
   preScript?: string;
   postScript?: string;
   testScript?: string;
@@ -227,10 +236,23 @@ export interface SavedGraphQLMock {
   responseBody: string;
   responseDelay?: number;
   schemaId?: string | null;
+  protocol?: "graphql";
   createdAt: number;
   folderId?: string | null;
   workspaceId: string;
 }
+
+export type UnifiedRequest =
+  | (SavedRequest & { protocol?: "rest" })
+  | (SavedGraphQLRequest & { protocol: "graphql" })
+  | (SavedGrpcRequest & { protocol: "grpc" })
+  | (SavedSoapRequest & { protocol: "soap" });
+
+export type UnifiedMock =
+  | (MockRule & { protocol?: "rest" })
+  | (SavedGraphQLMock & { protocol: "graphql" })
+  | (SavedGrpcMock & { protocol: "grpc" })
+  | (SavedSoapMock & { protocol: "soap" });
 
 export interface SavedGraphQLSchema {
   id: string;

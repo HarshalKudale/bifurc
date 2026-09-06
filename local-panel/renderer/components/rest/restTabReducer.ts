@@ -71,6 +71,7 @@ export interface TabState {
   // Runtime: request send state
   loading: boolean;
   result: ReplayResult | null;
+  durationMs: number | null;
   sendErr: string | null;
   scriptErr: string | null;
 
@@ -156,7 +157,7 @@ export type TabAction =
   | { type: "REFRESH"; entity: SavedRequest | MockRule; tabType: TabType }
   | { type: "APPLY_CURL"; url: string; method: string; headers: Record<string, string>; body: string }
   | { type: "SEND_START" }
-  | { type: "SEND_SUCCESS"; result: ReplayResult; resMode: BodyMode }
+  | { type: "SEND_SUCCESS"; result: ReplayResult; resMode: BodyMode; durationMs?: number }
   | { type: "SEND_ERROR"; error: string }
   | { type: "TEST_START" }
   | { type: "TEST_SUCCESS"; resStatus: number; resHeaders: KVRow[]; resBody: string; resMode: BodyMode; resBodyEncoding?: "utf8" | "base64" }
@@ -187,7 +188,7 @@ function defaultState(): TabState {
     streamingChunkSeparator: "\n\n",
     preScript: "", postScript: "", testScript: "",
     curlInput: "", showCurl: false,
-    loading: false, result: null, sendErr: null, scriptErr: null,
+    loading: false, result: null, durationMs: null, sendErr: null, scriptErr: null,
     testResults: [], testLogs: [], testRunning: false,
     saving: false, saveErr: null,
     testLoading: false, testError: null,
@@ -380,10 +381,10 @@ export function tabReducer(state: TabState, action: TabAction): TabState {
     }
 
     case "SEND_START":
-      return { ...state, loading: true, result: null, sendErr: null, scriptErr: null };
+      return { ...state, loading: true, result: null, durationMs: null, sendErr: null, scriptErr: null };
 
     case "SEND_SUCCESS":
-      return { ...state, loading: false, result: action.result, resMode: action.resMode, resTab: "body" };
+      return { ...state, loading: false, result: action.result, resMode: action.resMode, resTab: "body", durationMs: action.durationMs ?? null };
 
     case "SEND_ERROR":
       return { ...state, loading: false, sendErr: action.error };

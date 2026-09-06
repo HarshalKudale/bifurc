@@ -73,6 +73,9 @@ export const METHOD_HEX: Record<string, string> = {
   DELETE: "var(--c-destructive)",
   HEAD: "var(--c-violet)",
   OPTIONS: "var(--c-violet)",
+  GQL: "#d946ef",
+  GRPC: "#06b6d4",
+  SOAP: "#14b8a6",
 };
 
 // Semi-transparent backgrounds for method badges
@@ -85,6 +88,9 @@ const METHOD_BG: Record<string, string> = {
   DELETE: "oklch(var(--destructive) / 0.13)",
   HEAD: "oklch(var(--violet) / 0.13)",
   OPTIONS: "oklch(var(--violet) / 0.13)",
+  GQL: "rgba(217, 70, 239, 0.15)",
+  GRPC: "rgba(6, 182, 212, 0.15)",
+  SOAP: "rgba(20, 184, 166, 0.15)",
 };
 
 export const methodColor = (m: string) => METHOD_HEX[m.toUpperCase()] ?? "var(--c-muted-foreground)";

@@ -219,7 +219,7 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
     <div className="flex flex-col h-full overflow-hidden bg-surface">
       {/* Title bar */}
       <EditorTitleBar
-        label={isNew ? strings.sockets.newSocket : strings.sockets.editSocket}
+        label="WEBSOCKET"
         namePlaceholder={strings.sockets.namePlaceholder}
         name={name}
         onNameChange={setName}
@@ -578,6 +578,21 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
     });
   }, []);
 
+  const handleReorderTabs = useCallback((fromId: string, toId: string, edge: "left" | "right" = "left") => {
+    if (fromId === toId) return;
+    setOpenTabs((prev) => {
+      const fromIndex = prev.indexOf(fromId);
+      if (fromIndex === -1) return prev;
+      const withoutFrom = prev.filter((id) => id !== fromId);
+      let targetIndex = withoutFrom.indexOf(toId);
+      if (targetIndex === -1) return prev;
+      if (edge === "right") targetIndex += 1;
+      const next = [...withoutFrom];
+      next.splice(targetIndex, 0, fromId);
+      return next;
+    });
+  }, []);
+
   useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab });
 
   const reloadConnections = useCallback(async () => {
@@ -727,14 +742,10 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
           label: tabLabel(id),
           isDraft: isDraft(id),
           isModified: dirtyTabs[id],
-          renderTab: (isActive) => (
+          renderTab: () => (
             <WsTabHeader
               tabId={id}
               label={tabLabel(id)}
-              isActive={isActive}
-              isDraft={isDraft(id)}
-              isModified={dirtyTabs[id]}
-              onClose={(e) => { e.stopPropagation(); closeTab(id); }}
             />
           ),
         }))}
@@ -742,6 +753,7 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
         onTabClick={setActiveTab}
         onTabClose={closeTab}
         onNewTab={openNewTab}
+        onReorderTabs={handleReorderTabs}
         newTabTitle={strings.sockets.newTab}
         closeTabTitle={strings.common.close}
         onCloseOthers={(id) => {
@@ -830,10 +842,7 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
 
 // -- WsTabHeader - green/red dot based on connection status -----------------
 
-function WsTabHeader({ tabId, label, isDraft: draft, isModified, onClose }: {
-  tabId: string; label: string; isDraft: boolean; isActive?: boolean; isModified?: boolean;
-  onClose(e: React.MouseEvent): void;
-}) {
+function WsTabHeader({ tabId, label }: { tabId: string; label: string }) {
   const [dotColor, setDotColor] = useState("var(--c-muted-foreground)");
 
   useEffect(() => {
@@ -845,13 +854,9 @@ function WsTabHeader({ tabId, label, isDraft: draft, isModified, onClose }: {
   }, [tabId]);
 
   return (
-    <>
-      {isModified && <span className="text-[10px] text-signal opacity-80 flex-shrink-0 leading-none">*</span>}
+    <div className="flex items-center gap-1.5 min-w-0">
       <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
-      {draft && <span className="text-[8px] text-amber opacity-70 flex-shrink-0">●</span>}
-      <span className="max-w-[160px] truncate">{label}</span>
-      <button onClick={onClose}
-        className="w-4 h-4 flex items-center justify-center rounded hover:bg-surface-2 text-muted-foreground hover:text-foreground ml-0.5 flex-shrink-0 cursor-pointer" title={strings.common.close}><X size={10} /></button>
-    </>
+      <span className="truncate">{label}</span>
+    </div>
   );
 }
