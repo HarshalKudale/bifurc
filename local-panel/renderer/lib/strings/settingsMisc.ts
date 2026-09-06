@@ -55,7 +55,7 @@ export const settingsGroupStrings = {
       githubUrl: "https://github.com/HarshalKudale",
       githubDisplay: "github.com/HarshalKudale",
       license: "License",
-      licenseName: "MIT License",
+      licenseName: "Local Panel Community and Commercial License",
       appDesc: "Local development proxy & mock server",
       webhookServerPort: "Webhook Server Port",
       webhookServerPortDesc: "Port for the dedicated webhook HTTP server (default 9101). Start/stop from the Webhooks panel.",
