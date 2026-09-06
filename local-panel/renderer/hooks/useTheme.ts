@@ -3,6 +3,10 @@ import { useState, useEffect } from "react";
 export type ColorMode = "dark" | "light";
 
 const DEFAULT_MODE: ColorMode = "dark";
+const TITLEBAR_THEME = {
+  dark: { bg: "#090e12", fg: "#eef2f7" },
+  light: { bg: "#eff2f6", fg: "#151b21" },
+} as const;
 
 function applyMode(mode: ColorMode) {
   const html = document.documentElement;
@@ -10,8 +14,7 @@ function applyMode(mode: ColorMode) {
   if (mode === "light") html.classList.add("light");
 
   // Sync Electron titlebar overlay
-  const bg = mode === "dark" ? "#1c1e27" : "#f2f3f8";
-  const fg = mode === "dark" ? "#47e8a0" : "#3a3c47";
+  const { bg, fg } = TITLEBAR_THEME[mode];
   window.api?.setTitleBarOverlay?.(bg, fg);
 }
 

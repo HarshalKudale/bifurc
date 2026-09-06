@@ -6,6 +6,12 @@ import { stopServer, startServer } from "@/proxy/server";
 import { loadConfig } from "@/store/config";
 import { getMainWindow } from "@/main";
 
+function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
+  return themeId === "light"
+    ? { color: "#eff2f6", symbolColor: "#151b21" }
+    : { color: "#090e12", symbolColor: "#eef2f7" };
+}
+
 export function registerSystemHandlers() {
   // ── Zoom ────────────────────────────────────────────────────────────────────
   ipcMain.handle("zoom:get", () => {
@@ -18,10 +24,17 @@ export function registerSystemHandlers() {
     const s = loadSettings();
     saveSettings({ ...s, zoomLevel: clamped, zoomLevelSetByUser: true });
     const overlayHeight = Math.round(35 * Math.pow(1.2, clamped));
+    const overlayTheme = getTitleBarOverlayTheme(s.themeId);
     BrowserWindow.getAllWindows().forEach((w) => {
       if (!w.isDestroyed()) {
         w.webContents.setZoomLevel(clamped);
-        try { w.setTitleBarOverlay({ height: overlayHeight }); } catch { }
+        try {
+          w.setTitleBarOverlay({
+            color: overlayTheme.color,
+            symbolColor: overlayTheme.symbolColor,
+            height: overlayHeight,
+          });
+        } catch { }
       }
     });
     return { ok: true, zoomLevel: clamped };
@@ -36,6 +49,18 @@ export function registerSystemHandlers() {
   ipcMain.handle("theme:set", (_e, themeId: string) => {
     const s = loadSettings();
     saveSettings({ ...s, themeId });
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      const zoomLevel = win.webContents.getZoomLevel();
+      const height = Math.round(35 * Math.pow(1.2, zoomLevel));
+      const overlayTheme = getTitleBarOverlayTheme(themeId);
+      win.setTitleBarOverlay({
+        color: overlayTheme.color,
+        symbolColor: overlayTheme.symbolColor,
+        height,
+      });
+      win.setBackgroundColor(overlayTheme.color);
+    }
     return { ok: true };
   });
 

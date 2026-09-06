@@ -30,15 +30,17 @@ export default function EnvSelector({ environments, activeId, open, dropdownRef,
         aria-haspopup="menu"
         aria-expanded={open}
         title={strings.titleBar.switchEnvironment}
-        className={`flex min-h-9 items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 focus-visible:ring-offset-2 focus-visible:ring-offset-surface ${
-          active
-            ? "border-signal/40 bg-signal/10 text-signal hover:bg-signal/20"
-            : "border-border bg-card text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        className={`flex min-h-8 items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
+          open
+            ? "border-signal/40 bg-signal/10 text-signal"
+            : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
         }`}
       >
-        <Globe size={11} />
-        <span className="max-w-[120px] truncate">{active ? active.name : strings.titleBar.noEnvironment}</span>
-        <ChevronDown size={10} className="opacity-60" />
+        <Globe size={11} className="flex-shrink-0" />
+        <span className="max-w-[130px] truncate text-foreground font-medium">
+          {active ? active.name : strings.titleBar.noEnvironment}
+        </span>
+        <ChevronDown size={11} className="opacity-60 flex-shrink-0" />
       </button>
 
       {open && (

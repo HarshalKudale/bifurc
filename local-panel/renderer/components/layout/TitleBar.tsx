@@ -1,11 +1,10 @@
 import React, { useRef, useState } from "react";
 import { AppConfig, Workspace } from "@/types";
 import { Panel } from "@/lib/panelRegistry";
-import ServerToggle from "@/components/layout/ServerToggle";
 import WorkspaceSelector from "@/components/layout/WorkspaceSelector";
 import EnvSelector from "@/components/sidebar/EnvSelector";
 import { strings } from "@/lib/strings";
-import { Settings, Globe, Search } from "@/lib/icons";
+import { Settings, Search } from "@/lib/icons";
 import iconUrl from "@/icon.png";
 import HelpTooltip from "@/components/common/HelpTooltip";
 
@@ -51,11 +50,28 @@ export default function TitleBar({
   onOpenSearch,
 }: Props) {
   const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
+  const [serverBusy, setServerBusy] = useState(false);
   const envDropdownRef = useRef<HTMLDivElement>(null);
 
   const wsEnvironments = (config.environments ?? []).filter(
     (e) => e.workspaceId === activeWorkspaceId
   );
+  const serverLabel = serverError
+    ? strings.titleBar.portInUse.replace("{port}", String(config.port))
+    : serverRunning
+      ? strings.titleBar.active.replace("{port}", String(config.port))
+      : strings.titleBar.stopped.replace("{port}", String(config.port));
+
+  const handleServerBadgeClick = async () => {
+    if (serverBusy) return;
+    setServerBusy(true);
+    try {
+      if (serverRunning) await onServerStop();
+      else await onServerStart();
+    } finally {
+      setServerBusy(false);
+    }
+  };
 
   return (
     <div
@@ -150,72 +166,36 @@ export default function TitleBar({
         }}
       />
 
-      {/* Environment Manage button */}
       <button
         type="button"
-        onClick={onManageEnvs}
-        title={strings.titleBar.manageEnvironments}
-        aria-label={strings.titleBar.manageEnvironments}
+        onClick={handleServerBadgeClick}
+        disabled={serverBusy}
+        title={serverError ?? (serverRunning ? strings.titleBar.stopServer : strings.titleBar.startServer)}
+        aria-label={serverRunning ? strings.titleBar.stopServer : strings.titleBar.startServer}
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer select-none flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
-          activePanel === "environments"
-            ? "border-signal/40 bg-signal/15 text-signal"
-            : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+        className={`group flex h-9 max-w-[220px] items-center gap-2 rounded-xl border px-4 text-sm font-medium transition-all duration-150 cursor-pointer select-none disabled:cursor-not-allowed disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
+          serverError
+            ? "border-destructive/20 bg-destructive/10 text-destructive hover:border-destructive/35 hover:bg-destructive/14"
+            : serverRunning
+              ? "border-signal/20 bg-card/70 text-signal hover:border-signal/30 hover:bg-card/90"
+              : "border-border/80 bg-card/60 text-muted-foreground hover:border-signal/25 hover:bg-surface-2 hover:text-foreground"
         }`}
       >
-        <Globe size={13} />
+        <span
+          className={`h-3 w-3 rounded-full flex-shrink-0 ${serverRunning && !serverError && !serverBusy ? "animate-pulse-dot" : ""}`}
+          style={{
+            background: serverError
+              ? "var(--c-destructive)"
+              : serverRunning
+                ? "var(--c-signal)"
+                : "var(--c-muted-foreground)",
+            boxShadow: serverError || !serverRunning
+              ? "none"
+              : "0 0 10px color-mix(in oklab, var(--c-signal) 55%, transparent)",
+          }}
+        />
+        <span className="truncate">{serverBusy ? strings.footer.syncing : serverLabel}</span>
       </button>
-
-      {/* Server play/stop */}
-      <ServerToggle
-        running={serverRunning}
-        error={serverError}
-        onStart={onServerStart}
-        onStop={onServerStop}
-      />
-
-      {/* Server status */}
-      {serverError ? (
-        <div
-          className="flex items-center gap-1.5 text-destructive text-xs font-medium max-w-[220px]"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          title={serverError}
-        >
-          <span className="rounded-full flex-shrink-0" style={{ width: 6, height: 6, background: "var(--c-destructive)" }} />
-          <span className="truncate">{strings.titleBar.portInUse.replace("{port}", String(config.port))}</span>
-        </div>
-      ) : serverRunning ? (
-        <div
-          className="flex items-center gap-1.5 text-signal text-xs font-medium"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        >
-          <span
-            className="rounded-full flex-shrink-0 animate-pulse-dot"
-            style={{
-              width: 6,
-              height: 6,
-              background: "var(--c-signal)",
-              boxShadow: "0 0 6px var(--c-signal)",
-            }}
-          />
-          {strings.titleBar.active.replace("{port}", String(config.port))}
-        </div>
-      ) : (
-        <div
-          className="flex items-center gap-1.5 text-muted-foreground text-xs font-medium"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        >
-          <span
-            className="rounded-full flex-shrink-0"
-            style={{
-              width: 6,
-              height: 6,
-              background: "var(--c-muted-foreground)",
-            }}
-          />
-          {strings.titleBar.stopped.replace("{port}", String(config.port))}
-        </div>
-      )}
     </div>
   );
 }

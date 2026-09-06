@@ -20,6 +20,12 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 
+function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
+  return themeId === "light"
+    ? { color: "#eff2f6", symbolColor: "#151b21" }
+    : { color: "#090e12", symbolColor: "#eef2f7" };
+}
+
 function getAppIcon(): Electron.NativeImage {
   return nativeImage.createFromPath(path.join(__dirname, "..", "icon.png"));
 }
@@ -85,10 +91,15 @@ function titleBarHeightForZoom(zoomLevel: number): number {
 }
 
 /** Update the titlebar overlay height to match the current zoom level */
-function syncTitleBarOverlay(win: BrowserWindow, zoomLevel: number): void {
+function syncTitleBarOverlay(win: BrowserWindow, zoomLevel: number, themeId: string | null | undefined): void {
   if (win.isDestroyed()) return;
   try {
-    win.setTitleBarOverlay({ height: titleBarHeightForZoom(zoomLevel) });
+    const { color, symbolColor } = getTitleBarOverlayTheme(themeId);
+    win.setTitleBarOverlay({
+      color,
+      symbolColor,
+      height: titleBarHeightForZoom(zoomLevel),
+    });
   } catch { /* setTitleBarOverlay not supported on all platforms */ }
 }
 
@@ -117,6 +128,9 @@ function computeDefaultZoomForDisplay(): number {
 }
 
 function createWindow(): void {
+  const settings = loadSettings();
+  const initialOverlayTheme = getTitleBarOverlayTheme(settings.themeId);
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 780,
@@ -124,7 +138,7 @@ function createWindow(): void {
     minHeight: 800,
     title: "Local Panel",
     icon: getAppIcon(),
-    backgroundColor: "#1c1e27",
+    backgroundColor: initialOverlayTheme.color,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -133,24 +147,24 @@ function createWindow(): void {
     show: false,
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#1c1e27",
-      symbolColor: "#47e8a0",
+      color: initialOverlayTheme.color,
+      symbolColor: initialOverlayTheme.symbolColor,
       height: BASE_TITLEBAR_HEIGHT,
     },
   });
 
   mainWindow.loadFile(path.join(__dirname, "renderer/index.html"));
   mainWindow.once("ready-to-show", () => {
-    const settings = loadSettings();
+    const currentSettings = loadSettings();
     // Use persisted zoom if user has set one, otherwise compute from display
-    let zoom = settings.zoomLevel ?? 0;
-    if (zoom === 0 && !settings.zoomLevelSetByUser) {
+    let zoom = currentSettings.zoomLevel ?? 0;
+    if (zoom === 0 && !currentSettings.zoomLevelSetByUser) {
       zoom = computeDefaultZoomForDisplay();
       // Persist the computed default so it's consistent across restarts
-      saveSettings({ ...settings, zoomLevel: zoom });
+      saveSettings({ ...currentSettings, zoomLevel: zoom });
     }
     mainWindow!.webContents.setZoomLevel(zoom);
-    syncTitleBarOverlay(mainWindow!, zoom);
+    syncTitleBarOverlay(mainWindow!, zoom, loadSettings().themeId);
     mainWindow!.show();
   });
 
@@ -176,7 +190,7 @@ function createWindow(): void {
 
     if (newLevel !== null && newLevel !== current) {
       mainWindow!.webContents.setZoomLevel(newLevel);
-      syncTitleBarOverlay(mainWindow!, newLevel);
+      syncTitleBarOverlay(mainWindow!, newLevel, loadSettings().themeId);
       const s = loadSettings();
       saveSettings({ ...s, zoomLevel: newLevel, zoomLevelSetByUser: true });
     }
