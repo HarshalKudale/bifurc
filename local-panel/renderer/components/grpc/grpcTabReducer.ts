@@ -73,16 +73,15 @@ export interface GrpcMockDraft {
 
 // -- Actions ----------------------------------------------------------------
 
+import { createTabReducer, CommonTabAction } from "@/lib/createTabReducer";
+
 export type GrpcAction =
-    | { type: "SET_FIELD"; field: keyof GrpcTabState; value: unknown }
     | { type: "SET_METADATA"; metadata: Record<string, string> }
     | { type: "SET_RESPONSE_METADATA"; metadata: Record<string, string> }
     | { type: "SEND_START" }
     | { type: "SEND_SUCCESS"; responses: string[]; metadata: Record<string, string>; status: number; statusMessage: string; durationMs: number }
-    | { type: "SEND_ERROR"; error: string }
-    | { type: "SAVE_START" }
-    | { type: "SAVE_DONE" }
-    | { type: "LOAD"; state: Partial<GrpcTabState> };
+    | { type: "LOAD"; state: Partial<GrpcTabState> }
+    | CommonTabAction<GrpcTabState, any, any>;
 
 // -- Initial state factory --------------------------------------------------
 
@@ -162,10 +161,8 @@ export function initGrpcMockState(mock?: SavedGrpcMock | null): GrpcTabState {
 
 // -- Reducer ----------------------------------------------------------------
 
-export function grpcTabReducer(state: GrpcTabState, action: GrpcAction): GrpcTabState {
+const baseGrpcTabReducer = (state: GrpcTabState, action: GrpcAction): GrpcTabState => {
     switch (action.type) {
-        case "SET_FIELD":
-            return { ...state, [action.field]: action.value, dirty: true };
         case "SET_METADATA":
             return { ...state, metadata: action.metadata, dirty: true };
         case "SET_RESPONSE_METADATA":
@@ -174,18 +171,14 @@ export function grpcTabReducer(state: GrpcTabState, action: GrpcAction): GrpcTab
             return { ...state, sending: true, resError: null, responses: [], resMetadata: {}, resStatus: null, resStatusMessage: "", resDuration: null };
         case "SEND_SUCCESS":
             return { ...state, sending: false, responses: action.responses, resMetadata: action.metadata, resStatus: action.status, resStatusMessage: action.statusMessage, resDuration: action.durationMs };
-        case "SEND_ERROR":
-            return { ...state, sending: false, resError: action.error };
-        case "SAVE_START":
-            return { ...state, saving: true };
-        case "SAVE_DONE":
-            return { ...state, saving: false, dirty: false };
         case "LOAD":
             return { ...state, ...action.state, dirty: false };
         default:
             return state;
     }
-}
+};
+
+export const grpcTabReducer = createTabReducer<GrpcTabState, GrpcAction, any, any>({}, baseGrpcTabReducer);
 
 // -- Serialization helpers --------------------------------------------------
 

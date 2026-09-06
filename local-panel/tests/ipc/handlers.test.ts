@@ -38,6 +38,9 @@ vi.mock("../../src/proxy/server", () => ({
   getServerError: vi.fn(() => null),
   reloadConfig: vi.fn(),
   replayRequest: vi.fn(),
+}));
+
+vi.mock("../../src/proxy/logEmitter", () => ({
   logEmitter: mockLogEmitter,
 }));
 
@@ -628,16 +631,20 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("request:delete handler", () => {
     it("deletes the request file via deleteEntityFile", async () => {
-      const req: SavedRequest = { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1 };
-      vi.mocked(loadEntity).mockReturnValueOnce(req as any);
+      currentConfig.requests = [
+        { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
+      ];
       const { deleteEntityFile } = await import("../../src/store/workspaceFs");
 
       await getHandler("request:delete")(EVENT, "r1");
 
-      expect(deleteEntityFile).toHaveBeenCalled();
+      expect(deleteEntityFile).toHaveBeenCalledWith("default", "requests", "r1");
     });
 
     it("returns { ok: true }", async () => {
+      currentConfig.requests = [
+        { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
+      ];
       const result = await getHandler("request:delete")(EVENT, "r1");
       expect(result).toEqual({ ok: true });
     });
@@ -1079,14 +1086,18 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("ws:delete handler", () => {
     it("deletes the ws connection file via deleteEntityFile", async () => {
-      const conn: SavedWsConnection = { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" };
-      vi.mocked(loadEntity).mockReturnValueOnce(conn as any);
+      currentConfig.wsConnections = [
+        { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
+      ];
       const { deleteEntityFile } = await import("../../src/store/workspaceFs");
       await getHandler("ws:delete")(EVENT, "c1");
-      expect(deleteEntityFile).toHaveBeenCalled();
+      expect(deleteEntityFile).toHaveBeenCalledWith("default", "sockets", "c1");
     });
 
     it("returns { ok: true }", async () => {
+      currentConfig.wsConnections = [
+        { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
+      ];
       const result = await getHandler("ws:delete")(EVENT, "c1");
       expect(result).toEqual({ ok: true });
     });

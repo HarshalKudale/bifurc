@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { AppConfig, ServiceInfo } from "@/types";
 import { Panel } from "@/lib/panelRegistry";
-import { Search, X, Folder, Layers, ExternalLink, Globe, ArrowRight } from "@/lib/icons";
-import { methodColor, methodBg } from "@/lib/utils";
+import { Search, X, Globe } from "@/lib/icons";
 import {
   searchEntities,
   SearchResultItem,
   getPanelDisplayName,
-  normalizePanel,
 } from "./searchUtils";
+import { SearchResultsList } from "./SearchResultsList";
 
 interface Props {
   open: boolean;
@@ -45,7 +44,6 @@ export default function SearchModal({
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // When initialMode changes when modal is triggered, sync mode
   useEffect(() => {
     if (open) {
       onRefreshServices?.();
@@ -54,7 +52,6 @@ export default function SearchModal({
       setDebouncedQuery("");
       setActiveIndex(0);
       previousActiveElementRef.current = document.activeElement as HTMLElement | null;
-      // Focus instantly on open
       requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -62,15 +59,11 @@ export default function SearchModal({
     }
   }, [open, initialMode, onRefreshServices]);
 
-  // Debounce query filtering with 300ms
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Compute search results
   const { sections, flatItems } = useMemo(() => {
     if (!open) return { sections: [], flatItems: [] };
     return searchEntities({
@@ -83,12 +76,10 @@ export default function SearchModal({
     });
   }, [open, debouncedQuery, mode, activePanel, config, services]);
 
-  // Reset active index when query, mode, or flatItems change
   useEffect(() => {
     setActiveIndex(0);
   }, [debouncedQuery, mode]);
 
-  // Scroll active item into view
   useEffect(() => {
     if (flatItems.length > 0 && itemRefs.current[activeIndex]) {
       itemRefs.current[activeIndex]?.scrollIntoView({
@@ -98,15 +89,12 @@ export default function SearchModal({
     }
   }, [activeIndex, flatItems.length]);
 
-  // Toggle mode helper
   const toggleMode = useCallback(() => {
     setMode((prev) => (prev === "current" ? "global" : "current"));
     setActiveIndex(0);
-    // Keep input focused
     inputRef.current?.focus();
   }, []);
 
-  // Handle closing modal and restoring focus
   const handleClose = useCallback(() => {
     onClose();
     if (previousActiveElementRef.current && typeof previousActiveElementRef.current.focus === "function") {
@@ -114,13 +102,11 @@ export default function SearchModal({
     }
   }, [onClose]);
 
-  // Handle executing the selected action
   const handleSelect = useCallback(
     (item: SearchResultItem) => {
       handleClose();
 
       if (item.isOpenTab && item.tabId) {
-        // Focus existing open tab
         onSelectTab(item.panel, item.tabId);
       } else if (item.entityType === "tab" && item.tabId) {
         onSelectTab(item.panel, item.tabId);
@@ -131,20 +117,25 @@ export default function SearchModal({
         item.entityType === "websocket" ||
         item.entityType === "webhook"
       ) {
-        // Open saved entity in new active tab
         onOpenEntity(item.panel, item.id, item.entityType, item.original);
       } else if (item.entityType === "service" && item.original?.port) {
-        // Services action: Map the service in Mappings panel
         onNavigatePanel("mappings", `localhost:${item.original.port}`);
       } else {
-        // Non-tab entity: switch to respective panel
         onNavigatePanel(item.panel, item.original);
       }
     },
     [handleClose, onSelectTab, onOpenEntity, onNavigatePanel]
   );
 
-  // Keyboard navigation & controls
+  const handleMapService = useCallback(
+    (e: React.MouseEvent, port: number) => {
+      e.stopPropagation();
+      handleClose();
+      onNavigatePanel("mappings", `localhost:${port}`);
+    },
+    [handleClose, onNavigatePanel]
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -183,7 +174,6 @@ export default function SearchModal({
   if (!open) return null;
 
   const currentScreenName = getPanelDisplayName(activePanel);
-  let globalFlatIndexCounter = 0;
 
   return (
     <div
@@ -197,12 +187,10 @@ export default function SearchModal({
         onKeyDown={handleKeyDown}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Top Search Input Container */}
         <div className="flex-shrink-0 p-3 border-b border-border/70 bg-surface-2/30">
           <div className="flex items-center gap-2.5 px-3 py-2 bg-card border border-border rounded-lg focus-within:border-signal/70 focus-within:ring-2 focus-within:ring-signal/20 transition-all">
             <Search size={15} className="text-muted-foreground flex-shrink-0" />
 
-            {/* Mode Indicator Badge inside search bar - fixed width to accommodate longest name (Environments) */}
             <button
               type="button"
               onClick={toggleMode}
@@ -228,7 +216,6 @@ export default function SearchModal({
               </kbd>
             </button>
 
-            {/* Search Input */}
             <input
               ref={inputRef}
               type="text"
@@ -242,7 +229,6 @@ export default function SearchModal({
               onChange={(e) => setQuery(e.target.value)}
             />
 
-            {/* Clear query button */}
             {query && (
               <button
                 type="button"
@@ -260,154 +246,20 @@ export default function SearchModal({
           </div>
         </div>
 
-        {/* Results List */}
-        <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto divide-y divide-border/30">
-          {flatItems.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-surface-2 text-muted-foreground mb-3">
-                <Search size={18} />
-              </div>
-              <div className="text-sm font-medium text-foreground">
-                {debouncedQuery.trim()
-                  ? `No entities found matching '${debouncedQuery.trim()}'`
-                  : mode === "current"
-                  ? `No open tabs or entities in ${currentScreenName}`
-                  : "Type to search entities across workspace"}
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {debouncedQuery.trim()
-                  ? mode === "current"
-                    ? "Press Tab to switch to Global Search"
-                    : "Try searching for another name, method, or URL"
-                  : "Search requests, mocks, proxy rules, sockets, webhooks, and services"}
-              </div>
-            </div>
-          ) : (
-            sections.map((sec) => (
-              <div key={sec.title} className="py-2">
-                <div className="px-4 py-1 flex items-center justify-between text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  <span>{sec.title}</span>
-                  <span className="text-[10px] font-normal lowercase opacity-70">
-                    {sec.items.length} {sec.items.length === 1 ? "result" : "results"}
-                  </span>
-                </div>
-                <div className="mt-1 space-y-0.5 px-2">
-                  {sec.items.map((item) => {
-                    const thisIndex = globalFlatIndexCounter++;
-                    const isSelected = thisIndex === activeIndex;
+        <SearchResultsList
+          ref={listRef}
+          sections={sections}
+          flatItems={flatItems}
+          activeIndex={activeIndex}
+          mode={mode}
+          debouncedQuery={debouncedQuery}
+          currentScreenName={currentScreenName}
+          itemRefs={itemRefs}
+          onSelect={handleSelect}
+          onHover={setActiveIndex}
+          onMapService={handleMapService}
+        />
 
-                    return (
-                      <div
-                        key={item.id + item.section}
-                        ref={(el) => {
-                          itemRefs.current[thisIndex] = el;
-                        }}
-                        onClick={() => handleSelect(item)}
-                        onMouseEnter={() => setActiveIndex(thisIndex)}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors text-xs select-none ${
-                          isSelected
-                            ? "bg-signal/15 border-l-2 border-signal text-foreground pl-[10px]"
-                            : "hover:bg-surface-2 text-foreground/90 pl-3"
-                        }`}
-                      >
-                        {/* Method / Entity Badge */}
-                        {item.method ? (
-                          <span
-                            className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] flex-shrink-0 uppercase"
-                            style={{
-                              color: methodColor(item.method),
-                              backgroundColor: methodBg(item.method),
-                            }}
-                          >
-                            {item.method}
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-surface-2 text-muted-foreground flex-shrink-0">
-                            {item.entityType.toUpperCase()}
-                          </span>
-                        )}
-
-                        {/* Title & Subtitle */}
-                        <div className="flex-1 min-w-0 flex flex-col justify-center">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-foreground truncate">
-                              {item.title}
-                            </span>
-                            {item.isDraft && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-amber/15 text-amber border border-amber/30">
-                                Draft
-                              </span>
-                            )}
-                          </div>
-                          {item.subtitle && (
-                            <div className="text-[11px] text-muted-foreground truncate font-mono">
-                              {item.subtitle}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Folder badge if present */}
-                        {item.folderName && (
-                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-surface-2 px-1.5 py-0.5 rounded flex-shrink-0">
-                            <Folder size={10} />
-                            <span className="truncate max-w-[100px]">{item.folderName}</span>
-                          </span>
-                        )}
-
-                        {/* Service Map button or Mapped indicator */}
-                        {item.entityType === "service" && item.original?.port && (
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            {item.isMapped ? (
-                              <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                                Mapped
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleClose();
-                                  onNavigatePanel("mappings", `localhost:${item.original.port}`);
-                                }}
-                                title={`Map localhost:${item.original.port}`}
-                                className="px-2 py-0.5 text-[11px] font-semibold rounded bg-signal/15 hover:bg-signal/25 text-signal border border-signal/30 hover:border-signal/50 transition-all cursor-pointer flex items-center gap-1"
-                              >
-                                <span>Map</span>
-                                <ArrowRight size={10} />
-                              </button>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Open Tab Indicator */}
-                        {item.isOpenTab ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-signal/20 text-signal border border-signal/30 flex-shrink-0">
-                            OPEN TAB
-                          </span>
-                        ) : mode === "global" ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-2 text-muted-foreground flex-shrink-0">
-                            {getPanelDisplayName(item.panel)}
-                          </span>
-                        ) : null}
-
-                        {/* Enter arrow hint when selected */}
-                        {isSelected && (
-                          <div className="flex items-center text-muted-foreground flex-shrink-0">
-                            <kbd className="px-1 py-0.5 text-[9px] bg-card border border-border rounded font-mono">
-                              ↵
-                            </kbd>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Footer Shortcut Bar */}
         <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 bg-surface border-t border-border text-[11px] text-muted-foreground">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
@@ -446,3 +298,4 @@ export default function SearchModal({
     </div>
   );
 }
+

@@ -10,14 +10,15 @@ import {
     GraphQLTabType, GraphQLTabState,
     GraphQLRequestDraft, GraphQLMockDraft,
 } from "@/components/graphql/graphqlTabReducer";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import CodeEditor from "@/components/common/CodeEditor";
-import HeaderTable from "@/components/editor/HeaderTable";
+import HeaderTable from "@/components/common/HeaderTable";
 import { KVRow, mkRowId, headersToRows, rowsToHeaders } from "@/lib/utils";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { strings } from "@/lib/strings";
 import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import SchemaExplorer from "@/components/graphql/SchemaExplorer";
+import { useProtocolEditor } from "@/hooks/useProtocolEditor";
 
 // -- Public handle for imperative refresh -----------------------------------
 
@@ -55,29 +56,33 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
     { tabType, tabId, draftTabId, initial, folders = [], activeEnv = null, onSave, onClose, onDirtyChange, label, onSync, onRevert, syncStatus, onHistory },
     ref,
 ) {
-    const draft = draftTabId
-        ? (tabType === "request"
-            ? loadDraft<GraphQLRequestDraft>(draftTabId)
-            : loadDraft<GraphQLMockDraft>(draftTabId))
-        : null;
-
-    const [state, dispatch] = useReducer(
-        graphqlTabReducer,
-        undefined,
-        () => initGraphQLState(initial ?? null, draft, tabType),
-    );
-
-    const [initialSnapshot, setInitialSnapshot] = useState(() => JSON.stringify(stateToDraft(initGraphQLState(initial ?? null, draft, tabType), tabType)));
-    useEffect(() => {
-        const current = JSON.stringify(stateToDraft(state, tabType));
-        onDirtyChange?.(current !== initialSnapshot);
-    }, [state, tabType, initialSnapshot, onDirtyChange]);
-
-    const { markSaved } = useDraftPersist(
-        draftTabId ?? null,
-        () => stateToDraft(state, tabType),
-        () => isDraftEmpty(state, tabType),
-    );
+    const {
+        state,
+        dispatch,
+        isDirty,
+        handleSave,
+        handleRefresh,
+        syncing,
+        reverting,
+        handleSyncClick,
+        handleRevertClick,
+        hasLocalChanges
+    } = useProtocolEditor({
+        tabType,
+        tabId,
+        draftTabId,
+        initial: initial as any,
+        reducer: graphqlTabReducer as any,
+        initState: initGraphQLState as any,
+        stateToDraft: stateToDraft as any,
+        isDraftEmpty: isDraftEmpty as any,
+        stateToSavePayload: (s, t) => t === "request" ? stateToRequestPayload(s) : stateToMockPayload(s),
+        onSave: onSave as any,
+        onSync,
+        onRevert,
+        syncStatus,
+        onDirtyChange,
+    });
 
     // -- Request pane sub-tabs ----------------------------------------------
 
@@ -119,69 +124,20 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         }
     }, [state.endpointUrl, state.headers, state.query, state.variables, state.operationName, activeEnv]);
 
-    // -- Save ---------------------------------------------------------------
-
-    const handleSave = useCallback(async () => {
-        dispatch({ type: "SAVE_START" });
-        try {
-            const data = tabType === "request" ? stateToRequestPayload(state) : stateToMockPayload(state);
-            const res = await onSave(data);
-            dispatch({ type: "SAVE_SUCCESS" });
-            markSaved();
-            setInitialSnapshot(JSON.stringify(stateToDraft(state, tabType)));
-            return res;
-        } catch {
-            dispatch({ type: "SAVE_ERROR" });
-        }
-    }, [state, tabType, onSave, markSaved]);
-
     useImperativeHandle(ref, () => ({
         refresh(entity: SavedGraphQLRequest | SavedGraphQLMock) {
-            dispatch({ type: "REFRESH", entity, tabType });
-            setInitialSnapshot(JSON.stringify(stateToDraft(initGraphQLState(entity, null, tabType), tabType)));
+            handleRefresh(entity);
         },
         save() {
             return handleSave();
         },
-    }), [tabType, handleSave]);
+    }), [handleRefresh, handleSave]);
 
-    const [syncing, setSyncing] = useState(false);
-    const [reverting, setReverting] = useState(false);
-
-    const isDirty = JSON.stringify(stateToDraft(state, tabType)) !== initialSnapshot;
     const canSave = tabType === "request" ? !!(state.name || state.endpointUrl) : !!state.name;
-    const hasLocalChanges = !draftTabId && Boolean(isDirty || (syncStatus && syncStatus !== "clean"));
     const syncDisabled = !hasLocalChanges || (!canSave && isDirty) || syncing;
     const revertDisabled = !hasLocalChanges || reverting;
     const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
     const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
-
-    const handleSyncClick = useCallback(async () => {
-        if (syncing || !onSync) return;
-        setSyncing(true);
-        try {
-            let savedId: string | undefined = undefined;
-            if (isDirty || draftTabId) {
-                const res: any = await handleSave();
-                if (res && typeof res === "object" && res.id) {
-                    savedId = res.id;
-                }
-            }
-            await onSync(savedId);
-        } finally {
-            setSyncing(false);
-        }
-    }, [syncing, onSync, isDirty, draftTabId, handleSave]);
-
-    const handleRevertClick = useCallback(async () => {
-        if (reverting || !onRevert) return;
-        setReverting(true);
-        try {
-            await onRevert();
-        } finally {
-            setReverting(false);
-        }
-    }, [reverting, onRevert]);
 
     // -- Render: Request mode -----------------------------------------------
 

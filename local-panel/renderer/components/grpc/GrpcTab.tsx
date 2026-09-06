@@ -2,10 +2,10 @@ import React, { forwardRef, useImperativeHandle, useReducer, useCallback, useEff
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { SavedGrpcRequest, SavedGrpcMock, Folder, Environment } from "@/types";
 import CodeEditor from "@/components/common/CodeEditor";
-import HeaderTable from "@/components/editor/HeaderTable";
+import HeaderTable from "@/components/common/HeaderTable";
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
 import { TabStrip, BottomBar } from "@/components/editor/RequestTab";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { KVRow, mkRowId } from "@/lib/utils";
 import { resolveVars } from "@/lib/resolveVars";
 import { cn } from "@/components/ui/cn";
@@ -16,7 +16,9 @@ import {
     stateToRequestDraft, stateToMockDraft, requestToSaveData, mockToSaveData,
     GrpcRequestDraft, GrpcMockDraft,
 } from "@/components/grpc/grpcTabReducer";
-import ProtoExplorer from "@/components/grpc/ProtoExplorer";
+import { useProtocolEditor } from "@/hooks/useProtocolEditor";
+import { GrpcLeftPane, ReqSubTab, MockSubTab } from "./GrpcLeftPane";
+import { GrpcResponsePane, ResSubTab } from "./GrpcResponsePane";
 
 // -- Props ------------------------------------------------------------------
 
@@ -71,30 +73,40 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
 ) {
     const isNew = !!draftTabId;
 
-    // Initialize state from draft or saved entity
-    const initState = useCallback((): GrpcTabState => {
-        if (isNew && draftTabId) {
-            const draft = loadDraft<GrpcRequestDraft | GrpcMockDraft>(draftTabId);
+    const {
+        state,
+        dispatch,
+        isDirty,
+        handleSave,
+        handleRefresh,
+        syncing,
+        reverting,
+        handleSyncClick,
+        handleRevertClick,
+        hasLocalChanges
+    } = useProtocolEditor({
+        tabType,
+        tabId,
+        draftTabId,
+        initial,
+        reducer: grpcTabReducer as any,
+        initState: (init, draft, type) => {
             if (draft) {
-                if (tabType === "request") {
-                    const d = draft as GrpcRequestDraft;
-                    return { ...initGrpcRequestState(), ...d };
-                } else {
-                    const d = draft as GrpcMockDraft;
-                    return { ...initGrpcMockState(), ...d };
-                }
+                if (type === "request") return { ...initGrpcRequestState(), ...(draft as GrpcRequestDraft) };
+                return { ...initGrpcMockState(), ...(draft as GrpcMockDraft) };
             }
-        }
-        if (tabType === "request") return initGrpcRequestState(initial as SavedGrpcRequest | null);
-        return initGrpcMockState(initial as SavedGrpcMock | null);
-    }, []);
+            if (type === "request") return initGrpcRequestState(init as SavedGrpcRequest);
+            return initGrpcMockState(init as SavedGrpcMock);
+        },
+        stateToDraft: (s, t) => t === "request" ? stateToRequestDraft(s) : stateToMockDraft(s),
+        isDraftEmpty: (s, t) => t === "request" ? (!s.serverAddress && !s.serviceName && !s.methodName) : (!s.serviceName && !s.methodName),
+        stateToSavePayload: (s, t) => t === "request" ? requestToSaveData(s) : mockToSaveData(s),
+        onSave: onSave as any,
+        onSync,
+        onRevert,
+        syncStatus,
+    });
 
-    const [state, dispatch] = useReducer(grpcTabReducer, undefined, initState);
-
-    // Sub-tab state
-    type ReqSubTab = "message" | "metadata" | "pre-script" | "post-script" | "proto";
-    type ResSubTab = "response" | "res-metadata";
-    type MockSubTab = "response" | "metadata" | "settings" | "proto";
     const [reqTab, setReqTab] = useState<ReqSubTab>("message");
     const [resTab, setResTab] = useState<ResSubTab>("response");
     const [mockTab, setMockTab] = useState<MockSubTab>("response");
@@ -111,19 +123,6 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
     useEffect(() => {
         dispatch({ type: "SET_RESPONSE_METADATA", metadata: rowsToMetadata(resMetaRows) });
     }, [resMetaRows]);
-
-    // Draft persistence
-    const draftData = useCallback(() => {
-        if (tabType === "request") return stateToRequestDraft(state);
-        return stateToMockDraft(state);
-    }, [state, tabType]);
-
-    const isEmptyDraft = useCallback(() => {
-        if (tabType === "request") return !state.serverAddress && !state.serviceName && !state.methodName;
-        return !state.serviceName && !state.methodName;
-    }, [state, tabType]);
-
-    useDraftPersist(draftTabId, draftData, isEmptyDraft);
 
     // Send gRPC request
     const handleSend = useCallback(async () => {
@@ -159,101 +158,33 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         }
     }, [state.serverAddress, state.serviceName, state.methodName, state.requestBody, state.metadata, state.protoFileId, state.useReflection, activeEnv]);
 
-    // Save
-    const handleSave = useCallback(async () => {
-        dispatch({ type: "SAVE_START" });
-        try {
-            let res: any;
-            if (tabType === "request") {
-                res = await onSave(requestToSaveData(state));
-            } else {
-                res = await onSave(mockToSaveData(state));
-            }
-            dispatch({ type: "SAVE_DONE" });
-            return res;
-        } catch (err) {
-            dispatch({ type: "SAVE_DONE" });
-            throw err;
-        }
-    }, [state, tabType, onSave]);
-
     useImperativeHandle(ref, () => ({
         save() {
             return handleSave();
         },
         refresh(entity: SavedGrpcRequest | SavedGrpcMock) {
+            handleRefresh(entity);
             if (tabType === "request") {
                 const freshState = initGrpcRequestState(entity as SavedGrpcRequest);
-                dispatch({ type: "LOAD", state: freshState });
                 setMetaRows(metadataToRows(freshState.metadata));
                 setResMetaRows(metadataToRows(freshState.responseMetadata));
             } else {
                 const freshState = initGrpcMockState(entity as SavedGrpcMock);
-                dispatch({ type: "LOAD", state: freshState });
                 setMetaRows(metadataToRows(freshState.metadata));
                 setResMetaRows(metadataToRows(freshState.responseMetadata));
             }
         },
-    }), [handleSave, tabType]);
-
-    // Sync and Revert handling
-    const [syncing, setSyncing] = useState(false);
-    const [reverting, setReverting] = useState(false);
-
-    const handleSyncClick = useCallback(async () => {
-        if (!onSync || syncing) return;
-        setSyncing(true);
-        try {
-            let targetId = tabId;
-            if (state.dirty || isNew) {
-                const saved: any = await handleSave();
-                if (saved && typeof saved === "object" && saved.id) {
-                    targetId = saved.id;
-                }
-            }
-            await onSync(targetId);
-        } finally {
-            setSyncing(false);
-        }
-    }, [onSync, syncing, state.dirty, isNew, handleSave, tabId]);
-
-    const hasChanges = !isNew && Boolean(state.dirty || (syncStatus && syncStatus !== "clean"));
-
-    const handleRevertClick = useCallback(async () => {
-        if (!onRevert || reverting) return;
-        setReverting(true);
-        try {
-            await onRevert();
-        } finally {
-            setReverting(false);
-        }
-    }, [onRevert, reverting]);
+    }), [handleSave, handleRefresh, tabType]);
 
     const canSave = Boolean(state.serviceName && state.methodName);
-    const syncDisabled = !hasChanges || (!canSave && state.dirty) || syncing;
-    const revertDisabled = !hasChanges || reverting;
-    const syncTitle = !hasChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
-    const revertTitle = !hasChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
+    const syncDisabled = !hasLocalChanges || (!canSave && state.dirty) || syncing;
+    const revertDisabled = !hasLocalChanges || reverting;
+    const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
+    const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
 
     const set = (field: keyof GrpcTabState) => (value: unknown) => dispatch({ type: "SET_FIELD", field, value });
 
     // -- Render -------------------------------------------------------------
-
-    const reqSubTabs: { id: ReqSubTab; label: string }[] = tabType === "request"
-        ? [{ id: "message", label: strings.grpc.tabMessage }, { id: "metadata", label: strings.grpc.tabMetadata }, { id: "pre-script", label: strings.grpc.tabPreScript }, { id: "post-script", label: strings.grpc.tabPostScript }, { id: "proto", label: strings.grpc.tabProto }]
-        : [{ id: "message", label: strings.grpc.tabMessage }, { id: "metadata", label: strings.grpc.tabMetadata }, { id: "proto", label: strings.grpc.tabProto }];
-
-    const resSubTabs: { id: ResSubTab; label: string }[] = [
-        { id: "response", label: strings.grpc.tabResponse },
-        { id: "res-metadata", label: strings.grpc.tabTrailingMetadata },
-    ];
-
-    const mockSubTabs: { id: MockSubTab; label: string }[] = [
-        { id: "response", label: strings.grpc.tabResponseBody },
-        { id: "metadata", label: strings.grpc.tabResponseMetadata },
-        { id: "settings", label: strings.grpc.tabSettings },
-        { id: "proto", label: strings.grpc.tabProto },
-    ];
 
     return (
         <div className="flex flex-col h-full overflow-hidden">
@@ -355,97 +286,20 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                 <PanelGroup orientation="horizontal" className="h-full">
                     {/* Left panel: request body / metadata / scripts */}
                     <Panel defaultSize={tabType === "request" ? 50 : 100} minSize={30}>
-                        <div className="flex flex-col h-full overflow-hidden">
-                            {tabType === "request" ? (
-                                <>
-                                    <TabStrip tabs={reqSubTabs} active={reqTab} onChange={(t) => setReqTab(t as ReqSubTab)} />
-                                    <div className="flex-1 overflow-hidden">
-                                        {reqTab === "message" && (
-                                            <CodeEditor value={state.requestBody} onChange={(v) => set("requestBody")(v)} language="json" placeholder='{"key": "value"}' className="h-full" />
-                                        )}
-                                        {reqTab === "metadata" && (
-                                            <HeaderTable rows={metaRows} onChange={setMetaRows} emptyMessage={strings.grpc.noMetadata} />
-                                        )}
-                                        {reqTab === "pre-script" && (
-                                            <CodeEditor value={state.preScript} onChange={(v) => set("preScript")(v)} language="javascript" placeholder="// Pre-request script" className="h-full" />
-                                        )}
-                                        {reqTab === "post-script" && (
-                                            <CodeEditor value={state.postScript} onChange={(v) => set("postScript")(v)} language="javascript" placeholder="// Post-response script" className="h-full" />
-                                        )}
-                                        {reqTab === "proto" && (
-                                            <ProtoExplorer
-                                                protoFileId={state.protoFileId}
-                                                onSelectMethod={(serviceName, methodName, streamingType, skeleton) => {
-                                                    dispatch({ type: "SET_FIELD", field: "serviceName", value: serviceName });
-                                                    dispatch({ type: "SET_FIELD", field: "methodName", value: methodName });
-                                                    dispatch({ type: "SET_FIELD", field: "streamingType", value: streamingType });
-                                                    if (skeleton && skeleton !== "{}") dispatch({ type: "SET_FIELD", field: "requestBody", value: skeleton });
-                                                }}
-                                                onProtoChange={(id) => dispatch({ type: "SET_FIELD", field: "protoFileId", value: id })}
-                                            />
-                                        )}
-                                    </div>
-                                </>
-                            ) : (
-                                <>
-                                    <TabStrip tabs={mockSubTabs} active={mockTab} onChange={(t) => setMockTab(t as MockSubTab)} />
-                                    <div className="flex-1 overflow-hidden">
-                                        {mockTab === "response" && (
-                                            <CodeEditor value={state.responseBody} onChange={(v) => set("responseBody")(v)} language="json" placeholder='{"result": "mocked"}' className="h-full" />
-                                        )}
-                                        {mockTab === "metadata" && (
-                                            <HeaderTable rows={resMetaRows} onChange={setResMetaRows} emptyMessage={strings.grpc.noResponseMetadata} />
-                                        )}
-                                        {mockTab === "settings" && (
-                                            <div className="p-4 space-y-4 overflow-y-auto">
-                                                <div className="space-y-1">
-                                                    <label className="text-xs font-medium text-muted-foreground">{strings.grpc.responseDelay}</label>
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        className="w-32 bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none"
-                                                        value={state.responseDelay}
-                                                        onChange={(e) => set("responseDelay")(Number(e.target.value))}
-                                                    />
-                                                </div>
-                                                <div className="space-y-1">
-                                                    <label className="text-xs font-medium text-muted-foreground">{strings.grpc.errorCode}</label>
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        max={16}
-                                                        className="w-32 bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none"
-                                                        value={state.errorCode}
-                                                        onChange={(e) => set("errorCode")(Number(e.target.value))}
-                                                    />
-                                                </div>
-                                                <div className="space-y-1">
-                                                    <label className="text-xs font-medium text-muted-foreground">{strings.grpc.errorMessage}</label>
-                                                    <input
-                                                        className="w-full bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                                                        placeholder={strings.grpc.errorMessagePlaceholder}
-                                                        value={state.errorMessage}
-                                                        onChange={(e) => set("errorMessage")(e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-                                        {mockTab === "proto" && (
-                                            <ProtoExplorer
-                                                protoFileId={state.protoFileId}
-                                                onSelectMethod={(serviceName, methodName, streamingType, skeleton) => {
-                                                    dispatch({ type: "SET_FIELD", field: "serviceName", value: serviceName });
-                                                    dispatch({ type: "SET_FIELD", field: "methodName", value: methodName });
-                                                    dispatch({ type: "SET_FIELD", field: "streamingType", value: streamingType });
-                                                    if (skeleton && skeleton !== "{}") dispatch({ type: "SET_FIELD", field: "responseBody", value: skeleton });
-                                                }}
-                                                onProtoChange={(id) => dispatch({ type: "SET_FIELD", field: "protoFileId", value: id })}
-                                            />
-                                        )}
-                                    </div>
-                                </>
-                            )}
-                        </div>
+                        <GrpcLeftPane
+                            tabType={tabType}
+                            state={state}
+                            dispatch={dispatch}
+                            set={set}
+                            reqTab={reqTab}
+                            setReqTab={setReqTab}
+                            mockTab={mockTab}
+                            setMockTab={setMockTab}
+                            metaRows={metaRows}
+                            setMetaRows={setMetaRows}
+                            resMetaRows={resMetaRows}
+                            setResMetaRows={setResMetaRows}
+                        />
                     </Panel>
 
                     {/* Only show right panel for request mode */}
@@ -453,70 +307,11 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                         <>
                             <PanelResizeHandle className="w-px bg-border hover:bg-signal/50 transition-colors cursor-col-resize" />
                             <Panel defaultSize={50} minSize={25}>
-                                <div className="flex flex-col h-full overflow-hidden">
-                                    {/* Status bar */}
-                                    {state.resStatus !== null && (
-                                        <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-background/30 flex-shrink-0">
-                                            <span className={cn(
-                                                "text-xs font-semibold",
-                                                state.resStatus === 0 ? "text-signal" : "text-destructive"
-                                            )}>
-                                                {strings.grpc.status} {state.resStatus}
-                                            </span>
-                                            {state.resStatusMessage && (
-                                                <span className="text-xs text-muted-foreground">{state.resStatusMessage}</span>
-                                            )}
-                                            {state.resDuration !== null && (
-                                                <span className="text-xs text-muted-foreground ml-auto">{state.resDuration}ms</span>
-                                            )}
-                                        </div>
-                                    )}
-                                    {state.resError && (
-                                        <div className="px-4 py-2 border-b border-border bg-destructive/5 flex-shrink-0">
-                                            <p className="text-xs text-destructive">{state.resError}</p>
-                                        </div>
-                                    )}
-
-                                    <TabStrip tabs={resSubTabs} active={resTab} onChange={(t) => setResTab(t as ResSubTab)} />
-                                    <div className="flex-1 overflow-hidden">
-                                        {resTab === "response" && (
-                                            state.responses.length === 0 ? (
-                                                <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
-                                                    {state.sending ? strings.grpc.sending : strings.grpc.noResponseYet}
-                                                </div>
-                                            ) : state.responses.length === 1 ? (
-                                                <CodeEditor value={state.responses[0]} language="json" readOnly className="h-full" />
-                                            ) : (
-                                                <div className="flex flex-col h-full overflow-y-auto p-2 gap-1">
-                                                    {state.responses.map((r, i) => (
-                                                        <div key={i} className="border border-border rounded p-2">
-                                                            <div className="text-[10px] text-muted-foreground font-semibold mb-1">{strings.grpc.responseNumber.replace("{n}", String(i + 1))}</div>
-                                                            <pre className="text-xs text-foreground font-mono whitespace-pre-wrap break-all">{r}</pre>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )
-                                        )}
-                                        {resTab === "res-metadata" && (
-                                            <div className="p-4 overflow-y-auto">
-                                                {Object.keys(state.resMetadata).length === 0 ? (
-                                                    <p className="text-xs text-muted-foreground italic">{strings.grpc.noTrailingMetadata}</p>
-                                                ) : (
-                                                    <table className="w-full text-xs">
-                                                        <tbody>
-                                                            {Object.entries(state.resMetadata).map(([k, v]) => (
-                                                                <tr key={k} className="border-b border-border/30">
-                                                                    <td className="py-1.5 pr-4 text-signal font-mono">{k}</td>
-                                                                    <td className="py-1.5 text-foreground font-mono">{v}</td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                <GrpcResponsePane
+                                    state={state}
+                                    resTab={resTab}
+                                    onResTabChange={setResTab}
+                                />
                             </Panel>
                         </>
                     )}

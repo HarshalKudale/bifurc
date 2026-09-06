@@ -5,18 +5,19 @@ import { SavedSoapRequest, SavedSoapMock, Folder, Environment } from "@/types";
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
 import { BottomBar, TabStrip } from "@/components/editor/RequestTab";
 import CodeEditor from "@/components/common/CodeEditor";
-import HeaderTable from "@/components/editor/HeaderTable";
+import HeaderTable from "@/components/common/HeaderTable";
 import {
     soapTabReducer, initSoapState, soapStateToSavePayload, soapStateToDraft, isSoapDraftEmpty,
     SoapTabType, SoapTabState, SoapRequestDraft, SoapMockDraft,
 } from "@/components/soap/soapTabReducer";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { KVRow, mkRowId, headersToRows, rowsToHeaders, statusColor } from "@/lib/utils";
 import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import { cn } from "@/components/ui/cn";
 import WsdlExplorer from "@/components/soap/WsdlExplorer";
 import { strings } from "@/lib/strings";
+import { useProtocolEditor } from "@/hooks/useProtocolEditor";
 
 // -- Public handle for imperative refresh -----------------------------------
 
@@ -54,28 +55,33 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
     { tabType, tabId, draftTabId, initial, folders = [], activeEnv = null, onSave, onClose, label, onDirtyChange, onSync, onRevert, syncStatus, onHistory },
     ref,
 ) {
-    const draft = draftTabId
-        ? (tabType === "request"
-            ? loadDraft<SoapRequestDraft>(draftTabId)
-            : loadDraft<SoapMockDraft>(draftTabId))
-        : null;
-
-    const [state, dispatch] = useReducer(
-        soapTabReducer,
-        undefined,
-        () => initSoapState(initial ?? null, draft, tabType),
-    );
-
-    const [initialSnapshot, setInitialSnapshot] = useState(() => JSON.stringify(soapStateToDraft(initSoapState(initial ?? null, draft, tabType), tabType)));
-    const isDirty = JSON.stringify(soapStateToDraft(state, tabType)) !== initialSnapshot;
-    useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
-
-    // Draft auto-save
-    const { markSaved } = useDraftPersist(
-        draftTabId ?? null,
-        () => soapStateToDraft(state, tabType),
-        () => isSoapDraftEmpty(state, tabType),
-    );
+    const {
+        state,
+        dispatch,
+        isDirty,
+        handleSave,
+        handleRefresh,
+        syncing,
+        reverting,
+        handleSyncClick,
+        handleRevertClick,
+        hasLocalChanges
+    } = useProtocolEditor({
+        tabType,
+        tabId,
+        draftTabId,
+        initial: initial as any,
+        reducer: soapTabReducer as any,
+        initState: initSoapState as any,
+        stateToDraft: soapStateToDraft as any,
+        isDraftEmpty: isSoapDraftEmpty as any,
+        stateToSavePayload: soapStateToSavePayload as any,
+        onSave: onSave as any,
+        onSync,
+        onRevert,
+        syncStatus,
+        onDirtyChange,
+    });
 
     // -- Header rows helper -----------------------------------------------
 
@@ -85,7 +91,7 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
     const setHeaderRows = useCallback((rows: KVRow[]) => {
         const field = tabType === "request" ? "headers" : "responseHeaders";
         dispatch({ type: "SET_FIELD", field, value: rowsToHeaders(rows) });
-    }, [tabType]);
+    }, [tabType, dispatch]);
 
     // -- Send request -----------------------------------------------------
 
@@ -107,71 +113,23 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
         } catch (err: any) {
             dispatch({ type: "SEND_ERROR", error: err.message ?? String(err) });
         }
-    }, [state.endpointUrl, state.soapAction, state.headers, state.body, activeEnv]);
-
-    // -- Save -------------------------------------------------------------
-
-    const handleSave = useCallback(async () => {
-        dispatch({ type: "SAVE_START" });
-        try {
-            const payload = soapStateToSavePayload(state, tabType);
-            const res = await onSave(payload);
-            dispatch({ type: "SAVE_SUCCESS" });
-            markSaved();
-            setInitialSnapshot(JSON.stringify(soapStateToDraft(state, tabType)));
-            return res;
-        } catch {
-            dispatch({ type: "SAVE_ERROR" });
-        }
-    }, [state, tabType, onSave, markSaved]);
+    }, [state.endpointUrl, state.soapAction, state.headers, state.body, activeEnv, dispatch]);
 
     // Expose imperative refresh
     useImperativeHandle(ref, () => ({
         refresh(entity: SavedSoapRequest | SavedSoapMock) {
-            dispatch({ type: "REFRESH", entity, tabType });
-            setInitialSnapshot(JSON.stringify(soapStateToDraft(initSoapState(entity, null, tabType), tabType)));
+            handleRefresh(entity);
         },
         save() {
             return handleSave();
         },
-    }), [tabType, handleSave]);
-
-    const [syncing, setSyncing] = useState(false);
-    const [reverting, setReverting] = useState(false);
+    }), [handleRefresh, handleSave]);
 
     const canSave = tabType === "request" ? !(!state.name && !state.endpointUrl) : !(!state.name && !state.endpointPattern);
-    const hasLocalChanges = !draftTabId && Boolean(isDirty || (syncStatus && syncStatus !== "clean"));
     const syncDisabled = !hasLocalChanges || (!canSave && isDirty) || syncing;
     const revertDisabled = !hasLocalChanges || reverting;
     const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
     const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
-
-    const handleSyncClick = useCallback(async () => {
-        if (syncing || !onSync) return;
-        setSyncing(true);
-        try {
-            let savedId: string | undefined = undefined;
-            if (isDirty || draftTabId) {
-                const res: any = await handleSave();
-                if (res && typeof res === "object" && res.id) {
-                    savedId = res.id;
-                }
-            }
-            await onSync(savedId);
-        } finally {
-            setSyncing(false);
-        }
-    }, [syncing, onSync, isDirty, draftTabId, handleSave]);
-
-    const handleRevertClick = useCallback(async () => {
-        if (reverting || !onRevert) return;
-        setReverting(true);
-        try {
-            await onRevert();
-        } finally {
-            setReverting(false);
-        }
-    }, [reverting, onRevert]);
 
     // -- Request mode: left pane tabs -------------------------------------
 

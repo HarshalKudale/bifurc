@@ -10,7 +10,7 @@ import {
   TabType, TabState,
   RequestDraft, MockDraft,
 } from "@/components/rest/restTabReducer";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import { rowsToHeaders, b64ToText, textToB64, tryFormat, METHODS, MOCK_METHODS } from "@/lib/utils";
 import { parseCurl, SKIP_CURL_HEADERS } from "@/lib/curlParser";
@@ -19,6 +19,11 @@ import { strings } from "@/lib/strings";
 import { runPreScript, runPostScript } from "@/lib/scriptRunner";
 import { runTestScript } from "@/lib/testRunner";
 import { ChevronDown } from "@/lib/icons";
+
+import { useProtocolEditor } from "@/hooks/useProtocolEditor";
+import { RestCurlImport } from "./RestCurlImport";
+import { RestEditorPane } from "./RestEditorPane";
+import { useRestActions } from "./useRestActions";
 
 // -- Public handle for imperative refresh -----------------------------------
 
@@ -72,33 +77,36 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
   },
   ref,
 ) {
-  // Load draft from localStorage if applicable
-  const draft = draftTabId
-    ? (tabType === "request"
-      ? loadDraft<RequestDraft>(draftTabId)
-      : loadDraft<MockDraft>(draftTabId))
-    : null;
+  const {
+    state,
+    dispatch,
+    isDirty,
+    handleSave,
+    handleRefresh,
+    syncing,
+    reverting,
+    handleSyncClick,
+    handleRevertClick,
+    hasLocalChanges
+  } = useProtocolEditor({
+    tabType,
+    tabId,
+    draftTabId,
+    initial: initial as any,
+    reducer: tabReducer,
+    initState: initState as any,
+    stateToDraft: stateToDraft as any,
+    isDraftEmpty: isDraftEmpty as any,
+    stateToSavePayload: stateToSavePayload as any,
+    onSave: onSave as any,
+    onSync,
+    onRevert,
+    syncStatus,
+    onDirtyChange,
+  });
 
-  const [state, dispatch] = useReducer(
-    tabReducer,
-    undefined,
-    () => initState(initial ?? null, draft, tabType),
-  );
-
-  // Track dirty state (ref so it doesn't cause re-renders, updated after save)
-  const savedSnapshot = useRef(JSON.stringify(stateToDraft(initState(initial ?? null, draft, tabType), tabType)));
-  const isDirty = JSON.stringify(stateToDraft(state, tabType)) !== savedSnapshot.current;
-  useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
-
-  // Draft auto-save (no-op for saved tabs where draftTabId is null/undefined)
-  const { markSaved } = useDraftPersist(
-    draftTabId ?? null,
-    () => stateToDraft(state, tabType),
-    () => isDraftEmpty(state, tabType),
-  );
-
-  // handleSave defined below - use a ref so the imperative handle below captures it without ordering issues
-  const handleSaveRef = useRef<() => Promise<any>>(() => Promise.resolve());
+  const handleSaveRef = useRef(handleSave);
+  useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
 
   // -- cURL parsing ------------------------------------------------------
 
@@ -133,185 +141,17 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
   // -- Send (request mode) ------------------------------------------------
 
-  const handleSend = useCallback(async () => {
-    if (!state.url.trim()) return;
-    dispatch({ type: "SEND_START" });
-    try {
-      const resolvedUrl = resolveVars(state.url.trim(), activeEnv);
-      const resolvedHdr = resolveHeaders(rowsToHeaders(state.reqHeaders), activeEnv);
-      const resolvedBod = resolveVars(state.reqBody, activeEnv);
-
-      let finalUrl = resolvedUrl;
-      let finalHeaders = resolvedHdr;
-      let finalBody = resolvedBod;
-      let scriptEnv = activeEnv;
-
-      if (state.preScript.trim()) {
-        const pre = await runPreScript(state.preScript, { method: state.method, url: finalUrl, headers: finalHeaders, body: finalBody }, activeEnv);
-        if (pre.error) dispatch({ type: "SET_FIELD", field: "scriptErr", value: strings.editor.preScriptError.replace("{error}", pre.error) });
-        finalUrl = pre.req.url;
-        finalHeaders = pre.req.headers;
-        finalBody = pre.req.body;
-        if (activeEnv && Object.keys(pre.envVars).length > 0) {
-          scriptEnv = { ...activeEnv, variables: Object.entries(pre.envVars).map(([key, value]) => ({ id: key, key, value })) };
-        }
-      }
-
-      const sendStart = Date.now();
-      const res: ReplayResult = await window.api.replayRequest(state.method, finalUrl, finalHeaders, textToB64(finalBody));
-      const responseTime = Date.now() - sendStart;
-      const ct = res.headers["content-type"];
-      const resMode = ct ? contentTypeToMode(ct) : state.resMode;
-      dispatch({ type: "SEND_SUCCESS", result: res, resMode, durationMs: responseTime });
-
-      if (state.postScript.trim()) {
-        const post = await runPostScript(
-          state.postScript,
-          { status: res.status, headers: res.headers, body: b64ToText(res.body) },
-          scriptEnv,
-        );
-        if (post.error) {
-          const existing = state.scriptErr;
-          const postErr = strings.editor.postScriptError.replace("{error}", post.error);
-          dispatch({ type: "SET_FIELD", field: "scriptErr", value: existing ? `${existing}; ${postErr}` : postErr });
-        }
-      }
-
-      // Run test script if present
-      if (state.testScript.trim()) {
-        dispatch({ type: "RUN_TESTS_START" });
-        const testResult = await runTestScript(
-          state.testScript,
-          { status: res.status, headers: res.headers, body: b64ToText(res.body), responseTime },
-          scriptEnv,
-        );
-        dispatch({ type: "RUN_TESTS_DONE", results: testResult.tests, logs: testResult.logs });
-      }
-    } catch (e) {
-      dispatch({ type: "SEND_ERROR", error: e instanceof Error ? e.message : strings.editor.requestFailed });
-    }
-  }, [state.url, state.method, state.reqHeaders, state.reqBody, state.preScript, state.postScript, state.testScript, state.resMode, state.scriptErr, activeEnv]);
-
-  // -- Test (mock mode) ---------------------------------------------------
-
-  const handleTest = useCallback(async () => {
-    if (!state.url.trim()) return;
-    dispatch({ type: "TEST_START" });
-    try {
-      const testMethod = state.method === "*" ? "GET" : state.method;
-      const resolvedUrl = resolveVars(state.url.trim(), activeEnv);
-      const resolvedHdr = resolveHeaders(rowsToHeaders(state.reqHeaders), activeEnv);
-      const resolvedBod = resolveVars(state.reqBody, activeEnv);
-      const bodyB64 = resolvedBod.trim() ? textToB64(resolvedBod) : "";
-      const res: ReplayResult = await window.api.replayRequest(testMethod, resolvedUrl, resolvedHdr, bodyB64);
-      const ct = res.headers["content-type"];
-      const resMode = ct ? contentTypeToMode(ct) : state.resMode;
-      const { headersToRows } = await import("@/lib/utils");
-      const isBinaryRes = ct ? isBinaryContentType(ct) : false;
-      const resBody = isBinaryRes
-        ? res.body
-        : (resMode === "json" ? tryFormat(b64ToText(res.body)) : b64ToText(res.body));
-      dispatch({
-        type: "TEST_SUCCESS",
-        resStatus: res.status,
-        resHeaders: Object.keys(res.headers).length > 0 ? headersToRows(res.headers) : state.resHeaders,
-        resBody,
-        resMode,
-        resBodyEncoding: isBinaryRes ? "base64" : "utf8",
-      });
-    } catch (e) {
-      dispatch({ type: "TEST_ERROR", error: e instanceof Error ? e.message : strings.editor.requestFailed });
-    }
-  }, [state.url, state.method, state.reqHeaders, state.reqBody, state.resMode, state.resHeaders, activeEnv]);
-
-  // -- Save ---------------------------------------------------------------
-
-  const handleSave = useCallback(async () => {
-    if (tabType === "request" && !state.url.trim()) return;
-    if (tabType === "mock" && (!state.url.trim() || (state.useRegex && !!state.regexError))) return;
-    dispatch({ type: "SAVE_START" });
-    try {
-      const res = await onSave(stateToSavePayload(state, tabType));
-      markSaved();
-      savedSnapshot.current = JSON.stringify(stateToDraft(state, tabType));
-      dispatch({ type: "SAVE_SUCCESS" });
-      return res;
-    } catch (e) {
-      dispatch({ type: "SAVE_ERROR", error: e instanceof Error ? e.message : strings.editor.saveFailed });
-      throw e;
-    }
-  }, [state, tabType, onSave, markSaved]);
-
-  handleSaveRef.current = handleSave;
+  const { handleSend, handleTest, handleCreateMock } = useRestActions(state, dispatch, activeEnv, tabType, onCreateMock);
 
   // Expose imperative handle for save + refresh
   useImperativeHandle(ref, () => ({
     refresh(entity: SavedRequest | MockRule) {
-      dispatch({ type: "REFRESH", entity, tabType });
-      // Update snapshot so the refreshed entity is the new "clean" baseline
-      savedSnapshot.current = JSON.stringify(stateToDraft(initState(entity, null, tabType), tabType));
+      handleRefresh(entity);
     },
     save() {
       return handleSaveRef.current();
     },
-  }), [tabType]);
-
-  const [syncing, setSyncing] = useState(false);
-  const [reverting, setReverting] = useState(false);
-
-  const handleSyncClick = useCallback(async () => {
-    if (syncing || !onSync) return;
-    setSyncing(true);
-    try {
-      let savedId: string | undefined = undefined;
-      if (isDirty || draftTabId) {
-        const res: any = await handleSave();
-        if (res && typeof res === "object" && res.id) {
-          savedId = res.id;
-        }
-      }
-      await onSync(savedId);
-    } finally {
-      setSyncing(false);
-    }
-  }, [syncing, onSync, isDirty, draftTabId, handleSave]);
-
-  const handleRevertClick = useCallback(async () => {
-    if (reverting || !onRevert) return;
-    setReverting(true);
-    try {
-      await onRevert();
-    } finally {
-      setReverting(false);
-    }
-  }, [reverting, onRevert]);
-
-  // -- Create mock from current request/response -------------------------
-
-  const handleCreateMock = useCallback(() => {
-    if (!onCreateMock) return;
-    const { result, resMode } = state;
-    const resCt = result?.headers?.["content-type"] ?? "";
-    const isBinaryRes = isBinaryContentType(resCt);
-    onCreateMock({
-      name: state.name.trim() || "",
-      method: state.method,
-      urlPattern: state.url.trim(),
-      useRegex: false,
-      capturedHeaders: rowsToHeaders(state.reqHeaders),
-      capturedBody: textToB64(state.reqBody),
-      responseStatus: result?.status ?? 200,
-      responseStatusMocked: true,
-      responseHeaders: result?.headers ?? {},
-      mockedResponseHeaders: [],
-      responseBody: isBinaryRes
-        ? (result?.body ?? "")
-        : (result ? (resMode === "json" ? tryFormat(b64ToText(result.body)) : b64ToText(result.body)) : "{}"),
-      responseBodyMocked: true,
-      responseBodyEncoding: isBinaryRes ? "base64" : undefined,
-      responseDelayMocked: true,
-    });
-  }, [state, onCreateMock]);
+  }), [handleRefresh]);
 
   // -- Derived ------------------------------------------------------------
 
@@ -340,11 +180,10 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
   const errorMsg = state.sendErr ?? state.saveErr ?? state.regexError ?? state.testError ?? null;
 
-  const hasDiff = !draftTabId && Boolean(isDirty || (syncStatus && syncStatus !== "clean"));
-  const syncDisabled = !hasDiff || (!canSaveBase && isDirty) || syncing;
-  const revertDisabled = !hasDiff || reverting;
-  const syncTitle = !hasDiff ? strings.common.noChangesToSync : strings.common.syncTooltip;
-  const revertTitle = !hasDiff ? strings.common.noChangesToRevert : strings.common.revertTooltip;
+  const syncDisabled = !hasLocalChanges || (!canSaveBase && isDirty) || syncing;
+  const revertDisabled = !hasLocalChanges || reverting;
+  const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
+  const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
 
   // -- Render -------------------------------------------------------------
 
@@ -363,44 +202,13 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
       {/* cURL import - collapsible for request, always open for mock */}
       {showCurlImport && (
-        tabType === "request" ? (
-          <div className="px-4 flex-shrink-0 border-b border-border bg-background/30">
-            <button
-              onClick={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
-              className="flex items-center gap-1.5 py-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
-            >
-              <span style={{ display: "flex", alignItems: "center", transition: "transform 0.15s ease", transform: state.showCurl ? "rotate(0deg)" : "rotate(-90deg)" }}>
-                <ChevronDown size={10} />
-              </span>
-              {strings.requests.importFromCurl}
-            </button>
-            {state.showCurl && (
-              <textarea
-                className="w-full bg-card border border-border focus:border-signal rounded px-3 py-2 text-xs font-mono text-foreground outline-none resize-none placeholder:text-muted-foreground/50 mb-2"
-                rows={3}
-                placeholder={strings.requests.curlPlaceholder}
-                value={state.curlInput}
-                onChange={(e) => handleCurlChange(e.target.value)}
-                spellCheck={false}
-              />
-            )}
-          </div>
-        ) : (
-          <div className="px-4 py-3 border-b border-border flex-shrink-0 bg-background/30">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{strings.mocks.importFromCurl}</span>
-              <span className="text-[10px] text-muted-foreground opacity-60">{strings.mocks.importFromCurlHint}</span>
-            </div>
-            <textarea
-              className="w-full bg-card border border-border focus:border-signal rounded px-3 py-2 text-xs font-mono text-foreground outline-none resize-none placeholder:text-muted-foreground/50 transition-colors"
-              rows={3}
-              placeholder={strings.mocks.curlPlaceholder}
-              value={state.curlInput}
-              onChange={(e) => handleCurlChange(e.target.value)}
-              spellCheck={false}
-            />
-          </div>
-        )
+        <RestCurlImport
+          tabType={tabType}
+          showCurl={state.showCurl}
+          curlInput={state.curlInput}
+          onToggleShowCurl={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
+          onCurlChange={handleCurlChange}
+        />
       )}
 
       {/* URL bar */}
@@ -445,62 +253,12 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
       )}
 
       {/* Split-pane editor body */}
-      <EditorTab
-        mode={tabType === "request" ? "request" : "mock"}
+      <RestEditorPane
+        tabType={tabType}
+        state={state as any}
+        dispatch={dispatch}
         activeEnv={activeEnv}
-        reqTab={state.reqTab as "params" | "headers" | "body" | "pre-script"}
-        onReqTabChange={(v) => dispatch({ type: "SET_FIELD", field: "reqTab", value: v })}
-        reqParams={tabType === "request" ? state.reqParams : undefined}
-        onReqParamsChange={tabType === "request" ? (rows) => dispatch({ type: "SET_PARAMS", params: rows }) : undefined}
-        reqHeaders={state.reqHeaders}
-        onReqHeadersChange={(rows) => dispatch({ type: "SET_HEADERS", target: "req", rows })}
-        reqBody={state.reqBody}
-        onReqBodyChange={(v) => dispatch({ type: "SET_FIELD", field: "reqBody", value: v })}
-        reqMode={state.reqMode}
-        onReqModeChange={(m) => dispatch({ type: "SET_REQ_MODE", mode: m })}
-        reqReadOnly={tabType === "mock"}
-        preScript={tabType === "request" ? state.preScript : undefined}
-        onPreScriptChange={tabType === "request" ? (v) => dispatch({ type: "SET_FIELD", field: "preScript", value: v }) : undefined}
-        resTab={state.resTab as "body" | "headers" | "post-script" | "tests"}
-        onResTabChange={(v) => dispatch({ type: "SET_FIELD", field: "resTab", value: v })}
-        resMode={state.resMode}
-        // Request-mode response (read-only)
-        loading={tabType === "request" ? state.loading : undefined}
-        sendErr={tabType === "request" ? state.sendErr : undefined}
-        result={tabType === "request" ? state.result : undefined}
-        resBodyText={tabType === "request" ? resBodyText : undefined}
-        durationMs={tabType === "request" ? state.durationMs : undefined}
-        postScript={tabType === "request" ? state.postScript : undefined}
-        onPostScriptChange={tabType === "request" ? (v) => dispatch({ type: "SET_FIELD", field: "postScript", value: v }) : undefined}
-        scriptErr={tabType === "request" ? state.scriptErr : undefined}
-        testScript={tabType === "request" ? state.testScript : undefined}
-        onTestScriptChange={tabType === "request" ? (v) => dispatch({ type: "SET_FIELD", field: "testScript", value: v }) : undefined}
-        testResults={tabType === "request" ? state.testResults : undefined}
-        testLogs={tabType === "request" ? state.testLogs : undefined}
-        testRunning={tabType === "request" ? state.testRunning : undefined}
-        // Mock-mode response (editable)
-        resBody={tabType === "mock" ? state.resBody : undefined}
-        onResBodyChange={tabType === "mock" ? (v) => dispatch({ type: "SET_FIELD", field: "resBody", value: v }) : undefined}
-        resHeaders={tabType === "mock" ? state.resHeaders : undefined}
-        onResHeadersChange={tabType === "mock" ? (rows) => dispatch({ type: "SET_HEADERS", target: "res", rows }) : undefined}
-        onResModeChange={tabType === "mock" ? (m) => dispatch({ type: "SET_RES_MODE", mode: m }) : undefined}
-        resStatus={tabType === "mock" ? state.resStatus : undefined}
-        onResStatusChange={tabType === "mock" ? (s) => dispatch({ type: "SET_FIELD", field: "resStatus", value: s }) : undefined}
-        resStatusMocked={tabType === "mock" ? state.resStatusMocked : undefined}
-        onResStatusMockedChange={tabType === "mock" ? (mocked) => dispatch({ type: "SET_FIELD", field: "resStatusMocked", value: mocked }) : undefined}
-        resDelay={tabType === "mock" ? state.resDelay : undefined}
-        onResDelayChange={tabType === "mock" ? (ms) => dispatch({ type: "SET_FIELD", field: "resDelay", value: ms }) : undefined}
-        resDelayMocked={tabType === "mock" ? state.resDelayMocked : undefined}
-        onResDelayMockedChange={tabType === "mock" ? (mocked) => dispatch({ type: "SET_FIELD", field: "resDelayMocked", value: mocked }) : undefined}
-        resBodyEncoding={tabType === "mock" ? state.resBodyEncoding : undefined}
-        resBodyMocked={tabType === "mock" ? state.resBodyMocked : undefined}
-        onResBodyMockedChange={tabType === "mock" ? (mocked) => dispatch({ type: "SET_FIELD", field: "resBodyMocked", value: mocked }) : undefined}
-        streamingMode={tabType === "mock" ? state.streamingMode : undefined}
-        onStreamingModeChange={tabType === "mock" ? (m) => dispatch({ type: "SET_FIELD", field: "streamingMode", value: m }) : undefined}
-        streamingChunkDelay={tabType === "mock" ? state.streamingChunkDelay : undefined}
-        onStreamingChunkDelayChange={tabType === "mock" ? (ms) => dispatch({ type: "SET_FIELD", field: "streamingChunkDelay", value: ms }) : undefined}
-        streamingChunkSeparator={tabType === "mock" ? state.streamingChunkSeparator : undefined}
-        onStreamingChunkSeparatorChange={tabType === "mock" ? (sep) => dispatch({ type: "SET_FIELD", field: "streamingChunkSeparator", value: sep }) : undefined}
+        resBodyText={resBodyText}
       />
 
       {/* Bottom bar */}

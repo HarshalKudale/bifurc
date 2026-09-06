@@ -1,7 +1,7 @@
 import React from "react";
 import { AppConfig } from "@/types";
 import { strings } from "@/lib/strings";
-import { ColorMode } from "@/lib/useTheme";
+import { ColorMode } from "@/hooks/useTheme";
 import PanelLayout from "@/components/ui/PanelLayout";
 import ServerSettingsSection from "./settings/ServerSettingsSection";
 import TlsSettingsSection from "./settings/TlsSettingsSection";

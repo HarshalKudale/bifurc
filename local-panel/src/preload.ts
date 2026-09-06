@@ -100,6 +100,7 @@ contextBridge.exposeInMainWorld("api", {
   deleteWebhook: (id: string) => ipcRenderer.invoke("webhook:delete", id),
   registerActiveWebhook: (webhookId: string, urlSuffix: string) => ipcRenderer.invoke("webhook:registerActive", webhookId, urlSuffix),
   unregisterActiveWebhook: (webhookId: string) => ipcRenderer.invoke("webhook:unregisterActive", webhookId),
+  getWebhookServerStatus: () => ipcRenderer.invoke("webhookServer:status"),
   webhookServerStatus: () => ipcRenderer.invoke("webhookServer:status"),
   startWebhookServer: () => ipcRenderer.invoke("webhookServer:start"),
   stopWebhookServer: () => ipcRenderer.invoke("webhookServer:stop"),

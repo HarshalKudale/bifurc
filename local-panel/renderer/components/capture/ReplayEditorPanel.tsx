@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { RequestLogEntry, MockRule, ReplayResult } from "@/types";
-import HeaderTable from "@/components/editor/HeaderTable";
-import BodyEditor from "@/components/editor/BodyEditor";
+import HeaderTable from "@/components/common/HeaderTable";
+import BodyEditor from "@/components/common/BodyEditor";
 import {
   KVRow, mkRowId, headersToRows, rowsToHeaders,
   b64ToText, textToB64, tryFormat, statusColor,

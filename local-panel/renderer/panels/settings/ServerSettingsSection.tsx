@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { AppConfig } from "@/types";
 import { strings } from "@/lib/strings";
-import { ColorMode } from "@/lib/useTheme";
+import { ColorMode } from "@/hooks/useTheme";
 import { Button, Input, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
 
 interface ServerSettingsSectionProps {

@@ -2,12 +2,11 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppConfig, ProxyRule } from "@/types";
 import PanelHeader from "@/components/layout/PanelHeader";
 import ProxyRuleDetailsPanel, { RuleSavePayload } from "@/components/rules/ProxyRuleDetailsPanel";
+import ProxyRulesTable from "./ProxyRulesTable";
 import { strings } from "@/lib/strings";
 import { entityRelPath } from "@/lib/utils";
-import { Settings, History, Copy, Trash2 } from "@/lib/icons";
-import { Button, IconButton, DataTable, EmptyState, StatusDot, Switch } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
-import type { TableColumn } from "@/components/ui";
 
 interface Props {
   config: AppConfig;
@@ -182,186 +181,18 @@ export default function ProxyRulesPanel({
     }
   };
 
-  const syncDotColor = (syncSt: string | undefined) => {
-    if (syncSt === "new" || syncSt === "deleted") return "red" as const;
-    if (syncSt === "modified") return "yellow" as const;
-    return "green" as const;
-  };
-
-  const getSyncStatus = (r: ProxyRule) => {
+  const getSyncStatus = useCallback((r: ProxyRule) => {
     const relPath = entityRelPath("rules", r, folders);
     return entitySyncStatus?.[relPath];
-  };
+  }, [entitySyncStatus, folders]);
 
-  const isDetailsOpen = isCreatingNew || selectedRuleId !== null;
+  const isDetailsOpen = isCreatingNew || !!selectedRuleId;
 
-  // Currently selected rule for details panel
-  const activeRule = useMemo(() => {
+  const activeRule: ProxyRule | null = useMemo(() => {
     if (isCreatingNew) return null;
     if (!selectedRuleId) return null;
     return loadedEntities[selectedRuleId] ?? rules.find((r) => r.id === selectedRuleId) ?? null;
   }, [isCreatingNew, selectedRuleId, loadedEntities, rules]);
-
-  // -- Column definitions (dynamically adjust when right panel is open) --
-  const columns: TableColumn<ProxyRule>[] = useMemo(() => {
-    if (isDetailsOpen) {
-      // Streamlined columns when right side panel is open
-      return [
-        {
-          key: "nameAndPattern",
-          header: strings.proxyRules.columnName,
-          render: (r) => {
-            const syncSt = getSyncStatus(r);
-            return (
-              <div className="flex items-center gap-2 min-w-0">
-                {syncSt && <StatusDot color={syncDotColor(syncSt)} />}
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="text-xs font-medium text-foreground truncate">{r.name || "Untitled Rule"}</span>
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span
-                      className={`text-[9px] font-mono px-1 py-0.2 rounded uppercase font-semibold flex-shrink-0 ${
-                        r.useRegex ? "bg-signal/15 text-signal" : "bg-surface-2 text-muted-foreground"
-                      }`}
-                    >
-                      {r.useRegex ? "regex" : "exact"}
-                    </span>
-                    <span className="text-[11px] font-mono text-muted-foreground truncate" title={r.pattern}>
-                      {r.pattern}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          },
-        },
-        {
-          key: "on",
-          header: strings.mappings.columnOn,
-          align: "center",
-          width: "w-14",
-          render: (r) => (
-            <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-              <Switch checked={r.enabled} onChange={(v) => handleToggle(r, v)} />
-            </div>
-          ),
-        },
-      ];
-    }
-
-    // Full columns when right side panel is closed
-    return [
-      {
-        key: "name",
-        header: strings.proxyRules.columnName,
-        render: (r) => {
-          const syncSt = getSyncStatus(r);
-          return (
-            <div className="flex items-center gap-2 min-w-0">
-              {syncSt && <StatusDot color={syncDotColor(syncSt)} />}
-              <span className="text-xs font-medium text-foreground truncate">{r.name || "—"}</span>
-            </div>
-          );
-        },
-      },
-      {
-        key: "pattern",
-        header: strings.proxyRules.columnPattern,
-        render: (r) => (
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase font-semibold tracking-wider flex-shrink-0 ${
-                r.useRegex
-                  ? "bg-signal/15 text-signal border border-signal/30"
-                  : "bg-surface-2 text-muted-foreground border border-border"
-              }`}
-            >
-              {r.useRegex ? "regex" : "exact"}
-            </span>
-            <span className="font-mono text-xs text-foreground truncate max-w-md" title={r.pattern}>
-              {r.pattern}
-            </span>
-          </div>
-        ),
-      },
-      {
-        key: "on",
-        header: strings.mappings.columnOn,
-        align: "center",
-        width: "w-14",
-        render: (r) => (
-          <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-            <Switch checked={r.enabled} onChange={(v) => handleToggle(r, v)} />
-          </div>
-        ),
-      },
-      {
-        key: "actions",
-        width: "w-32",
-        render: (r) => {
-          const syncSt = getSyncStatus(r);
-          const relPath = entityRelPath("rules", r, folders);
-          return (
-            <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-              {onPublishItem && syncSt && syncSt !== "clean" && (
-                <Button variant="ghost" size="sm" onClick={() => onPublishItem(r.id)}>
-                  {strings.mappings.publish}
-                </Button>
-              )}
-              {onRestoreItem && syncSt && syncSt !== "clean" && (
-                <button
-                  onClick={() => onRestoreItem(r.id)}
-                  className="px-2.5 py-1 rounded text-amber hover:bg-amber/10 text-xs font-medium transition-all cursor-pointer"
-                >
-                  {strings.mappings.revert}
-                </button>
-              )}
-              {onHistoryOpen && (
-                <IconButton
-                  icon={<History size={11} />}
-                  title={strings.mappings.viewHistory}
-                  onClick={() => onHistoryOpen(relPath)}
-                  className="hover:text-signal"
-                />
-              )}
-              <IconButton
-                icon={<Copy size={12} />}
-                title={strings.folderTree.duplicate}
-                onClick={() => handleDuplicate(r.id)}
-                className="hover:text-signal"
-              />
-              <IconButton
-                icon={<Trash2 size={12} />}
-                title={strings.common.delete}
-                onClick={() => handleDelete(r.id)}
-                className="hover:text-destructive"
-              />
-            </div>
-          );
-        },
-      },
-    ];
-  }, [
-    isDetailsOpen,
-    folders,
-    entitySyncStatus,
-    onPublishItem,
-    onRestoreItem,
-    onHistoryOpen,
-    handleToggle,
-  ]);
-
-  const emptyNode = (
-    <EmptyState
-      icon={<Settings size={36} />}
-      title={strings.proxyRules.noRulesYet}
-      description={strings.proxyRules.noRulesYetHint}
-      action={
-        <Button variant="primary" onClick={handleOpenAdd}>
-          {strings.proxyRules.addRule}
-        </Button>
-      }
-    />
-  );
 
   const selectedRuleSyncStatus = activeRule ? getSyncStatus(activeRule) : undefined;
   const selectedRuleRelPath = activeRule ? entityRelPath("rules", activeRule, folders) : "";
@@ -383,15 +214,20 @@ export default function ProxyRulesPanel({
           />
 
           <div className="flex-1 overflow-y-auto p-6">
-            <DataTable
-              columns={columns}
-              data={rules}
-              rowKey={(r) => r.id}
-              emptyState={emptyNode}
-              onRowClick={(r) => handleSelectRule(r.id)}
-              rowClassName={(r) =>
-                r.id === selectedRuleId && isDetailsOpen ? "bg-card border-l-2 border-l-signal" : ""
-              }
+            <ProxyRulesTable
+              rules={rules}
+              folders={folders}
+              selectedRuleId={selectedRuleId}
+              isDetailsOpen={isDetailsOpen}
+              entitySyncStatus={entitySyncStatus}
+              onSelectRule={handleSelectRule}
+              onToggleRule={handleToggle}
+              onPublishItem={onPublishItem}
+              onRestoreItem={onRestoreItem}
+              onHistoryOpen={onHistoryOpen}
+              onDuplicate={handleDuplicate}
+              onDelete={handleDelete}
+              onOpenAdd={handleOpenAdd}
             />
           </div>
         </div>

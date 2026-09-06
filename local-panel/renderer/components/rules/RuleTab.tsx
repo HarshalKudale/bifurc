@@ -2,10 +2,9 @@ import React, { useState, useCallback, useMemo, useImperativeHandle, forwardRef 
 import { AppConfig, ProxyRule, Folder } from "@/types";
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
 import { BottomBar } from "@/components/editor/RequestTab";
-import CodeEditor from "@/components/common/CodeEditor";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { strings } from "@/lib/strings";
-import { Input, Select, FormField } from "@/components/ui";
+import ProxyRuleForm from "./ProxyRuleForm";
 
 // -- Types ------------------------------------------------------------------
 
@@ -118,7 +117,6 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
 
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof RuleTabState, string>>>({});
-  const [scriptTab, setScriptTab] = useState<"request" | "response">("request");
 
   const set = useCallback(<K extends keyof RuleTabState>(key: K, val: RuleTabState[K]) => {
     setState((prev) => ({ ...prev, [key]: val }));
@@ -256,122 +254,7 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
       />
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-h-0">
-        {/* Match pattern */}
-        <FormField label={s.matchUrl} error={errors.pattern}>
-          <div className="flex items-center gap-2">
-            <Input
-              className="flex-1 font-mono"
-              placeholder={state.useRegex ? "^https?://api\\.example\\.com/.*" : "https://api.example.com/endpoint"}
-              value={state.pattern}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => set("pattern", e.target.value)}
-              error={!!errors.pattern}
-            />
-            <button
-              type="button"
-              onClick={() => set("useRegex", !state.useRegex)}
-              className={`px-3 py-1.5 rounded border text-xs font-semibold transition-colors cursor-pointer flex-shrink-0 ${state.useRegex
-                ? "border-signal bg-signal/10 text-signal"
-                : "border-border bg-card text-muted-foreground hover:text-foreground"
-                }`}
-              title={state.useRegex ? s.switchToExact : s.switchToRegex}
-            >
-              {state.useRegex ? s.regexToggle : s.exactToggle}
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {state.useRegex ? s.regexHelp : s.exactHelp}
-          </p>
-        </FormField>
-
-        {/* Target */}
-        <div>
-          <div className="text-xs text-muted-foreground font-medium mb-2 uppercase tracking-wider">{s.forwardTo}</div>
-          <div className="flex items-center gap-3 mb-3">
-            {(["mapping", "external"] as const).map((type) => (
-              <label key={type} className="flex items-center gap-1.5 cursor-pointer text-sm text-foreground">
-                <input
-                  type="radio"
-                  className="accent-signal"
-                  checked={state.targetType === type}
-                  onChange={() => set("targetType", type)}
-                />
-                {type === "mapping" ? s.targetMapping : s.targetExternal}
-              </label>
-            ))}
-          </div>
-
-          {state.targetType === "mapping" ? (
-            <FormField label="" error={errors.targetMappingId}>
-              <Select
-                className="w-full"
-                error={!!errors.targetMappingId}
-                value={state.targetMappingId}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set("targetMappingId", e.target.value)}
-              >
-                <option value="">{s.selectMapping}</option>
-                {(config.mappings ?? []).map((m) => (
-                  <option key={m.id} value={m.id}>{m.domain} → {m.target}</option>
-                ))}
-              </Select>
-              {config.mappings.length === 0 && (
-                <p className="text-xs text-muted-foreground mt-1">{s.noMappingsDefined}</p>
-              )}
-            </FormField>
-          ) : (
-            <FormField label="" error={errors.targetExternal}>
-              <Input
-                className="w-full font-mono"
-                placeholder="api.example.com:8080 or 127.0.0.1:3000"
-                value={state.targetExternal}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => set("targetExternal", e.target.value)}
-                error={!!errors.targetExternal}
-              />
-              <p className="text-xs text-muted-foreground mt-1">host:port (e.g. api.example.com:8080 or 127.0.0.1:3000)</p>
-            </FormField>
-          )}
-        </div>
-
-        {/* Scripts */}
-        <div className="flex flex-col flex-1 min-h-0">
-          <div className="flex items-center gap-0 border-b border-border mb-0">
-            {(["request", "response"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setScriptTab(tab)}
-                className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer -mb-px ${scriptTab === tab
-                  ? "border-signal text-signal"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
-              >
-                {tab === "request" ? s.requestScript : s.responseScript}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 min-h-[200px] relative border-t border-border" style={{ minHeight: 200 }}>
-            {scriptTab === "request" ? (
-              <CodeEditor
-                key="req-script"
-                language="javascript"
-                value={state.requestScript}
-                onChange={(v) => set("requestScript", v)}
-                placeholder={s.requestScriptPlaceholder}
-                className="w-full h-full"
-                minHeight={200}
-              />
-            ) : (
-              <CodeEditor
-                key="res-script"
-                language="javascript"
-                value={state.responseScript}
-                onChange={(v) => set("responseScript", v)}
-                placeholder={s.responseScriptPlaceholder}
-                className="w-full h-full"
-                minHeight={200}
-              />
-            )}
-          </div>
-        </div>
+        <ProxyRuleForm state={state} errors={errors} onChange={set} config={config} minimal={true} />
       </div>
 
       <BottomBar

@@ -2,7 +2,7 @@ import React from "react";
 import { AppConfig, MockRule, SavedRequest, ServiceInfo, Folder, SyncStatus } from "@/types";
 import { Panel, isPanelEnabled } from "@/lib/panelRegistry";
 import { CaptureStats } from "@/panels/CapturePanel";
-import { ColorMode } from "@/lib/useTheme";
+import { ColorMode } from "@/hooks/useTheme";
 
 import ServicesPanel from "@/panels/ServicesPanel";
 import MappingsPanel from "@/panels/MappingsPanel";
@@ -18,12 +18,6 @@ import AuditLogPanel from "@/panels/AuditLogPanel";
 import WorkspacePanel from "@/panels/WorkspacePanel";
 import HealthBarPanel from "@/panels/HealthBarPanel";
 import PlaceholderPanel from "@/panels/PlaceholderPanel";
-import GraphQLRequestsPanel from "@/panels/GraphQLRequestsPanel";
-import GraphQLMocksPanel from "@/panels/GraphQLMocksPanel";
-import GrpcRequestsPanel from "@/panels/GrpcRequestsPanel";
-import GrpcMocksPanel from "@/panels/GrpcMocksPanel";
-import SoapRequestsPanel from "@/panels/SoapRequestsPanel";
-import SoapMocksPanel from "@/panels/SoapMocksPanel";
 import { AlertCircle } from "@/lib/icons";
 
 // -- Render context ----------------------------------------------------------

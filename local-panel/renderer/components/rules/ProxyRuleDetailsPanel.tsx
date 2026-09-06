@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { AppConfig, ProxyRule } from "@/types";
-import CodeEditor from "@/components/common/CodeEditor";
 import { strings } from "@/lib/strings";
-import { Input, Select, FormField, Switch, Button, IconButton } from "@/components/ui";
+import { Switch, Button, IconButton } from "@/components/ui";
 import { X, History, Trash2, Copy, GitCommit } from "@/lib/icons";
+import ProxyRuleForm, { RuleFormState } from "./ProxyRuleForm";
 
 export interface RuleSavePayload {
   name: string;
@@ -31,17 +31,6 @@ interface Props {
   onRevert?: () => Promise<void>;
   onHistory?: () => void;
   syncStatus?: "clean" | "modified" | "new" | "deleted";
-}
-
-interface RuleFormState {
-  name: string;
-  pattern: string;
-  useRegex: boolean;
-  targetType: "mapping" | "external";
-  targetMappingId: string;
-  targetExternal: string;
-  requestScript: string;
-  responseScript: string;
 }
 
 function stateFromRule(rule: Partial<ProxyRule> | null): RuleFormState {
@@ -79,7 +68,6 @@ export default function ProxyRuleDetailsPanel({
   const [syncing, setSyncing] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof RuleFormState, string>>>({});
-  const [scriptTab, setScriptTab] = useState<"request" | "response">("request");
 
   useEffect(() => {
     setForm(stateFromRule(rule));
@@ -230,143 +218,7 @@ export default function ProxyRuleDetailsPanel({
 
       {/* Main Form Body */}
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-h-0">
-        {/* Match Pattern */}
-        <FormField label={s.matchUrl} error={errors.pattern}>
-          <div className="flex items-center gap-2">
-            <Input
-              className="flex-1 font-mono text-xs"
-              placeholder={form.useRegex ? "^https?://api\\.example\\.com/.*" : "https://api.example.com/endpoint"}
-              value={form.pattern}
-              onChange={(e) => setField("pattern", e.target.value)}
-              error={!!errors.pattern}
-            />
-            <button
-              type="button"
-              onClick={() => setField("useRegex", !form.useRegex)}
-              className={`px-2.5 py-1.5 rounded border text-xs font-semibold transition-colors cursor-pointer flex-shrink-0 ${
-                form.useRegex
-                  ? "border-signal bg-signal/15 text-signal"
-                  : "border-border bg-card text-muted-foreground hover:text-foreground"
-              }`}
-              title={form.useRegex ? s.switchToExact : s.switchToRegex}
-            >
-              {form.useRegex ? s.regexToggle : s.exactToggle}
-            </button>
-          </div>
-          <p className="text-[11px] text-muted-foreground mt-1">
-            {form.useRegex ? s.regexHelp : s.exactHelp}
-          </p>
-        </FormField>
-
-        {/* Forward Target */}
-        <div className="border border-border/70 rounded-lg p-3 bg-card/40">
-          <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2.5">
-            {s.forwardTo}
-          </div>
-          <div className="flex items-center gap-4 mb-3">
-            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-foreground">
-              <input
-                type="radio"
-                name="targetType"
-                className="accent-signal"
-                checked={form.targetType === "mapping"}
-                onChange={() => setField("targetType", "mapping")}
-              />
-              {s.targetMapping}
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-foreground">
-              <input
-                type="radio"
-                name="targetType"
-                className="accent-signal"
-                checked={form.targetType === "external"}
-                onChange={() => setField("targetType", "external")}
-              />
-              {s.targetExternal}
-            </label>
-          </div>
-
-          {form.targetType === "mapping" ? (
-            <FormField label="" error={errors.targetMappingId}>
-              <Select
-                className="w-full text-xs font-mono"
-                error={!!errors.targetMappingId}
-                value={form.targetMappingId}
-                onChange={(e) => setField("targetMappingId", e.target.value)}
-              >
-                <option value="">{s.selectMapping}</option>
-                {(config.mappings ?? []).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.domain} → {m.target}
-                  </option>
-                ))}
-              </Select>
-              {(config.mappings ?? []).length === 0 && (
-                <p className="text-xs text-muted-foreground mt-1">{s.noMappingsDefined}</p>
-              )}
-            </FormField>
-          ) : (
-            <FormField label="" error={errors.targetExternal}>
-              <Input
-                className="w-full font-mono text-xs"
-                placeholder="api.example.com:8080 or 127.0.0.1:3000"
-                value={form.targetExternal}
-                onChange={(e) => setField("targetExternal", e.target.value)}
-                error={!!errors.targetExternal}
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">host:port (e.g. api.example.com:8080 or 127.0.0.1:3000)</p>
-            </FormField>
-          )}
-        </div>
-
-        {/* Scripts section */}
-        <div className="flex flex-col flex-1 min-h-[220px] border border-border/70 rounded-lg overflow-hidden">
-          <div className="flex items-center gap-0 border-b border-border bg-card/40">
-            {(["request", "response"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setScriptTab(tab)}
-                className={`px-3.5 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer -mb-px ${
-                  scriptTab === tab
-                    ? "border-signal text-signal bg-surface"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tab === "request" ? s.requestScript : s.responseScript}
-                {tab === "request" && form.requestScript.trim() && (
-                  <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-signal inline-block" />
-                )}
-                {tab === "response" && form.responseScript.trim() && (
-                  <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-amber inline-block" />
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 min-h-[180px] relative bg-background">
-            {scriptTab === "request" ? (
-              <CodeEditor
-                key="req-script"
-                language="javascript"
-                value={form.requestScript}
-                onChange={(v) => setField("requestScript", v)}
-                placeholder={s.requestScriptPlaceholder}
-                className="w-full h-full"
-                minHeight={180}
-              />
-            ) : (
-              <CodeEditor
-                key="res-script"
-                language="javascript"
-                value={form.responseScript}
-                onChange={(v) => setField("responseScript", v)}
-                placeholder={s.responseScriptPlaceholder}
-                className="w-full h-full"
-                minHeight={180}
-              />
-            )}
-          </div>
-        </div>
+        <ProxyRuleForm state={form} errors={errors} onChange={setField} config={config} minimal={false} />
       </div>
 
       {/* Footer toolbar */}
