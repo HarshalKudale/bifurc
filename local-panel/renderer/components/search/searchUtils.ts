@@ -16,6 +16,8 @@ export interface SearchResultItem {
   section: string;
   entityType: "tab" | "request" | "mock" | "rule" | "websocket" | "webhook" | "mapping" | "service" | "environment";
   original?: any;
+  isMapped?: boolean;
+  mappingLabel?: string;
 }
 
 export interface SearchSection {
@@ -349,11 +351,11 @@ export function searchEntities({
   }
 
   // Helper to add entity section
-  const addSection = (title: string, items: SearchResultItem[]) => {
+  const addSection = (title: string, items: SearchResultItem[], limit = maxPerSection) => {
     if (items.length > 0) {
       sections.push({
         title,
-        items: items.slice(0, maxPerSection),
+        items: limit > 0 ? items.slice(0, limit) : items,
       });
     }
   };
@@ -512,23 +514,41 @@ export function searchEntities({
   // Check services
   if (mode === "global" || normalizedActive === "services") {
     const serviceItems: SearchResultItem[] = [];
+    const portToMapping = new Map(
+      (config.mappings ?? []).map((m: Mapping) => {
+        const parts = m.target.split(":");
+        const port = parseInt(parts[parts.length - 1], 10);
+        return [port, m];
+      })
+    );
+
     services.forEach((s) => {
       const portStr = String(s.port);
-      if (matches(q, s.name, s.command, portStr)) {
+      const pidStr = String(s.pid);
+      const mapping = portToMapping.get(s.port);
+      const isMapped = !!mapping;
+      const mappingDisplay = mapping ? (mapping.label || mapping.subdomain || mapping.target) : "";
+
+      if (matches(q, s.processName, portStr, pidStr, s.address, mappingDisplay)) {
         serviceItems.push({
-          id: `svc-${s.port}-${s.name}`,
-          title: s.name,
-          subtitle: `Port ${s.port} · PID ${s.pid}`,
+          id: `svc-${s.port}-${s.pid}`,
+          title: s.processName || `Service (Port ${s.port})`,
+          subtitle: `${s.address}:${s.port} · PID ${s.pid}${isMapped ? ` · Mapped: ${mappingDisplay}` : " · Unmapped"}`,
           method: "SVC",
           panel: "services",
           isOpenTab: false,
           section: "Services",
           entityType: "service",
           original: s,
+          isMapped,
+          mappingLabel: mappingDisplay,
         });
       }
     });
-    addSection("Services", serviceItems);
+
+    // On services screen (mode === "current"), display the full list without limiting to 8
+    const serviceLimit = normalizedActive === "services" ? 0 : Math.max(maxPerSection, 12);
+    addSection("Services", serviceItems, serviceLimit);
   }
 
   // Check environments

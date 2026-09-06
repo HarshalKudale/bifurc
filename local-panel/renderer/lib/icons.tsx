@@ -56,6 +56,7 @@ export {
   CloudOff,      // no remote
   ArrowUp,       // push
   ArrowDown,     // pull
+  ArrowRight,    // navigate / map
   Activity,      // health bar nav
   Webhook,       // webhooks nav/panel
   User,          // account nav

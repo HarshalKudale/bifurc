@@ -774,6 +774,7 @@ export default function App() {
         onSelectTab={handleSearchSelectTab}
         onOpenEntity={handleSearchOpenEntity}
         onNavigatePanel={handleSearchNavigatePanel}
+        onRefreshServices={refreshServices}
       />
     </div>
   );

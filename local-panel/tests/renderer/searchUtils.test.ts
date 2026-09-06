@@ -189,4 +189,71 @@ describe("searchUtils", () => {
     expect(res.sections[0].items[0].entityType).toBe("rule");
     expect(res.sections[0].items[0].isOpenTab).toBe(false);
   });
+
+  it("searches services by processName, port, PID, and identifies mapped status", () => {
+    const mockServices = [
+      { port: 3000, address: "127.0.0.1", pid: 1234, processName: "node" },
+      { port: 5432, address: "0.0.0.0", pid: 5678, processName: "postgres" },
+      { port: 8080, address: "127.0.0.1", pid: 9999, processName: "java" },
+    ];
+
+    // Searching by processName "node"
+    const resByName = searchEntities({
+      query: "node",
+      mode: "current",
+      activePanel: "services",
+      config: mockConfig,
+      services: mockServices,
+    });
+
+    expect(resByName.sections.length).toBe(1);
+    expect(resByName.sections[0].title).toBe("Services");
+    expect(resByName.sections[0].items.length).toBe(1);
+    expect(resByName.sections[0].items[0].title).toBe("node");
+    expect(resByName.sections[0].items[0].subtitle).toContain("3000");
+    // port 3000 matches mockConfig.mappings target "http://localhost:3000"
+    expect(resByName.sections[0].items[0].isMapped).toBe(true);
+
+    // Searching by processName "postgres"
+    const resByPg = searchEntities({
+      query: "postgres",
+      mode: "current",
+      activePanel: "services",
+      config: mockConfig,
+      services: mockServices,
+    });
+    expect(resByPg.sections[0].items[0].title).toBe("postgres");
+    expect(resByPg.sections[0].items[0].isMapped).toBe(false);
+
+    // Searching by port "5432"
+    const resByPort = searchEntities({
+      query: "5432",
+      mode: "current",
+      activePanel: "services",
+      config: mockConfig,
+      services: mockServices,
+    });
+    expect(resByPort.sections[0].items[0].title).toBe("postgres");
+  });
+
+  it("does not truncate services to 8 when on services screen", () => {
+    const manyServices = Array.from({ length: 15 }, (_, i) => ({
+      port: 3000 + i,
+      address: "127.0.0.1",
+      pid: 1000 + i,
+      processName: `worker-${i}`,
+    }));
+
+    const res = searchEntities({
+      query: "",
+      mode: "current",
+      activePanel: "services",
+      config: mockConfig,
+      services: manyServices,
+      maxPerSection: 8,
+    });
+
+    // All 15 services should be present
+    expect(res.sections[0].items.length).toBe(15);
+  });
 });

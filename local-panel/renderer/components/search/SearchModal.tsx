@@ -20,6 +20,7 @@ interface Props {
   onSelectTab: (panel: Panel, tabId: string) => void;
   onOpenEntity: (panel: Panel, entityId: string, entityType: string, original?: any) => void;
   onNavigatePanel: (panel: Panel, target?: any) => void;
+  onRefreshServices?: () => void;
 }
 
 export default function SearchModal({
@@ -32,6 +33,7 @@ export default function SearchModal({
   onSelectTab,
   onOpenEntity,
   onNavigatePanel,
+  onRefreshServices,
 }: Props) {
   const [mode, setMode] = useState<"current" | "global">(initialMode);
   const [query, setQuery] = useState("");
@@ -46,6 +48,7 @@ export default function SearchModal({
   // When initialMode changes when modal is triggered, sync mode
   useEffect(() => {
     if (open) {
+      onRefreshServices?.();
       setMode(initialMode);
       setQuery("");
       setDebouncedQuery("");
@@ -57,7 +60,7 @@ export default function SearchModal({
         inputRef.current?.select();
       });
     }
-  }, [open, initialMode]);
+  }, [open, initialMode, onRefreshServices]);
 
   // Debounce query filtering with 300ms
   useEffect(() => {
@@ -130,6 +133,9 @@ export default function SearchModal({
       ) {
         // Open saved entity in new active tab
         onOpenEntity(item.panel, item.id, item.entityType, item.original);
+      } else if (item.entityType === "service" && item.original?.port) {
+        // Services action: Map the service in Mappings panel
+        onNavigatePanel("mappings", `localhost:${item.original.port}`);
       } else {
         // Non-tab entity: switch to respective panel
         onNavigatePanel(item.panel, item.original);
@@ -346,6 +352,31 @@ export default function SearchModal({
                             <Folder size={10} />
                             <span className="truncate max-w-[100px]">{item.folderName}</span>
                           </span>
+                        )}
+
+                        {/* Service Map button or Mapped indicator */}
+                        {item.entityType === "service" && item.original?.port && (
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {item.isMapped ? (
+                              <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                Mapped
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleClose();
+                                  onNavigatePanel("mappings", `localhost:${item.original.port}`);
+                                }}
+                                title={`Map localhost:${item.original.port}`}
+                                className="px-2 py-0.5 text-[11px] font-semibold rounded bg-signal/15 hover:bg-signal/25 text-signal border border-signal/30 hover:border-signal/50 transition-all cursor-pointer flex items-center gap-1"
+                              >
+                                <span>Map</span>
+                                <ArrowRight size={10} />
+                              </button>
+                            )}
+                          </div>
                         )}
 
                         {/* Open Tab Indicator */}
