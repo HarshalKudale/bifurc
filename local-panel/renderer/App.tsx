@@ -70,6 +70,7 @@ export default function App() {
   const [mappingPrefill, setMappingPrefill] = useState<string | undefined>();
   const [pendingOpenRequest, setPendingOpenRequest] = useState<Omit<SavedRequest, "id" | "createdAt" | "workspaceId"> | null>(null);
   const [pendingMockInitial, setPendingMockInitial] = useState<Partial<MockRule> | null>(null);
+  const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
 
   // Per-entity sync status (clean/modified/new/deleted)
   const [entitySyncStatus, setEntitySyncStatus] = useState<Record<string, "clean" | "modified" | "new" | "deleted">>({});
@@ -161,6 +162,16 @@ export default function App() {
 
   const handleSearchSelectTab = useCallback(
     (targetPanel: Panel, tabId: string) => {
+      if (targetPanel === "rules") {
+        setPendingRuleId(tabId);
+        setPanel("rules");
+        window.dispatchEvent(
+          new CustomEvent("localpanel:select-rule", {
+            detail: { ruleId: tabId },
+          })
+        );
+        return;
+      }
       const storageKey = getStorageKeyForPanel(targetPanel);
       if (storageKey) {
         writeStorage(`${storageKey}:activeTab`, tabId);
@@ -177,6 +188,16 @@ export default function App() {
 
   const handleSearchOpenEntity = useCallback(
     (targetPanel: Panel, entityId: string, _entityType: string, _original?: any) => {
+      if (targetPanel === "rules") {
+        setPendingRuleId(entityId);
+        setPanel("rules");
+        window.dispatchEvent(
+          new CustomEvent("localpanel:select-rule", {
+            detail: { ruleId: entityId },
+          })
+        );
+        return;
+      }
       const storageKey = getStorageKeyForPanel(targetPanel);
       if (storageKey) {
         const openKey = `${storageKey}:openTabs`;
@@ -201,6 +222,16 @@ export default function App() {
     (targetPanel: Panel, target?: any) => {
       if (targetPanel === "mappings" && typeof target === "string") {
         setMappingPrefill(target);
+      } else if (targetPanel === "rules") {
+        const ruleId = typeof target === "string" ? target : target?.id;
+        if (ruleId) {
+          setPendingRuleId(ruleId);
+          window.dispatchEvent(
+            new CustomEvent("localpanel:select-rule", {
+              detail: { ruleId },
+            })
+          );
+        }
       }
       setPanel(targetPanel);
     },
@@ -348,6 +379,7 @@ export default function App() {
   const clearWorkspaceContext = useCallback((loadingMsg = "Switching workspace…") => {
     setPendingOpenRequest(null);
     setPendingMockInitial(null);
+    setPendingRuleId(null);
     setHistoryOpen(false);
     setSidebarOpen(true);
     setMappingPrefill(undefined);
@@ -574,6 +606,8 @@ export default function App() {
     onPendingRequestConsumed: () => setPendingOpenRequest(null),
     pendingMockInitial,
     onPendingMockConsumed: () => setPendingMockInitial(null),
+    pendingRuleId,
+    onPendingRuleConsumed: () => setPendingRuleId(null),
     handleOpenMockEditor,
     handleOpenInRequests,
     onStatsChange: setCaptureStats,
@@ -607,7 +641,7 @@ export default function App() {
     wsConfig, config, wsId, services, serverRunning, serverError, colorMode, setColorMode,
     activeEnv, openHistory, handleEntityPathChange, historyOpen, bumpHistoryReload,
     entitySyncStatus, refreshEntitySyncStatus, handleConfigChange, handleWsConfigChange,
-    refreshServices, mappingPrefill, pendingOpenRequest, pendingMockInitial,
+    refreshServices, mappingPrefill, pendingOpenRequest, pendingMockInitial, pendingRuleId,
     handleOpenMockEditor, handleOpenInRequests, makePublishItem, makePublishFolder,
     makeFlatPublish, makeFlatRevert, makeRestoreItem, handlePublishHealthBar,
     visibility, setPanelVisible,

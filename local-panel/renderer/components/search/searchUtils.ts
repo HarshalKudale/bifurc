@@ -48,7 +48,6 @@ export function isTabSupportedPanel(panel: Panel): boolean {
     panel === "mock-graphql" ||
     panel === "mock-soap" ||
     panel === "mock-grpc" ||
-    panel === "rules" ||
     panel === "sockets" ||
     panel === "webhooks"
   );
@@ -115,8 +114,6 @@ export function getOpenTabs(panel: Panel): string[] {
       return readStorage<string[]>("requests:openTabs", []);
     case "mocks":
       return readStorage<string[]>("mocks:openTabs", []);
-    case "rules":
-      return readStorage<string[]>("rules:openTabs", []);
     case "sockets":
       return readStorage<string[]>("ws:openTabs", []);
     case "webhooks":
@@ -155,7 +152,6 @@ export function searchEntities({
   const openTabIdsByPanel: Record<string, Set<string>> = {
     requests: new Set(getOpenTabs("requests")),
     mocks: new Set(getOpenTabs("mocks")),
-    rules: new Set(getOpenTabs("rules")),
     sockets: new Set(getOpenTabs("sockets")),
     webhooks: new Set(getOpenTabs("webhooks")),
   };
@@ -214,7 +210,7 @@ export function searchEntities({
   const allWebhooks: SavedWebhook[] = config.webhooks ?? [];
   const whMap = new Map<string, SavedWebhook>(allWebhooks.map((w) => [w.id, w]));
 
-  const processOpenTabsFor = (panelKey: "requests" | "mocks" | "rules" | "sockets" | "webhooks") => {
+  const processOpenTabsFor = (panelKey: "requests" | "mocks" | "sockets" | "webhooks") => {
     const tabIds = openTabIdsByPanel[panelKey];
     if (!tabIds) return;
 
@@ -264,24 +260,6 @@ export function searchEntities({
             folderName = getFolderName(mock.folderId, mockFolders);
           } else {
             title = "Mock Tab";
-          }
-        }
-      } else if (panelKey === "rules") {
-        if (tabId.startsWith("rule-draft-")) {
-          isDraft = true;
-          const draft = loadDraft<any>(tabId);
-          title = draft?.name || "New Rule";
-          subtitle = draft?.pattern;
-          method = "RULE";
-        } else {
-          const rule = ruleMap.get(tabId);
-          if (rule) {
-            title = rule.name || "Untitled Rule";
-            subtitle = rule.pattern;
-            method = "RULE";
-            folderName = getFolderName(rule.folderId, ruleFolders);
-          } else {
-            title = "Rule Tab";
           }
         }
       } else if (panelKey === "sockets") {
@@ -355,7 +333,6 @@ export function searchEntities({
     // Global mode: include open tabs from all tabbed panels
     processOpenTabsFor("requests");
     processOpenTabsFor("mocks");
-    processOpenTabsFor("rules");
     processOpenTabsFor("sockets");
     processOpenTabsFor("webhooks");
   }
@@ -436,12 +413,14 @@ export function searchEntities({
 
   // Check rules
   if (mode === "global" || normalizedActive === "rules") {
-    const unopenedRules: SearchResultItem[] = [];
+    const matchingRules: SearchResultItem[] = [];
     allRules.forEach((r) => {
-      if (isEntityOpen("rules", r.id)) return;
       const folderName = getFolderName(r.folderId, ruleFolders);
-      if (matches(q, r.name, r.pattern, r.target, folderName)) {
-        unopenedRules.push({
+      const targetStr = r.targetType === "mapping"
+        ? (config.mappings?.find((m) => m.id === r.targetMappingId)?.domain || r.targetMappingId)
+        : r.targetExternal;
+      if (matches(q, r.name, r.pattern, targetStr, folderName)) {
+        matchingRules.push({
           id: r.id,
           tabId: r.id,
           title: r.name || "Untitled Rule",
@@ -456,7 +435,7 @@ export function searchEntities({
         });
       }
     });
-    addSection("Proxy Rules", unopenedRules);
+    addSection("Proxy Rules", matchingRules);
   }
 
   // Check sockets

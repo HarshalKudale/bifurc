@@ -66,11 +66,13 @@ export interface PanelRenderContext {
     onPrefillConsumed: () => void;
     setPanel: (p: Panel) => void;
     setMappingPrefill: (v: string | undefined) => void;
-    // Pending open request / mock initial
+    // Pending open request / mock initial / rule select
     pendingOpenRequest: Omit<SavedRequest, "id" | "createdAt" | "workspaceId"> | null;
     onPendingRequestConsumed: () => void;
     pendingMockInitial: Partial<MockRule> | null;
     onPendingMockConsumed: () => void;
+    pendingRuleId: string | null;
+    onPendingRuleConsumed: () => void;
     handleOpenMockEditor: (initial: Partial<MockRule>) => void;
     handleOpenInRequests: (req: Omit<SavedRequest, "id" | "createdAt" | "workspaceId">) => void;
     // Capture
@@ -139,6 +141,8 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onPublishItem={ctx.makePublishItem("rules", ctx.wsConfig.ruleFolders ?? [])}
             onPublishFolder={ctx.makePublishFolder("rules", ctx.wsConfig.ruleFolders ?? [])}
             onRestoreItem={ctx.makeRestoreItem("rules", ctx.wsConfig.ruleFolders ?? [])}
+            pendingRuleId={ctx.pendingRuleId}
+            onPendingRuleConsumed={ctx.onPendingRuleConsumed}
         />
     ),
     capture: (ctx) => (

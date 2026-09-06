@@ -174,4 +174,19 @@ describe("searchUtils", () => {
 
     expect(res.sections[0].items.length).toBe(5);
   });
+
+  it("searches proxy rules as saved entities without tab requirement", () => {
+    const res = searchEntities({
+      query: "auth",
+      mode: "current",
+      activePanel: "rules",
+      config: mockConfig,
+    });
+
+    expect(res.sections.length).toBe(1);
+    expect(res.sections[0].title).toBe("Proxy Rules");
+    expect(res.sections[0].items[0].id).toBe("rule-1");
+    expect(res.sections[0].items[0].entityType).toBe("rule");
+    expect(res.sections[0].items[0].isOpenTab).toBe(false);
+  });
 });
