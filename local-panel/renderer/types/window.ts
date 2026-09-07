@@ -35,7 +35,7 @@ import type {
   HealthBarService
 } from "./ipc";
 
-export interface LocalPanelApi {
+export interface BifurcApi {
   checkUpdate(): Promise<UpdateCheckResult>;
   getConfig(): Promise<AppConfig>;
   loadEntity(wsId: string, kind: string, id: string): Promise<{ ok: boolean; entity?: unknown }>;
@@ -206,6 +206,6 @@ export interface LocalPanelApi {
 
 declare global {
   interface Window {
-    api: LocalPanelApi;
+    api: BifurcApi;
   }
 }

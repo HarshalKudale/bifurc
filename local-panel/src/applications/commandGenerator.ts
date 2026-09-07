@@ -277,8 +277,8 @@ export function generateResolvedCommand(
             // If using build mode, build first then run
             if (!image && cfg?.dockerfile) {
                 const buildCtx = cfg.buildContext || ".";
-                const buildCmd = `docker build -f ${cfg.dockerfile} -t _localpanel_build ${buildCtx}`;
-                command = `${buildCmd} && docker run --rm _localpanel_build`;
+                const buildCmd = `docker build -f ${cfg.dockerfile} -t _bifurc_build ${buildCtx}`;
+                command = `${buildCmd} && docker run --rm _bifurc_build`;
             }
             break;
         }

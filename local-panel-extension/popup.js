@@ -1,5 +1,5 @@
 /**
- * Local Panel Companion — Popup Script
+ * Bifurc Companion — Popup Script
  */
 
 const proxyToggle = document.getElementById("proxyToggle");
@@ -25,7 +25,7 @@ async function loadState() {
     chrome.runtime.sendMessage({ type: "get:status" }, (response) => {
         if (response && response.connected) {
             statusDot.className = "dot dot-connected";
-            statusText.textContent = "Connected to Local Panel";
+            statusText.textContent = "Connected to Bifurc";
         } else {
             statusDot.className = "dot dot-disconnected";
             statusText.textContent = "Disconnected";
@@ -62,7 +62,7 @@ chrome.runtime.onMessage.addListener((message) => {
     if (message.type === "companion:status") {
         if (message.status === "connected") {
             statusDot.className = "dot dot-connected";
-            statusText.textContent = "Connected to Local Panel";
+            statusText.textContent = "Connected to Bifurc";
         } else {
             statusDot.className = "dot dot-disconnected";
             statusText.textContent = "Disconnected";

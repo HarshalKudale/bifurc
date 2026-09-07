@@ -108,8 +108,8 @@ export async function setRemote(
       fs.rmSync(tempDir, { recursive: true, force: true });
 
       const g = simpleGit(dir);
-      await g.addConfig("user.email", "local-panel@local", false, "local");
-      await g.addConfig("user.name", "Local Panel", false, "local");
+      await g.addConfig("user.email", "bifurc@local", false, "local");
+      await g.addConfig("user.name", "Bifurc", false, "local");
 
       // Read the remote workspace's identity from workspace.json
       let adoptedId = wsId;

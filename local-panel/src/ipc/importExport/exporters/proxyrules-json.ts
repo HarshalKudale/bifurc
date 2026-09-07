@@ -7,7 +7,7 @@ export async function run(wsId: string, filePath: string): Promise<ExportResult>
     const cfg = loadConfig();
     const proxyRules = cfg.proxyRules.filter((r) => r.workspaceId === wsId);
     const ws = cfg.workspaces.find((w) => w.id === wsId);
-    const payload = { schema: "lp-proxy-rules-v1", name: ws?.name ?? "Local Panel", proxyRules };
+    const payload = { schema: "lp-proxy-rules-v1", name: ws?.name ?? "Bifurc", proxyRules };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
     return { ok: true, filePath };
   } catch (err) {

@@ -220,12 +220,12 @@ describe("exportMocksToPostman", () => {
     expect(col.item).toHaveLength(1);
   });
 
-  it("stores _localpanel extension with urlPattern and enabled", () => {
+  it("stores _bifurc extension with urlPattern and enabled", () => {
     const json = exportMocksToPostman([makeMock({ urlPattern: "^/api", useRegex: true, enabled: false })], []);
     const col = JSON.parse(json);
-    expect(col.item[0]._localpanel.urlPattern).toBe("^/api");
-    expect(col.item[0]._localpanel.useRegex).toBe(true);
-    expect(col.item[0]._localpanel.enabled).toBe(false);
+    expect(col.item[0]._bifurc.urlPattern).toBe("^/api");
+    expect(col.item[0]._bifurc.useRegex).toBe(true);
+    expect(col.item[0]._bifurc.enabled).toBe(false);
   });
 
   it("stores response body and status", () => {
@@ -248,7 +248,7 @@ describe("parsePostmanMocks", () => {
     expect(mocks[0].responseBody).toBe('{"users":[]}');
   });
 
-  it("preserves _localpanel fields on round-trip", () => {
+  it("preserves _bifurc fields on round-trip", () => {
     const json = exportMocksToPostman([makeMock({ urlPattern: "^/api", useRegex: true, enabled: false })], []);
     const { mocks } = parsePostmanMocks(json);
     expect(mocks[0].urlPattern).toBe("^/api");

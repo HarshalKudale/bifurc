@@ -52,8 +52,8 @@ export async function run(wsId: string, filePath: string): Promise<ExportResult>
     const har = {
       log: {
         version: "1.2",
-        creator: { name: "Local Panel", version: "1.0" },
-        comment: ws?.name ?? "Local Panel Requests",
+        creator: { name: "Bifurc", version: "1.0" },
+        comment: ws?.name ?? "Bifurc Requests",
         entries: requests.map(toHarEntry),
       },
     };

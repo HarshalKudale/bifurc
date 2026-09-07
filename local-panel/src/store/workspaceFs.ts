@@ -35,7 +35,7 @@ export function dataRoot(): string {
   if (_dataRootOverride) return _dataRootOverride;
   // Windows: use AppData\Local instead of Roaming
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    return path.join(process.env.LOCALAPPDATA, "Local Panel", "data");
+    return path.join(process.env.LOCALAPPDATA, "Bifurc", "data");
   }
   return path.join(app.getPath("userData"), "data");
 }

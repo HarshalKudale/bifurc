@@ -41,8 +41,8 @@ export async function performGitClone(
   fs.rmSync(tempDir, { recursive: true, force: true });
 
   const g = simpleGit(targetDir);
-  await g.addConfig("user.email", "local-panel@local", false, "local");
-  await g.addConfig("user.name", "Local Panel", false, "local");
+  await g.addConfig("user.email", "bifurc@local", false, "local");
+  await g.addConfig("user.name", "Bifurc", false, "local");
 }
 
 export async function performGitPull(

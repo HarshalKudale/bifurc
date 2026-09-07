@@ -1,9 +1,12 @@
 {
-  "name": "local-panel",
+  "name": "bifurc",
   "version": "0.2.0",
   "description": "Local development panel - localhost domain proxy manager",
   "license": "SEE LICENSE IN ../LICENSE",
   "main": "dist/main.js",
+  "author": {
+    "name": "Harshal Kudale"
+  },
   "scripts": {
     "build:main": "tsc && tsc-alias",
     "build:renderer": "vite build",
@@ -19,8 +22,8 @@
     "test:e2e:headed": "npm run build && npx playwright test --headed"
   },
   "build": {
-    "appId": "com.local-panel.app",
-    "productName": "Local Panel",
+    "appId": "com.hkudale.bifurc",
+    "productName": "Bifurc",
     "directories": {
       "output": "release"
     },
@@ -29,14 +32,27 @@
       "package.json"
     ],
     "win": {
-      "artifactName": "Local.Panel.Setup.${ext}",
-      "target": "nsis"
+      "target": [
+          "nsis",
+          "appx"
+        ]
+    },
+    "nsis": {
+      "artifactName": "Bifurc.Setup.${ext}"
+    },
+    "appx": {
+      "artifactName": "Bifurc.Setup.${ext}",
+      "applicationId": "Bifurc",
+      "identityName": "HarshalKudale.Bifurc",
+      "publisher": "CN=C594A390-264F-4DE0-ABF9-524B641E479D",
+      "publisherDisplayName": "Harshal Kudale",
+      "displayName": "Bifurc"
     },
     "mac": {
       "target": "dmg"
     },
     "linux": {
-      "artifactName": "Local.Panel.${ext}",
+      "artifactName": "Bifurc.${ext}",
       "target": "AppImage"
     }
   },

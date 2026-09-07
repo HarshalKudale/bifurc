@@ -1,8 +1,8 @@
 /**
- * Local Panel Companion — Background Service Worker
+ * Bifurc Companion — Background Service Worker
  *
  * Manages:
- * 1. Proxy toggle (route traffic through Local Panel's proxy)
+ * 1. Proxy toggle (route traffic through Bifurc's proxy)
  * 2. WebSocket connection to companion server
  * 3. Context menus for DevTools network panel
  */
@@ -74,7 +74,7 @@ function connectWebSocket() {
         }
 
         ws.onopen = () => {
-            console.log("[LocalPanel] Connected to companion server");
+            console.log("[Bifurc] Connected to companion server");
             wsReconnectDelay = 1000; // reset backoff
             broadcastStatus("connected");
         };
@@ -120,11 +120,11 @@ function broadcastStatus(status) {
 
 function sendToCompanion(message) {
     if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log("[LocalPanel] Sending to companion:", message.action);
+        console.log("[Bifurc] Sending to companion:", message.action);
         ws.send(JSON.stringify(message));
         return true;
     }
-    console.warn("[LocalPanel] Cannot send to companion - WebSocket not connected");
+    console.warn("[Bifurc] Cannot send to companion - WebSocket not connected");
     return false;
 }
 
@@ -134,14 +134,14 @@ chrome.runtime.onInstalled.addListener(() => {
     // Remove existing menus to avoid duplicates on update
     chrome.contextMenus.removeAll(() => {
         chrome.contextMenus.create({
-            id: "localpanel-mock",
-            title: "Mock this request [LocalPanel]",
+            id: "bifurc-mock",
+            title: "Mock this request [Bifurc]",
             contexts: ["link"],
         });
 
         chrome.contextMenus.create({
-            id: "localpanel-request",
-            title: "Add to Requests [LocalPanel]",
+            id: "bifurc-request",
+            title: "Add to Requests [Bifurc]",
             contexts: ["link"],
         });
     });
@@ -206,9 +206,9 @@ chrome.contextMenus.onClicked.addListener((info) => {
     const requestUrl = info.linkUrl;
     if (!requestUrl) return;
 
-    if (info.menuItemId === "localpanel-mock") {
+    if (info.menuItemId === "bifurc-mock") {
         handleMockRequest(requestUrl);
-    } else if (info.menuItemId === "localpanel-request") {
+    } else if (info.menuItemId === "bifurc-request") {
         handleAddRequest(requestUrl);
     }
 });

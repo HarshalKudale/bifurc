@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { localPanelTheme, getHighlightExtension } from "@/lib/codemirrorTheme";
+import { BifurcTheme, getHighlightExtension } from "@/lib/codemirrorTheme";
 
 describe("codemirrorTheme", () => {
-  it("localPanelTheme is a non-null Extension", () => {
-    expect(localPanelTheme).toBeDefined();
-    expect(localPanelTheme).not.toBeNull();
+  it("BifurcTheme is a non-null Extension", () => {
+    expect(BifurcTheme).toBeDefined();
+    expect(BifurcTheme).not.toBeNull();
   });
 
   it("getHighlightExtension returns an Extension for dark mode", () => {

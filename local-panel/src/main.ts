@@ -32,7 +32,7 @@ function getAppIcon(): Electron.NativeImage {
 
 function createTray(): void {
   tray = new Tray(getAppIcon());
-  tray.setToolTip("Local Panel");
+  tray.setToolTip("Bifurc");
   updateTrayMenu();
 
   tray.on("double-click", () => {
@@ -52,7 +52,7 @@ export function updateTrayMenu(): void {
   const cfg = loadConfig();
   const menu = Menu.buildFromTemplate([
     {
-      label: "Open Local Panel",
+      label: "Open Bifurc",
       click: () => {
         if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
         else createWindow();
@@ -136,7 +136,7 @@ function createWindow(): void {
     height: 780,
     minWidth: 1400,
     minHeight: 800,
-    title: "Local Panel",
+    title: "Bifurc",
     icon: getAppIcon(),
     backgroundColor: initialOverlayTheme.color,
     webPreferences: {
@@ -213,7 +213,7 @@ app.whenReady().then(async () => {
   if (!hasGit) {
     dialog.showErrorBox(
       "Git required",
-      "Local Panel requires Git to be installed for config versioning and sync.\n\nPlease install Git from https://git-scm.com and restart.",
+      "Bifurc requires Git to be installed for config versioning and sync.\n\nPlease install Git from https://git-scm.com and restart.",
     );
     app.quit();
     return;

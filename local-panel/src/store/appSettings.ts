@@ -74,7 +74,7 @@ export function setSettingsPathOverride(p: string | null): void {
 function settingsPath(): string {
   if (_settingsPathOverride) return _settingsPathOverride;
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    return path.join(process.env.LOCALAPPDATA, "Local Panel", "app.json");
+    return path.join(process.env.LOCALAPPDATA, "Bifurc", "app.json");
   }
   return path.join(app.getPath("userData"), "app.json");
 }

@@ -247,10 +247,10 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         await chooseProtocol(page, /gRPC Call/i);
         await page.getByPlaceholder("Request name…").last().fill(created.grpcRequest);
         await page.getByPlaceholder("localhost:50051").last().fill("localhost:50051");
-        await page.getByPlaceholder("ServiceName").last().fill("localpanel.E2E");
+        await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E");
         await page.getByPlaceholder("MethodName").last().fill("Ping");
         await clickSave(page, /^Save$/i);
-        await page.getByPlaceholder("ServiceName").last().fill("localpanel.E2E.Updated");
+        await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E.Updated");
         await clickSave(page, /Update/i);
 
         // Mocks CRUD across protocols
@@ -287,10 +287,10 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         await clickNewTab(page, "New mock", /^New Mock$/i);
         await chooseProtocol(page, /gRPC Mock/i);
         await page.getByPlaceholder("Mock name…").last().fill(created.grpcMock);
-        await page.getByPlaceholder("ServiceName").last().fill("localpanel.E2E");
+        await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E");
         await page.getByPlaceholder("MethodName").last().fill("MockPing");
         await clickSave(page, /^Save$/i);
-        await page.getByPlaceholder("ServiceName").last().fill("localpanel.E2E.Updated");
+        await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E.Updated");
         await clickSave(page, /Update/i);
 
         // WebSocket CRUD

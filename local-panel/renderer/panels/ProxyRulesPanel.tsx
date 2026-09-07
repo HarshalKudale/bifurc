@@ -47,7 +47,7 @@ export default function ProxyRulesPanel({
     }
   }, [pendingRuleId, onPendingRuleConsumed]);
 
-  // Listen to localpanel:select-rule event
+  // Listen to bifurc:select-rule event
   useEffect(() => {
     const handler = (e: Event) => {
       const custom = e as CustomEvent<{ ruleId?: string }>;
@@ -56,8 +56,8 @@ export default function ProxyRulesPanel({
         setIsCreatingNew(false);
       }
     };
-    window.addEventListener("localpanel:select-rule", handler);
-    return () => window.removeEventListener("localpanel:select-rule", handler);
+    window.addEventListener("bifurc:select-rule", handler);
+    return () => window.removeEventListener("bifurc:select-rule", handler);
   }, []);
 
   // Reload rules from config

@@ -100,19 +100,19 @@ export default function App() {
   const handleSearchSelectTab = useCallback((targetPanel: Panel, tabId: string) => {
     if (targetPanel === "rules") {
       setPendingRuleId(tabId); setPanel("rules");
-      window.dispatchEvent(new CustomEvent("localpanel:select-rule", { detail: { ruleId: tabId } }));
+      window.dispatchEvent(new CustomEvent("bifurc:select-rule", { detail: { ruleId: tabId } }));
       return;
     }
     const storageKey = getStorageKeyForPanel(targetPanel);
     if (storageKey) writeStorage(`${storageKey}:activeTab`, tabId);
     setPanel(targetPanel);
-    window.dispatchEvent(new CustomEvent("localpanel:open-tab", { detail: { panel: targetPanel, tabId } }));
+    window.dispatchEvent(new CustomEvent("bifurc:open-tab", { detail: { panel: targetPanel, tabId } }));
   }, [getStorageKeyForPanel, setPanel]);
 
   const handleSearchOpenEntity = useCallback((targetPanel: Panel, entityId: string) => {
     if (targetPanel === "rules") {
       setPendingRuleId(entityId); setPanel("rules");
-      window.dispatchEvent(new CustomEvent("localpanel:select-rule", { detail: { ruleId: entityId } }));
+      window.dispatchEvent(new CustomEvent("bifurc:select-rule", { detail: { ruleId: entityId } }));
       return;
     }
     const storageKey = getStorageKeyForPanel(targetPanel);
@@ -123,7 +123,7 @@ export default function App() {
       writeStorage(`${storageKey}:activeTab`, entityId);
     }
     setPanel(targetPanel);
-    window.dispatchEvent(new CustomEvent("localpanel:open-tab", { detail: { panel: targetPanel, tabId: entityId } }));
+    window.dispatchEvent(new CustomEvent("bifurc:open-tab", { detail: { panel: targetPanel, tabId: entityId } }));
   }, [getStorageKeyForPanel, setPanel]);
 
   const handleSearchNavigatePanel = useCallback((targetPanel: Panel, target?: any) => {
@@ -132,7 +132,7 @@ export default function App() {
       const ruleId = typeof target === "string" ? target : target?.id;
       if (ruleId) {
         setPendingRuleId(ruleId);
-        window.dispatchEvent(new CustomEvent("localpanel:select-rule", { detail: { ruleId } }));
+        window.dispatchEvent(new CustomEvent("bifurc:select-rule", { detail: { ruleId } }));
       }
     }
     setPanel(targetPanel);

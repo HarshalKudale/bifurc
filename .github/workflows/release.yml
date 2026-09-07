@@ -58,7 +58,7 @@ jobs:
 
           release_name="${{ inputs.release_name }}"
           if [ -z "$release_name" ]; then
-            release_name="Local Panel ${tag}"
+            release_name="Bifurc ${tag}"
           fi
 
           {

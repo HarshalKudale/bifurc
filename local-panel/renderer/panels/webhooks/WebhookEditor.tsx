@@ -10,7 +10,7 @@ import { BottomBar } from '@/components/editor/RequestTab';
 const DRAFT_PREFIX = 'wh-draft-';
 const isDraftId = (id: string) => id.startsWith(DRAFT_PREFIX);
 const MAX_ACTIVE_WEBHOOKS = 5;
-const BASE_URL_SEGMENT = '/localpanel/webhooks/';
+const BASE_URL_SEGMENT = '/bifurc/webhooks/';
 
 // -- Webhook editor ---------------------------------------------------------
 

@@ -93,15 +93,15 @@ export function registerSystemHandlers() {
         // fallback in environments where app is not running
       }
 
-      const res = await fetch("https://api.github.com/repos/HarshalKudale/local-panel/releases/latest", {
-        headers: { "User-Agent": "LocalPanel-App" },
+      const res = await fetch("https://api.github.com/repos/HarshalKudale/bifurc/releases/latest", {
+        headers: { "User-Agent": "Bifurc-App" },
       });
 
       let tagName = "";
       let releaseName = "";
       let releaseNotes = "";
       let publishedAt = "";
-      let htmlUrl = "https://github.com/HarshalKudale/local-panel/releases";
+      let htmlUrl = "https://github.com/HarshalKudale/bifurc/releases";
       let downloadUrl = "";
       let assetName = "";
 
@@ -132,15 +132,15 @@ export function registerSystemHandlers() {
           downloadUrl = htmlUrl;
         }
       } else {
-        const tagsRes = await fetch("https://api.github.com/repos/HarshalKudale/local-panel/tags", {
-          headers: { "User-Agent": "LocalPanel-App" },
+        const tagsRes = await fetch("https://api.github.com/repos/HarshalKudale/bifurc/tags", {
+          headers: { "User-Agent": "Bifurc-App" },
         });
         if (tagsRes.ok) {
           const tags = (await tagsRes.json()) as any[];
           if (Array.isArray(tags) && tags.length > 0) {
             tagName = tags[0].name || "";
             releaseName = tagName;
-            htmlUrl = `https://github.com/HarshalKudale/local-panel/releases/tag/\${tagName}`;
+            htmlUrl = `https://github.com/HarshalKudale/bifurc/releases/tag/\${tagName}`;
             downloadUrl = htmlUrl;
           }
         }
@@ -194,8 +194,8 @@ export function registerSystemHandlers() {
         hasUpdate: false,
         currentVersion: "0.1.0",
         latestVersion: "0.1.0",
-        downloadUrl: "https://github.com/HarshalKudale/local-panel/releases",
-        releaseUrl: "https://github.com/HarshalKudale/local-panel/releases",
+        downloadUrl: "https://github.com/HarshalKudale/bifurc/releases",
+        releaseUrl: "https://github.com/HarshalKudale/bifurc/releases",
         error: err?.message || "Failed to check for updates",
       };
     }

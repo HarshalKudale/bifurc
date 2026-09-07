@@ -79,7 +79,7 @@ export async function run(wsId: string, filePath: string): Promise<ExportResult>
 
     const spec = {
       openapi: "3.0.3",
-      info: { title: ws?.name ?? "Local Panel", version: "1.0.0" },
+      info: { title: ws?.name ?? "Bifurc", version: "1.0.0" },
       paths,
     };
 

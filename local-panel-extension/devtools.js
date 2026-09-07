@@ -1,9 +1,9 @@
 /**
- * Local Panel Companion — DevTools bootstrap page.
- * Registers the Local Panel tab in Chrome DevTools.
+ * Bifurc Companion — DevTools bootstrap page.
+ * Registers the Bifurc tab in Chrome DevTools.
  */
 chrome.devtools.panels.create(
-    "Local Panel",
+    "Bifurc",
     "icons/icon16.png",
     "devtools-panel.html"
 );

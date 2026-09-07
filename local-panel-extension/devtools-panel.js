@@ -1,11 +1,11 @@
-﻿/**
- * Local Panel Companion — DevTools Panel Script
+/**
+ * Bifurc Companion — DevTools Panel Script
  *
  * Captures all network requests via chrome.devtools.network and displays them
  * in a Chrome-style table with search, type filters, and Mock / Save actions.
  */
 
-console.log("[DevTools] Local Panel DevTools panel script loaded");
+console.log("[DevTools] Bifurc DevTools panel script loaded");
 
 // Extension context validation
 let contextInvalidated = false;
@@ -229,7 +229,7 @@ tbody.addEventListener("click", (e) => {
         safeRuntimeMessage(message, (response) => {
             console.log("[DevTools] Background response:", response);
         });
-        showToast("Sending to Local Panel as mock...");
+        showToast("Sending to Bifurc as mock...");
     } else if (action === "save") {
         const msgId = genId();
         console.log("[DevTools] Creating request message:", msgId);
@@ -247,7 +247,7 @@ tbody.addEventListener("click", (e) => {
         safeRuntimeMessage(message, (response) => {
             console.log("[DevTools] Background response:", response);
         });
-        showToast("Sending to Local Panel as request...");
+        showToast("Sending to Bifurc as request...");
     }
 });
 
@@ -352,7 +352,7 @@ const cdot = document.getElementById("cdot");
 const ctext = document.getElementById("ctext");
 function setConn(ok) {
     cdot.className = ok ? "dot ok" : "dot";
-    ctext.textContent = ok ? "Local Panel connected" : "Disconnected";
+    ctext.textContent = ok ? "Bifurc connected" : "Disconnected";
 }
 function pollConn() {
     if (contextInvalidated) return;

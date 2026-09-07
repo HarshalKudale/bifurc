@@ -188,7 +188,7 @@ export const entitiesStrings = {
       editRule: "Edit Rule",
       newRuleTitle: "New Proxy Rule",
       detailsTitle: "Proxy Rule Details",
-      helpText: "Proxy rules apply when Local Panel is configured as your system or browser HTTP proxy. Each rule matches a URL pattern and forwards matching requests to a mapped local service or external host. Rules are evaluated top-to-bottom — first match wins. Use request/response scripts to manipulate traffic.",
+      helpText: "Proxy rules apply when Bifurc is configured as your system or browser HTTP proxy. Each rule matches a URL pattern and forwards matching requests to a mapped local service or external host. Rules are evaluated top-to-bottom — first match wins. Use request/response scripts to manipulate traffic.",
       exportTitle: "Export proxy rules to JSON",
       importTitle: "Import proxy rules from JSON",
       exported: "Exported {n} rule{s}",

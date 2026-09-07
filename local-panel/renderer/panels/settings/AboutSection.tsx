@@ -20,8 +20,8 @@ export default function AboutSection() {
         hasUpdate: false,
         currentVersion: __APP_VERSION__,
         latestVersion: __APP_VERSION__,
-        downloadUrl: "https://github.com/HarshalKudale/local-panel/releases",
-        releaseUrl: "https://github.com/HarshalKudale/local-panel/releases",
+        downloadUrl: "https://github.com/HarshalKudale/bifurc/releases",
+        releaseUrl: "https://github.com/HarshalKudale/bifurc/releases",
         error: err?.message || "Failed to check for updates",
       });
     } finally {
@@ -149,7 +149,7 @@ export default function AboutSection() {
 
         <div className="px-5 py-4 border-t border-border flex flex-wrap gap-3">
           <button
-            onClick={() => window.api.openExternal("https://github.com/HarshalKudale/local-panel")}
+            onClick={() => window.api.openExternal("https://github.com/HarshalKudale/bifurc")}
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-surface-2 border border-border text-xs font-medium text-foreground hover:border-signal/50 hover:text-signal transition-colors cursor-pointer"
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -159,7 +159,7 @@ export default function AboutSection() {
           </button>
           <button
             onClick={() =>
-              window.api.openExternal("https://github.com/HarshalKudale/local-panel/blob/main/SUPPORT.md")
+              window.api.openExternal("https://github.com/HarshalKudale/bifurc/blob/main/SUPPORT.md")
             }
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-surface-2 border border-border text-xs font-medium text-foreground hover:border-signal/50 hover:text-signal transition-colors cursor-pointer"
           >

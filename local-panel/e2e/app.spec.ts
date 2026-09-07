@@ -3,7 +3,7 @@ import { test, expect } from "./fixtures/electronApp";
 test.describe("Application Launch", () => {
     test("window opens with correct title", async ({ page, electronApp }) => {
         const title = await page.title();
-        expect(title).toContain("Local Panel");
+        expect(title).toContain("Bifurc");
     });
 
     test("main layout renders", async ({ page }) => {

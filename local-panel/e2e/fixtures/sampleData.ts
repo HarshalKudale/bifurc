@@ -23,7 +23,7 @@ export function readRealThemeId(): string | null {
     try {
         const localAppData = process.env.LOCALAPPDATA;
         if (!localAppData) return null;
-        const realAppJson = path.join(localAppData, "Local Panel", "app.json");
+        const realAppJson = path.join(localAppData, "Bifurc", "app.json");
         const raw = fs.readFileSync(realAppJson, "utf-8");
         const parsed = JSON.parse(raw) as { themeId?: string | null };
         return parsed.themeId ?? null;

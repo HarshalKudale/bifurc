@@ -18,7 +18,7 @@ export const navigationStrings = {
     // Title bar,
 
   titleBar: {
-      appName: "Local Panel",
+      appName: "Bifurc",
       collapseSidebar: "Collapse sidebar",
       expandSidebar: "Expand sidebar",
       switchEnvironment: "Switch environment",

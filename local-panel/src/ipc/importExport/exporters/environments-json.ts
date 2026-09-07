@@ -7,7 +7,7 @@ export async function run(wsId: string, filePath: string): Promise<ExportResult>
     const cfg = loadConfig();
     const environments = cfg.environments.filter((e) => e.workspaceId === wsId);
     const ws = cfg.workspaces.find((w) => w.id === wsId);
-    const payload = { schema: "lp-environments-v1", name: ws?.name ?? "Local Panel", environments };
+    const payload = { schema: "lp-environments-v1", name: ws?.name ?? "Bifurc", environments };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf-8");
     return { ok: true, filePath };
   } catch (err) {

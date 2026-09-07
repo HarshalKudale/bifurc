@@ -5,7 +5,7 @@ import { Extension } from "@codemirror/state";
 
 /* ── Editor chrome theme (auto-follows dark/light via CSS vars) ─────── */
 
-export const localPanelTheme = EditorView.theme({
+export const BifurcTheme = EditorView.theme({
   "&": {
     height: "100%",
     fontSize: "12px",

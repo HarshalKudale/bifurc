@@ -2,10 +2,10 @@
  * Standalone HTTP server for receiving incoming webhook payloads.
  *
  * - Runs on a dedicated port (default 9101) separate from the proxy server.
- * - Base path: POST /localpanel/webhooks/<urlSuffix>
+ * - Base path: POST /bifurc/webhooks/<urlSuffix>
  * - Only webhooks whose tab is currently open (active) accept requests.
  * - Inactive webhooks → 404 JSON error.
- * - GET /localpanel/webhooks/<urlSuffix> → 200 JSON "alive" for easy testing.
+ * - GET /bifurc/webhooks/<urlSuffix> → 200 JSON "alive" for easy testing.
  * - Server lifecycle: start/stop via IPC. Status persists across panel navigations.
  */
 
@@ -76,7 +76,7 @@ export function startWebhookServer(port: number): void {
 
   server = http.createServer((req, res) => {
     const url = req.url ?? "/";
-    const BASE = "/localpanel/webhooks/";
+    const BASE = "/bifurc/webhooks/";
 
     if (!url.startsWith(BASE)) {
       res.writeHead(404, { "Content-Type": "application/json" });

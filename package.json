@@ -1,7 +1,7 @@
 {
-  "name": "local-panel-monorepo",
+  "name": "bifurc-monorepo",
   "version": "0.2.0",
-  "description": "LocalPanel - Localhost domain proxy manager and API development toolkit",
+  "description": "Bifurc - Localhost domain proxy manager and API development toolkit",
   "private": true,
   "author": {
     "name": "Harshal Kudale",
@@ -10,7 +10,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HarshalKudale/local-panel.git"
+    "url": "https://github.com/HarshalKudale/bifurc.git"
   },
   "scripts": {
     "install:all": "npm install --prefix local-panel",

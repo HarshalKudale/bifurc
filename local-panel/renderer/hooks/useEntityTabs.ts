@@ -120,8 +120,8 @@ export function useEntityTabs<T extends { id: string }>({
         openTab(custom.detail.tabId);
       }
     };
-    window.addEventListener("localpanel:open-tab", handler);
-    return () => window.removeEventListener("localpanel:open-tab", handler);
+    window.addEventListener("bifurc:open-tab", handler);
+    return () => window.removeEventListener("bifurc:open-tab", handler);
   }, [storageKey, entityKind, openTab]);
 
   const openNewTab = useCallback(() => {

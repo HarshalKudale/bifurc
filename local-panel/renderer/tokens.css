@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Local Panel — Cyberpunk Neon Design Tokens
+   Bifurc — Cyberpunk Neon Design Tokens
    OKLCH color system with dark (default) and light modes.
    Tokens are stored as OKLCH channel values (L C H) so Tailwind can
    interpolate alpha via oklch(var(--token) / <alpha-value>).

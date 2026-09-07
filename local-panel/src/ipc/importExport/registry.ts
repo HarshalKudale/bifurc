@@ -89,7 +89,7 @@ import * as hooksJsonExp      from "@/ipc/importExport/exporters/webhooks-json";
 import * as hooksJsonImp      from "@/ipc/importExport/importers/webhooks-json";
 
 // Workspace
-registerFormat("workspace", { definition: { id: "workspace-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: workspaceJsonExp, importer: workspaceJsonImp });
+registerFormat("workspace", { definition: { id: "workspace-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: workspaceJsonExp, importer: workspaceJsonImp });
 registerFormat("workspace", { definition: { id: "workspace-zip", label: "ZIP Archive", extensions: ["zip"], supportsExport: true, supportsImport: true }, exporter: workspaceZipExp, importer: workspaceZipImp });
 
 // Requests
@@ -101,22 +101,22 @@ registerFormat("requests", { definition: { id: "requests-insomnia", label: "Inso
 
 // Mocks
 registerFormat("mocks", { definition: { id: "mocks-postman", label: "Postman Collection v2.1", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: mocksPostmanExp, importer: mocksPostmanImp });
-registerFormat("mocks", { definition: { id: "mocks-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: mocksJsonExp, importer: mocksJsonImp });
+registerFormat("mocks", { definition: { id: "mocks-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: mocksJsonExp, importer: mocksJsonImp });
 registerFormat("mocks", { definition: { id: "mocks-wiremock", label: "WireMock Stubs", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: mocksWireMockExp, importer: mocksWireMockImp });
 
 // Environments
-registerFormat("environments", { definition: { id: "environments-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: envsJsonExp, importer: envsJsonImp });
+registerFormat("environments", { definition: { id: "environments-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: envsJsonExp, importer: envsJsonImp });
 registerFormat("environments", { definition: { id: "environments-postman", label: "Postman Environment", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: envsPostmanExp, importer: envsPostmanImp });
 registerFormat("environments", { definition: { id: "environments-dotenv", label: "dotenv (.env)", extensions: ["env", "txt"], supportsExport: true, supportsImport: true }, exporter: envsDotenvExp, importer: envsDotenvImp });
 
 // Mappings
-registerFormat("mappings", { definition: { id: "mappings-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: mappingsJsonExp, importer: mappingsJsonImp });
+registerFormat("mappings", { definition: { id: "mappings-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: mappingsJsonExp, importer: mappingsJsonImp });
 
 // Proxy Rules
-registerFormat("proxyRules", { definition: { id: "proxyrules-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: proxyJsonExp, importer: proxyJsonImp });
+registerFormat("proxyRules", { definition: { id: "proxyrules-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: proxyJsonExp, importer: proxyJsonImp });
 
 // WebSockets
-registerFormat("websockets", { definition: { id: "websockets-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: wsJsonExp, importer: wsJsonImp });
+registerFormat("websockets", { definition: { id: "websockets-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: wsJsonExp, importer: wsJsonImp });
 
 // Webhooks
-registerFormat("webhooks", { definition: { id: "webhooks-json", label: "Local Panel JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: hooksJsonExp, importer: hooksJsonImp });
+registerFormat("webhooks", { definition: { id: "webhooks-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: hooksJsonExp, importer: hooksJsonImp });

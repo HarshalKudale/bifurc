@@ -21,8 +21,8 @@ export const test = base.extend<ElectronFixtures>({
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-e2e-"));
 
         // Pre-populate with sample workspace data
-        // App expects: ${LOCALAPPDATA}/Local Panel/app.json and ${LOCALAPPDATA}/Local Panel/data/
-        const appDir = path.join(dir, "Local Panel");
+        // App expects: ${LOCALAPPDATA}/Bifurc/app.json and ${LOCALAPPDATA}/Bifurc/data/
+        const appDir = path.join(dir, "Bifurc");
         const dataDir = path.join(appDir, "data");
         fs.mkdirSync(dataDir, { recursive: true });
         writeSampleWorkspace(dataDir, readRealThemeId());

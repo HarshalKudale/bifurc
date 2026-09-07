@@ -48,7 +48,7 @@ function folderNodeToItems(node: FNode<SavedRequest>): PMItem[] {
 export function exportRequestsToPostman(
   requests: SavedRequest[],
   folders: Folder[],
-  name = "Local Panel Requests",
+  name = "Bifurc Requests",
 ): string {
   const root = buildFolderTree(folders, requests);
   const col: PMCollection = {
@@ -86,7 +86,7 @@ function mockToItem(m: MockRule): PMItem {
     name: m.name || `${m.method === "*" ? "ANY" : m.method} ${m.urlPattern}`,
     request: pmReq,
     response: [pmRes],
-    _localpanel: {
+    _bifurc: {
       urlPattern: m.urlPattern,
       useRegex:   m.useRegex,
       enabled:    m.enabled,
@@ -107,7 +107,7 @@ function mockFolderNodeToItems(node: FNode<MockRule>): PMItem[] {
 export function exportMocksToPostman(
   mocks: MockRule[],
   folders: Folder[],
-  name = "Local Panel Mocks",
+  name = "Bifurc Mocks",
 ): string {
   const root = buildFolderTree(folders, mocks);
   const col: PMCollection = {
@@ -115,7 +115,7 @@ export function exportMocksToPostman(
       name,
       _postman_id: mkId(),
       schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-      description: "Local Panel mock rules. Each item's response[0] contains the mock response. _localpanel extension preserves regex/enabled state.",
+      description: "Bifurc mock rules. Each item's response[0] contains the mock response. _bifurc extension preserves regex/enabled state.",
     },
     item: mockFolderNodeToItems(root),
   };
@@ -213,7 +213,7 @@ export function parsePostmanMocks(jsonText: string): ParsedPostmanMocks {
         walk(item.item, item.name);
       } else if (item.request) {
         const req = item.request;
-        const lp = item._localpanel;
+        const lp = item._bifurc;
         const res = item.response?.[0];
         const urlPattern = lp?.urlPattern ?? urlRaw(req.url);
         const method = lp ? (req.method?.toUpperCase() ?? "*") : (req.method?.toUpperCase() ?? "GET");

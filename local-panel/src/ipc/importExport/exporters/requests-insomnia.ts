@@ -19,7 +19,7 @@ export async function run(wsId: string, filePath: string): Promise<ExportResult>
       {
         _id: workspaceId,
         _type: "workspace",
-        name: ws?.name ?? "Local Panel",
+        name: ws?.name ?? "Bifurc",
         created: Date.now(),
         modified: Date.now(),
       },
@@ -59,7 +59,7 @@ export async function run(wsId: string, filePath: string): Promise<ExportResult>
     const output = {
       __export_format: 4,
       __export_date: new Date().toISOString(),
-      __export_source: "local-panel",
+      __export_source: "bifurc",
       resources,
     };
 

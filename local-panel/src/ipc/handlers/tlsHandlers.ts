@@ -25,7 +25,7 @@ export function registerTlsHandlers() {
     if (!fs.existsSync(certPath)) return { ok: false, error: "No CA certificate found." };
     const { filePath, canceled } = await dialog.showSaveDialog({
       title: "Export CA Certificate",
-      defaultPath: "local-panel-ca.pem",
+      defaultPath: "bifurc-ca.pem",
       filters: [{ name: "Certificate", extensions: ["pem", "crt", "cer"] }],
     });
     if (canceled || !filePath) return { ok: false, canceled: true };

@@ -44,7 +44,7 @@ export async function initWorkspaceRepo(wsId: string): Promise<void> {
   if (!fs.existsSync(path.join(dir, ".git"))) {
     const g = simpleGit(dir);
     await g.init();
-    await g.addConfig("user.email", `${name}@local-panel`, false, "local");
+    await g.addConfig("user.email", `${name}@bifurc`, false, "local");
     await g.addConfig("user.name", name, false, "local");
     // .gitignore was written by initWorkspaceDir()
     if (fs.existsSync(path.join(dir, ".gitignore"))) {
@@ -56,7 +56,7 @@ export async function initWorkspaceRepo(wsId: string): Promise<void> {
     const g = simpleGit(dir);
     // Update user config to current hostname (idempotent)
     try {
-      await g.addConfig("user.email", `${name}@local-panel`, false, "local");
+      await g.addConfig("user.email", `${name}@bifurc`, false, "local");
       await g.addConfig("user.name", name, false, "local");
     } catch {}
     _gitCache.set(wsId, g);

@@ -135,7 +135,7 @@ export default function ServerSettingsSection({
 
         <SettingsRow
           title={strings.settings.webhookServerPort}
-          desc={`${strings.settings.webhookServerPortDesc} ${strings.settings.currentlyLabel} localhost:${config.webhookPort ?? 9101}/localpanel/webhooks/`}
+          desc={`${strings.settings.webhookServerPortDesc} ${strings.settings.currentlyLabel} localhost:${config.webhookPort ?? 9101}/bifurc/webhooks/`}
         >
           <Input
             aria-label={strings.settings.webhookServerPort}

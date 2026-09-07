@@ -112,7 +112,7 @@ export function searchWebhooks(q: string, allWebhooks: SavedWebhook[], whFolders
         id: w.id,
         tabId: w.id,
         title: w.name || "Untitled Webhook",
-        subtitle: `/localpanel/webhooks/${w.urlSuffix}`,
+        subtitle: `/bifurc/webhooks/${w.urlSuffix}`,
         method: "HOOK",
         folderName,
         panel: "webhooks",

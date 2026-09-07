@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Local Panel Companion",
+    "name": "Bifurc Companion",
     "version": "1.0.0",
-    "description": "Proxy toggle and DevTools integration for Local Panel",
+    "description": "Proxy toggle and DevTools integration for Bifurc",
     "permissions": [
         "proxy",
         "storage",

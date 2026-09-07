@@ -156,4 +156,4 @@ export interface AuditListOptions {
   offset?: number;
 }
 
-export type { LocalPanelApi } from "./window";
+export type { BifurcApi } from "./window";

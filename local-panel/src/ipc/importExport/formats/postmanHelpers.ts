@@ -38,7 +38,7 @@ export interface PMItem {
   request?:  PMRequest;
   response?: PMResponse[];
   event?:    PMEvent[];
-  _localpanel?: {
+  _bifurc?: {
     urlPattern: string;
     useRegex:   boolean;
     enabled:    boolean;

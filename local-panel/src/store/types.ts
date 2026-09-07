@@ -105,7 +105,7 @@ export interface SavedWsConnection {
 export interface SavedWebhook {
   id: string;
   name: string;
-  /** The user-defined suffix appended after /localpanel/webhooks/ */
+  /** The user-defined suffix appended after /bifurc/webhooks/ */
   urlSuffix: string;
   createdAt: number;
   folderId?: string | null;

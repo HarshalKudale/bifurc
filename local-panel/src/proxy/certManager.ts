@@ -15,7 +15,7 @@ export interface CertStatus {
 
 export async function generateCA(dataDir: string): Promise<{ certPath: string; keyPath: string }> {
     const ca = await createCA({
-        organization: "Local Panel CA",
+        organization: "Bifurc CA",
         countryCode: "US",
         state: "Development",
         locality: "Local",
@@ -64,7 +64,7 @@ export function installCA(certPath: string): InstallResult {
             ok: false,
             needsManualInstall: true,
             instructions:
-                `sudo cp "${certPath}" /usr/local/share/ca-certificates/local-panel-ca.crt\n` +
+                `sudo cp "${certPath}" /usr/local/share/ca-certificates/bifurc-ca.crt\n` +
                 `sudo update-ca-certificates`,
         };
     } catch (e: unknown) {

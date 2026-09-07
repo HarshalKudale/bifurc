@@ -1,4 +1,4 @@
-Local Panel Design System
+Bifurc Design System
 Astetics - Cyberpunk Neon Developer Tool
 
 A dark, technical interface with phosphor-green signal accents, restrained glows, grid details, and precise developer-tool UI. It should feel like a capable desktop utility, not a gaming interface: dense when needed, readable always, and neon only where attention is required.

@@ -9,7 +9,7 @@ import { json } from "@codemirror/lang-json";
 import { html } from "@codemirror/lang-html";
 import { xml } from "@codemirror/lang-xml";
 import { javascript } from "@codemirror/lang-javascript";
-import { localPanelTheme, getHighlightExtension } from "@/lib/codemirrorTheme";
+import { BifurcTheme, getHighlightExtension } from "@/lib/codemirrorTheme";
 
 export type EditorLanguage = "json" | "html" | "xml" | "javascript" | "text";
 
@@ -99,7 +99,7 @@ export default forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor
     ];
 
     const extensions: Extension[] = [
-      localPanelTheme,
+      BifurcTheme,
       highlightComp.current.of(getHighlightExtension(light)),
       langComp.current.of(getLanguageExtension(language)),
       readOnlyComp.current.of([

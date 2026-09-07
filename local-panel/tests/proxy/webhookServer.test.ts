@@ -109,8 +109,8 @@ describe("webhook server HTTP handling", () => {
         unregisterActiveWebhook("test-wh");
     });
 
-    it("GET /localpanel/webhooks/<suffix> returns alive check", async () => {
-        const res = await fetch(`http://127.0.0.1:${port}/localpanel/webhooks/my-hook`);
+    it("GET /bifurc/webhooks/<suffix> returns alive check", async () => {
+        const res = await fetch(`http://127.0.0.1:${port}/bifurc/webhooks/my-hook`);
         expect(res.status).toBe(200);
         const json = await res.json();
         expect(json.status).toBe("ok");
@@ -122,7 +122,7 @@ describe("webhook server HTTP handling", () => {
     });
 
     it("POST to inactive webhook returns 404", async () => {
-        const res = await fetch(`http://127.0.0.1:${port}/localpanel/webhooks/unknown-hook`, {
+        const res = await fetch(`http://127.0.0.1:${port}/bifurc/webhooks/unknown-hook`, {
             method: "POST",
             body: "test",
         });
@@ -135,7 +135,7 @@ describe("webhook server HTTP handling", () => {
         const payloads: any[] = [];
         webhookEmitter.on("payload", (p: any) => payloads.push(p));
 
-        const res = await fetch(`http://127.0.0.1:${port}/localpanel/webhooks/my-hook`, {
+        const res = await fetch(`http://127.0.0.1:${port}/bifurc/webhooks/my-hook`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ event: "test" }),
@@ -151,7 +151,7 @@ describe("webhook server HTTP handling", () => {
     });
 
     it("PUT method returns 405", async () => {
-        const res = await fetch(`http://127.0.0.1:${port}/localpanel/webhooks/my-hook`, { method: "PUT" });
+        const res = await fetch(`http://127.0.0.1:${port}/bifurc/webhooks/my-hook`, { method: "PUT" });
         expect(res.status).toBe(405);
     });
 });
