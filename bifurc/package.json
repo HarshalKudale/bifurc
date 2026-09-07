@@ -1,6 +1,6 @@
 {
   "name": "bifurc",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Local development panel - localhost domain proxy manager",
   "license": "SEE LICENSE IN ../LICENSE",
   "main": "dist/main.js",
