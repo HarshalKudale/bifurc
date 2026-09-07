@@ -1,7 +1,8 @@
 {
   "name": "local-panel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local development panel - localhost domain proxy manager",
+  "license": "SEE LICENSE IN ../LICENSE",
   "main": "dist/main.js",
   "scripts": {
     "build:main": "tsc && tsc-alias",
