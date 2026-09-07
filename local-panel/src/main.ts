@@ -133,9 +133,9 @@ function createWindow(): void {
 
   mainWindow = new BrowserWindow({
     width: 1400,
-    height: 780,
+    height: 850,
     minWidth: 1400,
-    minHeight: 800,
+    minHeight: 850,
     title: "Bifurc",
     icon: getAppIcon(),
     backgroundColor: initialOverlayTheme.color,
