@@ -12,6 +12,7 @@ import { renderPanel, PanelRenderContext } from "@/lib/panelFactory";
 import { useSidebarVisibility } from "@/hooks/useSidebarVisibility";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import SearchModal from "@/components/search/SearchModal";
+import TermsAcceptanceScreen from "@/components/onboarding/TermsAcceptanceScreen";
 import { readStorage, writeStorage } from "@/lib/storage";
 
 import { useAppConfigSync } from "@/hooks/useAppConfigSync";
@@ -19,6 +20,16 @@ import { useWorkspaceView } from "@/hooks/useWorkspaceView";
 import { usePublishHandlers } from "@/hooks/usePublishHandlers";
 
 export default function App() {
+  const [tosAccepted, setTosAccepted] = usePersistedState<boolean>("app:tos-accepted", false);
+
+  if (!tosAccepted) {
+    return <TermsAcceptanceScreen onAccept={() => setTosAccepted(true)} />;
+  }
+
+  return <AppShell />;
+}
+
+function AppShell() {
   const [colorMode, setColorMode] = useColorMode();
   const [panel, setPanel] = usePersistedState<Panel>("app:active-panel", "services");
   const { visibility, setPanelVisible, isPanelVisible } = useSidebarVisibility();
