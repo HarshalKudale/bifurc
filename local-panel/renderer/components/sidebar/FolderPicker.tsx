@@ -35,20 +35,20 @@ export default function FolderPicker({ folders, value, onChange }: Props) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border bg-bg2 hover:bg-bg3 text-xs text-text-base transition-colors cursor-pointer whitespace-nowrap"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border bg-card hover:bg-surface-2 text-xs text-foreground transition-colors cursor-pointer whitespace-nowrap"
       >
         <Folder size={11} />
         <span className="max-w-[120px] truncate">{selectedName}</span>
-        <ChevronDown size={10} className="text-text-dim ml-0.5" />
+        <ChevronDown size={10} className="text-muted-foreground ml-0.5" />
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full mb-1 left-0 z-50 bg-bg2 border border-border rounded-md shadow-2xl py-1 min-w-[180px] max-h-60 overflow-y-auto animate-scale-in">
+          <div className="absolute bottom-full mb-1 left-0 z-50 bg-card border border-border rounded-md shadow-2xl py-1 min-w-[180px] max-h-60 overflow-y-auto animate-scale-in">
             <button
               onClick={() => { onChange(null); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 text-xs cursor-pointer hover:bg-bg3 flex items-center gap-1.5 ${value === null ? "text-accent font-semibold" : "text-text-base"}`}
+              className={`w-full text-left px-3 py-1.5 text-xs cursor-pointer hover:bg-surface-2 flex items-center gap-1.5 ${value === null ? "text-signal font-semibold" : "text-foreground"}`}
             >
               <Folder size={11} /> {strings.folderTree.root}
             </button>
@@ -56,7 +56,7 @@ export default function FolderPicker({ folders, value, onChange }: Props) {
               <button
                 key={folder.id}
                 onClick={() => { onChange(folder.id); setOpen(false); }}
-                className={`w-full text-left py-1.5 text-xs cursor-pointer hover:bg-bg3 flex items-center gap-1.5 ${value === folder.id ? "text-accent font-semibold" : "text-text-base"}`}
+                className={`w-full text-left py-1.5 text-xs cursor-pointer hover:bg-surface-2 flex items-center gap-1.5 ${value === folder.id ? "text-signal font-semibold" : "text-foreground"}`}
                 style={{ paddingLeft: 12 + depth * 14 }}
               >
                 <Folder size={11} /> {folder.name}

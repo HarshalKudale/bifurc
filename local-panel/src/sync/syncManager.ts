@@ -16,63 +16,20 @@ function entityIdFromPath(p: string): string | null {
   return id;
 }
 
-const _syncStates = new Map<string, SyncState>();
+import {
+  getState,
+  setState,
+  emit,
+  getSyncConfig,
+  getSyncMeta,
+  saveSyncConfig,
+  saveSyncMeta,
+  onSyncStatusChange,
+  getSyncState,
+  clearState
+} from "./syncState";
 
-function getState(wsId: string): SyncState {
-  if (!_syncStates.has(wsId)) {
-    _syncStates.set(wsId, { status: "idle", error: null, lastPushedAt: null, lastPulledAt: null, progressMessage: null });
-  }
-  return _syncStates.get(wsId)!;
-}
-
-function setState(wsId: string, patch: Partial<SyncState>): SyncState {
-  const state = { ...getState(wsId), ...patch };
-  _syncStates.set(wsId, state);
-  return state;
-}
-
-let _statusListener: ((wsId: string, state: SyncState) => void) | null = null;
-
-export function onSyncStatusChange(cb: (wsId: string, state: SyncState) => void): void {
-  _statusListener = cb;
-}
-
-function emit(wsId: string): void {
-  if (_statusListener) _statusListener(wsId, getState(wsId));
-}
-
-export function getSyncState(wsId: string): SyncState {
-  const settings = loadSettings();
-  const meta = getSyncMeta(wsId);
-  const state = getState(wsId);
-  return { ...state, lastPushedAt: meta?.lastPushedAt ?? null, lastPulledAt: meta?.lastPulledAt ?? null };
-}
-
-export function getSyncConfig(wsId: string): SyncConfig | null {
-  const settings = loadSettings();
-  const ws = settings.workspaces.find((w) => w.id === wsId);
-  return (ws as any)?.syncConfig ?? null;
-}
-
-function getSyncMeta(wsId: string): SyncMeta | null {
-  const settings = loadSettings();
-  const ws = settings.workspaces.find((w) => w.id === wsId);
-  return (ws as any)?.syncMeta ?? null;
-}
-
-function saveSyncConfig(wsId: string, config: SyncConfig | null): void {
-  const settings = loadSettings();
-  const ws = settings.workspaces.find((w) => w.id === wsId);
-  if (ws) (ws as any).syncConfig = config;
-  saveSettings(settings);
-}
-
-function saveSyncMeta(wsId: string, meta: SyncMeta | null): void {
-  const settings = loadSettings();
-  const ws = settings.workspaces.find((w) => w.id === wsId);
-  if (ws) (ws as any).syncMeta = meta;
-  saveSettings(settings);
-}
+export { onSyncStatusChange, getSyncState, getSyncConfig };
 
 function isWorkspaceEmpty(wsId: string): boolean {
   const dir = wsDir(wsId);
@@ -92,14 +49,7 @@ function isWorkspaceEmpty(wsId: string): boolean {
   return true;
 }
 
-async function isRemoteEmpty(remote: string, branch: string): Promise<boolean> {
-  try {
-    const result = await simpleGit().raw(["ls-remote", "--refs", remote]);
-    return result.trim() === "";
-  } catch (e) {
-    throw new Error(`Cannot access remote: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
+import { isRemoteEmpty, fetchRemoteHead, performGitClone, performGitPull } from "./gitSyncOps";
 
 export async function setRemote(
   wsId: string,
@@ -189,7 +139,7 @@ export async function setRemote(
       saveSyncConfig(adoptedId, { remote, branch, autoSync: false });
       saveSyncMeta(adoptedId, { lastPushedAt: null, lastPulledAt: Date.now(), lastSyncedCommit: null });
       // Clean up stale state entry for old id if it changed
-      if (adoptedId !== wsId) _syncStates.delete(wsId);
+      if (adoptedId !== wsId) clearState(wsId);
       setState(adoptedId, { status: "idle", error: null, progressMessage: null });
       emit(adoptedId);
       return { ok: true, cloned: true, adoptedId };
@@ -274,85 +224,22 @@ export async function syncPull(wsId: string): Promise<{ ok: boolean; updated?: b
   emit(wsId);
 
   try {
-    const g = getGit(wsId);
+    const { updated, changedPaths } = await performGitPull(wsId, config.branch);
 
-    await g.fetch("origin", config.branch);
+    const now = Date.now();
+    const meta = getSyncMeta(wsId);
+    saveSyncMeta(wsId, { lastPushedAt: meta?.lastPushedAt ?? null, lastPulledAt: now, lastSyncedCommit: meta?.lastSyncedCommit ?? null });
 
-    // Check if there's anything to merge
-    let localHead: string;
-    let remoteHead: string;
-    try {
-      localHead = (await g.revparse(["HEAD"])).trim();
-      remoteHead = (await g.revparse([`origin/${config.branch}`])).trim();
-    } catch {
-      setState(wsId, { status: "idle", error: null });
-      emit(wsId);
-      return { ok: true, updated: false };
-    }
-
-    if (localHead === remoteHead) {
-      const now = Date.now();
-      const meta = getSyncMeta(wsId);
-      saveSyncMeta(wsId, { lastPushedAt: meta?.lastPushedAt ?? null, lastPulledAt: now, lastSyncedCommit: meta?.lastSyncedCommit ?? null });
+    if (!updated) {
       setState(wsId, { status: "idle", error: null, lastPulledAt: now });
       emit(wsId);
       return { ok: true, updated: false };
     }
 
-    // Collect files changed between our old HEAD and the incoming remote commits
-    let changedPaths: string[] = [];
-    try {
-      const raw = await g.raw(["diff", "--name-only", localHead, `origin/${config.branch}`]);
-      changedPaths = raw.split("\n").map((l) => l.trim()).filter(Boolean);
-    } catch { /* non-fatal */ }
-
-    // Stash any local uncommitted changes before merging so they survive the pull
-    let stashed = false;
-    try {
-      const statusCheck = await g.status();
-      const hasLocalChanges =
-        statusCheck.modified.length > 0 ||
-        statusCheck.not_added.length > 0 ||
-        statusCheck.deleted.length > 0 ||
-        statusCheck.created.length > 0;
-      if (hasLocalChanges) {
-        await g.raw(["stash", "push", "--include-untracked", "-m", "auto-stash before pull"]);
-        stashed = true;
-      }
-    } catch { /* non-fatal — proceed without stash */ }
-
-    // Merge remote changes
-    try {
-      await g.merge([`origin/${config.branch}`, "--no-edit"]);
-    } catch {
-      // If merge fails, abort and restore stash
-      try { await g.raw(["merge", "--abort"]); } catch {}
-      if (stashed) {
-        try { await g.stash(["pop"]); } catch {}
-      }
-      throw new Error("Pull merge failed");
-    }
-
-    // Restore local uncommitted changes on top of the merged state
-    if (stashed) {
-      try {
-        await g.stash(["pop"]);
-      } catch {
-        // Stash pop conflict: keep local (ours) version for conflicting files
-        try {
-          await g.raw(["checkout", "--ours", "."]);
-          await g.raw(["stash", "drop"]);
-        } catch {}
-      }
-    }
-
-    const updatedIds = changedPaths
+    const updatedIds = (changedPaths || [])
       .map(entityIdFromPath)
       .filter((id): id is string => id !== null);
 
-    const now = Date.now();
-    const meta = getSyncMeta(wsId);
-    saveSyncMeta(wsId, { lastPushedAt: meta?.lastPushedAt ?? null, lastPulledAt: now, lastSyncedCommit: meta?.lastSyncedCommit ?? null });
     setState(wsId, { status: "idle", error: null, lastPulledAt: now, updatedIds });
     emit(wsId);
     return { ok: true, updated: true, updatedIds };

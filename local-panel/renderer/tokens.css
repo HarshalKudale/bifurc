@@ -1,0 +1,152 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Local Panel — Cyberpunk Neon Design Tokens
+   OKLCH color system with dark (default) and light modes.
+   Tokens are stored as OKLCH channel values (L C H) so Tailwind can
+   interpolate alpha via oklch(var(--token) / <alpha-value>).
+   Full computed values are available as --c-<name> aliases.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dark mode (default) ────────────────────────────────────────────────── */
+
+:root {
+  /* Core surfaces (blue-charcoal, never pure black) */
+  --background:   0.16 0.012 250;
+  --surface:      0.19 0.013 252;
+  --card:         0.20 0.014 252;
+  --surface-2:    0.23 0.015 252;
+  --secondary:    0.26 0.016 252;
+  --accent:       0.28 0.020 252;
+  --border:       0.31 0.016 252;
+
+  /* Text */
+  --foreground:         0.96 0.005 250;
+  --muted-foreground:   0.68 0.018 252;
+  --subtle-text:        0.52 0.016 252;
+  --primary-foreground: 0.18 0.020 190;
+
+  /* Signal & semantic */
+  --signal:             0.84 0.16 172;
+  --signal-foreground:  0.18 0.020 190;
+  --violet:             0.72 0.16 300;
+  --amber:              0.83 0.15 78;
+  --blue:               0.66 0.15 240;
+  --destructive:        0.63 0.21 22;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius:    0.5rem;
+
+  /* Typography */
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── Computed full-value aliases (for inline styles & CSS direct use) ──── */
+
+:root {
+  --c-background:         oklch(var(--background));
+  --c-surface:            oklch(var(--surface));
+  --c-card:               oklch(var(--card));
+  --c-surface-2:          oklch(var(--surface-2));
+  --c-secondary:          oklch(var(--secondary));
+  --c-accent:             oklch(var(--accent));
+  --c-border:             oklch(var(--border));
+
+  --c-foreground:         oklch(var(--foreground));
+  --c-muted-foreground:   oklch(var(--muted-foreground));
+  --c-subtle-text:        oklch(var(--subtle-text));
+  --c-primary-foreground: oklch(var(--primary-foreground));
+
+  --c-signal:             oklch(var(--signal));
+  --c-signal-foreground:  oklch(var(--signal-foreground));
+  --c-violet:             oklch(var(--violet));
+  --c-amber:              oklch(var(--amber));
+  --c-blue:               oklch(var(--blue));
+  --c-destructive:        oklch(var(--destructive));
+}
+
+/* ── Glow tokens ──────────────────────────────────────────────────────── */
+
+:root {
+  --glow-signal-sm: 0 0 12px color-mix(in oklab, oklch(var(--signal)) 22%, transparent);
+  --glow-signal-md: 0 0 24px color-mix(in oklab, oklch(var(--signal)) 26%, transparent);
+  --glow-signal-lg: 0 0 56px color-mix(in oklab, oklch(var(--signal)) 20%, transparent);
+  --glow-violet-sm: 0 0 16px color-mix(in oklab, oklch(var(--violet)) 22%, transparent);
+  --glow-danger-sm: 0 0 16px color-mix(in oklab, oklch(var(--destructive)) 18%, transparent);
+}
+
+/* ── Syntax highlighting ──────────────────────────────────────────────── */
+
+:root {
+  --syn-keyword:   var(--c-signal);
+  --syn-bool:      var(--c-amber);
+  --syn-string:    var(--c-blue);
+  --syn-number:    var(--c-amber);
+  --syn-comment:   var(--c-subtle-text);
+  --syn-property:  var(--c-signal);
+  --syn-tag:       var(--c-signal);
+  --syn-attr-name: var(--c-foreground);
+  --syn-attr-val:  var(--c-blue);
+  --syn-bracket:   var(--c-muted-foreground);
+  --syn-variable:  var(--c-foreground);
+  --syn-defn:      var(--c-amber);
+  --syn-type:      var(--c-violet);
+  --syn-operator:  var(--c-muted-foreground);
+  --syn-regexp:    var(--c-amber);
+  --syn-escape:    var(--c-violet);
+  --syn-invalid:   var(--c-destructive);
+}
+
+/* ── HTTP method & status colors ──────────────────────────────────────── */
+
+:root {
+  --c-method-get:     var(--c-signal);
+  --c-method-post:    var(--c-amber);
+  --c-method-put:     var(--c-blue);
+  --c-method-patch:   var(--c-amber);
+  --c-method-delete:  var(--c-destructive);
+  --c-method-head:    var(--c-violet);
+  --c-method-options: var(--c-violet);
+
+  --c-method-head-bg: oklch(var(--violet) / 0.13);
+}
+
+/* ── Git sync status ──────────────────────────────────────────────────── */
+
+:root {
+  --c-sync-new:      var(--c-destructive);
+  --c-sync-modified: var(--c-amber);
+  --c-sync-clean:    var(--c-signal);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Light mode overrides
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.light {
+  /* Surfaces: light blue-grey */
+  --background:   0.96 0.006 250;
+  --surface:      0.98 0.004 252;
+  --card:         0.97 0.005 252;
+  --surface-2:    0.94 0.008 252;
+  --secondary:    0.91 0.010 252;
+  --accent:       0.89 0.012 252;
+  --border:       0.82 0.015 252;
+
+  /* Text: dark navy */
+  --foreground:         0.22 0.015 250;
+  --muted-foreground:   0.48 0.015 252;
+  --subtle-text:        0.62 0.012 252;
+  --primary-foreground: 0.98 0.005 172;
+
+  /* Signals: deeper for contrast on light backgrounds */
+  --signal:             0.52 0.14 172;
+  --signal-foreground:  0.98 0.005 172;
+  --violet:             0.52 0.16 300;
+  --amber:              0.55 0.14 78;
+  --blue:               0.50 0.14 240;
+  --destructive:        0.50 0.20 22;
+}

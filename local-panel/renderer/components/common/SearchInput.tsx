@@ -12,7 +12,7 @@ interface Props {
 export default function SearchInput({ value, onChange, placeholder = strings.sidebar.searchPlaceholderDefault }: Props) {
   return (
     <div className="relative">
-      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim pointer-events-none select-none flex items-center"><Search size={14} /></span>
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none select-none flex items-center"><Search size={14} /></span>
       <Input
         inputSize="md"
         aria-label={placeholder}

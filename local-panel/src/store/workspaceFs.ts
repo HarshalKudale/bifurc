@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
+import { getPendingDeletions } from "./workspace/fsPendingDeletions";
 
 export interface WorkspaceFile {
   id: string;
@@ -43,7 +44,7 @@ export function wsDir(wsId: string): string {
   return path.join(dataRoot(), wsId);
 }
 
-function entityDir(wsId: string, kind: string): string {
+export function entityDir(wsId: string, kind: string): string {
   return path.join(wsDir(wsId), kind);
 }
 
@@ -134,162 +135,11 @@ export function deleteEntityFile(wsId: string, kind: string, id: string): void {
   removeExistingEntityFile(wsId, kind, id);
 }
 
-// ── Pending deletions (entities deleted from disk, not yet git-committed) ────────
+export * from "./workspace/fsPendingDeletions";
 
-interface PendingDeletion {
-  id: string;
-  folderId: string | null;
-  name: string;
-  method?: string;
-  url?: string;
-  urlSuffix?: string;
-}
+export * from "./workspace/fsRead";
 
-interface PendingDeletionsFile {
-  [kind: string]: PendingDeletion[];
-}
-
-function pendingDeletionsFile(wsId: string): string {
-  return path.join(wsDir(wsId), "pending-deletions.json");
-}
-
-function readPendingDeletions(wsId: string): PendingDeletionsFile {
-  try { return JSON.parse(fs.readFileSync(pendingDeletionsFile(wsId), "utf-8")); } catch { return {}; }
-}
-
-function writePendingDeletions(wsId: string, data: PendingDeletionsFile): void {
-  fs.writeFileSync(pendingDeletionsFile(wsId), JSON.stringify(data, null, 2), "utf-8");
-}
-
-export function addPendingDeletion(wsId: string, kind: string, entry: PendingDeletion): void {
-  const data = readPendingDeletions(wsId);
-  if (!data[kind]) data[kind] = [];
-  if (!data[kind].some((e) => e.id === entry.id)) data[kind].push(entry);
-  writePendingDeletions(wsId, data);
-}
-
-export function removePendingDeletion(wsId: string, kind: string, id: string): void {
-  const data = readPendingDeletions(wsId);
-  if (data[kind]) data[kind] = data[kind].filter((e) => e.id !== id);
-  writePendingDeletions(wsId, data);
-}
-
-export function getPendingDeletions(wsId: string, kind: string): PendingDeletion[] {
-  return readPendingDeletions(wsId)[kind] ?? [];
-}
-
-/** Clear all pending deletions for a kind (called after folder publish covers them all) */
-export function clearPendingDeletions(wsId: string, kind: string): void {
-  const data = readPendingDeletions(wsId);
-  delete data[kind];
-  writePendingDeletions(wsId, data);
-}
-
-const SKIP_FILES = new Set(["index.json", "enabled.json", "names.json", "pending-deletions.json"]);
-
-export function readAllEntities<T>(wsId: string, kind: string): T[] {
-  const dir = entityDir(wsId, kind);
-  if (!fs.existsSync(dir)) return [];
-  const results: T[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory() && entry.name !== "drafts" && entry.name !== "capture" && entry.name !== ".runs") {
-      const subdir = path.join(dir, entry.name);
-      for (const f of fs.readdirSync(subdir)) {
-        if (f.endsWith(".json") && !SKIP_FILES.has(f)) {
-          try { results.push(JSON.parse(fs.readFileSync(path.join(subdir, f), "utf-8")) as T); } catch { }
-        }
-      }
-    } else if (entry.isFile() && entry.name.endsWith(".json") && !SKIP_FILES.has(entry.name)) {
-      try { results.push(JSON.parse(fs.readFileSync(path.join(dir, entry.name), "utf-8")) as T); } catch { }
-    }
-  }
-  return results;
-}
-
-/**
- * Read only entities whose IDs are in `enabledIds`.
- * Falls back to readAllEntities if enabledIds is null.
- */
-export function readEnabledEntities<T extends { id: string }>(
-  wsId: string, kind: string, enabledIds: Set<string> | null,
-): T[] {
-  if (enabledIds === null) return readAllEntities<T>(wsId, kind);
-  if (enabledIds.size === 0) return [];
-  const dir = entityDir(wsId, kind);
-  if (!fs.existsSync(dir)) return [];
-  const results: T[] = [];
-  // Check root files
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isFile() && entry.name.endsWith(".json") && !SKIP_FILES.has(entry.name)) {
-      const id = entry.name.slice(0, -5);
-      if (enabledIds.has(id)) {
-        try { results.push(JSON.parse(fs.readFileSync(path.join(dir, entry.name), "utf-8")) as T); } catch { }
-      }
-    } else if (entry.isDirectory() && entry.name !== "drafts" && entry.name !== "capture" && entry.name !== ".runs") {
-      const subdir = path.join(dir, entry.name);
-      for (const f of fs.readdirSync(subdir)) {
-        if (f.endsWith(".json") && !SKIP_FILES.has(f)) {
-          const id = f.slice(0, -5);
-          if (enabledIds.has(id)) {
-            try { results.push(JSON.parse(fs.readFileSync(path.join(subdir, f), "utf-8")) as T); } catch { }
-          }
-        }
-      }
-    }
-  }
-  return results;
-}
-
-/** Read a single entity file by ID (searches root and subfolders). */
-export function readEntity<T>(wsId: string, kind: string, id: string): T | null {
-  const file = findEntityFile(wsId, kind, id);
-  if (!file) return null;
-  try { return JSON.parse(fs.readFileSync(file, "utf-8")) as T; } catch { return null; }
-}
-
-// ── Name index (names.json) ───────────────────────────────────────────────────
-// Lightweight map: id → { name, method?, url? } for list display without full entity reads
-
-export interface EntityNameEntry { name: string; method?: string; url?: string; urlSuffix?: string; endpointUrl?: string; operationName?: string; soapActionPattern?: string; serviceName?: string;[key: string]: string | undefined; }
-
-function namesFile(wsId: string, kind: string): string {
-  return path.join(entityDir(wsId, kind), "names.json");
-}
-
-export function readNamesIndex(wsId: string, kind: string): Record<string, EntityNameEntry> {
-  try { return JSON.parse(fs.readFileSync(namesFile(wsId, kind), "utf-8")); } catch { return {}; }
-}
-
-function writeNamesIndex(wsId: string, kind: string, names: Record<string, EntityNameEntry>): void {
-  const f = namesFile(wsId, kind);
-  fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, JSON.stringify(names, null, 2), "utf-8");
-}
-
-export function upsertNameEntry(wsId: string, kind: string, id: string, entry: EntityNameEntry): void {
-  const names = readNamesIndex(wsId, kind);
-  names[id] = entry;
-  writeNamesIndex(wsId, kind, names);
-}
-
-export function removeNameEntry(wsId: string, kind: string, id: string): void {
-  const names = readNamesIndex(wsId, kind);
-  delete names[id];
-  writeNamesIndex(wsId, kind, names);
-}
-
-/** Bootstrap names.json from all entity files (first-time migration). */
-export function bootstrapNamesIndex<T extends { id: string; name: string; method?: string; url?: string }>(
-  wsId: string, kind: string,
-): Record<string, EntityNameEntry> {
-  const entities = readAllEntities<T>(wsId, kind);
-  const names: Record<string, EntityNameEntry> = {};
-  for (const e of entities) {
-    names[e.id] = { name: e.name, ...(e.method ? { method: e.method } : {}), ...(e.url ? { url: e.url } : {}) };
-  }
-  writeNamesIndex(wsId, kind, names);
-  return names;
-}
+export * from "./workspace/fsNamesIndex";
 
 /**
  * Scan entity dir and return stubs: id + folderId from directory structure.
@@ -373,44 +223,7 @@ export function findEntityRelPath(wsId: string, kind: string, id: string): strin
   return null;
 }
 
-// ── Folder directory management ───────────────────────────────────────────────
-
-/** Delete a folder's directory (called after all its items have been moved out). */
-export function deleteEntityDir(wsId: string, kind: string, folderName: string): void {
-  const dir = path.join(entityDir(wsId, kind), sanitizeDirName(folderName));
-  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-}
-
-/**
- * Scan the kind directory for subdirectories not yet registered in the index,
- * auto-register them, and return the (possibly updated) index.
- */
-export function autoSyncFsDirectories(wsId: string, kind: string, makeId: () => string): EntityIndex {
-  const idx = readIndex(wsId, kind);
-  const dir = entityDir(wsId, kind);
-  if (!fs.existsSync(dir)) return idx;
-
-  const subDirs = fs.readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && e.name !== "drafts" && e.name !== "capture" && e.name !== ".runs")
-    .map((e) => e.name);
-
-  let changed = false;
-  for (const dirName of subDirs) {
-    if (!idx.folders.some((f) => sanitizeDirName(f.name) === dirName)) {
-      idx.folders.push({
-        id: makeId(),
-        name: dirName,
-        parentId: null,
-        createdAt: Date.now(),
-        workspaceId: wsId,
-      });
-      changed = true;
-    }
-  }
-
-  if (changed) writeIndex(wsId, kind, idx);
-  return idx;
-}
+export * from "./workspace/fsDirectorySync";
 
 // ── Flat entity kinds (no subfolder, stored directly in kind/) ────────────────
 
@@ -431,41 +244,7 @@ export function flatEntityRelPath(kind: string, id: string): string {
   return `${kind}/${id}.json`;
 }
 
-// ── Enabled-set helpers ───────────────────────────────────────────────────────
-
-/**
- * Read the set of enabled entity IDs for a given kind.
- * Returns null if the enabled.json doesn't exist yet (meaning "use entity.enabled field" as fallback).
- */
-export function readEnabledSet(wsId: string, kind: string): Set<string> | null {
-  const file = path.join(entityDir(wsId, kind), "enabled.json");
-  try {
-    const ids = JSON.parse(fs.readFileSync(file, "utf-8")) as string[];
-    return new Set(ids);
-  } catch {
-    return null;
-  }
-}
-
-/** Write the enabled set for a kind to disk. */
-export function writeEnabledSet(wsId: string, kind: string, ids: Set<string>): void {
-  const file = path.join(entityDir(wsId, kind), "enabled.json");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(Array.from(ids), null, 2), "utf-8");
-}
-
-/**
- * Bootstrap enabled.json from existing entity files (first-time migration).
- * Reads all entities and writes enabled.json with the IDs that have enabled=true.
- */
-export function bootstrapEnabledSet<T extends { id: string; enabled?: boolean }>(
-  wsId: string, kind: string,
-): Set<string> {
-  const entities = readAllEntities<T>(wsId, kind);
-  const enabled = new Set(entities.filter((e) => e.enabled !== false).map((e) => e.id));
-  writeEnabledSet(wsId, kind, enabled);
-  return enabled;
-}
+export * from "./workspace/fsEnabledSet";
 
 // ── Find an entity file's absolute path ──────────────────────────────────────
 

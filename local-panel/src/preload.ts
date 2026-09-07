@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("api", {
+  checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
   getConfig: () => ipcRenderer.invoke("config:get"),
   loadEntity: (wsId: string, kind: string, id: string) => ipcRenderer.invoke("entity:load", wsId, kind, id),
   setEntityEnabled: (wsId: string, kind: string, id: string, enabled: boolean) => ipcRenderer.invoke("entity:setEnabled", wsId, kind, id, enabled),
@@ -66,9 +67,13 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("sync:status", handler);
     return () => ipcRenderer.off("sync:status", handler);
   },
-  publishEntity: (wsId: string, paths: string[]) => ipcRenderer.invoke("entity:publish", wsId, paths),
+  publishEntity: (wsId: string, paths: string[], message?: string) => ipcRenderer.invoke("entity:publish", wsId, paths, message),
   publishFolder: (wsId: string, kind: string, folderName: string | null) => ipcRenderer.invoke("folder:publish", wsId, kind, folderName),
   restoreEntity: (wsId: string, relPath: string) => ipcRenderer.invoke("entity:restore", wsId, relPath),
+  gitGetDiff: (wsId: string, relPath: string) => ipcRenderer.invoke("git:diff", wsId, relPath),
+  gitDiscard: (wsId: string, relPath: string) => ipcRenderer.invoke("git:discard", wsId, relPath),
+  gitSync: (wsId: string, paths: string[], message?: string) => ipcRenderer.invoke("git:sync", wsId, paths, message),
+  gitGetHistory: (wsId: string, relPath: string, opts?: { limit?: number; offset?: number }) => ipcRenderer.invoke("git:history", wsId, relPath, opts),
   getEntitySyncStatus: (wsId: string) => ipcRenderer.invoke("sync:getEntityStatus", wsId),
   onEntitySyncStatus: (cb: (data: { wsId: string; status: Record<string, string> }) => void) => {
     const handler = (_: unknown, data: unknown) => cb(data as any);
@@ -95,6 +100,7 @@ contextBridge.exposeInMainWorld("api", {
   deleteWebhook: (id: string) => ipcRenderer.invoke("webhook:delete", id),
   registerActiveWebhook: (webhookId: string, urlSuffix: string) => ipcRenderer.invoke("webhook:registerActive", webhookId, urlSuffix),
   unregisterActiveWebhook: (webhookId: string) => ipcRenderer.invoke("webhook:unregisterActive", webhookId),
+  getWebhookServerStatus: () => ipcRenderer.invoke("webhookServer:status"),
   webhookServerStatus: () => ipcRenderer.invoke("webhookServer:status"),
   startWebhookServer: () => ipcRenderer.invoke("webhookServer:start"),
   stopWebhookServer: () => ipcRenderer.invoke("webhookServer:stop"),

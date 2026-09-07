@@ -11,11 +11,11 @@ interface BadgeProps {
 }
 
 const variantClasses: Record<BadgeVariant, string> = {
-  accent:  "bg-accent/10 text-accent",
-  green:   "bg-green/10 text-green",
-  red:     "bg-red/10 text-red",
-  yellow:  "bg-yellow/10 text-yellow",
-  neutral: "bg-bg3 text-text-dim",
+  accent:  "bg-signal/10 text-signal",
+  green:   "bg-signal/10 text-signal",
+  red:     "bg-destructive/10 text-destructive",
+  yellow:  "bg-amber/10 text-amber",
+  neutral: "bg-surface-2 text-muted-foreground",
 };
 
 export default function Badge({ variant, dot, className, children }: BadgeProps) {

@@ -1,29 +1,15 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { AppConfig, SavedRequest, MockRule, Folder, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
-import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
-import RestTab from "@/components/rest/RestTab";
+import React from "react";
+import { AppConfig, SavedRequest, MockRule, Environment, ApiProtocol } from "@/types";
 import CollectionRunner from "@/components/rest/CollectionRunner";
-import DraftsFolder from "@/components/sidebar/DraftsFolder";
-import { loadDraft } from "@/lib/useDraftPersist";
-import { useEntityTabs } from "@/lib/useEntityTabs";
+import ProtocolSelectorTab from "@/components/editor/ProtocolSelectorTab";
+import { SidebarLayout } from "@/components/ui";
 import { strings } from "@/lib/strings";
-import { entityRelPath } from "@/lib/utils";
 import { Zap } from "@/lib/icons";
-import TabBar from "@/components/editor/TabBar";
-import { SidebarLayout, SidebarHeader } from "@/components/ui";
 import { useTabKeyBindings } from "@/hooks/useTabKeyBindings";
-import { usePersistedState } from "@/lib/usePersistedState";
-
-
-// -- Draft tab prefix -------------------------------------------------------
-
-const DRAFT_PREFIX = "req-draft-";
-const RUNNER_PREFIX = "runner-";
-const isDraft = (id: string) => id.startsWith(DRAFT_PREFIX) || id.startsWith("pending-");
-const isRunner = (id: string) => id.startsWith(RUNNER_PREFIX);
-
-// -- Props ------------------------------------------------------------------
+import RequestTabContent from "./requests/RequestTabContent";
+import RequestsSidebar from "./requests/RequestsSidebar";
+import RequestTabs from "./requests/RequestTabs";
+import { useRequestsPanelState } from "./requests/useRequestsPanelState";
 
 interface Props {
   config: AppConfig;
@@ -42,370 +28,189 @@ interface Props {
   onRestoreItem?: (id: string) => void;
 }
 
-// -- RequestsPanel ----------------------------------------------------------
-
 export default function RequestsPanel({
-  config, onConfigChange, pendingOpenRequest, onPendingConsumed, onOpenMockEditor,
-  activeEnv = null, onHistoryOpen, onEntityPathChange, historyOpen = false,
-  onAfterSave, entitySyncStatus, onPublishItem, onPublishFolder, onRestoreItem,
+  config,
+  onConfigChange,
+  pendingOpenRequest,
+  onPendingConsumed,
+  onOpenMockEditor,
+  activeEnv = null,
+  onHistoryOpen,
+  onEntityPathChange,
+  historyOpen = false,
+  onAfterSave,
+  entitySyncStatus,
+  onPublishItem,
+  onPublishFolder,
+  onRestoreItem,
 }: Props) {
-  const requests = config.requests ?? [];
-  const folders = config.requestFolders ?? [];
-
-  const [search, setSearch] = usePersistedState(`requests:${config.activeWorkspaceId}:search`, "");
-  const [sidebarOpen, setSidebarOpen] = usePersistedState(`requests:${config.activeWorkspaceId}:sidebar-open`, true);
-  const [selectedFolderId, setSelectedFolderId] = usePersistedState<string | null>(`requests:${config.activeWorkspaceId}:selected-folder`, null);
-  const [runnerFolderIds, setRunnerFolderIds] = useState<Set<string>>(new Set());
-
-  // Load which folders have saved runner configs - refresh when workspace changes
-  const loadRunnerFolderIds = useCallback(async () => {
-    try {
-      const ids = await window.api.listRunnerFolderIds(config.activeWorkspaceId);
-      setRunnerFolderIds(new Set(ids));
-    } catch { /* ignore */ }
-  }, [config.activeWorkspaceId]);
-
-  useEffect(() => { loadRunnerFolderIds(); }, [loadRunnerFolderIds]);
-
   const {
-    openTabs, activeTab, setActiveTab,
-    loadedEntities, setLoadedEntities,
-    tabRefs, isDraft,
-    openTab, openNewTab, closeTab, replaceTab, closeOtherTabs, closeAllTabs,
-  } = useEntityTabs<SavedRequest>({
-    storageKey: "requests",
-    draftPrefix: DRAFT_PREFIX,
-    extraDraftPrefixes: ["pending-", RUNNER_PREFIX],
-    workspaceId: config.activeWorkspaceId,
-    entityKind: "requests",
-    entities: requests,
+    tabs,
+    sidebarOpen,
+    setSidebarOpen,
+    setSelectedFolderId,
+    draftProtocols,
+    setDraftProtocols,
+    dirtyTabs,
+    setDirtyTabs,
+    openNewTabInFolder,
+    pendingData,
+    getEntityFilePath,
+    handleFoldersChange,
+    handleMoveFolder,
+    handleSaveEntity,
+    handleDelete,
+    handleDeleteItems,
+    handleBeforeDeleteFolder,
+    handleDuplicateImpl,
+    handleMoveItemsImpl,
+    handleOpenRunner,
+    draftTabIds,
+    tabLabel,
+    tabBadge,
+    folderViewItems,
+    folders,
+    itemProtocolMap,
+    allItemsMap,
+    allEntities,
+    runnerFolderIds,
+    isRunner,
+    isDraft,
+  } = useRequestsPanelState({
+    config,
+    onConfigChange,
+    pendingOpenRequest,
+    onPendingConsumed,
+    onEntityPathChange,
+    historyOpen,
+    onAfterSave,
   });
 
-  const [pendingData, setPendingData] = useState<Record<string, Omit<SavedRequest, "id" | "createdAt" | "workspaceId">>>({});
-  const [newTabInitials, setNewTabInitials] = useState<Record<string, Partial<SavedRequest>>>({});
-  const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
-
-  const openNewTabInFolder = useCallback(() => {
-    if (!selectedFolderId) { openNewTab(); return; }
-    const tabId = `${DRAFT_PREFIX}${Date.now()}`;
-    setNewTabInitials((prev) => ({ ...prev, [tabId]: { folderId: selectedFolderId } }));
-    openTab(tabId);
-  }, [openNewTab, openTab, selectedFolderId]);
+  const {
+    openTabs,
+    activeTab,
+    setActiveTab,
+    loadedEntities,
+    setLoadedEntities,
+    tabRefs,
+    openTab,
+    closeTab,
+    reorderTabs,
+    closeOtherTabs,
+    closeAllTabs,
+  } = tabs;
 
   useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab: openNewTabInFolder });
 
-  // Open a pending request in a new draft tab
-  useEffect(() => {
-    if (!pendingOpenRequest) return;
-    const tabId = `pending-${Date.now()}`;
-    setPendingData((prev) => ({ ...prev, [tabId]: pendingOpenRequest }));
-    openTab(tabId);
-    onPendingConsumed?.();
-  }, [pendingOpenRequest]);
-
-  const reloadRequests = useCallback(async () => {
-    const fresh = await window.api.getConfig();
-    await onConfigChange(fresh);
-  }, [onConfigChange]);
-
-  const getEntityFilePath = useCallback((tabId: string): string => {
-    if (isDraft(tabId)) return "";
-    const r = requests.find((x) => x.id === tabId);
-    if (!r) return "";
-    return entityRelPath("requests", r, folders);
-  }, [requests, folders]);
-
-  useEffect(() => {
-    if (!historyOpen || !activeTab) return;
-    const path = getEntityFilePath(activeTab);
-    if (path) onEntityPathChange?.(path);
-  }, [activeTab, historyOpen, getEntityFilePath, onEntityPathChange]);
-
-  const handleFoldersChange = useCallback(async () => {
-    const fresh = await window.api.getConfig();
-    await onConfigChange(fresh);
-  }, [onConfigChange]);
-
-  const handleMoveFolder = useCallback(async (folderId: string, targetParentId: string | null) => {
-    await window.api.moveFolder("request", folderId, targetParentId);
-    await handleFoldersChange();
-  }, [handleFoldersChange]);
-
-  const handleNewSave = useCallback(async (tabId: string, data: Omit<SavedRequest, "id" | "createdAt" | "workspaceId">) => {
-    const created = await window.api.addRequest(data);
-    await reloadRequests();
-    replaceTab(tabId, created.id);
-    setPendingData((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-    setNewTabInitials((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-    onAfterSave?.();
-  }, [reloadRequests, replaceTab, onAfterSave]);
-
-  const handleTabSave = useCallback(async (tabId: string, data: Omit<SavedRequest, "id" | "createdAt" | "workspaceId">) => {
-    const req = loadedEntities[tabId] ?? requests.find((r) => r.id === tabId);
-    if (!req) return;
-    const updated = { ...req, ...data };
-    setLoadedEntities((prev) => ({ ...prev, [tabId]: updated }));
-    await window.api.updateRequest(updated);
-    await reloadRequests();
-    onAfterSave?.();
-  }, [loadedEntities, requests, reloadRequests, onAfterSave]);
-
-  const handleDelete = useCallback(async (id: string) => {
-    closeTab(id);
-    await window.api.deleteRequest(id);
-    await reloadRequests();
-  }, [reloadRequests, closeTab]);
-
-  const handleDeleteItems = useCallback(async (trackedIds: string[], untrackedIds: string[]) => {
-    [...trackedIds, ...untrackedIds].forEach(id => closeTab(id));
-    if (trackedIds.length > 0) {
-      await Promise.all(trackedIds.map(id => window.api.deleteRequest(id)));
-      await reloadRequests();
-    }
-    if (untrackedIds.length > 0) {
-      await Promise.all(untrackedIds.map(id => window.api.deleteRequest(id)));
-      await reloadRequests();
-    }
-  }, [reloadRequests, closeTab]);
-
-  // Close all open tabs for a folder's requests before the folder is deleted
-  const handleBeforeDeleteFolder = useCallback((folderId: string) => {
-    requests
-      .filter((r) => r.folderId === folderId)
-      .forEach((r) => closeTab(r.id));
-    closeTab(`${RUNNER_PREFIX}${folderId}`);
-  }, [requests, closeTab]);
-
-  const handleDuplicate = useCallback(async (id: string) => {
-    let r = loadedEntities[id];
-    if (!r) {
-      const res = await window.api.loadEntity(config.activeWorkspaceId, "requests", id);
-      if (res.ok && res.entity) r = res.entity as SavedRequest;
-    }
-    if (!r) return;
-    const { id: _id, createdAt: _ca, workspaceId: _ws, ...rest } = r;
-    await window.api.addRequest({ ...rest, name: r.name ? `${r.name} (copy)` : "" });
-    await reloadRequests();
-  }, [loadedEntities, config.activeWorkspaceId, reloadRequests]);
-
-  const handleMoveItems = useCallback(async (ids: string[], folderId: string | null) => {
-    for (const id of ids) {
-      let r = loadedEntities[id];
-      if (!r) {
-        const res = await window.api.loadEntity(config.activeWorkspaceId, "requests", id);
-        if (res.ok && res.entity) r = res.entity as SavedRequest;
-      }
-      if (r) await window.api.updateRequest({ ...r, folderId: folderId ?? undefined });
-    }
-    await reloadRequests();
-  }, [loadedEntities, config.activeWorkspaceId, reloadRequests]);
-
-  const handleOpenRunner = useCallback((folderId: string) => {
-    const tabId = `${RUNNER_PREFIX}${folderId}`;
-    openTab(tabId);
-    // Refresh runner folder IDs so the tree node appears once the runner saves its config
-    setTimeout(() => loadRunnerFolderIds(), 500);
-  }, [openTab, loadRunnerFolderIds]);
-
-  const handleSaveRunnerReport = useCallback(async (report: any) => {
-    await window.api.saveRunnerReport(config.activeWorkspaceId, report);
-  }, [config.activeWorkspaceId]);
-
-  // After runner config is saved, refresh runner folder IDs so the tree node appears
-  const handleRunnerConfigSaved = useCallback(() => {
-    loadRunnerFolderIds();
-  }, [loadRunnerFolderIds]);
-
-
-  const filteredRequests = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return requests;
-    return requests.filter((r) => r.name.toLowerCase().includes(q) || r.url.toLowerCase().includes(q) || r.method.toLowerCase().includes(q));
-  }, [requests, search]);
-
-
-  const draftTabIds = openTabs.filter(isDraft);
-
-  interface RequestDraftSnapshot { name?: string; method?: string; url?: string; }
-
-  const tabLabel = (tabId: string) => {
-    if (isRunner(tabId)) {
-      const fId = tabId.slice(RUNNER_PREFIX.length);
-      const folder = folders.find((f) => f.id === fId);
-      return `Runner: ${folder?.name ?? strings.requests.collectionFallback}`;
-    }
-    if (isDraft(tabId)) {
-      const draft = loadDraft<RequestDraftSnapshot>(tabId);
-      if (draft?.url) {
-        try { const u = new URL(draft.url); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${draft.method ?? "GET"} /${last}`; } catch { return draft.method ?? "New Request"; }
-      }
-      const pd = pendingData[tabId];
-      if (pd?.url) {
-        try { const u = new URL(pd.url); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${pd.method} /${last}`; } catch { return pd.method; }
-      }
-      return strings.requests.newRequest;
-    }
-    const r = requests.find((x) => x.id === tabId);
-    if (!r) return "…";
-    if (r.name) return r.name;
-    try { const u = new URL(r.url); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${r.method} /${last}`; }
-    catch { return `${r.method} ${r.url.slice(0, 18)}`; }
-  };
-
-  const folderViewItems: FolderTreeItem[] = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const requestItems = (q
-      ? requests.filter((r) => r.name.toLowerCase().includes(q) || r.url.toLowerCase().includes(q) || r.method.toLowerCase().includes(q))
-      : requests
-    ).map((r): FolderTreeItem => ({
-      id: r.id,
-      name: r.name || (() => {
-        try { const u = new URL(r.url); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `/${last}`; }
-        catch { return r.url.slice(0, 40); }
-      })(),
-      method: r.method,
-      folderId: r.folderId ?? null,
-      isActive: activeTab === r.id,
-      isEnabled: true,
-      relPath: entityRelPath("requests", r, folders),
-    }));
-
-    // Add a runner config node for each folder that has a saved runner.json
-    const runnerItems: FolderTreeItem[] = folders
-      .filter((f) => runnerFolderIds.has(f.id))
-      .map((f): FolderTreeItem => ({
-        id: `${RUNNER_PREFIX}${f.id}`,
-        name: "Run Collection",
-        folderId: f.id,
-        isActive: activeTab === `${RUNNER_PREFIX}${f.id}`,
-        isEnabled: true,
-        isRunner: true,
-      }));
-
-    return [...requestItems, ...runnerItems];
-  }, [requests, folders, search, activeTab, runnerFolderIds]);
-
-  // -- Sidebar ------------------------------------------------------------
-
-  const sidebarContent = (
-    <>
-      <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.mocks.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.requests.searchPlaceholder} />
-      </SidebarHeader>
-      <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
-        {draftTabIds.length > 0 && (
-          <DraftsFolder
-            label={strings.requests.drafts}
-            draftTabIds={draftTabIds}
-            activeTab={activeTab}
-            onOpenTab={(id) => setActiveTab(id)}
-            onCloseTab={closeTab}
-            tabLabel={tabLabel}
-          />
-        )}
-        <FolderTree
-          kind="request"
-          folders={folders}
-          items={folderViewItems}
-          onOpenItem={openTab}
-          onDeleteItem={handleDelete}
-          onDeleteItems={handleDeleteItems}
-          onFoldersChange={handleFoldersChange}
-          onDuplicateItem={handleDuplicate}
-          onMoveItems={handleMoveItems}
-          onMoveFolder={handleMoveFolder}
-          onOpenNewTab={openNewTabInFolder}
-          onSelectedFolderChange={setSelectedFolderId}
-          onBeforeCreateFolder={() => true}
-          onHistoryItem={onHistoryOpen ? (id) => {
-            const path = getEntityFilePath(id);
-            if (path) onHistoryOpen(path);
-          } : undefined}
-          pathStatusMap={entitySyncStatus}
-          onPublishItem={onPublishItem}
-          onPublishFolder={onPublishFolder}
-          onRestoreItem={onRestoreItem}
-          onOpenRunner={handleOpenRunner}
-          onBeforeDeleteFolder={handleBeforeDeleteFolder}
-        />
-      </div>
-    </>
-  );
-
-  // -- Main content -------------------------------------------------------
-
   const mainContent = (
     <div className="flex flex-col flex-1 overflow-hidden min-w-0 h-full">
-      <TabBar
-        tabs={openTabs.map((id) => ({ id, label: tabLabel(id), isDraft: isDraft(id), isModified: dirtyTabs[id] }))}
+      <RequestTabs
+        openTabs={openTabs}
         activeTab={activeTab}
-        onTabClick={setActiveTab}
-        onTabClose={closeTab}
-        onNewTab={openNewTabInFolder}
-        newTabTitle={strings.requests.newTab}
-        closeTabTitle={strings.requests.closeTab}
-        onCloseOthers={closeOtherTabs}
-        onCloseAll={closeAllTabs}
-        onTabDuplicate={handleDuplicate}
+        dirtyTabs={dirtyTabs}
+        tabBadge={tabBadge}
+        tabLabel={tabLabel}
+        isDraft={isDraft}
+        isRunner={isRunner}
+        setActiveTab={setActiveTab}
+        closeTab={closeTab}
+        openNewTabInFolder={openNewTabInFolder}
+        reorderTabs={reorderTabs}
+        closeOtherTabs={closeOtherTabs}
+        closeAllTabs={closeAllTabs}
+        handleDuplicateImpl={handleDuplicateImpl}
       />
 
       <div className="flex-1 overflow-hidden relative">
         {openTabs.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-2">
             <div className="opacity-10 mb-1"><Zap size={48} /></div>
-            <div className="text-sm font-medium text-text-base">{strings.requests.noRequestsOpen}</div>
-            <p className="text-xs text-text-dim max-w-xs leading-relaxed">
-              {strings.requests.noRequestsOpenHint.replace("+", "")}
-              <span className="text-accent font-semibold">+</span>
-              {" to create a new one."}
+            <div className="text-sm font-medium text-foreground">{strings.requests.noRequestsOpen}</div>
+            <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
+              {strings.requests.noRequestsOpenHint}
             </p>
           </div>
         ) : (
           openTabs.map((tabId) => {
-            // Runner tab
             if (isRunner(tabId)) {
-              const fId = tabId.slice(RUNNER_PREFIX.length);
-              const folder = folders.find((f) => f.id === fId);
-              const folderRequests = requests.filter((r) => r.folderId === fId);
+              const folderId = runnerFolderIds[tabId];
               return (
-                <div key={tabId} className="absolute inset-0 flex flex-col overflow-hidden" style={{ display: activeTab === tabId ? "flex" : "none" }}>
-                  <CollectionRunner
-                    folderId={fId}
-                    folderName={folder?.name ?? "Collection"}
-                    requests={folderRequests}
-                    activeEnv={activeEnv}
-                    wsId={config.activeWorkspaceId}
-                    onClose={() => closeTab(tabId)}
-                    onSaveReport={handleSaveRunnerReport}
-                  />
+                <div
+                  key={tabId}
+                  className="absolute inset-0 flex flex-col overflow-hidden"
+                  style={{ display: activeTab === tabId ? "flex" : "none" }}
+                >
+                  {folderId && (
+                    <CollectionRunner
+                      folderId={folderId}
+                      folders={folders}
+                      activeEnv={activeEnv}
+                      onClose={() => closeTab(tabId)}
+                    />
+                  )}
                 </div>
               );
             }
 
             const isUnsaved = isDraft(tabId);
-            const req = isUnsaved ? null : (loadedEntities[tabId] ?? requests.find((r) => r.id === tabId) ?? null);
-            const initialData = isUnsaved ? (pendingData[tabId] ?? newTabInitials[tabId] ?? null) : req;
-            if (!isUnsaved && !req) return null;
+            const savedProto = itemProtocolMap.get(tabId);
+            const draftProto = draftProtocols[tabId];
+            const currentProto = isUnsaved ? draftProto : savedProto;
+
+            if (isUnsaved && !currentProto) {
+              return (
+                <div
+                  key={tabId}
+                  className="absolute inset-0 flex flex-col overflow-hidden"
+                  style={{ display: activeTab === tabId ? "flex" : "none" }}
+                >
+                  <ProtocolSelectorTab
+                    mode="request"
+                    onSelect={(proto) => {
+                      setDraftProtocols((prev) => ({ ...prev, [tabId]: proto }));
+                    }}
+                  />
+                </div>
+              );
+            }
+
+            const activeProtocol: ApiProtocol = currentProto ?? "rest";
+
+            const entity = isUnsaved
+              ? null
+              : (loadedEntities[tabId] ?? allEntities.find((e: any) => e.id === tabId) ?? null);
+            const initialData = isUnsaved
+              ? (pendingData[tabId] ?? null)
+              : entity;
+            if (!isUnsaved && !entity) return null;
+
+            const itemMeta = allItemsMap.get(tabId);
+            const relPath = itemMeta?.relPath ?? "";
+            const syncStatus = relPath ? entitySyncStatus?.[relPath] : undefined;
+
             return (
-              <div key={tabId} className="absolute inset-0 flex flex-col overflow-hidden" style={{ display: activeTab === tabId ? "flex" : "none" }}>
-                <RestTab
-                  ref={(el) => { tabRefs.current[tabId] = el; }}
-                  tabType="request"
-                  tabId={tabId}
-                  draftTabId={isUnsaved ? tabId : null}
-                  initial={initialData}
-                  folders={folders}
-                  activeEnv={activeEnv}
-                  onSave={(data) => isUnsaved
-                    ? handleNewSave(tabId, data as Omit<SavedRequest, "id" | "createdAt" | "workspaceId">)
-                    : handleTabSave(tabId, data as Omit<SavedRequest, "id" | "createdAt" | "workspaceId">)
-                  }
-                  onCreateMock={(initial) => onOpenMockEditor?.(initial)}
-                  onClose={() => closeTab(tabId)}
-                  onDirtyChange={(dirty) => setDirtyTabs((prev) => ({ ...prev, [tabId]: dirty }))}
-                  showCurlImport={isUnsaved}
-                />
-              </div>
+              <RequestTabContent
+                key={tabId}
+                tabId={tabId}
+                activeTab={activeTab}
+                isUnsaved={isUnsaved}
+                activeProtocol={activeProtocol}
+                initialData={initialData}
+                relPath={relPath}
+                syncStatus={syncStatus}
+                folders={folders}
+                activeEnv={activeEnv}
+                config={config}
+                tabRefs={tabRefs}
+                handleSaveEntity={handleSaveEntity}
+                closeTab={closeTab}
+                setDirtyTabs={setDirtyTabs}
+                onOpenMockEditor={onOpenMockEditor}
+                onPublishItem={onPublishItem}
+                onRestoreItem={onRestoreItem}
+                setLoadedEntities={setLoadedEntities}
+                onHistoryOpen={onHistoryOpen}
+              />
             );
           })
         )}
@@ -418,13 +223,41 @@ export default function RequestsPanel({
       <SidebarLayout
         sidebarOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(true)}
-        sidebar={sidebarContent}
+        sidebar={
+          <RequestsSidebar
+            setSidebarOpen={setSidebarOpen}
+            draftTabIds={draftTabIds}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            closeTab={closeTab}
+            tabLabel={tabLabel}
+            folders={folders}
+            folderViewItems={folderViewItems}
+            openTab={openTab}
+            handleDelete={handleDelete}
+            handleDeleteItems={handleDeleteItems}
+            handleFoldersChange={handleFoldersChange}
+            handleDuplicateImpl={handleDuplicateImpl}
+            handleMoveItemsImpl={handleMoveItemsImpl}
+            handleMoveFolder={handleMoveFolder}
+            openNewTabInFolder={openNewTabInFolder}
+            setSelectedFolderId={setSelectedFolderId}
+            onHistoryOpen={onHistoryOpen}
+            getEntityFilePath={getEntityFilePath}
+            entitySyncStatus={entitySyncStatus}
+            onPublishItem={onPublishItem}
+            onPublishFolder={onPublishFolder}
+            onRestoreItem={onRestoreItem}
+            handleOpenRunner={handleOpenRunner}
+            handleBeforeDeleteFolder={handleBeforeDeleteFolder}
+          />
+        }
         collapseTitle={strings.mocks.collapseSidebar}
         expandTitle={strings.mocks.expandSidebar}
         storageKey="requests-panel-sidebar"
-        collapsedBadge={requests.length > 0 ? (
-          <span className="text-[9px] text-text-dim font-mono" title={`${requests.length} requests`}
-            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", lineHeight: 1.4 }}>{requests.length}</span>
+        collapsedBadge={allEntities.length > 0 ? (
+          <span className="text-[9px] text-muted-foreground font-mono" title={`${allEntities.length} requests`}
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", lineHeight: 1.4 }}>{allEntities.length}</span>
         ) : undefined}
       >
         {mainContent}

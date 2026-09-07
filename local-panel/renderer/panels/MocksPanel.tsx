@@ -1,25 +1,27 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { AppConfig, MockRule, Environment } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
-import RestTab from "@/components/rest/RestTab";
-import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
-import DraftsFolder from "@/components/sidebar/DraftsFolder";
-import { loadDraft } from "@/lib/useDraftPersist";
-import { useEntityTabs } from "@/lib/useEntityTabs";
-import { strings } from "@/lib/strings";
-import { entityRelPath, calculateFolderStatus } from "@/lib/utils";
-import { findBlocksFolder, ensureBlocksFolderId, buildBlockMock } from "@/lib/blocks";
+import React from "react";
+import {
+  AppConfig,
+  MockRule,
+  Environment,
+} from "@/types";
 import { Zap } from "@/lib/icons";
-import TabBar from "@/components/editor/TabBar";
-import { SidebarLayout, SidebarHeader } from "@/components/ui";
+import { SidebarLayout } from "@/components/ui";
+import { strings } from "@/lib/strings";
 import { useTabKeyBindings } from "@/hooks/useTabKeyBindings";
-import { usePersistedState } from "@/lib/usePersistedState";
-
+import MockTabContent from "./mocks/MockTabContent";
+import MocksSidebar from "./mocks/MocksSidebar";
+import MockTabs from "./mocks/MockTabs";
+import { useMocksPanelState } from "./mocks/useMocksPanelState";
 
 // -- Draft tab prefix -------------------------------------------------------
 
 const DRAFT_PREFIX = "mock-draft-";
-const isDraft = (id: string) => id.startsWith(DRAFT_PREFIX) || id.startsWith("prefill-");
+const isDraft = (id: string) =>
+  id.startsWith(DRAFT_PREFIX) ||
+  id.startsWith("prefill-") ||
+  id.startsWith("gql-mock-draft-") ||
+  id.startsWith("grpc-mock-draft-") ||
+  id.startsWith("soap-mock-draft-");
 
 // -- Props ------------------------------------------------------------------
 
@@ -42,358 +44,154 @@ interface Props {
 // -- MocksPanel -------------------------------------------------------------
 
 export default function MocksPanel({
-  config, onConfigChange, pendingMockInitial, onPendingConsumed,
-  activeEnv = null, onHistoryOpen, onEntityPathChange, historyOpen = false,
-  onAfterSave, entitySyncStatus, onPublishItem, onPublishFolder, onRestoreItem,
+  config,
+  onConfigChange,
+  pendingMockInitial,
+  onPendingConsumed,
+  activeEnv = null,
+  onHistoryOpen,
+  onEntityPathChange,
+  historyOpen = false,
+  onAfterSave,
+  entitySyncStatus,
+  onPublishItem,
+  onPublishFolder,
+  onRestoreItem,
 }: Props) {
-  const mocks = config.mocks ?? [];
-  const folders = config.mockFolders ?? [];
-
-  const [search, setSearch] = usePersistedState(`mocks:${config.activeWorkspaceId}:search`, "");
-  const [sidebarOpen, setSidebarOpen] = usePersistedState(`mocks:${config.activeWorkspaceId}:sidebar-open`, true);
-  const [selectedFolderId, setSelectedFolderId] = usePersistedState<string | null>(`mocks:${config.activeWorkspaceId}:selected-folder`, null);
-
   const {
-    openTabs, activeTab, setActiveTab,
-    loadedEntities, setLoadedEntities,
-    tabRefs, isDraft,
-    openTab, openNewTab, closeTab, replaceTab, closeOtherTabs, closeAllTabs,
-  } = useEntityTabs<MockRule>({
-    storageKey: "mocks",
-    draftPrefix: DRAFT_PREFIX,
-    extraDraftPrefixes: ["prefill-"],
-    workspaceId: config.activeWorkspaceId,
-    entityKind: "mocks",
-    entities: mocks,
+    tabs,
+    sidebarOpen,
+    setSidebarOpen,
+    setSelectedFolderId,
+    draftProtocols,
+    setDraftProtocols,
+    dirtyTabs,
+    setDirtyTabs,
+    openNewTabInFolder,
+    getEntityFilePath,
+    handleFoldersChange,
+    handleMoveFolder,
+    handleToggle,
+    handleToggleFolderItems,
+    handleSaveEntity,
+    handleDelete,
+    handleDeleteItems,
+    handleBeforeDeleteFolder,
+    handleDuplicateImpl,
+    handleMoveItemsImpl,
+    handleBlockItem,
+    handleUnblockItem,
+    draftTabIds,
+    tabLabel,
+    tabBadge,
+    folderViewItems,
+    folderStatusMap,
+    folders,
+    itemProtocolMap,
+    allItemsMap,
+    allEntities,
+    blocksFolder,
+    prefillData,
+    newTabInitials
+  } = useMocksPanelState({
+    config,
+    onConfigChange,
+    pendingMockInitial,
+    onPendingConsumed,
+    onEntityPathChange,
+    historyOpen,
+    onAfterSave,
   });
 
-  const [newTabInitials, setNewTabInitials] = useState<Record<string, Partial<MockRule>>>({});
-  const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
-
-  const openNewTabInFolder = useCallback(() => {
-    if (!selectedFolderId) { openNewTab(); return; }
-    const tabId = `${DRAFT_PREFIX}${Date.now()}`;
-    setNewTabInitials((prev) => ({ ...prev, [tabId]: { folderId: selectedFolderId } }));
-    openTab(tabId);
-  }, [openNewTab, openTab, selectedFolderId]);
+  const {
+    openTabs,
+    activeTab,
+    setActiveTab,
+    loadedEntities,
+    setLoadedEntities,
+    tabRefs,
+    isDraft,
+    openTab,
+    closeTab,
+    reorderTabs,
+    closeOtherTabs,
+    closeAllTabs,
+  } = tabs;
 
   useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab: openNewTabInFolder });
-
-  const [prefillData, setPrefillData] = useState<Record<string, Partial<MockRule>>>({})
-
-  useEffect(() => {
-    if (!pendingMockInitial) return;
-    const tabId = `prefill-${Date.now()}`;
-    setPrefillData((prev) => ({ ...prev, [tabId]: pendingMockInitial }));
-    openTab(tabId);
-    onPendingConsumed?.();
-  }, [pendingMockInitial]);
-
-  const getEntityFilePath = useCallback((tabId: string): string => {
-    if (isDraft(tabId)) return "";
-    const m = mocks.find((x) => x.id === tabId);
-    if (!m) return "";
-    return entityRelPath("mocks", m, folders);
-  }, [mocks, folders]);
-
-  useEffect(() => {
-    if (!historyOpen || !activeTab) return;
-    const path = getEntityFilePath(activeTab);
-    if (path) onEntityPathChange?.(path);
-  }, [activeTab, historyOpen, getEntityFilePath, onEntityPathChange]);
-
-  const reloadMocks = useCallback(async () => {
-    const fresh = await window.api.getConfig();
-    await onConfigChange(fresh);
-  }, [onConfigChange]);
-
-  const handleToggle = useCallback(async (mock: MockRule) => {
-    await window.api.setEntityEnabled(config.activeWorkspaceId, "mocks", mock.id, !mock.enabled);
-    await reloadMocks();
-  }, [mocks, config.activeWorkspaceId, reloadMocks]);
-
-  const handleToggleFolderItems = useCallback(async (folderId: string | null, enable: boolean) => {
-    // Collect all descendant folder IDs recursively
-    const descendantFolderIds = new Set<string | null>([folderId]);
-    const queue = folders.filter((f) => (f.parentId ?? null) === folderId);
-    while (queue.length) {
-      const f = queue.shift()!;
-      descendantFolderIds.add(f.id);
-      folders.filter((c) => (c.parentId ?? null) === f.id).forEach((c) => queue.push(c));
-    }
-    const affected = mocks.filter((m) => descendantFolderIds.has(m.folderId ?? null));
-    for (const m of affected) {
-      if (m.enabled !== enable) await window.api.setEntityEnabled(config.activeWorkspaceId, "mocks", m.id, enable);
-    }
-    await reloadMocks();
-  }, [mocks, folders, config.activeWorkspaceId, reloadMocks]);
-
-  const handleNewMockSave = useCallback(async (tabId: string, data: Omit<MockRule, "id" | "createdAt" | "workspaceId">) => {
-    const created = await window.api.addMock(data);
-    await reloadMocks();
-    replaceTab(tabId, created.id);
-    setPrefillData((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-    setNewTabInitials((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
-    onAfterSave?.();
-  }, [mocks.length, reloadMocks, replaceTab, onAfterSave]);
-
-  const handleTabSave = useCallback(async (tabId: string, data: Omit<MockRule, "id" | "createdAt" | "workspaceId">) => {
-    const mock = loadedEntities[tabId] ?? mocks.find((m) => m.id === tabId);
-    if (!mock) return;
-    const updated = { ...mock, ...data };
-    setLoadedEntities((prev) => ({ ...prev, [tabId]: updated }));
-    await window.api.updateMock(updated);
-    await reloadMocks();
-    onAfterSave?.();
-  }, [loadedEntities, mocks, reloadMocks, onAfterSave]);
-
-  const handleDelete = useCallback(async (id: string) => {
-    closeTab(id);
-    await window.api.deleteMock(id);
-    await reloadMocks();
-  }, [reloadMocks, closeTab]);
-
-  // Grouped bulk delete: tracked items deleted together, untracked items together.
-  // Single reload per group so there's no race condition from concurrent reloads.
-  const handleDeleteItems = useCallback(async (trackedIds: string[], untrackedIds: string[]) => {
-    [...trackedIds, ...untrackedIds].forEach(id => closeTab(id));
-    if (trackedIds.length > 0) {
-      await Promise.all(trackedIds.map(id => window.api.deleteMock(id)));
-      await reloadMocks();
-    }
-    if (untrackedIds.length > 0) {
-      await Promise.all(untrackedIds.map(id => window.api.deleteMock(id)));
-      await reloadMocks();
-    }
-  }, [reloadMocks, closeTab]);
-
-  // Close all open tabs for a folder's mocks before the folder is deleted
-  const handleBeforeDeleteFolder = useCallback((folderId: string) => {
-    mocks
-      .filter((m) => m.folderId === folderId)
-      .forEach((m) => closeTab(m.id));
-  }, [mocks, closeTab]);
-
-  const handleDuplicate = useCallback(async (id: string) => {
-    let m = loadedEntities[id];
-    if (!m) {
-      const res = await window.api.loadEntity(config.activeWorkspaceId, "mocks", id);
-      if (res.ok && res.entity) m = res.entity as MockRule;
-    }
-    if (!m) return;
-    const { id: _id, createdAt: _ca, workspaceId: _ws, ...rest } = m;
-    await window.api.addMock({ ...rest, name: m.name ? `${m.name} (copy)` : "" });
-    await reloadMocks();
-  }, [loadedEntities, config.activeWorkspaceId, reloadMocks]);
-
-  const handleMoveItems = useCallback(async (ids: string[], folderId: string | null) => {
-    for (const id of ids) {
-      let m = loadedEntities[id] ?? mocks.find((x) => x.id === id);
-      if (!m) {
-        const res = await window.api.loadEntity(config.activeWorkspaceId, "mocks", id);
-        if (res.ok && res.entity) m = res.entity as MockRule;
-      }
-      if (m) await window.api.updateMock({ ...m, folderId: folderId ?? undefined });
-    }
-    await reloadMocks();
-  }, [loadedEntities, mocks, config.activeWorkspaceId, reloadMocks]);
-
-  const handleFoldersChange = useCallback(async () => {
-    const fresh = await window.api.getConfig();
-    await onConfigChange(fresh);
-  }, [onConfigChange]);
-
-  const handleMoveFolder = useCallback(async (folderId: string, targetParentId: string | null) => {
-    await window.api.moveFolder("mock", folderId, targetParentId);
-    await handleFoldersChange();
-  }, [handleFoldersChange]);
-
-  const blocksFolder = useMemo(() => findBlocksFolder(folders), [folders]);
-
-  // Block = move a mock into the application-managed Blocks folder as a 403 block-mock.
-  const handleBlockItem = useCallback(async (id: string) => {
-    const m = mocks.find((x) => x.id === id);
-    if (!m) return;
-    const folderId = await ensureBlocksFolderId(folders);
-    await window.api.deleteMock(id);
-    closeTab(id);
-    await window.api.addMock(buildBlockMock(m.method, m.urlPattern, folderId));
-    await reloadMocks();
-  }, [mocks, folders, closeTab, reloadMocks]);
-
-  // Unblock = delete the block mock entirely.
-  const handleUnblockItem = useCallback(async (id: string) => {
-    closeTab(id);
-    await window.api.deleteMock(id);
-    await reloadMocks();
-  }, [closeTab, reloadMocks]);
-
-
-  const filteredMocks = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return mocks;
-    return mocks.filter((m) => m.name.toLowerCase().includes(q) || m.urlPattern.toLowerCase().includes(q) || m.method.toLowerCase().includes(q));
-  }, [mocks, search]);
-
-
-  interface MockDraftSnapshot { name?: string; method?: string; urlPattern?: string; }
-
-  const tabLabel = (tabId: string) => {
-    if (isDraft(tabId)) {
-      if (tabId.startsWith("prefill-")) {
-        const pf = prefillData[tabId];
-        if (!pf) return strings.mocks.newMock;
-        if (pf.name) return pf.name;
-        if (pf.method && pf.urlPattern) {
-          try { const u = new URL(pf.urlPattern); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${pf.method} /${last}`; }
-          catch { return `${pf.method} ${(pf.urlPattern ?? "").slice(0, 18)}`; }
-        }
-        return strings.mocks.newMock;
-      }
-      const draft = loadDraft<MockDraftSnapshot>(tabId);
-      if (draft?.name) return draft.name;
-      if (draft?.method && draft?.urlPattern) {
-        try { const u = new URL(draft.urlPattern); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${draft.method} /${last}`; }
-        catch { return `${draft.method} ${draft.urlPattern.slice(0, 18)}`; }
-      }
-      return strings.mocks.newMock;
-    }
-    const m = mocks.find((x) => x.id === tabId);
-    if (!m) return "…";
-    if (m.name) return m.name;
-    try { const u = new URL(m.urlPattern); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${m.method} /${last}`; }
-    catch { return `${m.method} ${m.urlPattern.slice(0, 18)}`; }
-  };
-
-  const folderViewItems: FolderTreeItem[] = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (q
-      ? mocks.filter((m) => m.name.toLowerCase().includes(q) || m.urlPattern.toLowerCase().includes(q) || m.method.toLowerCase().includes(q))
-      : mocks
-    ).map((m): FolderTreeItem => ({
-      id: m.id,
-      name: m.name || `${m.method} ${m.urlPattern.slice(0, 40)}`,
-      method: m.method,
-      folderId: m.folderId ?? null,
-      isActive: activeTab === m.id,
-      isEnabled: m.enabled,
-      isBlock: !!blocksFolder && m.folderId === blocksFolder.id,
-      relPath: entityRelPath("mocks", m, folders),
-    }));
-  }, [mocks, folders, search, activeTab, blocksFolder]);
-
-  const folderStatusMap = useMemo(() => calculateFolderStatus(mocks, folders), [mocks, folders]);
-
-  const draftTabIds = openTabs.filter(isDraft);
-
-  // -- Sidebar ------------------------------------------------------------
-
-  const sidebarContent = (
-    <>
-      <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.mocks.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.mocks.searchPlaceholder} />
-      </SidebarHeader>
-      <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
-        {draftTabIds.length > 0 && (
-          <DraftsFolder
-            label={strings.mocks.drafts}
-            draftTabIds={draftTabIds}
-            activeTab={activeTab}
-            onOpenTab={(id) => setActiveTab(id)}
-            onCloseTab={closeTab}
-            tabLabel={tabLabel}
-          />
-        )}
-        <FolderTree
-          kind="mock"
-          folders={folders}
-          items={folderViewItems}
-          onOpenItem={openTab}
-          onDeleteItem={handleDelete}
-          onDeleteItems={handleDeleteItems}
-          onToggleItem={(id) => { const m = mocks.find((x) => x.id === id); if (m) handleToggle(m); }}
-          onToggleFolderItems={handleToggleFolderItems}
-          onFoldersChange={handleFoldersChange}
-          onDuplicateItem={handleDuplicate}
-          onMoveItems={handleMoveItems}
-          onMoveFolder={handleMoveFolder}
-          onOpenNewTab={openNewTabInFolder}
-          onSelectedFolderChange={setSelectedFolderId}
-          onBeforeCreateFolder={() => true}
-          onHistoryItem={onHistoryOpen ? (id) => {
-            const path = getEntityFilePath(id);
-            if (path) onHistoryOpen(path);
-          } : undefined}
-          pathStatusMap={entitySyncStatus}
-          folderStatusMap={folderStatusMap}
-          onPublishItem={onPublishItem}
-          onPublishFolder={onPublishFolder}
-          onRestoreItem={onRestoreItem}
-          onBeforeDeleteFolder={handleBeforeDeleteFolder}
-          blocksFolderId={blocksFolder?.id ?? null}
-          onBlockItem={handleBlockItem}
-          onUnblockItem={handleUnblockItem}
-        />
-      </div>
-    </>
-  );
 
   // -- Main content -------------------------------------------------------
 
   const mainContent = (
     <div className="flex flex-col flex-1 overflow-hidden min-w-0 h-full">
-      <TabBar
-        tabs={openTabs.map((id) => ({ id, label: tabLabel(id), isDraft: isDraft(id), isModified: dirtyTabs[id] }))}
+      <MockTabs
+        openTabs={openTabs}
         activeTab={activeTab}
-        onTabClick={setActiveTab}
-        onTabClose={closeTab}
-        onNewTab={openNewTabInFolder}
-        newTabTitle={strings.mocks.newTab}
-        closeTabTitle={strings.mocks.closeTab}
-        onCloseOthers={closeOtherTabs}
-        onCloseAll={closeAllTabs}
-        onTabDuplicate={handleDuplicate}
+        dirtyTabs={dirtyTabs}
+        tabBadge={tabBadge}
+        tabLabel={tabLabel}
+        isDraft={isDraft}
+        setActiveTab={setActiveTab}
+        closeTab={closeTab}
+        openNewTabInFolder={openNewTabInFolder}
+        reorderTabs={reorderTabs}
+        closeOtherTabs={closeOtherTabs}
+        closeAllTabs={closeAllTabs}
+        handleDuplicateImpl={handleDuplicateImpl}
       />
 
       <div className="flex-1 overflow-hidden relative">
         {openTabs.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center gap-2">
             <div className="opacity-10 mb-1"><Zap size={48} /></div>
-            <div className="text-sm font-medium text-text-base">{strings.mocks.noMocksOpen}</div>
-            <p className="text-xs text-text-dim max-w-xs leading-relaxed">
+            <div className="text-sm font-medium text-foreground">{strings.mocks.noMocksOpen}</div>
+            <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
               {strings.mocks.noMocksOpenHint}
             </p>
           </div>
         ) : (
           openTabs.map((tabId) => {
             const isUnsaved = isDraft(tabId);
-            const isPrefill = tabId.startsWith("prefill-");
-            const mock = isUnsaved ? null : (loadedEntities[tabId] ?? mocks.find((m) => m.id === tabId) ?? null);
-            if (!isUnsaved && !mock) return null;
-            const initialForTab: Partial<MockRule> | null = isPrefill
-              ? (prefillData[tabId] ?? null)
-              : isUnsaved ? (newTabInitials[tabId] ?? null) : mock;
+            const savedProto = itemProtocolMap.get(tabId);
+            const draftProto = draftProtocols[tabId];
+            const currentProto = isUnsaved ? draftProto : savedProto;
+
+            const entity = isUnsaved
+              ? null
+              : (loadedEntities[tabId] ?? allEntities.find((m: any) => m.id === tabId) ?? null);
+            const initialData = isUnsaved
+              ? (prefillData[tabId] ?? newTabInitials[tabId] ?? null)
+              : entity;
+
+            const itemMeta = allItemsMap.get(tabId);
+            const relPath = itemMeta?.relPath ?? "";
+            const syncStatus = relPath && entitySyncStatus ? entitySyncStatus[relPath] : undefined;
+
             return (
-              <div key={tabId} className="absolute inset-0 flex flex-col overflow-hidden" style={{ display: activeTab === tabId ? "flex" : "none" }}>
-                <RestTab
-                  ref={(el) => { tabRefs.current[tabId] = el; }}
-                  tabType="mock"
-                  tabId={tabId}
-                  draftTabId={isUnsaved ? tabId : null}
-                  initial={initialForTab}
-                  folders={folders}
-                  activeEnv={activeEnv}
-                  onSave={(data) => isUnsaved
-                    ? handleNewMockSave(tabId, data as Omit<MockRule, "id" | "createdAt" | "workspaceId">)
-                    : handleTabSave(tabId, data as Omit<MockRule, "id" | "createdAt" | "workspaceId">)
-                  }
-                  onClose={() => closeTab(tabId)}
-                  onDirtyChange={(dirty) => setDirtyTabs((prev) => ({ ...prev, [tabId]: dirty }))}
-                  showCurlImport={isUnsaved}
-                  enabled={isUnsaved ? undefined : mocks.find((m) => m.id === tabId)?.enabled}
-                  onToggleEnabled={isUnsaved ? undefined : () => { const m = mocks.find((x) => x.id === tabId); if (m) handleToggle(m); }}
-                />
-              </div>
+              <MockTabContent
+                key={tabId}
+                tabId={tabId}
+                activeTab={activeTab}
+                isUnsaved={isUnsaved}
+                currentProto={currentProto}
+                initialData={initialData}
+                itemMeta={itemMeta}
+                relPath={relPath}
+                syncStatus={syncStatus}
+                folders={folders}
+                activeEnv={activeEnv}
+                config={config}
+                tabRefs={tabRefs}
+                setDraftProtocols={setDraftProtocols}
+                handleSaveEntity={handleSaveEntity}
+                closeTab={closeTab}
+                setDirtyTabs={setDirtyTabs}
+                handleToggle={handleToggle}
+                onPublishItem={onPublishItem}
+                onRestoreItem={onRestoreItem}
+                setLoadedEntities={setLoadedEntities}
+                onHistoryOpen={onHistoryOpen}
+              />
             );
           })
         )}
@@ -406,13 +204,46 @@ export default function MocksPanel({
       <SidebarLayout
         sidebarOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(true)}
-        sidebar={sidebarContent}
+        sidebar={
+          <MocksSidebar
+            setSidebarOpen={setSidebarOpen}
+            draftTabIds={draftTabIds}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            closeTab={closeTab}
+            tabLabel={tabLabel}
+            folders={folders}
+            folderViewItems={folderViewItems}
+            openTab={openTab}
+            handleDelete={handleDelete}
+            handleDeleteItems={handleDeleteItems}
+            handleToggle={handleToggle}
+            handleToggleFolderItems={handleToggleFolderItems}
+            handleFoldersChange={handleFoldersChange}
+            handleDuplicateImpl={handleDuplicateImpl}
+            handleMoveItemsImpl={handleMoveItemsImpl}
+            handleMoveFolder={handleMoveFolder}
+            openNewTabInFolder={openNewTabInFolder}
+            setSelectedFolderId={setSelectedFolderId}
+            onHistoryOpen={onHistoryOpen}
+            getEntityFilePath={getEntityFilePath}
+            entitySyncStatus={entitySyncStatus}
+            folderStatusMap={folderStatusMap}
+            onPublishItem={onPublishItem}
+            onPublishFolder={onPublishFolder}
+            onRestoreItem={onRestoreItem}
+            handleBeforeDeleteFolder={handleBeforeDeleteFolder}
+            blocksFolderId={blocksFolder?.id ?? null}
+            handleBlockItem={handleBlockItem}
+            handleUnblockItem={handleUnblockItem}
+          />
+        }
         collapseTitle={strings.mocks.collapseSidebar}
         expandTitle={strings.mocks.expandSidebar}
         storageKey="mocks-panel-sidebar"
-        collapsedBadge={mocks.length > 0 ? (
-          <span className="text-[9px] text-text-dim font-mono" title={`${mocks.length} mocks`}
-            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", lineHeight: 1.4 }}>{mocks.length}</span>
+        collapsedBadge={allEntities.length > 0 ? (
+          <span className="text-[9px] text-muted-foreground font-mono" title={`${allEntities.length} mocks`}
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", lineHeight: 1.4 }}>{allEntities.length}</span>
         ) : undefined}
       >
         {mainContent}

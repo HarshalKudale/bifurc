@@ -67,17 +67,12 @@ export interface SoapMockDraft {
 
 // -- Actions ----------------------------------------------------------------
 
+import { createTabReducer, CommonTabAction } from "@/lib/createTabReducer";
+
 export type SoapTabAction =
-    | { type: "SET_FIELD"; field: string; value: unknown }
-    | { type: "LOAD_ENTITY"; entity: SavedSoapRequest | SavedSoapMock; tabType: SoapTabType }
-    | { type: "LOAD_DRAFT"; draft: SoapRequestDraft | SoapMockDraft; tabType: SoapTabType }
     | { type: "SEND_START" }
     | { type: "SEND_SUCCESS"; status: number; headers: Record<string, string>; body: string; durationMs: number }
-    | { type: "SEND_ERROR"; error: string }
-    | { type: "SAVE_START" }
-    | { type: "SAVE_SUCCESS" }
-    | { type: "SAVE_ERROR" }
-    | { type: "REFRESH"; entity: SavedSoapRequest | SavedSoapMock; tabType: SoapTabType };
+    | CommonTabAction<SoapTabState, SavedSoapRequest | SavedSoapMock, SoapRequestDraft | SoapMockDraft>;
 
 // -- Init -------------------------------------------------------------------
 
@@ -184,31 +179,20 @@ export function initSoapState(
 
 // -- Reducer ----------------------------------------------------------------
 
-export function soapTabReducer(state: SoapTabState, action: SoapTabAction): SoapTabState {
+const baseSoapTabReducer = (state: SoapTabState, action: SoapTabAction): SoapTabState => {
     switch (action.type) {
-        case "SET_FIELD":
-            return { ...state, [action.field]: action.value, dirty: true };
-        case "LOAD_ENTITY":
-        case "REFRESH":
-            return initSoapState(action.entity, null, action.tabType);
-        case "LOAD_DRAFT":
-            return initSoapState(null, action.draft, action.tabType);
         case "SEND_START":
             return { ...state, sending: true, resStatus: null, resHeaders: {}, resBody: "", resDuration: null, resError: null };
         case "SEND_SUCCESS":
             return { ...state, sending: false, resStatus: action.status, resHeaders: action.headers, resBody: action.body, resDuration: action.durationMs };
-        case "SEND_ERROR":
-            return { ...state, sending: false, resError: action.error };
-        case "SAVE_START":
-            return { ...state, saving: true };
-        case "SAVE_SUCCESS":
-            return { ...state, saving: false, dirty: false };
-        case "SAVE_ERROR":
-            return { ...state, saving: false };
         default:
             return state;
     }
-}
+};
+
+export const soapTabReducer = createTabReducer<SoapTabState, SoapTabAction, SavedSoapRequest | SavedSoapMock, SoapRequestDraft | SoapMockDraft>({
+    init: initSoapState
+}, baseSoapTabReducer);
 
 // -- Helpers ----------------------------------------------------------------
 

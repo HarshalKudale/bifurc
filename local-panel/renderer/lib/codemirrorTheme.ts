@@ -3,13 +3,13 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { Extension } from "@codemirror/state";
 
-// -- Editor chrome theme (uses CSS vars so it auto-follows dark/light) --------
+/* ── Editor chrome theme (auto-follows dark/light via CSS vars) ─────── */
 
 export const localPanelTheme = EditorView.theme({
   "&": {
     height: "100%",
     fontSize: "12px",
-    fontFamily: '"Cascadia Code", "Fira Code", Consolas, monospace',
+    fontFamily: "var(--font-mono)",
     background: "transparent",
   },
   ".cm-scroller": {
@@ -22,112 +22,87 @@ export const localPanelTheme = EditorView.theme({
   },
   ".cm-content": {
     padding: "12px 16px",
-    caretColor: "var(--c-accent)",
+    caretColor: "var(--c-signal)",
   },
   ".cm-line": {
     padding: "0",
   },
   ".cm-cursor, .cm-dropCursor": {
-    borderLeftColor: "var(--c-accent)",
+    borderLeftColor: "var(--c-signal)",
   },
   ".cm-selectionBackground, ::selection": {
-    background: "rgba(var(--color-accent-rgb) / 0.18) !important",
+    background: "oklch(var(--signal) / 0.18) !important",
   },
   "&.cm-focused .cm-selectionBackground": {
-    background: "rgba(var(--color-accent-rgb) / 0.18) !important",
+    background: "oklch(var(--signal) / 0.18) !important",
   },
   ".cm-activeLine": {
-    background: "rgba(var(--color-accent-rgb) / 0.04)",
+    background: "oklch(var(--signal) / 0.04)",
   },
   ".cm-gutters": {
-    background: "var(--c-bg2)",
-    color: "var(--c-text-dim)",
+    background: "var(--c-card)",
+    color: "var(--c-muted-foreground)",
     border: "none",
     borderRight: "1px solid var(--c-border)",
   },
   ".cm-activeLineGutter": {
-    background: "rgba(var(--color-accent-rgb) / 0.08)",
-    color: "var(--c-accent)",
+    background: "oklch(var(--signal) / 0.08)",
+    color: "var(--c-signal)",
   },
   ".cm-matchingBracket": {
-    background: "rgba(var(--color-accent-rgb) / 0.25)",
+    background: "oklch(var(--signal) / 0.25)",
     outline: "none",
   },
   ".cm-nonmatchingBracket": {
-    background: "rgba(var(--color-danger-a0) / 0.2)",
+    background: "oklch(var(--destructive) / 0.2)",
   },
   ".cm-placeholder": {
-    color: "var(--c-text-dim)",
+    color: "var(--c-muted-foreground)",
     opacity: "0.5",
     fontStyle: "italic",
   },
   ".cm-tooltip": {
-    background: "var(--c-bg2)",
+    background: "var(--c-card)",
     border: "1px solid var(--c-border)",
-    borderRadius: "4px",
+    borderRadius: "var(--radius-sm)",
   },
   ".cm-tooltip-autocomplete ul li[aria-selected]": {
-    background: "rgba(var(--color-accent-rgb) / 0.2)",
-    color: "var(--c-text-bright)",
+    background: "oklch(var(--signal) / 0.2)",
+    color: "var(--c-foreground)",
   },
 });
 
-// -- Syntax highlight styles ---------------------------------------------------
-// Two variants (dark/light) swapped via Compartment when html.light toggles.
+/* ── Syntax highlight (CSS-var-driven, auto-switches with mode) ─────── */
 
-const darkHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: "var(--c-syn-keyword)", fontWeight: "bold" },
-  { tag: [t.bool, t.null], color: "var(--c-syn-bool)" },
-  { tag: t.string, color: "var(--c-syn-string)" },
-  { tag: [t.number, t.integer], color: "var(--c-syn-number)" },
-  { tag: t.comment, color: "var(--c-syn-comment)", fontStyle: "italic" },
-  // JSON property keys
-  { tag: t.propertyName, color: "var(--c-syn-property)" },
-  // HTML/XML tags and attributes
-  { tag: t.tagName, color: "var(--c-syn-tag)" },
-  { tag: t.attributeName, color: "var(--c-syn-attr-name)" },
-  { tag: t.attributeValue, color: "var(--c-syn-attr-val)" },
-  { tag: t.angleBracket, color: "var(--c-syn-bracket)" },
-  // JS identifiers
-  { tag: t.variableName, color: "var(--c-syn-variable)" },
-  { tag: t.definition(t.variableName), color: "var(--c-syn-defn)" },
-  { tag: t.function(t.variableName), color: "var(--c-syn-defn)" },
-  { tag: t.typeName, color: "var(--c-syn-type)" },
-  { tag: t.className, color: "var(--c-syn-type)" },
-  { tag: t.operator, color: "var(--c-syn-operator)" },
-  { tag: t.punctuation, color: "var(--c-syn-operator)" },
-  { tag: t.separator, color: "var(--c-syn-operator)" },
-  { tag: t.regexp, color: "var(--c-syn-regexp)" },
-  { tag: t.escape, color: "var(--c-syn-escape)" },
-  { tag: t.url, color: "var(--c-syn-string)", textDecoration: "underline" },
-  { tag: t.invalid, color: "var(--c-syn-invalid)" },
+const highlight = HighlightStyle.define([
+  { tag: t.keyword, color: "var(--syn-keyword)", fontWeight: "bold" },
+  { tag: [t.bool, t.null], color: "var(--syn-bool)" },
+  { tag: t.string, color: "var(--syn-string)" },
+  { tag: [t.number, t.integer], color: "var(--syn-number)" },
+  { tag: t.comment, color: "var(--syn-comment)", fontStyle: "italic" },
+  { tag: t.propertyName, color: "var(--syn-property)" },
+  { tag: t.tagName, color: "var(--syn-tag)" },
+  { tag: t.attributeName, color: "var(--syn-attr-name)" },
+  { tag: t.attributeValue, color: "var(--syn-attr-val)" },
+  { tag: t.angleBracket, color: "var(--syn-bracket)" },
+  { tag: t.variableName, color: "var(--syn-variable)" },
+  { tag: t.definition(t.variableName), color: "var(--syn-defn)" },
+  { tag: t.function(t.variableName), color: "var(--syn-defn)" },
+  { tag: t.typeName, color: "var(--syn-type)" },
+  { tag: t.className, color: "var(--syn-type)" },
+  { tag: t.operator, color: "var(--syn-operator)" },
+  { tag: t.punctuation, color: "var(--syn-operator)" },
+  { tag: t.separator, color: "var(--syn-operator)" },
+  { tag: t.regexp, color: "var(--syn-regexp)" },
+  { tag: t.escape, color: "var(--syn-escape)" },
+  { tag: t.url, color: "var(--syn-string)", textDecoration: "underline" },
+  { tag: t.invalid, color: "var(--syn-invalid)" },
 ]);
 
-const lightHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: "var(--c-syn-keyword)", fontWeight: "bold" },
-  { tag: [t.bool, t.null], color: "var(--c-syn-bool)" },
-  { tag: t.string, color: "var(--c-syn-string)" },
-  { tag: [t.number, t.integer], color: "var(--c-syn-number)" },
-  { tag: t.comment, color: "var(--c-syn-comment)", fontStyle: "italic" },
-  { tag: t.propertyName, color: "var(--c-syn-property)" },
-  { tag: t.tagName, color: "var(--c-syn-tag)" },
-  { tag: t.attributeName, color: "var(--c-syn-attr-name)" },
-  { tag: t.attributeValue, color: "var(--c-syn-attr-val)" },
-  { tag: t.angleBracket, color: "var(--c-syn-bracket)" },
-  { tag: t.variableName, color: "var(--c-syn-variable)" },
-  { tag: t.definition(t.variableName), color: "var(--c-syn-defn)" },
-  { tag: t.function(t.variableName), color: "var(--c-syn-defn)" },
-  { tag: t.typeName, color: "var(--c-syn-type)" },
-  { tag: t.className, color: "var(--c-syn-type)" },
-  { tag: t.operator, color: "var(--c-syn-operator)" },
-  { tag: t.punctuation, color: "var(--c-syn-operator)" },
-  { tag: t.separator, color: "var(--c-syn-operator)" },
-  { tag: t.regexp, color: "var(--c-syn-regexp)" },
-  { tag: t.escape, color: "var(--c-syn-escape)" },
-  { tag: t.url, color: "var(--c-syn-string)", textDecoration: "underline" },
-  { tag: t.invalid, color: "var(--c-syn-invalid)" },
-]);
-
-export function getHighlightExtension(light: boolean): Extension {
-  return syntaxHighlighting(light ? lightHighlight : darkHighlight);
+/**
+ * Single highlight extension — CSS variables auto-switch between
+ * dark and light modes so no Compartment swap is needed.
+ */
+export function getHighlightExtension(_light?: boolean): Extension {
+  return syntaxHighlighting(highlight);
 }

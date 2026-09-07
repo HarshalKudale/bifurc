@@ -41,6 +41,12 @@ export interface AppConfig {
   graphqlSchemas: any[];
   graphqlRequestFolders: Folder[];
   graphqlMockFolders: Folder[];
+  grpcRequests: any[];
+  grpcMocks: any[];
+  protoFiles: any[];
+  grpcRequestFolders: Folder[];
+  grpcMockFolders: Folder[];
+  grpcMockServerPort: number;
   soapRequests?: any[];
   soapMocks?: any[];
   savedWsdls?: any[];
@@ -199,6 +205,34 @@ export function loadConfig(): AppConfig {
     graphqlSchemas: [],
     graphqlRequestFolders: (() => { try { return autoSyncFsDirectories(wsId, "graphqlRequests", generateId).folders as Folder[]; } catch { return []; } })(),
     graphqlMockFolders: (() => { try { return autoSyncFsDirectories(wsId, "graphqlMocks", generateId).folders as Folder[]; } catch { return []; } })(),
+    // gRPC entities
+    grpcRequests: (() => {
+      const stubs = readEntityStubs(wsId, "grpcRequests");
+      const names = readNamesIndex(wsId, "grpcRequests");
+      return stubs.map((s) => ({
+        id: s.id, folderId: s.folderId, workspaceId: wsId,
+        name: names[s.id]?.name ?? "",
+        serverAddress: (names[s.id] as any)?.serverAddress ?? "",
+        serviceName: (names[s.id] as any)?.serviceName ?? "",
+        methodName: (names[s.id] as any)?.methodName ?? "",
+        requestBody: "",
+        metadata: {},
+        protoFileId: null,
+        useReflection: false,
+        streamingType: "unary",
+        createdAt: 0,
+      }));
+    })(),
+    grpcMocks: (() => {
+      const enabledSet = readEnabledSet(wsId, "grpcMocks") ?? bootstrapEnabledSet(wsId, "grpcMocks");
+      return readAllEntities(wsId, "grpcMocks").map((m: any) => ({ ...m, enabled: enabledSet.has(m.id) }));
+    })(),
+    protoFiles: (() => {
+      try { return readAllEntities(wsId, "protoFiles"); } catch { return []; }
+    })(),
+    grpcRequestFolders: (() => { try { return autoSyncFsDirectories(wsId, "grpcRequests", generateId).folders as Folder[]; } catch { return []; } })(),
+    grpcMockFolders: (() => { try { return autoSyncFsDirectories(wsId, "grpcMocks", generateId).folders as Folder[]; } catch { return []; } })(),
+    grpcMockServerPort: 9102,
     // SOAP entities
     soapRequests: (() => {
       const stubs = readEntityStubs(wsId, "soapRequests");

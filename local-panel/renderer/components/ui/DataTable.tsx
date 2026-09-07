@@ -41,9 +41,9 @@ export default function DataTable<T>({
   }
 
   return (
-    <div className={cn("bg-bg1 border border-border rounded-lg overflow-hidden", className)}>
+    <div className={cn("bg-surface border border-border rounded-lg overflow-hidden", className)}>
       <table className="w-full border-collapse">
-        <thead className={cn(stickyHeader && "sticky top-0 bg-bg0 z-10")}>
+        <thead className={cn(stickyHeader && "sticky top-0 bg-background z-10")}>
           <tr className="border-b border-border">
             {columns.map((col) => (
               <th
@@ -53,7 +53,7 @@ export default function DataTable<T>({
                   col.align === "right" && "text-right",
                   (!col.align || col.align === "left") && col.header && "text-left",
                   col.width,
-                  col.header && `${headerFontSize} font-semibold uppercase tracking-wider text-text-dim ${cellPad}`,
+                  col.header && `${headerFontSize} font-semibold uppercase tracking-wider text-muted-foreground ${cellPad}`,
                   !col.header && cellPad,
                   col.headerClassName
                 )}
@@ -68,7 +68,7 @@ export default function DataTable<T>({
             <tr
               key={rowKey(row)}
               className={cn(
-                "border-b border-border/50 last:border-0 hover:bg-bg2 transition-colors",
+                "border-b border-border/50 last:border-0 hover:bg-card transition-colors",
                 onRowClick && "cursor-pointer",
                 rowClassName?.(row)
               )}

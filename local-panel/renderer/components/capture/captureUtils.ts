@@ -33,10 +33,10 @@ export function ctToLang(ct: string): EditorLanguage {
 }
 
 export function statusColor(s: number | null): string {
-  if (s === null) return "text-text-dim";
-  if (s < 300) return "text-green";
-  if (s < 400) return "text-yellow";
-  return "text-red";
+  if (s === null) return "text-muted-foreground";
+  if (s < 300) return "text-signal";
+  if (s < 400) return "text-amber";
+  return "text-destructive";
 }
 
 export function fmtTime(ts: number): string {
@@ -125,11 +125,11 @@ export function fulfilledBy(via: RequestLogEntry["via"]): string {
 
 export function fulfilledColor(via: RequestLogEntry["via"]): string {
   switch (via) {
-    case "proxy": return "text-accent";
+    case "proxy": return "text-signal";
     case "rule":
-    case "rfc6761": return "text-green";
-    case "mock": return "text-yellow";
-    case "error": return "text-red";
+    case "rfc6761": return "text-signal";
+    case "mock": return "text-amber";
+    case "error": return "text-destructive";
   }
 }
 

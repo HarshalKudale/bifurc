@@ -12,7 +12,7 @@ const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
         ref={ref}
         className={cn(
           "w-7 h-7 flex items-center justify-center rounded border border-border",
-          "bg-bg2 hover:bg-bg3 text-text-dim hover:text-text-base transition-colors cursor-pointer",
+          "bg-card hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer",
           "disabled:opacity-40 disabled:cursor-not-allowed",
           className
         )}

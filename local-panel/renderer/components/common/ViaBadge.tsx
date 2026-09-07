@@ -12,14 +12,14 @@ export const VIA_LABEL: Record<Via, string> = {
 };
 
 const VIA_COLOR: Record<Via, string> = {
-  rfc6761: "text-green",
-  proxy: "text-accent",
-  rule: "text-yellow",
-  mock: "text-purple-400",
-  error: "text-red",
+  rfc6761: "text-signal",
+  proxy: "text-signal",
+  rule: "text-amber",
+  mock: "text-violet",
+  error: "text-destructive",
 };
 
 export default function ViaBadge({ via }: { via: Via }) {
-  if (via === "mock") return <span style={{ color: "var(--c-method-head)" }}>{VIA_LABEL.mock}</span>;
+  if (via === "mock") return <span style={{ color: "var(--c-violet)" }}>{VIA_LABEL.mock}</span>;
   return <span className={VIA_COLOR[via]}>{VIA_LABEL[via]}</span>;
 }

@@ -68,10 +68,13 @@ export interface MockRule {
   streamingMode?: "none" | "sse" | "chunked";  // default "none"
   streamingChunkDelay?: number;  // ms between chunks (default 100)
   streamingChunkSeparator?: string;  // delimiter to split body into chunks (default "\n\n")
+  protocol?: "rest" | "graphql" | "grpc" | "soap";
   createdAt: number;
   folderId?: string | null;
   workspaceId: string;
 }
+
+export type ApiProtocol = "rest" | "graphql" | "grpc" | "soap";
 
 export interface SavedRequest {
   id: string;
@@ -80,6 +83,7 @@ export interface SavedRequest {
   url: string;
   headers: Record<string, string>;
   body: string;
+  protocol?: "rest" | "graphql" | "grpc" | "soap";
   preScript?: string;
   postScript?: string;
   testScript?: string;

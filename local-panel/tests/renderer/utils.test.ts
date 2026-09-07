@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   mkRowId,
   headersToRows,
@@ -129,32 +129,32 @@ describe("renderer/lib/utils.ts", () => {
   });
 
   describe("statusColor()", () => {
-    it("returns green for 2xx status codes", () => {
-      expect(statusColor(200)).toBe("var(--c-green)");
-      expect(statusColor(201)).toBe("var(--c-green)");
+    it("returns signal green for 2xx status codes", () => {
+      expect(statusColor(200)).toBe("var(--c-signal)");
+      expect(statusColor(201)).toBe("var(--c-signal)");
     });
 
-    it("returns yellow for 3xx status codes", () => {
-      expect(statusColor(301)).toBe("var(--c-yellow)");
+    it("returns amber for 3xx status codes", () => {
+      expect(statusColor(301)).toBe("var(--c-amber)");
     });
 
-    it("returns red for 4xx and 5xx status codes", () => {
-      expect(statusColor(404)).toBe("var(--c-red)");
-      expect(statusColor(500)).toBe("var(--c-red)");
+    it("returns destructive red for 4xx and 5xx status codes", () => {
+      expect(statusColor(404)).toBe("var(--c-destructive)");
+      expect(statusColor(500)).toBe("var(--c-destructive)");
     });
   });
 
   describe("methodColor()", () => {
-    it("returns green for GET", () => {
-      expect(methodColor("GET")).toBe("var(--c-green)");
+    it("returns signal green for GET", () => {
+      expect(methodColor("GET")).toBe("var(--c-signal)");
     });
 
-    it("returns yellow for POST", () => {
-      expect(methodColor("POST")).toBe("var(--c-yellow)");
+    it("returns amber for POST", () => {
+      expect(methodColor("POST")).toBe("var(--c-amber)");
     });
 
-    it("returns dim for unknown methods", () => {
-      expect(methodColor("UNKNOWN")).toBe("var(--c-text-dim)");
+    it("returns muted foreground for unknown methods", () => {
+      expect(methodColor("UNKNOWN")).toBe("var(--c-muted-foreground)");
     });
 
     it("is case-insensitive", () => {
@@ -166,11 +166,11 @@ describe("renderer/lib/utils.ts", () => {
     it("returns a background color string for GET", () => {
       const bg = methodBg("GET");
       expect(typeof bg).toBe("string");
-      expect(bg).toMatch(/rgba/);
+      expect(bg).toMatch(/oklch/);
     });
 
     it("returns a fallback for unknown methods", () => {
-      expect(methodBg("UNKNOWN")).toBe("rgba(113,115,109,0.13)");
+      expect(methodBg("UNKNOWN")).toBe("oklch(var(--muted-foreground) / 0.13)");
     });
   });
 

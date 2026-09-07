@@ -33,11 +33,11 @@ export default function CaptureTypeTabs({ active, counts, onChange }: Props) {
             key={t.key}
             onClick={() => onChange(t.key)}
             className={`px-2.5 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
-              isActive ? "bg-accent/15 text-accent" : "text-text-dim hover:text-text-base hover:bg-bg2"
+              isActive ? "bg-signal/15 text-signal" : "text-muted-foreground hover:text-foreground hover:bg-card"
             }`}
           >
             {t.label}
-            {t.key !== "all" && n > 0 && <span className="ml-1 text-[10px] text-text-dim">{n}</span>}
+            {t.key !== "all" && n > 0 && <span className="ml-1 text-[10px] text-muted-foreground">{n}</span>}
           </button>
         );
       })}

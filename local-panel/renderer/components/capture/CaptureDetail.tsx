@@ -27,7 +27,7 @@ function Pane({ headers, body }: { headers: Record<string, string>; body: string
     );
   }
   if (!displayBody) {
-    return <p className="font-mono text-[11px] text-text-dim italic p-3">{strings.capture.emptyBody}</p>;
+    return <p className="font-mono text-[11px] text-muted-foreground italic p-3">{strings.capture.emptyBody}</p>;
   }
   return <CodeEditor value={displayBody} readOnly language={lang} className="h-full" />;
 }
@@ -35,8 +35,8 @@ function Pane({ headers, body }: { headers: Record<string, string>; body: string
 function TimingRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between px-3 py-2 border-b border-border/40 last:border-0">
-      <span className="text-[11px] text-text-dim">{label}</span>
-      <span className="text-[11px] font-mono text-text-bright">{value}</span>
+      <span className="text-[11px] text-muted-foreground">{label}</span>
+      <span className="text-[11px] font-mono text-foreground">{value}</span>
     </div>
   );
 }
@@ -59,16 +59,16 @@ export default function CaptureDetail({ entry, onClose }: Props) {
   ];
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg1 border-l border-border">
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-surface border-l border-border">
       {/* Header */}
       <div className="flex items-center gap-3 px-3 py-2 border-b border-border flex-shrink-0">
-        <span className="font-mono text-xs font-semibold text-accent">{entry.method}</span>
-        <span className="font-mono text-xs text-text-dim truncate flex-1" title={entry.url}>{entry.url}</span>
+        <span className="font-mono text-xs font-semibold text-signal">{entry.method}</span>
+        <span className="font-mono text-xs text-muted-foreground truncate flex-1" title={entry.url}>{entry.url}</span>
         {entry.status !== null && (
           <span className={`font-mono text-xs font-bold ${statusColor(entry.status)}`}>{entry.status}</span>
         )}
         {entry.durationMs !== null && (
-          <span className="font-mono text-[10px] text-text-dim">{fmtDur(entry.durationMs)}</span>
+          <span className="font-mono text-[10px] text-muted-foreground">{fmtDur(entry.durationMs)}</span>
         )}
         <IconButton icon={<X size={14} />} onClick={onClose} title={strings.capture.closeDetail} />
       </div>
@@ -80,7 +80,7 @@ export default function CaptureDetail({ entry, onClose }: Props) {
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`px-3 py-1 text-[11px] font-medium cursor-pointer transition-colors rounded-t ${
-              tab === t.key ? "bg-bg2 text-text-bright border border-border border-b-bg2" : "text-text-dim hover:text-text-base"
+              tab === t.key ? "bg-card text-foreground border border-border border-b-card" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {t.label}
@@ -92,11 +92,11 @@ export default function CaptureDetail({ entry, onClose }: Props) {
       <div className="flex-1 min-h-0 overflow-auto">
         {tab === "headers" && (
           <div>
-            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-dim bg-bg2/40">
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground bg-card/40">
               {strings.capture.detailRequestHeaders}
             </div>
             <CaptureHeaderTable headers={entry.reqHeaders} />
-            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-dim bg-bg2/40 border-t border-border">
+            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground bg-card/40 border-t border-border">
               {strings.capture.detailResponseHeaders}
             </div>
             <CaptureHeaderTable headers={entry.resHeaders} />

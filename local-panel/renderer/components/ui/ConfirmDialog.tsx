@@ -39,15 +39,15 @@ export default function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="bg-bg2 border border-border rounded-lg shadow-2xl p-4 w-72"
+        className="bg-card border border-border rounded-lg shadow-2xl p-4 w-72"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onConfirm(); } }}
       >
-        {title && <p className="text-xs font-semibold text-text-bright mb-1">{title}</p>}
-        <p className="text-xs text-text-base leading-relaxed mb-4">{message}</p>
+        {title && <p className="text-xs font-semibold text-foreground mb-1">{title}</p>}
+        <p className="text-xs text-foreground leading-relaxed mb-4">{message}</p>
         <div className="flex justify-end gap-2">
           <button
-            className="px-3 py-1.5 text-xs rounded border border-border hover:bg-bg3 text-text-dim cursor-pointer"
+            className="px-3 py-1.5 text-xs rounded border border-border hover:bg-surface-2 text-muted-foreground cursor-pointer"
             onClick={onCancel}
           >
             {strings.common.cancel}
@@ -55,7 +55,7 @@ export default function ConfirmDialog({
           <button
             ref={confirmRef}
             className="px-3 py-1.5 text-xs rounded font-semibold text-white cursor-pointer"
-            style={{ background: confirmVariant === "danger" ? "var(--c-red)" : "var(--c-accent)" }}
+            style={{ background: confirmVariant === "danger" ? "var(--c-destructive)" : "var(--c-signal)" }}
             onClick={onConfirm}
           >
             {confirmLabel}

@@ -50,7 +50,7 @@ export default function ContextMenu({ x, y, items, onClose, minWidth = 210 }: Co
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-bg2 border border-border rounded-md shadow-2xl py-1 select-none animate-scale-in"
+      className="fixed z-50 bg-card border border-border rounded-md shadow-2xl py-1 select-none animate-scale-in"
       style={{ left: ax, top: ay, minWidth }}
       onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
@@ -66,10 +66,10 @@ export default function ContextMenu({ x, y, items, onClose, minWidth = 210 }: Co
             disabled={item.disabled}
             className={`w-full text-left px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-2 ${
               item.disabled
-                ? "opacity-40 cursor-not-allowed text-text-dim"
+                ? "opacity-40 cursor-not-allowed text-muted-foreground"
                 : item.danger
-                ? "text-red hover:bg-bg3 cursor-pointer"
-                : "text-text-base hover:bg-bg3 cursor-pointer"
+                ? "text-destructive hover:bg-surface-2 cursor-pointer"
+                : "text-foreground hover:bg-surface-2 cursor-pointer"
             }`}
           >
             {item.icon !== undefined && (

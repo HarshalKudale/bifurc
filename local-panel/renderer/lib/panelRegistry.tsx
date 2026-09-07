@@ -25,6 +25,8 @@ export type Panel =
     | "mappings"
     | "rules"
     | "capture"
+    | "requests"
+    | "mocks"
     | "mock-rest"
     | "mock-graphql"
     | "mock-soap"
@@ -68,7 +70,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "services",
         label: strings.nav.services,
-        icon: <Zap size={14} />,
+        icon: <Zap size={20} />,
         section: strings.panels.sectionApplications,
         sectionType: "flat",
         enabled: true,
@@ -77,7 +79,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "healthbar",
         label: strings.panels.sectionHealthBar,
-        icon: <Activity size={14} />,
+        icon: <Activity size={20} />,
         section: strings.panels.sectionApplications,
         sectionType: "flat",
         enabled: true,
@@ -88,7 +90,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "mappings",
         label: strings.nav.mappings,
-        icon: <ArrowLeftRight size={14} />,
+        icon: <ArrowLeftRight size={20} />,
         section: strings.nav.routing,
         sectionType: "flat",
         enabled: true,
@@ -97,7 +99,7 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "rules",
         label: strings.nav.proxyRules,
-        icon: <Settings size={14} />,
+        icon: <Settings size={20} />,
         section: strings.nav.routing,
         sectionType: "flat",
         enabled: true,
@@ -106,55 +108,39 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "capture",
         label: strings.nav.capture,
-        icon: <Clipboard size={14} />,
+        icon: <Clipboard size={20} />,
         section: strings.nav.routing,
         sectionType: "flat",
         enabled: true,
         helpText: strings.capture.helpText,
     },
 
-    // --- Request (flat) -------------------------------------------------------
+    // --- API (flat) -----------------------------------------------------------
     {
-        id: "req-rest",
-        label: strings.panels.sectionRest,
-        icon: <ArrowUpRight size={14} />,
-        section: strings.panels.sectionRequest,
+        id: "requests",
+        label: strings.nav.requests,
+        icon: <ArrowUpRight size={20} />,
+        section: strings.panels.sectionApi,
         sectionType: "flat",
         enabled: true,
-        helpText: strings.requests.helpText,
+        helpText: strings.panels.requestsHelp,
     },
     {
-        id: "req-graphql",
-        label: strings.panels.sectionGraphql,
-        icon: <Braces size={14} />,
-        section: strings.panels.sectionRequest,
+        id: "mocks",
+        label: strings.nav.mocks,
+        icon: <Layers size={20} />,
+        section: strings.panels.sectionApi,
         sectionType: "flat",
         enabled: true,
-        helpText: strings.panels.graphqlRequestHelp,
+        helpText: strings.panels.mocksHelp,
     },
-    {
-        id: "req-soap",
-        label: strings.panels.sectionSoap,
-        icon: <FileCode size={14} />,
-        section: strings.panels.sectionRequest,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.soapRequestHelp,
-    },
-    {
-        id: "req-grpc",
-        label: strings.panels.sectionGrpc,
-        icon: <Network size={14} />,
-        section: strings.panels.sectionRequest,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.grpcRequestHelp,
-    },
+
+    // --- Realtime (flat) ------------------------------------------------------
     {
         id: "sockets",
         label: strings.panels.sectionWebsocket,
-        icon: <Radio size={14} />,
-        section: strings.panels.sectionRequest,
+        icon: <Radio size={20} />,
+        section: strings.panels.sectionRealtime,
         sectionType: "flat",
         enabled: true,
         helpText: strings.sockets.helpText,
@@ -162,78 +148,42 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "webhooks",
         label: strings.panels.sectionWebhooks,
-        icon: <Webhook size={14} />,
-        section: strings.panels.sectionRequest,
+        icon: <Webhook size={20} />,
+        section: strings.panels.sectionRealtime,
         sectionType: "flat",
         enabled: true,
         helpText: strings.panels.webhooksHelp,
-    },
-
-    // --- Mock (flat) ------------------------------------------------------------
-    {
-        id: "mock-rest",
-        label: strings.panels.sectionRest,
-        icon: <ArrowUpRight size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.mocks.helpText,
-    },
-    {
-        id: "mock-graphql",
-        label: strings.panels.sectionGraphql,
-        icon: <Braces size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.graphqlMockHelp,
-    },
-    {
-        id: "mock-soap",
-        label: strings.panels.sectionSoap,
-        icon: <FileCode size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.soapMockHelp,
-    },
-    {
-        id: "mock-grpc",
-        label: strings.panels.sectionGrpc,
-        icon: <Network size={14} />,
-        section: strings.panels.sectionMock,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.grpcMockHelp,
     },
 
     // --- Workspace (flat) ---------------------------------------------------------
     {
         id: "environments",
         label: strings.nav.environments,
-        icon: <Globe size={14} />,
+        icon: <Globe size={20} />,
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
-        alwaysVisible: true,
+        showInSidebar: false,
         helpText: strings.environments.helpText,
     },
     {
         id: "workspace",
         label: strings.panels.sectionWorkspace,
-        icon: <Layers size={14} />,
+        icon: <Layers size={20} />,
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
+        showInSidebar: false,
         helpText: strings.workspace.helpText,
     },
     {
         id: "audit",
         label: strings.panels.sectionAuditLog,
-        icon: <ClipboardList size={14} />,
+        icon: <ClipboardList size={20} />,
         section: strings.nav.tools,
         sectionType: "flat",
         enabled: true,
+        showInSidebar: false,
         helpText: strings.panels.auditHelp,
     },
 
@@ -242,11 +192,11 @@ export const PANEL_REGISTRY: PanelEntry[] = [
     {
         id: "settings",
         label: strings.nav.settings,
-        icon: <Settings size={14} />,
+        icon: <Settings size={20} />,
         section: strings.nav.config,
         sectionType: "flat",
         enabled: true,
-        alwaysVisible: true,
+        showInSidebar: false,
         helpText: strings.settings.helpText,
     },
 ];

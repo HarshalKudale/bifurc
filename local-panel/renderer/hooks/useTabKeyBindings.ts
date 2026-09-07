@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { PersistableTabHandle } from "@/lib/useEntityTabs";
+import type { PersistableTabHandle } from "@/hooks/useEntityTabs";
 
 interface Options {
   activeTab: string | null;

@@ -1,10 +1,10 @@
 import React from "react";
 
 const colorVar: Record<string, string> = {
-  green:  "var(--c-green)",
-  yellow: "var(--c-yellow)",
-  red:    "var(--c-red)",
-  accent: "var(--c-accent)",
+  green:  "var(--c-signal)",
+  yellow: "var(--c-amber)",
+  red:    "var(--c-destructive)",
+  accent: "var(--c-signal)",
 };
 
 interface ActiveDotProps {
@@ -16,7 +16,7 @@ interface ActiveDotProps {
 
 export default function ActiveDot({ active, color = "green", size = "sm", className }: ActiveDotProps) {
   const px = size === "sm" ? 8 : 10;
-  const bg = active ? colorVar[color] : "var(--c-text-dim)";
+  const bg = active ? colorVar[color] : "var(--c-muted-foreground)";
   const shadow = active ? `0 0 5px ${colorVar[color]}` : "none";
   const opacity = active ? 1 : 0.45;
   return (
