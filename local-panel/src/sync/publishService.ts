@@ -170,8 +170,18 @@ export async function publishEntities(opts: PublishOptions): Promise<{ ok: boole
 export async function restoreEntity(wsId: string, relPath: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const g = getGit(wsId);
-    await g.raw(["checkout", "HEAD", "--", relPath]);
-    return { ok: true };
+    try {
+      await g.raw(["checkout", "HEAD", "--", relPath]);
+      return { ok: true };
+    } catch (checkoutErr) {
+      // If the file is untracked (never committed to HEAD), remove the untracked file
+      const fullPath = path.join(wsDir(wsId), relPath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        return { ok: true };
+      }
+      throw checkoutErr;
+    }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

@@ -1,17 +1,16 @@
-import React, { useState, useCallback, useImperativeHandle, forwardRef } from "react";
+import React, { useState, useCallback, useMemo, useImperativeHandle, forwardRef } from "react";
 import { AppConfig, ProxyRule, Folder } from "@/types";
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
 import { BottomBar } from "@/components/editor/RequestTab";
-import CodeEditor from "@/components/common/CodeEditor";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { strings } from "@/lib/strings";
-import { Input, Select, FormField } from "@/components/ui";
+import ProxyRuleForm from "./ProxyRuleForm";
 
 // -- Types ------------------------------------------------------------------
 
 export interface RuleTabHandle {
   refresh(rule: ProxyRule): void;
-  save(): void;
+  save(): Promise<any> | void;
 }
 
 interface RuleTabState {
@@ -44,10 +43,14 @@ interface Props {
   initial: Partial<ProxyRule> | null;
   folders: Folder[];
   config: AppConfig;
-  onSave(data: RuleSavePayload): Promise<void>;
+  onSave(data: RuleSavePayload): Promise<any>;
   onClose(): void;
   enabled?: boolean;
   onToggleEnabled?: () => void;
+  onSync?: (savedId?: string) => Promise<void>;
+  onRevert?: () => Promise<void>;
+  syncStatus?: "clean" | "modified" | "new" | "deleted";
+  onHistory?: () => void;
 }
 
 // -- RuleDraft type for localStorage ---------------------------------------
@@ -78,17 +81,17 @@ function stateFromRule(rule: Partial<ProxyRule> | null): RuleTabState {
   };
 }
 
-function stateFromDraft(draft: RuleDraft): RuleTabState {
+function stateFromDraft(d: RuleDraft): RuleTabState {
   return {
-    name: draft.name ?? "",
-    pattern: draft.pattern ?? "",
-    useRegex: draft.useRegex ?? true,
-    targetType: draft.targetType ?? "mapping",
-    targetMappingId: draft.targetMappingId ?? "",
-    targetExternal: draft.targetExternal ?? "",
-    requestScript: draft.requestScript ?? "",
-    responseScript: draft.responseScript ?? "",
-    folderId: draft.folderId ?? null,
+    name: d.name ?? "",
+    pattern: d.pattern ?? "",
+    useRegex: d.useRegex ?? true,
+    targetType: d.targetType ?? "mapping",
+    targetMappingId: d.targetMappingId ?? "",
+    targetExternal: d.targetExternal ?? "",
+    requestScript: d.requestScript ?? "",
+    responseScript: d.responseScript ?? "",
+    folderId: d.folderId ?? null,
   };
 }
 
@@ -99,7 +102,7 @@ function isDraftEmpty(s: RuleTabState): boolean {
 // -- RuleTab component ------------------------------------------------------
 
 export default forwardRef<RuleTabHandle, Props>(function RuleTab(
-  { tabId, draftTabId, initial, folders, config, onSave, onClose, enabled, onToggleEnabled },
+  { tabId, draftTabId, initial, folders, config, onSave, onClose, enabled, onToggleEnabled, onSync, onRevert, syncStatus, onHistory },
   ref,
 ) {
   const isDraft = draftTabId !== null;
@@ -114,7 +117,6 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
 
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof RuleTabState, string>>>({});
-  const [scriptTab, setScriptTab] = useState<"request" | "response">("request");
 
   const set = useCallback(<K extends keyof RuleTabState>(key: K, val: RuleTabState[K]) => {
     setState((prev) => ({ ...prev, [key]: val }));
@@ -133,6 +135,22 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
     } as RuleDraft),
     () => isDraftEmpty(state),
   );
+
+  const isDirty = useMemo(() => {
+    if (isDraft) return !isDraftEmpty(state);
+    const init = stateFromRule(initial);
+    return (
+      state.name !== init.name ||
+      state.pattern !== init.pattern ||
+      state.useRegex !== init.useRegex ||
+      state.targetType !== init.targetType ||
+      state.targetMappingId !== init.targetMappingId ||
+      state.targetExternal !== init.targetExternal ||
+      state.requestScript !== init.requestScript ||
+      state.responseScript !== init.responseScript ||
+      state.folderId !== init.folderId
+    );
+  }, [state, initial, isDraft]);
 
   const validate = (): boolean => {
     const errs: Partial<Record<keyof RuleTabState, string>> = {};
@@ -154,7 +172,7 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
     if (!validate()) return;
     setSaving(true);
     try {
-      await onSave({
+      const res = await onSave({
         name: state.name,
         pattern: state.pattern.trim(),
         useRegex: state.useRegex,
@@ -166,6 +184,7 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
         folderId: state.folderId,
       });
       markSaved();
+      return res;
     } finally {
       setSaving(false);
     }
@@ -177,9 +196,47 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
       setState(stateFromRule(rule));
     },
     save() {
-      void handleSave();
+      return handleSave();
     },
   }), [handleSave]);
+
+  const [syncing, setSyncing] = useState(false);
+  const [reverting, setReverting] = useState(false);
+
+  const handleSyncClick = useCallback(async () => {
+    if (!onSync || syncing) return;
+    setSyncing(true);
+    try {
+      let targetId = tabId;
+      if (isDirty || isDraft) {
+        const saved: any = await handleSave();
+        if (saved && typeof saved === "object" && saved.id) {
+          targetId = saved.id;
+        }
+      }
+      await onSync(targetId);
+    } finally {
+      setSyncing(false);
+    }
+  }, [onSync, syncing, isDirty, isDraft, handleSave, tabId]);
+
+  const hasChanges = !isDraft && Boolean(isDirty || (syncStatus && syncStatus !== "clean"));
+
+  const handleRevertClick = useCallback(async () => {
+    if (!onRevert || reverting) return;
+    setReverting(true);
+    try {
+      await onRevert();
+    } finally {
+      setReverting(false);
+    }
+  }, [onRevert, reverting]);
+
+  const canSave = Boolean(state.pattern.trim());
+  const syncDisabled = !hasChanges || (!canSave && isDirty) || syncing;
+  const revertDisabled = !hasChanges || reverting;
+  const syncTitle = !hasChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
+  const revertTitle = !hasChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
 
   const s = strings.proxyRules;
 
@@ -197,122 +254,7 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
       />
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 min-h-0">
-        {/* Match pattern */}
-        <FormField label={s.matchUrl} error={errors.pattern}>
-          <div className="flex items-center gap-2">
-            <Input
-              className="flex-1 font-mono"
-              placeholder={state.useRegex ? "^https?://api\\.example\\.com/.*" : "https://api.example.com/endpoint"}
-              value={state.pattern}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => set("pattern", e.target.value)}
-              error={!!errors.pattern}
-            />
-            <button
-              type="button"
-              onClick={() => set("useRegex", !state.useRegex)}
-              className={`px-3 py-1.5 rounded border text-xs font-semibold transition-colors cursor-pointer flex-shrink-0 ${state.useRegex
-                ? "border-accent bg-accent/10 text-accent"
-                : "border-border bg-bg2 text-text-dim hover:text-text-base"
-                }`}
-              title={state.useRegex ? s.switchToExact : s.switchToRegex}
-            >
-              {state.useRegex ? s.regexToggle : s.exactToggle}
-            </button>
-          </div>
-          <p className="text-xs text-text-dim mt-1">
-            {state.useRegex ? s.regexHelp : s.exactHelp}
-          </p>
-        </FormField>
-
-        {/* Target */}
-        <div>
-          <div className="text-xs text-text-dim font-medium mb-2 uppercase tracking-wider">{s.forwardTo}</div>
-          <div className="flex items-center gap-3 mb-3">
-            {(["mapping", "external"] as const).map((type) => (
-              <label key={type} className="flex items-center gap-1.5 cursor-pointer text-sm text-text-base">
-                <input
-                  type="radio"
-                  className="accent-accent"
-                  checked={state.targetType === type}
-                  onChange={() => set("targetType", type)}
-                />
-                {type === "mapping" ? s.targetMapping : s.targetExternal}
-              </label>
-            ))}
-          </div>
-
-          {state.targetType === "mapping" ? (
-            <FormField label="" error={errors.targetMappingId}>
-              <Select
-                className="w-full"
-                error={!!errors.targetMappingId}
-                value={state.targetMappingId}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => set("targetMappingId", e.target.value)}
-              >
-                <option value="">{s.selectMapping}</option>
-                {(config.mappings ?? []).map((m) => (
-                  <option key={m.id} value={m.id}>{m.domain} → {m.target}</option>
-                ))}
-              </Select>
-              {config.mappings.length === 0 && (
-                <p className="text-xs text-text-dim mt-1">{s.noMappingsDefined}</p>
-              )}
-            </FormField>
-          ) : (
-            <FormField label="" error={errors.targetExternal}>
-              <Input
-                className="w-full font-mono"
-                placeholder="api.example.com:8080 or 127.0.0.1:3000"
-                value={state.targetExternal}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => set("targetExternal", e.target.value)}
-                error={!!errors.targetExternal}
-              />
-              <p className="text-xs text-text-dim mt-1">host:port (e.g. api.example.com:8080 or 127.0.0.1:3000)</p>
-            </FormField>
-          )}
-        </div>
-
-        {/* Scripts */}
-        <div className="flex flex-col flex-1 min-h-0">
-          <div className="flex items-center gap-0 border-b border-border mb-0">
-            {(["request", "response"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setScriptTab(tab)}
-                className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer -mb-px ${scriptTab === tab
-                  ? "border-accent text-accent"
-                  : "border-transparent text-text-dim hover:text-text-base"
-                  }`}
-              >
-                {tab === "request" ? s.requestScript : s.responseScript}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 min-h-[200px] relative border-t border-border" style={{ minHeight: 200 }}>
-            {scriptTab === "request" ? (
-              <CodeEditor
-                key="req-script"
-                language="javascript"
-                value={state.requestScript}
-                onChange={(v) => set("requestScript", v)}
-                placeholder={s.requestScriptPlaceholder}
-                className="w-full h-full"
-                minHeight={200}
-              />
-            ) : (
-              <CodeEditor
-                key="res-script"
-                language="javascript"
-                value={state.responseScript}
-                onChange={(v) => set("responseScript", v)}
-                placeholder={s.responseScriptPlaceholder}
-                className="w-full h-full"
-                minHeight={200}
-              />
-            )}
-          </div>
-        </div>
+        <ProxyRuleForm state={state} errors={errors} onChange={set} config={config} minimal={true} />
       </div>
 
       <BottomBar
@@ -324,6 +266,16 @@ export default forwardRef<RuleTabHandle, Props>(function RuleTab(
         saveLabel={isDraft ? s.saveRule : s.updateRule}
         saving={saving}
         savingLabel={strings.server.saving}
+        onSync={onSync ? handleSyncClick : undefined}
+        onRevert={onRevert ? handleRevertClick : undefined}
+        onHistory={onHistory}
+        historyDisabled={!onHistory || isDraft}
+        syncDisabled={syncDisabled}
+        revertDisabled={revertDisabled}
+        syncing={syncing}
+        reverting={reverting}
+        syncTitle={syncTitle}
+        revertTitle={revertTitle}
       />
     </div>
   );

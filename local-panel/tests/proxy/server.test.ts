@@ -748,6 +748,7 @@ describe("src/proxy/server.ts", () => {
         mocks: [{ id: "m1", name: "Header Mock", method: "GET", urlPattern: "http://api.example.com/h",
           useRegex: false, enabled: true, capturedHeaders: {},  capturedBody: "",
           responseStatus: 200, responseHeaders: { "access-control-allow-origin": "{{ORIGIN}}" },
+          mockedResponseHeaders: ["access-control-allow-origin"],
           responseBody: '{}', createdAt: 1 }],
       });
       const socket = openConnection();

@@ -2,7 +2,7 @@ import React from "react";
 import { AppConfig, MockRule, SavedRequest, ServiceInfo, Folder, SyncStatus } from "@/types";
 import { Panel, isPanelEnabled } from "@/lib/panelRegistry";
 import { CaptureStats } from "@/panels/CapturePanel";
-import { Theme } from "@/lib/useTheme";
+import { ColorMode } from "@/hooks/useTheme";
 
 import ServicesPanel from "@/panels/ServicesPanel";
 import MappingsPanel from "@/panels/MappingsPanel";
@@ -18,12 +18,6 @@ import AuditLogPanel from "@/panels/AuditLogPanel";
 import WorkspacePanel from "@/panels/WorkspacePanel";
 import HealthBarPanel from "@/panels/HealthBarPanel";
 import PlaceholderPanel from "@/panels/PlaceholderPanel";
-import GraphQLRequestsPanel from "@/panels/GraphQLRequestsPanel";
-import GraphQLMocksPanel from "@/panels/GraphQLMocksPanel";
-import GrpcRequestsPanel from "@/panels/GrpcRequestsPanel";
-import GrpcMocksPanel from "@/panels/GrpcMocksPanel";
-import SoapRequestsPanel from "@/panels/SoapRequestsPanel";
-import SoapMocksPanel from "@/panels/SoapMocksPanel";
 import { AlertCircle } from "@/lib/icons";
 
 // -- Render context ----------------------------------------------------------
@@ -42,9 +36,9 @@ export interface PanelRenderContext {
     // Server state
     serverRunning: boolean;
     serverError: string | null;
-    // Theme
-    theme: Theme;
-    setTheme: (t: Theme) => void;
+    // Color mode
+    colorMode: ColorMode;
+    setColorMode: (m: ColorMode) => void;
     // Active environment
     activeEnv: any;
     // History sidebar
@@ -66,21 +60,23 @@ export interface PanelRenderContext {
     onPrefillConsumed: () => void;
     setPanel: (p: Panel) => void;
     setMappingPrefill: (v: string | undefined) => void;
-    // Pending open request / mock initial
+    // Pending open request / mock initial / rule select
     pendingOpenRequest: Omit<SavedRequest, "id" | "createdAt" | "workspaceId"> | null;
     onPendingRequestConsumed: () => void;
     pendingMockInitial: Partial<MockRule> | null;
     onPendingMockConsumed: () => void;
+    pendingRuleId: string | null;
+    onPendingRuleConsumed: () => void;
     handleOpenMockEditor: (initial: Partial<MockRule>) => void;
     handleOpenInRequests: (req: Omit<SavedRequest, "id" | "createdAt" | "workspaceId">) => void;
     // Capture
     onStatsChange: (stats: CaptureStats | null) => void;
     // Publish helpers
-    makePublishItem: (kind: "requests" | "mocks" | "sockets" | "webhooks" | "rules", folders: Folder[]) => (id: string) => Promise<void>;
-    makePublishFolder: (kind: "requests" | "mocks" | "sockets" | "webhooks" | "rules", folders: Folder[]) => (folderId: string | null) => Promise<void>;
+    makePublishItem: (kind: string, folders: Folder[]) => (id: string) => Promise<void>;
+    makePublishFolder: (kind: "requests" | "mocks" | "sockets" | "webhooks" | "rules" | string, folders: Folder[]) => (folderId: string | null) => Promise<void>;
     makeFlatPublish: (kind: "mappings") => (id: string) => Promise<void>;
     makeFlatRevert: (kind: "mappings") => (id: string) => Promise<void>;
-    makeRestoreItem: (kind: "requests" | "mocks" | "sockets" | "webhooks" | "rules", folders: Folder[]) => (id: string) => Promise<void>;
+    makeRestoreItem: (kind: string, folders: Folder[]) => (id: string) => Promise<void>;
     handlePublishHealthBar: () => Promise<void>;
     // Workspace panel handlers
     onWorkspaceRename: (id: string, name: string) => Promise<void>;
@@ -139,6 +135,8 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onPublishItem={ctx.makePublishItem("rules", ctx.wsConfig.ruleFolders ?? [])}
             onPublishFolder={ctx.makePublishFolder("rules", ctx.wsConfig.ruleFolders ?? [])}
             onRestoreItem={ctx.makeRestoreItem("rules", ctx.wsConfig.ruleFolders ?? [])}
+            pendingRuleId={ctx.pendingRuleId}
+            onPendingRuleConsumed={ctx.onPendingRuleConsumed}
         />
     ),
     capture: (ctx) => (
@@ -151,45 +149,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onStatsChange={ctx.onStatsChange}
         />
     ),
-    "mock-rest": (ctx) => (
-        <MocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            pendingMockInitial={ctx.pendingMockInitial}
-            onPendingConsumed={ctx.onPendingMockConsumed}
-            activeEnv={ctx.activeEnv}
-            onHistoryOpen={ctx.openHistory}
-            onEntityPathChange={ctx.handleEntityPathChange}
-            historyOpen={ctx.historyOpen}
-            onAfterSave={ctx.bumpHistoryReload}
-            entitySyncStatus={ctx.entitySyncStatus}
-            onPublishItem={ctx.makePublishItem("mocks", ctx.wsConfig.mockFolders ?? [])}
-            onPublishFolder={ctx.makePublishFolder("mocks", ctx.wsConfig.mockFolders ?? [])}
-            onRestoreItem={ctx.makeRestoreItem("mocks", ctx.wsConfig.mockFolders ?? [])}
-        />
-    ),
-    "mock-graphql": (ctx) => (
-        <GraphQLMocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-        />
-    ),
-    "mock-soap": (ctx) => (
-        <SoapMocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-        />
-    ),
-    "mock-grpc": (ctx) => (
-        <GrpcMocksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-        />
-    ),
-    "req-rest": (ctx) => (
+    requests: (ctx) => (
         <RequestsPanel
             config={ctx.wsConfig}
             onConfigChange={ctx.handleWsConfigChange}
@@ -207,27 +167,31 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onRestoreItem={ctx.makeRestoreItem("requests", ctx.wsConfig.requestFolders ?? [])}
         />
     ),
-    "req-graphql": (ctx) => (
-        <GraphQLRequestsPanel
+    mocks: (ctx) => (
+        <MocksPanel
             config={ctx.wsConfig}
             onConfigChange={ctx.handleWsConfigChange}
+            pendingMockInitial={ctx.pendingMockInitial}
+            onPendingConsumed={ctx.onPendingMockConsumed}
             activeEnv={ctx.activeEnv}
+            onHistoryOpen={ctx.openHistory}
+            onEntityPathChange={ctx.handleEntityPathChange}
+            historyOpen={ctx.historyOpen}
+            onAfterSave={ctx.bumpHistoryReload}
+            entitySyncStatus={ctx.entitySyncStatus}
+            onPublishItem={ctx.makePublishItem("mocks", ctx.wsConfig.mockFolders ?? [])}
+            onPublishFolder={ctx.makePublishFolder("mocks", ctx.wsConfig.mockFolders ?? [])}
+            onRestoreItem={ctx.makeRestoreItem("mocks", ctx.wsConfig.mockFolders ?? [])}
         />
     ),
-    "req-soap": (ctx) => (
-        <SoapRequestsPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-        />
-    ),
-    "req-grpc": (ctx) => (
-        <GrpcRequestsPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
-            activeEnv={ctx.activeEnv}
-        />
-    ),
+    "mock-rest": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "mock-graphql": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "mock-soap": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "mock-grpc": (ctx) => PANEL_RENDERERS.mocks(ctx),
+    "req-rest": (ctx) => PANEL_RENDERERS.requests(ctx),
+    "req-graphql": (ctx) => PANEL_RENDERERS.requests(ctx),
+    "req-soap": (ctx) => PANEL_RENDERERS.requests(ctx),
+    "req-grpc": (ctx) => PANEL_RENDERERS.requests(ctx),
     sockets: (ctx) => (
         <WebSocketsPanel
             config={ctx.wsConfig}
@@ -271,8 +235,8 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             serverRunning={ctx.serverRunning}
             serverError={ctx.serverError}
             onConfigChange={ctx.handleConfigChange}
-            theme={ctx.theme}
-            onThemeChange={ctx.setTheme}
+            colorMode={ctx.colorMode}
+            onColorModeChange={ctx.setColorMode}
             onServerRestart={ctx.onServerRestart}
             sidebarVisibility={ctx.sidebarVisibility}
             onSidebarVisibilityChange={ctx.setSidebarPanelVisible}
@@ -307,9 +271,16 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
  * placeholder instead. This allows compile-time toggling of in-progress panels.
  */
 export function renderPanel(panelId: Panel, ctx: PanelRenderContext): React.ReactNode {
-    if (!isPanelEnabled(panelId)) {
+    let normalizedId = panelId;
+    if (panelId === "req-rest" || panelId === "req-graphql" || panelId === "req-soap" || panelId === "req-grpc") {
+        normalizedId = "requests";
+    } else if (panelId === "mock-rest" || panelId === "mock-graphql" || panelId === "mock-soap" || panelId === "mock-grpc") {
+        normalizedId = "mocks";
+    }
+
+    if (!isPanelEnabled(normalizedId)) {
         return <DisabledPanel />;
     }
-    const renderer = PANEL_RENDERERS[panelId];
+    const renderer = PANEL_RENDERERS[normalizedId];
     return renderer ? renderer(ctx) : <DisabledPanel />;
 }

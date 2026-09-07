@@ -14,7 +14,7 @@ class MockLocalStorage {
 const mockStorage = new MockLocalStorage();
 (globalThis as any).localStorage = mockStorage;
 
-import { saveDraft, loadDraft, clearDraft, getDraftIds } from "@/lib/useDraftPersist";
+import { saveDraft, loadDraft, clearDraft, getDraftIds } from "@/hooks/useDraftPersist";
 
 describe("renderer/lib/useDraftPersist.ts — pure helpers", () => {
   beforeEach(() => {

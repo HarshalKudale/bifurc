@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppConfig, LocalMapping } from "@/types";
 import Modal from "@/components/common/Modal";
-import SearchInput from "@/components/common/SearchInput";
 import PanelHeader from "@/components/layout/PanelHeader";
 import { strings } from "@/lib/strings";
 import { flatEntityRelPath } from "@/lib/utils";
@@ -48,7 +47,6 @@ export default function MappingsPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<FormState>>({});
-  const [search, setSearch] = useState("");
 
 
   useEffect(() => {
@@ -144,15 +142,7 @@ export default function MappingsPanel({
   };
 
 
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? config.mappings.filter(
-      (m) =>
-        m.domain.toLowerCase().includes(q) ||
-        m.target.toLowerCase().includes(q) ||
-        (m.label ?? "").toLowerCase().includes(q)
-    )
-    : config.mappings;
+
 
   const syncDotColor = (syncSt: string | undefined) => {
     if (syncSt === "new" || syncSt === "deleted") return "red" as const;
@@ -177,17 +167,17 @@ export default function MappingsPanel({
     {
       key: "domain",
       header: strings.mappings.columnDomain,
-      render: (m) => <span className="font-mono text-xs text-text-bright">{m.domain}</span>,
+      render: (m) => <span className="font-mono text-xs text-foreground">{m.domain}</span>,
     },
     {
       key: "target",
       header: strings.mappings.columnTarget,
-      render: (m) => <span className="font-mono text-xs text-text-dim">{m.target}</span>,
+      render: (m) => <span className="font-mono text-xs text-muted-foreground">{m.target}</span>,
     },
     {
       key: "label",
       header: strings.mappings.columnLabel,
-      render: (m) => <span className="text-xs text-text-dim">{m.label || "—"}</span>,
+      render: (m) => <span className="text-xs text-muted-foreground">{m.label || "—"}</span>,
     },
     {
       key: "on",
@@ -213,7 +203,7 @@ export default function MappingsPanel({
             {onRevert && syncSt && syncSt !== "clean" && (
               <button
                 onClick={() => onRevert(m.id)}
-                className="px-2.5 py-1 rounded text-yellow hover:bg-yellow/10 text-xs font-medium transition-all cursor-pointer"
+                className="px-2.5 py-1 rounded text-amber hover:bg-amber/10 text-xs font-medium transition-all cursor-pointer"
               >
                 {strings.mappings.revert}
               </button>
@@ -223,7 +213,7 @@ export default function MappingsPanel({
                 icon={<History size={11} />}
                 title={strings.mappings.viewHistory}
                 onClick={() => onHistoryOpen(`mappings/${m.id}.json`)}
-                className="hover:text-accent"
+                className="hover:text-signal"
               />
             )}
             <Button variant="danger" size="sm" onClick={() => remove(m.id)}>{strings.common.delete}</Button>
@@ -245,17 +235,14 @@ export default function MappingsPanel({
           title={strings.mappings.title}
           subtitle={strings.mappings.subtitle}
           actions={
-            <>
-              <SearchInput value={search} onChange={setSearch} placeholder={strings.mappings.searchPlaceholder} />
-              <Button variant="primary" onClick={openAdd}>{strings.mappings.addMapping}</Button>
-            </>
+            <Button variant="primary" onClick={openAdd}>{strings.mappings.addMapping}</Button>
           }
         />
 
         <div className="flex-1 overflow-y-auto p-6">
           <DataTable
             columns={columns}
-            data={filtered}
+            data={config.mappings}
             rowKey={(m) => m.id}
             emptyState={emptyNode}
           />
@@ -276,13 +263,13 @@ export default function MappingsPanel({
                 onChange={(e) => setForm({ ...form, subdomain: e.target.value })}
                 autoFocus
               />
-              <span className="bg-bg3 border border-l-0 border-border rounded-r px-3 py-2 text-sm font-mono text-text-dim select-none whitespace-nowrap">
+              <span className="bg-surface-2 border border-l-0 border-border rounded-r px-3 py-2 text-sm font-mono text-muted-foreground select-none whitespace-nowrap">
                 {strings.mappings.localHostSuffix}
               </span>
             </div>
             {form.subdomain.trim() && !errors.subdomain && (
-              <p className="text-xs text-text-dim mt-1">
-                {strings.mappings.willCreate} <span className="font-mono text-accent">{fullDomain(form.subdomain)}</span>
+              <p className="text-xs text-muted-foreground mt-1">
+                {strings.mappings.willCreate} <span className="font-mono text-signal">{fullDomain(form.subdomain)}</span>
               </p>
             )}
           </FormField>

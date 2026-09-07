@@ -1,6 +1,6 @@
 {
   "name": "local-panel-monorepo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "LocalPanel - Localhost domain proxy manager and API development toolkit",
   "private": true,
   "author": {

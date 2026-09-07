@@ -14,12 +14,12 @@ export default function EmptyState({ icon, title, description, action, className
   return (
     <div className={cn(
       "flex flex-col items-center justify-center text-center",
-      fill ? "h-full py-16" : "bg-bg1 border border-border rounded-lg py-16",
+      fill ? "h-full py-16" : "bg-surface border border-border rounded-lg py-16",
       className
     )}>
       <div className="opacity-15 mb-3">{icon}</div>
-      <div className="text-sm font-medium text-text-base mb-1">{title}</div>
-      {description && <p className="text-xs text-text-dim">{description}</p>}
+      <div className="text-sm font-medium text-foreground mb-1">{title}</div>
+      {description && <p className="text-xs text-muted-foreground">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );

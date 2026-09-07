@@ -47,12 +47,12 @@ export default function SidebarLayout({
             defaultSize={defaultSize}
             minSize={minSize}
             maxSize={maxSize}
-            className="flex flex-col bg-bg1 border-r border-border overflow-hidden"
+            className="flex flex-col bg-surface border-r border-border overflow-hidden"
           >
             {sidebar}
           </Panel>
 
-          <PanelResizeHandle className="w-1 bg-border hover:bg-accent/40 active:bg-accent/60 transition-colors cursor-col-resize flex-shrink-0" />
+          <PanelResizeHandle className="w-1 bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-col-resize flex-shrink-0" />
 
           {/* Main content area */}
           <Panel defaultSize={100 - defaultSize} minSize={60} className="flex flex-col overflow-hidden">
@@ -62,11 +62,11 @@ export default function SidebarLayout({
       ) : (
         <>
           {/* Collapsed strip when sidebar is closed */}
-          <div className="flex flex-col items-center py-2 gap-2 border-r border-border bg-bg1 flex-shrink-0 w-9">
+          <div className="flex flex-col items-center py-2 gap-2 border-r border-border bg-surface flex-shrink-0 w-9">
             <button
               onClick={onToggle}
               title={expandTitle}
-              className="w-7 h-7 flex items-center justify-center rounded hover:bg-bg2 text-text-dim hover:text-text-base transition-colors cursor-pointer"
+              className="w-7 h-7 flex items-center justify-center rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
               <ChevronRight size={13} />
             </button>
@@ -96,7 +96,7 @@ export function SidebarHeader({ children, onCollapse, collapseTitle = strings.ti
       <button
         onClick={onCollapse}
         title={collapseTitle}
-        className="w-7 h-7 flex items-center justify-center rounded hover:bg-bg2 text-text-dim hover:text-text-base transition-colors flex-shrink-0 cursor-pointer"
+        className="w-7 h-7 flex items-center justify-center rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 cursor-pointer"
       >
         <ChevronLeft size={13} />
       </button>

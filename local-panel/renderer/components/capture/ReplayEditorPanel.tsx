@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { RequestLogEntry, MockRule, ReplayResult } from "@/types";
-import HeaderTable from "@/components/editor/HeaderTable";
-import BodyEditor from "@/components/editor/BodyEditor";
+import HeaderTable from "@/components/common/HeaderTable";
+import BodyEditor from "@/components/common/BodyEditor";
 import {
   KVRow, mkRowId, headersToRows, rowsToHeaders,
   b64ToText, textToB64, tryFormat, statusColor,
@@ -22,9 +22,9 @@ const SKIP_HEADERS = new Set([
 ]);
 
 function statusTextClass(s: number): string {
-  if (s < 300) return "text-green";
-  if (s < 400) return "text-yellow";
-  return "text-red";
+  if (s < 300) return "text-signal";
+  if (s < 400) return "text-amber";
+  return "text-destructive";
 }
 
 export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Props) {
@@ -105,16 +105,16 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
   const reqHeaderCount = reqHeaders.filter((r) => r.enabled && r.key.trim()).length;
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-bg1">
+    <div className="flex flex-col flex-1 overflow-hidden bg-surface">
       {/* Title bar */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-border flex-shrink-0">
-        <span className="text-xs font-semibold text-text-dim uppercase tracking-widest whitespace-nowrap">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-widest whitespace-nowrap">
           {strings.editor.replayRequest}
         </span>
         <div className="flex-1" />
         <button
           onClick={onClose}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim hover:text-text-base cursor-pointer text-xs font-medium transition-colors flex-shrink-0"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-border bg-card hover:bg-surface-2 text-muted-foreground hover:text-foreground cursor-pointer text-xs font-medium transition-colors flex-shrink-0"
         >
           {strings.editor.back}
         </button>
@@ -123,23 +123,23 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
       {/* Method + URL bar */}
       <div className="px-5 py-3 border-b border-border flex-shrink-0 flex items-center gap-2">
         <div
-          className="flex items-stretch rounded border border-border focus-within:border-accent transition-colors overflow-hidden flex-1"
-          style={{ background: "var(--c-bg2)" }}
+          className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1"
+          style={{ background: "var(--c-card)" }}
         >
           <select
             value={method}
             onChange={(e) => setMethod(e.target.value)}
-            className="bg-bg3 border-r border-border text-xs font-bold font-mono px-3 py-2.5 outline-none cursor-pointer appearance-none flex-shrink-0"
+            className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 outline-none cursor-pointer appearance-none flex-shrink-0"
             style={{ color: methodColor(method), minWidth: 80 }}
           >
             {METHODS.map((m) => (
-              <option key={m} value={m} style={{ color: methodColor(m), background: "var(--c-bg2)" }}>
+              <option key={m} value={m} style={{ color: methodColor(m), background: "var(--c-card)" }}>
                 {m}
               </option>
             ))}
           </select>
           <input
-            className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-text-bright outline-none placeholder:text-text-dim min-w-0"
+            className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-foreground outline-none placeholder:text-muted-foreground min-w-0"
             placeholder={strings.requests.urlPlaceholder}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -148,7 +148,7 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
         <button
           onClick={handleSend}
           disabled={loading || !url.trim()}
-          className="px-5 py-2.5 rounded bg-accent hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed text-bg0 text-xs font-semibold transition-all cursor-pointer flex-shrink-0 flex items-center gap-1.5"
+          className="px-5 py-2.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex-shrink-0 flex items-center gap-1.5"
         >
           {loading ? (
             <>
@@ -166,8 +166,8 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
 
         {/* Left: Request */}
         <div className="flex flex-col min-h-0 overflow-hidden border-r border-border" style={{ width: "50%" }}>
-          <div className="flex items-center flex-shrink-0 border-b border-border bg-bg0/40">
-            <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-text-dim border-r border-border whitespace-nowrap">
+          <div className="flex items-center flex-shrink-0 border-b border-border bg-background/40">
+            <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-r border-border whitespace-nowrap">
               {strings.editor.request}
             </span>
             {(["headers", "body"] as const).map((t) => (
@@ -176,8 +176,8 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
                 onClick={() => setReqTab(t)}
                 className={`px-4 py-2.5 text-xs font-medium cursor-pointer transition-colors whitespace-nowrap ${
                   reqTab === t
-                    ? "text-accent border-b-2 border-accent -mb-px"
-                    : "text-text-dim hover:text-text-base"
+                    ? "text-signal border-b-2 border-signal -mb-px"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {t === "headers"
@@ -204,8 +204,8 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
 
         {/* Right: Response */}
         <div className="flex flex-col min-h-0 overflow-hidden flex-1">
-          <div className="flex items-center flex-shrink-0 border-b border-border bg-bg0/40">
-            <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-text-dim border-r border-border whitespace-nowrap">
+          <div className="flex items-center flex-shrink-0 border-b border-border bg-background/40">
+            <span className="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground border-r border-border whitespace-nowrap">
               {strings.editor.response}
             </span>
             {(["body", "headers"] as const).map((t) => (
@@ -214,8 +214,8 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
                 onClick={() => setResTab(t)}
                 className={`px-4 py-2.5 text-xs font-medium cursor-pointer transition-colors whitespace-nowrap ${
                   resTab === t
-                    ? "text-accent border-b-2 border-accent -mb-px"
-                    : "text-text-dim hover:text-text-base"
+                    ? "text-signal border-b-2 border-signal -mb-px"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {t}
@@ -235,15 +235,15 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
           <div className="flex-1 overflow-y-auto min-h-0">
             {loading && (
               <div className="flex items-center justify-center h-full">
-                <div className="flex flex-col items-center gap-2 text-text-dim">
-                  <span className="inline-block w-5 h-5 border-2 border-text-dim/30 border-t-accent rounded-full animate-spin" />
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <span className="inline-block w-5 h-5 border-2 border-muted-foreground/30 border-t-signal rounded-full animate-spin" />
                   <span className="text-xs">{strings.server.sending}</span>
                 </div>
               </div>
             )}
             {error && !loading && (
               <div className="p-4">
-                <div className="px-3 py-2 rounded border border-red/30 bg-red/5 text-xs text-red font-mono">
+                <div className="px-3 py-2 rounded border border-destructive/30 bg-destructive/5 text-xs text-destructive font-mono">
                   {error}
                 </div>
               </div>
@@ -252,7 +252,7 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
               <div className="flex items-center justify-center h-full text-center">
                 <div>
                   <div className="text-3xl opacity-20 mb-2">→</div>
-                  <p className="text-xs text-text-dim">{strings.capture.sendToSeeResponse}</p>
+                  <p className="text-xs text-muted-foreground">{strings.capture.sendToSeeResponse}</p>
                 </div>
               </div>
             )}
@@ -277,7 +277,7 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between px-5 py-3 border-t border-border flex-shrink-0 bg-bg0/30">
+      <div className="flex items-center justify-between px-5 py-3 border-t border-border flex-shrink-0 bg-background/30">
         <div className="flex items-center gap-2">
           {result && (
             <span className={`text-xs font-mono font-semibold ${statusTextClass(result.status)}`}>
@@ -285,7 +285,7 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
             </span>
           )}
           {result && (
-            <span className="text-[10px] text-text-dim">
+            <span className="text-[10px] text-muted-foreground">
               {strings.capture.headerCount.replace("{count}", String(Object.keys(result.headers).length))}
             </span>
           )}
@@ -293,13 +293,13 @@ export default function ReplayEditorPanel({ entry, onCreateMock, onClose }: Prop
         <div className="flex items-center gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim text-xs font-medium transition-all cursor-pointer"
+            className="px-3 py-1.5 rounded border border-border bg-card hover:bg-surface-2 text-muted-foreground text-xs font-medium transition-all cursor-pointer"
           >
             {strings.common.cancel}
           </button>
           <button
             onClick={handleCreateMock}
-            className="px-4 py-1.5 rounded bg-yellow/20 hover:bg-yellow/30 border border-yellow/30 text-yellow text-xs font-semibold transition-all cursor-pointer"
+            className="px-4 py-1.5 rounded bg-amber/20 hover:bg-amber/30 border border-amber/30 text-amber text-xs font-semibold transition-all cursor-pointer"
             title={result ? strings.capture.createMockResponseTitle : strings.capture.createMockRequestTitle}
           >
             <Zap size={11} className="inline mr-1" /> {result ? strings.capture.mockThisResponse : strings.requests.createMock}

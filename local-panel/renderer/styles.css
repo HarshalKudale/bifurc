@@ -1,270 +1,9 @@
+@import "./tokens.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Palette reference tokens (raw, not used by Tailwind directly) ─────────── */
-
-:root {
-  /* primary (periwinkle/lavender) */
-  --clr-primary-a0: #c0c1ff;
-  /* primary */
-  --clr-primary-a10: #caccff;
-  --clr-primary-a20: #d3d4ff;
-  --clr-primary-a30: #e1e0ff;
-  /* primary-fixed */
-  --clr-primary-a40: #e8e8ff;
-  --clr-primary-a50: #f0f0ff;
-
-  /* surface (dark navy) */
-  --clr-surface-a0: #010f1f;
-  /* surface-container-lowest */
-  --clr-surface-a10: #051424;
-  /* surface / background */
-  --clr-surface-a20: #0d1c2d;
-  /* surface-container-low */
-  --clr-surface-a30: #122131;
-  /* surface-container */
-  --clr-surface-a40: #1c2b3c;
-  /* surface-container-high */
-  --clr-surface-a50: #273647;
-  /* surface-container-highest */
-
-  /* tonal surface (blue-navy) */
-  --clr-tonal-a0: #122131;
-  /* surface-container */
-  --clr-tonal-a10: #1c2b3c;
-  /* surface-container-high */
-  --clr-tonal-a20: #464554;
-  /* outline-variant */
-  --clr-tonal-a30: #908fa0;
-  /* outline */
-  --clr-tonal-a40: #c7c4d7;
-  /* on-surface-variant */
-  --clr-tonal-a50: #d4e4fa;
-  /* on-surface */
-
-  /* status */
-  --clr-success-a0: #22946e;
-  --clr-success-a10: #5ba989;
-  --clr-success-a20: #86bfa6;
-  --clr-warning-a0: #a87a2a;
-  --clr-warning-a10: #ba945a;
-  --clr-warning-a20: #cbae84;
-  --clr-danger-a0: #ffb4ab;
-  /* error */
-  --clr-danger-a10: #ffdad6;
-  /* on-error-container */
-  --clr-danger-a20: #93000a;
-  /* error-container */
-  --clr-info-a0: #bcc7de;
-  /* secondary */
-  --clr-info-a10: #c7c4d7;
-  /* on-surface-variant */
-  --clr-info-a20: #d4e4fa;
-  /* on-surface */
-}
-
-/* ── Dark mode — RGB channel tokens (Tailwind opacity utilities) ─────────────
-   Format: R G B (no rgb() wrapper — Tailwind injects it as rgb(R G B / alpha))  */
-
-:root {
-  /* Fallback values matching the default "Terminal" theme — avoids a flash of the
-     wrong palette before React hydrates and lib/useTheme.ts applies the stored theme. */
-  --color-bg0-rgb: 10 10 10;
-  /* #0a0a0a */
-  --color-bg1-rgb: 14 14 14;
-  /* #0e0e0e */
-  --color-bg2-rgb: 18 18 18;
-  /* #121212 */
-  --color-bg3-rgb: 26 26 26;
-  /* #1a1a1a */
-  --color-border-rgb: 31 82 31;
-  /* #1f521f */
-  --color-accent-rgb: 51 255 0;
-  /* #33ff00 */
-  --color-accent-dim-rgb: 31 82 31;
-  /* #1f521f */
-  --color-green-rgb: 51 255 0;
-  /* #33ff00 */
-  --color-red-rgb: 255 51 51;
-  /* #ff3333 */
-  --color-yellow-rgb: 255 176 0;
-  /* #ffb000 */
-  --color-text-base-rgb: 43 224 0;
-  /* #2be000 */
-  --color-text-dim-rgb: 31 82 31;
-  /* #1f521f */
-  --color-text-bright-rgb: 51 255 0;
-  /* #33ff00 */
-
-  /* Inline style aliases (used in style={} props in components) */
-  --c-accent: #33ff00;
-  --c-green: #33ff00;
-  --c-red: #ff3333;
-  --c-yellow: #ffb000;
-  --c-text-base: #2be000;
-  --c-text-dim: #1f521f;
-  --c-text-bright: #33ff00;
-  --c-bg2: #121212;
-  --c-bg3: #1a1a1a;
-  --c-border: rgba(31, 82, 31, 0.75);
-
-  /* HTTP method — dim green (HEAD / OPTIONS) */
-  --c-method-head: #0a8f0a;
-  --c-method-head-bg: rgba(10, 143, 10, 0.13);
-
-  /* Git sync status dot colors */
-  --c-sync-new: #ff3333;
-  --c-sync-modified: #ffb000;
-  --c-sync-clean: #33ff00;
-
-  /* Syntax highlighting — dark */
-  --c-syn-keyword: #33ff00;
-  --c-syn-bool: #ffb000;
-  --c-syn-string: #2be000;
-  --c-syn-number: #ffb000;
-  --c-syn-comment: #1f521f;
-  --c-syn-property: #33ff00;
-  --c-syn-tag: #33ff00;
-  --c-syn-attr-name: #2be000;
-  --c-syn-attr-val: #ffb000;
-  --c-syn-bracket: #1f521f;
-  --c-syn-variable: #33ff00;
-  --c-syn-defn: #ffb000;
-  --c-syn-type: #2be000;
-  --c-syn-operator: #1f521f;
-  --c-syn-regexp: #ffb000;
-  --c-syn-escape: #ff3333;
-  --c-syn-invalid: #ff3333;
-}
-
-/* Accent badge text — uses contrast token set by theme */
-:root .bg-accent {
-  color: var(--c-accent-contrast, #0a0a0a) !important;
-}
-
-html.light .bg-accent {
-  color: var(--c-accent-contrast, #e1e0ff) !important;
-}
-
-/* ── Light mode — RGB channel tokens ──────────────────────────────────────── */
-
-html.light {
-  /* primary (deep blue-purple) */
-  --clr-primary-a0: #c0c1ff;
-  --clr-primary-a10: #494bd6;
-  /* inverse-primary */
-  --clr-primary-a20: #2f2ebe;
-  /* on-primary-fixed-variant */
-  --clr-primary-a30: #07006c;
-  /* on-primary-fixed */
-  --clr-primary-a40: #1000a9;
-  /* on-primary */
-  --clr-primary-a50: #0d0096;
-  /* on-primary-container */
-
-  /* surface (light blue-white) */
-  --clr-surface-a0: #f5f8fd;
-  --clr-surface-a10: #eef4fb;
-  --clr-surface-a20: #e4edf8;
-  --clr-surface-a30: #d4e4fa;
-  /* inverse-surface */
-  --clr-surface-a40: #c3d5ec;
-  --clr-surface-a50: #b8c3d6;
-
-  /* tonal surface (light blue-tinted) */
-  --clr-tonal-a0: #e8eef8;
-  --clr-tonal-a10: #dde4ef;
-  --clr-tonal-a20: #d0dae9;
-  --clr-tonal-a30: #c3d0e2;
-  --clr-tonal-a40: #b8c3d6;
-  --clr-tonal-a50: #908fa0;
-
-  --clr-success-a0: #22946e;
-  --clr-success-a10: #4fa482;
-  --clr-success-a20: #71b497;
-  --clr-warning-a0: #a87a2a;
-  --clr-warning-a10: #b58e4f;
-  --clr-warning-a20: #c2a16f;
-  --clr-danger-a0: #93000a;
-  /* error-container */
-  --clr-danger-a10: #690005;
-  /* on-error */
-  --clr-danger-a20: #ba1a1a;
-  --clr-info-a0: #494bd6;
-  /* inverse-primary */
-  --clr-info-a10: #3e495d;
-  /* secondary-container */
-  --clr-info-a20: #607eae;
-
-  --color-bg0-rgb: 221 228 239;
-  /* #dde4ef light outer chrome  */
-  --color-bg1-rgb: 245 248 253;
-  /* #f5f8fd panels              */
-  --color-bg2-rgb: 232 238 248;
-  /* #e8eef8 input fills         */
-  --color-bg3-rgb: 221 230 243;
-  /* #dde6f3 hover elevated      */
-  --color-border-rgb: 184 195 214;
-  /* #b8c3d6 borders             */
-  --color-accent-rgb: 73 75 214;
-  /* #494bd6 inverse-primary     */
-  --color-accent-dim-rgb: 53 53 196;
-  /* #3535c4 deeper accent       */
-  --color-green-rgb: 34 148 110;
-  /* #22946e success (same)      */
-  --color-red-rgb: 147 0 10;
-  /* #93000a error-container     */
-  --color-yellow-rgb: 168 122 42;
-  /* #a87a2a (same)              */
-  --color-text-base-rgb: 35 49 67;
-  /* #233143 inverse-on-surface  */
-  --color-text-dim-rgb: 70 69 84;
-  /* #464554 outline-variant     */
-  --color-text-bright-rgb: 1 15 31;
-  /* #010f1f darkest navy        */
-
-  --c-accent: #494bd6;
-  --c-green: #22946e;
-  --c-red: #93000a;
-  --c-yellow: #a87a2a;
-  --c-text-base: #233143;
-  --c-text-dim: #464554;
-  --c-text-bright: #010f1f;
-  --c-bg2: #e8eef8;
-  --c-bg3: #dde6f3;
-  --c-border: rgba(184, 195, 214, 0.75);
-
-  /* HTTP method — same purple is readable on light bg */
-  --c-method-head: #a78bfa;
-  --c-method-head-bg: rgba(167, 139, 250, 0.13);
-
-  /* Git sync status dot colors (same as dark) */
-  --c-sync-new: #f87171;
-  --c-sync-modified: #fbbf24;
-  --c-sync-clean: #46ff09;
-
-  /* Syntax highlighting — light */
-  --c-syn-keyword: #494bd6;
-  --c-syn-bool: #494bd6;
-  --c-syn-string: #22946e;
-  --c-syn-number: #a87a2a;
-  --c-syn-comment: #464554;
-  --c-syn-property: #2f2ebe;
-  --c-syn-tag: #494bd6;
-  --c-syn-attr-name: #233143;
-  --c-syn-attr-val: #22946e;
-  --c-syn-bracket: #464554;
-  --c-syn-variable: #010f1f;
-  --c-syn-defn: #494bd6;
-  --c-syn-type: #233143;
-  --c-syn-operator: #464554;
-  --c-syn-regexp: #a87a2a;
-  --c-syn-escape: #494bd6;
-  --c-syn-invalid: #93000a;
-}
-
-/* ── Base styles ───────────────────────────────────────────────────────────── */
+/* ── Base styles ──────────────────────────────────────────────────────── */
 
 * {
   box-sizing: border-box;
@@ -274,9 +13,9 @@ html,
 body,
 #root {
   height: 100%;
-  background: rgb(var(--color-bg0-rgb));
-  color: rgb(var(--color-text-base-rgb));
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: oklch(var(--background));
+  color: oklch(var(--foreground));
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
   line-height: 1.5;
@@ -294,274 +33,119 @@ textarea {
 }
 
 :focus-visible {
-  outline: 2px solid rgba(var(--color-accent-rgb), 0.5);
+  outline: 2px solid oklch(var(--signal) / 0.5);
   outline-offset: 2px;
 }
 
-/* ── Terminal CLI theme chrome ─────────────────────────────────────────────
-   Applied via html.theme-terminal (toggled by lib/useTheme.ts when the active
-   theme has `terminal: true`). Layers "Monospace Supremacy", 0px radius,
-   no drop shadows, phosphor glow and a faint CRT scanline overlay on top of
-   the terminal theme's green-on-black color tokens without touching markup. */
+/* ── Accent badge text — uses signal-foreground for contrast ──────────── */
 
-html.theme-terminal,
-html.theme-terminal * {
-  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Consolas, "Liberation Mono", monospace !important;
-  border-radius: 0 !important;
+.bg-signal {
+  color: oklch(var(--signal-foreground));
 }
 
-/* Keep icon glyph fonts (if any) and canvases/svg untouched */
-html.theme-terminal svg,
-html.theme-terminal img,
-html.theme-terminal canvas {
-  font-family: initial !important;
-}
-
-/* No drop shadows — pane depth comes from borders, not elevation */
-html.theme-terminal [class*="shadow"] {
-  box-shadow: none !important;
-}
-
-/* Phosphor glow on headings and the brightest/accent text */
-html.theme-terminal h1,
-html.theme-terminal h2,
-html.theme-terminal h3,
-html.theme-terminal .text-accent,
-html.theme-terminal .text-text-bright {
-  text-shadow: 0 0 5px rgba(51, 255, 0, 0.5);
-}
-
-/* Section headers read like shell prompts: uppercase + tracked out */
-html.theme-terminal h1,
-html.theme-terminal h2,
-html.theme-terminal h3 {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-/* Blinking block cursor — glow-matched caret for prompt-style inputs */
-html.theme-terminal input,
-html.theme-terminal textarea {
-  caret-color: rgb(var(--color-accent-rgb));
-}
-
-@keyframes terminal-blink {
-
-  0%,
-  49% {
-    opacity: 1;
-  }
-
-  50%,
-  100% {
-    opacity: 0;
-  }
-}
-
-/* Opt-in utility: append a blinking block cursor, e.g. <span className="terminal-cursor"> */
-html.theme-terminal .terminal-cursor::after {
-  content: "\2588";
-  display: inline-block;
-  margin-left: 2px;
-  color: rgb(var(--color-accent-rgb));
-  animation: terminal-blink 1s step-start infinite;
-}
-
-/* Faint CRT scanlines — subtle depth without harming legibility */
-html.theme-terminal body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  background: repeating-linear-gradient(to bottom,
-      rgba(0, 0, 0, 0) 0px,
-      rgba(0, 0, 0, 0) 2px,
-      rgba(0, 0, 0, 0.35) 3px);
-  opacity: 0.35;
-}
-
-/* ── Animations ───────────────────────────────────────────────────────────── */
+/* ── Animations ──────────────────────────────────────────────────────── */
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slideDown {
-  from {
-    opacity: 0;
-    max-height: 0;
-  }
-
-  to {
-    opacity: 1;
-    max-height: 2000px;
-  }
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 2000px; }
 }
 
 @keyframes slideUp {
-  from {
-    opacity: 1;
-    max-height: 2000px;
-  }
-
-  to {
-    opacity: 0;
-    max-height: 0;
-  }
+  from { opacity: 1; max-height: 2000px; }
+  to   { opacity: 0; max-height: 0; }
 }
 
 @keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @keyframes pulse-dot {
-
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.4;
-  }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.15s ease both;
-}
+.animate-fade-in    { animation: fadeIn 0.15s ease both; }
+.animate-scale-in   { animation: scaleIn 0.12s ease both; }
+.animate-slide-down { animation: slideDown 0.2s ease both; overflow: hidden; }
+.animate-pulse-dot  { animation: pulse-dot 2s ease-in-out infinite; }
 
-.animate-scale-in {
-  animation: scaleIn 0.12s ease both;
-}
+/* ── Transitions ─────────────────────────────────────────────────────── */
 
-.animate-slide-down {
-  animation: slideDown 0.2s ease both;
-  overflow: hidden;
-}
-
-.animate-pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
-}
-
-/* Tree node expand/collapse — grid-rows transition handles both open and close */
 .tree-folder-body {
   display: grid;
   transition: grid-template-rows 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.tree-folder-body>.tree-folder-inner {
+.tree-folder-body > .tree-folder-inner {
   overflow: hidden;
   min-height: 0;
 }
 
-/* Smooth sidebar collapse — left nav */
 .sidebar-collapse {
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.18s ease;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
 }
 
-/* Panel inner sidebar (Mocks / Requests / Sockets / Webhooks) */
 .panel-sidebar {
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.18s ease;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
 }
 
-/* Smooth history sidebar slide-in from right */
 .history-sidebar {
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.18s ease;
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
   overflow: hidden;
   flex-shrink: 0;
 }
 
-/* Tab entrance */
-.tab-enter {
-  animation: fadeIn 0.12s ease both;
-}
+.tab-enter { animation: fadeIn 0.12s ease both; }
 
-/* Tab bar — hide scrollbar, keep scrollability */
-.tab-bar-scroll {
-  scrollbar-width: none;
-}
+.tab-bar-scroll { scrollbar-width: none; }
+.tab-bar-scroll::-webkit-scrollbar { display: none; }
 
-.tab-bar-scroll::-webkit-scrollbar {
-  display: none;
-}
+/* ── Scrollbar ───────────────────────────────────────────────────────── */
 
-::-webkit-scrollbar {
-  width: 5px;
-}
+::-webkit-scrollbar       { width: 5px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: oklch(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: oklch(var(--surface-2)); }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* ── CodeMirror 6 integration ────────────────────────────────────────── */
 
-::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-border-rgb));
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-bg3-rgb));
-}
-
-/* ── CodeMirror 6 integration ─────────────────────────────────────────────── */
-
-.cm-editor {
-  height: 100%;
-  background: transparent;
-}
-
-.cm-editor.cm-focused {
-  outline: none;
-}
+.cm-editor { height: 100%; background: transparent; }
+.cm-editor.cm-focused { outline: none; }
 
 .cm-editor .cm-scroller {
   overflow: auto;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
 }
 
-/* Match app scrollbar styling inside cm editors */
-.cm-editor .cm-scroller::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
+.cm-editor .cm-scroller::-webkit-scrollbar { width: 5px; height: 5px; }
+.cm-editor .cm-scroller::-webkit-scrollbar-track { background: transparent; }
+.cm-editor .cm-scroller::-webkit-scrollbar-thumb { background: oklch(var(--border)); border-radius: 3px; }
 
-.cm-editor .cm-scroller::-webkit-scrollbar-track {
-  background: transparent;
-}
+.cm-foldGutter .cm-gutterElement { cursor: pointer; padding: 0 4px; }
+.cm-editor .cm-activeLineGutter  { border-right: none; }
 
-.cm-editor .cm-scroller::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-border-rgb));
-  border-radius: 3px;
-}
+/* ── Reduced motion ──────────────────────────────────────────────────── */
 
-/* Fold gutter */
-.cm-foldGutter .cm-gutterElement {
-  cursor: pointer;
-  padding: 0 4px;
-}
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-scale-in,
+  .animate-slide-down,
+  .animate-pulse-dot {
+    animation: none !important;
+  }
 
-/* Remove default CM6 outline on active line for cleaner look */
-.cm-editor .cm-activeLineGutter {
-  border-right: none;
+  .sidebar-collapse,
+  .panel-sidebar,
+  .history-sidebar,
+  .tree-folder-body {
+    transition: none !important;
+  }
 }

@@ -56,6 +56,7 @@ export {
   CloudOff,      // no remote
   ArrowUp,       // push
   ArrowDown,     // pull
+  ArrowRight,    // navigate / map
   Activity,      // health bar nav
   Webhook,       // webhooks nav/panel
   User,          // account nav
@@ -85,4 +86,5 @@ export {
   TerminalSquare,// runner type icon (command)
   Loader2,       // spinner for starting/stopping state
   Hexagon,       // node.js
+  RotateCcw,     // revert changes
 } from "lucide-react";

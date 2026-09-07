@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { AppConfig, Workspace, SyncState, SyncStatus } from "@/types";
+import React, { useState, useEffect } from "react";
+import { AppConfig, SyncState, SyncStatus } from "@/types";
 import { strings } from "@/lib/strings";
-import { Cloud, CloudOff, ArrowUp, ArrowDown, Link, Unlink, GitBranch, RefreshCw } from "@/lib/icons";
-import { Button, Input, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
 import PanelLayout from "@/components/ui/PanelLayout";
 import ImportExportModal from "@/components/modals/ImportExportModal";
-
+import AuditLogPanel from "@/panels/AuditLogPanel";
+import { WorkspaceCard } from "@/panels/WorkspaceCard";
 
 interface Props {
   config: AppConfig;
@@ -18,30 +17,8 @@ export default function WorkspacePanel({ config, onConfigChange, onWorkspaceDele
   const wsId = config.activeWorkspaceId;
   const workspace = (config.workspaces ?? []).find((w) => w.id === wsId) ?? null;
 
-  const [nameInput, setNameInput] = useState(workspace?.name ?? "");
   const [syncState, setSyncState] = useState<SyncState>({ status: "idle", error: null, lastPushedAt: null, lastPulledAt: null, progressMessage: null });
-
-  // Remote connection form
-  const [remoteInput, setRemoteInput] = useState("");
-  const [branchInput, setBranchInput] = useState("main");
-  const [connectConfirm, setConnectConfirm] = useState<"empty" | "non-empty" | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
-
-  // Disconnect confirmation
-  const [disconnectConfirm, setDisconnectConfirm] = useState(false);
-
-  // Delete confirmation
-  const [deleteConfirm, setDeleteConfirm] = useState(false);
-
   const [ieModalMode, setIeModalMode] = useState<"import" | "export" | null>(null);
-
-  const syncConfig = workspace?.syncConfig;
-  const isConnected = !!syncConfig;
-
-  useEffect(() => {
-    setNameInput(workspace?.name ?? "");
-  }, [workspace?.name]);
 
   useEffect(() => {
     if (!wsId) return;
@@ -63,336 +40,33 @@ export default function WorkspacePanel({ config, onConfigChange, onWorkspaceDele
     return unsub;
   }, [wsId]);
 
-  const handleNameBlur = useCallback(async () => {
-    const trimmed = nameInput.trim();
-    if (trimmed && trimmed !== workspace?.name) {
-      await onWorkspaceRename(wsId, trimmed);
-    }
-  }, [nameInput, workspace?.name, wsId, onWorkspaceRename]);
-
-  // -- Connect logic ---------------------------------------------------------
-  const handleConnectClick = () => {
-    setConnectError(null);
-    const hasData = (
-      (config.mocks ?? []).filter((m) => m.workspaceId === wsId).length > 0 ||
-      (config.mappings ?? []).filter((m) => m.workspaceId === wsId).length > 0 ||
-      (config.proxyRules ?? []).filter((r) => r.workspaceId === wsId).length > 0 ||
-      (config.requests ?? []).filter((r) => r.workspaceId === wsId).length > 0 ||
-      (config.wsConnections ?? []).filter((c) => c.workspaceId === wsId).length > 0 ||
-      (config.environments ?? []).filter((e) => e.workspaceId === wsId).length > 0
-    );
-    setConnectConfirm(hasData ? "non-empty" : "empty");
-  };
-
-  const handleConnectConfirm = async () => {
-    if (!remoteInput.trim()) return;
-    setConnecting(true);
-    setConnectConfirm(null);
-    setConnectError(null);
-    try {
-      const result = await window.api.syncSetRemote(wsId, remoteInput.trim(), branchInput.trim() || "main");
-      if (result.ok) {
-        const effectiveId = result.adoptedId ?? wsId;
-        // If the workspace ID changed (clone adopted remote identity), switch to it explicitly
-        if (effectiveId !== wsId) {
-          const switchResult = await window.api.setActiveWorkspace(effectiveId);
-          if (switchResult.ok) {
-            onConfigChange(switchResult.config);
-          } else {
-            const fresh = await window.api.getConfig();
-            onConfigChange(fresh);
-          }
-        } else {
-          const fresh = await window.api.getConfig();
-          onConfigChange(fresh);
-        }
-        const state = await window.api.syncGetState(effectiveId);
-        setSyncState(state);
-      } else {
-        setConnectError(result.error ?? "Connection failed");
-      }
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    setDisconnectConfirm(false);
-    await window.api.syncDisconnect(wsId);
-    const fresh = await window.api.getConfig();
-    onConfigChange(fresh);
-    setSyncState({ status: "idle", error: null, lastPushedAt: null, lastPulledAt: null, progressMessage: null });
-    setRemoteInput("");
-  };
-
-  const handlePush = async () => {
-    const result = await window.api.syncPush(wsId);
-    if (!result.ok) setSyncState((s) => ({ ...s, error: result.error ?? null }));
-  };
-
-  const handlePull = async () => {
-    const result = await window.api.syncPull(wsId);
-    if (!result.ok) setSyncState((s) => ({ ...s, error: result.error ?? null }));
-  };
-
-  const handleAutoSyncToggle = async (enabled: boolean) => {
-    await window.api.syncSetAutoSync(wsId, enabled);
-    const fresh = await window.api.getConfig();
-    onConfigChange(fresh);
-  };
-
   const handleImportDone = async () => {
     const fresh = await window.api.getConfig();
     onConfigChange(fresh);
   };
 
-  // -- Delete ----------------------------------------------------------------
-
-  const handleDeleteConfirm = async () => {
-    setDeleteConfirm(false);
-    await onWorkspaceDelete(wsId);
-  };
-
   if (!workspace) return null;
-
-  const lastPushed = workspace.syncMeta?.lastPushedAt ?? syncState.lastPushedAt;
-  const lastPulled = workspace.syncMeta?.lastPulledAt ?? syncState.lastPulledAt;
 
   return (
     <>
-      <PanelLayout title={strings.workspace.title} subtitle={strings.workspace.subtitle}>
-        <div className="flex flex-col gap-6">
+      <PanelLayout title={strings.workspace.title} subtitle={strings.workspace.subtitle} noPadding>
+        <div className="flex flex-col lg:flex-row flex-1 h-full min-h-0 divide-y lg:divide-y-0 lg:divide-x divide-border overflow-hidden">
+          {/* Left Column: Workspace Settings */}
+          <WorkspaceCard
+            config={config}
+            workspace={workspace}
+            syncState={syncState}
+            onConfigChange={onConfigChange}
+            onWorkspaceDelete={onWorkspaceDelete}
+            onWorkspaceRename={onWorkspaceRename}
+            onIeModalOpen={setIeModalMode}
+            setSyncState={setSyncState}
+          />
 
-          {/* -- Details --------------------------------------------------- */}
-          <section>
-            <SectionLabel>{strings.workspace.sectionDetails}</SectionLabel>
-            <SectionCard>
-              <SettingsRow title={strings.workspace.workspaceName} desc="">
-                <Input
-                  aria-label={strings.workspace.workspaceName}
-                  className="w-56 font-mono"
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  onBlur={handleNameBlur}
-                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                />
-              </SettingsRow>
-            </SectionCard>
-          </section>
-
-          {/* -- Remote Sync ----------------------------------------------- */}
-          <section>
-            <SectionLabel>{strings.workspace.sectionSync}</SectionLabel>
-
-            {syncState.error && (
-              <div className="mb-3 px-3 py-2 rounded border border-red/30 bg-red/5 text-xs text-red flex items-start gap-2">
-                <span className="flex-shrink-0 mt-0.5"><Cloud size={12} /></span>
-                <span>{strings.workspace.syncError}: {syncState.error}</span>
-              </div>
-            )}
-
-            <SectionCard>
-              {!isConnected ? (
-                <>
-                  <SettingsRow title={strings.workspace.remoteUrl} desc={strings.workspace.remoteUrlDesc}>
-                    <Input
-                      aria-label={strings.workspace.remoteUrl}
-                      className="w-72 font-mono text-sm"
-                      placeholder={strings.workspace.remoteUrlPlaceholder}
-                      value={remoteInput}
-                      onChange={(e) => setRemoteInput(e.target.value)}
-                    />
-                  </SettingsRow>
-                  <SettingsRow title={strings.workspace.branch} desc="">
-                    <Input
-                      aria-label={strings.workspace.branch}
-                      className="w-40 font-mono text-sm"
-                      placeholder={strings.workspace.branchPlaceholder}
-                      value={branchInput}
-                      onChange={(e) => setBranchInput(e.target.value)}
-                    />
-                  </SettingsRow>
-                  <div className="px-5 py-3 border-t border-border flex items-center justify-between gap-3">
-                    <span className="text-xs text-text-dim flex items-center gap-1.5">
-                      <CloudOff size={12} />
-                      Not connected
-                    </span>
-                    <button
-                      disabled={!remoteInput.trim() || connecting}
-                      onClick={handleConnectClick}
-                      className="px-3 py-1.5 rounded border border-accent/40 bg-accent/10 hover:bg-accent/20 text-accent text-xs font-medium transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-                    >
-                      <Link size={12} />
-                      {connecting ? strings.workspace.connectingBtn : strings.workspace.connectBtn}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <SettingsRow title={strings.workspace.remoteUrl} desc="">
-                    <span className="text-xs font-mono text-text-dim truncate max-w-72 flex items-center gap-1.5">
-                      <GitBranch size={11} className="flex-shrink-0" />
-                      {syncConfig?.remote}
-                    </span>
-                  </SettingsRow>
-                  <SettingsRow title={strings.workspace.branch} desc="">
-                    <span className="text-xs font-mono text-text-dim">{syncConfig?.branch ?? "main"}</span>
-                  </SettingsRow>
-                  <SettingsRow title={strings.workspace.autoSync} desc={strings.workspace.autoSyncDesc}>
-                    <Switch
-                      checked={syncConfig?.autoSync ?? false}
-                      ariaLabel={strings.workspace.autoSync}
-                      onChange={handleAutoSyncToggle}
-                    />
-                  </SettingsRow>
-
-                  {/* Status + timestamps */}
-                  <div className="px-5 py-3 border-t border-border flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <SyncStatusBadge status={syncState.status} progressMessage={syncState.progressMessage} />
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handlePull}
-                          disabled={syncState.status !== "idle"}
-                          title={strings.workspace.pullBtn}
-                          className="px-2.5 py-1 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim hover:text-text-base text-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-                        >
-                          <ArrowDown size={11} />
-                          {syncState.status === "pulling" ? strings.workspace.pullingBtn : strings.workspace.pullBtn}
-                        </button>
-                        <button
-                          onClick={handlePush}
-                          disabled={syncState.status !== "idle"}
-                          title={strings.workspace.pushBtn}
-                          className="px-2.5 py-1 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim hover:text-text-base text-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-                        >
-                          <ArrowUp size={11} />
-                          {syncState.status === "pushing" ? strings.workspace.pushingBtn : strings.workspace.pushBtn}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 text-[11px] text-text-dim">
-                      <span>
-                        {strings.workspace.lastPushed}: <span className="text-text-base">{lastPushed ? formatRelTime(lastPushed) : strings.workspace.never}</span>
-                      </span>
-                      <span>
-                        {strings.workspace.lastPulled}: <span className="text-text-base">{lastPulled ? formatRelTime(lastPulled) : strings.workspace.never}</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Disconnect */}
-                  <div className="px-5 py-3 border-t border-border">
-                    {disconnectConfirm ? (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-text-dim flex-1">{strings.workspace.disconnectWarning}</span>
-                        <button onClick={() => setDisconnectConfirm(false)} className="px-2.5 py-1 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim text-xs cursor-pointer">
-                          {strings.common.cancel}
-                        </button>
-                        <button onClick={handleDisconnect} className="px-2.5 py-1 rounded border border-red/40 bg-red/10 hover:bg-red/20 text-red text-xs cursor-pointer flex items-center gap-1">
-                          <Unlink size={11} />
-                          {strings.workspace.disconnectConfirm}
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setDisconnectConfirm(true)}
-                        className="px-2.5 py-1 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim text-xs cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Unlink size={11} />
-                        {strings.workspace.disconnectBtn}
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-
-              {connectError && (
-                <div className="px-5 py-3 border-t border-red/20 bg-red/5 text-xs text-red">{connectError}</div>
-              )}
-            </SectionCard>
-
-            {/* Connect confirmation dialog */}
-            {connectConfirm && (
-              <div className="mt-3 p-4 rounded border border-accent/20 bg-accent/5 text-xs text-text-dim flex flex-col gap-3">
-                <p className="text-text-base">
-                  {connectConfirm === "empty" ? strings.workspace.connectWarningEmpty : strings.workspace.connectWarningNonEmpty}
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setConnectConfirm(null)}
-                    className="px-3 py-1.5 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim text-xs cursor-pointer"
-                  >
-                    {strings.workspace.cancelConnect}
-                  </button>
-                  <button
-                    onClick={handleConnectConfirm}
-                    className="px-3 py-1.5 rounded border border-accent/40 bg-accent/10 hover:bg-accent/20 text-accent text-xs font-medium cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Link size={11} />
-                    {strings.workspace.confirmConnect}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* In-progress indicator shown after confirmation, during clone/push */}
-            {connecting && (
-              <div className="mt-3 p-4 rounded border border-accent/20 bg-accent/5 flex items-center gap-3">
-                <span className="inline-block w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                <span className="text-xs text-accent font-medium">
-                  {syncState.progressMessage ?? strings.workspace.connectingBtn}
-                </span>
-              </div>
-            )}
-          </section>
-
-          {/* -- Data ------------------------------------------------------ */}
-          <section>
-            <SectionLabel>{strings.workspace.sectionData}</SectionLabel>
-            <SectionCard>
-              <SettingsRow title={strings.workspace.exportBtn} desc={strings.workspace.exportDesc}>
-                <Button variant="secondary" onClick={() => setIeModalMode("export")}>{strings.common.export}</Button>
-              </SettingsRow>
-              <SettingsRow title={strings.workspace.importBtn} desc={strings.workspace.importDesc}>
-                <Button variant="secondary" onClick={() => setIeModalMode("import")}>{strings.common.import}</Button>
-              </SettingsRow>
-            </SectionCard>
-          </section>
-
-          {/* -- Danger Zone ----------------------------------------------- */}
-          <section>
-            <SectionLabel>{strings.workspace.sectionDanger}</SectionLabel>
-            <div className="bg-bg1 border border-red/20 rounded-lg overflow-hidden">
-              <div className="flex items-center gap-4 px-5 py-4">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-text-base">{strings.workspace.deleteBtn}</div>
-                  <div className="text-xs text-text-dim mt-0.5">{strings.workspace.deleteDesc}</div>
-                </div>
-                <div className="flex-shrink-0">
-                  {deleteConfirm ? (
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => setDeleteConfirm(false)} className="px-2.5 py-1 rounded border border-border bg-bg2 hover:bg-bg3 text-text-dim text-xs cursor-pointer">
-                        {strings.common.cancel}
-                      </button>
-                      <button onClick={handleDeleteConfirm} className="px-2.5 py-1 rounded border border-red/40 bg-red/10 hover:bg-red/20 text-red text-xs font-medium cursor-pointer">
-                        {strings.workspace.deleteConfirmBtn}
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setDeleteConfirm(true)}
-                      disabled={config.workspaces.length <= 1}
-                      className="px-3 py-1.5 rounded border border-red/40 bg-red/5 hover:bg-red/15 text-red text-xs font-medium transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {strings.workspace.deleteBtn}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-
+          {/* Right Column: Workspace Audit Log */}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
+            <AuditLogPanel activeWorkspaceId={wsId} embedded />
+          </div>
         </div>
 
         <ImportExportModal
@@ -407,38 +81,3 @@ export default function WorkspacePanel({ config, onConfigChange, onWorkspaceDele
   );
 }
 
-// -- Helpers -------------------------------------------------------------------
-
-function SyncStatusBadge({ status, progressMessage }: { status: SyncStatus; progressMessage: string | null }) {
-  const map: Record<SyncStatus, { label: string; color: string }> = {
-    idle: { label: strings.workspace.statusIdle, color: "text-green" },
-    pushing: { label: strings.workspace.statusPushing, color: "text-accent" },
-    pulling: { label: strings.workspace.statusPulling, color: "text-accent" },
-    cloning: { label: strings.workspace.statusCloning, color: "text-accent" },
-    error: { label: strings.workspace.statusError, color: "text-red" },
-  };
-  const { label, color } = map[status] ?? map.idle;
-  const spinning = status !== "idle" && status !== "error";
-  const displayLabel = spinning && progressMessage ? progressMessage : label;
-  return (
-    <span className={`flex items-center gap-1.5 text-xs ${color}`}>
-      {spinning ? (
-        <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin flex-shrink-0" />
-      ) : (
-        <Cloud size={12} />
-      )}
-      {displayLabel}
-    </span>
-  );
-}
-
-function formatRelTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}

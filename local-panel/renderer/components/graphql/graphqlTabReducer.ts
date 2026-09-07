@@ -68,17 +68,12 @@ export interface GraphQLMockDraft {
 
 // -- Actions ----------------------------------------------------------------
 
+import { createTabReducer, CommonTabAction } from "@/lib/createTabReducer";
+
 export type GraphQLTabAction =
-    | { type: "SET_FIELD"; field: keyof GraphQLTabState; value: any }
-    | { type: "LOAD_ENTITY"; entity: SavedGraphQLRequest | SavedGraphQLMock; tabType: GraphQLTabType }
-    | { type: "LOAD_DRAFT"; draft: GraphQLRequestDraft | GraphQLMockDraft; tabType: GraphQLTabType }
     | { type: "SEND_START" }
     | { type: "SEND_SUCCESS"; status: number; headers: Record<string, string>; body: string; durationMs: number }
-    | { type: "SEND_ERROR"; error: string }
-    | { type: "SAVE_START" }
-    | { type: "SAVE_SUCCESS" }
-    | { type: "SAVE_ERROR" }
-    | { type: "REFRESH"; entity: SavedGraphQLRequest | SavedGraphQLMock; tabType: GraphQLTabType };
+    | CommonTabAction<GraphQLTabState, SavedGraphQLRequest | SavedGraphQLMock, GraphQLRequestDraft | GraphQLMockDraft>;
 
 // -- Initial state ----------------------------------------------------------
 
@@ -143,31 +138,20 @@ export function initGraphQLState(
 
 // -- Reducer ----------------------------------------------------------------
 
-export function graphqlTabReducer(state: GraphQLTabState, action: GraphQLTabAction): GraphQLTabState {
+const baseGraphqlTabReducer = (state: GraphQLTabState, action: GraphQLTabAction): GraphQLTabState => {
     switch (action.type) {
-        case "SET_FIELD":
-            return { ...state, [action.field]: action.value, dirty: true };
-        case "LOAD_ENTITY":
-        case "REFRESH":
-            return initGraphQLState(action.entity, null, action.tabType);
-        case "LOAD_DRAFT":
-            return initGraphQLState(null, action.draft, action.tabType);
         case "SEND_START":
             return { ...state, sending: true, resError: null, resStatus: null, resBody: "", resHeaders: {}, resDuration: null };
         case "SEND_SUCCESS":
             return { ...state, sending: false, resStatus: action.status, resHeaders: action.headers, resBody: action.body, resDuration: action.durationMs };
-        case "SEND_ERROR":
-            return { ...state, sending: false, resError: action.error };
-        case "SAVE_START":
-            return { ...state, saving: true };
-        case "SAVE_SUCCESS":
-            return { ...state, saving: false, dirty: false };
-        case "SAVE_ERROR":
-            return { ...state, saving: false };
         default:
             return state;
     }
-}
+};
+
+export const graphqlTabReducer = createTabReducer<GraphQLTabState, GraphQLTabAction, SavedGraphQLRequest | SavedGraphQLMock, GraphQLRequestDraft | GraphQLMockDraft>({
+    init: initGraphQLState
+}, baseGraphqlTabReducer);
 
 // -- Helpers ----------------------------------------------------------------
 
