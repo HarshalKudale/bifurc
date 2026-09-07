@@ -22,7 +22,7 @@ on:
       prerelease:
         description: "Mark the GitHub release as a prerelease"
         required: false
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
 
           if [ "${{ github.event_name }}" = "push" ]; then
             tag="${GITHUB_REF_NAME}"
-            prerelease=true
+            prerelease=false
           else
             tag="${{ inputs.tag_name }}"
             prerelease="${{ inputs.prerelease }}"
@@ -84,8 +84,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows installer
-        run: npm run package -- --win nsis --publish never
+      - name: Build Windows installers
+        run: npm run package -- --win --publish never
 
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v4
@@ -93,6 +93,7 @@ jobs:
           name: windows-release
           path: |
             bifurc/release/*.exe
+            bifurc/release/*.appx
           if-no-files-found: error
 
   build-linux:
@@ -151,4 +152,5 @@ jobs:
           generate_release_notes: true
           files: |
             release-assets/*.exe
+            release-assets/*.appx
             release-assets/*.AppImage
