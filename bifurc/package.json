@@ -34,16 +34,16 @@
       "tray-icon.png"
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "icon.ico",
       "target": [
           "nsis",
           "appx"
         ]
     },
     "nsis": {
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico",
       "artifactName": "Bifurc.Setup.${ext}"
     },
     "appx": {
@@ -58,7 +58,7 @@
       "target": "dmg"
     },
     "linux": {
-      "icon": "build/icon.png",
+      "icon": "icon.png",
       "artifactName": "Bifurc.${ext}",
       "target": "AppImage"
     }
