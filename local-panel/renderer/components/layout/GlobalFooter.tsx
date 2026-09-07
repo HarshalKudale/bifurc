@@ -78,7 +78,6 @@ export default function GlobalFooter({
     // Publish is available whenever there are local changes - no remote required
     // (backend commits locally and only pushes if a remote is configured)
     const publishDisabled = outgoingCount === 0 || publishing || isSyncing;
-    const shouldRender = !!rightContent || hasRemote || outgoingCount > 0 || isSyncing;
 
     const handlePublish = async () => {
         setPublishing(true);
@@ -98,15 +97,15 @@ export default function GlobalFooter({
         if (isSyncing) {
             return (
                 <div className="flex items-center gap-1.5">
-                    <RefreshCw size={10} className="animate-spin text-yellow flex-shrink-0" />
-                    <span className="text-yellow text-[10px]">{strings.footer.syncing}</span>
-                    <GitBranch size={10} className="text-accent flex-shrink-0" />
-                    <span className="font-mono text-accent text-[10px]">{branch}</span>
+                    <RefreshCw size={10} className="animate-spin text-amber flex-shrink-0" />
+                    <span className="text-amber text-[10px]">{strings.footer.syncing}</span>
+                    <GitBranch size={10} className="text-signal flex-shrink-0" />
+                    <span className="font-mono text-signal text-[10px]">{branch}</span>
                     {outgoingCount > 0 && prefix && (
                         <>
-                            <span className="text-text-dim/50 text-[10px]">·</span>
-                            <span className="font-semibold text-text-base text-[10px]">{outgoingCount}</span>
-                            <span className="text-text-dim text-[10px]">
+                            <span className="text-muted-foreground/50 text-[10px]">·</span>
+                            <span className="font-semibold text-foreground text-[10px]">{outgoingCount}</span>
+                            <span className="text-muted-foreground text-[10px]">
                                 {pluralLabel} {strings.footer.changesWaitingToPublish}
                             </span>
                         </>
@@ -137,12 +136,12 @@ export default function GlobalFooter({
                             {publishing ? strings.footer.publishing : strings.footer.publish}
                         </Button>
                     )}
-                    <GitBranch size={10} className="text-accent flex-shrink-0" />
-                    <span className="text-text-dim text-[10px]">{hasRemote ? strings.footer.sync : strings.footer.local}</span>
-                    <span className="font-mono text-accent text-[10px]">{branch}</span>
-                    <span className="text-text-dim/50 text-[10px]">·</span>
-                    <span className="font-semibold text-yellow text-[10px]">{outgoingCount}</span>
-                    <span className="text-text-dim text-[10px]">{changeLabel}</span>
+                    <GitBranch size={10} className="text-signal flex-shrink-0" />
+                    <span className="text-muted-foreground text-[10px]">{hasRemote ? strings.footer.sync : strings.footer.local}</span>
+                    <span className="font-mono text-signal text-[10px]">{branch}</span>
+                    <span className="text-muted-foreground/50 text-[10px]">·</span>
+                    <span className="font-semibold text-amber text-[10px]">{outgoingCount}</span>
+                    <span className="text-muted-foreground text-[10px]">{changeLabel}</span>
 
                 </div>
             );
@@ -151,21 +150,19 @@ export default function GlobalFooter({
         // Clean / up to date
         return (
             <div className="flex items-center gap-1.5">
-                <GitBranch size={10} className="text-text-dim flex-shrink-0" />
-                <span className="text-text-dim text-[10px]">{hasRemote ? strings.footer.sync : strings.footer.local}</span>
-                <span className="font-mono text-text-dim text-[10px]">{branch}</span>
-                <span className="text-text-dim/50 text-[10px]">·</span>
-                <span className="text-green text-[10px]">{strings.footer.upToDate}</span>
+                <GitBranch size={10} className="text-muted-foreground flex-shrink-0" />
+                <span className="text-muted-foreground text-[10px]">{hasRemote ? strings.footer.sync : strings.footer.local}</span>
+                <span className="font-mono text-muted-foreground text-[10px]">{branch}</span>
+                <span className="text-muted-foreground/50 text-[10px]">·</span>
+                <span className="text-signal text-[10px]">{strings.footer.upToDate}</span>
             </div>
         );
     };
 
     // -- Render -------------------------------------------------------------
 
-    if (!shouldRender) return null;
-
     return (
-        <div className="border-t border-border bg-bg0 flex min-h-11 h-11 items-center gap-3 px-4 flex-shrink-0 select-none z-20">
+        <div className="border-t border-border bg-background flex min-h-11 h-11 items-center gap-3 px-4 flex-shrink-0 select-none z-20">
             {/* Left: git / sync status */}
             <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
                 {renderSyncInfo()}
@@ -174,7 +171,7 @@ export default function GlobalFooter({
 
             {/* Right: panel-specific stats */}
             {rightContent && (
-                <div className="flex items-center gap-2 text-[10px] text-text-dim font-mono flex-shrink-0">
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono flex-shrink-0">
                     {rightContent}
                 </div>
             )}

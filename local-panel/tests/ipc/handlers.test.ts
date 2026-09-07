@@ -38,6 +38,9 @@ vi.mock("../../src/proxy/server", () => ({
   getServerError: vi.fn(() => null),
   reloadConfig: vi.fn(),
   replayRequest: vi.fn(),
+}));
+
+vi.mock("../../src/proxy/logEmitter", () => ({
   logEmitter: mockLogEmitter,
 }));
 
@@ -226,6 +229,7 @@ describe("src/ipc/handlers.ts", () => {
       "history:list", "history:diff",
       "request:replay", "server:status", "proxy:status",
       "server:restart", "server:stop", "server:start",
+      "app:checkUpdate",
       "shell:openExternal", "shell:setTitleBarOverlay",
     ];
 
@@ -627,16 +631,20 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("request:delete handler", () => {
     it("deletes the request file via deleteEntityFile", async () => {
-      const req: SavedRequest = { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1 };
-      vi.mocked(loadEntity).mockReturnValueOnce(req as any);
+      currentConfig.requests = [
+        { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
+      ];
       const { deleteEntityFile } = await import("../../src/store/workspaceFs");
 
       await getHandler("request:delete")(EVENT, "r1");
 
-      expect(deleteEntityFile).toHaveBeenCalled();
+      expect(deleteEntityFile).toHaveBeenCalledWith("default", "requests", "r1");
     });
 
     it("returns { ok: true }", async () => {
+      currentConfig.requests = [
+        { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
+      ];
       const result = await getHandler("request:delete")(EVENT, "r1");
       expect(result).toEqual({ ok: true });
     });
@@ -1078,14 +1086,18 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("ws:delete handler", () => {
     it("deletes the ws connection file via deleteEntityFile", async () => {
-      const conn: SavedWsConnection = { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" };
-      vi.mocked(loadEntity).mockReturnValueOnce(conn as any);
+      currentConfig.wsConnections = [
+        { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
+      ];
       const { deleteEntityFile } = await import("../../src/store/workspaceFs");
       await getHandler("ws:delete")(EVENT, "c1");
-      expect(deleteEntityFile).toHaveBeenCalled();
+      expect(deleteEntityFile).toHaveBeenCalledWith("default", "sockets", "c1");
     });
 
     it("returns { ok: true }", async () => {
+      currentConfig.wsConnections = [
+        { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
+      ];
       const result = await getHandler("ws:delete")(EVENT, "c1");
       expect(result).toEqual({ ok: true });
     });
@@ -1363,6 +1375,68 @@ describe("src/ipc/handlers.ts", () => {
 
       expect(result.before).toBeNull();
       expect(result.after).toBeNull();
+    });
+  });
+
+  // ── app:checkUpdate ───────────────────────────────────────────────────
+
+  describe("app:checkUpdate handler", () => {
+    it("detects when an update is available from GitHub releases", async () => {
+      const mockRelease = {
+        tag_name: "v0.2.0",
+        name: "Local Panel v0.2.0",
+        body: "Bug fixes and improvements",
+        html_url: "https://github.com/HarshalKudale/local-panel/releases/tag/v0.2.0",
+        published_at: "2026-09-01T00:00:00Z",
+        assets: [
+          {
+            name: "Local.Panel.Setup.0.2.0.exe",
+            browser_download_url: "https://github.com/HarshalKudale/local-panel/releases/download/v0.2.0/Local.Panel.Setup.0.2.0.exe",
+          },
+        ],
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockRelease,
+      }) as any;
+
+      try {
+        const result = await getHandler("app:checkUpdate")(EVENT);
+        expect(result.ok).toBe(true);
+        expect(result.hasUpdate).toBe(true);
+        expect(result.latestVersion).toBe("v0.2.0");
+        expect(result.downloadUrl).toContain("Local.Panel.Setup.0.2.0.exe");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("returns hasUpdate = false when version matches", async () => {
+      const mockRelease = {
+        tag_name: "v0.1.0",
+        name: "Local Panel v0.1.0",
+        body: "Initial release",
+        html_url: "https://github.com/HarshalKudale/local-panel/releases/tag/v0.1.0",
+        published_at: "2026-09-01T00:00:00Z",
+        assets: [],
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockRelease,
+      }) as any;
+
+      try {
+        const result = await getHandler("app:checkUpdate")(EVENT);
+        expect(result.ok).toBe(true);
+        expect(result.hasUpdate).toBe(false);
+        expect(result.latestVersion).toBe("v0.1.0");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

@@ -8,7 +8,7 @@ interface SectionCardProps {
 
 export default function SectionCard({ children, className }: SectionCardProps) {
   return (
-    <div className={cn("bg-bg1 border border-border rounded-lg overflow-hidden", className)}>
+    <div className={cn("bg-surface border border-border rounded-lg overflow-hidden", className)}>
       {children}
     </div>
   );

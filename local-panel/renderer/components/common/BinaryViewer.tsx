@@ -92,47 +92,47 @@ export default function BinaryViewer({ data, contentType, editable = false, onCh
 
     return (
         <div
-            className={`flex flex-col flex-1 overflow-hidden ${dragOver ? "ring-2 ring-accent ring-inset" : ""}`}
+            className={`flex flex-col flex-1 overflow-hidden ${dragOver ? "ring-2 ring-signal ring-inset" : ""}`}
             onDragOver={(e) => { if (editable) { e.preventDefault(); setDragOver(true); } }}
             onDragLeave={() => setDragOver(false)}
             onDrop={editable ? handleDrop : undefined}
         >
             {/* Toolbar */}
-            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/40 bg-bg0/20 flex-shrink-0">
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/40 bg-background/20 flex-shrink-0">
                 <div className="flex items-center gap-0.5">
                     {isImage && (
                         <button
                             onClick={() => setViewMode("preview")}
-                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${viewMode === "preview" ? "bg-accent/20 text-accent" : "text-text-dim hover:text-text-base"
+                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${viewMode === "preview" ? "bg-signal/20 text-signal" : "text-muted-foreground hover:text-foreground"
                                 }`}
                         >{strings.binary.preview}</button>
                     )}
                     <button
                         onClick={() => setViewMode("hex")}
-                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${viewMode === "hex" ? "bg-accent/20 text-accent" : "text-text-dim hover:text-text-base"
+                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${viewMode === "hex" ? "bg-signal/20 text-signal" : "text-muted-foreground hover:text-foreground"
                             }`}
                     >{strings.binary.hex}</button>
                     <button
                         onClick={() => setViewMode("base64")}
-                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${viewMode === "base64" ? "bg-accent/20 text-accent" : "text-text-dim hover:text-text-base"
+                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${viewMode === "base64" ? "bg-signal/20 text-signal" : "text-muted-foreground hover:text-foreground"
                             }`}
                     >{strings.binary.base64}</button>
                 </div>
 
                 <div className="flex-1" />
 
-                <span className="text-[10px] text-text-dim font-mono">{contentType}</span>
-                <span className="text-[10px] text-text-dim font-mono">{formatBytes(dataSize)}</span>
+                <span className="text-[10px] text-muted-foreground font-mono">{contentType}</span>
+                <span className="text-[10px] text-muted-foreground font-mono">{formatBytes(dataSize)}</span>
 
                 <button
                     onClick={handleCopyBase64}
-                    className="text-[10px] text-text-dim hover:text-accent cursor-pointer transition-colors font-medium"
+                    className="text-[10px] text-muted-foreground hover:text-signal cursor-pointer transition-colors font-medium"
                 >{strings.binary.copyBase64}</button>
 
                 {editable && (
                     <button
                         onClick={handleFilePick}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-bg2 border border-border hover:border-accent text-text-dim hover:text-accent cursor-pointer transition-colors"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-card border border-border hover:border-signal text-muted-foreground hover:text-signal cursor-pointer transition-colors"
                     >
                         <Upload size={10} />
                         {strings.binary.upload}
@@ -141,8 +141,8 @@ export default function BinaryViewer({ data, contentType, editable = false, onCh
             </div>
 
             {error && (
-                <div className="px-3 py-1.5 border-b border-red/30 bg-red/5 flex-shrink-0">
-                    <span className="text-[11px] text-red font-mono">{error}</span>
+                <div className="px-3 py-1.5 border-b border-destructive/30 bg-destructive/5 flex-shrink-0">
+                    <span className="text-[11px] text-destructive font-mono">{error}</span>
                 </div>
             )}
 
@@ -152,11 +152,11 @@ export default function BinaryViewer({ data, contentType, editable = false, onCh
                     <div className="flex flex-col items-center justify-center h-full text-center p-4">
                         {editable ? (
                             <>
-                                <Upload size={24} className="text-text-dim/40 mb-2" />
-                                <p className="text-xs text-text-dim">{strings.binary.dropFile}</p>
+                                <Upload size={24} className="text-muted-foreground/40 mb-2" />
+                                <p className="text-xs text-muted-foreground">{strings.binary.dropFile}</p>
                             </>
                         ) : (
-                            <p className="text-xs text-text-dim italic">{strings.binary.noBinaryData}</p>
+                            <p className="text-xs text-muted-foreground italic">{strings.binary.noBinaryData}</p>
                         )}
                     </div>
                 ) : viewMode === "preview" && isImage ? (
@@ -169,11 +169,11 @@ export default function BinaryViewer({ data, contentType, editable = false, onCh
                         />
                     </div>
                 ) : viewMode === "hex" ? (
-                    <pre className="p-3 text-[11px] font-mono text-text-base leading-5 whitespace-pre select-all">
+                    <pre className="p-3 text-[11px] font-mono text-foreground leading-5 whitespace-pre select-all">
                         {hexDump(data)}
                     </pre>
                 ) : (
-                    <pre className="p-3 text-[11px] font-mono text-text-base leading-5 whitespace-pre-wrap break-all select-all">
+                    <pre className="p-3 text-[11px] font-mono text-foreground leading-5 whitespace-pre-wrap break-all select-all">
                         {data}
                     </pre>
                 )}

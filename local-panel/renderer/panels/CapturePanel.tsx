@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Group as PanelGroup, Panel, Separator as ResizeHandle } from "react-resizable-panels";
 import { RequestLogEntry, MockRule, SavedRequest, AppConfig } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
 import PanelHeader from "@/components/layout/PanelHeader";
 import CaptureTable from "@/components/capture/CaptureTable";
 import CaptureDetail from "@/components/capture/CaptureDetail";
@@ -17,6 +16,9 @@ import {
   Play, Pause, Clipboard, Zap, Download, Share2, Ban, Trash2, ArrowUpRight,
 } from "@/lib/icons";
 import { Button, ContextMenu, ContextMenuItem } from "@/components/ui";
+import { useCaptureActions } from "@/components/capture/useCaptureActions";
+import { CaptureToolbar } from "@/components/capture/CaptureToolbar";
+import { useCaptureContextMenu } from "@/components/capture/useCaptureContextMenu";
 
 export interface CaptureStats {
   total: number;
@@ -61,7 +63,6 @@ interface CtxMenuState {
 
 export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChange, onOpenInMocks, onOpenInRequests, onStatsChange }: Props) {
   const [entries, setEntries] = useState<RequestLogEntry[]>(() => loadPersistedEntries(activeWorkspaceId));
-  const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
@@ -129,21 +130,12 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
     setEntries((prev) => prev.filter((e) => !ids.has(e.id)));
   }, []);
 
-  const q = search.trim().toLowerCase();
   const visible = useMemo(
     () => entries.filter((e) => {
       if (typeFilter !== "all" && deriveType(e) !== typeFilter) return false;
-      if (!q) return true;
-      return (
-        e.url.toLowerCase().includes(q) ||
-        e.method.toLowerCase().includes(q) ||
-        e.host.toLowerCase().includes(q) ||
-        (e.target ?? "").toLowerCase().includes(q) ||
-        String(e.status ?? "").includes(q) ||
-        fulfilledBy(e.via).toLowerCase().includes(q)
-      );
+      return true;
     }),
-    [entries, q, typeFilter],
+    [entries, typeFilter],
   );
 
   const typeCounts = useMemo(() => {
@@ -198,83 +190,19 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
     ));
   }, [visible]);
 
-  // -- Bulk actions (also used by toolbar Mock All / Save All) ------------------
-  const mockEntries = useCallback(async (list: RequestLogEntry[], inFolder: boolean) => {
-    if (list.length === 0) return;
-    let folderId: string | null = null;
-    if (inFolder) {
-      const folderName = `Capture ${new Date().toLocaleString().replace(/[/:]/g, "-")}`;
-      const folder = await window.api.addFolder("mock", { name: folderName, parentId: null });
-      folderId = folder.id;
-    }
-    for (const entry of list) {
-      const mock = buildMockInitial(entry);
-      await window.api.addMock({
-        name: `${entry.method} ${entry.url}`,
-        method: mock.method ?? "GET",
-        urlPattern: mock.urlPattern ?? entry.url,
-        useRegex: mock.useRegex ?? false,
-        responseStatus: mock.responseStatus ?? 200,
-        responseHeaders: mock.responseHeaders ?? {},
-        responseBody: mock.responseBody ?? "",
-        responseBodyEncoding: mock.responseBodyEncoding,
-        enabled: true,
-        folderId,
-      } as any);
-    }
-    window.api.getConfig();
-  }, []);
-
-  const saveEntries = useCallback(async (list: RequestLogEntry[], inFolder: boolean) => {
-    if (list.length === 0) return;
-    let folderId: string | null = null;
-    if (inFolder) {
-      const folderName = `Capture ${new Date().toLocaleString().replace(/[/:]/g, "-")}`;
-      const folder = await window.api.addFolder("request", { name: folderName, parentId: null });
-      folderId = folder.id;
-    }
-    for (const entry of list) {
-      await window.api.addRequest({ ...reqToHeadersBody(entry), name: `${entry.method} ${entry.url}`, folderId } as any);
-    }
-    window.api.getConfig();
-  }, []);
-
-  const blockedKeys = useMemo(() => blockedKeySet(wsConfig), [wsConfig.mocks, wsConfig.mockFolders]);
-
   const reloadConfig = useCallback(async () => {
     const fresh = await window.api.getConfig();
     await onConfigChange(fresh);
   }, [onConfigChange]);
 
-  const blockEntries = useCallback(async (list: RequestLogEntry[]) => {
-    if (list.length === 0) return;
-    const folderId = await ensureBlocksFolderId(wsConfig.mockFolders ?? []);
-    const existing = blockedKeySet(wsConfig);
-    for (const entry of list) {
-      if (existing.has(blockKey(entry.method, entry.url))) continue;
-      await window.api.addMock(buildBlockMock(entry.method, entry.url, folderId) as any);
-    }
-    await reloadConfig();
-  }, [wsConfig, reloadConfig]);
-
-  const unblockEntries = useCallback(async (list: RequestLogEntry[]) => {
-    const blocks = findBlocksFolder(wsConfig.mockFolders ?? []);
-    if (!blocks) return;
-    const keys = new Set(list.map((e) => blockKey(e.method, e.url)));
-    const toDelete = (wsConfig.mocks ?? []).filter(
-      (m) => m.folderId === blocks.id && keys.has(blockKey(m.method, m.urlPattern)),
-    );
-    for (const m of toDelete) await window.api.deleteMock(m.id);
-    await reloadConfig();
-  }, [wsConfig, reloadConfig]);
-
-  const shareEntries = useCallback((list: RequestLogEntry[]) => {
-    if (list.length === 0) return;
-    const name = list.length === 1
-      ? `capture-${list[0].method}-${list[0].id}.json`
-      : `captured-requests-${list.length}.json`;
-    window.api.shareCaptureJson(list, name);
-  }, []);
+  const {
+    blockedKeys,
+    mockEntries,
+    saveEntries,
+    blockEntries,
+    unblockEntries,
+    shareEntries,
+  } = useCaptureActions({ wsConfig, reloadConfig });
 
   // -- Context menu -------------------------------------------------------------
   const handleContextMenu = useCallback((entry: RequestLogEntry, ev: React.MouseEvent) => {
@@ -283,39 +211,22 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
     setCtxMenu({ x: ev.clientX, y: ev.clientY, multi, entry });
   }, [selectedIds]);
 
-  const ctxItems = useMemo<ContextMenuItem[]>(() => {
-    if (!ctxMenu) return [];
-    const close = () => setCtxMenu(null);
-    const run = (fn: () => void) => () => { fn(); close(); };
-    if (ctxMenu.multi) {
-      const selected = entries.filter((e) => selectedIds.has(e.id));
-      const allBlocked = selected.length > 0 && selected.every((e) => blockedKeys.has(blockKey(e.method, e.url)));
-      return [
-        { label: strings.capture.ctxMockMany, icon: <Zap size={14} />, action: run(() => mockEntries(selected, true)) },
-        { label: strings.capture.ctxSaveMany, icon: <Download size={14} />, action: run(() => saveEntries(selected, true)) },
-        allBlocked
-          ? { label: strings.capture.ctxUnblockMany, icon: <Ban size={14} />, action: run(() => unblockEntries(selected)) }
-          : { label: strings.capture.ctxBlockMany, icon: <Ban size={14} />, action: run(() => blockEntries(selected)) },
-        { label: strings.capture.ctxShareMany, icon: <Share2 size={14} />, action: run(() => shareEntries(selected)) },
-        { sep: true },
-        { label: strings.capture.ctxDeleteMany, icon: <Trash2 size={14} />, danger: true, action: run(() => { removeEntries(selectedIds); setSelectedIds(new Set()); }) },
-      ];
-    }
-    const e = ctxMenu.entry;
-    const isBlocked = blockedKeys.has(blockKey(e.method, e.url));
-    return [
-      { label: strings.capture.ctxMock, icon: <Zap size={14} />, action: run(() => onOpenInMocks(buildMockInitial(e))) },
-      { label: strings.capture.ctxOpen, icon: <ArrowUpRight size={14} />, action: run(() => onOpenInRequests(reqToHeadersBody(e))) },
-      { label: strings.capture.ctxSave, icon: <Download size={14} />, action: run(() => saveEntries([e], false)) },
-      { sep: true },
-      isBlocked
-        ? { label: strings.capture.ctxUnblock, icon: <Ban size={14} />, action: run(() => unblockEntries([e])) }
-        : { label: strings.capture.ctxBlock, icon: <Ban size={14} />, action: run(() => blockEntries([e])) },
-      { label: strings.capture.ctxShare, icon: <Share2 size={14} />, action: run(() => shareEntries([e])) },
-      { sep: true },
-      { label: strings.capture.ctxDelete, icon: <Trash2 size={14} />, danger: true, action: run(() => removeEntries(new Set([e.id]))) },
-    ];
-  }, [ctxMenu, entries, selectedIds, blockedKeys, mockEntries, saveEntries, blockEntries, unblockEntries, shareEntries, removeEntries, onOpenInMocks, onOpenInRequests]);
+  const ctxItems = useCaptureContextMenu({
+    ctxMenu,
+    setCtxMenu,
+    entries,
+    selectedIds,
+    blockedKeys,
+    mockEntries,
+    saveEntries,
+    blockEntries,
+    unblockEntries,
+    shareEntries,
+    removeEntries,
+    setSelectedIds,
+    onOpenInMocks,
+    onOpenInRequests,
+  });
 
   // Notify parent of current stats so the global footer can display them
   useEffect(() => {
@@ -327,8 +238,8 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
       {visible.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-center py-16">
           <div className="opacity-15 mb-3"><Clipboard size={36} /></div>
-          <div className="text-sm font-medium text-text-base font-sans mb-1">{strings.capture.emptyTitle}</div>
-          <p className="text-xs text-text-dim font-sans">
+          <div className="text-sm font-medium text-foreground font-sans mb-1">{strings.capture.emptyTitle}</div>
+          <p className="text-xs text-muted-foreground font-sans">
             {entries.length === 0
               ? paused ? strings.capture.emptyPausedHint : strings.capture.emptyLiveHint
               : strings.capture.emptyNoMatch}
@@ -351,35 +262,15 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PanelHeader
-        title={strings.capture.title}
-        subtitle={strings.capture.subtitle.replace("{count}", String(MAX_ENTRIES))}
-        actions={
-          <>
-            {selectedIds.size > 0 && (
-              <span className="text-xs text-text-dim whitespace-nowrap">
-                {strings.capture.selectedCount.replace("{count}", String(selectedIds.size))}
-              </span>
-            )}
-            <SearchInput value={search} onChange={setSearch} placeholder={strings.capture.searchPlaceholder} />
-            <button
-              onClick={() => setPaused((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${paused
-                ? "border-yellow bg-yellow/10 text-yellow"
-                : "border-green/40 bg-green/10 text-green hover:bg-green/20"
-                }`}
-            >
-              {paused ? <><Play size={10} fill="currentColor" /> {strings.capture.start}</> : <><Pause size={10} fill="currentColor" /> {strings.capture.pause}</>}
-            </button>
-            <Button variant="secondary" onClick={clear}>{strings.capture.clear}</Button>
-            {entries.length > 0 && (
-              <>
-                <Button variant="secondary" onClick={() => mockEntries(visible, true)} icon={<Zap size={10} />}>{strings.capture.mockAll}</Button>
-                <Button variant="secondary" onClick={() => saveEntries(visible, true)} icon={<Download size={10} />}>{strings.capture.saveAll}</Button>
-              </>
-            )}
-          </>
-        }
+      <CaptureToolbar
+        selectedCount={selectedIds.size}
+        paused={paused}
+        onTogglePause={() => setPaused((v) => !v)}
+        onClear={clear}
+        hasEntries={entries.length > 0}
+        onMockAll={() => mockEntries(visible, true)}
+        onSaveAll={() => saveEntries(visible, true)}
+        maxEntries={MAX_ENTRIES}
       />
 
       <CaptureTypeTabs active={typeFilter} counts={typeCounts} onChange={setTypeFilter} />
@@ -389,7 +280,7 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
           <Panel defaultSize={60} minSize={30} className="flex flex-col overflow-hidden">
             {list}
           </Panel>
-          <ResizeHandle className="w-1 bg-border hover:bg-accent/40 active:bg-accent/60 transition-colors cursor-col-resize flex-shrink-0" />
+          <ResizeHandle className="w-1 bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-col-resize flex-shrink-0" />
           <Panel defaultSize={40} minSize={25} className="flex flex-col overflow-hidden">
             <CaptureDetail key={activeEntry.id} entry={activeEntry} onClose={() => setActiveId(null)} />
           </Panel>

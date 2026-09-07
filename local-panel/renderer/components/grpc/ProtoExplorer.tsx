@@ -104,10 +104,10 @@ function getStreamingType(method: ProtoMethod): "unary" | "server" | "client" | 
 }
 
 const STREAMING_LABELS: Record<string, { label: string; color: string }> = {
-    unary: { label: strings.grpc.streamUnary, color: "text-text-dim" },
-    server: { label: strings.grpc.streamServer, color: "text-yellow" },
-    client: { label: strings.grpc.streamClient, color: "text-accent" },
-    bidi: { label: strings.grpc.streamBidi, color: "text-green" },
+    unary: { label: strings.grpc.streamUnary, color: "text-muted-foreground" },
+    server: { label: strings.grpc.streamServer, color: "text-amber" },
+    client: { label: strings.grpc.streamClient, color: "text-signal" },
+    bidi: { label: strings.grpc.streamBidi, color: "text-signal" },
 };
 
 // -- Component --------------------------------------------------------------
@@ -194,13 +194,13 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
     })).filter((s) => s.methods.length > 0);
 
     return (
-        <div className="flex flex-col h-full overflow-hidden bg-bg0">
+        <div className="flex flex-col h-full overflow-hidden bg-background">
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border flex-shrink-0">
-                <span className="text-[10px] font-semibold text-text-dim uppercase tracking-wider flex-1">{strings.grpc.proto}</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex-1">{strings.grpc.proto}</span>
                 <button
                     onClick={() => setMode(mode === "import" ? "list" : "import")}
-                    className="text-[10px] text-accent hover:text-accent-dim cursor-pointer"
+                    className="text-[10px] text-signal hover:text-signal/80 cursor-pointer"
                 >
                     {mode === "import" ? strings.grpc.back : strings.grpc.import}
                 </button>
@@ -211,17 +211,17 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
                 <div className="p-3 flex flex-col gap-2 border-b border-border">
                     <button
                         onClick={handleImportFile}
-                        className="px-3 py-1.5 rounded bg-accent text-bg0 text-xs font-semibold cursor-pointer"
+                        className="px-3 py-1.5 rounded bg-signal text-background text-xs font-semibold cursor-pointer"
                     >
                         {strings.grpc.importProtoFile}
                     </button>
                     <div className="flex items-center gap-2">
                         <div className="flex-1 h-px bg-border" />
-                        <span className="text-[9px] text-text-dim">{strings.grpc.or}</span>
+                        <span className="text-[9px] text-muted-foreground">{strings.grpc.or}</span>
                         <div className="flex-1 h-px bg-border" />
                     </div>
                     <input
-                        className="bg-bg2 border border-border rounded px-2.5 py-1.5 text-xs font-mono text-text-bright outline-none focus:border-accent placeholder:text-text-dim"
+                        className="bg-card border border-border rounded px-2.5 py-1.5 text-xs font-mono text-foreground outline-none focus:border-signal placeholder:text-muted-foreground"
                         placeholder="localhost:50051"
                         value={reflectAddress}
                         onChange={(e) => setReflectAddress(e.target.value)}
@@ -230,11 +230,11 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
                     <button
                         onClick={handleReflect}
                         disabled={loading || !reflectAddress.trim()}
-                        className="px-3 py-1.5 rounded bg-bg3 border border-border text-text-bright text-xs font-semibold disabled:opacity-40 cursor-pointer"
+                        className="px-3 py-1.5 rounded bg-surface-2 border border-border text-foreground text-xs font-semibold disabled:opacity-40 cursor-pointer"
                     >
                         {loading ? strings.grpc.reflecting : strings.grpc.serverReflection}
                     </button>
-                    {error && <span className="text-xs text-red">{error}</span>}
+                    {error && <span className="text-xs text-destructive">{error}</span>}
                 </div>
             )}
 
@@ -251,7 +251,7 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
                                 onProtoChange?.(p.id);
                             }
                         }}
-                        className="w-full bg-bg2 border border-border rounded px-2.5 py-1.5 text-xs text-text-bright outline-none focus:border-accent"
+                        className="w-full bg-card border border-border rounded px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-signal"
                     >
                         <option value="">{strings.grpc.selectProtoFile}</option>
                         {protos.map((p) => (
@@ -265,7 +265,7 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
             {services.length > 0 && (
                 <div className="px-3 py-2 border-b border-border">
                     <input
-                        className="w-full bg-bg2 border border-border rounded px-2.5 py-1.5 text-xs text-text-bright outline-none focus:border-accent placeholder:text-text-dim"
+                        className="w-full bg-card border border-border rounded px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-signal placeholder:text-muted-foreground"
                         placeholder={strings.grpc.filterMethods}
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
@@ -276,13 +276,13 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
             {/* Services/Methods list */}
             <div className="flex-1 overflow-y-auto">
                 {services.length === 0 && protos.length === 0 && mode === "list" && (
-                    <div className="p-4 text-xs text-text-dim text-center">
+                    <div className="p-4 text-xs text-muted-foreground text-center">
                         {strings.grpc.noProtoFiles}
                     </div>
                 )}
                 {filteredServices.map((service) => (
                     <div key={service.name}>
-                        <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-text-dim bg-bg1 border-b border-border sticky top-0">
+                        <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground bg-surface border-b border-border sticky top-0">
                             {service.name}
                         </div>
                         {service.methods.map((method) => {
@@ -292,14 +292,14 @@ export default function ProtoExplorer({ protoFileId, onSelectMethod, onProtoChan
                                 <button
                                     key={`${service.name}.${method.name}`}
                                     onClick={() => handleSelectMethod(service, method)}
-                                    className="w-full text-left px-3 py-2 hover:bg-bg2 transition-colors cursor-pointer border-b border-border/50"
+                                    className="w-full text-left px-3 py-2 hover:bg-card transition-colors cursor-pointer border-b border-border/50"
                                     title={strings.grpc.selectMethod.replace("{service}", service.name).replace("{method}", method.name)}
                                 >
                                     <div className="flex items-center gap-2">
-                                        <span className="text-xs text-text-bright font-mono truncate flex-1">{method.name}</span>
+                                        <span className="text-xs text-foreground font-mono truncate flex-1">{method.name}</span>
                                         <span className={cn("text-[9px] font-semibold", badge.color)}>{badge.label}</span>
                                     </div>
-                                    <div className="text-[10px] text-text-dim truncate mt-0.5">
+                                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">
                                         {method.inputType} → {method.outputType}
                                     </div>
                                 </button>

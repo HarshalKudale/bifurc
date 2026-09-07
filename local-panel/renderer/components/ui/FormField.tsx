@@ -12,13 +12,13 @@ export default function FormField({ label, htmlFor, description, error, children
   return (
     <div className="mb-5">
       {label && (
-        <label htmlFor={htmlFor} className="block text-sm font-medium text-text-base mb-1.5">
+        <label htmlFor={htmlFor} className="block text-sm font-medium text-foreground mb-1.5">
           {label}
         </label>
       )}
-      {description && <p className="text-xs text-text-dim mb-2">{description}</p>}
+      {description && <p className="text-xs text-muted-foreground mb-2">{description}</p>}
       {children}
-      {error && <p className="text-xs text-red mt-1">{error}</p>}
+      {error && <p className="text-xs text-destructive mt-1">{error}</p>}
     </div>
   );
 }

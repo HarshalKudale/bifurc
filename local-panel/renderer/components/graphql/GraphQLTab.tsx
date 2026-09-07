@@ -10,14 +10,15 @@ import {
     GraphQLTabType, GraphQLTabState,
     GraphQLRequestDraft, GraphQLMockDraft,
 } from "@/components/graphql/graphqlTabReducer";
-import { useDraftPersist, loadDraft } from "@/lib/useDraftPersist";
+import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import CodeEditor from "@/components/common/CodeEditor";
-import HeaderTable from "@/components/editor/HeaderTable";
+import HeaderTable from "@/components/common/HeaderTable";
 import { KVRow, mkRowId, headersToRows, rowsToHeaders } from "@/lib/utils";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { strings } from "@/lib/strings";
 import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import SchemaExplorer from "@/components/graphql/SchemaExplorer";
+import { useProtocolEditor } from "@/hooks/useProtocolEditor";
 
 // -- Public handle for imperative refresh -----------------------------------
 
@@ -39,37 +40,49 @@ export interface GraphQLTabProps {
     onClose(): void;
     onDirtyChange?(dirty: boolean): void;
     label?: string;
+    /** Commit and push current state of entity */
+    onSync?: (savedId?: string) => Promise<void>;
+    /** Revert local changes to last synced version */
+    onRevert?: () => Promise<void>;
+    /** Git sync status of this entity */
+    syncStatus?: "clean" | "modified" | "new" | "deleted";
+    /** View git history for this entity */
+    onHistory?: () => void;
 }
 
 // -- Component --------------------------------------------------------------
 
 const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQLTab(
-    { tabType, tabId, draftTabId, initial, folders = [], activeEnv = null, onSave, onClose, onDirtyChange, label },
+    { tabType, tabId, draftTabId, initial, folders = [], activeEnv = null, onSave, onClose, onDirtyChange, label, onSync, onRevert, syncStatus, onHistory },
     ref,
 ) {
-    const draft = draftTabId
-        ? (tabType === "request"
-            ? loadDraft<GraphQLRequestDraft>(draftTabId)
-            : loadDraft<GraphQLMockDraft>(draftTabId))
-        : null;
-
-    const [state, dispatch] = useReducer(
-        graphqlTabReducer,
-        undefined,
-        () => initGraphQLState(initial ?? null, draft, tabType),
-    );
-
-    const [initialSnapshot] = useState(() => JSON.stringify(stateToDraft(initGraphQLState(initial ?? null, draft, tabType), tabType)));
-    useEffect(() => {
-        const current = JSON.stringify(stateToDraft(state, tabType));
-        onDirtyChange?.(current !== initialSnapshot);
-    }, [state, tabType, initialSnapshot, onDirtyChange]);
-
-    const { markSaved } = useDraftPersist(
-        draftTabId ?? null,
-        () => stateToDraft(state, tabType),
-        () => isDraftEmpty(state, tabType),
-    );
+    const {
+        state,
+        dispatch,
+        isDirty,
+        handleSave,
+        handleRefresh,
+        syncing,
+        reverting,
+        handleSyncClick,
+        handleRevertClick,
+        hasLocalChanges
+    } = useProtocolEditor({
+        tabType,
+        tabId,
+        draftTabId,
+        initial: initial as any,
+        reducer: graphqlTabReducer as any,
+        initState: initGraphQLState as any,
+        stateToDraft: stateToDraft as any,
+        isDraftEmpty: isDraftEmpty as any,
+        stateToSavePayload: (s, t) => t === "request" ? stateToRequestPayload(s) : stateToMockPayload(s),
+        onSave: onSave as any,
+        onSync,
+        onRevert,
+        syncStatus,
+        onDirtyChange,
+    });
 
     // -- Request pane sub-tabs ----------------------------------------------
 
@@ -111,28 +124,20 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         }
     }, [state.endpointUrl, state.headers, state.query, state.variables, state.operationName, activeEnv]);
 
-    // -- Save ---------------------------------------------------------------
-
-    const handleSave = useCallback(async () => {
-        dispatch({ type: "SAVE_START" });
-        try {
-            const data = tabType === "request" ? stateToRequestPayload(state) : stateToMockPayload(state);
-            await onSave(data);
-            dispatch({ type: "SAVE_SUCCESS" });
-            markSaved();
-        } catch {
-            dispatch({ type: "SAVE_ERROR" });
-        }
-    }, [state, tabType, onSave, markSaved]);
-
     useImperativeHandle(ref, () => ({
         refresh(entity: SavedGraphQLRequest | SavedGraphQLMock) {
-            dispatch({ type: "REFRESH", entity, tabType });
+            handleRefresh(entity);
         },
         save() {
-            void handleSave();
+            return handleSave();
         },
-    }), [tabType, handleSave]);
+    }), [handleRefresh, handleSave]);
+
+    const canSave = tabType === "request" ? !!(state.name || state.endpointUrl) : !!state.name;
+    const syncDisabled = !hasLocalChanges || (!canSave && isDirty) || syncing;
+    const revertDisabled = !hasLocalChanges || reverting;
+    const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
+    const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
 
     // -- Render: Request mode -----------------------------------------------
 
@@ -161,7 +166,7 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
     return (
         <div className="flex flex-col h-full overflow-hidden">
             <EditorTitleBar
-                label={label ?? (tabType === "request" ? strings.graphql.requestTitle : strings.graphql.mockTitle)}
+                label={label ?? (tabType === "request" ? "GRAPHQL" : "GRAPHQL MOCK")}
                 namePlaceholder={tabType === "request" ? strings.graphql.requestNamePlaceholder : strings.graphql.mockNamePlaceholder}
                 name={state.name}
                 onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}
@@ -172,14 +177,14 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
             {tabType === "request" && (
                 <div className="px-4 py-2.5 border-b border-border flex-shrink-0 flex items-center gap-2">
                     <div
-                        className="flex items-stretch rounded border border-border focus-within:border-accent transition-colors overflow-hidden flex-1"
-                        style={{ background: "var(--c-bg2)" }}
+                        className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1"
+                        style={{ background: "var(--c-card)" }}
                     >
-                        <span className="bg-bg3 border-r border-border text-xs font-bold font-mono px-3 py-2.5 flex-shrink-0 text-accent">
+                        <span className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 flex-shrink-0 text-signal">
                             {strings.graphql.methodPost}
                         </span>
                         <input
-                            className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-text-bright outline-none placeholder:text-text-dim min-w-0"
+                            className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-foreground outline-none placeholder:text-muted-foreground min-w-0"
                             placeholder="https://api.example.com/graphql"
                             value={state.endpointUrl}
                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "endpointUrl", value: e.target.value })}
@@ -189,7 +194,7 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                     <button
                         onClick={handleSend}
                         disabled={state.sending || !state.endpointUrl.trim()}
-                        className="px-4 py-2.5 rounded bg-accent hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed text-bg0 text-xs font-semibold transition-all cursor-pointer flex-shrink-0 flex items-center gap-1.5"
+                        className="px-4 py-2.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex-shrink-0 flex items-center gap-1.5"
                     >
                         {state.sending
                             ? <><span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />{strings.graphql.sending}</>
@@ -202,25 +207,25 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
             {tabType === "mock" && (
                 <div className="px-4 py-2.5 border-b border-border flex-shrink-0 flex items-center gap-2">
                     <div
-                        className="flex items-stretch rounded border border-border focus-within:border-accent transition-colors overflow-hidden flex-1"
-                        style={{ background: "var(--c-bg2)" }}
+                        className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1"
+                        style={{ background: "var(--c-card)" }}
                     >
-                        <span className="bg-bg3 border-r border-border text-xs font-bold font-mono px-3 py-2.5 flex-shrink-0 text-text-dim">
+                        <span className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 flex-shrink-0 text-muted-foreground">
                             {strings.graphql.endpoint}
                         </span>
                         <input
-                            className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-text-bright outline-none placeholder:text-text-dim min-w-0"
+                            className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-foreground outline-none placeholder:text-muted-foreground min-w-0"
                             placeholder="/graphql or regex pattern…"
                             value={state.endpointPattern}
                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "endpointPattern", value: e.target.value })}
                         />
                     </div>
-                    <label className="flex items-center gap-1.5 text-xs text-text-dim cursor-pointer select-none">
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                         <input
                             type="checkbox"
                             checked={state.useRegex}
                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "useRegex", value: e.target.checked })}
-                            className="accent-accent"
+                            className="accent-signal"
                         />
                         {strings.graphql.regex}
                     </label>
@@ -250,11 +255,11 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                             {reqSubTab === "query" && tabType === "mock" && (
                                 <div className="flex flex-col gap-3 p-4 overflow-y-auto h-full">
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-[10px] font-semibold text-text-dim uppercase tracking-wider">{strings.graphql.operationType}</label>
+                                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.operationType}</label>
                                         <select
                                             value={state.operationType}
                                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "operationType", value: e.target.value })}
-                                            className="bg-bg2 border border-border rounded px-3 py-2 text-sm text-text-bright outline-none focus:border-accent"
+                                            className="bg-card border border-border rounded px-3 py-2 text-sm text-foreground outline-none focus:border-signal"
                                         >
                                             <option value="any">{strings.graphql.opAny}</option>
                                             <option value="query">{strings.graphql.opQuery}</option>
@@ -263,28 +268,28 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                                         </select>
                                     </div>
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-[10px] font-semibold text-text-dim uppercase tracking-wider">{strings.graphql.operationName}</label>
+                                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.operationName}</label>
                                         <input
-                                            className="bg-bg2 border border-border rounded px-3 py-2 text-sm text-text-bright outline-none focus:border-accent placeholder:text-text-dim"
+                                            className="bg-card border border-border rounded px-3 py-2 text-sm text-foreground outline-none focus:border-signal placeholder:text-muted-foreground"
                                             placeholder={strings.graphql.operationNamePlaceholder}
                                             value={state.operationNameMatch}
                                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "operationNameMatch", value: e.target.value })}
                                         />
                                     </div>
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-[10px] font-semibold text-text-dim uppercase tracking-wider">{strings.graphql.responseStatus}</label>
+                                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.responseStatus}</label>
                                         <input
                                             type="number"
-                                            className="bg-bg2 border border-border rounded px-3 py-2 text-sm text-text-bright outline-none focus:border-accent w-24"
+                                            className="bg-card border border-border rounded px-3 py-2 text-sm text-foreground outline-none focus:border-signal w-24"
                                             value={state.responseStatus}
                                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "responseStatus", value: Number(e.target.value) })}
                                         />
                                     </div>
                                     <div className="flex flex-col gap-1.5">
-                                        <label className="text-[10px] font-semibold text-text-dim uppercase tracking-wider">{strings.graphql.responseDelay}</label>
+                                        <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.responseDelay}</label>
                                         <input
                                             type="number"
-                                            className="bg-bg2 border border-border rounded px-3 py-2 text-sm text-text-bright outline-none focus:border-accent w-24"
+                                            className="bg-card border border-border rounded px-3 py-2 text-sm text-foreground outline-none focus:border-signal w-24"
                                             value={state.responseDelay}
                                             onChange={(e) => dispatch({ type: "SET_FIELD", field: "responseDelay", value: Number(e.target.value) })}
                                         />
@@ -335,7 +340,7 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                     </div>
                 </Panel>
 
-                <PanelResizeHandle className="w-px bg-border hover:bg-accent transition-colors cursor-col-resize" />
+                <PanelResizeHandle className="w-px bg-border hover:bg-signal transition-colors cursor-col-resize" />
 
                 {/* Right pane */}
                 <Panel defaultSize={50} minSize={25}>
@@ -343,17 +348,17 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                         {tabType === "request" && (
                             <>
                                 {/* Response header bar */}
-                                <div className="flex items-center gap-3 px-4 py-2 border-b border-border flex-shrink-0 bg-bg0/40">
-                                    <span className="text-[10px] font-semibold text-text-dim uppercase tracking-wider">{strings.graphql.response}</span>
+                                <div className="flex items-center gap-3 px-4 py-2 border-b border-border flex-shrink-0 bg-background/40">
+                                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.response}</span>
                                     {state.resStatus !== null && (
                                         <>
-                                            <span className={`text-xs font-mono font-bold ${state.resStatus < 300 ? "text-green" : state.resStatus < 400 ? "text-yellow" : "text-red"}`}>
+                                            <span className={`text-xs font-mono font-bold ${state.resStatus < 300 ? "text-signal" : state.resStatus < 400 ? "text-amber" : "text-destructive"}`}>
                                                 {state.resStatus}
                                             </span>
-                                            <span className="text-xs text-text-dim">{state.resDuration}ms</span>
+                                            <span className="text-xs text-muted-foreground">{state.resDuration}ms</span>
                                         </>
                                     )}
-                                    {state.resError && <span className="text-xs text-red">{state.resError}</span>}
+                                    {state.resError && <span className="text-xs text-destructive">{state.resError}</span>}
                                 </div>
                                 <div className="flex-1 overflow-hidden">
                                     <CodeEditor
@@ -368,8 +373,8 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                         )}
                         {tabType === "mock" && (
                             <>
-                                <div className="flex items-center gap-3 px-4 py-2 border-b border-border flex-shrink-0 bg-bg0/40">
-                                    <span className="text-[10px] font-semibold text-text-dim uppercase tracking-wider">{strings.graphql.responseBody}</span>
+                                <div className="flex items-center gap-3 px-4 py-2 border-b border-border flex-shrink-0 bg-background/40">
+                                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.responseBody}</span>
                                 </div>
                                 <div className="flex-1 overflow-hidden">
                                     <CodeEditor
@@ -397,6 +402,16 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                 saveDisabled={tabType === "request" ? !state.name && !state.endpointUrl : !state.name}
                 saving={state.saving}
                 savingLabel={strings.server.saving}
+                onSync={onSync ? handleSyncClick : undefined}
+                onRevert={onRevert ? handleRevertClick : undefined}
+                onHistory={onHistory}
+                historyDisabled={!onHistory || !!draftTabId}
+                syncDisabled={syncDisabled}
+                revertDisabled={revertDisabled}
+                syncing={syncing}
+                reverting={reverting}
+                syncTitle={syncTitle}
+                revertTitle={revertTitle}
             />
         </div>
     );

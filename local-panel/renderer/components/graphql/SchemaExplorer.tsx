@@ -164,13 +164,13 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
     };
 
     return (
-        <div className="flex flex-col h-full overflow-hidden bg-bg0">
+        <div className="flex flex-col h-full overflow-hidden bg-background">
             {/* Header */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border flex-shrink-0">
-                <span className="text-[10px] font-semibold text-text-dim uppercase tracking-wider flex-1">{strings.graphql.schema}</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex-1">{strings.graphql.schema}</span>
                 <button
                     onClick={() => setMode(mode === "introspect" ? "list" : "introspect")}
-                    className="text-[10px] text-accent hover:text-accent-dim cursor-pointer"
+                    className="text-[10px] text-signal hover:text-signal/80 cursor-pointer"
                 >
                     {mode === "introspect" ? strings.graphql.back : strings.graphql.introspect}
                 </button>
@@ -180,7 +180,7 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
             {mode === "introspect" && (
                 <div className="p-3 flex flex-col gap-2 border-b border-border">
                     <input
-                        className="bg-bg2 border border-border rounded px-2.5 py-1.5 text-xs font-mono text-text-bright outline-none focus:border-accent placeholder:text-text-dim"
+                        className="bg-card border border-border rounded px-2.5 py-1.5 text-xs font-mono text-foreground outline-none focus:border-signal placeholder:text-muted-foreground"
                         placeholder="https://api.example.com/graphql"
                         value={introspectUrl}
                         onChange={(e) => setIntrospectUrl(e.target.value)}
@@ -189,11 +189,11 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
                     <button
                         onClick={handleIntrospect}
                         disabled={loading || !introspectUrl.trim()}
-                        className="px-3 py-1.5 rounded bg-accent text-bg0 text-xs font-semibold disabled:opacity-40 cursor-pointer"
+                        className="px-3 py-1.5 rounded bg-signal text-background text-xs font-semibold disabled:opacity-40 cursor-pointer"
                     >
                         {loading ? strings.graphql.introspecting : strings.graphql.fetchSchema}
                     </button>
-                    {error && <span className="text-xs text-red">{error}</span>}
+                    {error && <span className="text-xs text-destructive">{error}</span>}
                 </div>
             )}
 
@@ -209,7 +209,7 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
                                 setOperations(parseIntrospectionToOperations(s.content));
                             }
                         }}
-                        className="w-full bg-bg2 border border-border rounded px-2.5 py-1.5 text-xs text-text-bright outline-none focus:border-accent"
+                        className="w-full bg-card border border-border rounded px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-signal"
                     >
                         <option value="">{strings.graphql.selectSchema}</option>
                         {schemas.map((s) => (
@@ -223,7 +223,7 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
             {selectedSchema && (
                 <div className="px-3 py-2 border-b border-border">
                     <input
-                        className="w-full bg-bg2 border border-border rounded px-2.5 py-1.5 text-xs text-text-bright outline-none focus:border-accent placeholder:text-text-dim"
+                        className="w-full bg-card border border-border rounded px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-signal placeholder:text-muted-foreground"
                         placeholder={strings.graphql.filterOperations}
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
@@ -234,12 +234,12 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
             {/* Operations list */}
             <div className="flex-1 overflow-y-auto">
                 {!selectedSchema && schemas.length === 0 && (
-                    <div className="p-4 text-xs text-text-dim text-center">
+                    <div className="p-4 text-xs text-muted-foreground text-center">
                         {strings.graphql.noSchemasLoaded}
                     </div>
                 )}
                 {selectedSchema && operations.length === 0 && (
-                    <div className="p-4 text-xs text-text-dim text-center">
+                    <div className="p-4 text-xs text-muted-foreground text-center">
                         {strings.graphql.noOperationsInSchema}
                     </div>
                 )}
@@ -248,23 +248,23 @@ export default function SchemaExplorer({ schemaId, onInsertQuery, onInsertVariab
                     if (ops.length === 0) return null;
                     return (
                         <div key={type}>
-                            <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-text-dim bg-bg1 border-b border-border sticky top-0">
+                            <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground bg-surface border-b border-border sticky top-0">
                                 {type}s ({ops.length})
                             </div>
                             {ops.map((op) => (
                                 <button
                                     key={`${type}-${op.name}`}
                                     onClick={() => handleSelectOperation(op)}
-                                    className="w-full text-left px-3 py-1.5 hover:bg-bg2 transition-colors cursor-pointer border-b border-border/50"
+                                    className="w-full text-left px-3 py-1.5 hover:bg-card transition-colors cursor-pointer border-b border-border/50"
                                     title={strings.graphql.insertQueryTemplate.replace("{name}", op.name)}
                                 >
-                                    <div className="text-xs text-text-bright font-mono truncate">{op.name}</div>
+                                    <div className="text-xs text-foreground font-mono truncate">{op.name}</div>
                                     {op.args.length > 0 && (
-                                        <div className="text-[10px] text-text-dim truncate">
+                                        <div className="text-[10px] text-muted-foreground truncate">
                                             ({op.args.map((a) => `${a.name}: ${a.type}`).join(", ")})
                                         </div>
                                     )}
-                                    <div className="text-[10px] text-accent/70 truncate">→ {op.returnType}</div>
+                                    <div className="text-[10px] text-signal/70 truncate">→ {op.returnType}</div>
                                 </button>
                             ))}
                         </div>
