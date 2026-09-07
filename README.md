@@ -17,8 +17,8 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 
 ```text
 Bifurc/
-├── local-panel/            # Electron desktop application
-├── local-panel-extension/  # Browser companion extension
+├── bifurc/            # Electron desktop application
+├── bifurc-extension/  # Browser companion extension
 ```
 
 The published site itself is maintained in the separate `bifurc-website` repository.
@@ -35,15 +35,15 @@ The documentation source now lives in the **website repository only** and is ren
 
 ```bash
 git clone https://github.com/HarshalKudale/bifurc.git
-cd local-panel
+cd bifurc
 npm install
-cd local-panel
+cd bifurc
 npm run dev
 ```
 
 ## Browser extension
 
-Load the `local-panel-extension/` folder unpacked in Chrome or Edge to:
+Load the `bifurc-extension/` folder unpacked in Chrome or Edge to:
 
 - toggle browser proxy routing
 - review traffic inside a Bifurc DevTools tab

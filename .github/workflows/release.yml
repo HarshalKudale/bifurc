@@ -42,7 +42,7 @@ jobs:
       - id: meta
         shell: bash
         run: |
-          version="$(node -p "require('./local-panel/package.json').version")"
+          version="$(node -p "require('./bifurc/package.json').version")"
 
           if [ "${{ github.event_name }}" = "push" ]; then
             tag="${GITHUB_REF_NAME}"
@@ -73,7 +73,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: local-panel
+        working-directory: bifurc
     steps:
       - uses: actions/checkout@v4
 
@@ -92,7 +92,7 @@ jobs:
         with:
           name: windows-release
           path: |
-            local-panel/release/*.exe
+            bifurc/release/*.exe
           if-no-files-found: error
 
   build-linux:
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: local-panel
+        working-directory: bifurc
     steps:
       - uses: actions/checkout@v4
 
@@ -120,7 +120,7 @@ jobs:
         with:
           name: linux-release
           path: |
-            local-panel/release/*.AppImage
+            bifurc/release/*.AppImage
           if-no-files-found: error
 
   publish-release:
