@@ -1,6 +1,6 @@
 {
   "name": "bifurc",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Local development panel - localhost domain proxy manager",
   "license": "SEE LICENSE IN ../LICENSE",
   "main": "dist/main.js",
@@ -29,15 +29,21 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "icon.png",
+      "tray-icon.png"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
           "nsis",
           "appx"
         ]
     },
     "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "artifactName": "Bifurc.Setup.${ext}"
     },
     "appx": {
@@ -52,6 +58,7 @@
       "target": "dmg"
     },
     "linux": {
+      "icon": "build/icon.png",
       "artifactName": "Bifurc.${ext}",
       "target": "AppImage"
     }

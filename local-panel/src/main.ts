@@ -30,8 +30,12 @@ function getAppIcon(): Electron.NativeImage {
   return nativeImage.createFromPath(path.join(__dirname, "..", "icon.png"));
 }
 
+function getTrayIcon(): Electron.NativeImage {
+  return nativeImage.createFromPath(path.join(__dirname, "..", "tray-icon.png"));
+}
+
 function createTray(): void {
-  tray = new Tray(getAppIcon());
+  tray = new Tray(getTrayIcon());
   tray.setToolTip("Bifurc");
   updateTrayMenu();
 

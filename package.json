@@ -1,6 +1,6 @@
 {
   "name": "bifurc-monorepo",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Bifurc - Localhost domain proxy manager and API development toolkit",
   "private": true,
   "author": {
