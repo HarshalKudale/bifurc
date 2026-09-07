@@ -14,9 +14,9 @@ interface Props {
 }
 
 const ACTION_COLORS: Record<string, string> = {
-  create: "bg-green/15 text-green border border-green/30",
-  update: "bg-yellow/15 text-yellow border border-yellow/30",
-  delete: "bg-red/15 text-red border border-red/30",
+  create: "bg-signal/15 text-signal border border-signal/30",
+  update: "bg-amber/15 text-amber border border-amber/30",
+  delete: "bg-destructive/15 text-destructive border border-destructive/30",
 };
 
 function relativeTime(ts: number): string {
@@ -113,18 +113,18 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
       className="history-sidebar"
       style={{ width: open ? 280 : 0, opacity: open ? 1 : 0 }}
     >
-    <div className="flex flex-col h-full bg-bg1 border-l border-border" style={{ width: 280, minWidth: 280 }}>
+    <div className="flex flex-col h-full bg-surface border-l border-border" style={{ width: 280, minWidth: 280 }}>
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0">
-        <GitCommit size={13} className="text-accent flex-shrink-0" />
+        <GitCommit size={13} className="text-signal flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold text-text-bright truncate">{historyTitle}</div>
-          <div className="text-[10px] text-text-dim truncate font-mono" title={filePath}>{fileName}</div>
+          <div className="text-xs font-semibold text-foreground truncate">{historyTitle}</div>
+          <div className="text-[10px] text-muted-foreground truncate font-mono" title={filePath}>{fileName}</div>
         </div>
         <button
           onClick={onClose}
           title={strings.history.closeHistory}
-          className="w-6 h-6 flex items-center justify-center rounded hover:bg-bg2 text-text-dim hover:text-text-base transition-colors flex-shrink-0 cursor-pointer"
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-card text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 cursor-pointer"
         >
           <X size={12} />
         </button>
@@ -132,20 +132,20 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
 
       {/* Entry count */}
       {!loading && total > 0 && (
-        <div className="px-3 py-1.5 border-b border-border flex-shrink-0 bg-bg0/30">
-          <span className="text-[10px] text-text-dim">{total} {strings.history.commit.replace("{s}", total !== 1 ? "s" : "")}</span>
+        <div className="px-3 py-1.5 border-b border-border flex-shrink-0 bg-background/30">
+          <span className="text-[10px] text-muted-foreground">{total} {strings.history.commit.replace("{s}", total !== 1 ? "s" : "")}</span>
         </div>
       )}
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {loading && (
-          <div className="flex items-center justify-center h-20 text-xs text-text-dim">{strings.history.loading}</div>
+          <div className="flex items-center justify-center h-20 text-xs text-muted-foreground">{strings.history.loading}</div>
         )}
 
         {!loading && entries.length === 0 && (
           <div className="flex flex-col items-center justify-center h-24 px-4 text-center">
-            <p className="text-xs text-text-dim">{strings.history.noHistory}</p>
+            <p className="text-xs text-muted-foreground">{strings.history.noHistory}</p>
           </div>
         )}
 
@@ -160,19 +160,19 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
             <div className="w-full flex items-center gap-2 px-3 py-2">
               {/* Timeline dot */}
               <div className="flex-shrink-0" style={{ width: 8 }}>
-                <div className={`w-2 h-2 rounded-full border ${isFirst ? "border-accent bg-accent/30" : "border-border bg-bg3"}`} />
+                <div className={`w-2 h-2 rounded-full border ${isFirst ? "border-signal bg-signal/30" : "border-border bg-surface-2"}`} />
               </div>
 
               {/* Action badge */}
               <span
-                className={`text-[9px] font-semibold px-1 py-px rounded uppercase tracking-wide flex-shrink-0 ${ACTION_COLORS[entry.action] ?? "bg-bg3 text-text-dim border border-border"}`}
+                className={`text-[9px] font-semibold px-1 py-px rounded uppercase tracking-wide flex-shrink-0 ${ACTION_COLORS[entry.action] ?? "bg-surface-2 text-muted-foreground border border-border"}`}
               >
                 {entry.action}
               </span>
 
               {/* Committer */}
               <span
-                className="text-[9px] font-mono bg-bg2 border border-border px-1 py-px rounded text-text-dim truncate flex-shrink-0 max-w-[72px]"
+                className="text-[9px] font-mono bg-card border border-border px-1 py-px rounded text-muted-foreground truncate flex-shrink-0 max-w-[72px]"
                 title={entry.actor}
               >
                 {entry.actor || strings.history.localActor}
@@ -181,7 +181,7 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
               {/* Changed fields or spacer */}
               {entry.action === "update" && entry.changedFields && entry.changedFields.length > 0 ? (
                 <span
-                  className="text-[10px] text-text-dim font-mono truncate flex-1 min-w-0"
+                  className="text-[10px] text-muted-foreground font-mono truncate flex-1 min-w-0"
                   title={entry.changedFields.map(formatFieldLabel).join(", ")}
                 >
                   {entry.changedFields.slice(0, 3).map(formatFieldLabel).join(", ")}
@@ -193,14 +193,14 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
 
               {/* Time */}
               <div className="flex-shrink-0">
-                <span className="text-[9px] text-text-dim" title={absoluteTime(entry.ts)}>
+                <span className="text-[9px] text-muted-foreground" title={absoluteTime(entry.ts)}>
                   {relativeTime(entry.ts)}
                 </span>
               </div>
 
               {/* Chevron - update only */}
               {canExpand && (
-                <span className="text-text-dim flex-shrink-0">
+                <span className="text-muted-foreground flex-shrink-0">
                   {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                 </span>
               )}
@@ -212,7 +212,7 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
               {canExpand ? (
                 <button
                   onClick={() => handleExpand(entry)}
-                  className="w-full hover:bg-bg2 transition-colors text-left cursor-pointer"
+                  className="w-full hover:bg-card transition-colors text-left cursor-pointer"
                 >
                   {rowContent}
                 </button>
@@ -222,10 +222,10 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
 
               {/* Expanded diff - update only */}
               {isExpanded && (
-                <div className="px-3 pb-3 pt-1 bg-bg0/40">
-                  <div className="text-[9px] font-mono text-text-dim/60 mb-1.5 select-all">{entry.commitHash}</div>
+                <div className="px-3 pb-3 pt-1 bg-background/40">
+                  <div className="text-[9px] font-mono text-muted-foreground/60 mb-1.5 select-all">{entry.commitHash}</div>
                   {isDiffLoading ? (
-                    <div className="text-[10px] text-text-dim py-1">{strings.history.loadingDiff}</div>
+                    <div className="text-[10px] text-muted-foreground py-1">{strings.history.loadingDiff}</div>
                   ) : entryDiff ? (
                     <CompactDiff before={entryDiff.before} after={entryDiff.after} />
                   ) : null}
@@ -254,15 +254,15 @@ function CompactDiff({ before, after }: CompactDiffProps) {
   const afterObj  = (after  && typeof after  === "object") ? (after  as Record<string, unknown>) : {};
 
   if (!before && !after) {
-    return <p className="text-[10px] text-text-dim">{strings.history.noSnapshot}</p>;
+    return <p className="text-[10px] text-muted-foreground">{strings.history.noSnapshot}</p>;
   }
 
   if (before && !after) {
-    return <p className="text-[10px] text-text-dim italic">{strings.history.deletedPrior}</p>;
+    return <p className="text-[10px] text-muted-foreground italic">{strings.history.deletedPrior}</p>;
   }
 
   if (!before && after) {
-    return <p className="text-[10px] text-text-dim italic">{strings.history.createdNoPrior}</p>;
+    return <p className="text-[10px] text-muted-foreground italic">{strings.history.createdNoPrior}</p>;
   }
 
   const allKeys = Array.from(new Set([...Object.keys(beforeObj), ...Object.keys(afterObj)]))
@@ -272,7 +272,7 @@ function CompactDiff({ before, after }: CompactDiffProps) {
   const unchanged = allKeys.filter((k) => !changed.includes(k));
 
   if (changed.length === 0) {
-    return <p className="text-[10px] text-text-dim">{strings.history.noFieldChanges}</p>;
+    return <p className="text-[10px] text-muted-foreground">{strings.history.noFieldChanges}</p>;
   }
 
   const displayKeys = showAll ? allKeys : changed;
@@ -285,13 +285,13 @@ function CompactDiff({ before, after }: CompactDiffProps) {
         const aVal = JSON.stringify(afterObj[k]  ?? null);
         return (
           <div key={k} className={`${!isChanged ? "opacity-40" : ""}`}>
-            <span className="text-[9px] uppercase text-text-dim tracking-wider block mb-0.5">{k}</span>
+            <span className="text-[9px] uppercase text-muted-foreground tracking-wider block mb-0.5">{k}</span>
             {isChanged && (
               <>
-                <div className="bg-red/5 border border-red/20 rounded px-1.5 py-0.5 text-red line-through opacity-70 truncate mb-0.5">
+                <div className="bg-destructive/5 border border-destructive/20 rounded px-1.5 py-0.5 text-destructive line-through opacity-70 truncate mb-0.5">
                   {bVal}
                 </div>
-                <div className="bg-green/5 border border-green/20 rounded px-1.5 py-0.5 text-green truncate">
+                <div className="bg-signal/5 border border-signal/20 rounded px-1.5 py-0.5 text-signal truncate">
                   {aVal}
                 </div>
               </>
@@ -301,7 +301,7 @@ function CompactDiff({ before, after }: CompactDiffProps) {
       })}
       {unchanged.length > 0 && (
         <button
-          className="text-[9px] text-text-dim underline text-left mt-0.5 cursor-pointer"
+          className="text-[9px] text-muted-foreground underline text-left mt-0.5 cursor-pointer"
           onClick={() => setShowAll((v) => !v)}
         >
           {showAll ? strings.history.hideUnchanged.replace("{n}", String(unchanged.length)) : strings.history.showUnchanged.replace("{n}", String(unchanged.length))}

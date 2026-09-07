@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Local Panel</title>
   <script>
-    (function () { var id = localStorage.getItem('lp-theme') || 'terminal'; var dark = ['terminal', 'midnight-navy', 'dracula-purple', 'tokyo-night', 'nord-dark', 'monokai']; document.documentElement.classList.add(dark.indexOf(id) !== -1 ? 'dark' : 'light'); if (id === 'terminal') document.documentElement.classList.add('theme-terminal'); })();
+    (function () { var m = localStorage.getItem('lp-color-mode'); if (m === 'light') document.documentElement.classList.add('light'); })();
   </script>
 </head>
 

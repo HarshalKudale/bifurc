@@ -11,37 +11,18 @@ import { tcpTunnel, proxyToUpstream, passthroughToUpstream, passthroughToUpstrea
 import { loadCA, unloadCA, isCALoaded, clearCertCache } from "@/proxy/tlsCert";
 import { interceptTls } from "@/proxy/tlsIntercept";
 import { decompressBody, stripContentEncoding } from "@/proxy/decompressUtils";
+import { handleProxyRouting } from "@/proxy/routingUtils";
 import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "@/proxy/logEmitter";
-
 export { RequestLogEntry, logEmitter, emitLogChunk } from "@/proxy/logEmitter";
 
-function mkId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
+import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./serverUtils";
 
 let server: net.Server | null = null;
 let currentPort = 0;
 let currentConfig: AppConfig;
 let fullRules: ProxyRule[] = [];
 let lastError: string | null = null;
-
-// Per-kind enabled ID sets — loaded from enabled.json for fast dispatch
-interface EnabledSets {
-  mocks: Set<string>;
-  mappings: Set<string>;
-  rules: Set<string>;
-}
 let enabledSets: EnabledSets = { mocks: new Set(), mappings: new Set(), rules: new Set() };
-
-function loadEnabledSets(wsId: string): EnabledSets {
-  const load = (kind: string): Set<string> => {
-    const existing = readEnabledSet(wsId, kind);
-    if (existing !== null) return existing;
-    // First run — bootstrap from entity files
-    return bootstrapEnabledSet(wsId, kind);
-  };
-  return { mocks: load("mocks"), mappings: load("mappings"), rules: load("rules") };
-}
 
 export function startServer(port: number): void {
   if (server) stopServer();
@@ -145,82 +126,13 @@ export function reloadConfig(): void {
 
 // ── Replay a captured request, return {status, headers, body (base64)} ────
 
-export function replayRequest(
-  method: string,
-  url: string,
-  headers: Record<string, string>,
-  bodyBase64: string,
-): Promise<{ status: number; headers: Record<string, string>; body: string }> {
-  return new Promise((resolve, reject) => {
-    let hostname: string;
-    let port: number;
-    let path: string;
-    try {
-      const u = new URL(url);
-      hostname = u.hostname;
-      port = u.port ? parseInt(u.port, 10) : (u.protocol === "https:" ? 443 : 80);
-      path = u.pathname + u.search;
-    } catch {
-      return reject(new Error("Invalid URL"));
-    }
-
-    const body = bodyBase64 ? Buffer.from(bodyBase64, "base64") : Buffer.alloc(0);
-    const upHeaders: Record<string, string> = { ...headers, connection: "close" };
-    if (body.length > 0) upHeaders["content-length"] = String(body.length);
-
-    const isHttps = new URL(url).protocol === "https:";
-    const transport = isHttps ? https : http;
-    const req = transport.request({ hostname, port, path, method, headers: upHeaders }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (c: Buffer) => chunks.push(c));
-      res.on("end", () => {
-        const resHeaders: Record<string, string> = {};
-        for (const [k, v] of Object.entries(res.headers)) {
-          if (v != null && !HOP_BY_HOP.has(k.toLowerCase()))
-            resHeaders[k] = Array.isArray(v) ? v.join(", ") : v;
-        }
-        const raw = Buffer.concat(chunks);
-        const ce = resHeaders["content-encoding"] ?? "";
-        const decompressed = decompressBody(raw, ce);
-        const logHeaders = ce ? stripContentEncoding(resHeaders) : resHeaders;
-        resolve({
-          status: res.statusCode ?? 0,
-          headers: logHeaders,
-          body: decompressed.toString("base64"),
-        });
-      });
-    });
-    req.on("error", reject);
-    if (body.length > 0) req.write(body);
-    req.end();
-  });
-}
+export { replayRequest } from "./serverReplay";
 
 // ── HTTP dispatch ─────────────────────────────────────────────────────────
 
-function activeEnv(cfg: AppConfig): Environment | null {
-  const globalEnv = (cfg.environments ?? []).find((e) => e.id === "__global__") ?? null;
-  const selected = cfg.activeEnvironmentId
-    ? (cfg.environments ?? []).find((e) => e.id === cfg.activeEnvironmentId) ?? null
-    : null;
-  if (!globalEnv && !selected) return null;
-  const map = new Map<string, { id: string; key: string; value: string }>();
-  for (const v of globalEnv?.variables ?? []) map.set(v.key, v);
-  for (const v of selected?.variables ?? []) map.set(v.key, v);
-  return { id: "merged", name: "merged", variables: [...map.values()], createdAt: 0, workspaceId: "" };
-}
 
-function workspaceCfg(cfg: AppConfig): AppConfig {
-  const wsId = cfg.activeWorkspaceId;
-  if (!wsId) return cfg;
-  // Use enabled.json sets for fast O(1) lookup — only include enabled entities for proxy dispatch
-  return {
-    ...cfg,
-    mappings: cfg.mappings.filter((m) => m.workspaceId === wsId && enabledSets.mappings.has(m.id)),
-    proxyRules: fullRules.filter((r) => (!r.workspaceId || r.workspaceId === wsId) && enabledSets.rules.has(r.id)),
-    mocks: cfg.mocks.filter((m) => m.workspaceId === wsId && enabledSets.mocks.has(m.id)),
-  };
-}
+
+
 
 function dispatch(
   socket: net.Socket,
@@ -229,7 +141,7 @@ function dispatch(
   headerLines: string[],
   bodyBuf: Buffer,
 ): void {
-  const cfg = workspaceCfg(currentConfig ?? loadConfig());
+  const cfg = workspaceCfg(currentConfig ?? loadConfig(), fullRules, enabledSets);
   const t0 = Date.now();
   const id = mkId();
 
@@ -313,83 +225,9 @@ function dispatch(
 
   // 3. Forward proxy path (always active for absolute http:// targets)
   if (rawTarget.startsWith("http://") || rawTarget.startsWith("https://")) {
-    // 3a. Mock check — highest priority
+    // 3a. Proxy routing (mocks, rules)
     const env = activeEnv(cfg);
-    const mock = matchMock(cfg.mocks, method, url, env);
-    if (mock) {
-      if (isFullyMocked(mock)) {
-        serveMock(socket, mock, env);
-        const resolved = resolveMockOnlyResponse(mock, env);
-        const slice = resolved.body.length <= 512 * 1024 ? resolved.body : resolved.body.slice(0, 512 * 1024);
-        emitLog({ ...baseEntry, status: resolved.status, via: "mock", target: `mock:${mock.id}`, durationMs: Date.now() - t0 + resolved.delayMs, resHeaders: resolved.headers, resBody: slice.toString("base64"), resStatus: resolved.status });
-        return;
-      }
-
-      const { matched, rule: matchedRule, target: ruleTarget } = matchProxyRule(cfg.proxyRules, rawTarget, cfg.mappings);
-      if (matched && (!matchedRule || !ruleTarget)) {
-        sendHtml(socket, 502, "<h1>502 Bad Gateway</h1><p>Proxy rule matched but the target is not configured.</p>");
-        emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-        return;
-      }
-      const upstreamPromise = matched && matchedRule && ruleTarget
-        ? fetchUpstreamResponse(method, ruleTarget, reqPath, headers, bodyBuf, matchedRule)
-        : replayRequest(method, url, headers, reqBodyB64).then((res) => ({
-          status: res.status,
-          headers: res.headers,
-          body: Buffer.from(res.body, "base64"),
-          durationMs: Date.now() - t0,
-        }));
-
-      upstreamPromise.then((upstream) => {
-        const merged = mergeMockWithUpstream(mock, upstream, env);
-        serveResolvedResponse(socket, merged);
-        const slice = merged.body.length <= 512 * 1024 ? merged.body : merged.body.slice(0, 512 * 1024);
-        emitLog({ ...baseEntry, status: merged.status, via: "mock", target: `mock:${mock.id}`, durationMs: upstream.durationMs + merged.delayMs, resHeaders: merged.headers, resBody: slice.toString("base64"), resStatus: merged.status });
-      }).catch((err: Error) => {
-        console.error(`[mock downstream] ${url} —`, err.message);
-        sendHtml(socket, 502, `<h1>502 Bad Gateway</h1><p>Could not connect to <code>${url}</code>.</p>`);
-        emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-      });
-      return;
-    }
-
-    // 3a-ii. GraphQL mock check
-    const bodyStr = bodyBuf.toString("utf-8");
-    const gqlMocks = (cfg as any).graphqlMocks as GraphQLMockDef[] | undefined;
-    const gqlMock = matchGraphQLMock(gqlMocks ?? [], url, bodyStr, env);
-    if (gqlMock) {
-      serveProtocolMock(socket, gqlMock, env);
-      emitLog({ ...baseEntry, status: gqlMock.responseStatus, via: "mock", target: `graphql-mock:${gqlMock.id}`, durationMs: Date.now() - t0, resHeaders: gqlMock.responseHeaders, resBody: Buffer.from(gqlMock.responseBody, "utf-8").toString("base64"), resStatus: gqlMock.responseStatus });
-      return;
-    }
-
-    // 3a-iii. SOAP mock check
-    const soapMocks = (cfg as any).soapMocks as SoapMockDef[] | undefined;
-    const soapMock = matchSoapMock(soapMocks ?? [], url, headers, bodyStr, env);
-    if (soapMock) {
-      serveProtocolMock(socket, soapMock, env);
-      emitLog({ ...baseEntry, status: soapMock.responseStatus, via: "mock", target: `soap-mock:${soapMock.id}`, durationMs: Date.now() - t0, resHeaders: soapMock.responseHeaders, resBody: Buffer.from(soapMock.responseBody, "utf-8").toString("base64"), resStatus: soapMock.responseStatus });
-      return;
-    }
-
-    // 3b. Proxy rule match
-    const { matched, rule: matchedRule, target: ruleTarget } = matchProxyRule(cfg.proxyRules, rawTarget, cfg.mappings);
-    if (matched) {
-      if (matchedRule && ruleTarget) {
-        const hasScripts = !!(matchedRule.requestScript?.trim() || matchedRule.responseScript?.trim());
-        if (hasScripts) {
-          proxyWithScripts(socket, method, ruleTarget, reqPath, headers, bodyBuf, matchedRule, (status, dur, resH, resB) => {
-            emitLog({ ...baseEntry, status, via: "rule", target: ruleTarget, durationMs: dur, resHeaders: resH, resBody: resB, resStatus: status });
-          });
-        } else {
-          proxyToUpstream(socket, method, ruleTarget, reqPath, headers, bodyBuf, (status, dur, resH, resB) => {
-            emitLog({ ...baseEntry, status, via: "rule", target: ruleTarget, durationMs: dur, resHeaders: resH, resBody: resB, resStatus: status });
-          }, baseEntry.id);
-        }
-      } else {
-        sendHtml(socket, 502, "<h1>502 Bad Gateway</h1><p>Proxy rule matched but the target is not configured.</p>");
-        emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-      }
+    if (handleProxyRouting(socket, cfg, env, method, url, rawTarget, reqPath, headers, bodyBuf, reqBodyB64, baseEntry, t0)) {
       return;
     }
 
@@ -417,7 +255,7 @@ function dispatchHttps(
   hostname: string,
   port: number,
 ): void {
-  const cfg = workspaceCfg(currentConfig ?? loadConfig());
+  const cfg = workspaceCfg(currentConfig ?? loadConfig(), fullRules, enabledSets);
   const t0 = Date.now();
   const id = mkId();
 
@@ -441,83 +279,9 @@ function dispatchHttps(
     reqBody: reqBodyB64,
   };
 
-  // 1. Mock check — highest priority
+  // Proxy routing (mocks, rules)
   const env = activeEnv(cfg);
-  const mock = matchMock(cfg.mocks, method, url, env);
-  if (mock) {
-    if (isFullyMocked(mock)) {
-      serveMock(socket, mock, env);
-      const resolved = resolveMockOnlyResponse(mock, env);
-      const slice = resolved.body.length <= 512 * 1024 ? resolved.body : resolved.body.slice(0, 512 * 1024);
-      emitLog({ ...baseEntry, status: resolved.status, via: "mock", target: `mock:${mock.id}`, durationMs: Date.now() - t0 + resolved.delayMs, resHeaders: resolved.headers, resBody: slice.toString("base64"), resStatus: resolved.status });
-      return;
-    }
-
-    const { matched, rule: matchedRule, target: ruleTarget } = matchProxyRule(cfg.proxyRules, url, cfg.mappings);
-    if (matched && (!matchedRule || !ruleTarget)) {
-      sendHtml(socket, 502, "<h1>502 Bad Gateway</h1><p>Proxy rule matched but the target is not configured.</p>");
-      emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-      return;
-    }
-    const upstreamPromise = matched && matchedRule && ruleTarget
-      ? fetchUpstreamResponse(method, ruleTarget, reqPath, headers, bodyBuf, matchedRule)
-      : replayRequest(method, url, headers, reqBodyB64).then((res) => ({
-        status: res.status,
-        headers: res.headers,
-        body: Buffer.from(res.body, "base64"),
-        durationMs: Date.now() - t0,
-      }));
-
-    upstreamPromise.then((upstream) => {
-      const merged = mergeMockWithUpstream(mock, upstream, env);
-      serveResolvedResponse(socket, merged);
-      const slice = merged.body.length <= 512 * 1024 ? merged.body : merged.body.slice(0, 512 * 1024);
-      emitLog({ ...baseEntry, status: merged.status, via: "mock", target: `mock:${mock.id}`, durationMs: upstream.durationMs + merged.delayMs, resHeaders: merged.headers, resBody: slice.toString("base64"), resStatus: merged.status });
-    }).catch((err: Error) => {
-      console.error(`[mock downstream] ${url} —`, err.message);
-      sendHtml(socket, 502, `<h1>502 Bad Gateway</h1><p>Could not connect to <code>${url}</code>.</p>`);
-      emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-    });
-    return;
-  }
-
-  // 1b. GraphQL mock check
-  const bodyStr = bodyBuf.toString("utf-8");
-  const gqlMocks = (cfg as any).graphqlMocks as GraphQLMockDef[] | undefined;
-  const gqlMock = matchGraphQLMock(gqlMocks ?? [], url, bodyStr, env);
-  if (gqlMock) {
-    serveProtocolMock(socket, gqlMock, env);
-    emitLog({ ...baseEntry, status: gqlMock.responseStatus, via: "mock", target: `graphql-mock:${gqlMock.id}`, durationMs: Date.now() - t0, resHeaders: gqlMock.responseHeaders, resBody: Buffer.from(gqlMock.responseBody, "utf-8").toString("base64"), resStatus: gqlMock.responseStatus });
-    return;
-  }
-
-  // 1c. SOAP mock check
-  const soapMocks = (cfg as any).soapMocks as SoapMockDef[] | undefined;
-  const soapMock = matchSoapMock(soapMocks ?? [], url, headers, bodyStr, env);
-  if (soapMock) {
-    serveProtocolMock(socket, soapMock, env);
-    emitLog({ ...baseEntry, status: soapMock.responseStatus, via: "mock", target: `soap-mock:${soapMock.id}`, durationMs: Date.now() - t0, resHeaders: soapMock.responseHeaders, resBody: Buffer.from(soapMock.responseBody, "utf-8").toString("base64"), resStatus: soapMock.responseStatus });
-    return;
-  }
-
-  // 2. Proxy rule match — match against the full https:// URL
-  const { matched, rule: matchedRule, target: ruleTarget } = matchProxyRule(cfg.proxyRules, url, cfg.mappings);
-  if (matched) {
-    if (matchedRule && ruleTarget) {
-      const hasScripts = !!(matchedRule.requestScript?.trim() || matchedRule.responseScript?.trim());
-      if (hasScripts) {
-        proxyWithScripts(socket, method, ruleTarget, reqPath, headers, bodyBuf, matchedRule, (status, dur, resH, resB) => {
-          emitLog({ ...baseEntry, status, via: "rule", target: ruleTarget, durationMs: dur, resHeaders: resH, resBody: resB, resStatus: status });
-        });
-      } else {
-        proxyToUpstream(socket, method, ruleTarget, reqPath, headers, bodyBuf, (status, dur, resH, resB) => {
-          emitLog({ ...baseEntry, status, via: "rule", target: ruleTarget, durationMs: dur, resHeaders: resH, resBody: resB, resStatus: status });
-        }, baseEntry.id);
-      }
-    } else {
-      sendHtml(socket, 502, "<h1>502 Bad Gateway</h1><p>Proxy rule matched but the target is not configured.</p>");
-      emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-    }
+  if (handleProxyRouting(socket, cfg, env, method, url, url, reqPath, headers, bodyBuf, reqBodyB64, baseEntry, t0)) {
     return;
   }
 

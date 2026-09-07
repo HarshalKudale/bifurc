@@ -11,11 +11,11 @@ interface StatusDotProps {
 }
 
 const colorStyles: Record<DotColor, string> = {
-  green:  "var(--c-green)",
-  red:    "var(--c-red)",
-  yellow: "var(--c-yellow)",
-  accent: "var(--c-accent)",
-  dim:    "var(--c-text-dim)",
+  green:  "var(--c-signal)",
+  red:    "var(--c-destructive)",
+  yellow: "var(--c-amber)",
+  accent: "var(--c-signal)",
+  dim:    "var(--c-muted-foreground)",
 };
 
 export default function StatusDot({ color, pulse, size = "sm", className }: StatusDotProps) {

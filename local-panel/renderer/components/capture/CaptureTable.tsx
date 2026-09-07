@@ -29,7 +29,7 @@ interface Props {
   onContextMenu: (entry: RequestLogEntry, ev: React.MouseEvent) => void;
 }
 
-const TH = "text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-dim";
+const TH = "text-left px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground";
 
 export default function CaptureTable({
   entries, selectedIds, activeId, blockedKeys, onRowClick, onToggleCheck, onToggleAll, onContextMenu,
@@ -38,12 +38,12 @@ export default function CaptureTable({
 
   return (
     <table className="w-full border-collapse">
-      <thead className="sticky top-0 bg-bg0 z-10">
+      <thead className="sticky top-0 bg-background z-10">
         <tr className="border-b border-border">
           <th className="px-3 py-2 w-8">
             <button
               onClick={onToggleAll}
-              className="flex items-center justify-center text-text-dim hover:text-accent transition-colors cursor-pointer"
+              className="flex items-center justify-center text-muted-foreground hover:text-signal transition-colors cursor-pointer"
               title={strings.capture.selectAll}
             >
               {allSelected ? <CheckSquare size={13} /> : <Square size={13} />}
@@ -69,27 +69,27 @@ export default function CaptureTable({
               onClick={(ev) => onRowClick(e, ev)}
               onContextMenu={(ev) => onContextMenu(e, ev)}
               className={`border-b border-border/30 cursor-pointer transition-colors ${
-                isActive ? "bg-accent/10" : checked ? "bg-bg2/60 hover:bg-bg1" : "hover:bg-bg1"
+                isActive ? "bg-signal/10" : checked ? "bg-card/60 hover:bg-surface" : "hover:bg-surface"
               }`}
             >
               <td className="px-3 py-1.5" onClick={(ev) => { ev.stopPropagation(); onToggleCheck(e.id, ev); }}>
-                <span className={`flex items-center justify-center ${checked ? "text-accent" : "text-text-dim"} hover:text-accent`}>
+                <span className={`flex items-center justify-center ${checked ? "text-signal" : "text-muted-foreground"} hover:text-signal`}>
                   {checked ? <CheckSquare size={13} /> : <Square size={13} />}
                 </span>
               </td>
-              <td className={`px-3 py-1.5 max-w-[320px] ${blocked ? "text-text-dim" : "text-text-base"}`}>
+              <td className={`px-3 py-1.5 max-w-[320px] ${blocked ? "text-muted-foreground" : "text-foreground"}`}>
                 <span className="flex items-center gap-1.5 min-w-0" title={blocked ? `${strings.capture.blockedPrefix} ${e.url}` : e.url}>
-                  {blocked && <Ban size={11} className="flex-shrink-0 text-red" />}
+                  {blocked && <Ban size={11} className="flex-shrink-0 text-destructive" />}
                   <span className={`block truncate ${blocked ? "line-through" : ""}`}>{urlName(e.url)}</span>
                 </span>
               </td>
-              <td className="px-3 py-1.5 text-accent whitespace-nowrap">{e.method}</td>
+              <td className="px-3 py-1.5 text-signal whitespace-nowrap">{e.method}</td>
               <td className={`px-3 py-1.5 whitespace-nowrap font-semibold ${statusColor(e.status)}`}>{e.status ?? "—"}</td>
-              <td className="px-3 py-1.5 text-text-dim whitespace-nowrap">{TYPE_LABEL[deriveType(e)]}</td>
+              <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{TYPE_LABEL[deriveType(e)]}</td>
               <td className={`px-3 py-1.5 whitespace-nowrap ${fulfilledColor(e.via)}`}>{fulfilledBy(e.via)}</td>
-              <td className="px-3 py-1.5 text-right text-text-dim whitespace-nowrap">{resBodySize(e)}</td>
-              <td className="px-3 py-1.5 text-text-dim whitespace-nowrap">
-                <span className="text-text-base">{fmtTime(e.ts)}</span>
+              <td className="px-3 py-1.5 text-right text-muted-foreground whitespace-nowrap">{resBodySize(e)}</td>
+              <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                <span className="text-foreground">{fmtTime(e.ts)}</span>
                 <span className="ml-2">{fmtDur(e.durationMs)}</span>
               </td>
             </tr>

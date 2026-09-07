@@ -11,9 +11,9 @@ interface SyncIndicatorProps {
 export default function SyncIndicator({ status, size = 9 }: SyncIndicatorProps) {
   if (!status || status === "clean") return null;
   const icon = (() => {
-    if (status === "modified") return <Pencil size={size} style={{ color: "var(--c-sync-modified)" }} />;
-    if (status === "new")      return <Plus   size={size} style={{ color: "var(--c-sync-new)" }} />;
-    if (status === "deleted")  return <Trash2 size={size} style={{ color: "var(--c-sync-modified)" }} />;
+    if (status === "modified") return <Pencil size={size} style={{ color: "var(--c-amber)" }} />;
+    if (status === "new")      return <Plus   size={size} style={{ color: "var(--c-destructive)" }} />;
+    if (status === "deleted")  return <Trash2 size={size} style={{ color: "var(--c-amber)" }} />;
     return null;
   })();
   return (

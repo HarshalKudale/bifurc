@@ -89,7 +89,7 @@ import {
   MAX_WS_CONNECTIONS,
   getActiveConnectionCount,
   canOpenNewConnection,
-} from "@/lib/useWebSocket";
+} from "@/hooks/useWebSocket";
 
 // ── Registry helper tests ────────────────────────────────────────────────────
 

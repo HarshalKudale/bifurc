@@ -1,20 +1,12 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppConfig, ProxyRule } from "@/types";
-import SearchInput from "@/components/common/SearchInput";
-import RuleTab, { RuleTabHandle, RuleSavePayload } from "@/components/rules/RuleTab";
-import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
-import DraftsFolder from "@/components/sidebar/DraftsFolder";
-import { loadDraft } from "@/lib/useDraftPersist";
-import { useEntityTabs } from "@/lib/useEntityTabs";
+import PanelHeader from "@/components/layout/PanelHeader";
+import ProxyRuleDetailsPanel, { RuleSavePayload } from "@/components/rules/ProxyRuleDetailsPanel";
+import ProxyRulesTable from "./ProxyRulesTable";
 import { strings } from "@/lib/strings";
-import { entityRelPath, calculateFolderStatus } from "@/lib/utils";
-import { Settings } from "@/lib/icons";
-import TabBar from "@/components/editor/TabBar";
-import { SidebarLayout, SidebarHeader } from "@/components/ui";
-import { usePersistedState } from "@/lib/usePersistedState";
-import { useTabKeyBindings } from "@/hooks/useTabKeyBindings";
-
-const DRAFT_PREFIX = "rule-draft-";
+import { entityRelPath } from "@/lib/utils";
+import { Button } from "@/components/ui";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 
 interface Props {
   config: AppConfig;
@@ -24,262 +16,247 @@ interface Props {
   onPublishItem?: (id: string) => void;
   onPublishFolder?: (folderId: string | null) => void;
   onRestoreItem?: (id: string) => void;
+  pendingRuleId?: string | null;
+  onPendingRuleConsumed?: () => void;
 }
 
 export default function ProxyRulesPanel({
-  config, onConfigChange, onHistoryOpen, entitySyncStatus, onPublishItem, onPublishFolder, onRestoreItem,
+  config,
+  onConfigChange,
+  onHistoryOpen,
+  entitySyncStatus,
+  onPublishItem,
+  onRestoreItem,
+  pendingRuleId,
+  onPendingRuleConsumed,
 }: Props) {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const rules = config.proxyRules ?? [];
   const folders = config.ruleFolders ?? [];
 
-  const [search, setSearch] = usePersistedState(`rules:${config.activeWorkspaceId}:search`, "");
-  const [sidebarOpen, setSidebarOpen] = usePersistedState(`rules:${config.activeWorkspaceId}:sidebar-open`, true);
+  const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [loadedEntities, setLoadedEntities] = useState<Record<string, ProxyRule>>({});
 
-  const {
-    openTabs, activeTab, setActiveTab,
-    loadedEntities, setLoadedEntities,
-    tabRefs, isDraft,
-    openTab, openNewTab, closeTab, replaceTab, closeOtherTabs, closeAllTabs,
-  } = useEntityTabs<ProxyRule>({
-    storageKey: "rules",
-    draftPrefix: DRAFT_PREFIX,
-    workspaceId: config.activeWorkspaceId,
-    entityKind: "rules",
-    entities: rules,
-  });
+  // Auto-select rule from search or navigation
+  useEffect(() => {
+    if (pendingRuleId) {
+      setSelectedRuleId(pendingRuleId);
+      setIsCreatingNew(false);
+      onPendingRuleConsumed?.();
+    }
+  }, [pendingRuleId, onPendingRuleConsumed]);
 
-  useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab });
+  // Listen to localpanel:select-rule event
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<{ ruleId?: string }>;
+      if (custom.detail?.ruleId) {
+        setSelectedRuleId(custom.detail.ruleId);
+        setIsCreatingNew(false);
+      }
+    };
+    window.addEventListener("localpanel:select-rule", handler);
+    return () => window.removeEventListener("localpanel:select-rule", handler);
+  }, []);
 
+  // Reload rules from config
   const reloadRules = useCallback(async () => {
     const fresh = await window.api.getConfig();
     await onConfigChange(fresh);
   }, [onConfigChange]);
 
-  const handleToggle = useCallback(async (rule: ProxyRule) => {
-    if (isDraft(rule.id)) return; // drafts cannot be enabled
-    await window.api.setEntityEnabled(config.activeWorkspaceId, "rules", rule.id, !rule.enabled);
-    await reloadRules();
-  }, [rules, isDraft, config.activeWorkspaceId, reloadRules]);
+  // Load full entity data whenever selectedRuleId changes
+  useEffect(() => {
+    if (!selectedRuleId) return;
+    let cancelled = false;
+    window.api
+      .loadEntity(config.activeWorkspaceId, "rules", selectedRuleId)
+      .then((res) => {
+        if (!cancelled && res.ok && res.entity) {
+          setLoadedEntities((prev) => ({ ...prev, [selectedRuleId]: res.entity as ProxyRule }));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRuleId, config.activeWorkspaceId]);
 
-  const handleToggleFolderItems = useCallback(async (folderId: string | null, enable: boolean) => {
-    const descendantFolderIds = new Set<string | null>([folderId]);
-    const queue = folders.filter((f) => (f.parentId ?? null) === folderId);
-    while (queue.length) {
-      const f = queue.shift()!;
-      descendantFolderIds.add(f.id);
-      folders.filter((c) => (c.parentId ?? null) === f.id).forEach((c) => queue.push(c));
+  // Clean up selectedRuleId if the rule was removed
+  useEffect(() => {
+    if (selectedRuleId && !rules.some((r) => r.id === selectedRuleId) && !isCreatingNew) {
+      setSelectedRuleId(null);
     }
-    const affected = rules.filter((r) => descendantFolderIds.has(r.folderId ?? null) && !isDraft(r.id));
-    for (const stub of affected) {
-      if (stub.enabled !== enable) await window.api.setEntityEnabled(config.activeWorkspaceId, "rules", stub.id, enable);
-    }
-    await reloadRules();
-  }, [rules, folders, isDraft, config.activeWorkspaceId, reloadRules]);
+  }, [rules, selectedRuleId, isCreatingNew]);
 
-  const handleNewRuleSave = useCallback(async (tabId: string, data: RuleSavePayload) => {
-    const created = await window.api.addRule({
-      ...data,
-      workspaceId: config.activeWorkspaceId,
-      enabled: false,
-    } as Omit<ProxyRule, "id" | "createdAt" | "workspaceId">);
-    await reloadRules();
-    replaceTab(tabId, created.id);
-  }, [rules.length, config.activeWorkspaceId, reloadRules, replaceTab]);
+  const handleToggle = useCallback(
+    async (rule: ProxyRule, enabled?: boolean) => {
+      const nextEnabled = enabled !== undefined ? enabled : !rule.enabled;
+      await window.api.setEntityEnabled(config.activeWorkspaceId, "rules", rule.id, nextEnabled);
+      await reloadRules();
+    },
+    [config.activeWorkspaceId, reloadRules]
+  );
 
-  const handleTabSave = useCallback(async (tabId: string, data: RuleSavePayload) => {
-    const stub = rules.find((r) => r.id === tabId);
-    const existing = loadedEntities[tabId] ?? (stub ? await window.api.loadEntity(config.activeWorkspaceId, "rules", tabId)
-      .then((r) => r.ok && r.entity ? r.entity as ProxyRule : null) : null);
-    if (!existing) return;
-    const updated: ProxyRule = { ...existing, ...data };
-    setLoadedEntities((prev) => ({ ...prev, [tabId]: updated }));
-    await window.api.updateRule(updated);
-    await reloadRules();
-  }, [rules, loadedEntities, config.activeWorkspaceId, setLoadedEntities, reloadRules]);
-
-  const handleDelete = useCallback(async (id: string) => {
-    await window.api.deleteRule(id);
-    await reloadRules();
-    closeTab(id);
-  }, [reloadRules, closeTab]);
-
-  const handleDuplicate = useCallback(async (id: string) => {
-    const full = loadedEntities[id] ?? await window.api.loadEntity(config.activeWorkspaceId, "rules", id)
-      .then((r) => r.ok && r.entity ? r.entity as ProxyRule : null);
-    if (!full) return;
-    const { id: _id, createdAt: _ca, workspaceId: _ws, ...rest } = full;
-    await window.api.addRule({ ...rest, name: full.name ? `${full.name}${strings.proxyRules.copySuffix}` : "", enabled: false });
-    await reloadRules();
-  }, [loadedEntities, config.activeWorkspaceId, reloadRules]);
-
-  const handleMoveItems = useCallback(async (ids: string[], folderId: string | null) => {
-    for (const id of ids) {
-      let full = loadedEntities[id] ?? await window.api.loadEntity(config.activeWorkspaceId, "rules", id)
-        .then((r) => r.ok && r.entity ? r.entity as ProxyRule : null);
-      if (!full) continue;
-      await window.api.updateRule({ ...full, folderId: folderId ?? undefined });
-    }
-    await reloadRules();
-  }, [loadedEntities, config.activeWorkspaceId, reloadRules]);
-
-  const handleFoldersChange = useCallback(async () => {
-    const fresh = await window.api.getConfig();
-    await onConfigChange(fresh);
-  }, [onConfigChange]);
-
-  // -- Label helpers ------------------------------------------------------
-
-  interface RuleDraftSnapshot { name?: string; pattern?: string; }
-
-  const tabLabel = (tabId: string) => {
-    if (isDraft(tabId)) {
-      const draft = loadDraft<RuleDraftSnapshot>(tabId);
-      if (draft?.name) return draft.name;
-      if (draft?.pattern) return draft.pattern.slice(0, 30);
-      return strings.proxyRules.newRule;
-    }
-    const r = rules.find((x) => x.id === tabId);
-    if (!r) return "…";
-    return r.name || r.pattern.slice(0, 30) || strings.proxyRules.newRule;
+  const handleOpenAdd = () => {
+    setSelectedRuleId(null);
+    setIsCreatingNew(true);
   };
 
-  // -- Folder tree items --------------------------------------------------
+  const handleSelectRule = (id: string) => {
+    setSelectedRuleId(id);
+    setIsCreatingNew(false);
+  };
 
-  const folderViewItems: FolderTreeItem[] = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (q
-      ? rules.filter((r) => r.name.toLowerCase().includes(q) || r.pattern.toLowerCase().includes(q))
-      : rules
-    ).map((r): FolderTreeItem => ({
-      id: r.id,
-      name: r.name || r.pattern.slice(0, 40) || strings.proxyRules.newRule,
-      folderId: r.folderId ?? null,
-      isActive: activeTab === r.id,
-      isEnabled: r.enabled,
-      relPath: entityRelPath("rules", r, folders),
-    }));
-  }, [rules, folders, search, activeTab]);
+  const handleCloseDetails = () => {
+    setSelectedRuleId(null);
+    setIsCreatingNew(false);
+  };
 
-  const folderStatusMap = useMemo(() => calculateFolderStatus(rules, folders), [rules, folders]);
+  const handleDelete = async (id: string) => {
+    const ok = await confirm(strings.proxyRules.deleteConfirm);
+    if (!ok) return;
+    await window.api.deleteRule(id);
+    if (selectedRuleId === id) {
+      setSelectedRuleId(null);
+      setIsCreatingNew(false);
+    }
+    await reloadRules();
+  };
 
-  const draftTabIds = openTabs.filter(isDraft);
+  const handleDuplicate = async (id: string) => {
+    const full =
+      loadedEntities[id] ??
+      (await window.api
+        .loadEntity(config.activeWorkspaceId, "rules", id)
+        .then((r) => (r.ok && r.entity ? (r.entity as ProxyRule) : null))) ??
+      rules.find((r) => r.id === id);
 
-  // -- Sidebar ------------------------------------------------------------
+    if (!full) return;
+    const { id: _id, createdAt: _ca, workspaceId: _ws, ...rest } = full;
+    const newRule = await window.api.addRule({
+      ...rest,
+      name: full.name ? `${full.name}${strings.proxyRules.copySuffix}` : "",
+      enabled: false,
+      workspaceId: config.activeWorkspaceId,
+    });
+    await reloadRules();
+    setSelectedRuleId(newRule.id);
+    setIsCreatingNew(false);
+  };
 
-  const sidebarContent = (
-    <>
-      <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.proxyRules.collapseSidebar}>
-        <SearchInput value={search} onChange={setSearch} placeholder={strings.proxyRules.searchPlaceholder} />
-      </SidebarHeader>
-      <div className="flex-1 overflow-y-auto overflow-x-auto min-w-0" style={{ display: "flex", flexDirection: "column" }}>
-        {draftTabIds.length > 0 && (
-          <DraftsFolder
-            label={strings.proxyRules.drafts}
-            draftTabIds={draftTabIds}
-            activeTab={activeTab}
-            onOpenTab={(id) => setActiveTab(id)}
-            onCloseTab={closeTab}
-            tabLabel={tabLabel}
-          />
-        )}
-        <FolderTree
-          kind="rule"
-          folders={folders}
-          items={folderViewItems}
-          folderStatusMap={folderStatusMap}
-          onOpenItem={openTab}
-          onDeleteItem={handleDelete}
-          onToggleItem={(id) => { const r = rules.find((x) => x.id === id); if (r) handleToggle(r); }}
-          onToggleFolderItems={handleToggleFolderItems}
-          onFoldersChange={handleFoldersChange}
-          onDuplicateItem={handleDuplicate}
-          onMoveItems={handleMoveItems}
-          onOpenNewTab={openNewTab}
-          onBeforeCreateFolder={() => true}
-          onHistoryItem={onHistoryOpen ? (id) => {
-            const r = rules.find((x) => x.id === id);
-            if (r) onHistoryOpen(entityRelPath("rules", r, folders));
-          } : undefined}
-          pathStatusMap={entitySyncStatus}
-          onPublishItem={onPublishItem}
-          onPublishFolder={onPublishFolder}
-          onRestoreItem={onRestoreItem}
-        />
-      </div>
-    </>
-  );
+  const handleSaveRule = async (data: RuleSavePayload) => {
+    if (isCreatingNew) {
+      const created = await window.api.addRule({
+        ...data,
+        workspaceId: config.activeWorkspaceId,
+        enabled: false,
+      } as Omit<ProxyRule, "id" | "createdAt" | "workspaceId">);
+      await reloadRules();
+      setLoadedEntities((prev) => ({ ...prev, [created.id]: created }));
+      setSelectedRuleId(created.id);
+      setIsCreatingNew(false);
+      return created;
+    } else if (selectedRuleId) {
+      const existing =
+        loadedEntities[selectedRuleId] ??
+        (await window.api
+          .loadEntity(config.activeWorkspaceId, "rules", selectedRuleId)
+          .then((r) => (r.ok && r.entity ? (r.entity as ProxyRule) : null))) ??
+        rules.find((r) => r.id === selectedRuleId);
 
-  // -- Main content -------------------------------------------------------
+      const updated: ProxyRule = {
+        ...(existing ?? {}),
+        ...data,
+        id: selectedRuleId,
+        workspaceId: config.activeWorkspaceId,
+        enabled: existing?.enabled ?? false,
+        createdAt: existing?.createdAt ?? Date.now(),
+      };
+      setLoadedEntities((prev) => ({ ...prev, [selectedRuleId]: updated }));
+      await window.api.updateRule(updated);
+      await reloadRules();
+      return updated;
+    }
+  };
 
-  const mainContent = (
-    <div className="flex flex-col flex-1 overflow-hidden min-w-0 h-full">
-      <TabBar
-        tabs={openTabs.map((id) => ({ id, label: tabLabel(id), isDraft: isDraft(id) }))}
-        activeTab={activeTab}
-        onTabClick={setActiveTab}
-        onTabClose={closeTab}
-        onNewTab={openNewTab}
-        newTabTitle={strings.proxyRules.newTab}
-        closeTabTitle={strings.proxyRules.closeTab}
-        onCloseOthers={closeOtherTabs}
-        onCloseAll={closeAllTabs}
-        onTabDuplicate={handleDuplicate}
-      />
-      <div className="flex-1 overflow-hidden relative">
-        {openTabs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-2">
-            <div className="opacity-10 mb-1"><Settings size={48} /></div>
-            <div className="text-sm font-medium text-text-base">{strings.proxyRules.noRulesOpen}</div>
-            <p className="text-xs text-text-dim max-w-xs leading-relaxed">
-              {strings.proxyRules.noRulesOpenHintPrefix} <span className="text-accent font-semibold">+</span> {strings.proxyRules.noRulesOpenHintSuffix}
-            </p>
-          </div>
-        ) : (
-          openTabs.map((tabId) => {
-            const isUnsaved = isDraft(tabId);
-            const rule = isUnsaved ? null : (loadedEntities[tabId] ?? rules.find((r) => r.id === tabId) ?? null);
-            if (!isUnsaved && !rule) return null;
-            return (
-              <div key={tabId} className="absolute inset-0 flex flex-col overflow-hidden" style={{ display: activeTab === tabId ? "flex" : "none" }}>
-                <RuleTab
-                  ref={(el: RuleTabHandle | null) => { (tabRefs as React.MutableRefObject<Record<string, RuleTabHandle | null>>).current[tabId] = el; }}
-                  tabId={tabId}
-                  draftTabId={isUnsaved ? tabId : null}
-                  initial={rule}
-                  folders={folders}
-                  config={config}
-                  onSave={(data) => isUnsaved
-                    ? handleNewRuleSave(tabId, data)
-                    : handleTabSave(tabId, data)
-                  }
-                  onClose={() => closeTab(tabId)}
-                  enabled={isUnsaved ? undefined : rules.find((r) => r.id === tabId)?.enabled}
-                  onToggleEnabled={isUnsaved ? undefined : () => { const r = rules.find((x) => x.id === tabId); if (r) handleToggle(r); }}
-                />
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
+  const getSyncStatus = useCallback((r: ProxyRule) => {
+    const relPath = entityRelPath("rules", r, folders);
+    return entitySyncStatus?.[relPath];
+  }, [entitySyncStatus, folders]);
+
+  const isDetailsOpen = isCreatingNew || !!selectedRuleId;
+
+  const activeRule: ProxyRule | null = useMemo(() => {
+    if (isCreatingNew) return null;
+    if (!selectedRuleId) return null;
+    return loadedEntities[selectedRuleId] ?? rules.find((r) => r.id === selectedRuleId) ?? null;
+  }, [isCreatingNew, selectedRuleId, loadedEntities, rules]);
+
+  const selectedRuleSyncStatus = activeRule ? getSyncStatus(activeRule) : undefined;
+  const selectedRuleRelPath = activeRule ? entityRelPath("rules", activeRule, folders) : "";
 
   return (
     <>
-      <SidebarLayout
-        sidebarOpen={sidebarOpen}
-        onToggle={() => setSidebarOpen(true)}
-        sidebar={sidebarContent}
-        collapseTitle={strings.proxyRules.collapseSidebar}
-        expandTitle={strings.proxyRules.expandSidebar}
-        storageKey="proxy-rules-panel-sidebar"
-        collapsedBadge={rules.length > 0 ? (
-          <span className="text-[9px] text-text-dim font-mono" title={strings.proxyRules.rulesCountTitle.replace("{count}", String(rules.length))}
-            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", lineHeight: 1.4 }}>{rules.length}</span>
-        ) : undefined}
-      >
-        {mainContent}
-      </SidebarLayout>
+      {ConfirmDialogElement}
+      <div className="flex flex-1 overflow-hidden h-full">
+        {/* Rules Table Area */}
+        <div className="flex flex-col flex-1 overflow-hidden min-w-0">
+          <PanelHeader
+            title={strings.proxyRules.title}
+            subtitle={strings.proxyRules.subtitle}
+            actions={
+              <Button variant="primary" onClick={handleOpenAdd}>
+                {strings.proxyRules.addRule}
+              </Button>
+            }
+          />
+
+          <div className="flex-1 overflow-y-auto p-6">
+            <ProxyRulesTable
+              rules={rules}
+              folders={folders}
+              selectedRuleId={selectedRuleId}
+              isDetailsOpen={isDetailsOpen}
+              entitySyncStatus={entitySyncStatus}
+              onSelectRule={handleSelectRule}
+              onToggleRule={handleToggle}
+              onPublishItem={onPublishItem}
+              onRestoreItem={onRestoreItem}
+              onHistoryOpen={onHistoryOpen}
+              onDuplicate={handleDuplicate}
+              onDelete={handleDelete}
+              onOpenAdd={handleOpenAdd}
+            />
+          </div>
+        </div>
+
+        {/* Right-Side Proxy Details Panel */}
+        {isDetailsOpen && (
+          <aside className="w-[500px] max-w-[50vw] min-w-[360px] border-l border-border bg-surface flex flex-col h-full flex-shrink-0 z-10 shadow-lg">
+            <ProxyRuleDetailsPanel
+              rule={activeRule}
+              isNew={isCreatingNew}
+              config={config}
+              onSave={handleSaveRule}
+              onClose={handleCloseDetails}
+              onDelete={activeRule ? () => handleDelete(activeRule.id) : undefined}
+              onDuplicate={activeRule ? () => handleDuplicate(activeRule.id) : undefined}
+              enabled={activeRule?.enabled}
+              onToggleEnabled={activeRule ? () => handleToggle(activeRule) : undefined}
+              onSync={onPublishItem && activeRule ? async () => onPublishItem(activeRule.id) : undefined}
+              onRevert={onRestoreItem && activeRule ? async () => onRestoreItem(activeRule.id) : undefined}
+              onHistory={
+                onHistoryOpen && selectedRuleRelPath
+                  ? () => onHistoryOpen(selectedRuleRelPath)
+                  : undefined
+              }
+              syncStatus={selectedRuleSyncStatus}
+            />
+          </aside>
+        )}
+      </div>
     </>
   );
 }
