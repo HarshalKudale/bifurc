@@ -131,7 +131,7 @@ export async function queryLog(opts: QueryLogOptions): Promise<{ entries: AuditE
   const g = getGit(opts.workspaceId);
 
   const args: string[] = ["log", "--format=%H%n%at%n%s%n%b%n---END---"];
-  if (opts.filePath) args.push("--", opts.filePath);
+  if (opts.filePath) args.push("--", opts.filePath.replace(/\\/g, "/"));
 
   let raw: string;
   try { raw = await g.raw(args); } catch { return { entries: [], total: 0 }; }
@@ -201,7 +201,8 @@ export async function getEntityAtCommit(
   relPath: string,       // e.g. "mocks/root/mock_abc.json"
 ): Promise<unknown | null> {
   try {
-    const content = await getGit(wsId).show(`${commitRef}:${relPath}`);
+    const normalized = relPath.replace(/\\/g, "/");
+    const content = await getGit(wsId).show(`${commitRef}:${normalized}`);
     return JSON.parse(content);
   } catch { return null; }
 }
