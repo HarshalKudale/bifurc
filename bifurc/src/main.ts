@@ -212,91 +212,101 @@ function createWindow(): void {
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 
-app.whenReady().then(async () => {
-  const hasGit = await checkGitInstalled();
-  if (!hasGit) {
-    dialog.showErrorBox(
-      "Git required",
-      "Bifurc requires Git to be installed for config versioning and sync.\n\nPlease install Git from https://git-scm.com and restart.",
-    );
-    app.quit();
-    return;
-  }
+const gotTheLock = app.requestSingleInstanceLock();
 
-  let settings = loadSettings();
-
-  // Init dirs/repos for all known workspaces first
-  for (const ws of settings.workspaces) {
-    initWorkspaceDir(ws.id, ws.name);
-    await initWorkspaceRepo(ws.id);
-    const syncCfg = getSyncConfig(ws.id);
-    if (syncCfg?.autoSync) startAutoSync(ws.id);
-  }
-
-  // Validate active workspace — fallback or create new if its dir is missing
-  const wsDirExists = (id: string) => {
-    try { return fs.statSync(wsDir(id)).isDirectory(); } catch { return false; }
-  };
-  if (!wsDirExists(settings.activeWorkspaceId)) {
-    const valid = settings.workspaces.find((w) => wsDirExists(w.id));
-    if (valid) {
-      settings.activeWorkspaceId = valid.id;
-      saveSettings(settings);
-    } else {
-      // No valid workspace on disk — create a fresh empty one
-      const id = generateId();
-      const name = "Workspace 1";
-      settings.workspaces = [{ id, name, activeEnvironmentId: null }];
-      settings.activeWorkspaceId = id;
-      saveSettings(settings);
-      initWorkspaceDir(id, name);
-      await initWorkspaceRepo(id);
-    }
-  }
-
-  const { reloadConfig } = require("@/proxy/server");
-  setAutoSyncReloadFn(reloadConfig);
-
-  registerIpcHandlers();
-
-  // First-launch IPC
-  ipcMain.handle("app:isFirstLaunch", () => {
-    const s = loadSettings();
-    return !s.hasSeenWelcome;
-  });
-  ipcMain.handle("app:completeFirstLaunch", () => {
-    const s = loadSettings();
-    saveSettings({ ...s, hasSeenWelcome: true });
-    return { ok: true };
-  });
-
-  // Handle second instance on Windows
+if (!gotTheLock) {
+  app.quit();
+} else {
   app.on("second-instance", () => {
-    if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow();
+    }
   });
 
-  createWindow();
-  createTray();
+  app.whenReady().then(async () => {
+    const hasGit = await checkGitInstalled();
+    if (!hasGit) {
+      dialog.showErrorBox(
+        "Git required",
+        "Bifurc requires Git to be installed for config versioning and sync.\n\nPlease install Git from https://git-scm.com and restart.",
+      );
+      app.quit();
+      return;
+    }
 
-  const cfg = loadConfig();
-  startServer(cfg.port);
-  startCompanionServer(cfg.companionPort ?? 9271);
-});
+    let settings = loadSettings();
 
-app.on("before-quit", () => {
-  quitting = true;
-  processSpawner.stopAll();
-  stopAllAutoSync();
-  stopCompanionServer();
-  stopServer();
-});
+    // Init dirs/repos for all known workspaces first
+    for (const ws of settings.workspaces) {
+      initWorkspaceDir(ws.id, ws.name);
+      await initWorkspaceRepo(ws.id);
+      const syncCfg = getSyncConfig(ws.id);
+      if (syncCfg?.autoSync) startAutoSync(ws.id);
+    }
 
+    // Validate active workspace — fallback or create new if its dir is missing
+    const wsDirExists = (id: string) => {
+      try { return fs.statSync(wsDir(id)).isDirectory(); } catch { return false; }
+    };
+    if (!wsDirExists(settings.activeWorkspaceId)) {
+      const valid = settings.workspaces.find((w) => wsDirExists(w.id));
+      if (valid) {
+        settings.activeWorkspaceId = valid.id;
+        saveSettings(settings);
+      } else {
+        // No valid workspace on disk — create a fresh empty one
+        const id = generateId();
+        const name = "Workspace 1";
+        settings.workspaces = [{ id, name, activeEnvironmentId: null }];
+        settings.activeWorkspaceId = id;
+        saveSettings(settings);
+        initWorkspaceDir(id, name);
+        await initWorkspaceRepo(id);
+      }
+    }
 
-app.on("window-all-closed", () => {
-  // Don't quit on window close — tray keeps app alive
-});
+    const { reloadConfig } = require("@/proxy/server");
+    setAutoSyncReloadFn(reloadConfig);
 
-app.on("activate", () => {
-  if (mainWindow === null) createWindow();
-  else { mainWindow.show(); mainWindow.focus(); }
-});
+    registerIpcHandlers();
+
+    // First-launch IPC
+    ipcMain.handle("app:isFirstLaunch", () => {
+      const s = loadSettings();
+      return !s.hasSeenWelcome;
+    });
+    ipcMain.handle("app:completeFirstLaunch", () => {
+      const s = loadSettings();
+      saveSettings({ ...s, hasSeenWelcome: true });
+      return { ok: true };
+    });
+
+    createWindow();
+    createTray();
+
+    const cfg = loadConfig();
+    startServer(cfg.port);
+    startCompanionServer(cfg.companionPort ?? 9271);
+  });
+
+  app.on("before-quit", () => {
+    quitting = true;
+    processSpawner.stopAll();
+    stopAllAutoSync();
+    stopCompanionServer();
+    stopServer();
+  });
+
+  app.on("window-all-closed", () => {
+    // Don't quit on window close — tray keeps app alive
+  });
+
+  app.on("activate", () => {
+    if (mainWindow === null) createWindow();
+    else { mainWindow.show(); mainWindow.focus(); }
+  });
+}
