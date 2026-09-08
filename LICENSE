@@ -1,14 +1,14 @@
-Local Panel Community and Commercial License
+Bifurc Community and Commercial License
 
 Copyright (c) 2024 Harshal Kudale. All rights reserved.
 
-This license applies to the Local Panel desktop application, browser extension,
+This license applies to the Bifurc desktop application, browser extension,
 website source, documentation, and associated source code in this repository,
 unless a file states otherwise.
 
 1. Definitions
 
-- "Software" means the Local Panel source code, binaries, website, extension,
+- "Software" means the Bifurc source code, binaries, website, extension,
   documentation, and derivative works of that code.
 - "Individual Use" means use by one natural person.
 - "Small Team" means an organization, studio, business, or group with no more
@@ -66,7 +66,7 @@ license from the author:
 
 Commercial and enterprise licensing inquiries:
 
-localpanel@harshalkudale.com
+bifurc@harshalkudale.com
 
 5. Forks, contributions, and pull requests
 
