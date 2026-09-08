@@ -1,6 +1,6 @@
-# Local Panel
+# Bifurc
 
-**Local Panel is a desktop API development workspace for localhost routing, capture, mocking, protocol testing, and git-backed configuration.**
+**Bifurc is a desktop API development workspace for localhost routing, capture, mocking, protocol testing, and git-backed configuration.**
 
 It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/GraphQL/SOAP/gRPC request authoring, browser-assisted workflows, TLS interception, and workspace history in one developer-focused app.
 
@@ -16,42 +16,42 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 ## Repository structure
 
 ```text
-LocalPanel/
-├── local-panel/            # Electron desktop application
-├── local-panel-extension/  # Browser companion extension
+Bifurc/
+├── bifurc/            # Electron desktop application
+├── bifurc-extension/  # Browser companion extension
 ```
 
-The published site itself is maintained in the separate `local-panel-website` repository.
+The published site itself is maintained in the separate `bifurc-website` repository.
 
 ## Documentation
 
-The documentation source now lives in the **website repository only** and is rendered from markdown files in `local-panel-website\content\docs`.
+The documentation source now lives in the **website repository only** and is rendered from markdown files in `bifurc-website\content\docs`.
 
-- Website repo: `local-panel-website\`
-- Docs source: `local-panel-website\content\docs\`
+- Website repo: `bifurc-website\`
+- Docs source: `bifurc-website\content\docs\`
 - Website routes: `/docs/*`
 
 ## Quick start
 
 ```bash
-git clone https://github.com/HarshalKudale/local-panel.git
-cd local-panel
+git clone https://github.com/HarshalKudale/bifurc.git
+cd bifurc
 npm install
-cd local-panel
+cd bifurc
 npm run dev
 ```
 
 ## Browser extension
 
-Load the `local-panel-extension/` folder unpacked in Chrome or Edge to:
+Load the `bifurc-extension/` folder unpacked in Chrome or Edge to:
 
 - toggle browser proxy routing
-- review traffic inside a Local Panel DevTools tab
+- review traffic inside a Bifurc DevTools tab
 - create saved requests and mocks from live browser traffic
 
 ## Licensing
 
-Local Panel is **free for individual developers and teams of up to 10 users**.
+Bifurc is **free for individual developers and teams of up to 10 users**.
 
 You may use it, fork it publicly, and contribute pull requests under the repository license. Commercial products, enterprise/private-fork usage, and organizations beyond the free community grant require written permission and a paid license from the author.
 

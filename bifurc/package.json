@@ -1,0 +1,119 @@
+{
+  "name": "bifurc",
+  "version": "0.3.0",
+  "description": "Local development panel - localhost domain proxy manager",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "main": "dist/main.js",
+  "author": {
+    "name": "Harshal Kudale"
+  },
+  "scripts": {
+    "build:main": "tsc && tsc-alias",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && electron-builder",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "npm run build && npx playwright test",
+    "test:e2e:headed": "npm run build && npx playwright test --headed"
+  },
+  "build": {
+    "appId": "com.hkudale.bifurc",
+    "productName": "Bifurc",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "icon.png",
+      "tray-icon.png"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+          "nsis",
+          "appx"
+        ]
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "Bifurc.Setup.${ext}"
+    },
+    "appx": {
+      "artifactName": "Bifurc.Setup.${ext}",
+      "applicationId": "Bifurc",
+      "identityName": "HarshalKudale.Bifurc",
+      "publisher": "CN=C594A390-264F-4DE0-ABF9-524B641E479D",
+      "publisherDisplayName": "Harshal Kudale",
+      "displayName": "Bifurc"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "artifactName": "Bifurc.${ext}",
+      "target": "AppImage"
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/jsdom": "^28.0.1",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/unzipper": "^0.10.11",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.5",
+    "autoprefixer": "^10.4.0",
+    "electron": "42.3.0",
+    "electron-builder": "^26.8.1",
+    "jsdom": "^29.1.1",
+    "playwright": "^1.60.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.4.0",
+    "vite": "^8.0.13",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.2",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-html": "^6.4.11",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/language": "^6.12.3",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.43.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
+    "@radix-ui/react-switch": "^1.3.7",
+    "@types/archiver": "^7.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "archiver": "^8.0.0",
+    "js-yaml": "^4.1.1",
+    "lucide-react": "^1.14.0",
+    "mkcert": "^3.2.0",
+    "react": "^18.3.0",
+    "react-complex-tree": "^2.6.1",
+    "react-dom": "^18.3.0",
+    "react-resizable-panels": "^4.11.0",
+    "simple-git": "^3.36.0",
+    "unzipper": "^0.12.3",
+    "ws": "^8.21.0"
+  }
+}
