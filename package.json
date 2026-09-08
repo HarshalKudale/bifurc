@@ -1,7 +1,7 @@
 {
-  "name": "local-panel-monorepo",
-  "version": "0.2.0",
-  "description": "LocalPanel - Localhost domain proxy manager and API development toolkit",
+  "name": "bifurc-monorepo",
+  "version": "0.3.0",
+  "description": "Bifurc - Localhost domain proxy manager and API development toolkit",
   "private": true,
   "author": {
     "name": "Harshal Kudale",
@@ -10,27 +10,27 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HarshalKudale/local-panel.git"
+    "url": "https://github.com/HarshalKudale/bifurc.git"
   },
   "scripts": {
-    "install:all": "npm install --prefix local-panel",
-    "clean:app": "cd local-panel && rimraf dist build release coverage test-results playwright-report node_modules/.vite",
-    "build:app": "cd local-panel && npm run build",
-    "dev": "cd local-panel && npm run dev",
-    "start": "cd local-panel && npm start",
+    "install:all": "npm install --prefix bifurc",
+    "clean:app": "cd bifurc && rimraf dist build release coverage test-results playwright-report node_modules/.vite",
+    "build:app": "cd bifurc && npm run build",
+    "dev": "cd bifurc && npm run dev",
+    "start": "cd bifurc && npm start",
     "test": "npm run test:app",
-    "test:app": "cd local-panel && npm test",
-    "test:watch": "cd local-panel && npm run test:watch",
-    "test:coverage": "cd local-panel && npm run test:coverage",
-    "test:e2e": "cd local-panel && npm run test:e2e",
-    "test:e2e:headed": "cd local-panel && npm run test:e2e:headed",
+    "test:app": "cd bifurc && npm test",
+    "test:watch": "cd bifurc && npm run test:watch",
+    "test:coverage": "cd bifurc && npm run test:coverage",
+    "test:e2e": "cd bifurc && npm run test:e2e",
+    "test:e2e:headed": "cd bifurc && npm run test:e2e:headed",
     "test:all": "npm run test:coverage && npm run test:e2e",
-    "package:app": "cd local-panel && npm run package",
-    "typecheck": "cd local-panel && npm run typecheck",
+    "package:app": "cd bifurc && npm run package",
+    "typecheck": "cd bifurc && npm run typecheck",
     "postinstall": "echo 'Run npm run install:all to install dependencies in all packages'"
   },
   "workspaces": [
-    "local-panel"
+    "bifurc"
   ],
   "engines": {
     "node": ">=18.0.0",

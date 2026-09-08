@@ -12,25 +12,25 @@ Safe deletions. Zero behavioral change.
 
 These 7 files are imported in `panelFactory.tsx` but **never rendered** (all routing goes through the unified `RequestsPanel` / `MocksPanel`). `LogsPanel` is not even imported anywhere.
 
-#### [DELETE] [GraphQLRequestsPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/GraphQLRequestsPanel.tsx)
-#### [DELETE] [GraphQLMocksPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/GraphQLMocksPanel.tsx)
-#### [DELETE] [GrpcRequestsPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/GrpcRequestsPanel.tsx)
-#### [DELETE] [GrpcMocksPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/GrpcMocksPanel.tsx)
-#### [DELETE] [SoapRequestsPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/SoapRequestsPanel.tsx)
-#### [DELETE] [SoapMocksPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/SoapMocksPanel.tsx)
-#### [DELETE] [LogsPanel.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/panels/LogsPanel.tsx)
+#### [DELETE] [GraphQLRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GraphQLRequestsPanel.tsx)
+#### [DELETE] [GraphQLMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GraphQLMocksPanel.tsx)
+#### [DELETE] [GrpcRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GrpcRequestsPanel.tsx)
+#### [DELETE] [GrpcMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GrpcMocksPanel.tsx)
+#### [DELETE] [SoapRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/SoapRequestsPanel.tsx)
+#### [DELETE] [SoapMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/SoapMocksPanel.tsx)
+#### [DELETE] [LogsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/LogsPanel.tsx)
 
-#### [MODIFY] [panelFactory.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/lib/panelFactory.tsx)
+#### [MODIFY] [panelFactory.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/panelFactory.tsx)
 Remove the 6 dead imports (lines 21-26).
 
 ### 1.2 Delete Dead Utility File
 
-#### [DELETE] [applicationUtils.ts](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/lib/applicationUtils.ts)
+#### [DELETE] [applicationUtils.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/applicationUtils.ts)
 Contains `RunConfigType`, `AppProcessStatus`, etc. — **zero imports** across the entire codebase.
 
 ### 1.3 Purge Dead Strings
 
-#### [MODIFY] [strings.ts](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/lib/strings.ts)
+#### [MODIFY] [strings.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/strings.ts)
 Remove the entire `applications:` section (~120 lines, ~lines 680-800) — the "Applications" panel is disabled and these strings are never referenced.
 
 ### 1.4 Remove Dead Imports & Unused Variables (per-file)
@@ -46,7 +46,7 @@ Will use TypeScript compiler (`tsc --noUnusedLocals --noUnusedParameters`) + man
 
 ### 1.5 Remove gRPC Stubs
 
-#### [MODIFY] [handlers.ts](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/src/ipc/handlers.ts)
+#### [MODIFY] [handlers.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/src/ipc/handlers.ts)
 `grpc:execute` and `grpc:reflect` (lines ~1127-1150) are error-return stubs. Remove if not planned for implementation; otherwise leave and annotate.
 
 > [!IMPORTANT]
@@ -89,7 +89,7 @@ The boilerplate of stripping `HOP_BY_HOP` headers, formatting `set-cookie`, and 
 
 ### 2.4 Extract Shared Proxy Dispatch Flow (Backend)
 
-#### [MODIFY] [server.ts](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/src/proxy/server.ts)
+#### [MODIFY] [server.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/src/proxy/server.ts)
 `dispatch()` and `dispatchHttps()` contain 100+ duplicated lines for rule matching, mock resolution, script execution, and upstream forwarding. Extract shared logic into `handleProxyRouting()`.
 
 ### 2.5 Create `useProtocolEditor` Hook (Frontend)
@@ -119,8 +119,8 @@ Create a base reducer factory that handles the common lifecycle, allowing each p
 
 ### 2.8 Consolidate Persistence Hooks
 
-#### [MODIFY] [useDraftPersist.ts](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/lib/useDraftPersist.ts)
-#### [MODIFY] [usePersistedState.ts](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/lib/usePersistedState.ts)
+#### [MODIFY] [useDraftPersist.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/useDraftPersist.ts)
+#### [MODIFY] [usePersistedState.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/usePersistedState.ts)
 These two hooks handle overlapping persistence logic. Consolidate into a single `usePersistedState` with a `draft` mode option.
 
 ### 2.9 JSON Import/Export Factory (Backend)
@@ -164,8 +164,8 @@ The layout of `SidebarLayout + FolderTree + TabBar + active-tab-wrapper` is dupl
 
 ### 3.5 Consolidate Token Hint Components
 
-#### [MODIFY] [EnvVarHint.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/components/editor/EnvVarHint.tsx)
-#### [MODIFY] [RandomizerHint.tsx](file:///i:/workspace/LocalPanel-Worskspace/LocalPanel/local-panel/renderer/components/editor/RandomizerHint.tsx)
+#### [MODIFY] [EnvVarHint.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/components/editor/EnvVarHint.tsx)
+#### [MODIFY] [RandomizerHint.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/components/editor/RandomizerHint.tsx)
 These share dropdown/token-insertion UI logic. Create a generalized `<TokenHint>` base component with type-specific renderers.
 
 ### 3.6 Move Misplaced Files
