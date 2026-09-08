@@ -1,4 +1,4 @@
-# Contributing to Local Panel
+# Contributing to Bifurc
 
 We welcome documentation fixes, bug reports, design feedback, workflow improvements, and code contributions.
 
@@ -7,7 +7,7 @@ We welcome documentation fixes, bug reports, design feedback, workflow improveme
 1. Fork the repository publicly.
 2. Read the [LICENSE](LICENSE) so you understand the contribution and usage terms.
 3. Keep your change focused.
-4. Update the website docs in `local-panel-website\content\docs` when behavior changes.
+4. Update the website docs in `bifurc-website\content\docs` when behavior changes.
 5. Run the relevant existing tests for the area you changed.
 
 ## Contribution scope
@@ -41,10 +41,10 @@ By submitting a contribution, you confirm that:
 
 - you have the right to contribute the code or content;
 - the contribution may be used, modified, and distributed by the project
-  maintainer under the Local Panel repository license; and
+  maintainer under the Bifurc repository license; and
 - your contribution does not grant you any additional commercial rights beyond
   the repository license.
 
 ## Need help?
 
-Open an issue or contact **localpanel@harshalkudale.com**.
+Open an issue or contact **bifurc@harshalkudale.com**.

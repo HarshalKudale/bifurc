@@ -14,24 +14,24 @@ out/
 *.deb
 *.rpm
 
-# ===== local-panel (Electron) =====
-local-panel/coverage/
-local-panel/test-results/
-local-panel/playwright-report/
-local-panel/userData/
-local-panel/*.asar
-local-panel/.vite/
+# ===== Bifurc app (Electron) =====
+bifurc/coverage/
+bifurc/test-results/
+bifurc/playwright-report/
+bifurc/userData/
+bifurc/*.asar
+bifurc/.vite/
 
-# ===== local-panel-website (Next.js) =====
-local-panel-website/.next/
-local-panel-website/*.tsbuildinfo
-local-panel-website/next-env.d.ts
-local-panel-website/.vercel
+# ===== bifurc-website (Next.js) =====
+bifurc-website/.next/
+bifurc-website/*.tsbuildinfo
+bifurc-website/next-env.d.ts
+bifurc-website/.vercel
 
-# ===== local-panel-extension (Browser Extension) =====
-local-panel-extension/dist/
-local-panel-extension/*.zip
-local-panel-extension/node_modules/
+# ===== Bifurc extension (Browser Extension) =====
+bifurc-extension/dist/
+bifurc-extension/*.zip
+bifurc-extension/node_modules/
 
 # ===== Test Coverage & Reports =====
 coverage/
@@ -101,7 +101,7 @@ ehthumbs_vista.db
 !ca.pem
 
 # ===== Runtime Data =====
-local-panel/userData/
+bifurc/userData/
 *.asar.unpacked/
 
 # ===== Package Manager =====

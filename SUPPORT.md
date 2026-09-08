@@ -1,6 +1,6 @@
-# Support Local Panel
+# Support Bifurc
 
-Local Panel is maintained by [Harshal Kudale](https://github.com/HarshalKudale).
+Bifurc is maintained by [Harshal Kudale](https://github.com/HarshalKudale).
 
 ## Community support
 
@@ -13,7 +13,7 @@ You can support the project by:
 
 ## Commercial and enterprise support
 
-Local Panel is free for individual developers and teams of up to 10 users.
+Bifurc is free for individual developers and teams of up to 10 users.
 
 If you need:
 
@@ -23,4 +23,4 @@ If you need:
 - larger-team licensing
 - direct commercial distribution rights
 
-contact the author at **localpanel@harshalkudale.com**.
+contact the author at **bifurc@harshalkudale.com**.
