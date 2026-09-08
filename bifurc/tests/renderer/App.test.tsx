@@ -111,14 +111,14 @@ describe("App TOS gate", () => {
   it("blocks the app until the terms are accepted", () => {
     render(<App />);
 
-    expect(screen.getByText("Accept Terms to continue")).toBeInTheDocument();
+    expect(screen.getByText("Review and accept the terms")).toBeInTheDocument();
     expect(screen.queryByTestId("title-bar")).not.toBeInTheDocument();
   });
 
   it("persists acceptance and unlocks the app shell", () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "I accept" }));
+    fireEvent.click(screen.getByRole("button", { name: /accept and continue/i }));
 
     expect(screen.getByTestId("title-bar")).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem("app:tos-accepted") ?? "false")).toBe(true);
