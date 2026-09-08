@@ -1,4 +1,10 @@
 # Bifurc
+[![Website](https://img.shields.io/badge/Website-Bifurc-4F46E5?logo=googlechrome&logoColor=white)](https://bifurc.harshalkudale.com/)
+[![Tests](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml/badge.svg)](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml)
+[![Latest Release](https://img.shields.io/github/v/release/HarshalKudale/bifurc?display_name=tag&sort=semver)](https://github.com/HarshalKudale/bifurc/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/HarshalKudale/bifurc/total)](https://github.com/HarshalKudale/bifurc/releases)
+[![License](https://img.shields.io/github/license/HarshalKudale/bifurc)](https://github.com/HarshalKudale/bifurc/blob/master/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/HarshalKudale/bifurc?style=flat)](https://github.com/HarshalKudale/bifurc/stargazers)
 
 **Bifurc is a desktop API development workspace for localhost routing, capture, mocking, protocol testing, and git-backed configuration.**
 
