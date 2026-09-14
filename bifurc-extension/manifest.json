@@ -6,7 +6,8 @@
     "permissions": [
         "proxy",
         "storage",
-        "contextMenus"
+        "contextMenus",
+        "webRequest"
     ],
     "host_permissions": [
         "<all_urls>"

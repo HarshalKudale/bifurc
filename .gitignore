@@ -5,7 +5,6 @@ node_modules/
 
 # ===== Build Outputs =====
 dist/
-build/
 release/
 out/
 *.app
