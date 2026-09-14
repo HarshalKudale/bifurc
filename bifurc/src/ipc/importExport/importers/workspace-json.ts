@@ -64,6 +64,7 @@ export async function run(
     cfg.proxyRules     = [...cfg.proxyRules,     ...remap<ProxyRule>(d.proxyRules)];
     cfg.mocks          = [...cfg.mocks,          ...remap<MockRule>(d.mocks)];
     cfg.mockFolders    = [...cfg.mockFolders,    ...remap<Folder>(d.mockFolders)];
+    cfg.ruleFolders    = [...cfg.ruleFolders,    ...remap<Folder>(d.ruleFolders ?? [])];
     cfg.requestFolders = [...cfg.requestFolders, ...remap<Folder>(d.requestFolders)];
     cfg.wsFolders      = [...cfg.wsFolders,      ...remap<Folder>(d.wsFolders)];
     cfg.webhookFolders = [...cfg.webhookFolders, ...remap<Folder>(d.webhookFolders ?? [])];
@@ -80,6 +81,7 @@ export async function run(
     const reqFolderMap = new Map(remap<Folder>(d.requestFolders).map((f) => [f.id, f.name]));
     const wsFolderMap  = new Map(remap<Folder>(d.wsFolders).map((f) => [f.id, f.name]));
     const hookFolderMap = new Map(remap<Folder>(d.webhookFolders ?? []).map((f) => [f.id, f.name]));
+    const ruleFolderMap = new Map(remap<Folder>(d.ruleFolders ?? []).map((f) => [f.id, f.name]));
 
     for (const r of remap<SavedRequest>(d.requests ?? [])) {
       writeEntity(newWsId, "requests", r.id, r, r.folderId ? (reqFolderMap.get(r.folderId) ?? null) : null);
@@ -93,12 +95,34 @@ export async function run(
       writeEntity(newWsId, "webhooks", h.id, h, h.folderId ? (hookFolderMap.get(h.folderId) ?? null) : null);
       upsertNameEntry(newWsId, "webhooks", h.id, { name: h.name, urlSuffix: h.urlSuffix });
     }
-    // Persist mocks and mappings/rules enabled state
+    // Proxy rules need an EXPLICIT write: `saveConfig()` deliberately skips rule
+    // files (it only ever holds the UI stubs), so without this loop every rule in
+    // the snapshot would be dropped on disk and the imported workspace would proxy
+    // nothing.
+    for (const r of remap<ProxyRule>(d.proxyRules ?? [])) {
+      writeEntity(newWsId, "rules", r.id, r, r.folderId ? (ruleFolderMap.get(r.folderId) ?? null) : null);
+      const set = readEnabledSet(newWsId, "rules") ?? bootstrapEnabledSet(newWsId, "rules");
+      if (r.enabled) set.add(r.id); else set.delete(r.id);
+      writeEnabledSet(newWsId, "rules", set);
+      upsertNameEntry(newWsId, "rules", r.id, { name: r.name, url: r.pattern });
+    }
+    // Persist mocks and mappings/rules enabled state.
+    //
+    // Each loop needs BOTH branches: `enabled.json` does not exist yet for a brand
+    // new workspace, so `readEnabledSet` returns null and `bootstrapEnabledSet`
+    // treats a missing `enabled` flag as ENABLED (entity files strip the flag). A
+    // mock the user had deliberately disabled would therefore come back enabled and
+    // start serving traffic again. The explicit `delete` is what prevents that.
     for (const m of remap<MockRule>(d.mocks ?? [])) {
       const set = readEnabledSet(newWsId, "mocks") ?? bootstrapEnabledSet(newWsId, "mocks");
-      if (m.enabled) set.add(m.id);
+      if (m.enabled) set.add(m.id); else set.delete(m.id);
       writeEnabledSet(newWsId, "mocks", set);
       upsertNameEntry(newWsId, "mocks", m.id, { name: m.name, method: m.method, url: m.urlPattern });
+    }
+    for (const m of remap<LocalMapping>(d.mappings ?? [])) {
+      const set = readEnabledSet(newWsId, "mappings") ?? bootstrapEnabledSet(newWsId, "mappings");
+      if (m.enabled) set.add(m.id); else set.delete(m.id);
+      writeEnabledSet(newWsId, "mappings", set);
     }
 
     reloadConfig();

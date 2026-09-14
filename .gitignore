@@ -15,6 +15,9 @@ out/
 
 # ===== Bifurc app (Electron) =====
 bifurc/coverage/
+# Alternate report dirs used when the environment blocks Vitest's bulk delete of
+# `coverage/` (see TESTING.md §1). Safe to ignore.
+bifurc/coverage-*/
 bifurc/test-results/
 bifurc/playwright-report/
 bifurc/userData/

@@ -1,92 +1,84 @@
 import { test, expect } from "./fixtures/electronApp";
+import { openPanel, uniqueName, pause } from "./helpers";
 
-test.describe("Mappings / Services Panel", () => {
-    test("displays empty state when no mappings exist", async ({ page }) => {
-        // Navigate to mappings
-        const nav = page.locator("text=Mappings, text=Services, [data-testid='nav-mappings']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
-        }
-        // Should show empty state or list
-        const body = await page.textContent("body");
-        expect(body).toBeTruthy();
+/**
+ * Mappings panel — real CRUD assertions.
+ *
+ * These replace an earlier version where every step was wrapped in
+ * `if (await locator.isVisible())`. That pattern meant the test passed even when the
+ * panel, the Add button, or the Save button did not exist at all.
+ */
+test.describe("Mappings panel", () => {
+    test.beforeEach(async ({ page }) => {
+        await openPanel(page, "Mappings");
     });
 
-    test("can open add mapping form", async ({ page }) => {
-        const nav = page.locator("text=Mappings, text=Services, [data-testid='nav-mappings']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
-        }
-        // Click add button
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-            // Form or modal should appear
-            const form = page.locator("input, [data-testid='mapping-form']").first();
-            await expect(form).toBeVisible({ timeout: 3000 });
-        }
+    test("renders the panel with its add control and seeded mappings", async ({ page }) => {
+        await expect(page.getByRole("button", { name: /\+ Add Mapping/i }).first()).toBeVisible();
+        // The e2e fixture seeds api.localhost / docs.localhost / admin.localhost.
+        await expect(page.locator("tr:has-text('api.localhost')").first()).toBeVisible();
     });
 
-    test("can create a new mapping with domain and target", async ({ page }) => {
-        const nav = page.locator("text=Mappings, text=Services, [data-testid='nav-mappings']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
-        }
+    test("creates a mapping and shows it in the list", async ({ page }) => {
+        const label = uniqueName("Mapping");
+        const domain = `e2e-${Date.now().toString(36)}`;
 
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
+        try {
+            await page.getByRole("button", { name: /\+ Add Mapping/i }).first().click();
+            await page.getByPlaceholder("example or client.example").fill(domain);
+            await page.getByPlaceholder("127.0.0.1:3000").fill("127.0.0.1:3010");
+            await page.getByPlaceholder("My App").fill(label);
+            await page.getByRole("button", { name: /^Save$/i }).last().click();
 
-            // Fill domain field
-            const domainInput = page.locator("input[placeholder*='domain'], input[name='domain'], [data-testid='domain-input']").first();
-            if (await domainInput.isVisible()) {
-                await domainInput.fill("myapp.localhost");
-            }
-
-            // Fill target field
-            const targetInput = page.locator("input[placeholder*='target'], input[name='target'], input[placeholder*='http'], [data-testid='target-input']").first();
-            if (await targetInput.isVisible()) {
-                await targetInput.fill("http://127.0.0.1:3000");
-            }
-
-            // Save
-            const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-            if (await saveBtn.isVisible()) {
-                await saveBtn.click();
-                await page.waitForTimeout(500);
-                // Verify it appears in the list
-                const body = await page.textContent("body");
-                expect(body).toContain("myapp.localhost");
-            }
+            await expect(page.locator(`tr:has-text("${domain}.localhost")`).first()).toBeVisible();
+        } finally {
+            await page.evaluate(async (d) => {
+                const cfg = await window.api.getConfig();
+                for (const m of cfg.mappings.filter((x) => x.domain === `${d}.localhost`)) {
+                    await window.api.deleteMapping(m.id);
+                }
+            }, domain);
         }
     });
 
-    test("mapping without domain shows validation feedback", async ({ page }) => {
-        const nav = page.locator("text=Mappings, text=Services, [data-testid='nav-mappings']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
-        }
+    test("edits an existing mapping and persists the new label", async ({ page }) => {
+        const label = uniqueName("Mapping");
+        const updated = `${label} Updated`;
+        const domain = `e2e-${Date.now().toString(36)}`;
 
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
+        try {
+            await page.getByRole("button", { name: /\+ Add Mapping/i }).first().click();
+            await page.getByPlaceholder("example or client.example").fill(domain);
+            await page.getByPlaceholder("127.0.0.1:3000").fill("127.0.0.1:3011");
+            await page.getByPlaceholder("My App").fill(label);
+            await page.getByRole("button", { name: /^Save$/i }).last().click();
+            await expect(page.locator(`tr:has-text("${domain}.localhost")`).first()).toBeVisible();
 
-            // Try to save without filling fields
-            const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-            if (await saveBtn.isVisible()) {
-                await saveBtn.click();
-                await page.waitForTimeout(300);
-                // Should still be on the form (not navigated away)
-                const form = page.locator("input").first();
-                await expect(form).toBeVisible();
-            }
+            const row = page.locator(`tr:has-text("${domain}.localhost")`).first();
+            await row.getByRole("button", { name: /Edit/i }).click();
+            await pause(page, 300);
+            await page.getByPlaceholder("My App").fill(updated);
+            await page.getByRole("button", { name: /^Save$/i }).last().click();
+
+            await expect(page.locator(`tr:has-text("${updated}")`).first()).toBeVisible();
+        } finally {
+            await page.evaluate(async (d) => {
+                const cfg = await window.api.getConfig();
+                for (const m of cfg.mappings.filter((x) => x.domain === `${d}.localhost`)) {
+                    await window.api.deleteMapping(m.id);
+                }
+            }, domain);
         }
+    });
+
+    test("does not create a mapping when the domain is missing", async ({ page }) => {
+        await page.getByRole("button", { name: /\+ Add Mapping/i }).first().click();
+        // Leave the required domain field empty and try to save.
+        await page.getByPlaceholder("My App").fill(uniqueName("Invalid"));
+        await page.getByRole("button", { name: /^Save$/i }).last().click();
+        await pause(page, 400);
+
+        // The dialog must stay open (nothing saved, no row added).
+        await expect(page.getByPlaceholder("example or client.example")).toBeVisible();
     });
 });

@@ -1,12 +1,61 @@
 import type { ElectronApplication, Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 
 /**
- * Helper to call IPC handlers from tests (seed data, trigger actions).
- * Uses electronApp.evaluate() to invoke ipcMain handlers directly.
+ * Shared E2E helpers.
+ *
+ * IMPORTANT: these helpers assert. The previous generation of specs wrapped every
+ * step in `if (await locator.isVisible())`, which meant a renamed button or a broken
+ * panel produced a *green* test. A test that cannot fail is worse than no test, so
+ * every helper here fails loudly when the UI it depends on is missing.
+ */
+
+/** Escape a string for safe use inside a RegExp. */
+export function escapeRegex(input: string): string {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A unique, run-scoped name so tests never collide with seeded sample data. */
+export function uniqueName(prefix: string): string {
+    return `E2E ${prefix} ${Date.now().toString(36)}`;
+}
+
+export async function pause(page: Page, ms = 400): Promise<void> {
+    await page.waitForTimeout(ms);
+}
+
+/**
+ * Open a left-sidebar panel by its visible label and wait for the transition.
+ * Fails if the panel entry point does not exist.
+ */
+export async function openPanel(page: Page, label: string): Promise<void> {
+    const button = page.getByRole("button", { name: new RegExp(`^${escapeRegex(label)}$`, "i") }).first();
+    await expect(button).toBeVisible({ timeout: 15_000 });
+    await button.click();
+    await pause(page, 700);
+}
+
+/**
+ * Assert that a panel finished rendering by waiting for a stable anchor element
+ * that only exists inside that panel.
+ */
+export async function expectPanelAnchor(page: Page, name: string | RegExp): Promise<void> {
+    await expect(page.getByRole("button", { name }).first()).toBeVisible({ timeout: 10_000 });
+}
+
+/** Wait for the app shell to be interactive. */
+export async function waitForAppReady(page: Page): Promise<void> {
+    await page.waitForLoadState("domcontentloaded");
+    await pause(page, 1500);
+    await expect(page.locator("body")).toContainText(/\S/, { timeout: 15_000 });
+}
+
+/**
+ * Call an IPC handler from the renderer. Useful for deterministic cleanup and for
+ * seeding state that is awkward to drive through the UI.
  */
 export async function ipcInvoke(app: ElectronApplication, channel: string, ...args: any[]): Promise<any> {
     return app.evaluate(async ({ ipcMain }, { channel, args }) => {
-        // Access the registered handler via electron internals
         const event = { sender: { send: () => { } } } as any;
         const handler = (ipcMain as any)._invokeHandlers?.get(channel);
         if (handler) return handler(event, ...args);
@@ -15,55 +64,54 @@ export async function ipcInvoke(app: ElectronApplication, channel: string, ...ar
 }
 
 /**
- * Navigate to a specific panel in the sidebar.
+ * Navigate to a specific panel by its data-testid (`nav-<id>`).
+ * Prefer `openPanel` — the sidebar exposes accessible names for every entry.
  */
 export async function navigateTo(page: Page, panelId: string): Promise<void> {
     await page.click(`[data-testid="nav-${panelId}"]`);
-    await page.waitForTimeout(300); // Brief wait for panel transition
+    await pause(page, 300);
 }
 
-/**
- * Wait for the app to finish initial loading.
- */
-export async function waitForAppReady(page: Page): Promise<void> {
-    // Wait for the main layout to appear
-    await page.waitForSelector("[data-testid='app-layout']", { timeout: 15_000 });
-}
-
-/**
- * Get all visible items in a list panel.
- */
+/** Get all visible items in a list panel. */
 export async function getListItems(page: Page, listSelector: string): Promise<string[]> {
     return page.$$eval(`${listSelector} [data-testid="list-item"]`, (items) =>
-        items.map((el) => el.textContent?.trim() ?? "")
+        items.map((el) => el.textContent?.trim() ?? ""),
     );
 }
 
-/**
- * Click the "Add" / "+" button in a panel.
- */
-export async function clickAddButton(page: Page): Promise<void> {
-    await page.click("[data-testid='add-button']");
+/** Click a button by its accessible name. Fails if it is not present. */
+export async function clickButton(page: Page, name: string | RegExp): Promise<void> {
+    const button = page.getByRole("button", { name }).first();
+    await expect(button).toBeVisible({ timeout: 10_000 });
+    await button.click();
 }
 
-/**
- * Fill a form field by its label.
- */
-export async function fillField(page: Page, label: string, value: string): Promise<void> {
-    const input = page.locator(`label:has-text("${label}") + input, label:has-text("${label}") input, [aria-label="${label}"]`).first();
-    await input.fill(value);
-}
-
-/**
- * Click a button by its text content.
- */
-export async function clickButton(page: Page, text: string): Promise<void> {
-    await page.click(`button:has-text("${text}")`);
-}
-
-/**
- * Verify a toast/notification message appears.
- */
+/** Verify a toast/notification message appears. */
 export async function expectToast(page: Page, message: string): Promise<void> {
     await page.waitForSelector(`text=${message}`, { timeout: 5_000 });
+}
+
+/** Pick a protocol in the new-tab / new-mock chooser (e.g. "REST Mock"). */
+export async function chooseProtocol(page: Page, label: RegExp): Promise<void> {
+    await page.getByRole("button", { name: label }).click();
+    await pause(page, 700);
+}
+
+/**
+ * Type into the last visible CodeMirror editor. The protocol editors render several
+ * editors per tab, so we walk backwards and use the first one that is visible.
+ */
+export async function fillVisibleCodeEditor(page: Page, value: string): Promise<void> {
+    const editors = page.locator(".cm-content[contenteditable='true']");
+    const count = await editors.count();
+    for (let i = count - 1; i >= 0; i--) {
+        const editor = editors.nth(i);
+        if (await editor.isVisible().catch(() => false)) {
+            await editor.click();
+            await page.keyboard.press("ControlOrMeta+A");
+            await page.keyboard.type(value);
+            return;
+        }
+    }
+    throw new Error("No visible editable code editor found");
 }

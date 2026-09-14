@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "./fixtures/electronApp";
+import { test, expect } from "./fixtures/electronApp";
+import type { Page } from "@playwright/test";
 
 test.setTimeout(180_000);
 
@@ -77,7 +78,7 @@ async function expectRow(page: Page, text: string): Promise<void> {
 }
 
 async function cleanupCreatedEntities(page: Page, names: Record<string, string>): Promise<void> {
-    await page.evaluate(async (created) => {
+    await page.evaluate(async (created: Record<string, string>) => {
         const cfg = await window.api.getConfig();
 
         for (const mapping of cfg.mappings.filter((m) => (m.label ?? "") === created.mapping || m.domain === created.mappingDomain)) {

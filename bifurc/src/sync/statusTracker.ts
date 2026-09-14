@@ -16,8 +16,12 @@ function isEntityPath(p: string): boolean {
 /**
  * Git uses C-string quoting (wraps in double-quotes, escapes with backslash) for paths that
  * contain spaces, non-ASCII chars, etc.  Strip it so paths match what we compute in the renderer.
+ *
+ * Exported because any code that parses non-`-z` porcelain output hits the same problem:
+ * a path like `mocks/Solo Folder/sf-1.json` arrives as `"mocks/Solo Folder/sf-1.json"`, and
+ * comparing it against an unquoted path silently never matches.
  */
-function unquoteGitPath(p: string): string {
+export function unquoteGitPath(p: string): string {
   if (p.startsWith('"') && p.endsWith('"')) {
     // Unescape standard C escape sequences git uses: \t \n \\ \"  and \NNN (octal)
     return p.slice(1, -1).replace(/\\(["\\tnr]|[0-7]{1,3})/g, (_, esc: string) => {
