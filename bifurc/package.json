@@ -1,6 +1,6 @@
 {
   "name": "bifurc",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local development panel - localhost domain proxy manager",
   "license": "SEE LICENSE IN ../LICENSE",
   "main": "dist/main.js",
@@ -24,28 +24,32 @@
   "build": {
     "appId": "com.hkudale.bifurc",
     "productName": "Bifurc",
+
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+
     "files": [
       "dist/**/*",
-      "package.json",
-      "icon.png",
-      "tray-icon.png"
+      "package.json"
     ],
+
     "win": {
-      "icon": "icon.ico",
+      "icon": "build/icon",
       "target": [
-          "nsis",
-          "appx"
-        ]
+        "nsis",
+        "appx"
+      ]
     },
+
     "nsis": {
-      "installerIcon": "icon.ico",
-      "uninstallerIcon": "icon.ico",
-      "installerHeaderIcon": "icon.ico",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "artifactName": "Bifurc.Setup.${ext}"
     },
+
     "appx": {
       "artifactName": "Bifurc.Setup.${ext}",
       "applicationId": "Bifurc",
@@ -53,14 +57,6 @@
       "publisher": "CN=C594A390-264F-4DE0-ABF9-524B641E479D",
       "publisherDisplayName": "Harshal Kudale",
       "displayName": "Bifurc"
-    },
-    "mac": {
-      "target": "dmg"
-    },
-    "linux": {
-      "icon": "icon.png",
-      "artifactName": "Bifurc.${ext}",
-      "target": "AppImage"
     }
   },
   "devDependencies": {
