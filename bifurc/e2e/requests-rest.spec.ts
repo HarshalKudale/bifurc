@@ -1,89 +1,74 @@
 import { test, expect } from "./fixtures/electronApp";
+import { openPanel, chooseProtocol, uniqueName, pause } from "./helpers";
 
-test.describe("REST Requests Panel", () => {
+/**
+ * REST Requests panel.
+ *
+ * Replaces a version whose every assertion was guarded by `if (await locator.isVisible())`
+ * — it asserted `expect(body).toBeTruthy()` and nothing else, so it never caught a
+ * regression. These tests save a request and assert the saved entity is persisted.
+ */
+test.describe("REST Requests panel", () => {
     test.beforeEach(async ({ page }) => {
-        const nav = page.locator("text=Requests, [data-testid='nav-requests']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
-        }
+        await openPanel(page, "Requests");
     });
 
-    test("displays empty state when no saved requests exist", async ({ page }) => {
-        const body = await page.textContent("body");
-        expect(body).toBeTruthy();
+    test("renders the panel with its new-request control", async ({ page }) => {
+        await expect(page.getByRole("button", { name: /^New Request$/i }).first()).toBeVisible();
     });
 
-    test("can open new request tab", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('New'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-            // Should show URL input field
-            const urlInput = page.locator("input[placeholder*='url'], input[placeholder*='http'], [data-testid='url-input']").first();
-            await expect(urlInput).toBeVisible({ timeout: 3000 });
-        }
-    });
+    test("creates a REST request and shows it in the list", async ({ page }) => {
+        const name = uniqueName("REST Request");
 
-    test("can enter URL and method for a GET request", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('New'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
+        try {
+            await page.getByRole("button", { name: /^New Request$/i }).first().click();
+            await pause(page, 300);
+            await chooseProtocol(page, /REST Request/i);
 
-            // Enter URL
-            const urlInput = page.locator("input[placeholder*='url'], input[placeholder*='http'], [data-testid='url-input']").first();
-            if (await urlInput.isVisible()) {
-                await urlInput.fill("http://localhost:3000/api/users");
-                const value = await urlInput.inputValue();
-                expect(value).toBe("http://localhost:3000/api/users");
-            }
-        }
-    });
+            await page.getByPlaceholder("Request name (optional)").fill(name);
+            await page
+                .getByPlaceholder("https://example.localhost/endpoint")
+                .fill("https://example.localhost/api/e2e-request");
+            await page.getByRole("button", { name: /Save Request/i }).click();
 
-    test("can switch HTTP method to POST", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('New'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-
-            const methodSelect = page.locator("select[name='method'], [data-testid='method-select'], button:has-text('GET')").first();
-            if (await methodSelect.isVisible()) {
-                if (await methodSelect.evaluate((el) => el.tagName === "SELECT")) {
-                    await methodSelect.selectOption("POST");
-                } else {
-                    // It's a button/dropdown
-                    await methodSelect.click();
-                    await page.waitForTimeout(200);
-                    const postOption = page.locator("text=POST").first();
-                    if (await postOption.isVisible()) {
-                        await postOption.click();
-                    }
+            await expect(page.locator("body")).toContainText(name);
+        } finally {
+            await page.evaluate(async (n) => {
+                const cfg = await window.api.getConfig();
+                for (const r of (cfg.requests ?? []).filter((x) => x.name === n)) {
+                    await window.api.deleteRequest(r.id);
                 }
-            }
+            }, name);
         }
     });
 
-    test("shows body editor when method is POST", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('New'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
+    test("updates a saved REST request", async ({ page }) => {
+        const name = uniqueName("REST Request");
+        const updated = `${name} Updated`;
 
-            // Switch to POST
-            const methodSelect = page.locator("select[name='method'], [data-testid='method-select']").first();
-            if (await methodSelect.isVisible()) {
-                await methodSelect.selectOption("POST");
-                await page.waitForTimeout(200);
-                // Body tab/editor should be available
-                const bodyTab = page.locator("text=Body, [data-testid='body-tab']").first();
-                if (await bodyTab.isVisible()) {
-                    await bodyTab.click();
-                    await page.waitForTimeout(200);
-                    const editor = page.locator("textarea, .cm-editor, [data-testid='body-editor']").first();
-                    await expect(editor).toBeVisible({ timeout: 3000 });
+        try {
+            await page.getByRole("button", { name: /^New Request$/i }).first().click();
+            await pause(page, 300);
+            await chooseProtocol(page, /REST Request/i);
+
+            await page.getByPlaceholder("Request name (optional)").fill(name);
+            await page
+                .getByPlaceholder("https://example.localhost/endpoint")
+                .fill("https://example.localhost/api/e2e-request-update");
+            await page.getByRole("button", { name: /Save Request/i }).click();
+            await expect(page.locator("body")).toContainText(name);
+
+            await page.getByPlaceholder("Request name (optional)").fill(updated);
+            await page.getByRole("button", { name: /Update Request/i }).click();
+
+            await expect(page.locator("body")).toContainText(updated);
+        } finally {
+            await page.evaluate(async ({ n, u }) => {
+                const cfg = await window.api.getConfig();
+                for (const r of (cfg.requests ?? []).filter((x) => x.name === n || x.name === u)) {
+                    await window.api.deleteRequest(r.id);
                 }
-            }
+            }, { n: name, u: updated });
         }
     });
 });

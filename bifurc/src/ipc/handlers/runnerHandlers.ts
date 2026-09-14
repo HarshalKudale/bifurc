@@ -108,13 +108,14 @@ export function registerRunnerHandlers() {
 function generateRunnerHtml(report: any): string {
   const duration = ((report.completedAt - report.startedAt) / 1000).toFixed(2);
   const timestamp = new Date(report.startedAt).toISOString();
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const esc = (s: unknown) =>
+    String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Run Report - \${esc(report.folderName)}</title>
+<title>Run Report - ${esc(report.folderName)}</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 24px; }
@@ -139,28 +140,28 @@ body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; 
 </head>
 <body>
 <div class="header">
-<h1>Collection Run: \${esc(report.folderName)}</h1>
-<div class="meta">\${timestamp} &bull; Duration: \${duration}s</div>
+<h1>Collection Run: ${esc(report.folderName)}</h1>
+<div class="meta">${timestamp} &bull; Duration: ${duration}s</div>
 </div>
 <div class="summary">
-<div class="stat"><div class="value">\${report.totalRequests}</div><div class="label">Requests</div></div>
-<div class="stat"><div class="value passed">\${report.passedTests}</div><div class="label">Passed</div></div>
-<div class="stat"><div class="value failed">\${report.failedTests}</div><div class="label">Failed</div></div>
-<div class="stat"><div class="value">\${duration}s</div><div class="label">Duration</div></div>
+<div class="stat"><div class="value">${report.totalRequests}</div><div class="label">Requests</div></div>
+<div class="stat"><div class="value passed">${report.passedTests}</div><div class="label">Passed</div></div>
+<div class="stat"><div class="value failed">${report.failedTests}</div><div class="label">Failed</div></div>
+<div class="stat"><div class="value">${duration}s</div><div class="label">Duration</div></div>
 </div>
-\${(report.results ?? []).map((r: any, i: number) => \`
+${(report.results ?? []).map((r: any) => `
 <div class="request">
 <div class="req-header">
-<span class="method">\${r.method}</span>
-<span class="name">\${esc(r.requestName)}</span>
-\${r.status != null ? \`<span class="status">\${r.status}</span>\` : ""}
-<span class="time">\${r.responseTime}ms</span>
+<span class="method">${esc(r.method)}</span>
+<span class="name">${esc(r.requestName)}</span>
+${r.status != null ? `<span class="status">${r.status}</span>` : ""}
+<span class="time">${r.responseTime}ms</span>
 </div>
-\${(r.tests?.length || r.error) ? \`<div class="tests">
-\${r.error ? \`<div class="test-item failed">✗ Error: \${esc(r.error)}</div>\` : ""}
-\${(r.tests ?? []).map((t: any) => \`<div class="test-item \${t.passed ? "passed" : "failed"}">\${t.passed ? "✓" : "✗"} \${esc(t.name)}\${t.error ? \` — \${esc(t.error)}\` : ""}</div>\`).join("")}
-</div>\` : ""}
-</div>\`).join("")}
+${(r.tests?.length || r.error) ? `<div class="tests">
+${r.error ? `<div class="test-item failed">✗ Error: ${esc(r.error)}</div>` : ""}
+${(r.tests ?? []).map((t: any) => `<div class="test-item ${t.passed ? "passed" : "failed"}">${t.passed ? "✓" : "✗"} ${esc(t.name)}${t.error ? ` — ${esc(t.error)}` : ""}</div>`).join("")}
+</div>` : ""}
+</div>`).join("")}
 </body>
 </html>`;
 }

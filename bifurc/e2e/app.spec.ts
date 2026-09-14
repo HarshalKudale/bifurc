@@ -1,7 +1,8 @@
 import { test, expect } from "./fixtures/electronApp";
+import { openPanel } from "./helpers";
 
 test.describe("Application Launch", () => {
-    test("window opens with correct title", async ({ page, electronApp }) => {
+    test("window opens with correct title", async ({ page }) => {
         const title = await page.title();
         expect(title).toContain("Bifurc");
     });
@@ -13,8 +14,8 @@ test.describe("Application Launch", () => {
     });
 
     test("window has minimum dimensions", async ({ electronApp }) => {
-        const window = await electronApp.firstWindow();
-        const { width, height } = await window.evaluate(() => ({
+        const win = await electronApp.firstWindow();
+        const { width, height } = await win.evaluate(() => ({
             width: window.innerWidth,
             height: window.innerHeight,
         }));
@@ -24,45 +25,36 @@ test.describe("Application Launch", () => {
 });
 
 test.describe("Navigation", () => {
+    /**
+     * These tests used to be wrapped in `if (await nav.isVisible())`, so a missing or
+     * renamed panel produced a passing test. Each one now asserts on a control that
+     * only exists inside the target panel.
+     */
     test("can navigate to mappings panel", async ({ page }) => {
-        const mappingsNav = page.locator("text=Mappings, text=Services, [data-testid='nav-mappings']").first();
-        if (await mappingsNav.isVisible()) {
-            await mappingsNav.click();
-            await page.waitForTimeout(500);
-            // Panel should be visible
-            const content = await page.textContent("body");
-            expect(content).toBeTruthy();
-        }
+        await openPanel(page, "Mappings");
+        await expect(page.getByRole("button", { name: /\+ Add Mapping/i }).first()).toBeVisible();
     });
 
     test("can navigate to mocks panel", async ({ page }) => {
-        const mocksNav = page.locator("text=Mocks, [data-testid='nav-mocks']").first();
-        if (await mocksNav.isVisible()) {
-            await mocksNav.click();
-            await page.waitForTimeout(500);
-            const content = await page.textContent("body");
-            expect(content).toBeTruthy();
-        }
+        await openPanel(page, "Mocks");
+        await expect(page.getByRole("button", { name: /^New Mock$/i }).first()).toBeVisible();
     });
 
     test("can navigate to requests panel", async ({ page }) => {
-        const reqNav = page.locator("text=Requests, [data-testid='nav-requests']").first();
-        if (await reqNav.isVisible()) {
-            await reqNav.click();
-            await page.waitForTimeout(500);
-            const content = await page.textContent("body");
-            expect(content).toBeTruthy();
-        }
+        await openPanel(page, "Requests");
+        await expect(page.getByRole("button", { name: /^New Request$/i }).first()).toBeVisible();
     });
 
-    test("can navigate to environments panel", async ({ page }) => {
-        const envNav = page.locator("text=Environments, text=Env, [data-testid='nav-environments']").first();
-        if (await envNav.isVisible()) {
-            await envNav.click();
-            await page.waitForTimeout(500);
-            const content = await page.textContent("body");
-            expect(content).toBeTruthy();
-        }
+    test("can navigate to proxy rules panel", async ({ page }) => {
+        await openPanel(page, "Proxy Rules");
+        await expect(page.getByRole("button", { name: /Add Rule/i }).first()).toBeVisible();
+    });
+
+    test("can open the environments manager", async ({ page }) => {
+        await page.getByRole("button", { name: /^Manage Environments/i }).first().click();
+        await expect(page.getByRole("button", { name: /New Environment/i }).first()).toBeVisible({
+            timeout: 10_000,
+        });
     });
 
     test("common tab keybinds work on tabbed panels", async ({ page }) => {

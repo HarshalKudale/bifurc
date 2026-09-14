@@ -251,7 +251,8 @@
 
         thead tr {
             background: var(--bg-t);
-            border-bottom: 1px solid var(--border)
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, .22)
         }
 
         th {
@@ -466,7 +467,8 @@
             background: transparent;
             cursor: pointer;
             color: var(--dim);
-            white-space: nowrap
+            white-space: nowrap;
+            transition: background .12s ease, border-color .12s ease, color .12s ease
         }
 
         .ab:hover {
@@ -565,14 +567,18 @@
             color: var(--accent)
         }
 
-        display: none;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        padding: 60px 24px;
-        color: var(--dim);
-        text-align: center
+        /* #tw is position:relative — the empty state covers the whole panel */
+        #empty {
+            position: absolute;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 24px;
+            color: var(--dim);
+            text-align: center
         }
 
         #empty.show {
@@ -611,20 +617,30 @@
             position: fixed;
             bottom: 28px;
             right: 10px;
-            padding: 5px 12px;
+            max-width: 340px;
+            padding: 7px 13px;
             background: var(--bg-t);
             border: 1px solid var(--green);
-            border-radius: 3px;
+            border-radius: 5px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
             font-size: 11px;
+            line-height: 1.4;
             color: var(--green);
             opacity: 0;
-            transition: opacity .2s;
+            transform: translateY(6px);
+            transition: opacity .18s ease, transform .18s ease;
             pointer-events: none;
             z-index: 100
         }
 
         #toast.show {
-            opacity: 1
+            opacity: 1;
+            transform: translateY(0)
+        }
+
+        #toast.error {
+            border-color: var(--red);
+            color: var(--red)
         }
     </style>
 </head>

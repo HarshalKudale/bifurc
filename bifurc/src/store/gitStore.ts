@@ -49,6 +49,12 @@ export async function initWorkspaceRepo(wsId: string): Promise<void> {
     // .gitignore was written by initWorkspaceDir()
     if (fs.existsSync(path.join(dir, ".gitignore"))) {
       await g.add(".gitignore");
+      // Commit the workspace identity file too. `setRemote()` reads workspace.json out of a
+      // fresh clone to adopt the remote workspace's id and name — if it is never committed,
+      // that adoption can never fire and a cloned workspace is left without an identity file.
+      if (fs.existsSync(path.join(dir, "workspace.json"))) {
+        await g.add("workspace.json");
+      }
       await g.commit("chore: init workspace repo");
     }
     _gitCache.set(wsId, g);
@@ -131,7 +137,7 @@ export async function queryLog(opts: QueryLogOptions): Promise<{ entries: AuditE
   const g = getGit(opts.workspaceId);
 
   const args: string[] = ["log", "--format=%H%n%at%n%s%n%b%n---END---"];
-  if (opts.filePath) args.push("--", opts.filePath);
+  if (opts.filePath) args.push("--", opts.filePath.replace(/\\/g, "/"));
 
   let raw: string;
   try { raw = await g.raw(args); } catch { return { entries: [], total: 0 }; }
@@ -201,7 +207,8 @@ export async function getEntityAtCommit(
   relPath: string,       // e.g. "mocks/root/mock_abc.json"
 ): Promise<unknown | null> {
   try {
-    const content = await getGit(wsId).show(`${commitRef}:${relPath}`);
+    const normalized = relPath.replace(/\\/g, "/");
+    const content = await getGit(wsId).show(`${commitRef}:${normalized}`);
     return JSON.parse(content);
   } catch { return null; }
 }
@@ -209,7 +216,10 @@ export async function getEntityAtCommit(
 /** Return the list of files changed by a given commit (paths relative to workspace root). */
 export async function getCommitChangedFiles(commitRef: string, wsId: string): Promise<string[]> {
   try {
-    const raw = await getGit(wsId).raw(["diff-tree", "--no-commit-id", "-r", "--name-only", commitRef]);
+    // `--root` is required so the FIRST commit of a workspace also reports its files;
+    // without it `diff-tree` prints nothing for a root commit and the Audit Log's
+    // diff view would render empty for that entry.
+    const raw = await getGit(wsId).raw(["diff-tree", "--root", "--no-commit-id", "-r", "--name-only", commitRef]);
     return raw.split("\n").map((l) => l.trim()).filter(Boolean);
   } catch { return []; }
 }
