@@ -140,7 +140,7 @@ export function registerSystemHandlers() {
           if (Array.isArray(tags) && tags.length > 0) {
             tagName = tags[0].name || "";
             releaseName = tagName;
-            htmlUrl = `https://github.com/HarshalKudale/bifurc/releases/tag/\${tagName}`;
+            htmlUrl = `https://github.com/HarshalKudale/bifurc/releases/tag/${tagName}`;
             downloadUrl = htmlUrl;
           }
         }

@@ -1,4 +1,4 @@
-import type { AppConfig, SyncState, SyncStatus } from "./config";
+import type { AppConfig, SyncState, SyncStatus, Workspace } from "./config";
 import type {
   Environment,
   Folder,
@@ -16,8 +16,7 @@ import type {
   SavedSoapRequest,
   SavedWebhook,
   SavedWsConnection,
-  SavedWsdl,
-  Workspace
+  SavedWsdl
 } from "./entities";
 
 export interface ServiceInfo {

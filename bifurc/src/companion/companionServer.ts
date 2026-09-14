@@ -50,19 +50,28 @@ let currentPort: number = 9271;
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function broadcastEntityStatus(wsId: string): void {
-    const windows = BrowserWindow.getAllWindows();
-    const status = getWorkspaceSyncStatus(wsId);
-    // Serialize the status to plain object to avoid "Failed to serialize arguments" error
-    const serializedStatus = JSON.parse(JSON.stringify(status));
-    for (const w of windows) {
-        if (!w.isDestroyed()) {
-            try {
-                w.webContents.send("sync:entityStatus", { wsId, status: serializedStatus });
-            } catch (err) {
-                console.error('[companion] Failed to broadcast entity status:', err);
+    // `getWorkspaceSyncStatus()` is async. Serializing the *Promise* (rather than its
+    // resolved value) yields `{}`, so the renderer was always told "nothing is dirty"
+    // and an entity added from the browser extension never showed its unsaved-changes
+    // dot. Stay non-blocking — the WebSocket reply must not wait on a git call — but
+    // send the resolved map.
+    void getWorkspaceSyncStatus(wsId)
+        .then((status) => {
+            // Serialize the status to plain object to avoid "Failed to serialize arguments" error
+            const serializedStatus = JSON.parse(JSON.stringify(status));
+            for (const w of BrowserWindow.getAllWindows()) {
+                if (!w.isDestroyed()) {
+                    try {
+                        w.webContents.send("sync:entityStatus", { wsId, status: serializedStatus });
+                    } catch (err) {
+                        console.error('[companion] Failed to broadcast entity status:', err);
+                    }
+                }
             }
-        }
-    }
+        })
+        .catch((err) => {
+            console.error('[companion] Failed to compute entity status:', err);
+        });
 }
 
 function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean): void {

@@ -4,16 +4,19 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "types": ["node", "@playwright/test"],
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["./renderer/*"]
+    }
   },
-  "include": [
-    "**/*.ts"
-  ]
+  "include": ["**/*.ts", "../renderer/types/window.ts"]
 }
