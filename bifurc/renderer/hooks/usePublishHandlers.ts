@@ -22,13 +22,15 @@ export function usePublishHandlers({
   wsId,
   refreshConfig,
   refreshEntitySyncStatus,
-  panel
+  panel,
+  onAfterPublish,
 }: {
   wsConfig: AppConfig;
   wsId: string;
   refreshConfig: () => Promise<void>;
   refreshEntitySyncStatus: (id: string) => void;
   panel: string;
+  onAfterPublish?: () => void;
 }) {
   const makePublishItem = useCallback((kind: string, folders: Folder[]) =>
     async (id: string) => {
@@ -43,8 +45,9 @@ export function usePublishHandlers({
       await window.api.publishEntity(wsId, [relPath]);
       await refreshConfig();
       refreshEntitySyncStatus(wsId);
+      onAfterPublish?.();
     },
-    [wsConfig, wsId, refreshEntitySyncStatus, refreshConfig]
+    [wsConfig, wsId, refreshEntitySyncStatus, refreshConfig, onAfterPublish]
   );
 
   const makePublishFolder = useCallback((kind: "requests" | "mocks" | "sockets" | "webhooks" | "rules", folders: Folder[]) =>
@@ -52,8 +55,9 @@ export function usePublishHandlers({
       await window.api.publishFolder(wsId, kind, folderId ? folders.find((f) => f.id === folderId)?.name ?? null : null);
       await refreshConfig();
       refreshEntitySyncStatus(wsId);
+      onAfterPublish?.();
     },
-    [wsId, refreshEntitySyncStatus, refreshConfig]
+    [wsId, refreshEntitySyncStatus, refreshConfig, onAfterPublish]
   );
 
   const makeFlatPublish = useCallback((kind: "mappings") =>
@@ -61,8 +65,9 @@ export function usePublishHandlers({
       const relPath = flatEntityRelPath(kind, id);
       await window.api.publishEntity(wsId, [relPath]);
       refreshEntitySyncStatus(wsId);
+      onAfterPublish?.();
     },
-    [wsId, refreshEntitySyncStatus]
+    [wsId, refreshEntitySyncStatus, onAfterPublish]
   );
 
   const makeFlatRevert = useCallback((kind: "mappings") =>
@@ -71,14 +76,16 @@ export function usePublishHandlers({
       await window.api.gitDiscard(wsId, relPath);
       await refreshConfig();
       refreshEntitySyncStatus(wsId);
+      onAfterPublish?.();
     },
-    [wsId, refreshEntitySyncStatus, refreshConfig]
+    [wsId, refreshEntitySyncStatus, refreshConfig, onAfterPublish]
   );
 
   const handlePublishHealthBar = useCallback(async () => {
     await window.api.publishEntity(wsId, ["healthbar/services.json"]);
     refreshEntitySyncStatus(wsId);
-  }, [wsId, refreshEntitySyncStatus]);
+    onAfterPublish?.();
+  }, [wsId, refreshEntitySyncStatus, onAfterPublish]);
 
   const makeRestoreItem = useCallback((kind: string, folders: Folder[]) =>
     async (id: string) => {
@@ -93,8 +100,9 @@ export function usePublishHandlers({
       await window.api.gitDiscard(wsId, relPath);
       await refreshConfig();
       refreshEntitySyncStatus(wsId);
+      onAfterPublish?.();
     },
-    [wsConfig, wsId, refreshEntitySyncStatus, refreshConfig]
+    [wsConfig, wsId, refreshEntitySyncStatus, refreshConfig, onAfterPublish]
   );
 
   const PANEL_PUBLISH_KIND: Partial<Record<string, string>> = {
@@ -120,7 +128,8 @@ export function usePublishHandlers({
     }
     await refreshConfig();
     refreshEntitySyncStatus(wsId);
-  }, [panel, wsId, refreshConfig, refreshEntitySyncStatus]);
+    onAfterPublish?.();
+  }, [panel, wsId, refreshConfig, refreshEntitySyncStatus, onAfterPublish]);
 
   return {
     makePublishItem,

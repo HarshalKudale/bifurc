@@ -82,7 +82,6 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
     }
     
     saveConfig(cfg);
-    reloadConfig();
 
     if (opts.isFlat) {
       writeFlatEntity(wsId, opts.kind, newEntity.id, newEntity);
@@ -103,6 +102,12 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
       upsertNameEntry(wsId, opts.kind, newEntity.id, opts.getNameEntry(newEntity));
     }
 
+    // Reload LAST. `reloadConfig()` snapshots the enabled-sets from `enabled.json`, so
+    // running it before `syncEnabledSet()` left the running proxy with a stale set —
+    // `workspaceCfg()` then filtered the brand-new entity out of routing, and it only
+    // started working after some unrelated action happened to reload the config.
+    reloadConfig();
+
     broadcastEntityStatus(wsId);
     
     if (["mock", "request"].includes(opts.ipcPrefix ?? "")) {
@@ -121,7 +126,6 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
     if (idx !== -1) cfg[opts.configKey][idx] = entity;
     
     saveConfig(cfg);
-    reloadConfig();
 
     if (opts.isFlat) {
       writeFlatEntity(wsId, opts.kind, entity.id, entity);
@@ -137,6 +141,10 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
     if (opts.getNameEntry) {
       upsertNameEntry(wsId, opts.kind, entity.id, opts.getNameEntry(entity));
     }
+
+    // Reload LAST so the running proxy picks up the edited entity (see the note in the
+    // add handler).
+    reloadConfig();
 
     broadcastEntityStatus(wsId);
     return { ok: true };
@@ -157,7 +165,6 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
       }
 
       saveConfig(cfg);
-      reloadConfig();
 
       if (opts.isFlat) {
         deleteFlatEntityFile(wsId, opts.kind, id);
@@ -178,6 +185,11 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
       if (opts.hasEnabledState) {
         syncEnabledSet(wsId, opts.kind, id, false);
       }
+
+      // Reload LAST: `saveConfig()` does not unlink files for entities removed from the
+      // config, so reloading before the file was deleted (and before the enabled-set was
+      // updated) kept the deleted entity live in the proxy's routing tables.
+      reloadConfig();
 
       invalidateCache(wsId);
       broadcastEntityStatus(wsId);
