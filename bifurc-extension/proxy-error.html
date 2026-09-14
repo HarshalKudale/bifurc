@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Bifurc — proxy unavailable</title>
+    <style>
+        /* Same palette as the popup — dark base, green accent. */
+        :root {
+            --bg: #1a1a1a;
+            --panel: #202020;
+            --panel-2: #252525;
+            --line: #2c2c2c;
+            --line-2: #3a3a3a;
+            --text: #e0e0e0;
+            --text-2: #c8c8c8;
+            --text-3: #8f8f8f;
+            --text-4: #6e6e6e;
+            --accent: #4ade80;
+            --accent-soft: rgba(74, 222, 128, .13);
+            --accent-line: rgba(74, 222, 128, .3);
+            --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+            --ease: cubic-bezier(.4, 0, .2, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            min-height: 100%;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 13px;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 20px;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 520px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 28px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+        }
+
+        .icon {
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 11px;
+            background: var(--accent-soft);
+            border: 1px solid var(--accent-line);
+            color: var(--accent);
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: -.015em;
+            margin-bottom: 10px;
+        }
+
+        .lead {
+            font-size: 13px;
+            color: var(--text-3);
+            margin-bottom: 10px;
+        }
+
+        .lead strong {
+            color: var(--text-2);
+            font-weight: 600;
+        }
+
+        code {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--accent);
+            background: var(--panel-2);
+            border: 1px solid var(--line-2);
+            border-radius: 4px;
+            padding: 1px 5px;
+        }
+
+        .details {
+            margin: 18px 0 22px;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            overflow: hidden;
+        }
+
+        .drow {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            padding: 9px 12px;
+        }
+
+        .drow+.drow {
+            border-top: 1px solid var(--line);
+        }
+
+        .drow .k {
+            flex: none;
+            width: 78px;
+            font-size: 10px;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            color: var(--text-4);
+        }
+
+        .drow .v {
+            flex: 1;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--text-2);
+            word-break: break-all;
+        }
+
+        .drow .v code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: var(--text-2);
+        }
+
+        .conn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .conn .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--text-4);
+        }
+
+        .conn.on .dot {
+            background: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 9px;
+        }
+
+        .btn {
+            height: 36px;
+            padding: 0 16px;
+            border-radius: 8px;
+            border: 1px solid var(--line-2);
+            background: transparent;
+            color: var(--text-2);
+            font: 500 13px/1 inherit;
+            cursor: pointer;
+            transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease), transform .1s var(--ease);
+        }
+
+        .btn:hover:not(:disabled) {
+            border-color: var(--text-4);
+            color: var(--text);
+            background: rgba(255, 255, 255, .05);
+        }
+
+        .btn:active:not(:disabled) {
+            transform: scale(.98);
+        }
+
+        .btn:disabled {
+            opacity: .5;
+            cursor: default;
+        }
+
+        .btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #0f2a19;
+            font-weight: 600;
+        }
+
+        .btn.primary:hover:not(:disabled) {
+            background: #5ee88d;
+            border-color: #5ee88d;
+            color: #0f2a19;
+        }
+
+        .foot {
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 1px solid var(--line);
+            font-size: 11px;
+            line-height: 1.55;
+            color: var(--text-4);
+        }
+
+        .status {
+            margin-top: 12px;
+            font-size: 11.5px;
+            color: var(--accent);
+            min-height: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+        </div>
+
+        <h1>Can't reach the Bifurc proxy</h1>
+
+        <p class="lead">
+            Bifurc is sending this request through its local proxy, but nothing answered at
+            <code id="proxyAddr">127.0.0.1:&hellip;</code>.
+        </p>
+        <p class="lead" id="lead">
+            The companion app is connected, so the <strong>proxy server inside it is probably
+                turned off</strong>. Turn the proxy server on in the companion app, then try again
+            &mdash; or switch off proxy mode below to browse directly.
+        </p>
+
+        <div class="details">
+            <div class="drow">
+                <span class="k">Requested</span>
+                <span class="v"><code id="failedUrl">&mdash;</code></span>
+            </div>
+            <div class="drow">
+                <span class="k">Proxy</span>
+                <span class="v"><code id="proxyAddrRow">&mdash;</code></span>
+            </div>
+            <div class="drow">
+                <span class="k">Companion</span>
+                <span class="v"><span class="conn" id="conn"><span class="dot"></span><span
+                            id="connText">Checking&hellip;</span></span></span>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button class="btn primary" id="retryBtn">Try again</button>
+            <button class="btn" id="disableBtn">Turn off proxy mode</button>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <p class="foot">
+            Turning off proxy mode leaves the companion connection alone, so the DevTools panel keeps
+            working. You can re-enable it from the Bifurc toolbar icon once the proxy server is running.
+        </p>
+    </div>
+
+    <script src="proxy-error.js"></script>
+</body>
+
+</html>
