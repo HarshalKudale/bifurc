@@ -35,6 +35,11 @@
       "package.json"
     ],
 
+    "extraResources": [
+      { "from": "build/tray-icon.png", "to": "tray-icon.png" },
+      { "from": "build/icon.png", "to": "icon.png" }
+    ],
+
     "win": {
       "icon": "build/icon",
       "target": [
