@@ -55,6 +55,19 @@ Load the `bifurc-extension/` folder unpacked in Chrome or Edge to:
 - review traffic inside a Bifurc DevTools tab
 - create saved requests and mocks from live browser traffic
 
+## Testing
+
+```bash
+npm test                  # unit + integration (Vitest)
+npm run test:unit         # fast loop
+npm run test:integration  # real proxy/mapping/rule/mock routing over real sockets
+npm run test:coverage     # with coverage + thresholds
+npm run test:e2e          # Playwright against the real Electron app
+```
+
+See [TESTING.md](TESTING.md) for the testing guide, the coverage report, and the list of known
+gaps.
+
 ## Licensing
 
 Bifurc is **free for individual developers and teams of up to 10 users**.

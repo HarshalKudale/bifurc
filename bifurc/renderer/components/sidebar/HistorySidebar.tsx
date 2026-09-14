@@ -38,8 +38,6 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Record<string, { before: unknown | null; after: unknown | null }>>({});
   const [diffLoading, setDiffLoading] = useState<string | null>(null);
-  const prevPathRef = useRef<string>("");
-
   const load = useCallback(async (fp: string, wsId: string) => {
     if (!fp) return;
     setLoading(true);
@@ -57,22 +55,15 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
     }
   }, []);
 
+  // Load whenever sidebar is open and filePath/workspaceId changes, or when sidebar opens
   useEffect(() => {
-    if (filePath !== prevPathRef.current) {
-      prevPathRef.current = filePath;
-      load(filePath, workspaceId);
-    }
-  }, [filePath, workspaceId, load]);
-
-  // Initial load
-  useEffect(() => {
+    if (!open || !filePath) return;
     load(filePath, workspaceId);
-    prevPathRef.current = filePath;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, filePath, workspaceId, load]);
 
-  // Reload when reloadKey increments (e.g. after a save)
+  // Reload when reloadKey increments (e.g. after a save or sync)
   useEffect(() => {
-    if (reloadKey === undefined || reloadKey === 0) return;
+    if (!open || !filePath || reloadKey === undefined || reloadKey === 0) return;
     load(filePath, workspaceId);
   }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 

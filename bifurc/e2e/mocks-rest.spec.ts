@@ -1,89 +1,79 @@
 import { test, expect } from "./fixtures/electronApp";
+import { openPanel, chooseProtocol, fillVisibleCodeEditor, uniqueName, pause } from "./helpers";
 
-test.describe("Mocks Panel - REST", () => {
+/**
+ * Mocks panel — REST mocks.
+ *
+ * The earlier version of this file only asserted `expect(body).toBeTruthy()` and
+ * wrapped every interaction in `if (await locator.isVisible())`, so it could not fail.
+ * These tests drive the real create/save flow and assert on the saved entity.
+ */
+test.describe("Mocks panel — REST", () => {
     test.beforeEach(async ({ page }) => {
-        const nav = page.locator("text=Mocks, [data-testid='nav-mocks']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
+        await openPanel(page, "Mocks");
+    });
+
+    test("renders the panel with its new-mock control and seeded mocks", async ({ page }) => {
+        await expect(page.getByRole("button", { name: /^New Mock$/i }).first()).toBeVisible();
+        // The e2e fixture seeds a "GET Users List" REST mock.
+        await expect(page.locator("body")).toContainText("GET Users List");
+    });
+
+    test("creates a REST mock with a body and status", async ({ page }) => {
+        const name = uniqueName("REST Mock");
+
+        try {
+            await page.getByRole("button", { name: /^New Mock$/i }).first().click();
+            await pause(page, 300);
+            await chooseProtocol(page, /REST Mock/i);
+
+            await page.getByPlaceholder("Mock name (optional)").fill(name);
+            await page
+                .locator("input[placeholder='http://example.localhost/endpoint']")
+                .last()
+                .fill("http://example.localhost/api/e2e-mock");
+            await fillVisibleCodeEditor(page, '{"status":"ok"}');
+            await page.getByRole("button", { name: /Save Mock/i }).click();
+
+            await expect(page.locator("body")).toContainText(name);
+        } finally {
+            await page.evaluate(async (n) => {
+                const cfg = await window.api.getConfig();
+                for (const m of (cfg.mocks ?? []).filter((x) => x.name === n)) {
+                    await window.api.deleteMock(m.id);
+                }
+            }, name);
         }
     });
 
-    test("displays empty state when no mocks exist", async ({ page }) => {
-        const body = await page.textContent("body");
-        expect(body).toBeTruthy();
-    });
+    test("updates an existing REST mock", async ({ page }) => {
+        const name = uniqueName("REST Mock");
+        const updated = `${name} Updated`;
 
-    test("can open add mock form", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-            const form = page.locator("input, select, [data-testid='mock-form']").first();
-            await expect(form).toBeVisible({ timeout: 3000 });
-        }
-    });
+        try {
+            await page.getByRole("button", { name: /^New Mock$/i }).first().click();
+            await pause(page, 300);
+            await chooseProtocol(page, /REST Mock/i);
 
-    test("can create a GET mock with status 200", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
+            await page.getByPlaceholder("Mock name (optional)").fill(name);
+            await page
+                .locator("input[placeholder='http://example.localhost/endpoint']")
+                .last()
+                .fill("http://example.localhost/api/e2e-mock-update");
+            await page.getByRole("button", { name: /Save Mock/i }).click();
+            await expect(page.locator("body")).toContainText(name);
 
-            // Fill URL pattern
-            const urlInput = page.locator("input[placeholder*='url'], input[placeholder*='pattern'], input[name='urlPattern'], [data-testid='url-pattern-input']").first();
-            if (await urlInput.isVisible()) {
-                await urlInput.fill("/api/health");
-            }
+            await page.getByPlaceholder("Mock name (optional)").fill(updated);
+            await page.getByRole("button", { name: /Update Mock/i }).click();
 
-            // Fill response body
-            const bodyEditor = page.locator("textarea, [data-testid='response-body'], .cm-editor").first();
-            if (await bodyEditor.isVisible()) {
-                await bodyEditor.click();
-                await page.keyboard.type('{"status":"ok"}');
-            }
-
-            // Save
-            const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-            if (await saveBtn.isVisible()) {
-                await saveBtn.click();
-                await page.waitForTimeout(500);
-                const body = await page.textContent("body");
-                expect(body).toContain("/api/health");
-            }
-        }
-    });
-
-    test("can create a POST mock with error response", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-
-            // Select POST method
-            const methodSelect = page.locator("select[name='method'], [data-testid='method-select']").first();
-            if (await methodSelect.isVisible()) {
-                await methodSelect.selectOption("POST");
-            }
-
-            // Fill URL pattern
-            const urlInput = page.locator("input[placeholder*='url'], input[placeholder*='pattern'], input[name='urlPattern']").first();
-            if (await urlInput.isVisible()) {
-                await urlInput.fill("/api/users");
-            }
-
-            // Set status to 422
-            const statusInput = page.locator("input[name='status'], input[placeholder*='status'], [data-testid='status-input']").first();
-            if (await statusInput.isVisible()) {
-                await statusInput.fill("422");
-            }
-
-            // Save
-            const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-            if (await saveBtn.isVisible()) {
-                await saveBtn.click();
-                await page.waitForTimeout(500);
-            }
+            await expect(page.locator("body")).toContainText(updated);
+        } finally {
+            await page.evaluate(async ({ n, u }) => {
+                const cfg = await window.api.getConfig();
+                for (const m of (cfg.mocks ?? []).filter((x) => x.name === n || x.name === u)) {
+                    await window.api.deleteMock(m.id);
+                }
+            }, { n: name, u: updated });
         }
     });
 });

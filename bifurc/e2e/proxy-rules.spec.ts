@@ -1,100 +1,78 @@
 import { test, expect } from "./fixtures/electronApp";
+import { openPanel, uniqueName } from "./helpers";
 
-test.describe("Proxy Rules Panel", () => {
+/**
+ * Proxy Rules panel — real CRUD assertions.
+ *
+ * Previously these tests were guarded by `if (await locator.isVisible())` and could
+ * therefore pass with the panel completely broken.
+ */
+test.describe("Proxy Rules panel", () => {
     test.beforeEach(async ({ page }) => {
-        const nav = page.locator("text=Rules, text=Proxy, [data-testid='nav-rules']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
+        await openPanel(page, "Proxy Rules");
+    });
+
+    test("renders the panel with its add control and seeded rules", async ({ page }) => {
+        await expect(page.getByRole("button", { name: /Add Rule/i }).first()).toBeVisible();
+        // The e2e fixture seeds a "Block Analytics" rule.
+        await expect(page.locator("body")).toContainText("Block Analytics");
+    });
+
+    test("creates a rule that routes to an external host", async ({ page }) => {
+        const name = uniqueName("Rule");
+
+        try {
+            await page.getByRole("button", { name: /Add Rule/i }).first().click();
+            await page.getByPlaceholder("Rule name (optional)").fill(name);
+            await page.getByPlaceholder("^https?://api\\.example\\.com/.*").fill("https://api.example.com/v1/e2e");
+            await page.getByRole("radio", { name: /External Host/i }).click();
+            await page.getByPlaceholder("api.example.com:8080 or 127.0.0.1:3000").fill("127.0.0.1:3010");
+            await page.getByRole("button", { name: /Save Rule/i }).click();
+
+            await expect(page.locator(`tr:has-text("${name}")`).first()).toBeVisible();
+        } finally {
+            await page.evaluate(async (n) => {
+                const cfg = await window.api.getConfig();
+                for (const r of (cfg.proxyRules ?? []).filter((x) => x.name === n)) {
+                    await window.api.deleteRule(r.id);
+                }
+            }, name);
         }
     });
 
-    test("displays empty state when no rules exist", async ({ page }) => {
-        const body = await page.textContent("body");
-        expect(body).toBeTruthy();
-    });
+    test("updates an existing rule name", async ({ page }) => {
+        const name = uniqueName("Rule");
+        const updated = `${name} Updated`;
 
-    test("can open add rule form", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-            const form = page.locator("input, select, [data-testid='rule-form']").first();
-            await expect(form).toBeVisible({ timeout: 3000 });
+        try {
+            await page.getByRole("button", { name: /Add Rule/i }).first().click();
+            await page.getByPlaceholder("Rule name (optional)").fill(name);
+            await page.getByPlaceholder("^https?://api\\.example\\.com/.*").fill("https://api.example.com/v1/update-e2e");
+            await page.getByRole("radio", { name: /External Host/i }).click();
+            await page.getByPlaceholder("api.example.com:8080 or 127.0.0.1:3000").fill("127.0.0.1:3010");
+            await page.getByRole("button", { name: /Save Rule/i }).click();
+            await expect(page.locator(`tr:has-text("${name}")`).first()).toBeVisible();
+
+            await page.getByPlaceholder("Rule name (optional)").fill(updated);
+            await page.getByRole("button", { name: /Update Rule/i }).click();
+
+            await expect(page.locator(`tr:has-text("${updated}")`).first()).toBeVisible();
+        } finally {
+            await page.evaluate(async ({ n, u }) => {
+                const cfg = await window.api.getConfig();
+                for (const r of (cfg.proxyRules ?? []).filter((x) => x.name === n || x.name === u)) {
+                    await window.api.deleteRule(r.id);
+                }
+            }, { n: name, u: updated });
         }
     });
 
-    test("can create a block rule with regex pattern", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
+    test("does not save a rule when the pattern is missing", async ({ page }) => {
+        await page.getByRole("button", { name: /Add Rule/i }).first().click();
+        await page.getByPlaceholder("Rule name (optional)").fill(uniqueName("NoPattern"));
+        await page.getByRole("button", { name: /Save Rule/i }).click();
 
-            // Fill rule name
-            const nameInput = page.locator("input[name='name'], input[placeholder*='name'], [data-testid='rule-name-input']").first();
-            if (await nameInput.isVisible()) {
-                await nameInput.fill("Block Tracking");
-            }
-
-            // Set URL pattern
-            const patternInput = page.locator("input[name='urlPattern'], input[placeholder*='pattern'], input[placeholder*='url'], [data-testid='url-pattern-input']").first();
-            if (await patternInput.isVisible()) {
-                await patternInput.fill(".*tracking\\.js$");
-            }
-
-            // Enable regex
-            const regexToggle = page.locator("input[name='useRegex'], [data-testid='regex-toggle'], label:has-text('Regex')").first();
-            if (await regexToggle.isVisible()) {
-                await regexToggle.click();
-            }
-
-            // Save
-            const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-            if (await saveBtn.isVisible()) {
-                await saveBtn.click();
-                await page.waitForTimeout(500);
-                const body = await page.textContent("body");
-                expect(body).toContain("Block Tracking");
-            }
-        }
-    });
-
-    test("can create a redirect rule", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-
-            // Fill rule name
-            const nameInput = page.locator("input[name='name'], input[placeholder*='name']").first();
-            if (await nameInput.isVisible()) {
-                await nameInput.fill("Redirect API v1");
-            }
-
-            // Select redirect type
-            const typeSelect = page.locator("select[name='type'], [data-testid='rule-type-select']").first();
-            if (await typeSelect.isVisible()) {
-                await typeSelect.selectOption("redirect");
-            }
-
-            // Set URL pattern
-            const patternInput = page.locator("input[name='urlPattern'], input[placeholder*='pattern']").first();
-            if (await patternInput.isVisible()) {
-                await patternInput.fill("/api/v1/");
-            }
-
-            // Set target
-            const targetInput = page.locator("input[name='targetUrl'], input[placeholder*='target'], [data-testid='target-url-input']").first();
-            if (await targetInput.isVisible()) {
-                await targetInput.fill("/api/v2/");
-            }
-
-            // Save
-            const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-            if (await saveBtn.isVisible()) {
-                await saveBtn.click();
-                await page.waitForTimeout(500);
-            }
-        }
+        // Still on the rule editor with the pattern field present — nothing was saved.
+        await expect(page.getByPlaceholder("^https?://api\\.example\\.com/.*")).toBeVisible();
     });
 });

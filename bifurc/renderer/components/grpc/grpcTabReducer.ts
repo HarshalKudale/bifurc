@@ -178,7 +178,25 @@ const baseGrpcTabReducer = (state: GrpcTabState, action: GrpcAction): GrpcTabSta
     }
 };
 
-export const grpcTabReducer = createTabReducer<GrpcTabState, GrpcAction, any, any>({}, baseGrpcTabReducer);
+export const grpcTabReducer = createTabReducer<GrpcTabState, GrpcAction, any, any>(
+    {
+        // gRPC has two different state factories, so the shared LOAD_ENTITY / LOAD_DRAFT /
+        // REFRESH handling in createTabReducer has to be told which one to use. Without this
+        // `init`, `REFRESH` (dispatched when the user discards changes) was a no-op and the
+        // editor kept showing the discarded edits. Mirrors `initState` in GrpcTab.tsx.
+        init: (entity: any, draft: any, tabType: any) => {
+            if (draft) {
+                return tabType === "request"
+                    ? { ...initGrpcRequestState(), ...(draft as GrpcRequestDraft) }
+                    : { ...initGrpcMockState(), ...(draft as GrpcMockDraft) };
+            }
+            return tabType === "request"
+                ? initGrpcRequestState(entity as SavedGrpcRequest | null)
+                : initGrpcMockState(entity as SavedGrpcMock | null);
+        },
+    },
+    baseGrpcTabReducer,
+);
 
 // -- Serialization helpers --------------------------------------------------
 

@@ -395,12 +395,8 @@ const toastEl = document.getElementById("toast");
 let toastTmr;
 function showToast(msg, isError = false) {
     toastEl.textContent = msg;
+    toastEl.classList.toggle("error", isError);
     toastEl.classList.add("show");
-    if (isError) {
-        toastEl.style.backgroundColor = "#d32f2f";
-    } else {
-        toastEl.style.backgroundColor = "";
-    }
     clearTimeout(toastTmr);
     toastTmr = setTimeout(() => toastEl.classList.remove("show"), isError ? 4000 : 2000);
 }

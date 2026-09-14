@@ -154,7 +154,14 @@ function AppShell() {
   const handleOpenInRequests = useCallback((req: any) => { setPendingOpenRequest(req); setPanel("requests"); }, []);
   const handleOpenMockEditor = useCallback((initial: any) => { setPendingMockInitial(initial); setPanel("mocks"); }, []);
 
-  const publishHandlers = usePublishHandlers({ wsConfig, wsId, refreshConfig, refreshEntitySyncStatus, panel });
+  const publishHandlers = usePublishHandlers({
+    wsConfig,
+    wsId,
+    refreshConfig,
+    refreshEntitySyncStatus,
+    panel,
+    onAfterPublish: bumpHistoryReload,
+  });
 
   const globalEnv = (wsConfig.environments ?? []).find((e) => e.id === "__global__") ?? null;
   const selectedActiveEnv = (wsConfig.environments ?? []).find((e) => e.id === wsConfig.activeEnvironmentId) ?? null;

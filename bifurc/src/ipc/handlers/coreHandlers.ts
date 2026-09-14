@@ -18,6 +18,7 @@ import {
 } from "@/proxy/server";
 import { logEmitter, RequestLogEntry } from "@/proxy/logEmitter";
 import { updateTrayMenu } from "@/main";
+import { restartCompanionServer } from "@/companion/companionServer";
 import { generateRandomWorkspaceName } from "@/lib/randomNames";
 import { gateCreate } from "@/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
@@ -47,7 +48,12 @@ export function registerCoreHandlers() {
       startServer(incoming.port);
     }
     if (incoming.companionPort !== prev.companionPort) {
-      const { restartCompanionServer } = require("@/companion/companionServer");
+      // Statically imported (see the top of this file) rather than `require`d here.
+      // A bare `require("@/companion/companionServer")` only resolves because
+      // `tsc-alias` post-processes the build output — which makes this user-facing
+      // path depend on the build pipeline, and makes it impossible to exercise from
+      // a test runner (the alias is not resolvable at runtime). There is no import
+      // cycle to avoid: nothing under `src/companion` imports `src/ipc`.
       restartCompanionServer(incoming.companionPort);
     }
     return { ok: true };

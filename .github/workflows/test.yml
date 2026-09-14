@@ -7,7 +7,9 @@ on:
     branches: [main, develop]
 
 jobs:
-  unit-tests:
+  # ── Static checks ───────────────────────────────────────────────────────────
+  # Fast failure: catch type errors before spending time on the test suites.
+  typecheck:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -19,12 +21,42 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: bifurc/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run unit tests with coverage
-        run: npm run test:coverage
+      - name: Typecheck main process (src/)
+        run: npm run typecheck
+
+      - name: Typecheck E2E specs
+        run: npm run typecheck:e2e
+
+  # ── Unit + integration ──────────────────────────────────────────────────────
+  # `test:ci` runs every Vitest project (unit and integration) with coverage and
+  # enforces the thresholds declared in vitest.config.ts. A coverage regression
+  # fails the build rather than silently shipping.
+  unit-and-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bifurc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: bifurc/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit + integration tests with coverage
+        run: npm run test:ci
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -33,6 +65,7 @@ jobs:
           name: coverage-report
           path: bifurc/coverage/
 
+  # ── End-to-end (real Electron app) ──────────────────────────────────────────
   e2e-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -45,6 +78,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: bifurc/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -52,7 +87,22 @@ jobs:
       - name: Build app
         run: npm run build
 
-      - name: Install Playwright
+      # Electron needs a set of native libraries that are not present on the
+      # ubuntu-latest image by default. Without these the app fails to launch and
+      # every E2E test errors out before it can assert anything.
+      - name: Install Electron system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+            libgbm1 libpango-1.0-0 libcairo2 libasound2t64 || \
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+            libgbm1 libpango-1.0-0 libcairo2 libasound2
+
+      - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests

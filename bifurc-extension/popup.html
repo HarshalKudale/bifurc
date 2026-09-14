@@ -4,6 +4,24 @@
 <head>
     <meta charset="utf-8">
     <style>
+        /* ── Palette (unchanged from the original scheme) ─────────────────── */
+        :root {
+            --bg: #1a1a1a;
+            --panel: #202020;
+            --panel-2: #252525;
+            --line: #2c2c2c;
+            --line-2: #3a3a3a;
+            --text: #e0e0e0;
+            --text-2: #c8c8c8;
+            --text-3: #8f8f8f;
+            --text-4: #6e6e6e;
+            --accent: #4ade80;
+            --accent-soft: rgba(74, 222, 128, .13);
+            --accent-line: rgba(74, 222, 128, .3);
+            --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+            --ease: cubic-bezier(.4, 0, .2, 1);
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -13,187 +31,413 @@
         body {
             width: 320px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #1a1a1a;
-            color: #e0e0e0;
-            padding: 16px;
+            background: var(--bg);
+            color: var(--text);
+            padding: 14px;
             font-size: 13px;
+            -webkit-font-smoothing: antialiased;
         }
 
-        .header {
+        /* ── Header ───────────────────────────────────────────────────────── */
+        .hdr {
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #333;
+            gap: 10px;
+            margin-bottom: 12px;
         }
 
-        .header img {
-            width: 20px;
-            height: 20px;
+        .hdr .logo {
+            width: 34px;
+            height: 34px;
+            flex: none;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+            background: var(--panel-2);
+            border: 1px solid var(--line-2);
+            overflow: hidden;
         }
 
-        .header h1 {
+        .hdr .logo img {
+            width: 26px;
+            height: 26px;
+            display: block;
+            border-radius: 6px;
+        }
+
+        .hdr .title {
             font-size: 14px;
             font-weight: 600;
+            line-height: 1.15;
+            letter-spacing: -.01em;
         }
 
+        .hdr .sub {
+            margin-top: 2px;
+            font-size: 10px;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: var(--text-3);
+        }
+
+        /* ── Connection status ────────────────────────────────────────────── */
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 9px 10px;
+            margin-bottom: 12px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            transition: border-color .2s var(--ease), background .2s var(--ease);
+        }
+
+        .status.on {
+            border-color: var(--accent-line);
+            background: linear-gradient(180deg, var(--accent-soft), transparent);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            flex: none;
+            border-radius: 50%;
+            background: var(--text-4);
+            transition: background .2s var(--ease), box-shadow .2s var(--ease);
+        }
+
+        .status.on .dot {
+            background: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        .status .label {
+            flex: 1;
+            font-size: 12px;
+            color: var(--text-3);
+            transition: color .2s var(--ease);
+        }
+
+        .status.on .label {
+            color: var(--text);
+        }
+
+        .icon-btn {
+            width: 22px;
+            height: 22px;
+            flex: none;
+            padding: 0;
+            display: grid;
+            place-items: center;
+            border-radius: 6px;
+            border: 1px solid var(--line-2);
+            background: transparent;
+            color: var(--text-3);
+            cursor: pointer;
+            transition: color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease);
+        }
+
+        .icon-btn:hover {
+            color: var(--text);
+            border-color: var(--text-4);
+            background: rgba(255, 255, 255, .05);
+        }
+
+        .icon-btn:active {
+            transform: scale(.94);
+        }
+
+        .icon-btn.spin svg {
+            animation: spin .6s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* ── Sections ─────────────────────────────────────────────────────── */
         .section {
-            margin-bottom: 14px;
+            margin-bottom: 12px;
+        }
+
+        .section:last-of-type {
+            margin-bottom: 0;
         }
 
         .section-title {
-            font-size: 11px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: .08em;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #888;
-            margin-bottom: 8px;
+            color: var(--text-3);
+            padding: 0 2px;
+            margin-bottom: 6px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            overflow: hidden;
         }
 
         .row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 0;
+            gap: 12px;
+            padding: 10px 12px;
         }
 
-        .row label {
-            font-size: 13px;
-            color: #ccc;
+        .row+.row {
+            border-top: 1px solid var(--line);
         }
 
-        .row .desc {
-            font-size: 11px;
-            color: #777;
-            margin-top: 2px;
+        .label-main {
+            font-size: 12.5px;
+            line-height: 1.3;
+            color: var(--text-2);
         }
 
-        /* Toggle switch */
-        .toggle {
+        .desc {
+            margin-top: 3px;
+            font-size: 10.5px;
+            line-height: 1.45;
+            color: var(--text-4);
+        }
+
+        /* ── Toggle switch ────────────────────────────────────────────────── */
+        .switch {
             position: relative;
-            width: 36px;
-            height: 20px;
+            width: 38px;
+            height: 22px;
+            flex: none;
             cursor: pointer;
         }
 
-        .toggle input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .toggle .slider {
+        .switch input {
             position: absolute;
             inset: 0;
-            background: #444;
-            border-radius: 10px;
-            transition: background 0.2s;
+            z-index: 2;
+            margin: 0;
+            opacity: 0;
+            cursor: pointer;
         }
 
-        .toggle .slider::before {
+        .switch .track {
+            position: absolute;
+            inset: 0;
+            border-radius: 11px;
+            background: var(--line-2);
+            transition: background .2s var(--ease);
+        }
+
+        .switch .track::after {
             content: "";
             position: absolute;
-            width: 14px;
-            height: 14px;
-            left: 3px;
             top: 3px;
-            background: #fff;
+            left: 3px;
+            width: 16px;
+            height: 16px;
             border-radius: 50%;
-            transition: transform 0.2s;
+            background: #fff;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, .45);
+            transition: transform .2s var(--ease);
         }
 
-        .toggle input:checked+.slider {
-            background: #4ade80;
+        .switch input:checked+.track {
+            background: var(--accent);
         }
 
-        .toggle input:checked+.slider::before {
+        .switch input:checked+.track::after {
             transform: translateX(16px);
         }
 
-        /* Input */
-        input[type="number"] {
-            width: 72px;
-            background: #252525;
-            border: 1px solid #444;
-            border-radius: 4px;
-            color: #e0e0e0;
-            font-size: 12px;
-            font-family: monospace;
-            padding: 4px 8px;
-            text-align: right;
-            outline: none;
+        .switch input:focus-visible+.track {
+            box-shadow: 0 0 0 3px var(--accent-soft);
         }
 
-        input[type="number"]:focus {
-            border-color: #4ade80;
-        }
-
-        /* Status dot */
-        .status {
+        /* ── Resolved-state strip ─────────────────────────────────────────── */
+        .state {
             display: flex;
             align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            padding: 6px 10px;
-            background: #222;
-            border-radius: 6px;
-            margin-bottom: 12px;
+            gap: 7px;
+            padding: 8px 12px;
+            border-top: 1px solid var(--line);
+            background: rgba(255, 255, 255, .015);
         }
 
-        .status .dot {
-            width: 8px;
-            height: 8px;
+        .state .sdot {
+            width: 6px;
+            height: 6px;
+            flex: none;
             border-radius: 50%;
-            flex-shrink: 0;
+            background: var(--line-2);
+            transition: background .2s var(--ease), box-shadow .2s var(--ease);
         }
 
-        .dot-connected {
-            background: #4ade80;
-            box-shadow: 0 0 6px #4ade80;
+        .state .stext {
+            font-size: 11px;
+            line-height: 1.35;
+            color: var(--text-4);
+            transition: color .2s var(--ease);
         }
 
-        .dot-disconnected {
-            background: #666;
+        .state .stext code {
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--text-3);
+        }
+
+        .state.active .sdot {
+            background: var(--accent);
+            box-shadow: 0 0 6px rgba(74, 222, 128, .65);
+        }
+
+        .state.active .stext {
+            color: var(--text-2);
+        }
+
+        .state.active .stext code {
+            color: var(--accent);
+        }
+
+        .state.paused .sdot {
+            background: var(--text-4);
+        }
+
+        /* ── Port field ───────────────────────────────────────────────────── */
+        .field {
+            display: flex;
+            align-items: center;
+            flex: none;
+            gap: 1px;
+            height: 28px;
+            padding: 0 8px;
+            border-radius: 7px;
+            background: var(--panel-2);
+            border: 1px solid var(--line-2);
+            transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+        }
+
+        .field:focus-within {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        .field .prefix {
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--text-4);
+            user-select: none;
+        }
+
+        .field input {
+            width: 48px;
+            border: none;
+            outline: none;
+            background: none;
+            padding: 0;
+            text-align: right;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .field input::-webkit-outer-spin-button,
+        .field input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .field input[type=number] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+
+        /* ── Footer ───────────────────────────────────────────────────────── */
+        .footer {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid var(--line);
+            font-size: 10px;
+            line-height: 1.5;
+            color: var(--text-4);
+            text-align: center;
         }
     </style>
 </head>
 
 <body>
-    <div class="header">
-        <img src="icons/icon48.png" alt="LP">
-        <h1>Bifurc</h1>
+    <div class="hdr">
+        <div class="logo"><img src="icons/icon48.png" alt="Bifurc"></div>
+        <div>
+            <div class="title">Bifurc</div>
+            <div class="sub">Companion</div>
+        </div>
     </div>
 
-    <div class="status" id="status">
-        <span class="dot dot-disconnected" id="statusDot"></span>
-        <span id="statusText">Disconnected</span>
+    <div class="status" id="statusCard">
+        <span class="dot"></span>
+        <span class="label" id="statusText">Checking connection…</span>
+        <button class="icon-btn" id="reconnectBtn" title="Reconnect to companion server">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+        </button>
     </div>
 
     <div class="section">
         <div class="section-title">Proxy</div>
-        <div class="row">
-            <div>
-                <label>Route traffic through proxy</label>
-                <div class="desc">All browser HTTP(S) traffic will be proxied</div>
+        <div class="card">
+            <div class="row">
+                <div>
+                    <div class="label-main">Route traffic through proxy</div>
+                    <div class="desc">Sends all browser HTTP(S) traffic to Bifurc</div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="proxyToggle">
+                    <span class="track"></span>
+                </label>
             </div>
-            <label class="toggle">
-                <input type="checkbox" id="proxyToggle">
-                <span class="slider"></span>
-            </label>
-        </div>
-        <div class="row">
-            <label>Proxy port</label>
-            <input type="number" id="proxyPort" min="1" max="65535" value="80">
+            <div class="row">
+                <div class="label-main">Proxy port</div>
+                <div class="field">
+                    <span class="prefix">127.0.0.1:</span>
+                    <input type="number" id="proxyPort" min="1" max="65535" step="1" value="80">
+                </div>
+            </div>
+            <div class="state" id="proxyState">
+                <span class="sdot"></span>
+                <span class="stext" id="proxyStateText">Direct passthrough</span>
+            </div>
         </div>
     </div>
 
     <div class="section">
         <div class="section-title">Companion Server</div>
-        <div class="row">
-            <label>WebSocket port</label>
-            <input type="number" id="companionPort" min="1" max="65535" value="9271">
+        <div class="card">
+            <div class="row">
+                <div>
+                    <div class="label-main">WebSocket port</div>
+                    <div class="desc">Port the desktop app listens on</div>
+                </div>
+                <div class="field">
+                    <span class="prefix">ws://</span>
+                    <input type="number" id="companionPort" min="1" max="65535" step="1" value="9271">
+                </div>
+            </div>
         </div>
     </div>
+
+    <div class="footer" id="footer">Proxy needs the companion server connected.</div>
 
     <script src="popup.js"></script>
 </body>

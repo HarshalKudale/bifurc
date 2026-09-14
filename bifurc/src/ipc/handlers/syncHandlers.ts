@@ -133,12 +133,14 @@ export function registerSyncHandlers() {
 
   ipcMain.handle("history:list", async (_e, opts: { workspaceId?: string; filePath: string; limit?: number; offset?: number }) => {
     const wsId = opts.workspaceId ?? loadConfig().activeWorkspaceId;
-    return queryLog({ workspaceId: wsId, filePath: opts.filePath, limit: opts.limit ?? 100, offset: opts.offset ?? 0 });
+    const normalized = opts.filePath.replace(/\\/g, "/");
+    return queryLog({ workspaceId: wsId, filePath: normalized, limit: opts.limit ?? 100, offset: opts.offset ?? 0 });
   });
 
   ipcMain.handle("history:diff", async (_e, commitHash: string, filePath: string, workspaceId: string) => {
-    const after = await getEntityAtCommit(commitHash, workspaceId, filePath);
-    const before = await getEntityAtCommit(`${commitHash}~1`, workspaceId, filePath);
+    const normalized = filePath.replace(/\\/g, "/");
+    const after = await getEntityAtCommit(commitHash, workspaceId, normalized);
+    const before = await getEntityAtCommit(`${commitHash}~1`, workspaceId, normalized);
     return { before, after };
   });
 

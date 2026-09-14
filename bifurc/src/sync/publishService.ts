@@ -4,6 +4,7 @@ import * as os from "os";
 import { getGit } from "@/store/gitStore";
 import { getSyncConfig } from "@/sync/syncManager";
 import { wsDir } from "@/store/workspaceFs";
+import { unquoteGitPath } from "@/sync/statusTracker";
 
 export interface PublishOptions {
   wsId: string;
@@ -58,13 +59,16 @@ export async function publishEntities(opts: PublishOptions): Promise<{ ok: boole
     const g = getGit(opts.wsId);
     const actor = deviceName();
 
-    // Check pre-staging status to know which files were new/modified/deleted
+    // Check pre-staging status to know which files were new/modified/deleted.
+    // NOTE: `--porcelain` without `-z` C-quotes paths containing spaces, so the keys must be
+    // unquoted — otherwise `preStatusMap.get(singlePath)` misses for e.g. `mocks/My Folder/x.json`
+    // and the create/update/delete classification below silently degrades to "update".
     const preStatus = await g.raw(["status", "--porcelain", "-uall"]).catch(() => "");
     const preStatusMap = new Map<string, string>();
     for (const line of preStatus.split("\n")) {
       if (!line.trim()) continue;
       const xy = line.slice(0, 2);
-      const filePath = line.slice(3).trim();
+      const filePath = unquoteGitPath(line.slice(3).trim());
       preStatusMap.set(filePath, xy);
     }
 
@@ -99,11 +103,14 @@ export async function publishEntities(opts: PublishOptions): Promise<{ ok: boole
         if (isDir) {
           // Folder/bundled publish — use a structured message for each staged file
           // so queryLog can parse them. We collect all staged entity paths.
-          const allStagedPaths = [
-            ...status.staged,
-            ...status.created,
-            ...status.deleted,
-          ].filter((f) => f.endsWith(".json") && !["index.json", "enabled.json", "names.json"].some((s) => f.endsWith(s)));
+          // Dedupe: simple-git reports a newly-added file in BOTH `staged` and `created`,
+          // so concatenating without a Set double-counts every new file. That made the
+          // `allStagedPaths.length === 1` branch below unreachable for a folder holding a
+          // single new entity — it fell through to the bundled form and recorded a
+          // *create* as `update mock folder "X"`, losing the per-entity linkage.
+          const allStagedPaths = Array.from(
+            new Set([...status.staged, ...status.created, ...status.deleted]),
+          ).filter((f) => f.endsWith(".json") && !["index.json", "enabled.json", "names.json"].some((s) => f.endsWith(s)));
 
           if (allStagedPaths.length === 1) {
             // Single entity in folder publish — treat as single entity publish
