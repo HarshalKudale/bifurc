@@ -28,7 +28,13 @@ export function replayRequest(
 
     const isHttps = new URL(url).protocol === "https:";
     const transport = isHttps ? https : http;
-    const req = transport.request({ hostname, port, path, method, headers: upHeaders }, (res) => {
+    // `agent: false` gives each request its own non-pooling agent, so the
+    // `connection: close` above is actually honoured. Without it the global agent
+    // returns the socket to its pool whenever the upstream answers `keep-alive`
+    // (very common — servers routinely ignore the request's close), and the next
+    // request to the same origin is rejected by the server with
+    // `HPE_CLOSED_CONNECTION`, surfacing as a spurious 400 / "socket hang up".
+    const req = transport.request({ hostname, port, path, method, headers: upHeaders, agent: false }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
