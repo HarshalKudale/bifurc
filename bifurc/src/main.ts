@@ -26,12 +26,36 @@ function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: s
     : { color: "#090e12", symbolColor: "#eef2f7" };
 }
 
+/**
+ * Resolve a bundled icon file.
+ *
+ * Packaged builds ship the icons as extra resources (see `extraResources` in
+ * package.json), so they live under `process.resourcesPath`. In dev they are
+ * read from the build-resources folder.
+ */
+function iconPath(file: string): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, file)
+    : path.join(__dirname, "..", "build", file);
+}
+
+/**
+ * Load an icon, falling back to the executable's embedded icon. This guarantees
+ * the tray is never created from an empty NativeImage, which renders as a
+ * blank / invisible tray slot.
+ */
+function loadIcon(file: string): Electron.NativeImage {
+  const image = nativeImage.createFromPath(iconPath(file));
+  if (!image.isEmpty()) return image;
+  return nativeImage.createFromPath(process.execPath);
+}
+
 function getAppIcon(): Electron.NativeImage {
-  return nativeImage.createFromPath(path.join(__dirname, "..", "icon.png"));
+  return loadIcon("icon.png");
 }
 
 function getTrayIcon(): Electron.NativeImage {
-  return nativeImage.createFromPath(path.join(__dirname, "..", "tray-icon.png"));
+  return loadIcon("tray-icon.png");
 }
 
 function createTray(): void {
