@@ -13,16 +13,15 @@
  * transport unless the protocol package knows about it first.
  *
  * Scope of this pass (see `plan/03-phase-2-engine-extraction.md` work item 7 for the full
- * status note): the registry itself is complete and unit-tested. Only a handful of the simplest
- * `coreHandlers.ts` commands (`config.get`, `env.setActive`, `workspace.setActive`) have been
- * wired through it so far, proving the pattern end-to-end without changing the wire behaviour
- * `tests/ipc/handlers.test.ts` already pins. Converting the remaining ~100 handlers is *not*
- * purely mechanical: most of the CRUD channels (`mock:add`, `rule:update`, `ws:delete`, …) are
- * generated per-kind by `entityCrudFactory.ts` today, while the protocol collapses all of them
- * into six generic `entity.*` commands (P1 item 2). Registering those requires first collapsing
- * the factory's per-kind channels onto the generic shape — a data-modelling change, not a
- * mechanical find-and-replace — so it is left for a dedicated follow-up pass rather than rushed
- * here.
+ * status note): the registry itself is complete and unit-tested, and roughly 100 commands
+ * across `coreHandlers.ts`, the CRUD-factory channels (`entityCrudFactory.ts` — `mock:add`,
+ * `rule:update`, `ws:delete`, and every other kind collapse onto `entity.create`/
+ * `entity.update`/`entity.delete`), `entity:load`/`entity:setEnabled`, and most of
+ * `syncHandlers.ts`/`folderHandlers.ts`/`tlsHandlers.ts`/`runnerHandlers.ts`/
+ * `graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts`/`applicationHandlers.ts` now go
+ * through it. Still outside its scope: `environments`/`graphqlSchemas`/`protoFiles`/`wsdls`
+ * (bespoke handlers, no CRUD-factory involvement) and the P3-bound `importExport:*` SPLIT
+ * channels.
  */
 import { type CommandAction, getCommandParamsSchema, isKnownCommand } from "@bifurc/protocol";
 import type { bus } from "@/eventBus";
