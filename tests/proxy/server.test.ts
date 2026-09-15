@@ -12,7 +12,7 @@ let _testProxyRules: any[] = [];
 let _testMappings: any[] = [];
 let _testMocks: any[] = [];
 
-vi.mock("../../src/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/store/workspaceFs", () => ({
   readEnabledSet: vi.fn(() => null),
   bootstrapEnabledSet: vi.fn((_wsId: string, kind: string) => {
     if (kind === "rules") return new Set<string>(_testProxyRules.filter((r) => r.enabled).map((r) => r.id));
@@ -30,7 +30,7 @@ vi.mock("../../src/store/workspaceFs", () => ({
 }));
 
 // Mock store/config at top level so it is effective for the imported server module
-vi.mock("../../src/store/config", () => ({
+vi.mock("@bifurc/engine/store/config", () => ({
   loadConfig: vi.fn(() => ({
     port: 8080,
     minimizeToTray: true,
@@ -52,7 +52,7 @@ vi.mock("../../src/store/config", () => ({
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig } from "@/store/config";
+import { loadConfig } from "@bifurc/engine/store/config";
 import {
   startServer,
   stopServer,

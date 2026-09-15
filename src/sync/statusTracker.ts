@@ -1,5 +1,5 @@
-import { getGit } from "@/store/gitStore";
-import { getPendingDeletions } from "@/store/workspaceFs";
+import { getGit } from "@bifurc/engine/store/gitStore";
+import { getPendingDeletions } from "@bifurc/engine/store/workspaceFs";
 
 export type EntitySyncStatus = "clean" | "modified" | "new" | "deleted";
 

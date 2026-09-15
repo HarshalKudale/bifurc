@@ -29,16 +29,15 @@ const { mockIpcMain, registeredHandlers } = vi.hoisted(() => {
 
 vi.mock("fs");
 
-vi.mock("@/subscription/entityCount", () => ({
+vi.mock("@bifurc/engine/subscription/entityCount", () => ({
   gateCreate: vi.fn(() => ({ allowed: true })),
   gateEnable: vi.fn(() => ({ allowed: true })),
 }));
 
-vi.mock("@/subscription/gate", () => ({
-  canCreate: vi.fn(() => ({ allowed: true })),
-  canEnable: vi.fn(() => ({ allowed: true })),
-  canUseFeature: vi.fn(() => ({ allowed: true })),
-}));
+// NOTE: a `vi.mock("@bifurc/engine/subscription/gate")` block used to sit here. It mocked a module that
+// does not exist anywhere in this repository (the real module is `@/subscription/entityCount`,
+// mocked above, and its API is `gateCreate`/`gateEnable` — not `canCreate`/`canEnable`). It was
+// left over from a pre-history refactor and removed during P2 work item 8.
 
 vi.mock("../../src/proxy/server", () => ({
   startServer: vi.fn(),
@@ -58,7 +57,7 @@ vi.mock("../../src/proxy/service-discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 
-vi.mock("../../src/store/gitStore", () => ({
+vi.mock("@bifurc/engine/store/gitStore", () => ({
   commitMutation: vi.fn(() => Promise.resolve("abc123")),
   queryLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
   getEntityAtCommit: vi.fn(() => Promise.resolve(null)),
@@ -68,7 +67,7 @@ vi.mock("../../src/store/gitStore", () => ({
   AuditAction: {},
 }));
 
-vi.mock("../../src/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/store/workspaceFs", () => ({
   writeEntity: vi.fn(),
   deleteEntityFile: vi.fn(),
   writeFlatEntity: vi.fn(),
@@ -96,7 +95,7 @@ vi.mock("../../src/store/workspaceFs", () => ({
   clearPendingDeletions: vi.fn(),
 }));
 
-vi.mock("../../src/store/appSettings", () => ({
+vi.mock("@bifurc/engine/store/appSettings", () => ({
   loadSettings: vi.fn(() => ({
     port: 80,
     minimizeToTray: true,
@@ -137,7 +136,7 @@ vi.mock("electron", () => ({
   shell: { openExternal: vi.fn() },
 }));
 
-import type { AppConfig } from "@/store/config";
+import type { AppConfig } from "@bifurc/engine/store/config";
 
 const makeDefaultConfig = (): AppConfig =>
   ({
@@ -159,7 +158,7 @@ const makeDefaultConfig = (): AppConfig =>
 
 let currentConfig: AppConfig = makeDefaultConfig();
 
-vi.mock("../../src/store/config", () => ({
+vi.mock("@bifurc/engine/store/config", () => ({
   loadConfig: vi.fn(() => currentConfig),
   saveConfig: vi.fn((cfg: AppConfig) => { currentConfig = cfg; }),
   generateId: vi.fn(() => `id-${Math.random().toString(36).slice(2)}`),

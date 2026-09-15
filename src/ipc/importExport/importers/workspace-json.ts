@@ -3,12 +3,12 @@ import {
   loadConfig, saveConfig, generateId,
   LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook,
   Folder, Environment, Workspace,
-} from "@/store/config";
+} from "@bifurc/engine/store/config";
 import {
   writeEntity, writeFlatEntity, writeEnabledSet, bootstrapEnabledSet, readEnabledSet,
   upsertNameEntry, initWorkspaceDir,
-} from "@/store/workspaceFs";
-import { initWorkspaceRepo } from "@/store/gitStore";
+} from "@bifurc/engine/store/workspaceFs";
+import { initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
 import { reloadConfig } from "@/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 

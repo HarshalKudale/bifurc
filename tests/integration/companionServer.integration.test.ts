@@ -22,7 +22,7 @@ import { simpleGit } from "simple-git";
 import { BrowserWindow } from "electron";
 
 import { createWorkspace, getFreePort, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { setDataDirOverride } from "@/store/gitStore";
+import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { wireEventBridge } from "@/ipc/eventBridge";
 import {
   startCompanionServer,

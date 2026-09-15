@@ -1,8 +1,8 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig, AppConfig, Environment, ProxyRule } from "@/store/config";
-import { readEnabledSet, bootstrapEnabledSet, readAllEntities } from "@/store/workspaceFs";
+import { loadConfig, AppConfig, Environment, ProxyRule } from "@bifurc/engine/store/config";
+import { readEnabledSet, bootstrapEnabledSet, readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import { HOP_BY_HOP } from "@/proxy/constants";
 import { sendHtml, buildHomePage, buildNotMappedPage } from "@/proxy/pages";
 import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "@/proxy/mockHandler";

@@ -4,10 +4,10 @@ import * as path from "path";
 import type {
   FolderAddParams, FolderRenameParams, FolderMoveParams, FolderDeleteParams, FolderKindValue,
 } from "@bifurc/protocol";
-import { Folder } from "@/store/config";
-import { loadConfig, saveConfig } from "@/store/config";
-import { generateId } from "@/store/config";
-import { readIndex, writeIndex, wsDir as workspaceDir, sanitizeDirName, deleteEntityDir } from "@/store/workspaceFs";
+import { Folder } from "@bifurc/engine/store/config";
+import { loadConfig, saveConfig } from "@bifurc/engine/store/config";
+import { generateId } from "@bifurc/engine/store/config";
+import { readIndex, writeIndex, wsDir as workspaceDir, sanitizeDirName, deleteEntityDir } from "@bifurc/engine/store/workspaceFs";
 import { bus } from "@/eventBus";
 import { commandRegistry } from "@/commands/registry";
 

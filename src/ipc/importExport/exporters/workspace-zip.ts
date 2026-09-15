@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import archiver from "archiver";
-import { wsDir } from "@/store/workspaceFs";
+import { wsDir } from "@bifurc/engine/store/workspaceFs";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 export async function run(wsId: string, filePath: string): Promise<ExportResult> {

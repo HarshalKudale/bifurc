@@ -15,7 +15,7 @@ const { mockIpcMain, registeredHandlers } = vi.hoisted(() => {
 
 let currentSettings: any;
 
-vi.mock("@/store/appSettings", () => ({
+vi.mock("@bifurc/engine/store/appSettings", () => ({
   loadSettings: vi.fn(() => currentSettings),
   saveSettings: vi.fn((s: any) => { currentSettings = s; }),
   appDataDir: vi.fn(() => "/tmp/test-user-data"),

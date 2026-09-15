@@ -21,8 +21,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, TEST_WS_NAME, type WorkspaceFixture } from "./proxyHarness";
-import { initWorkspaceDir } from "@/store/workspaceFs";
-import { initWorkspaceRepo, setDataDirOverride, queryLog, getGit } from "@/store/gitStore";
+import { initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
+import { initWorkspaceRepo, setDataDirOverride, queryLog, getGit } from "@bifurc/engine/store/gitStore";
 
 // ── Electron: capture the real handlers instead of registering them ───────────
 

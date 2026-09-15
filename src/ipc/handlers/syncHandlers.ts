@@ -14,11 +14,11 @@ import {
 import { startAutoSync, stopAutoSync, updateLastKnownHead } from "@/sync/autoSync";
 import { getFileDiff, discardChanges, syncChanges, getFileHistory } from "@/sync/gitOps";
 import { getWorkspaceSyncStatus, invalidateCache } from "@/sync/statusTracker";
-import { loadConfig, saveConfig } from "@/store/config";
+import { loadConfig, saveConfig } from "@bifurc/engine/store/config";
 import { reloadConfig } from "@/proxy/server";
 import {
   queryLog, getEntityAtCommit, getCommitChangedFiles, QueryLogOptions, AuditEntity,
-} from "@/store/gitStore";
+} from "@bifurc/engine/store/gitStore";
 import { bus, emitEntityStatus } from "@/eventBus";
 import { commandRegistry } from "@/commands/registry";
 

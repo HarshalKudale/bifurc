@@ -14,10 +14,10 @@ async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-sync-test-"));
   remoteDir = path.join(tmpDir, "remote.git");
 
-  const { setDataDirOverride } = await import("../../src/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride(tmpDir);
 
-  const { setSettingsPathOverride } = await import("../../src/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   // Write minimal settings
@@ -33,18 +33,18 @@ async function setup() {
   );
 
   // Initialize the workspace directory and local git repo
-  const { initWorkspaceDir } = await import("../../src/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
-  const { initWorkspaceRepo } = await import("../../src/store/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("../../src/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride("");
 
-  const { setSettingsPathOverride } = await import("../../src/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
   setSettingsPathOverride(null);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -113,7 +113,7 @@ describe("syncManager", () => {
     expect(cfg?.remote).toBe(nonEmptyRemote);
 
     // workspace.json from the remote should now be present under the adopted dir
-    const { wsDir } = await import("../../src/store/workspaceFs");
+    const { wsDir } = await import("@bifurc/engine/store/workspaceFs");
     const wsJsonPath = path.join(wsDir(adoptedId), "workspace.json");
     expect(fs.existsSync(wsJsonPath)).toBe(true);
   }, 30_000);
@@ -127,7 +127,7 @@ describe("syncManager", () => {
     expect(result.adoptedId).toBe("other");
 
     // app.json should now use "other" as the workspace id and active id
-    const { loadSettings } = await import("../../src/store/appSettings");
+    const { loadSettings } = await import("@bifurc/engine/store/appSettings");
     const settings = loadSettings();
     expect(settings.activeWorkspaceId).toBe("other");
     const ws = settings.workspaces.find((w) => w.id === "other");
@@ -141,7 +141,7 @@ describe("syncManager", () => {
     const nonEmptyRemote = await makeNonEmptyRemote();
 
     // Bootstrap enabled.json in each kind dir — this was the bug: these were counted as entity files
-    const { wsDir, writeEnabledSet } = await import("../../src/store/workspaceFs");
+    const { wsDir, writeEnabledSet } = await import("@bifurc/engine/store/workspaceFs");
     const dir = wsDir(WS_ID);
     for (const kind of ["mappings", "rules", "mocks", "requests", "sockets", "environments"]) {
       fs.mkdirSync(path.join(dir, kind), { recursive: true });
@@ -162,11 +162,11 @@ describe("syncManager", () => {
     const nonEmptyRemote = await makeNonEmptyRemote();
 
     // Add a file to our workspace so it is non-empty
-    const { wsDir } = await import("../../src/store/workspaceFs");
+    const { wsDir } = await import("@bifurc/engine/store/workspaceFs");
     const dir = wsDir(WS_ID);
     fs.mkdirSync(path.join(dir, "mappings"), { recursive: true });
     fs.writeFileSync(path.join(dir, "mappings", "m1.json"), JSON.stringify({ id: "m1", domain: "test.localhost", target: "127.0.0.1:3000", enabled: true, workspaceId: WS_ID }), "utf-8");
-    const { getGit } = await import("../../src/store/gitStore");
+    const { getGit } = await import("@bifurc/engine/store/gitStore");
     await getGit(WS_ID).add(".");
     await getGit(WS_ID).commit("add mapping");
 
@@ -238,13 +238,13 @@ describe("syncManager", () => {
 
 describe("generateRandomWorkspaceName()", () => {
   it("returns adjective-noun format", async () => {
-    const { generateRandomWorkspaceName } = await import("../../src/lib/randomNames");
+    const { generateRandomWorkspaceName } = await import("@bifurc/engine/lib/randomNames");
     const name = generateRandomWorkspaceName();
     expect(name).toMatch(/^[a-z]+-[a-z]+$/);
   });
 
   it("returns different names on repeated calls (probabilistic)", async () => {
-    const { generateRandomWorkspaceName } = await import("../../src/lib/randomNames");
+    const { generateRandomWorkspaceName } = await import("@bifurc/engine/lib/randomNames");
     const names = new Set(Array.from({ length: 10 }, () => generateRandomWorkspaceName()));
     expect(names.size).toBeGreaterThan(1);
   });

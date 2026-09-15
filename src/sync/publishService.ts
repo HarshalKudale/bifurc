@@ -1,9 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { getGit } from "@/store/gitStore";
+import { getGit } from "@bifurc/engine/store/gitStore";
 import { getSyncConfig } from "@/sync/syncManager";
-import { wsDir } from "@/store/workspaceFs";
+import { wsDir } from "@bifurc/engine/store/workspaceFs";
 import { unquoteGitPath } from "@/sync/statusTracker";
 
 export interface PublishOptions {

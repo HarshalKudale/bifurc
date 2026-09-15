@@ -1,7 +1,7 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { ProxyRule, LocalMapping } from "@/store/config";
+import { ProxyRule, LocalMapping } from "@bifurc/engine/store/config";
 import { HOP_BY_HOP } from "@/proxy/constants";
 import { sendHtml } from "@/proxy/pages";
 import { executeRequestScript, executeResponseScript } from "@/proxy/scriptExecutor";

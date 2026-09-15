@@ -2,7 +2,7 @@ import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import type { RunnerGetHistoryParams, RunnerListFolderIdsParams } from "@bifurc/protocol";
-import { wsDir as workspaceDir } from "@/store/workspaceFs";
+import { wsDir as workspaceDir } from "@bifurc/engine/store/workspaceFs";
 import { commandRegistry } from "@/commands/registry";
 import { bus } from "@/eventBus";
 

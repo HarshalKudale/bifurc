@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { getGit, queryLog } from "@/store/gitStore";
+import { getGit, queryLog } from "@bifurc/engine/store/gitStore";
 import {
   wsDir,
   readEntity,
@@ -10,7 +10,7 @@ import {
   getPendingDeletions,
   removePendingDeletion,
   EntityNameEntry,
-} from "@/store/workspaceFs";
+} from "@bifurc/engine/store/workspaceFs";
 import { publishEntities } from "@/sync/publishService";
 import {
   getWorkspaceSyncStatus,

@@ -1,5 +1,5 @@
 import * as net from "net";
-import { AppConfig, Environment } from "@/store/config";
+import { AppConfig, Environment } from "@bifurc/engine/store/config";
 import { RequestLogEntry, emitLog } from "@/proxy/logEmitter";
 import { sendHtml } from "@/proxy/pages";
 import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "@/proxy/mockHandler";

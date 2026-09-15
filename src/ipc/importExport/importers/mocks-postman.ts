@@ -1,10 +1,10 @@
 import * as fs from "fs";
 import {
   loadConfig, saveConfig, generateId, MockRule, Folder,
-} from "@/store/config";
+} from "@bifurc/engine/store/config";
 import {
   writeEntity, upsertNameEntry, readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
-} from "@/store/workspaceFs";
+} from "@bifurc/engine/store/workspaceFs";
 import { reloadConfig } from "@/proxy/server";
 import { parsePostmanMocks } from "@/ipc/importExport/formats/postman";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";

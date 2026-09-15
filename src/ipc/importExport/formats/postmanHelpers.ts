@@ -1,4 +1,4 @@
-import { Folder } from "@/store/config";
+import { Folder } from "@bifurc/engine/store/config";
 
 // ── Postman v2.1 type stubs ────────────────────────────────────────────────
 

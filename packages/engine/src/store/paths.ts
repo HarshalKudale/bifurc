@@ -3,10 +3,10 @@
  *
  * `appSettings.ts` and `workspaceFs.ts` now consume `dataDir()` as their ultimate fallback (after
  * the win32 `LOCALAPPDATA` special case and the `*Override` test hooks, both left untouched —
- * see `src/store/workspaceFs.ts#dataRoot` and `src/store/appSettings.ts#settingsPath`). Neither
+ * see `store/workspaceFs.ts#dataRoot` and `store/appSettings.ts#settingsPath`). Neither
  * module imports `electron` any more.
  *
- * `src/main.ts` calls `setDataRoot(app.getPath("userData"))` once, at the very top of
+ * `src/main.ts` calls `setDataRoot()` with Electron's `userData` path once, at the very top of
  * `app.whenReady()`, before any store module is touched — this preserves the exact directory
  * Electron previously resolved directly, so existing installs see no path change. The two
  * `*Override` hooks are deliberately left as-is (not folded into this module): they are proven

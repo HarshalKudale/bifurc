@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { loadConfig, MockRule } from "@/store/config";
+import { loadConfig, MockRule } from "@bifurc/engine/store/config";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 function mockToWireMock(m: MockRule): object {

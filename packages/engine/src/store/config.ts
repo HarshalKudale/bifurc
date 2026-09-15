@@ -1,5 +1,5 @@
 import * as path from "path";
-import { loadSettings, saveSettings, AppSettings, WorkspaceMeta } from "@/store/appSettings";
+import { loadSettings, saveSettings, AppSettings, WorkspaceMeta } from "./appSettings";
 import {
   readAllEntities, readEntityStubs, readEntity,
   readNamesIndex, bootstrapNamesIndex,
@@ -7,11 +7,11 @@ import {
   writeFlatEntity, deleteFlatEntityFile, initWorkspaceDir,
   wsDir, dataRoot, autoSyncFsDirectories, readEnabledSet, bootstrapEnabledSet,
   getPendingDeletions,
-} from "@/store/workspaceFs";
+} from "./workspaceFs";
 import type {
   MockRule, LocalMapping, ProxyRule, SavedRequest,
   SavedWsConnection, SavedWebhook, Environment, Folder, Workspace,
-} from "@/store/types";
+} from "./types";
 
 export type { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook, Folder, Environment, Workspace };
 

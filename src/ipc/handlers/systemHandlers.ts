@@ -1,7 +1,7 @@
 import { ipcMain, dialog, app } from "electron";
 import * as fs from "fs";
 import { stopServer, startServer } from "@/proxy/server";
-import { loadConfig } from "@/store/config";
+import { loadConfig } from "@bifurc/engine/store/config";
 
 export function registerSystemHandlers() {
   ipcMain.handle("server:restart", () => {

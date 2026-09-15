@@ -10,7 +10,7 @@ import {
   DataRootNotInitialisedError,
   platformDefaultDataDir,
   resolveDataDir,
-} from "@/store/paths";
+} from "@bifurc/engine/store/paths";
 
 describe("store/paths", () => {
   afterEach(() => {

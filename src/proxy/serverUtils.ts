@@ -1,5 +1,5 @@
-import { AppConfig, Environment } from "@/store/config";
-import { readEnabledSet, bootstrapEnabledSet } from "@/store/workspaceFs";
+import { AppConfig, Environment } from "@bifurc/engine/store/config";
+import { readEnabledSet, bootstrapEnabledSet } from "@bifurc/engine/store/workspaceFs";
 
 export interface EnabledSets {
   mocks: Set<string>;
@@ -32,7 +32,7 @@ export function activeEnv(cfg: AppConfig): Environment | null {
   return { id: "merged", name: "merged", variables: [...map.values()], createdAt: 0, workspaceId: "" };
 }
 
-export function workspaceCfg(cfg: AppConfig, fullRules: import('@/store/config').ProxyRule[], enabledSets: EnabledSets): AppConfig {
+export function workspaceCfg(cfg: AppConfig, fullRules: import('@bifurc/engine/store/config').ProxyRule[], enabledSets: EnabledSets): AppConfig {
   const wsId = cfg.activeWorkspaceId;
   if (!wsId) return cfg;
   return {

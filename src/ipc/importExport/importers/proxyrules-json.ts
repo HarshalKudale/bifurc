@@ -1,10 +1,10 @@
 import * as fs from "fs";
 import {
   loadConfig, saveConfig, generateId, ProxyRule,
-} from "@/store/config";
+} from "@bifurc/engine/store/config";
 import {
   writeFlatEntity, readEnabledSet, writeEnabledSet, bootstrapEnabledSet, readAllEntities,
-} from "@/store/workspaceFs";
+} from "@bifurc/engine/store/workspaceFs";
 import { reloadConfig } from "@/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 

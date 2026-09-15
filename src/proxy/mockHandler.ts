@@ -1,7 +1,7 @@
 import * as net from "net";
-import { MockRule, Environment } from "@/store/config";
+import { MockRule, Environment } from "@bifurc/engine/store/config";
 import { HOP_BY_HOP } from "@/proxy/constants";
-import { resolveRandomizers } from "@/lib/randomizer";
+import { resolveRandomizers } from "@bifurc/engine/lib/randomizer";
 
 export interface ResolvedMockResponse {
   status: number;

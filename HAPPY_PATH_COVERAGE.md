@@ -108,13 +108,15 @@ These are real features with **no** basic-workflow test. Ordered by risk.
    spec per screen would make "which feature is broken?" answerable at a glance.
 3. **"Visit-only" assertions are weak.** `expect(page.locator("body")).toContainText("…")`
    proves the panel mounted, not that it works.
-4. **Coverage of the renderer is still low** (46.14% statements / 48.39% lines overall) — the
+4. **Coverage of the renderer is still low** (47.96% statements / 50.35% lines overall) — the
    panels themselves are mostly untested; the coverage above is concentrated in the main
    process, where the logic lives. The exception is `renderer/lib`, which reached 82.9%
    once the collection runner and its report generator were covered. Note the overall figure
-   is measured against a `src/**` + `renderer/**` denominator that includes every panel; a
-   change to the coverage `include` glob in `vitest.config.ts` moved it by half a point
-   without a single test changing (see `TESTING.md` §4.2).
+   is measured against a `src/**` + `renderer/**` + `packages/**` denominator that includes
+   every panel; a change to the coverage `include` glob in `vitest.config.ts` moved it by half
+   a point without a single test changing (see `TESTING.md` §4.2). The 2026-09-15 engine
+   extraction moved `src/{store,lib,subscription}` into `packages/engine/src` and grew the
+   denominator from 11,129 to 11,443 statements while the percentage still rose.
 
 ## 5. Recommended next steps
 

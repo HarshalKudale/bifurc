@@ -17,12 +17,12 @@ import { ALLOWED_ACTIONS } from "@/companion/allowedActions";
 import {
     loadConfig, saveConfig, generateId, AppConfig,
     MockRule, SavedRequest, Folder,
-} from "@/store/config";
+} from "@bifurc/engine/store/config";
 import {
     writeEntity, upsertNameEntry, findEntityRelPath,
     readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
     readIndex, writeIndex, sanitizeDirName, wsDir,
-} from "@/store/workspaceFs";
+} from "@bifurc/engine/store/workspaceFs";
 import { invalidateCache } from "@/sync/statusTracker";
 import { reloadConfig } from "@/proxy/server";
 import { bus, emitEntityStatus } from "@/eventBus";

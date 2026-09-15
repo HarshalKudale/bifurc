@@ -17,6 +17,10 @@ out/
 *.dmg
 *.deb
 *.rpm
+# tsup transpiles a TS config to a temp `.mjs` beside it and normally removes it, but an
+# interrupted build leaves it behind — and `prepare` now builds both workspace packages on
+# every install, so it shows up often enough to be worth ignoring.
+tsup.config.bundled_*.mjs
 
 # ===== Test Coverage & Reports =====
 # Alternate report dirs (`coverage-run`, `coverage-run3`, …) are used when the

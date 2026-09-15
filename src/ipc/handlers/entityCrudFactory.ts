@@ -1,20 +1,20 @@
 import { ipcMain } from "electron";
 import type { EntityCreateParams, EntityUpdateParams, EntityDeleteParams, EntityListParams } from "@bifurc/protocol";
-import { loadConfig, saveConfig, generateId, AppConfig } from "@/store/config";
+import { loadConfig, saveConfig, generateId, AppConfig } from "@bifurc/engine/store/config";
 import { 
   writeEntity, deleteEntityFile, writeFlatEntity, deleteFlatEntityFile,
   upsertNameEntry, removeNameEntry, 
   addPendingDeletion, findEntityRelPath,
   readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
   readAllEntities,
-} from "@/store/workspaceFs";
-import { getGit } from "@/store/gitStore";
+} from "@bifurc/engine/store/workspaceFs";
+import { getGit } from "@bifurc/engine/store/gitStore";
 import { reloadConfig } from "@/proxy/server";
 import { invalidateCache } from "@/sync/statusTracker";
 import { bus, emitEntityStatus } from "@/eventBus";
 import { commandRegistry } from "@/commands/registry";
 import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
-import { gateCreate } from "@/subscription/entityCount";
+import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 
 const ctx = { bus };
 

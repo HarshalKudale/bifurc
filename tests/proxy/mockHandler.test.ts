@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@/lib/randomizer", () => ({
+vi.mock("@bifurc/engine/lib/randomizer", () => ({
     resolveRandomizers: vi.fn((text: string) => text),
 }));
 

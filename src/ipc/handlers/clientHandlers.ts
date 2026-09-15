@@ -17,7 +17,7 @@
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { loadSettings, saveSettings, appDataDir } from "@/store/appSettings";
+import { loadSettings, saveSettings, appDataDir } from "@bifurc/engine/store/appSettings";
 import { getMainWindow } from "@/main";
 import { installCA } from "@/proxy/certManager";
 

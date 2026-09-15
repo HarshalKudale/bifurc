@@ -28,8 +28,8 @@ import * as os from "os";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 import { getExporter, getImporter } from "@/ipc/importExport/registry";
-import { loadConfig } from "@/store/config";
-import { readAllEntities } from "@/store/workspaceFs";
+import { loadConfig } from "@bifurc/engine/store/config";
+import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import type { EntityKind, CollisionStrategy } from "@/ipc/importExport/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

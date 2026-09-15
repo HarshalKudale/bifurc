@@ -1,6 +1,6 @@
 import * as fs from "fs";
-import { loadConfig, SavedWsConnection } from "@/store/config";
-import { readAllEntities } from "@/store/workspaceFs";
+import { loadConfig, SavedWsConnection } from "@bifurc/engine/store/config";
+import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 export async function run(wsId: string, filePath: string): Promise<ExportResult> {
