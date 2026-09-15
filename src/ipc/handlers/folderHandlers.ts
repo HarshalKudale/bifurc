@@ -5,7 +5,7 @@ import { Folder } from "@/store/config";
 import { loadConfig, saveConfig } from "@/store/config";
 import { generateId } from "@/store/config";
 import { readIndex, writeIndex, wsDir as workspaceDir, sanitizeDirName, deleteEntityDir } from "@/store/workspaceFs";
-import { bus } from "@/events/bus";
+import { bus } from "@/eventBus";
 
 type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock";
 

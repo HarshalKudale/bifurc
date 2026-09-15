@@ -12,7 +12,7 @@ import { reloadConfig } from "@/proxy/server";
 import {
   queryLog, getEntityAtCommit, getCommitChangedFiles, QueryLogOptions, AuditEntity,
 } from "@/store/gitStore";
-import { emitEntityStatus } from "@/events/bus";
+import { emitEntityStatus } from "@/eventBus";
 
 export function registerSyncHandlers() {
   // ── Sync ──────────────────────────────────────────────────────────────────
