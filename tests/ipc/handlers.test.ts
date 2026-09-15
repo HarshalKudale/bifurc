@@ -1432,8 +1432,8 @@ describe("src/ipc/handlers.ts", () => {
   // created, updated, deleted, or loaded.
 
   describe("entity.* CommandRegistry collapse", () => {
-    it("registers entity.create, entity.update, entity.delete, entity.load and entity.setEnabled", () => {
-      for (const action of ["entity.create", "entity.update", "entity.delete", "entity.load", "entity.setEnabled"]) {
+    it("registers entity.create, entity.update, entity.delete, entity.load, entity.list and entity.setEnabled", () => {
+      for (const action of ["entity.create", "entity.update", "entity.delete", "entity.load", "entity.list", "entity.setEnabled"]) {
         expect(commandRegistry.isRegistered(action)).toBe(true);
       }
     });
@@ -1464,6 +1464,19 @@ describe("src/ipc/handlers.ts", () => {
       const input: Omit<SavedWsConnection, "id"> = { name: "conn", url: "ws://localhost" } as any;
       await getHandler("ws:add")(EVENT, input);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("sockets");
+    });
+
+    it("graphql:addSchema/deleteSchema/listSchemas route through entity.create/entity.delete/entity.list", async () => {
+      const { writeEntity, deleteEntityFile, readAllEntities } = await import("../../src/store/workspaceFs");
+      await getHandler("graphql:addSchema")(EVENT, { name: "s", content: "type Query {}" } as any);
+      expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("graphqlSchemas");
+
+      await getHandler("graphql:deleteSchema")(EVENT, "s1");
+      expect(vi.mocked(deleteEntityFile)).toHaveBeenCalledWith("default", "graphqlSchemas", "s1");
+
+      const list = await getHandler("graphql:listSchemas")(EVENT);
+      expect(vi.mocked(readAllEntities)).toHaveBeenCalledWith("default", "graphqlSchemas");
+      expect(list).toEqual([]);
     });
   });
 });
