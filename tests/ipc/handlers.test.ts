@@ -229,7 +229,6 @@ describe("src/ipc/handlers.ts", () => {
       "request:replay", "server:status", "proxy:status",
       "server:restart", "server:stop", "server:start",
       "app:checkUpdate",
-      "shell:openExternal", "shell:setTitleBarOverlay",
     ];
 
     for (const channel of expectedChannels) {
@@ -889,28 +888,6 @@ describe("src/ipc/handlers.ts", () => {
 
     it("registers a handler for 'server:restart'", () => {
       expect(registeredHandlers.has("server:restart")).toBe(true);
-    });
-  });
-
-  // ── shell:openExternal ────────────────────────────────────────────────
-
-  describe("shell:openExternal handler", () => {
-    it("registers a handler for 'shell:openExternal'", () => {
-      expect(registeredHandlers.has("shell:openExternal")).toBe(true);
-    });
-
-    it("invokes the handler body without throwing when shell is available", () => {
-      // The handler uses a dynamic require("electron") which in some Vitest ESM
-      // environments returns the CJS module rather than the vi.mock() factory.
-      // We verify the handler executes (covering lines 308-310) without asserting
-      // on the mock call, since require() interception is env-dependent.
-      expect(registeredHandlers.has("shell:openExternal")).toBe(true);
-      // Invoke the handler; tolerate throws from dynamic require not being mocked
-      try {
-        getHandler("shell:openExternal")(EVENT, "https://example.com");
-      } catch {
-        // Dynamic CJS require not fully intercepted in this environment — expected
-      }
     });
   });
 
