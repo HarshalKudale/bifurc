@@ -175,9 +175,11 @@ beforeEach(async () => {
 
   const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
   const { registerSystemHandlers } = await import("@/ipc/handlers/systemHandlers");
+  const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
   const { registerCrudHandlers } = await import("@/ipc/handlers/crudHandlers");
   registerCoreHandlers();
   registerSystemHandlers();
+  registerClientHandlers();
   registerCrudHandlers();
 });
 
