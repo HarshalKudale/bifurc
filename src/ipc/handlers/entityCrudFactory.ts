@@ -9,7 +9,7 @@ import {
 import { getGit } from "@/store/gitStore";
 import { reloadConfig } from "@/proxy/server";
 import { invalidateCache } from "@/sync/statusTracker";
-import { bus, emitEntityStatus } from "@/events/bus";
+import { bus, emitEntityStatus } from "@/eventBus";
 
 export async function isGitTracked(wsId: string, relPath: string): Promise<boolean> {
   try {

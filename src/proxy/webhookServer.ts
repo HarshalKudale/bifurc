@@ -11,7 +11,7 @@
 
 import * as http from "http";
 import { EventEmitter } from "events";
-import { bus } from "@/events/bus";
+import { bus } from "@/eventBus";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
