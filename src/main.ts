@@ -1,7 +1,8 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain, screen } from "electron";
+import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen } from "electron";
 import * as path from "path";
 import { processSpawner } from "@/applications/processSpawner";
 import { registerIpcHandlers } from "@/ipc/handlers";
+import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 import { loadConfig, generateId } from "@/store/config";
 import { loadSettings, saveSettings } from "@/store/appSettings";
 import { initWorkspaceDir, dataRoot, wsDir } from "@/store/workspaceFs";
@@ -320,22 +321,12 @@ if (!gotTheLock) {
     setAutoSyncReloadFn(reloadConfig);
 
     registerIpcHandlers();
+    registerClientHandlers();
 
     // Bridge the engine bus's settings-change notification to the shell's own tray update.
     // Kept here (not in eventBridge.ts) to avoid an @/main <-> @/ipc/handlers import cycle —
     // see the comment in eventBridge.ts.
     bus.onTyped("settings.changed", () => updateTrayMenu());
-
-    // First-launch IPC
-    ipcMain.handle("app:isFirstLaunch", () => {
-      const s = loadSettings();
-      return !s.hasSeenWelcome;
-    });
-    ipcMain.handle("app:completeFirstLaunch", () => {
-      const s = loadSettings();
-      saveSettings({ ...s, hasSeenWelcome: true });
-      return { ok: true };
-    });
 
     createWindow();
     createTray();
