@@ -174,6 +174,7 @@ import { startServer, stopServer, isRunning, getPort, getServerError, reloadConf
 import { discoverServices } from "@/proxy/service-discovery";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
+import { commandRegistry } from "@/commands/registry";
 
 // ── Helper: get registered handler ───────────────────────────────────────────
 
@@ -1417,6 +1418,52 @@ describe("src/ipc/handlers.ts", () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+  });
+
+  // ── entity.* CommandRegistry collapse (P2 work item 7) ──────────────────
+  //
+  // The legacy per-kind channels (`rule:add`, `ws:add`, …) now route through the collapsed
+  // `entity.create`/`entity.update`/`entity.delete` commands internally (see
+  // `entityCrudFactory.ts`). `EntityKind`'s wire vocabulary renames two of the twelve kinds —
+  // engine-internal "rules"/"sockets" become protocol "proxyRules"/"wsConnections" — so these
+  // tests exist specifically to pin that translation: without it, `commandRegistry.invoke()`
+  // would throw a schema-validation error the moment a rule or websocket connection was
+  // created, updated, deleted, or loaded.
+
+  describe("entity.* CommandRegistry collapse", () => {
+    it("registers entity.create, entity.update, entity.delete, entity.load and entity.setEnabled", () => {
+      for (const action of ["entity.create", "entity.update", "entity.delete", "entity.load", "entity.setEnabled"]) {
+        expect(commandRegistry.isRegistered(action)).toBe(true);
+      }
+    });
+
+    it("entity:load translates the engine-internal \"rules\" kind to the protocol's \"proxyRules\" without throwing", async () => {
+      const result = await getHandler("entity:load")(EVENT, "default", "rules", "r1");
+      // `loadEntity` is mocked to always return null in this file — the meaningful assertion
+      // is that this resolves at all instead of rejecting on Zod schema validation.
+      expect(result).toEqual({ ok: false });
+    });
+
+    it("entity:load translates the engine-internal \"sockets\" kind to the protocol's \"wsConnections\" without throwing", async () => {
+      const result = await getHandler("entity:load")(EVENT, "default", "sockets", "ws1");
+      expect(result).toEqual({ ok: false });
+    });
+
+    it("rule:add routes through entity.create with kind \"proxyRules\" and still stores under \"rules\"", async () => {
+      const { writeEntity } = await import("../../src/store/workspaceFs");
+      const input: Omit<ProxyRule, "id"> = {
+        name: "API rule", pattern: ".*\\.api\\.com.*", targetMappingId: "m1", enabled: true,
+      };
+      await getHandler("rule:add")(EVENT, input);
+      expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("rules");
+    });
+
+    it("ws:add routes through entity.create with kind \"wsConnections\" and still stores under \"sockets\"", async () => {
+      const { writeEntity } = await import("../../src/store/workspaceFs");
+      const input: Omit<SavedWsConnection, "id"> = { name: "conn", url: "ws://localhost" } as any;
+      await getHandler("ws:add")(EVENT, input);
+      expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("sockets");
     });
   });
 });
