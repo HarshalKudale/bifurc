@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { app } from "electron";
+import { dataDir } from "@/store/paths";
 
 export interface WorkspaceSyncConfig {
   remote: string;
@@ -76,7 +76,10 @@ function settingsPath(): string {
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
     return path.join(process.env.LOCALAPPDATA, "Bifurc", "app.json");
   }
-  return path.join(app.getPath("userData"), "app.json");
+  // Engine-side, Electron-free path (P2 work item 4): the Electron shell calls
+  // `setDataRoot(app.getPath("userData"))` at startup, so this resolves to the exact same
+  // directory Electron would have returned — see `src/store/paths.ts`.
+  return path.join(dataDir(), "app.json");
 }
 
 export function appDataDir(): string {

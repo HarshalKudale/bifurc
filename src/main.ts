@@ -11,6 +11,7 @@ import { checkGitInstalled, initWorkspaceRepo } from "@/store/gitStore";
 import { startAutoSync, stopAllAutoSync, setAutoSyncReloadFn } from "@/sync/autoSync";
 import { getSyncConfig } from "@/sync/syncManager";
 import { bus } from "@/eventBus";
+import { setDataRoot } from "@/store/paths";
 import * as fs from "fs";
 
 
@@ -251,6 +252,11 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    // P2 work item 4: the engine-side store modules (appSettings.ts, workspaceFs.ts) are now
+    // Electron-free and resolve their paths via `dataDir()`. This is the one place the shell
+    // hands them Electron's own `userData` path, preserving current behaviour exactly.
+    setDataRoot(app.getPath("userData"));
+
     const hasGit = await checkGitInstalled();
     if (!hasGit) {
       dialog.showErrorBox(

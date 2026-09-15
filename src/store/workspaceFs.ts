@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { app } from "electron";
+import { dataDir } from "@/store/paths";
 import { getPendingDeletions } from "./workspace/fsPendingDeletions";
 
 export interface WorkspaceFile {
@@ -37,7 +37,10 @@ export function dataRoot(): string {
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
     return path.join(process.env.LOCALAPPDATA, "Bifurc", "data");
   }
-  return path.join(app.getPath("userData"), "data");
+  // Engine-side, Electron-free path (P2 work item 4): the Electron shell calls
+  // `setDataRoot(app.getPath("userData"))` at startup, so this resolves to the exact same
+  // directory Electron would have returned — see `src/store/paths.ts`.
+  return path.join(dataDir(), "data");
 }
 
 export function wsDir(wsId: string): string {

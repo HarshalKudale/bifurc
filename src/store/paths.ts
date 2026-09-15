@@ -1,25 +1,28 @@
 /**
  * P2 work item 4 — data directory resolution.
  *
- * New, additive infrastructure only. `appSettings.ts` and `workspaceFs.ts` are NOT yet wired to
- * consume this as their primary path — that wiring, plus the decision on whether the existing
- * `setDataRootOverride()` / `setSettingsPathOverride()` test hooks remain separate or fold into
- * this module, is flagged in `plan/03-phase-2-engine-extraction.md` as the part of this item most
- * likely to silently break e2e data-dir isolation. That wiring needs the 11 e2e specs to verify
- * it (`plan/13-checklist.md` P6 item "Verify e2e data-dir isolation still holds"), which cannot
- * run in this sandbox (no desktop session — see `plan/baseline.md` "Environment caveats"). It is
- * intentionally deferred rather than merged in unverified.
+ * `appSettings.ts` and `workspaceFs.ts` now consume `dataDir()` as their ultimate fallback (after
+ * the win32 `LOCALAPPDATA` special case and the `*Override` test hooks, both left untouched —
+ * see `src/store/workspaceFs.ts#dataRoot` and `src/store/appSettings.ts#settingsPath`). Neither
+ * module imports `electron` any more.
  *
- * What IS delivered here: the resolution order the CLI (P8) and Docker (P9) need, exactly as
- * specified —
+ * `src/main.ts` calls `setDataRoot(app.getPath("userData"))` once, at the very top of
+ * `app.whenReady()`, before any store module is touched — this preserves the exact directory
+ * Electron previously resolved directly, so existing installs see no path change. The two
+ * `*Override` hooks are deliberately left as-is (not folded into this module): they are proven
+ * by the full integration suite and folding them in was a distinct, riskier change this pass
+ * did not attempt.
+ *
+ * This module also gives the CLI (P8) and Docker (P9) entrypoints the resolution order they
+ * need, exactly as specified —
  *
  *   1. `--data-dir <path>` CLI flag (see `resolveDataDir(argv)`)
  *   2. `BIFURC_DATA_DIR` environment variable
  *   3. Platform default: `%LOCALAPPDATA%\Bifurc` (Windows), `~/Library/Application Support/Bifurc`
  *      (macOS), `$XDG_CONFIG_HOME/bifurc` or `~/.config/bifurc` (Linux)
  *
- * The Electron shell will call `setDataRoot(app.getPath("userData"))` — option 1 in spirit,
- * preserving current behaviour exactly, once it is wired up (tracked, not done in this pass).
+ * Non-Electron callers (CLI/Docker, once they exist) are expected to call
+ * `setDataRoot(resolveDataDir(argv))` once at startup, exactly like the shell does.
  */
 import * as os from "os";
 import * as path from "path";
