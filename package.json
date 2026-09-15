@@ -4,6 +4,9 @@
   "description": "Local development panel - localhost domain proxy manager",
   "license": "SEE LICENSE IN ../LICENSE",
   "main": "dist/main.js",
+  "workspaces": [
+    "packages/*"
+  ],
   "author": {
     "name": "Harshal Kudale"
   },
@@ -97,6 +100,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
+    "@bifurc/protocol": "*",
     "@codemirror/autocomplete": "^6.20.2",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-html": "^6.4.11",
