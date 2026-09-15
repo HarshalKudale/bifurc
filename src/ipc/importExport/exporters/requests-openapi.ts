@@ -1,6 +1,6 @@
 import * as fs from "fs";
-import { loadConfig, SavedRequest } from "@/store/config";
-import { readAllEntities } from "@/store/workspaceFs";
+import { loadConfig, SavedRequest } from "@bifurc/engine/store/config";
+import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 function extractPathParams(url: string): string[] {

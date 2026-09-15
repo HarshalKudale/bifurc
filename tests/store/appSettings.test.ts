@@ -12,7 +12,7 @@ import {
     loadSettings,
     saveSettings,
     appDataDir,
-} from "@/store/appSettings";
+} from "@bifurc/engine/store/appSettings";
 
 describe("appSettings", () => {
     let tmpDir: string;

@@ -1,6 +1,6 @@
 import * as fs from "fs";
-import { loadConfig, SavedRequest, SavedWsConnection, SavedWebhook, ProxyRule } from "@/store/config";
-import { readAllEntities, readEnabledSet, bootstrapEnabledSet } from "@/store/workspaceFs";
+import { loadConfig, SavedRequest, SavedWsConnection, SavedWebhook, ProxyRule } from "@bifurc/engine/store/config";
+import { readAllEntities, readEnabledSet, bootstrapEnabledSet } from "@bifurc/engine/store/workspaceFs";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 export async function run(wsId: string, filePath: string): Promise<ExportResult> {

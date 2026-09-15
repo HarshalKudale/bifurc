@@ -3,11 +3,11 @@ import * as path from "path";
 import unzipper from "unzipper";
 import {
   loadConfig, saveConfig, generateId, Workspace,
-} from "@/store/config";
-import { wsDir, initWorkspaceDir } from "@/store/workspaceFs";
-import { initWorkspaceRepo } from "@/store/gitStore";
+} from "@bifurc/engine/store/config";
+import { wsDir, initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
+import { initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
 import { reloadConfig } from "@/proxy/server";
-import { loadSettings, saveSettings } from "@/store/appSettings";
+import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 
 export function preflight(_wsId: string, filePath: string): PreflightResult {

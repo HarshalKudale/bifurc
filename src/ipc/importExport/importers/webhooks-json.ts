@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import {
   loadConfig, saveConfig, generateId, SavedWebhook, Folder,
-} from "@/store/config";
-import { writeEntity, upsertNameEntry, readAllEntities } from "@/store/workspaceFs";
+} from "@bifurc/engine/store/config";
+import { writeEntity, upsertNameEntry, readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import { reloadConfig } from "@/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 

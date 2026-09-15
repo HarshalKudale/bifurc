@@ -13,7 +13,18 @@
     "sourceMap": true,
     "baseUrl": "./src",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      /**
+       * P2 work item 8. The engine is a real npm workspace package (`packages/engine`) that the
+       * shell consumes as *built* output, exactly like `@bifurc/protocol`. Mapping the subpath
+       * here does two things:
+       *   - `tsc --noEmit` resolves engine types from its emitted `.d.ts` (build the package first
+       *     — `npm run build:packages`, also wired to `prepare` so `npm ci` does it automatically);
+       *   - `tsc-alias` rewrites the specifier in the emitted JS to a *relative* path, so
+       *     `dist/**` requires `../packages/engine/dist/...` at runtime with no node_modules
+       *     resolution and no reliance on workspace symlinks inside the packaged asar.
+       */
+      "@bifurc/engine/*": ["../packages/engine/dist/*"]
     }
   },
   "include": ["src/**/*"],

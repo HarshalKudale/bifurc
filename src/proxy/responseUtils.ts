@@ -76,7 +76,7 @@ export function handleProxyResponse(
 }
 
 import * as https from "https";
-import { ProxyRule } from "@/store/config";
+import { ProxyRule } from "@bifurc/engine/store/config";
 import { sendHtml } from "@/proxy/pages";
 import { executeRequestScript, executeResponseScript } from "@/proxy/scriptExecutor";
 

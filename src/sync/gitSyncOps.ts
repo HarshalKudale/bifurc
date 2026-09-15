@@ -1,7 +1,7 @@
 import simpleGit, { SimpleGitProgressEvent } from "simple-git";
 import * as fs from "fs";
 import * as path from "path";
-import { getGit } from "@/store/gitStore";
+import { getGit } from "@bifurc/engine/store/gitStore";
 
 export async function isRemoteEmpty(remote: string, branch: string): Promise<boolean> {
   try {

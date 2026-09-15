@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { loadConfig } from "@/store/config";
+import { loadConfig } from "@bifurc/engine/store/config";
 import type { ExportResult } from "@/ipc/importExport/types";
 import { exportMocksToPostman } from "@/ipc/importExport/formats/postman";
 

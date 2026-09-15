@@ -2,7 +2,7 @@ import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { generateCA, getCertStatus } from "@/proxy/certManager";
-import { appDataDir } from "@/store/appSettings";
+import { appDataDir } from "@bifurc/engine/store/appSettings";
 import { commandRegistry } from "@/commands/registry";
 import { bus } from "@/eventBus";
 

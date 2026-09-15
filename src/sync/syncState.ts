@@ -1,5 +1,5 @@
 import { SyncConfig, SyncMeta, SyncState } from "@/sync/types";
-import { loadSettings, saveSettings } from "@/store/appSettings";
+import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 
 const _syncStates = new Map<string, SyncState>();
 

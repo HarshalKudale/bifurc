@@ -179,23 +179,60 @@ optional and blocks nothing.
 - [x] Replace `registerIpcHandlers()` with the `CommandRegistry` — `src/commands/registry.ts`,
       **~112 commands** across 13 files, covering every `EntityKind` value. Only the P3-bound
       `importExport:*` SPLIT channels remain outside it.
-- [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` is a
-      real linked npm workspace (`"workspaces": ["packages/*"]`), built with its own `tsup`
-      pipeline and consumed at runtime by `src/commands/registry.ts`. `packages/engine` and the
-      file moves are not started.
-- [ ] **Split the dependencies** — engine deps out of the flat list — not started
-- [ ] Resolve `@/*` aliases at package boundaries — not started
-- [ ] `tsup` build for `packages/engine` — not started
-- [ ] `git mv` the moved modules (preserve blame) — not started (nothing moved yet)
+- [x] **`git mv` the moved modules (preserve blame)** — the bottom layer moved:
+      `src/store/` (11 files), `src/lib/` (2), `src/subscription/` (1) → `packages/engine/src/`.
+      Done with `git mv`, so blame survives.
+- [x] **`tsup` build for `packages/engine`** — `packages/engine/tsup.config.ts`. Multi-entry with
+      the directory structure preserved (`dist/store/config.js`), ESM + CJS + `.d.ts`, mirroring
+      the `packages/protocol` pattern. **`bundle: false` is deliberate and load-bearing**:
+      `store/paths.ts` holds the resolved data root as module-level state, and bundling would
+      inline a private copy into every entry point, so a `setDataRoot()` call through one entry
+      would silently stop affecting the modules reached through another. Verified after the build:
+      `dist/store/config.js` does `require("./appSettings")` / `require("./workspaceFs")`, and
+      `dist/store/paths.js` owns the singleton.
+- [x] **Resolve `@/*` aliases at package boundaries** — the engine is alias-free internally (its
+      7 `@/store/*` imports became relative); consumers now use `@bifurc/engine/*`. Three
+      resolution paths, all deliberate: `tsc` via a new root `tsconfig.json` `paths` entry, vitest
+      via `resolve.alias` pointing at the engine **source** (so tests exercise real code and
+      coverage can instrument it), and Node at runtime via the package's `exports` map — note
+      `tsc-alias` deliberately leaves `@bifurc/engine/*` bare rather than rewriting it to a
+      relative path, exactly as it already does for `@bifurc/protocol`. **254 statements across
+      97 files** rewritten (src 69 files, tests 37 files, renderer **0** — the renderer's `@/`
+      alias points at `renderer/`, so it never referenced the moved layer).
+      **Measured, not assumed:** it must be a `resolve.alias` *and* it must be redeclared inside
+      every `test.projects` entry. A `resolveId` plugin never fires (the package is externalized
+      first), and root-level `resolve.alias` — like root-level `plugins` — is not inherited by
+      project runs, which is why a deliberately **bogus** alias target was silently ignored while
+      the suite still passed against `dist/`. A `deps.inline` pattern is **not** needed. Before
+      this, all 14 engine files reported 0% coverage because tests loaded the built `dist/*.mjs`.
+- [x] **Fix the latent workspace-build CI bug** — neither `packages/*` `dist` is committed
+      (`dist/` is gitignored repo-wide) and CI only ran `npm ci`, so `npm run typecheck` failed on
+      a fresh clone with `TS2307: Cannot find module '@bifurc/protocol'`. Added `build:packages`
+      and wired it to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`, so
+      installs are now self-sufficient for both packages.
+- [ ] **Split the dependencies** — **partially**: `packages/engine` declares its own deps
+      (`simple-git`) and its own build devDeps (`tsup`, `typescript`, `@types/node`), and has
+      **no** Electron or renderer dependency. The rest of the engine's deps (`ws`, `js-yaml`,
+      `mkcert`, `archiver`, `unzipper`, `@bifurc/protocol`) are still in the root flat list,
+      because the modules that use them have not moved yet — removing them now would break the
+      shell. They move with their modules in the remaining steps.
+- [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` and
+      `packages/engine` are both real linked npm workspaces built with their own `tsup` pipelines.
+      `apps/*` does not exist yet, and the Electron shell is still the repo root — that switch is
+      P6's job.
 
-**Gate:** not green — see the phase doc's acceptance-criteria section for the itemised, honest
-status. **Every remaining acceptance criterion is blocked on work item 8** (the physical
-`packages/engine` move + dependency split); items 1–7 are otherwise closed apart from the two
-items above explicitly left open on product grounds. Verified after the latest changes:
-`npm run typecheck` and `npm run build:main` clean; full suite **1615/1616 across 69 files** — the
-single failure is the documented sandbox `127.0.0.1:1` connectivity quirk in the P0 spike test,
-reproduced identically on the pre-change tree. The 11 e2e specs remain unverified (cannot run in
-this sandbox — no desktop session).
+**Gate:** **not yet green, but only one thing stands between here and it.** Work item 8 is now
+**started and its infrastructure is done** — the package exists, builds, is linked, and the bottom
+layer has physically moved. What remains is moving the *rest* of the engine's modules
+(`proxy/`, `sync/`, `applications/`, `companion/`, `commands/`, `eventBus.ts`, `startup.ts`,
+`shutdown.ts`) and building `createEngine()` — which is what makes the "engine starts from a bare
+Node script with `--data-dir`" criterion satisfiable. Items 1–7 are otherwise closed apart from
+the two items above explicitly left open on product grounds.
+
+Verified after this change: `npm run typecheck` and `npm run typecheck:packages` clean;
+`npm run build:main` clean; full suite **1615/1616 across 69 files** — identical to the baseline,
+the single failure being the documented sandbox `127.0.0.1:1` connectivity quirk in the P0 spike
+test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desktop session).
 
 ---
 
