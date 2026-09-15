@@ -1,12 +1,30 @@
 import { ipcMain, dialog } from "electron";
 import { getAllFormats, getExporter, getImporter } from "@/ipc/importExport/registry";
 import type { EntityKind, ExportRequest, PreflightRequest, ImportRequest } from "@/ipc/importExport/types";
+import { commandRegistry } from "@/commands/registry";
+import { bus } from "@/eventBus";
 
 // Import registry side effects (registers all formats)
 import "./registry";
 
+// P2 work item 7 — only `export.formats` converts here. The other three
+// (`importExport:export/preflight/import`) were checked and are genuinely NOT safe to convert
+// as a registration-only move — two separate real gaps, not one:
+//   - `export.create`/`import.preflight` are SPLIT (engine should render/read content or a
+//     blobId; client owns the save/open dialog — see this file's own comment: "Full blob-layer
+//     rewiring is P3's job"), but today's handlers still call `dialog.showSaveDialog`/
+//     `showOpenDialog` themselves and pass the resulting path straight to the exporter/importer.
+//   - `import.commit`'s `collisionStrategy` enum is `["skip", "overwrite", "rename"]` in the
+//     frozen protocol schema, but the actual local `CollisionStrategy` type (and every real
+//     renderer call site) uses `["keep", "override", "new"]` — different string values, not
+//     just missing fields. Converting this one would reject every real import outright.
+// Both are P3 (`File_Ops_Protocol.md` blob layer) territory, not this pass's.
+const ctx = { bus };
+
+commandRegistry.register("export.formats", () => getAllFormats());
+
 export function registerImportExportHandlers(): void {
-  ipcMain.handle("importExport:formats", () => getAllFormats());
+  ipcMain.handle("importExport:formats", () => commandRegistry.invoke("export.formats", {}, ctx));
 
   ipcMain.handle("importExport:export", async (_e, req: ExportRequest) => {
     const { kind, format, wsId } = req;
