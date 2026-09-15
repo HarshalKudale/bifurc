@@ -132,23 +132,24 @@ optional and blocks nothing.
 
 - [x] **`Cleanup_plan.md` Phase 1–2 complete** — prerequisite, not a parallel track (per D6 gate
       assessment in `plan/README.md`; 2.9 still folds into P3 as documented there)
-- [x] Build the EventBus (copy `logEmitter`'s pattern) — `src/events/bus.ts`
+- [x] Build the EventBus (copy `logEmitter`'s pattern) — `src/eventBus.ts`
 - [x] Convert broadcast site **#1** — `src/ipc/handlers.ts:24–49` — run the suite
-- [ ] **Data dir injection** (`appSettings.ts:79`, `workspaceFs.ts:40`) + `paths.ts` — `paths.ts`
-      built and unit-tested (`tests/store/paths.test.ts`, 8/8); **not wired** into
-      `appSettings.ts`/`workspaceFs.ts` as the primary path yet — deferred, see the phase doc's
-      acceptance-criteria notes for why
+- [x] **Data dir injection** (`appSettings.ts:79`, `workspaceFs.ts:40`) + `paths.ts` — `paths.ts`
+      built and unit-tested (`tests/store/paths.test.ts`, 8/8) **and now wired as the primary
+      path**; `main.ts` calls `setDataRoot(app.getPath("userData"))` at the top of
+      `app.whenReady()`, so existing installs see no path change. The two `*Override` test hooks
+      were deliberately kept separate rather than folded in — see the phase doc's work item 4 note.
 - [x] Verify what `store/gitStore.ts` actually needs from `electron` — nothing; unused import
       removed
 - [x] Convert broadcast site #2 — `coreHandlers.ts:28`
 - [x] Convert broadcast site #3 — `entityCrudFactory.ts:29–42`
 - [x] Convert broadcast site #4 — `folderHandlers.ts:10`
 - [x] Convert broadcast site #5 — `syncHandlers.ts:18`
-- [ ] Convert broadcast site #6 — `systemHandlers.ts:28` — **not applicable as originally scoped**:
+- [x] Convert broadcast site #6 — `systemHandlers.ts:28` — **resolved as not applicable**:
       on inspection this file's `BrowserWindow` use is `zoom:set`/`shell:setTitleBarOverlay`
       driving actual window chrome (CLIENT-classified per `plan/handler-classification.md`), not
-      an engine→client data broadcast. No conversion needed; will simply stay in the Electron
-      shell when P2 item 8's physical move happens.
+      an engine→client data broadcast. No conversion needed; it stays in the Electron shell when
+      the physical move happens.
 - [x] Convert broadcast site #7 — `proxy/webhookServer.ts:137` — `src/proxy/` now has **zero**
       Electron imports
 - [x] Convert broadcast site #8 — `companion/companionServer.ts:52–83`
@@ -156,24 +157,45 @@ optional and blocks nothing.
       wire name survives only in the temporary `src/ipc/eventBridge.ts` shim, by design)
 - [x] Break the `coreHandlers` → `main` import cycle
 - [x] Remove the `mainWindow` reference from `processSpawner.ts`
-- [ ] Make engine shutdown idempotent — not started
-- [ ] Split out shell-only handlers (zoom, theme, titlebar, dialogs, openExternal, first-launch) —
-      not started (classification done in P1; extraction not done)
-- [ ] Move `tls:installCA` out of the engine — not started
-- [ ] Replace the git `dialog.showErrorBox` with `preflight()` — not started
-- [ ] Move workspace bootstrap out of `main.ts:265–294` into the engine — not started
-- [ ] Replace `registerIpcHandlers()` with the `CommandRegistry` — not started (deliberately last,
-      per the phase doc's own ordering advice)
-- [ ] Restructure to `packages/*` + `apps/*` workspaces — not started
+- [x] Make engine shutdown idempotent — `src/shutdown.ts` (`shutdownEngine()`, memoised), plus a
+      per-entry guard in `processSpawner.stop()` so `stopAll()` is repeatable. `main.ts`'s
+      `before-quit` is now one call. Unit-tested (`tests/shutdown.test.ts`, 6/6)
+- [x] Split out shell-only handlers (zoom, theme, titlebar, dialogs, openExternal, first-launch) —
+      **10 of 15 channels done**: they live in `src/ipc/handlers/clientHandlers.ts` with its own
+      `registerClientHandlers()`, unit-tested (`tests/ipc/clientHandlers.test.ts`, 21/21).
+      Remaining: the two SPLIT channels (`app:checkUpdate` → P12, `capture:shareJson`) and
+      `main.ts`'s tray/window/menu code, which cannot move until `packages/engine` exists.
+- [x] Move `tls:installCA` out of the engine — done, into `clientHandlers.ts`
+- [ ] Replace the git `dialog.showErrorBox` with `preflight()` — **not done, deliberately**.
+      `preflight()` exists and runs in `main.ts`, but the pre-existing git-required block still
+      makes its own direct `checkGitInstalled()` call and still shows the dialog, preserving
+      current behaviour. Routing it through `preflight()` — and deciding whether
+      `data-dir-unwritable` / `port-in-use` / `mkcert-unusable` should become *blocking* — is a
+      product decision, left open.
+- [x] Move workspace bootstrap out of `main.ts` into the engine — `bootstrapWorkspaces()` in
+      `src/startup.ts`; `main.ts` is now a single call and no longer touches
+      `workspaceFs`/`gitStore`/`autoSync` directly. Integration-tested with real dirs + real git
+      (`tests/integration/workspaceBootstrap.integration.test.ts`, 7/7)
+- [x] Replace `registerIpcHandlers()` with the `CommandRegistry` — `src/commands/registry.ts`,
+      **~112 commands** across 13 files, covering every `EntityKind` value. Only the P3-bound
+      `importExport:*` SPLIT channels remain outside it.
+- [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` is a
+      real linked npm workspace (`"workspaces": ["packages/*"]`), built with its own `tsup`
+      pipeline and consumed at runtime by `src/commands/registry.ts`. `packages/engine` and the
+      file moves are not started.
 - [ ] **Split the dependencies** — engine deps out of the flat list — not started
 - [ ] Resolve `@/*` aliases at package boundaries — not started
 - [ ] `tsup` build for `packages/engine` — not started
 - [ ] `git mv` the moved modules (preserve blame) — not started (nothing moved yet)
 
 **Gate:** not green — see the phase doc's acceptance-criteria section for the itemised, honest
-status. **Full unit suite (48 files / 1234 tests) and integration suite (323/325, 2 pre-existing
-sandbox-only failures) verified green after every conversion in this session — zero regressions.**
-The 11 e2e specs are unverified (cannot run in this sandbox).
+status. **Every remaining acceptance criterion is blocked on work item 8** (the physical
+`packages/engine` move + dependency split); items 1–7 are otherwise closed apart from the two
+items above explicitly left open on product grounds. Verified after the latest changes:
+`npm run typecheck` and `npm run build:main` clean; full suite **1615/1616 across 69 files** — the
+single failure is the documented sandbox `127.0.0.1:1` connectivity quirk in the P0 spike test,
+reproduced identically on the pre-change tree. The 11 e2e specs remain unverified (cannot run in
+this sandbox — no desktop session).
 
 ---
 

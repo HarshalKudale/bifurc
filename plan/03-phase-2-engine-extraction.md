@@ -138,6 +138,30 @@ Also revisit lifecycle: today the spawner stops all children on `app.on("before-
 engine that becomes a `shutdown()` call on the engine, and it must be **idempotent** — the shell, a
 supervisor restart, and a SIGTERM handler may all call it.
 
+> **Status (2026-09-15): done.** The window reference itself was removed in an earlier session (the
+> spawner now emits `process.output` / `process.statusChange` on the bus). This session closed the
+> lifecycle half:
+>
+> - **`src/shutdown.ts`** is new and Electron-free. It exports `shutdownEngine(): Promise<void>` and
+>   `isShuttingDown(): boolean`. The teardown sequence (spawner → pollers → companion server → proxy
+>   server) is memoised behind a single in-flight promise, so the shell quitting, a supervisor
+>   SIGTERM and a crash handler can all call it in the same tick and exactly one teardown runs.
+>   `main.ts`'s `before-quit` is now `void shutdownEngine()`.
+> - **Ordering is deliberate and pinned by a test**: children and pollers stop *before* the servers,
+>   otherwise a server still accepting traffic can spawn work after the spawner was torn down.
+> - **`processSpawner.stopAll()` is now genuinely idempotent**, via a `stopping` flag on each
+>   `RunningProcess` entry checked at the top of `stop()`. Without it a second shutdown pass would
+>   re-`taskkill` the same pid and re-emit "stopping" status/log events — and a late `stop()` on an
+>   already-exited process would flip its status back from `exited` to `stopping`. Entries are
+>   **not** removed from the map, so `getState()` / `getLogs()` keep working for a client reading
+>   them during shutdown.
+> - Unit-tested in `tests/shutdown.test.ts` (6/6): exactly-once teardown, ordering, repeated calls,
+>   concurrent callers, shared promise identity, and the `isShuttingDown()` state machine.
+>
+> Note for the package move: the four individual stop functions were already null-guarded and safe
+> to call when their subsystem is not running — what was missing was a guard on the *sequence*.
+> `shutdownEngine()` must not become a thin re-export of them without keeping that guard.
+
 ---
 
 ## Work item 4 — Inject the data directory
@@ -282,9 +306,38 @@ non-zero with the message on stderr. **One check, three presentations.**
 > Whether those should become blocking (and whether the git check should be re-routed through
 > `preflight()` instead of its own direct call) is a product decision left open, not an oversight.
 >
-> **Not done:** extracting the workspace bootstrap from `main.ts` (init dirs, init repos, start
-> auto-sync, validate active workspace, create a default one) into the engine — it still lives in
-> the shell's `app.whenReady()` handler, unchanged.
+> **Not done:** the git check still is not routed through `preflight()` — see above, that is a
+> product decision, not an oversight.
+>
+> **Status (2026-09-15, this session): the workspace bootstrap is now extracted too.**
+> `src/startup.ts` gained `bootstrapWorkspaces(settings)` alongside `preflight()`, so the whole
+> engine-startup surface lives in one Electron-free module. It does exactly what `main.ts`'s
+> `app.whenReady()` handler used to do inline — create every known workspace's dirs
+> (`initWorkspaceDir`) and git repo (`initWorkspaceRepo`), start auto-sync for the workspaces whose
+> `syncConfig.autoSync` is set, then repair `activeWorkspaceId` or create a fresh default workspace
+> — plus the `setAutoSyncReloadFn(reloadConfig)` wiring, which is engine-internal and the shell
+> never needed to know about.
+>
+> `main.ts` is now a single call, `settings = (await bootstrapWorkspaces(settings)).settings;`, and
+> no longer imports `workspaceFs`, `gitStore`, `autoSync`, `syncManager` or `store/config` at all.
+> The function returns the effective settings instead of mutating the caller's object; the leftover
+> `require("@/proxy/server")` for `reloadConfig` is gone (it was redundant — `main.ts` already had a
+> static import of that module).
+>
+> **A real quirk was found while testing this, and deliberately preserved.** Because the loop calls
+> `initWorkspaceDir()` for *every* workspace in settings — creating the directory if missing — the
+> subsequent "is the active workspace's dir on disk?" check can never fail for a workspace that is
+> *listed*. So the "fall back to another workspace / create a default" branch only ever fires when
+> `activeWorkspaceId` is **not** in `workspaces` (settings edited, or a workspace dropped from the
+> list while still active). The "its dir was deleted" reading of that code is unreachable. This is
+> pre-existing behaviour, and P2 is an extraction, not a behaviour change — so it is preserved
+> verbatim and annotated in `src/startup.ts` with a "do not fix during the package move" note.
+>
+> Integration-tested in `tests/integration/workspaceBootstrap.integration.test.ts` (7/7) with a real
+> temp data root, real directories and real `git init` — including that a second bootstrap run adds
+> no second `chore: init workspace repo` commit, and that a healthy active workspace leaves the
+> settings file byte-identical (no pointless rewrite on every launch). Only `startAutoSync` is
+> stubbed, so the suite does not leave a 30-second poller timer running.
 
 ---
 
@@ -671,27 +724,37 @@ electron-builder, tailwind) in one flat list. These must split:
 
 - [ ] `grep -rn "from \"electron\"" packages/engine/src` returns **zero** results. *(Not yet
       applicable — `packages/engine` does not exist yet; the physical restructuring in work item 8
-      is not done. Progress made in place: `src/**` electron-importing files reduced from 22 →
-      18 → **16** across sessions — `gitStore.ts`, `companionServer.ts`, `webhookServer.ts`,
-      `processSpawner.ts`, `appSettings.ts`, and `workspaceFs.ts` are now electron-free. `src/proxy/`
-      — "the actual product" per this doc's own note — has **zero** Electron imports. A new
-      `src/ipc/handlers/clientHandlers.ts` was also added this session and does import `electron` —
-      by design, it never moves to `packages/engine` (see work item 5's status note).)*
+      is not done, and it is the only thing left in P2. Progress made in place: `src/**` has **17**
+      electron-importing files (verified 2026-09-15), but 11 of those are `src/ipc/handlers/*` that
+      import only `ipcMain` — the registration layer this phase replaces wholesale. The genuinely
+      shell/client-scoped ones are `main.ts`, `preload.ts`, `eventBridge.ts` (the deliberate
+      temporary bridge) and `clientHandlers.ts` (never moves to `packages/engine`, see work item 5).
+      Everything this phase converted is Electron-free: `src/proxy/` — "the actual product" per this
+      doc's own note — has **zero** Electron imports, and `gitStore.ts`, `companionServer.ts`,
+      `webhookServer.ts`, `processSpawner.ts`, `appSettings.ts`, `workspaceFs.ts`, `startup.ts`,
+      `shutdown.ts` and `eventBus.ts` are all clean.)*
 - [ ] `grep -rn "BrowserWindow\|app.getPath\|dialog\.\|shell\." packages/engine/src` returns zero.
-      *(Same caveat — see the per-item status below for what's actually converted.)*
+      *(Same caveat — see the per-item status below for what's actually converted. Verified: the
+      only remaining `BrowserWindow.getAllWindows()` / `webContents.send` sites in `src/` are
+      `eventBridge.ts` (deliberate) and `clientHandlers.ts` (zoom/titlebar chrome, CLIENT-classified).)*
 - [ ] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
-      *(Not done — needs item 8's package extraction. Item 6's preflight() now exists in
-      `src/startup.ts` and is wired into `main.ts`, but nothing runs it from a bare Node script yet
-      since there is no engine entrypoint outside Electron.)*
+      *(Not done — needs item 8's package extraction. The pieces now exist and are individually
+      tested: `src/store/paths.ts` resolves the data root with a loud failure when unset,
+      `src/startup.ts` provides `preflight()` **and** `bootstrapWorkspaces()`, and `src/shutdown.ts`
+      provides an idempotent `shutdownEngine()`. What is missing is an engine entrypoint outside
+      Electron — there is nothing to run yet.)*
 - [x] `setDataRoot()` not called → loud error, not a silent cwd fallback. Implemented in
       `src/store/paths.ts` (`DataRootNotInitialisedError`), unit-tested
       (`tests/store/paths.test.ts`, 8/8 passing), **and now wired as the primary path** in
       `appSettings.ts`/`workspaceFs.ts` — see the work item 4 status note above.
-- [x] All unit + integration suites pass. *(67 files / 1594 tests as of this session; zero
-      regressions.)* The 11 e2e suites remain **unverified** — they cannot run in this sandbox (no
-      desktop session, per `plan/baseline.md` "Environment caveats"). Integration suite: 65/67
-      files green, 1592/1594 tests, matching the documented baseline exactly (the 2 failures are
-      the sandbox network-interceptor caveat, not a regression).
+- [x] All unit + integration suites pass. *(**69 files / 1616 tests, 1615 passing** as of
+      2026-09-15; zero regressions.)* The 11 e2e suites remain **unverified** — they cannot run in
+      this sandbox (no desktop session, per `plan/baseline.md` "Environment caveats"). The single
+      failure is the documented sandbox network-interceptor caveat
+      (`ECONNREFUSED 127.0.0.1:1` in `tests/spike/protocolPoc.test.ts`, P0 spike code untouched by
+      P2), reproduced identically on the pre-change tree. Earlier sessions recorded 2 such failures;
+      the count varies run to run, which is consistent with it being an environment artifact rather
+      than a regression.
 - [x] No `companion:refresh`; replaced by `entity.changed`. **Internally** — every engine-side
       emission site now emits `bus.emitTyped("entity.changed", ...)`. The wire name
       `companion:refresh` still exists, deliberately, in the temporary shell bridge
@@ -707,17 +770,19 @@ electron-builder, tailwind) in one flat list. These must split:
       though — `npm run build` in that package produces ESM+CJS+`.d.ts` via `tsup`, and is now
       the thing `src/commands/registry.ts` depends on at runtime.)*
 
-**Honest status:** work items 1 (EventBus), 2 (broadcast inversion, all 8 sites), and 3
-(`processSpawner` mainWindow removal) are **done and verified** — full unit + integration suite
-green, zero regressions. Work item 4 (data dir) is now **done**: `setDataRoot()` is the primary
+**Honest status:** work items 1 (EventBus), 2 (broadcast inversion, all 8 sites) and 3
+(`processSpawner` — the window reference **and** the idempotent lifecycle) are **done and
+verified** — full unit + integration suite green, zero regressions. Work item 4 (data dir) is
+**done**: `setDataRoot()` is the primary
 path in `appSettings.ts`/`workspaceFs.ts`, wired from `main.ts`'s `app.whenReady()`; the two
 `*Override` test hooks were deliberately kept separate rather than folded in (see the work item 4
-status note above for the reasoning). Work item 6 (headless startup) is **half done**:
-`src/startup.ts`'s `preflight()` exists, is unit-tested, and is wired into `main.ts` as an
-additional, non-blocking diagnostic pass — but the pre-existing git-check block was left as its
-own direct call rather than routed through `preflight()`, and the workspace-bootstrap loop (init
-dirs/repos, auto-sync, active-workspace validation) has not been extracted out of `main.ts` into
-the engine. Work item 5 (split shell-only handlers) is **started**: the 10 pure-CLIENT channels
+status note above for the reasoning). Work item 6 (headless startup) is **done apart from one
+deliberate gap**: `preflight()` and `bootstrapWorkspaces()` both live in the Electron-free
+`src/startup.ts` and are tested, and `main.ts` no longer touches
+`workspaceFs`/`gitStore`/`autoSync`/`syncManager` directly — but the pre-existing git-check block
+was left as its own direct call rather than routed through `preflight()`, and whether the other
+checks should become *blocking* is a product decision left open. Work item 5 (split shell-only
+handlers) is **started**: the 10 pure-CLIENT channels
 now live in `src/ipc/handlers/clientHandlers.ts`, registered separately from
 `registerIpcHandlers()`; the two SPLIT channels in `systemHandlers.ts` (`app:checkUpdate`,
 `capture:shareJson`) and `main.ts`'s tray/window/menu code are untouched, per that item's own
