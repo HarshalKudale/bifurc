@@ -1,7 +1,7 @@
 import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import type { ConfigGetParams, EnvSetActiveParams, WorkspaceSetActiveParams } from "@bifurc/protocol";
+import type { ConfigGetParams, EnvSetActiveParams, WorkspaceSetActiveParams, EntityLoadParams, EntitySetEnabledParams } from "@bifurc/protocol";
 import { executeIpcScript, IpcScriptOpts } from "@/proxy/scriptExecutor";
 import {
   loadConfig, saveConfig, loadEntity, generateId, AppConfig,
@@ -24,6 +24,7 @@ import { gateCreate } from "@/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@/sync/statusTracker";
 import { commandRegistry } from "@/commands/registry";
+import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
 
 // P2 work item 7 (CommandRegistry) proof-of-concept — see `src/commands/registry.ts` for the
 // rationale and current scope. These three commands were picked because they cover both shapes
@@ -55,6 +56,56 @@ commandRegistry.register("workspace.setActive", ({ id }: WorkspaceSetActiveParam
   return { ok: true, config: loadConfig() };
 });
 
+// The six kinds that carry an enabled/disabled flag, tracked in `enabled.json` rather than on
+// the entity itself. `EntitySetEnabledParams.kind` is already restricted to exactly these six
+// engine-internal strings (see `entityKindMap.ts`'s own note on why it needs no translation).
+const ENABLED_STATE_KINDS = new Set(["mocks", "mappings", "rules", "graphqlMocks", "soapMocks", "grpcMocks"]);
+
+commandRegistry.register("entity.load", ({ workspaceId, kind, id }: EntityLoadParams) => {
+  const engineKind = toEngineKind(kind);
+  const entity = loadEntity(workspaceId, engineKind, id);
+  if (!entity) return { ok: false };
+  if (ENABLED_STATE_KINDS.has(engineKind)) {
+    const set = readEnabledSet(workspaceId, engineKind);
+    return { ok: true, entity: { ...entity as object, enabled: set ? set.has(id) : false } };
+  }
+  return { ok: true, entity };
+});
+
+commandRegistry.register("entity.setEnabled", async ({ workspaceId, kind, id, enabled }: EntitySetEnabledParams) => {
+  if (enabled && kind === "mocks") {
+    const cfg = loadConfig();
+    const target = (cfg.mocks ?? []).find((m) => m.id === id);
+    if (target) {
+      const sig = `${target.method.toUpperCase()}|${target.urlPattern}|${target.capturedBody ?? ""}`;
+      for (const m of cfg.mocks) {
+        if (m.id !== id && m.enabled) {
+          const mSig = `${m.method.toUpperCase()}|${m.urlPattern}|${m.capturedBody ?? ""}`;
+          if (mSig === sig) syncEnabledSet(workspaceId, "mocks", m.id, false);
+        }
+      }
+    }
+  }
+  if (enabled && kind === "rules") {
+    const cfg = loadConfig();
+    const target = (cfg.proxyRules ?? []).find((r) => r.id === id);
+    if (target) {
+      const sig = `${target.useRegex ? "re" : "exact"}|${target.pattern}`;
+      for (const r of cfg.proxyRules) {
+        if (r.id !== id && r.enabled) {
+          const rSig = `${r.useRegex ? "re" : "exact"}|${r.pattern}`;
+          if (rSig === sig) syncEnabledSet(workspaceId, "rules", r.id, false);
+        }
+      }
+    }
+  }
+
+  syncEnabledSet(workspaceId, kind, id, enabled);
+  reloadConfig();
+  emitEntityStatus(workspaceId);
+  return { ok: true };
+});
+
 export function registerCoreHandlers() {
   ipcMain.handle("config:get", () => commandRegistry.invoke("config.get", {}, ctx));
 
@@ -82,52 +133,17 @@ export function registerCoreHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle("entity:load", (_e, wsId: string, kind: string, id: string) => {
-    const entity = loadEntity(wsId, kind, id);
-    if (!entity) return { ok: false };
-    const enabledKinds = new Set(["mocks", "mappings", "rules", "graphqlMocks", "soapMocks", "grpcMocks"]);
-    if (enabledKinds.has(kind)) {
-      const set = readEnabledSet(wsId, kind);
-      return { ok: true, entity: { ...entity as object, enabled: set ? set.has(id) : false } };
-    }
-    return { ok: true, entity };
-  });
+  ipcMain.handle("entity:load", (_e, wsId: string, kind: string, id: string) =>
+    commandRegistry.invoke("entity.load", { workspaceId: wsId, kind: toProtocolKind(kind), id }, ctx));
 
   ipcMain.handle("entity:setEnabled", async (_e, wsId: string, kind: string, id: string, enabled: boolean) => {
+    // Kept as an explicit guard, ahead of `commandRegistry.invoke()`, rather than folded into
+    // the registered handler: `EntitySetEnabledParams.kind` is a strict 6-value enum, so an
+    // invalid `kind` would otherwise fail Zod validation (and throw) instead of resolving with
+    // the `{ ok: false, error: "invalid_kind" }` this channel has always returned.
     const enabledKinds = new Set(["mocks", "mappings", "rules", "graphqlMocks", "soapMocks", "grpcMocks"]);
     if (!enabledKinds.has(kind)) return { ok: false, error: "invalid_kind" };
-
-    if (enabled && kind === "mocks") {
-      const cfg = loadConfig();
-      const target = (cfg.mocks ?? []).find((m) => m.id === id);
-      if (target) {
-        const sig = `${target.method.toUpperCase()}|${target.urlPattern}|${target.capturedBody ?? ""}`;
-        for (const m of cfg.mocks) {
-          if (m.id !== id && m.enabled) {
-            const mSig = `${m.method.toUpperCase()}|${m.urlPattern}|${m.capturedBody ?? ""}`;
-            if (mSig === sig) syncEnabledSet(wsId, "mocks", m.id, false);
-          }
-        }
-      }
-    }
-    if (enabled && kind === "rules") {
-      const cfg = loadConfig();
-      const target = (cfg.proxyRules ?? []).find((r) => r.id === id);
-      if (target) {
-        const sig = `${target.useRegex ? "re" : "exact"}|${target.pattern}`;
-        for (const r of cfg.proxyRules) {
-          if (r.id !== id && r.enabled) {
-            const rSig = `${r.useRegex ? "re" : "exact"}|${r.pattern}`;
-            if (rSig === sig) syncEnabledSet(wsId, "rules", r.id, false);
-          }
-        }
-      }
-    }
-
-    syncEnabledSet(wsId, kind, id, enabled);
-    reloadConfig();
-    emitEntityStatus(wsId);
-    return { ok: true };
+    return commandRegistry.invoke("entity.setEnabled", { workspaceId: wsId, kind, id, enabled }, ctx);
   });
 
   ipcMain.handle("services:discover", () => discoverServices());
