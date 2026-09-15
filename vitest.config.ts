@@ -78,7 +78,7 @@ export default defineConfig({
         test: {
           ...shared,
           name: "unit",
-          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx", "packages/**/*.test.ts"],
           // Integration tests live under tests/integration and bind real ports.
           exclude: ["tests/integration/**"],
         },

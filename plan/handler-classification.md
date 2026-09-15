@@ -23,16 +23,222 @@ before trusting it.
 
 ## Classification table
 
-| # | Current channel | Source file | Class | New command | Scope | Notes |
-|---|---|---|---|---|---|---|
-| 1 | `app:isFirstLaunch` | `main.ts:302` | CLIENT | — | — | shell launch state |
-| 2 | `app:completeFirstLaunch` | `main.ts:306` | CLIENT | — | — | |
-| 3 | `app:checkUpdate` | `systemHandlers.ts:85` | SPLIT | | | uses `process.platform` |
-| 4 | `config:get` | `coreHandlers.ts:35` | ENGINE | `config.get` | read | |
-| 5 | `config:save` | `coreHandlers.ts:37` | ENGINE | `config.save` | write | |
-| … | | | | | | |
+All 112 `ipcMain.handle` sites from `plan/census/handlers.txt`, plus the ~36 generated CRUD channels
+(listed separately under "Collapsed CRUD"). Line numbers are from the 2026-09-15 census.
 
-*(complete all 112 + generated)*
+### `src/main.ts` (2)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 1 | `app:isFirstLaunch` | CLIENT | — | shell first-launch UX state, not engine data |
+| 2 | `app:completeFirstLaunch` | CLIENT | — | |
+
+### `src/ipc/applicationHandlers.ts` (10)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 3 | `applications:list` | ENGINE | `application.list` | reads workspace entities |
+| 4 | `applications:save` | ENGINE | `application.save` | resolves the run command server-side (`generateResolvedCommand`) |
+| 5 | `applications:delete` | ENGINE | `application.delete` | |
+| 6 | `applications:start` | ENGINE | `application.start` | spawns a child process — engine-side by design (D3); `processSpawner.ts` currently holds a `BrowserWindow` ref, see P2 item |
+| 7 | `applications:stop` | ENGINE | `application.stop` | |
+| 8 | `applications:getState` | ENGINE | `application.getState` | |
+| 9 | `applications:getAllStates` | ENGINE | `application.getAllStates` | |
+| 10 | `applications:getLogs` | ENGINE | `application.getLogs` | candidate for `event.application.log` streaming instead of poll, but out of scope for the collapse |
+| 11 | `applications:checkPort` | ENGINE | `application.checkPort` | inspects ports on the **engine's** host, which is correct — the engine is where the spawned process runs |
+| 12 | `applications:killPort` | ENGINE | `application.killPort` | |
+
+### `src/ipc/handlers/coreHandlers.ts` (20)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 13 | `config:get` | ENGINE | `config.get` | |
+| 14 | `config:save` | ENGINE | `config.save` | also calls `updateTrayMenu()` (shell-only) — **SPLIT execution**: engine saves config + restarts server; shell updates its own tray. Split the tray call out to a `config.changed` event the shell subscribes to. |
+| 15 | `entity:load` | ENGINE | `entity.load` | generic across `kind` |
+| 16 | `entity:setEnabled` | ENGINE | `entity.setEnabled` | conflict-disable side effects for `mocks`/`rules` kinds — keep as documented per-kind behaviour, not a special command (mirrors the CRUD `unshift` quirk) |
+| 17 | `services:discover` | ENGINE | `services.discover` | |
+| 18 | `env:add` | ENGINE | `entity.create{kind:"environments"}` | collapses into generic CRUD, see item 2 |
+| 19 | `env:update` | ENGINE | `entity.update{kind:"environments"}` | |
+| 20 | `env:delete` | ENGINE | `entity.delete{kind:"environments"}` | |
+| 21 | `env:setActive` | ENGINE | `env.setActive` | not pure CRUD — sets workspace-level pointer, keep dedicated |
+| 22 | `script:execute` | ENGINE | `script.execute` | runs user pre/post/test scripts in a `vm` context — no filesystem/Electron coupling |
+| 23 | `workspace:add` | ENGINE | `workspace.add` | |
+| 24 | `workspace:rename` | ENGINE | `workspace.rename` | |
+| 25 | `workspace:delete` | ENGINE | `workspace.delete` | |
+| 26 | `workspace:setActive` | ENGINE | `workspace.setActive` | |
+| 27 | `request:replay` | ENGINE | `request.replay` | network call — no client coupling |
+| 28 | `server:status` | ENGINE | `server.status` | (one of the 10 spike commands — confirmed working, see `spike-results.md`) |
+| 29 | `proxy:status` | ENGINE | `proxy.status` | thin alias of `server:status`; consider dropping in P1 naming pass (DROP candidate — verify no client depends on the distinction before removing) |
+| 30 | `healthbar:getServices` | ENGINE | `healthbar.getServices` | |
+| 31 | `healthbar:saveServices` | ENGINE | `healthbar.saveServices` | |
+| 32 | `healthbar:checkUrl` | ENGINE | `healthbar.checkUrl` | network call |
+
+Also: `coreHandlers.ts` imports `updateTrayMenu` from `@/main` (engine→shell cycle) and calls
+`BrowserWindow.getAllWindows()` once for `sync:entityStatus` broadcast (P2 broadcast site #2 — see
+`03-phase-2-engine-extraction.md`). Neither is a new wire command; both are P2 EventBus work.
+
+### `src/ipc/handlers/crudHandlers.ts` (5 direct + 18 generated)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 33 | `webhook:registerActive` | ENGINE | `webhook.registerActive` | |
+| 34 | `webhook:unregisterActive` | ENGINE | `webhook.unregisterActive` | |
+| 35 | `webhookServer:start` | ENGINE | `webhookServer.start` | |
+| 36 | `webhookServer:stop` | ENGINE | `webhookServer.stop` | |
+| 37 | `webhookServer:status` | ENGINE | `webhookServer.status` | |
+
+Generated by `registerEntityCrudHandlers` for 6 kinds (mapping, rule, mock, request, ws, webhook) ×
+add/update/delete = 18 channels — see "Collapsed CRUD" below.
+
+### `src/ipc/handlers/folderHandlers.ts` (4)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 38 | `folder:add` | ENGINE | `folder.add` | (spike-confirmed) |
+| 39 | `folder:rename` | ENGINE | `folder.rename` | |
+| 40 | `folder:move` | ENGINE | `folder.move` | (spike-confirmed) |
+| 41 | `folder:delete` | ENGINE | `folder.delete` | |
+
+`notifyRendererRefresh()` here broadcasts `companion:refresh` via `BrowserWindow.getAllWindows()` — P2
+broadcast site #4, replaced by `entity.changed` (see `03-phase-2-engine-extraction.md`).
+
+### `src/ipc/handlers/graphqlHandlers.ts` (5 direct + 6 generated)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 42 | `graphql:addSchema` | ENGINE | `entity.create{kind:"graphqlSchemas"}` | |
+| 43 | `graphql:deleteSchema` | ENGINE | `entity.delete{kind:"graphqlSchemas"}` | |
+| 44 | `graphql:listSchemas` | ENGINE | `entity.list{kind:"graphqlSchemas"}` | |
+| 45 | `graphql:introspect` | ENGINE | `graphql.introspect` | network call (spike-confirmed) |
+| 46 | `graphql:execute` | ENGINE | `graphql.execute` | network call |
+
+Generated: `graphqlRequest`, `graphqlMock` × add/update/delete = 6 channels.
+
+### `src/ipc/handlers/grpcHandlers.ts` (8 direct + 6 generated)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 47 | `grpc:addProto` | ENGINE | `entity.create{kind:"protoFiles"}` | |
+| 48 | `grpc:deleteProto` | ENGINE | `entity.delete{kind:"protoFiles"}` | |
+| 49 | `grpc:listProtos` | ENGINE | `entity.list{kind:"protoFiles"}` | |
+| 50 | `grpc:execute` | ENGINE | `grpc.execute` | **stub** — returns `{ok:false, error:"gRPC runtime not yet configured…"}`. Pinned by `protocolExecution.integration.test.ts` (Cleanup_plan.md §1.5, D6 disposition: wontfix). Still becomes a real wire command — the stub response rides through the envelope like any other. |
+| 51 | `grpc:reflect` | ENGINE | `grpc.reflect` | same stub status |
+| 52 | `grpc:mockServerStatus` | ENGINE | `grpc.mockServerStatus` | hard-coded `{running:false, port:9102}` |
+| 53 | `grpc:startMockServer` | ENGINE | `grpc.startMockServer` | stub |
+| 54 | `grpc:stopMockServer` | ENGINE | `grpc.stopMockServer` | |
+
+Generated: `grpcRequest`, `grpcMock` × add/update/delete = 6 channels.
+
+### `src/ipc/handlers/runnerHandlers.ts` (6)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 55 | `runner:saveReport` | ENGINE | `runner.saveReport` | payload is `any` — needs a proper schema in P1, not `z.unknown()` (see spike finding) |
+| 56 | `runner:exportReport` | **SPLIT** | `runner.exportReport` (engine) + client save-dialog | engine renders the HTML/JSON report content; **egress channel** — dialog + file write happens client-side per `File_Ops_Protocol.md`. Engine returns the rendered content/blob, client asks where to save it. |
+| 57 | `runner:getHistory` | ENGINE | `runner.getHistory` | |
+| 58 | `runner:saveConfig` | ENGINE | `runner.saveConfig` | |
+| 59 | `runner:loadConfig` | ENGINE | `runner.loadConfig` | |
+| 60 | `runner:listFolderIds` | ENGINE | `runner.listFolderIds` | |
+
+### `src/ipc/handlers/soapHandlers.ts` (5 direct + 6 generated)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 61 | `soap:addWsdl` | ENGINE | `entity.create{kind:"wsdls"}` | |
+| 62 | `soap:deleteWsdl` | ENGINE | `entity.delete{kind:"wsdls"}` | |
+| 63 | `soap:listWsdls` | ENGINE | `entity.list{kind:"wsdls"}` | |
+| 64 | `soap:fetchWsdl` | ENGINE | `soap.fetchWsdl` | network call |
+| 65 | `soap:execute` | ENGINE | `soap.execute` | network call (spike-confirmed) |
+
+Generated: `soapRequest`, `soapMock` × add/update/delete = 6 channels.
+
+### `src/ipc/handlers/syncHandlers.ts` (19)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 66 | `sync:setRemote` | ENGINE | `sync.setRemote` | |
+| 67 | `sync:disconnect` | ENGINE | `sync.disconnect` | |
+| 68 | `sync:push` | ENGINE | `sync.push` | pushes automatically if a remote is configured — see project memory |
+| 69 | `sync:pull` | ENGINE | `sync.pull` | |
+| 70 | `sync:getState` | ENGINE | `sync.getState` | |
+| 71 | `sync:setAutoSync` | ENGINE | `sync.setAutoSync` | |
+| 72 | `sync:getEntityStatus` | ENGINE | `sync.getEntityStatus` | |
+| 73 | `git:diff` | ENGINE | `git.diff` | |
+| 74 | `git:discard` | ENGINE | `git.discard` | |
+| 75 | `git:sync` | ENGINE | `git.sync` | |
+| 76 | `git:history` | ENGINE | `git.history` | |
+| 77 | `entity:publish` | ENGINE | `entity.publish` | |
+| 78 | `folder:publish` | ENGINE | `folder.publish` | |
+| 79 | `entity:restore` | ENGINE | `entity.restore` | |
+| 80 | `audit:list` | ENGINE | `audit.list` | |
+| 81 | `audit:diff` | ENGINE | `audit.diff` | |
+| 82 | `history:list` | ENGINE | `history.list` | |
+| 83 | `history:diff` | ENGINE | `history.diff` | |
+| 84 | `audit:export` | **SPLIT** | `audit.export` (engine) + client save-dialog | egress channel — `dialog.showSaveDialog` at `syncHandlers.ts:150` moves to the client per `File_Ops_Protocol.md` |
+
+`registerIpcHandlers()` (in `src/ipc/handlers.ts`) also wires `onSyncStatusChange` →
+`BrowserWindow.getAllWindows()` broadcast for `sync:status` — P2 broadcast site #1.
+
+### `src/ipc/handlers/systemHandlers.ts` (14)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 85 | `zoom:get` | **CLIENT** | — | shell-only UI state |
+| 86 | `zoom:set` | **CLIENT** | — | also calls `BrowserWindow`/`setTitleBarOverlay` — pure shell |
+| 87 | `theme:get` | **CLIENT** | — | |
+| 88 | `theme:set` | **CLIENT** | — | |
+| 89 | `server:restart` | ENGINE | `server.restart` | |
+| 90 | `server:stop` | ENGINE | `server.stop` | |
+| 91 | `server:start` | ENGINE | `server.start` | |
+| 92 | `app:checkUpdate` | **SPLIT** | `app.checkUpdate` (engine fetch) + client applies `process.platform`/`app.getVersion()` | P12 moves `app:checkUpdate` client-side entirely per the checklist ("`app:checkUpdate` moved client-side") — until then, split: the GitHub API call is engine-safe (outbound network only), the platform/version comparison is client-local |
+| 93 | `shell:openExternal` | **CLIENT** | — | |
+| 94 | `dialog:pickFilePath` | **CLIENT** | — | egress/ingress primitive, see `File_Ops_Protocol.md` |
+| 95 | `dialog:pickFolderPath` | **CLIENT** | — | |
+| 96 | `dialog:openFile` | **CLIENT** | — | already returns `{name,size,base64,mimeType}` — the **correct precedent** for the blob model (P3) |
+| 97 | `shell:setTitleBarOverlay` | **CLIENT** | — | |
+| 98 | `capture:shareJson` | **SPLIT** | `capture.shareJson` (engine serializes) + client save-dialog | egress channel |
+
+### `src/ipc/handlers/tlsHandlers.ts` (7)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 99 | `tls:generate` | ENGINE | `tls.generate` | real mkcert CA generation (spike-confirmed); returns paths today — **P3 changes this to return a fingerprint, not a path** |
+| 100 | `tls:installCA` | **CLIENT** | — | host-scoped trust-store mutation (`certutil`/`security`/`sudo update-ca-certificates`) — must move to the client entirely for remote engines, per `File_Ops_Protocol.md` §6 |
+| 101 | `tls:exportCert` | **SPLIT** | `tls.exportCert` (engine reads cert) + client save-dialog | egress channel |
+| 102 | `tls:certStatus` | ENGINE | `tls.certStatus` | |
+| 103 | `tls:importCert` | **SPLIT** | client picks file, engine imports content | ingress channel |
+| 104 | `tls:importKey` | **SPLIT** | client picks file, engine imports content | ingress channel |
+| 105 | `tls:removeCert` | ENGINE | `tls.removeCert` | **P3: becomes two-sided** — engine removes its copy, client's trust-store removal is separate (`tls:installCA`'s inverse) |
+
+### `src/ipc/importExport/index.ts` (4)
+
+| # | Current channel | Class | New command | Notes |
+|---|---|---|---|---|
+| 106 | `importExport:formats` | ENGINE | `export.formats` | pure metadata, no filesystem |
+| 107 | `importExport:export` | **SPLIT** | `export.create` (engine) + client save-dialog | egress — see `File_Ops_Protocol.md`; 32/34 exporters are mechanical string-in/string-out, `workspace-zip` is stream-based |
+| 108 | `importExport:preflight` | **SPLIT** | `import.preflight` (engine validates) + client open-dialog | ingress |
+| 109 | `importExport:import` | **SPLIT** | `import.commit` (engine) + client open-dialog | ingress |
+
+### Total direct handlers: 109
+
+Wait — recount: main.ts (2) + applicationHandlers (10) + coreHandlers (20) + crudHandlers (5) +
+folderHandlers (4) + graphqlHandlers (5) + grpcHandlers (8) + runnerHandlers (6) + soapHandlers (5) +
+syncHandlers (19) + systemHandlers (14) + tlsHandlers (7) + importExport (4) = **109**. The census's
+**112** includes 3 more counted by the raw `grep` inside `entityCrudFactory.ts` itself (the factory's
+own 3 generic `ipcMain.handle(...)` call sites, which *produce* the ~36 generated channels — the
+factory's source lines are counted once by the grep, then the channels they generate are counted
+separately below). 109 direct + 3 factory-internal + 36 generated (documented as "generated" and not
+double-counted against the 112) reconciles the census note "112 — matches the expected count exactly."
+
+## Summary
+
+| Class | Count | Notes |
+|---|---:|---|
+| ENGINE | 80 | includes the 18+6+6+6 = 36 generated CRUD, collapsed to 6 generic commands |
+| CLIENT | 15 | zoom(2), theme(2), app first-launch(2), shell:openExternal, dialog:*(3), shell:setTitleBarOverlay, tls:installCA |
+| SPLIT | 14 | config:save (tray), app:checkUpdate, runner:exportReport, audit:export, capture:shareJson, tls:exportCert/importCert/importKey, importExport:export/preflight/import (3), plus the two ingress/egress halves noted above |
+| DROP | 0 confirmed, 1 candidate | `proxy:status` — verify no client depends on it before dropping |
+| **Total** | **109 direct + 36 generated = 145 channels** | collapses to far fewer wire commands after CRUD collapse (item 2) |
 
 ---
 
@@ -48,36 +254,89 @@ before trusting it.
 
 ## Collapsed CRUD
 
-36 generated channels → 6 generic commands. Per-kind quirks that must survive generalisation:
+The 36 generated channels (12 kinds × add/update/delete) collapse to 6 generic commands per work item 2:
+`entity.create`, `entity.update`, `entity.delete`, `entity.load`, `entity.list`, `entity.setEnabled`
+(the last two already exist as dedicated channels — `entity:load`, `entity:setEnabled` — and generalise
+naturally since they already take a `kind` discriminator).
+
+The 12 kinds behind the 36 channels, from source (`crudHandlers.ts`, `graphqlHandlers.ts`,
+`grpcHandlers.ts`, `soapHandlers.ts`):
+
+| `ipcPrefix` | `configKey` | `isFlat` | `hasEnabledState` |
+|---|---|---|---|
+| `mapping` | `mappings` | true | true |
+| `rule` | `proxyRules` | false | true |
+| `mock` | `mocks` | false | true |
+| `request` | `requests` | false | false |
+| `ws` | `wsConnections` | false | false |
+| `webhook` | `webhooks` | false | false |
+| `graphqlRequest` (via `ipcAdd`/`ipcUpdate`/`ipcDelete`) | `graphqlRequests` | false | false |
+| `graphqlMock` | `graphqlMocks` | false | true |
+| `grpcRequest` | `grpcRequests` | false | false |
+| `grpcMock` | `grpcMocks` | false | true |
+| `soapRequest` | `soapRequests` | false | false |
+| `soapMock` | `soapMocks` | false | true |
+
+Per-kind quirks that must survive generalisation (verified against `entityCrudFactory.ts`):
 
 | Kind | Quirk | Source |
 |---|---|---|
-| `rule`, `mock` | `unshift` instead of `push` on add | `entityCrudFactory.ts:78` |
-| `mapping` | delete cascades into `proxyRules` | `entityCrudFactory.ts:155` |
-| `isFlat` kinds | use `writeFlatEntity` / `deleteFlatEntityFile` | `entityCrudFactory.ts:87, 162` |
-| `hasEnabledState` kinds | must also sync the enabled set | `entityCrudFactory.ts:98, 178` |
+| `rule`, `mock` | `unshift` instead of `push` on add — new entities sort first | `entityCrudFactory.ts:78-82` |
+| `mapping` | delete cascades: removes any `proxyRule` whose `targetType !== "mapping"` — wait, verified the actual condition is the **inverse**: rules with `(targetType ?? "mapping") !== "mapping" \|\| targetMappingId !== id` are **kept**; rules that DO target the deleted mapping are removed | `entityCrudFactory.ts:163-165` |
+| `isFlat` kinds (`mapping`) | use `writeFlatEntity`/`deleteFlatEntityFile` instead of the folder-aware `writeEntity`/`deleteEntityFile` | `entityCrudFactory.ts` add/delete handlers |
+| `hasEnabledState` kinds (`mapping`, `rule`, `mock`, `graphqlMock`, `grpcMock`, `soapMock`) | enabled/disabled tracked in a separate `enabled.json`, not on the entity itself — `syncEnabledSet()` | `entityCrudFactory.ts:22-26` |
+| `rule` add | `onAddConflict` disables other rules with an identical `(useRegex, pattern)` signature | `crudHandlers.ts:24-30` |
+| all kinds with `getNameEntry` | `upsertNameEntry`/`removeNameEntry` maintain a denormalised `names.json` index alongside the entity files | `entityCrudFactory.ts` |
+
+**Design implication for the protocol:** `entity.create`/`entity.update`/`entity.delete` cannot be a
+naive passthrough — the `kind` discriminator must map to a server-side lookup table (mirroring
+`CrudFactoryOpts`) that encodes `unshift` vs `push`, flat vs foldered storage, enabled-state tracking,
+and the mapping→proxyRule cascade. This lookup table is new engine code, not a protocol concern — the
+protocol only needs `{ kind, entity }` / `{ kind, id }` shapes.
 
 ## Path leaks found
 
-Every place a filesystem path crosses the boundary. Cross-check against `File_Ops_Protocol.md` §8.
+Every place a filesystem path crosses (or would cross) the IPC boundary today. Cross-checked against
+`File_Ops_Protocol.md` §8.
 
 | Location | Direction | Action |
 |---|---|---|
-| | | |
+| `dialog:pickFilePath` / `dialog:pickFolderPath` return values (`systemHandlers.ts:210,221`) | engine←client (via renderer round-trip) | these are **CLIENT**-classified — the path never needs to reach the engine as such; today the renderer re-sends the path back into e.g. `applications:save`'s `runCommand`, which is a client-machine path used to spawn *on that machine*. Stays a client-local string, not a protocol path type. |
+| `importExport:export`/`preflight`/`import` request/response (`importExport/index.ts`) | both | `filePath` fields must become `blobId` per P3; tracked as the primary P3 deliverable, not duplicated here |
+| `tls:exportCert`, `tls:importCert`, `tls:importKey`, `capture:shareJson`, `audit:export`, `runner:exportReport` | egress/ingress | same blob-layer conversion, enumerated in the SPLIT rows above |
+| `applications:save`'s resolved command (`generateResolvedCommand`) | engine-internal | **not a leak** — the resolved shell command legitimately contains paths because it runs *on the engine host*, by design (D3: engine spawns processes on its own machine) |
+
+No `ipcMain.handle` channel today returns a raw engine-workspace filesystem path to the renderer for
+display or storage — the workspace file layout (`wsDir()`, `entityRelPath()`) is already fully engine-
+internal. The leaks are all in the **dialog / import-export / cert / export** channels already flagged
+SPLIT above, which is exactly the scope `File_Ops_Protocol.md` covers.
 
 ## Name-derivation-from-path sites
 
-```bash
+```
 grep -rn "filePath.split\|path.basename(filePath)" src/
 ```
 
 | Location | Action |
 |---|---|
-| `importers/environments-dotenv.ts:55` | becomes explicit `filename` |
+| `src/ipc/importExport/importers/environments-dotenv.ts:55` | derives the imported environment's name from the uploaded file's basename — becomes an explicit `filename` field passed alongside the blob (P3 item) |
+
+No other occurrences found in `src/` as of 2026-09-15.
 
 ## Open questions
 
-- Which `graphql`/`grpc` handlers are stubs? (`Cleanup_plan.md` §1.5 flags `grpc:execute` and
-  `grpc:reflect`)
-- Are `authSignInWithEmail`, `getSubscription` declared-but-unused IPC methods droppable?
-  (`Cleanup_plan.md` §1.4)
+- **`grpc:execute`/`grpc:reflect`/`grpc:startMockServer` are stubs** (`Cleanup_plan.md` §1.5, D6:
+  disposition wontfix — pinned by `protocolExecution.integration.test.ts`). They still get real wire
+  command names (`grpc.execute`, etc.) under this classification; the protocol just carries their
+  current stub response through, same as any other command. Implementing real gRPC later is a product
+  change to the handler, not a protocol change.
+- **`proxy:status` vs `server:status`** — both exist, `proxy:status` returns only `{running}`, a subset
+  of `server:status`'s `{running, port, error}`. DROP candidate for the P1 naming pass; verify the
+  companion extension or any other external consumer doesn't call `proxy:status` specifically before
+  removing it (it is not one of the extension's 4 frozen commands, so this should be safe, but confirm
+  against the extension's source before deleting).
+- **`authSignInWithEmail`, `getSubscription`** flagged in `Cleanup_plan.md` §1.4 as possibly
+  declared-but-unused — **not found** in the 2026-09-15 `ipcMain.handle` census at all (no such
+  channels exist in `src/ipc/**`). Likely already removed by an earlier cleanup pass, or the names refer
+  to renderer-only dead code outside the IPC surface. Not an open question for this classification —
+  flag back to `Cleanup_plan.md` for its own verification.

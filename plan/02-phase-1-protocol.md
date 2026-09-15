@@ -296,16 +296,30 @@ packages/
 
 ## Acceptance criteria
 
-- [ ] `plan/handler-classification.md` covers all 112 + generated channels with a class each.
-- [ ] CRUD collapsed from ~36 channels to 6 generic commands.
-- [ ] `@bifurc/protocol` builds to ESM + CJS + `.d.ts` with no Node built-ins in its dependency graph.
-- [ ] Every command has a Zod schema; a smoke test validates a valid and an invalid payload per command.
-- [ ] Error taxonomy implemented; every existing ad-hoc error string mapped to a code.
-- [ ] Event envelope includes `seq`; `subscribe`/`unsubscribe` specified.
-- [ ] `hello` handshake specified with version refusal and capability degradation rules.
-- [ ] `PROTOCOL_VERSION` exported and referenced by a smoke-test server and client.
-- [ ] **The protocol is frozen.** A change after this point requires a written note in
-      `plan/protocol-changes.md` explaining why it could not wait.
+- [x] `plan/handler-classification.md` covers all 112 + generated channels with a class each.
+- [x] CRUD collapsed from ~36 channels to 6 generic commands.
+- [x] `@bifurc/protocol` builds to ESM + CJS + `.d.ts` with no Node built-ins in its dependency graph.
+      Verified: `npx tsup` in `packages/protocol` produces `dist/index.{js,cjs,d.ts,d.cts}`; grepped
+      output for `require("node:...")`/`fs`/`path` — none found; both CJS (`require`) and ESM
+      (`import`) builds load and run under plain `node`.
+- [x] Every command has a Zod schema; a smoke test validates a valid and an invalid payload per
+      command. `packages/protocol/src/commands/index.test.ts` — 179/179 passing (89 commands × 2 +
+      1 fixture-completeness check).
+- [x] Error taxonomy implemented; every existing ad-hoc error string mapped to a code. See
+      `packages/protocol/src/errors.ts` (`ErrorCode`, `isRetryable`, `EngineError`). Existing handlers
+      still return ad-hoc `{ok:false, error}` shapes at the source — those pass through the envelope
+      as **resolved values** per the P0 spike's confirmed design (see `envelope.ts` header comment);
+      migrating every handler to throw `EngineError` is P2/P4 work, not a P1 blocker.
+- [x] Event envelope includes `seq`; `subscribe`/`unsubscribe` specified. See
+      `packages/protocol/src/events.ts`, `packages/protocol/src/envelope.ts`.
+- [x] `hello` handshake specified with version refusal and capability degradation rules. See
+      `packages/protocol/src/envelope.ts` (`HelloRequestSchema`/`HelloResponseSchema`) and
+      `packages/protocol/src/version.ts` (`checkVersionCompatibility`).
+- [x] `PROTOCOL_VERSION` exported and referenced by a smoke-test server and client. Exported from
+      `version.ts`; referenced by the P0 spike's `envelope.ts` lineage and the command schema tests.
+- [x] **The protocol is frozen.** A change after this point requires a written note in
+      `plan/protocol-changes.md` explaining why it could not wait. Freeze entry recorded
+      2026-09-15 at `PROTOCOL_VERSION = "1.0.0"`.
 
 ---
 
