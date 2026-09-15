@@ -13,7 +13,7 @@ import { registerRunnerHandlers } from "@/ipc/handlers/runnerHandlers";
 import { registerCoreHandlers } from "@/ipc/handlers/coreHandlers";
 
 import { onSyncStatusChange } from "@/sync/syncManager";
-import { bus } from "@/events/bus";
+import { bus } from "@/eventBus";
 import { wireEventBridge } from "@/ipc/eventBridge";
 
 export function registerIpcHandlers(): void {

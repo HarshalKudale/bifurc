@@ -25,7 +25,7 @@ import {
 } from "@/store/workspaceFs";
 import { invalidateCache } from "@/sync/statusTracker";
 import { reloadConfig } from "@/proxy/server";
-import { bus, emitEntityStatus } from "@/events/bus";
+import { bus, emitEntityStatus } from "@/eventBus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

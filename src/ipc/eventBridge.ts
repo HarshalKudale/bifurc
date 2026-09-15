@@ -14,7 +14,7 @@
  * "refetch everything", so that is what it gets, byte-identical to before this file existed.
  */
 import { BrowserWindow } from "electron";
-import { bus } from "@/events/bus";
+import { bus } from "@/eventBus";
 import { logEmitter } from "@/proxy/logEmitter";
 
 function broadcast(channel: string, payload?: unknown): void {

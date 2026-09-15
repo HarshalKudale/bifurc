@@ -278,7 +278,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("emits settings.changed on the bus after saving (P2: tray update is the shell's job now)", async () => {
-      const { bus } = await import("@/events/bus");
+      const { bus } = await import("@/eventBus");
       const listener = vi.fn();
       bus.onTyped("settings.changed", listener);
       const incoming: AppConfig = { ...makeDefaultConfig() };

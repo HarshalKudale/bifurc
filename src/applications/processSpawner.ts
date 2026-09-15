@@ -5,7 +5,7 @@
 
 import { ChildProcess, spawn } from "child_process";
 import { readEntity } from "@/store/workspaceFs";
-import { bus } from "@/events/bus";
+import { bus } from "@/eventBus";
 import {
     ApplicationConfig,
     AppProcessState,
