@@ -1,0 +1,42 @@
+src/applications/processSpawner.ts:7:import { BrowserWindow } from "electron";
+src/applications/processSpawner.ts:26:    private mainWindow: BrowserWindow | null = null;
+src/applications/processSpawner.ts:28:    setMainWindow(win: BrowserWindow): void {
+src/companion/companionServer.ts:16:import { BrowserWindow } from "electron";
+src/companion/companionServer.ts:62:            for (const w of BrowserWindow.getAllWindows()) {
+src/companion/companionServer.ts:88:    const windows = BrowserWindow.getAllWindows();
+src/ipc/handlers/coreHandlers.ts:1:import { ipcMain, BrowserWindow } from "electron";
+src/ipc/handlers/coreHandlers.ts:29:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers/entityCrudFactory.ts:1:import { ipcMain, BrowserWindow } from "electron";
+src/ipc/handlers/entityCrudFactory.ts:30:  const windows = BrowserWindow.getAllWindows();
+src/ipc/handlers/entityCrudFactory.ts:38:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers/folderHandlers.ts:1:import { ipcMain, BrowserWindow } from "electron";
+src/ipc/handlers/folderHandlers.ts:10:  const windows = BrowserWindow.getAllWindows();
+src/ipc/handlers/runnerHandlers.ts:28:      const { filePath, canceled } = await dialog.showSaveDialog({
+src/ipc/handlers/syncHandlers.ts:1:import { ipcMain, dialog, BrowserWindow } from "electron";
+src/ipc/handlers/syncHandlers.ts:18:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers/syncHandlers.ts:150:    const { filePath, canceled } = await dialog.showSaveDialog({
+src/ipc/handlers/systemHandlers.ts:1:import { ipcMain, dialog, BrowserWindow, app } from "electron";
+src/ipc/handlers/systemHandlers.ts:28:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers/systemHandlers.ts:206:    shell.openExternal(url);
+src/ipc/handlers/systemHandlers.ts:211:    const win = BrowserWindow.getFocusedWindow();
+src/ipc/handlers/systemHandlers.ts:213:    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+src/ipc/handlers/systemHandlers.ts:222:    const win = BrowserWindow.getFocusedWindow();
+src/ipc/handlers/systemHandlers.ts:224:    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+src/ipc/handlers/systemHandlers.ts:233:    const win = BrowserWindow.getFocusedWindow();
+src/ipc/handlers/systemHandlers.ts:234:    const { filePaths, canceled } = await dialog.showOpenDialog(win!, {
+src/ipc/handlers/systemHandlers.ts:274:      const { filePath, canceled } = await dialog.showSaveDialog({
+src/ipc/handlers/tlsHandlers.ts:26:    const { filePath, canceled } = await dialog.showSaveDialog({
+src/ipc/handlers/tlsHandlers.ts:39:    const { filePaths, canceled } = await dialog.showOpenDialog({
+src/ipc/handlers/tlsHandlers.ts:51:    const { filePaths, canceled } = await dialog.showOpenDialog({
+src/ipc/handlers.ts:1:import { BrowserWindow } from "electron";
+src/ipc/handlers.ts:25:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers.ts:32:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers.ts:39:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/handlers.ts:46:    BrowserWindow.getAllWindows().forEach((w) => {
+src/ipc/importExport/index.ts:20:    const { filePath, canceled } = await dialog.showSaveDialog({
+src/ipc/importExport/index.ts:40:    const { filePaths, canceled } = await dialog.showOpenDialog({
+src/proxy/service-discovery.ts:13:  const PS = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+src/proxy/webhookServer.ts:14:import { BrowserWindow } from "electron";
+src/proxy/webhookServer.ts:137:      BrowserWindow.getAllWindows().forEach((w) => {
+src/store/appSettings.ts:79:  return path.join(app.getPath("userData"), "app.json");
+src/store/workspaceFs.ts:40:  return path.join(app.getPath("userData"), "data");

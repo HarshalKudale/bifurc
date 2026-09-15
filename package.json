@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",
+    "spike:typecheck": "tsc -p spike/tsconfig.json",
     "package": "npm run build && electron-builder",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
@@ -29,22 +30,24 @@
   "build": {
     "appId": "com.hkudale.bifurc",
     "productName": "Bifurc",
-
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
-
     "files": [
       "dist/**/*",
       "package.json"
     ],
-
     "extraResources": [
-      { "from": "build/tray-icon.png", "to": "tray-icon.png" },
-      { "from": "build/icon.png", "to": "icon.png" }
+      {
+        "from": "build/tray-icon.png",
+        "to": "tray-icon.png"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
     ],
-
     "win": {
       "icon": "build/icon",
       "target": [
@@ -52,14 +55,12 @@
         "appx"
       ]
     },
-
     "nsis": {
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
       "artifactName": "Bifurc.Setup.${ext}"
     },
-
     "appx": {
       "artifactName": "Bifurc.Setup.${ext}",
       "applicationId": "Bifurc",
@@ -120,6 +121,7 @@
     "react-resizable-panels": "^4.11.0",
     "simple-git": "^3.36.0",
     "unzipper": "^0.12.3",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "zod": "^4.6.5"
   }
 }
