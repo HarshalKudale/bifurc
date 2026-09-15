@@ -10,7 +10,7 @@ import { startCompanionServer, stopCompanionServer } from "@/companion/companion
 import { checkGitInstalled, initWorkspaceRepo } from "@/store/gitStore";
 import { startAutoSync, stopAllAutoSync, setAutoSyncReloadFn } from "@/sync/autoSync";
 import { getSyncConfig } from "@/sync/syncManager";
-import { bus } from "@/events/bus";
+import { bus } from "@/eventBus";
 import * as fs from "fs";
 
 

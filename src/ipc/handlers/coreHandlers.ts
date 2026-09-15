@@ -16,7 +16,7 @@ import {
   startServer, stopServer, isRunning, getPort, getServerError,
   reloadConfig, replayRequest,
 } from "@/proxy/server";
-import { bus, emitEntityStatus } from "@/events/bus";
+import { bus, emitEntityStatus } from "@/eventBus";
 import { restartCompanionServer } from "@/companion/companionServer";
 import { generateRandomWorkspaceName } from "@/lib/randomNames";
 import { gateCreate } from "@/subscription/entityCount";
