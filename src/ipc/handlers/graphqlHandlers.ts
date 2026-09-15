@@ -1,8 +1,6 @@
 import { ipcMain } from "electron";
 import type { GraphqlIntrospectParams, GraphqlExecuteParams } from "@bifurc/protocol";
-import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
-import { loadConfig, generateId } from "@/store/config";
-import { writeEntity, deleteEntityFile, readAllEntities } from "@/store/workspaceFs";
+import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { commandRegistry } from "@/commands/registry";
 import { bus } from "@/eventBus";
 
@@ -30,11 +28,11 @@ interface SavedGraphQLSchema {
 // updateRequest/deleteRequest and graphql:addMock/updateMock/deleteMock already route through
 // the CommandRegistry too, via the `registerEntityCrudHandlers()` calls below (the CRUD
 // collapse — see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's
-// tenth batch). Only `graphql:addSchema/deleteSchema/listSchemas` remain unconverted: they don't
-// track a `configKey` array the way every `CrudFactoryOpts` kind does (schemas are written
-// straight to disk, nothing mirrors them into `AppConfig`), and no protocol command exists for
-// them yet — a genuinely different shape from the CRUD collapse, not just an unfinished slice
-// of it.
+// tenth batch). `graphql:addSchema/deleteSchema/listSchemas` now route through the same
+// registry too, via `registerSimpleEntityHandlers()` — they don't track a `configKey` array the
+// way every `CrudFactoryOpts` kind does (schemas are written straight to disk, nothing mirrors
+// them into `AppConfig`), and have no "update" concept, so they go through the smaller
+// `entity.create`/`entity.delete`/`entity.list` fallback path instead.
 const ctx = { bus };
 
 commandRegistry.register("graphql.introspect", async ({ url, headers }: GraphqlIntrospectParams) => {
@@ -126,25 +124,9 @@ export function registerGraphqlHandlers() {
     getNameEntry: (mock) => ({ name: mock.name, operationName: mock.operationName }),
   });
 
-  ipcMain.handle("graphql:addSchema", async (_e, schema: Omit<SavedGraphQLSchema, "id" | "createdAt">) => {
-    const cfg = loadConfig();
-    const wsId = (schema as any).workspaceId ?? cfg.activeWorkspaceId;
-    const newSchema: SavedGraphQLSchema = { ...schema, id: generateId(), createdAt: Date.now(), workspaceId: wsId };
-    writeEntity(wsId, "graphqlSchemas", newSchema.id, newSchema, null);
-    return newSchema;
-  });
-
-  ipcMain.handle("graphql:deleteSchema", async (_e, id: string) => {
-    const cfg = loadConfig();
-    const wsId = cfg.activeWorkspaceId;
-    deleteEntityFile(wsId, "graphqlSchemas", id);
-    return { ok: true };
-  });
-
-  ipcMain.handle("graphql:listSchemas", async () => {
-    const cfg = loadConfig();
-    const wsId = cfg.activeWorkspaceId;
-    return readAllEntities<SavedGraphQLSchema>(wsId, "graphqlSchemas");
+  registerSimpleEntityHandlers<SavedGraphQLSchema>({
+    kind: "graphqlSchemas",
+    ipcAdd: "graphql:addSchema", ipcDelete: "graphql:deleteSchema", ipcList: "graphql:listSchemas",
   });
 
   ipcMain.handle("graphql:introspect", (_e, params: GraphqlIntrospectParams) =>
