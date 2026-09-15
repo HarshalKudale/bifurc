@@ -26,6 +26,24 @@ envelope — write the entry first, then make the change.
 
 ## Change log
 
+### 2026-09-15 — Protocol frozen at v1.0.0 (89 commands)
+
+**Phase:** P1
+**Type:** n/a — this is the freeze point, not a change
+**Change:** `@bifurc/protocol` (`packages/protocol/`) built and frozen at `PROTOCOL_VERSION = "1.0.0"`,
+covering all 80 ENGINE + 14 SPLIT (engine-half) commands enumerated in
+`plan/handler-classification.md`, collapsed per work item 2 to 89 wire commands (36 generated CRUD
+channels → the 6 generic `entity.*` commands). Full command list, params schemas, error taxonomy,
+event envelope (with `seq`), `hello` handshake, and `subscribe`/`unsubscribe` are in
+`packages/protocol/src/`.
+**Why it could not wait:** n/a — this entry exists so every subsequent row has a clear baseline to
+diff against.
+**Affected:** the entire command surface, for the first time.
+**Migration:** none yet — P2 onward consume this package; no client has been rewired to it yet
+(that starts at P2/P5/P6).
+**Approved by:** this session, per `plan/02-phase-1-protocol.md` acceptance criteria (all met — see
+"Gate" note below).
+
 *No changes since freeze.*
 
 ---
