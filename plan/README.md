@@ -188,7 +188,7 @@ Update this table as you go. It is the single source of truth for programme stat
 | 00 Decisions | ✅ **done** | 2026-09-14 | ✅ | D1–D9 resolved |
 | P0 De-risk | ✅ **done** | 2026-09-15 | ✅ | Spike 4 (protocol PoC) confirmed the renderer-unchanged thesis — see `plan/spike-results.md`. Spikes 1/3 skipped (D4/D5); spike 2 still optional. |
 | P1 Protocol | ✅ **done** | 2026-09-15 | ✅ | `packages/protocol` — 89 commands, errors, events, `hello` handshake. `plan/handler-classification.md` complete. Frozen at v1.0.0, see `plan/protocol-changes.md`. |
-| P2 Engine extraction | 🟡 in progress | 2026-09-15 | ⬜ | Broadcast inversion done (EventBus + all 8 sites + `processSpawner`); data-dir/CommandRegistry/package-restructure not started. See `03-phase-2-engine-extraction.md` for the itemised status. |
+| P2 Engine extraction | 🟡 in progress | 2026-09-15 | ⬜ | Work items 1–3 (EventBus + all 8 broadcast sites + `processSpawner`), 4 (data-dir wired as primary path in `appSettings.ts`/`workspaceFs.ts`), and 6 (headless `preflight()` in `src/startup.ts`) done. Items 5, 7, 8 (split shell-only handlers, CommandRegistry, `packages/*` restructure) not started. See `03-phase-2-engine-extraction.md` for the itemised status. |
 | P3 File ops | ⬜ not started | | | |
 | P4 Transport | ⬜ not started | | | |
 | P5 RPC client | ⬜ not started | | | |
@@ -213,7 +213,7 @@ D6 requires Cleanup_plan.md **Phase 1–2** to land before P2 starts. Verified a
 | 1.1 Delete dead panel files | ✅ | `GraphQLRequestsPanel`, `LogsPanel` etc. absent from `renderer/panels/` |
 | 1.2 Delete `applicationUtils.ts` | ✅ | file absent |
 | 1.3 Purge dead strings | ✅ | no stale keys found |
-| 1.4 Dead imports / unused vars | ✅ | *one leftover: `src/store/gitStore.ts:5` has an unused `import { app } from "electron"` — delete it in P2's "verify gitStore" step* |
+| 1.4 Dead imports / unused vars | ✅ | *the leftover unused `import { app } from "electron"` in `src/store/gitStore.ts` flagged here previously has since been removed (verified 2026-09-15 — `gitStore.ts` imports only `simple-git`, `path`, `fs`, `os`, `@/store/types`, `@/store/workspaceFs`)* |
 | 1.5 Remove gRPC stubs | ⚠️ **not done — recommend re-scoping** | stubs remain in `grpcHandlers.ts`. They are deliberately pinned by `protocolExecution.integration.test.ts` as the product's "gRPC not implemented" contract. Removing them is a product decision, not dead-code cleanup. Recommend marking 1.5 **wontfix** and referencing the pinned contract. |
 | 2.1 `entityCrudFactory.ts` | ✅ | exists, generates the ~36 CRUD channels |
 | 2.2 `folderHandlers.ts` | ✅ | exists |
