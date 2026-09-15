@@ -103,27 +103,28 @@ optional and blocks nothing.
 
 ---
 
-## Section 2 — P1 Protocol (2–3 weeks)
+## Section 2 — P1 Protocol (2–3 weeks) ✅ DONE 2026-09-15
 
-- [ ] **Confirm `Cleanup_plan.md` status (D6)** — it gates P2, so know where it stands now
+- [x] **Confirm `Cleanup_plan.md` status (D6)** — it gates P2, so know where it stands now
 
-- [ ] **Run the classification** — every channel into ENGINE / CLIENT / SPLIT / DROP
-- [ ] Write `plan/handler-classification.md` (the deliverable, not a by-product)
-- [ ] Collapse ~36 CRUD channels → 6 generic commands
-- [ ] Document per-kind CRUD quirks (`rule`/`mock` `unshift`; `mapping` delete cascades to `proxyRules`)
-- [ ] Fix the command naming convention (`namespace.verb`)
-- [ ] Write `errors.ts` — error taxonomy with `retryable`
-- [ ] Write `version.ts` — `PROTOCOL_VERSION`
-- [ ] Define all command schemas
-- [ ] Define the event envelope with `seq`
-- [ ] Define `subscribe` / `unsubscribe`
-- [ ] Define the `hello` handshake + capability negotiation
-- [ ] Set up `packages/protocol` with `tsup` (ESM + CJS + `.d.ts`)
-- [ ] Add an ESLint rule banning `node:*` imports in `packages/protocol`
-- [ ] Smoke test: valid and invalid payload per command
-- [ ] **Freeze the protocol.** Create `plan/protocol-changes.md` for any later change
+- [x] **Run the classification** — every channel into ENGINE / CLIENT / SPLIT / DROP
+- [x] Write `plan/handler-classification.md` (the deliverable, not a by-product)
+- [x] Collapse ~36 CRUD channels → 6 generic commands
+- [x] Document per-kind CRUD quirks (`rule`/`mock` `unshift`; `mapping` delete cascades to `proxyRules`)
+- [x] Fix the command naming convention (`namespace.verb`)
+- [x] Write `errors.ts` — error taxonomy with `retryable`
+- [x] Write `version.ts` — `PROTOCOL_VERSION`
+- [x] Define all command schemas — 89 commands, `packages/protocol/src/commands/`
+- [x] Define the event envelope with `seq`
+- [x] Define `subscribe` / `unsubscribe`
+- [x] Define the `hello` handshake + capability negotiation
+- [x] Set up `packages/protocol` with `tsup` (ESM + CJS + `.d.ts`)
+- [ ] Add an ESLint rule banning `node:*` imports in `packages/protocol` — deferred to P2 (no ESLint
+      config exists in this repo yet); verified manually by grepping the built output instead
+- [x] Smoke test: valid and invalid payload per command — 179/179 passing
+- [x] **Freeze the protocol.** Create `plan/protocol-changes.md` for any later change
 
-**Gate:** `@bifurc/protocol` builds; smoke server + client round-trip; schemas frozen.
+**Gate:** `@bifurc/protocol` builds; smoke server + client round-trip; schemas frozen. ✅
 
 ---
 

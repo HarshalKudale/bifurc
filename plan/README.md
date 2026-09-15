@@ -186,8 +186,8 @@ Update this table as you go. It is the single source of truth for programme stat
 | Phase | Status | Started | Gate green | Notes |
 |---|---|---|---|---|
 | 00 Decisions | ✅ **done** | 2026-09-14 | ✅ | D1–D9 resolved |
-| P0 De-risk | ⬜ not started | | | spike 4 (protocol PoC) still required |
-| P1 Protocol | ⬜ not started | | | |
+| P0 De-risk | ✅ **done** | 2026-09-15 | ✅ | Spike 4 (protocol PoC) confirmed the renderer-unchanged thesis — see `plan/spike-results.md`. Spikes 1/3 skipped (D4/D5); spike 2 still optional. |
+| P1 Protocol | ✅ **done** | 2026-09-15 | ✅ | `packages/protocol` — 89 commands, errors, events, `hello` handshake. `plan/handler-classification.md` complete. Frozen at v1.0.0, see `plan/protocol-changes.md`. |
 | P2 Engine extraction | ⬜ not started | | | **nearly unblocked** — see "Cleanup_plan.md status" below (D6) |
 | P3 File ops | ⬜ not started | | | |
 | P4 Transport | ⬜ not started | | | |
