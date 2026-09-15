@@ -188,7 +188,7 @@ Update this table as you go. It is the single source of truth for programme stat
 | 00 Decisions | ✅ **done** | 2026-09-14 | ✅ | D1–D9 resolved |
 | P0 De-risk | ✅ **done** | 2026-09-15 | ✅ | Spike 4 (protocol PoC) confirmed the renderer-unchanged thesis — see `plan/spike-results.md`. Spikes 1/3 skipped (D4/D5); spike 2 still optional. |
 | P1 Protocol | ✅ **done** | 2026-09-15 | ✅ | `packages/protocol` — 89 commands, errors, events, `hello` handshake. `plan/handler-classification.md` complete. Frozen at v1.0.0, see `plan/protocol-changes.md`. |
-| P2 Engine extraction | 🟡 in progress | 2026-09-15 | ⬜ | Work items 1–3 (EventBus + all 8 broadcast sites + `processSpawner`) and 4 (data-dir wired as primary path in `appSettings.ts`/`workspaceFs.ts`) done. Item 6 (headless `preflight()` in `src/startup.ts`) half done. Item 5 (client-only handlers split into `src/ipc/handlers/clientHandlers.ts`) started — 10 of 15 CLIENT channels moved. Item 7 (`src/commands/registry.ts` — the CommandRegistry) now covers **~112 commands**: `coreHandlers.ts`, `syncHandlers.ts` (16/19), `folderHandlers.ts` (4/4), `tlsHandlers.ts` (3/6), `runnerHandlers.ts` (2/6), `graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts` (network calls + all CRUD + schema/WSDL/proto CRUD), `applicationHandlers.ts` (10/10), `importExport/index.ts` (1/4), **the full CRUD collapse**: `entityCrudFactory.ts`'s 36 add/update/delete channels (all 12 kinds) plus `entity:load`/`entity:setEnabled` route through 5 generic `entity.*` commands (bridged by a new `src/commands/entityKindMap.ts` translation table for the one real kind-naming mismatch, `rules`↔`proxyRules`/`sockets`↔`wsConnections`), `graphqlSchemas`/`protoFiles`/`wsdls` (9 more channels: `graphql:addSchema/deleteSchema/listSchemas`, `soap:addWsdl/deleteWsdl/listWsdls`, `grpc:addProto/deleteProto/listProtos`) route through the same `entity.create`/`entity.delete`/new `entity.list` commands via a lighter `registerSimpleEntityHandlers()` (no `AppConfig` array, no update), and — this session — `environments` (the last `EntityKind`): `env:add/update/delete` now route through the same `entity.create`/`entity.update`/`entity.delete` via `registerEntityCrudHandlers()`, gated by a new `CrudFactoryOpts.gateKind` (checked ahead of `createEntityCore()`, returns `{error: "limit_reached", ...gate}` unchanged) plus `environments`-specific guards inside `deleteEntityCore()` (can't delete `"__global__"`; clears `activeEnvironmentId` when the active env is deleted). `audit.list`, `runner.saveConfig`, and `import.commit` remain deliberately unconverted (real protocol-schema gaps — see the phase doc). **Item 7 is now done except for** the SPLIT import/export channels, which are P3 territory. Item 8 (`packages/*` restructure) started: `packages/protocol` is now a real linked npm workspace dependency (needed to make item 7 possible at all) — `packages/engine` itself is not. See `03-phase-2-engine-extraction.md` for the itemised status. |
+| P2 Engine extraction | 🟡 in progress | 2026-09-15 | ⬜ | **Items 1–7 done; only item 8 (the physical `packages/engine` move + dependency split) remains, and every unchecked acceptance criterion is blocked on it.** Done: EventBus (`src/eventBus.ts`) + all 8 broadcast sites inverted; `processSpawner` window reference removed **and** shutdown made idempotent (`src/shutdown.ts`, 6/6 unit tests); data dir wired as the primary path; `preflight()` **and** `bootstrapWorkspaces()` extracted into the Electron-free `src/startup.ts` (7/7 real-I/O integration tests — real dirs, real `git init`); 10 of 15 CLIENT channels split into `src/ipc/handlers/clientHandlers.ts`; **~112 commands** routed through the `CommandRegistry` (`src/commands/registry.ts`) covering every `EntityKind` value, including the full `entityCrudFactory` collapse and `src/commands/entityKindMap.ts` bridging `rules`↔`proxyRules` / `sockets`↔`wsConnections`. Deliberately open: the git `dialog.showErrorBox` is not yet routed through `preflight()` (product decision), and `importExport:*` stays outside the registry until P3. `packages/protocol` is a real linked workspace; `packages/engine` does not exist yet. Verified: `npm run typecheck` + `build:main` clean, full suite **1615/1616** (69 files) — the 1 failure is the documented sandbox `127.0.0.1:1` quirk; the 11 e2e specs are unverifiable in this sandbox. |
 | P3 File ops | ⬜ not started | | | |
 | P4 Transport | ⬜ not started | | | |
 | P5 RPC client | ⬜ not started | | | |
@@ -214,7 +214,7 @@ D6 requires Cleanup_plan.md **Phase 1–2** to land before P2 starts. Verified a
 | 1.2 Delete `applicationUtils.ts` | ✅ | file absent |
 | 1.3 Purge dead strings | ✅ | no stale keys found |
 | 1.4 Dead imports / unused vars | ✅ | *the leftover unused `import { app } from "electron"` in `src/store/gitStore.ts` flagged here previously has since been removed (verified 2026-09-15 — `gitStore.ts` imports only `simple-git`, `path`, `fs`, `os`, `@/store/types`, `@/store/workspaceFs`)* |
-| 1.5 Remove gRPC stubs | ⚠️ **not done — recommend re-scoping** | stubs remain in `grpcHandlers.ts`. They are deliberately pinned by `protocolExecution.integration.test.ts` as the product's "gRPC not implemented" contract. Removing them is a product decision, not dead-code cleanup. Recommend marking 1.5 **wontfix** and referencing the pinned contract. |
+| 1.5 Remove gRPC stubs | ✅ **closed as WONTFIX** (2026-09-15) | stubs remain in `grpcHandlers.ts`, deliberately — they are pinned by `protocolExecution.integration.test.ts` as the product's "gRPC not implemented" contract. Removing them is a product decision, not dead-code cleanup. The disposition is now recorded in `Cleanup_plan.md` §1.5, so this no longer blocks the D6 gate. |
 | 2.1 `entityCrudFactory.ts` | ✅ | exists, generates the ~36 CRUD channels |
 | 2.2 `folderHandlers.ts` | ✅ | exists |
 | 2.3 `responseUtils.ts` | ✅ | exists |
@@ -231,13 +231,14 @@ Phase 4 (300-line limit) — **not landed**: 18 files still exceed 300 lines (wo
 `GraphQLTab.tsx` 420, `SoapTab.tsx` 405, `restTabReducer.ts` 350).
 Phase 5 (React anti-patterns) — not assessed; not blocking.
 
-**Verdict:** the D6 prerequisite is met **except for 2.9** (and the 1.5 disposition decision).
-Recommended path:
+**Verdict:** the D6 prerequisite is **met**, with one recorded exception — **2.9 is folded into P3**.
 
-1. Decide 1.5 = wontfix (one paragraph in `Cleanup_plan.md`, reason: pinned stub contract).
-2. Either land 2.9 (`jsonFactory.ts`) as a small standalone PR, **or** explicitly fold it into P3 —
-   P3 rewrites the import/export layer for the blob protocol anyway, so doing 2.9 twice is waste.
-   If folding into P3, record the D6 exception here.
+1. ✅ **Done (2026-09-15).** 1.5 decided as **wontfix** and recorded in `Cleanup_plan.md` §1.5, with
+   the pinned-contract reasoning.
+2. **D6 exception — 2.9 folds into P3.** `jsonFactory.ts` is *not* landed and will not be done
+   separately: P3 rewrites the import/export layer for the blob protocol anyway, so building the
+   factory first and then rewriting it is waste. The exporter/importer files stay individual until
+   P3 converts them. Recorded here as the deliberate exception, per the recommendation above.
 3. Phases 3–5 of the cleanup remain post-P2 work; they touch the renderer, which P1–P6 must not
    edit — so they are **naturally sequenced after P6**, not before P2.
 

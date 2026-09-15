@@ -46,11 +46,29 @@ Will use TypeScript compiler (`tsc --noUnusedLocals --noUnusedParameters`) + man
 
 ### 1.5 Remove gRPC Stubs
 
-#### [MODIFY] [handlers.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/src/ipc/handlers.ts)
+#### [MODIFY] [handlers.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/src/ipc/handlers.ts)
 `grpc:execute` and `grpc:reflect` (lines ~1127-1150) are error-return stubs. Remove if not planned for implementation; otherwise leave and annotate.
 
 > [!IMPORTANT]
 > **Decision needed**: Are the gRPC execute/reflect stubs placeholders for upcoming work, or should they be removed?
+
+#### Disposition — **WONTFIX** (decided 2026-09-15, closes the D6 gate for P2)
+
+**Keep the stubs. They are not dead code — they are a pinned product contract.**
+
+`tests/integration/protocolExecution.integration.test.ts` asserts the stubs' exact behaviour
+(`grpc:execute` / `grpc:reflect` resolve with
+`{ok:false, error:"gRPC runtime not yet configured…"}`, `grpc:startMockServer` is a no-op stub, and
+`grpc:mockServerStatus` is hard-coded `{running:false, port:9102}`). The suite exists to pin "gRPC is
+not implemented yet" as an observable, user-facing guarantee — the UI can rely on a graceful
+error rather than a crash or a silent hang.
+
+Deleting the stubs would therefore fail that suite and remove a contract the product depends on.
+This is a product decision, not dead-code cleanup, so it is out of scope for this plan. When gRPC
+is actually implemented, the stubs are replaced *together with* those tests — see the note in
+`packages/protocol/src/commands/grpc.ts` and `plan/protocol-changes.md`.
+
+No action required. Recorded here so the D6 prerequisite is not left with an open question.
 
 ---
 
