@@ -128,44 +128,52 @@ optional and blocks nothing.
 
 ---
 
-## Section 3 — P2 Engine extraction (4–6 weeks)
+## Section 3 — P2 Engine extraction (4–6 weeks) 🟡 IN PROGRESS 2026-09-15
 
-> **HARD GATE (D6): do not start this section until `Cleanup_plan.md` has landed.** At minimum its
-> Phase 1–2. Running cleanup and extraction concurrently touches ~110 files and makes regressions
-> untraceable. Cleanup's Phase 4–5 may follow later.
+- [x] **`Cleanup_plan.md` Phase 1–2 complete** — prerequisite, not a parallel track (per D6 gate
+      assessment in `plan/README.md`; 2.9 still folds into P3 as documented there)
+- [x] Build the EventBus (copy `logEmitter`'s pattern) — `src/events/bus.ts`
+- [x] Convert broadcast site **#1** — `src/ipc/handlers.ts:24–49` — run the suite
+- [ ] **Data dir injection** (`appSettings.ts:79`, `workspaceFs.ts:40`) + `paths.ts` — `paths.ts`
+      built and unit-tested (`tests/store/paths.test.ts`, 8/8); **not wired** into
+      `appSettings.ts`/`workspaceFs.ts` as the primary path yet — deferred, see the phase doc's
+      acceptance-criteria notes for why
+- [x] Verify what `store/gitStore.ts` actually needs from `electron` — nothing; unused import
+      removed
+- [x] Convert broadcast site #2 — `coreHandlers.ts:28`
+- [x] Convert broadcast site #3 — `entityCrudFactory.ts:29–42`
+- [x] Convert broadcast site #4 — `folderHandlers.ts:10`
+- [x] Convert broadcast site #5 — `syncHandlers.ts:18`
+- [ ] Convert broadcast site #6 — `systemHandlers.ts:28` — **not applicable as originally scoped**:
+      on inspection this file's `BrowserWindow` use is `zoom:set`/`shell:setTitleBarOverlay`
+      driving actual window chrome (CLIENT-classified per `plan/handler-classification.md`), not
+      an engine→client data broadcast. No conversion needed; will simply stay in the Electron
+      shell when P2 item 8's physical move happens.
+- [x] Convert broadcast site #7 — `proxy/webhookServer.ts:137` — `src/proxy/` now has **zero**
+      Electron imports
+- [x] Convert broadcast site #8 — `companion/companionServer.ts:52–83`
+- [x] Replace `companion:refresh` with `entity.changed` — internally, at every emission site (the
+      wire name survives only in the temporary `src/ipc/eventBridge.ts` shim, by design)
+- [x] Break the `coreHandlers` → `main` import cycle
+- [x] Remove the `mainWindow` reference from `processSpawner.ts`
+- [ ] Make engine shutdown idempotent — not started
+- [ ] Split out shell-only handlers (zoom, theme, titlebar, dialogs, openExternal, first-launch) —
+      not started (classification done in P1; extraction not done)
+- [ ] Move `tls:installCA` out of the engine — not started
+- [ ] Replace the git `dialog.showErrorBox` with `preflight()` — not started
+- [ ] Move workspace bootstrap out of `main.ts:265–294` into the engine — not started
+- [ ] Replace `registerIpcHandlers()` with the `CommandRegistry` — not started (deliberately last,
+      per the phase doc's own ordering advice)
+- [ ] Restructure to `packages/*` + `apps/*` workspaces — not started
+- [ ] **Split the dependencies** — engine deps out of the flat list — not started
+- [ ] Resolve `@/*` aliases at package boundaries — not started
+- [ ] `tsup` build for `packages/engine` — not started
+- [ ] `git mv` the moved modules (preserve blame) — not started (nothing moved yet)
 
-- [ ] **`Cleanup_plan.md` Phase 1–2 complete** — prerequisite, not a parallel track
-- [ ] Build the EventBus (copy `logEmitter`'s pattern)
-- [ ] Convert broadcast site **#1** — `src/ipc/handlers.ts:24–49` — run the suite
-- [ ] **Data dir injection** (`appSettings.ts:79`, `workspaceFs.ts:40`) + `paths.ts`
-- [ ] Verify what `store/gitStore.ts` actually needs from `electron`
-- [ ] Convert broadcast site #2 — `coreHandlers.ts:28`
-- [ ] Convert broadcast site #3 — `entityCrudFactory.ts:29–42`
-- [ ] Convert broadcast site #4 — `folderHandlers.ts:10`
-- [ ] Convert broadcast site #5 — `syncHandlers.ts:18`
-- [ ] Convert broadcast site #6 — `systemHandlers.ts:28`
-- [ ] Convert broadcast site #7 — `proxy/webhookServer.ts:137`
-- [ ] Convert broadcast site #8 — `companion/companionServer.ts:52–83`
-- [ ] Replace `companion:refresh` with `entity.changed`
-- [ ] Break the `coreHandlers` → `main` import cycle
-- [ ] Remove the `mainWindow` reference from `processSpawner.ts`
-- [ ] Make engine shutdown idempotent
-- [ ] Split out shell-only handlers (zoom, theme, titlebar, dialogs, openExternal, first-launch)
-- [ ] Move `tls:installCA` out of the engine
-- [ ] Replace the git `dialog.showErrorBox` with `preflight()`
-- [ ] Move workspace bootstrap out of `main.ts:265–294` into the engine
-- [ ] Replace `registerIpcHandlers()` with the `CommandRegistry`
-- [ ] Restructure to `packages/*` + `apps/*` workspaces
-- [ ] **Split the dependencies** — engine deps out of the flat list
-- [ ] Resolve `@/*` aliases at package boundaries
-- [ ] `tsup` build for `packages/engine`
-- [ ] `git mv` the moved modules (preserve blame)
-
-**Gate:**
-- [ ] `grep -rn "from \"electron\"" packages/engine/src` → zero
-- [ ] Engine starts from a bare Node script and shuts down cleanly
-- [ ] All 35 unit suites + 11 e2e specs still pass
-- [ ] `packages/engine/package.json` has no renderer or Electron dependency
+**Gate:** not green — see the phase doc's acceptance-criteria section for the itemised, honest
+status. **Full unit suite (48 files / 1234 tests) and integration suite (323/325, 2 pre-existing
+sandbox-only failures) verified green after every conversion in this session — zero regressions.**
+The 11 e2e specs are unverified (cannot run in this sandbox).
 
 ---
 

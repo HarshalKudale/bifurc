@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from "electron";
+import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import {
   setRemote, disconnect, syncPush, syncPull, getSyncState, setAutoSync,
@@ -12,14 +12,7 @@ import { reloadConfig } from "@/proxy/server";
 import {
   queryLog, getEntityAtCommit, getCommitChangedFiles, QueryLogOptions, AuditEntity,
 } from "@/store/gitStore";
-
-function broadcastEntityStatus(wsId: string): void {
-  getWorkspaceSyncStatus(wsId).then((status) => {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) w.webContents.send("sync:entityStatus", { wsId, status });
-    });
-  }).catch(() => { });
-}
+import { emitEntityStatus } from "@/events/bus";
 
 export function registerSyncHandlers() {
   // ── Sync ──────────────────────────────────────────────────────────────────
@@ -38,7 +31,7 @@ export function registerSyncHandlers() {
     if (result.ok && result.updated) {
       reloadConfig();
       invalidateCache(wsId);
-      broadcastEntityStatus(wsId);
+      emitEntityStatus(wsId);
     }
     return result;
   });
@@ -62,14 +55,14 @@ export function registerSyncHandlers() {
 
   ipcMain.handle("git:discard", async (_e, wsId: string, relPath: string) => {
     const result = await discardChanges(wsId, relPath);
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     reloadConfig();
     return result;
   });
 
   ipcMain.handle("git:sync", async (_e, wsId: string, paths: string[], message?: string) => {
     const result = await syncChanges(wsId, paths, message);
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     try {
       const sha = await getRemoteHead(wsId);
       if (sha) updateLastKnownHead(wsId, sha);
@@ -84,7 +77,7 @@ export function registerSyncHandlers() {
   // Backward-compatible entity / folder handlers delegating to generic git ops
   ipcMain.handle("entity:publish", async (_e, wsId: string, paths: string[], message?: string) => {
     const result = await syncChanges(wsId, paths, message);
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     try {
       const sha = await getRemoteHead(wsId);
       if (sha) updateLastKnownHead(wsId, sha);
@@ -96,7 +89,7 @@ export function registerSyncHandlers() {
     const sanitizeDirName = (name: string) => name.replace(/[<>:"/\\|?*]+/g, "-");
     const folderPath = folderName ? `${kind}/${sanitizeDirName(folderName)}/` : `${kind}/`;
     const result = await syncChanges(wsId, [folderPath]);
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     try {
       const sha = await getRemoteHead(wsId);
       if (sha) updateLastKnownHead(wsId, sha);
@@ -106,7 +99,7 @@ export function registerSyncHandlers() {
 
   ipcMain.handle("entity:restore", async (_e, wsId: string, relPath: string) => {
     const result = await discardChanges(wsId, relPath);
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     reloadConfig();
     return result;
   });

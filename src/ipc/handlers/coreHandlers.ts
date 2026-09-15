@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { executeIpcScript, IpcScriptOpts } from "@/proxy/scriptExecutor";
@@ -16,21 +16,12 @@ import {
   startServer, stopServer, isRunning, getPort, getServerError,
   reloadConfig, replayRequest,
 } from "@/proxy/server";
-import { logEmitter, RequestLogEntry } from "@/proxy/logEmitter";
-import { updateTrayMenu } from "@/main";
+import { bus, emitEntityStatus } from "@/events/bus";
 import { restartCompanionServer } from "@/companion/companionServer";
 import { generateRandomWorkspaceName } from "@/lib/randomNames";
 import { gateCreate } from "@/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
-import { getWorkspaceSyncStatus, invalidateCache } from "@/sync/statusTracker";
-
-function broadcastEntityStatus(wsId: string): void {
-  getWorkspaceSyncStatus(wsId).then((status) => {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) w.webContents.send("sync:entityStatus", { wsId, status });
-    });
-  }).catch(() => { });
-}
+import { invalidateCache } from "@/sync/statusTracker";
 
 export function registerCoreHandlers() {
   ipcMain.handle("config:get", () => loadConfig());
@@ -39,7 +30,7 @@ export function registerCoreHandlers() {
     const prev = loadConfig();
     saveConfig(incoming);
     reloadConfig();
-    updateTrayMenu();
+    bus.emitTyped("settings.changed", {});
     const tlsChanged = incoming.tlsEnabled !== prev.tlsEnabled
       || incoming.tlsCaCertPath !== prev.tlsCaCertPath
       || incoming.tlsCaKeyPath !== prev.tlsCaKeyPath;
@@ -103,7 +94,7 @@ export function registerCoreHandlers() {
 
     syncEnabledSet(wsId, kind, id, enabled);
     reloadConfig();
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     return { ok: true };
   });
 
@@ -239,7 +230,7 @@ export function registerCoreHandlers() {
     const file = path.join(dir, "services.json");
     fs.writeFileSync(file, JSON.stringify(services, null, 2), "utf-8");
     invalidateCache(wsId);
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     return { ok: true };
   });
 
