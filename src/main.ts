@@ -11,7 +11,8 @@ import { checkGitInstalled, initWorkspaceRepo } from "@/store/gitStore";
 import { startAutoSync, stopAllAutoSync, setAutoSyncReloadFn } from "@/sync/autoSync";
 import { getSyncConfig } from "@/sync/syncManager";
 import { bus } from "@/eventBus";
-import { setDataRoot } from "@/store/paths";
+import { setDataRoot, dataDir } from "@/store/paths";
+import { preflight } from "@/startup";
 import * as fs from "fs";
 
 
@@ -268,6 +269,23 @@ if (!gotTheLock) {
     }
 
     let settings = loadSettings();
+
+    // Non-fatal headless-startup diagnostics (data dir writable, ports free, mkcert usable) —
+    // see src/startup.ts (P2 work item 6). Logged only: the shell has always tolerated port
+    // conflicts (the server reports its own bind failure via bus.emit("server.error", ...)), so
+    // this adds visibility without changing existing behaviour.
+    preflight({
+      dataDir: dataDir(),
+      ports: [
+        { name: "proxy", port: settings.port },
+        { name: "webhook", port: settings.webhookPort ?? 9101 },
+        { name: "companion", port: settings.companionPort ?? 9271 },
+      ],
+    }).then((checks) => {
+      for (const c of checks) {
+        if (!c.ok) console.warn(`[preflight] ${c.code}: ${c.message}`);
+      }
+    });
 
     // Init dirs/repos for all known workspaces first
     for (const ws of settings.workspaces) {
