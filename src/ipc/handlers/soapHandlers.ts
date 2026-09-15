@@ -1,10 +1,13 @@
 import { ipcMain } from "electron";
+import type { SoapFetchWsdlParams, SoapExecuteParams } from "@bifurc/protocol";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { loadConfig } from "@/store/config";
 import { generateId } from "@/store/config";
 import {
   writeEntity, deleteEntityFile, readAllEntities,
 } from "@/store/workspaceFs";
+import { commandRegistry } from "@/commands/registry";
+import { bus } from "@/eventBus";
 
 interface SavedSoapRequest {
   id: string; name: string; endpointUrl: string; soapAction: string;
@@ -25,6 +28,64 @@ interface SavedWsdl {
   id: string; name: string; content: string; sourceUrl?: string;
   importedAt: number; createdAt: number; workspaceId: string;
 }
+
+// P2 work item 7 — only soap.fetchWsdl/execute convert here, same reasoning as
+// graphqlHandlers.ts: the CRUD-factory channels and the WSDL-CRUD channels (no protocol command
+// exists for them yet) wait for the CRUD collapse.
+const ctx = { bus };
+
+commandRegistry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {
+  const httpMod = url.startsWith("https") ? require("https") : require("http");
+  try {
+    const parsed = new URL(url);
+    const content = await new Promise<string>((resolve, reject) => {
+      const req = httpMod.request(
+        { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "GET", rejectUnauthorized: false },
+        (res: any) => {
+          let data = "";
+          res.on("data", (chunk: string) => { data += chunk; });
+          res.on("end", () => resolve(data));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    return { ok: true, content };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? "Failed to fetch WSDL" };
+  }
+});
+
+commandRegistry.register("soap.execute", async ({ endpointUrl, soapAction, headers, body }: SoapExecuteParams) => {
+  const httpMod = endpointUrl.startsWith("https") ? require("https") : require("http");
+  const parsed = new URL(endpointUrl);
+  const xmlBody = Buffer.from(body, "utf-8");
+  const reqHeaders: Record<string, string> = {
+    "Content-Type": "text/xml; charset=utf-8",
+    "Content-Length": String(xmlBody.length),
+    ...headers,
+  };
+  if (soapAction) reqHeaders["SOAPAction"] = soapAction;
+  const start = Date.now();
+  const { status, resHeaders, resBody } = await new Promise<{ status: number; resHeaders: Record<string, string>; resBody: string }>((resolve, reject) => {
+    const req = httpMod.request(
+      { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "POST", headers: reqHeaders, rejectUnauthorized: false },
+      (res: any) => {
+        let data = "";
+        res.on("data", (chunk: string) => { data += chunk; });
+        res.on("end", () => {
+          const h: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) { h[k] = Array.isArray(v) ? v.join(", ") : String(v); }
+          resolve({ status: res.statusCode ?? 0, resHeaders: h, resBody: data });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.write(xmlBody);
+    req.end();
+  });
+  return { status, headers: resHeaders, body: resBody, durationMs: Date.now() - start };
+});
 
 export function registerSoapHandlers() {
   registerEntityCrudHandlers<SavedSoapRequest>({
@@ -68,56 +129,9 @@ export function registerSoapHandlers() {
     return readAllEntities<SavedWsdl>(wsId, "wsdls");
   });
 
-  ipcMain.handle("soap:fetchWsdl", async (_e, url: string) => {
-    const httpMod = url.startsWith("https") ? require("https") : require("http");
-    try {
-      const parsed = new URL(url);
-      const content = await new Promise<string>((resolve, reject) => {
-        const req = httpMod.request(
-          { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "GET", rejectUnauthorized: false },
-          (res: any) => {
-            let data = "";
-            res.on("data", (chunk: string) => { data += chunk; });
-            res.on("end", () => resolve(data));
-          },
-        );
-        req.on("error", reject);
-        req.end();
-      });
-      return { ok: true, content };
-    } catch (err: any) {
-      return { ok: false, error: err?.message ?? "Failed to fetch WSDL" };
-    }
-  });
+  ipcMain.handle("soap:fetchWsdl", (_e, url: string) =>
+    commandRegistry.invoke("soap.fetchWsdl", { url }, ctx));
 
-  ipcMain.handle("soap:execute", async (_e, { endpointUrl, soapAction, headers, body }: { endpointUrl: string; soapAction: string; headers: Record<string, string>; body: string }) => {
-    const httpMod = endpointUrl.startsWith("https") ? require("https") : require("http");
-    const parsed = new URL(endpointUrl);
-    const xmlBody = Buffer.from(body, "utf-8");
-    const reqHeaders: Record<string, string> = {
-      "Content-Type": "text/xml; charset=utf-8",
-      "Content-Length": String(xmlBody.length),
-      ...headers,
-    };
-    if (soapAction) reqHeaders["SOAPAction"] = soapAction;
-    const start = Date.now();
-    const { status, resHeaders, resBody } = await new Promise<{ status: number; resHeaders: Record<string, string>; resBody: string }>((resolve, reject) => {
-      const req = httpMod.request(
-        { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "POST", headers: reqHeaders, rejectUnauthorized: false },
-        (res: any) => {
-          let data = "";
-          res.on("data", (chunk: string) => { data += chunk; });
-          res.on("end", () => {
-            const h: Record<string, string> = {};
-            for (const [k, v] of Object.entries(res.headers)) { h[k] = Array.isArray(v) ? v.join(", ") : String(v); }
-            resolve({ status: res.statusCode ?? 0, resHeaders: h, resBody: data });
-          });
-        },
-      );
-      req.on("error", reject);
-      req.write(xmlBody);
-      req.end();
-    });
-    return { status, headers: resHeaders, body: resBody, durationMs: Date.now() - start };
-  });
+  ipcMain.handle("soap:execute", (_e, params: SoapExecuteParams) =>
+    commandRegistry.invoke("soap.execute", params, ctx));
 }
