@@ -534,6 +534,40 @@ creates churn.
 > among `EntityKind`'s 16 values, plus the P3-bound `importExport:*` channels. Unifying
 > `environments` is a smaller, well-scoped follow-up — it would need the generic `entity.create`
 > path to carry the create-gate check, which none of the other kinds do today.
+>
+> **Twelfth batch (this session): `environments` — the last non-`importExport:*` gap.** It fits
+> `CrudFactoryOpts` exactly like `mappings` does (`isFlat: true`, no folders, no enabled state,
+> has an update), so no new registry shape was needed — just one addition to the existing one:
+> `CrudFactoryOpts.gateKind?: string`, the friendly kind name (`"environment"`) `gateCreate()`
+> (`@/subscription/entityCount`) expects. `entity.create`'s registered handler checks it — ahead
+> of `createEntityCore()`, so a blocked create never touches config/disk — and returns
+> `{error: "limit_reached", ...gate}` verbatim when `gateCreate()` disallows it, exactly what
+> `env:add` returned before the collapse. `EntityCreateResult`'s frozen `{id, entity}` shape has
+> no room for that error shape, but `registry.ts`'s `invoke()` only validates *params*, not
+> return values (the same trade-off `entity:setEnabled`'s `invalid_kind` guard already relies
+> on), so this is safe. **One real bug surfaced and was fixed, not just worked around:** the
+> `ipcAdd` thin adapter unconditionally did `result.entity` to unwrap `entity.create`'s return —
+> which silently turned a gate-blocked create into `undefined` on the wire instead of the error
+> object, a regression a new test caught immediately. Fixed with an `"entity" in result` check
+> that passes the error shape through unchanged. `environments`' two delete-time quirks — the
+> synthetic `"__global__"` environment can never be deleted, and deleting the active environment
+> must clear `activeEnvironmentId` — are handled the same way the pre-existing mapping->proxyRule
+> cascade delete is: a `kind === "environments"` special case inside the shared, generic
+> `deleteEntityCore()`, not a new hook. `coreHandlers.ts`'s hand-written `env:add`/`env:update`/
+> `env:delete` `ipcMain.handle` bodies are gone, replaced by one `registerEntityCrudHandlers<Environment>({ipcPrefix: "env", kind: "environments", configKey: "environments", isFlat: true, gateKind: "environment"})`
+> call — `env:setActive` (a different command, `env.setActive`) is untouched. `entityKindMap.ts`
+> needed no changes: `environments` is identical on both the engine and protocol side already.
+> Verified: `npm run typecheck` and `npm run build:main` are clean; the full suite is 1601/1603
+> (the 2 failures are the same pre-existing, unrelated `127.0.0.1:1` connectivity quirk —
+> reconfirmed by reproducing them against the pre-change `git stash` tree too). Three new tests
+> in `tests/ipc/handlers.test.ts` (`entity.* CommandRegistry collapse`) pin `env:add`'s flat
+> storage, the gate-block error shape (and that it creates nothing), and the `"__global__"`
+> delete guard; the pre-existing `env:add`/`env:update`/`env:delete` describe blocks earlier in
+> that file were left in place unchanged and still pass, now exercising the collapsed path.
+>
+> **What's left in work item 7 after this batch: only the P3-bound `importExport:*` SPLIT
+> channels.** Every `EntityKind` value — all 16 — is now routed through the CommandRegistry.
+> Total: **~112 commands** routed through it (see `registry.ts`'s own status note).
 
 ---
 
@@ -621,6 +655,15 @@ electron-builder, tailwind) in one flat list. These must split:
 > what's bridged, what's deliberately still out (`environments`, `graphqlSchemas`, `protoFiles`,
 > `wsdls`, and the P3-bound `importExport:*` channels), and the new regression tests that pin
 > the kind translation.
+>
+> **Status (this session, continued further): `graphqlSchemas`/`protoFiles`/`wsdls` (eleventh
+> batch) and `environments` (twelfth batch) both landed.** Every `EntityKind` value is now
+> routed through the CommandRegistry — the only thing still outside it is the P3-bound
+> `importExport:*` SPLIT channels. See work item 7's own status note (eleventh/twelfth batches)
+> for the full detail: the new `simpleEntityKinds`/`entity.list` registry for the three
+> no-`AppConfig`-array kinds, and `CrudFactoryOpts.gateKind` plus the `environments`-specific
+> delete guards for the create-gated kind. Total now: **~112 commands** routed through the
+> `CommandRegistry`.
 
 ---
 
@@ -686,10 +729,16 @@ unit-tested, and proven on 48 commands across `coreHandlers.ts` (`config.get`, `
 `src/ipc/importExport/index.ts` (1 of 4); converting `audit.list`,
 `runner.saveConfig`, and `import.commit` each exposed a real gap between the frozen protocol schema and actual
 handler/renderer usage, so all three were deliberately left unconverted rather than silently breaking
-real functionality — see work item 7's status note. The remaining ~55 handlers — the
-`entityCrudFactory.ts` CRUD channels (need a dedicated collapsing pass) and the three SPLIT/gapped
-import-export channels — are not yet
-converted. Work item 8 (the physical `packages/*`
+real functionality — see work item 7's status note. **Since then, three further passes closed
+almost everything else:** the CRUD collapse (all 12 `entityCrudFactory.ts` kinds' 36 channels
+plus `entity:load`/`entity:setEnabled`, onto `entity.create`/`entity.update`/`entity.delete`/
+`entity.load`/`entity.setEnabled`), the `graphqlSchemas`/`protoFiles`/`wsdls` simple-entity pass
+(onto `entity.create`/`entity.delete`/`entity.list`), and the `environments` pass (the last
+`EntityKind`, via a new `CrudFactoryOpts.gateKind` for its create-gate check plus
+`deleteEntityCore`-level guards for its two delete-time quirks). Work item 7 is now **done
+except for the P3-bound `importExport:*` SPLIT channels** — every `EntityKind` value routes
+through the CommandRegistry, ~112 commands total. See work item 7's own status note (tenth
+through twelfth batches) for the full detail. Work item 8 (the physical `packages/*`
 restructuring + dependency split) is **mostly not started**, but is no longer untouched:
 `packages/protocol` is now a real linked npm workspace (`"workspaces": ["packages/*"]`,
 `"@bifurc/protocol": "*"` as a dependency), built with its own `tsup` pipeline, and consumed by

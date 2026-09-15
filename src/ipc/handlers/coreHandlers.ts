@@ -8,7 +8,6 @@ import {
   Environment, Workspace,
 } from "@/store/config";
 import {
-  writeFlatEntity, deleteFlatEntityFile,
   initWorkspaceDir, wsDir as workspaceDir, readEnabledSet
 } from "@/store/workspaceFs";
 import { initWorkspaceRepo } from "@/store/gitStore";
@@ -25,6 +24,7 @@ import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@/sync/statusTracker";
 import { commandRegistry } from "@/commands/registry";
 import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
+import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 
 // P2 work item 7 (CommandRegistry) proof-of-concept — see `src/commands/registry.ts` for the
 // rationale and current scope. These three commands were picked because they cover both shapes
@@ -148,43 +148,19 @@ export function registerCoreHandlers() {
 
   ipcMain.handle("services:discover", () => discoverServices());
 
-  ipcMain.handle("env:add", async (_e, env: Omit<Environment, "id" | "createdAt">) => {
-    const cfg = loadConfig();
-    const wsId = env.workspaceId ?? cfg.activeWorkspaceId;
-    const gate = gateCreate(wsId, "environment");
-    if (!gate.allowed) return { error: "limit_reached", ...gate };
-    const newEnv: Environment = { ...env, id: generateId(), createdAt: Date.now(), workspaceId: wsId };
-    cfg.environments = cfg.environments ?? [];
-    cfg.environments.push(newEnv);
-    saveConfig(cfg);
-    writeFlatEntity(wsId, "environments", newEnv.id, newEnv);
-    return newEnv;
-  });
-
-  ipcMain.handle("env:update", async (_e, env: Environment) => {
-    const cfg = loadConfig();
-    const wsId = env.workspaceId ?? cfg.activeWorkspaceId;
-    cfg.environments = cfg.environments ?? [];
-    const idx = cfg.environments.findIndex((e) => e.id === env.id);
-    if (idx !== -1) cfg.environments[idx] = env;
-    saveConfig(cfg);
-    reloadConfig();
-    writeFlatEntity(wsId, "environments", env.id, env);
-    return { ok: true };
-  });
-
-  ipcMain.handle("env:delete", async (_e, id: string) => {
-    if (id === "__global__") return { ok: false, error: "cannot_delete_global" };
-    const cfg = loadConfig();
-    const env = (cfg.environments ?? []).find((e) => e.id === id);
-    cfg.environments = (cfg.environments ?? []).filter((e) => e.id !== id);
-    if (cfg.activeEnvironmentId === id) cfg.activeEnvironmentId = null;
-    saveConfig(cfg);
-    reloadConfig();
-    if (env) {
-      deleteFlatEntityFile(env.workspaceId, "environments", id);
-    }
-    return { ok: true };
+  // `environments` — the last `EntityKind` still holding out of the CRUD collapse (see the
+  // "What's left" note in `plan/03-phase-2-engine-extraction.md` work item 7). It fits
+  // `CrudFactoryOpts` exactly like `mappings` does (flat storage, no folders, no enabled
+  // state) plus one thing none of the twelve original CRUD kinds needed: a create-gate check
+  // (`gateKind`, consulted by `entity.create`'s registered handler) and two environment-only
+  // delete-time quirks (the "__global__" guard and the active-environment reset), both now
+  // handled inside `entityCrudFactory.ts` itself, keyed off `opts.kind === "environments"`.
+  registerEntityCrudHandlers<Environment>({
+    ipcPrefix: "env",
+    kind: "environments",
+    configKey: "environments",
+    isFlat: true,
+    gateKind: "environment",
   });
 
   ipcMain.handle("env:setActive", (_e, id: string | null) => commandRegistry.invoke("env.setActive", { id }, ctx));

@@ -1478,5 +1478,39 @@ describe("src/ipc/handlers.ts", () => {
       expect(vi.mocked(readAllEntities)).toHaveBeenCalledWith("default", "graphqlSchemas");
       expect(list).toEqual([]);
     });
+
+    // `environments` is the thirteenth (and last) `EntityKind` to join the collapse — unlike
+    // the twelve original CRUD-factory kinds, it carries a create-gate check (`gateKind`) and
+    // two delete-time quirks (the "__global__" guard, the active-environment reset). These
+    // pin that it now goes through `entity.create`/`entity.update`/`entity.delete` exactly
+    // like every other kind, with those quirks preserved.
+
+    it("env:add routes through entity.create with kind \"environments\" and stores flat", async () => {
+      const { writeFlatEntity } = await import("../../src/store/workspaceFs");
+      const input = { name: "Dev", variables: [] };
+      const result = await getHandler("env:add")(EVENT, input);
+      expect(result.id).toBeTruthy();
+      expect(result.name).toBe("Dev");
+      expect(vi.mocked(writeFlatEntity).mock.calls[0][1]).toBe("environments");
+    });
+
+    it("env:add returns { error: \"limit_reached\", ... } and creates nothing when gateCreate disallows it", async () => {
+      const { gateCreate } = await import("@/subscription/entityCount");
+      vi.mocked(gateCreate).mockReturnValueOnce({ allowed: false, current: 1, limit: 1 });
+
+      currentConfig.environments = [];
+      const result = await getHandler("env:add")(EVENT, { name: "Dev", variables: [] });
+
+      expect(result).toEqual({ error: "limit_reached", allowed: false, current: 1, limit: 1 });
+      expect(currentConfig.environments).toHaveLength(0);
+      expect(gateCreate).toHaveBeenCalledWith(expect.any(String), "environment");
+    });
+
+    it("env:delete refuses to delete \"__global__\"", async () => {
+      currentConfig.environments = [{ id: "__global__", name: "Global", variables: [], createdAt: 1 }];
+      const result = await getHandler("env:delete")(EVENT, "__global__");
+      expect(result).toEqual({ ok: false, error: "cannot_delete_global" });
+      expect(currentConfig.environments).toHaveLength(1);
+    });
   });
 });

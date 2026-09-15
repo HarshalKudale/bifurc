@@ -14,6 +14,7 @@ import { invalidateCache } from "@/sync/statusTracker";
 import { bus, emitEntityStatus } from "@/eventBus";
 import { commandRegistry } from "@/commands/registry";
 import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
+import { gateCreate } from "@/subscription/entityCount";
 
 const ctx = { bus };
 
@@ -65,6 +66,12 @@ export interface CrudFactoryOpts<T> {
   validate?: (entity: Partial<T>) => void;
   onAddConflict?: (cfg: AppConfig, newEntity: T) => void;
   getNameEntry?: (entity: T) => any; // Return object for upsertNameEntry/addPendingDeletion
+  /** The friendly kind name `gateCreate()` (`@/subscription/entityCount`) expects — e.g.
+   * `"environment"`. Only `environments` sets this today (its pre-existing `env:add` handler
+   * was the one CRUD-ish kind with a create-gate check); every other kind is ungated. Checked
+   * by `entity.create`'s registered command handler, ahead of `createEntityCore()`, so a
+   * blocked create never touches config/disk — see that handler for the shared shape. */
+  gateKind?: string;
 }
 
 // ── Core logic, extracted so both the legacy per-kind `ipcMain.handle` channels and the
@@ -166,7 +173,14 @@ async function updateEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
   return { ok: true };
 }
 
-async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, id: string): Promise<{ ok: boolean }> {
+async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, id: string): Promise<{ ok: boolean; error?: string }> {
+  // `environments`' one delete-time guard: the synthetic "__global__" environment
+  // (bootstrapped in `store/config.ts`) can never be deleted. Checked ahead of everything
+  // else, byte-for-byte the same early-return `env:delete` had before the CRUD collapse.
+  if (opts.kind === "environments" && id === "__global__") {
+    return { ok: false, error: "cannot_delete_global" };
+  }
+
   const cfg = loadConfig() as any;
   const wsId = cfg.activeWorkspaceId;
 
@@ -178,6 +192,13 @@ async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
 
     if (opts.ipcPrefix === "mapping") {
       cfg.proxyRules = (cfg.proxyRules ?? []).filter((r: any) => (r.targetType ?? "mapping") !== "mapping" || r.targetMappingId !== id);
+    }
+
+    // `environments`' other delete-time quirk: clear the active-environment pointer if the
+    // environment being deleted was active, so nothing keeps resolving variables against an
+    // id that no longer exists.
+    if (opts.kind === "environments" && cfg.activeEnvironmentId === id) {
+      cfg.activeEnvironmentId = null;
     }
 
     saveConfig(cfg);
@@ -243,15 +264,25 @@ function listSimpleEntitiesCore<T>(wsId: string, kind: string): T[] {
 // load, exactly like `coreHandlers.ts`'s `config.get`/`env.setActive` — they dispatch to
 // whichever kind's `opts` is in `entityCrudRegistry` at invoke time, so it does not matter which
 // `*Handlers.ts` file (and therefore which order) populated the registry first. A kind in
-// neither `entityCrudRegistry` nor `simpleEntityKinds` (today: only `environments`, which keeps
-// its own bespoke, gated-create handlers in `coreHandlers.ts`) throws a clear error rather than
-// silently no-oping.
+// neither `entityCrudRegistry` nor `simpleEntityKinds` throws a clear error rather than
+// silently no-oping — today every `EntityKind` value is registered in one or the other.
 
 commandRegistry.register("entity.create", async ({ kind, entity, workspaceId }: EntityCreateParams) => {
   const engineKind = toEngineKind(kind);
   const mergedEntity = { ...entity, workspaceId: workspaceId ?? (entity as any).workspaceId };
   const opts = entityCrudRegistry.get(engineKind);
   if (opts) {
+    // Only `environments` sets `gateKind` today (see `CrudFactoryOpts.gateKind`'s own note).
+    // Checked here, ahead of `createEntityCore()`, so a blocked create never touches
+    // config/disk — matches `env:add`'s pre-collapse `{error: "limit_reached", ...gate}`
+    // return exactly. `EntityCreateResult`'s frozen `{id, entity}` shape has no room for this,
+    // but the registry (`registry.ts`) only validates *params*, not return values, so this is
+    // safe: it is the same trade-off `entity:setEnabled`'s `invalid_kind` guard already made.
+    if (opts.gateKind) {
+      const wsId = (mergedEntity as any).workspaceId ?? loadConfig().activeWorkspaceId;
+      const gate = gateCreate(wsId, opts.gateKind);
+      if (!gate.allowed) return { error: "limit_reached", ...gate };
+    }
     const created = await createEntityCore(opts, mergedEntity as any);
     return { id: created.id, entity: created as Record<string, unknown> };
   }
@@ -292,13 +323,15 @@ export function registerEntityCrudHandlers<T extends EntityBase>(opts: CrudFacto
   ipcMain.handle(opts.ipcAdd || `${opts.ipcPrefix}:add`, async (_e, entity: Omit<T, "id" | "createdAt">) => {
     // `entity.create` returns `{id, entity}` (the frozen protocol shape); the legacy channel
     // has always returned the raw created entity, so unwrap it here to keep the wire response
-    // byte-identical.
+    // byte-identical. A gate-blocked create (only `environments` sets `gateKind`) returns
+    // `{error, ...gate}` instead — no `.entity` to unwrap — so that shape passes through
+    // unchanged, matching `env:add`'s pre-collapse `{error: "limit_reached", ...gate}` return.
     const result = await commandRegistry.invoke(
       "entity.create",
       { kind: protocolKind, entity, workspaceId: (entity as any).workspaceId },
       ctx,
-    ) as { id: string; entity: Record<string, unknown> };
-    return result.entity;
+    ) as { id: string; entity: Record<string, unknown> } | { error: string };
+    return "entity" in result ? result.entity : result;
   });
 
   ipcMain.handle(opts.ipcUpdate || `${opts.ipcPrefix}:update`, async (_e, entity: T) => {
