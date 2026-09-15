@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+import type { ConfigGetParams, EnvSetActiveParams, WorkspaceSetActiveParams } from "@bifurc/protocol";
 import { executeIpcScript, IpcScriptOpts } from "@/proxy/scriptExecutor";
 import {
   loadConfig, saveConfig, loadEntity, generateId, AppConfig,
@@ -22,9 +23,40 @@ import { generateRandomWorkspaceName } from "@/lib/randomNames";
 import { gateCreate } from "@/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@/sync/statusTracker";
+import { commandRegistry } from "@/commands/registry";
+
+// P2 work item 7 (CommandRegistry) proof-of-concept — see `src/commands/registry.ts` for the
+// rationale and current scope. These three commands were picked because they cover both shapes
+// (`config.get` has no params; `env.setActive`/`workspace.setActive` have a simple named-param
+// object that already matches its legacy channel's single positional argument 1:1) without
+// touching the CRUD-factory channels, which need their own collapsing pass first.
+const ctx = { bus };
+commandRegistry.register("config.get", (_params: ConfigGetParams) => loadConfig());
+
+commandRegistry.register("env.setActive", ({ id }: EnvSetActiveParams) => {
+  if (id === "__global__") return { ok: false, error: "cannot_activate_global" };
+  const cfg = loadConfig();
+  cfg.activeEnvironmentId = id;
+  const ws = (cfg.workspaces ?? []).find((w) => w.id === cfg.activeWorkspaceId);
+  if (ws) ws.activeEnvironmentId = id;
+  saveConfig(cfg);
+  reloadConfig();
+  return { ok: true };
+});
+
+commandRegistry.register("workspace.setActive", ({ id }: WorkspaceSetActiveParams) => {
+  const cfg = loadConfig();
+  const ws = (cfg.workspaces ?? []).find((w) => w.id === id);
+  if (!ws) return { ok: false };
+  cfg.activeWorkspaceId = id;
+  cfg.activeEnvironmentId = ws.activeEnvironmentId;
+  saveConfig(cfg);
+  reloadConfig();
+  return { ok: true, config: loadConfig() };
+});
 
 export function registerCoreHandlers() {
-  ipcMain.handle("config:get", () => loadConfig());
+  ipcMain.handle("config:get", () => commandRegistry.invoke("config.get", {}, ctx));
 
   ipcMain.handle("config:save", (_e, incoming: AppConfig) => {
     const prev = loadConfig();
@@ -139,16 +171,7 @@ export function registerCoreHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle("env:setActive", (_e, id: string | null) => {
-    if (id === "__global__") return { ok: false, error: "cannot_activate_global" };
-    const cfg = loadConfig();
-    cfg.activeEnvironmentId = id;
-    const ws = (cfg.workspaces ?? []).find((w) => w.id === cfg.activeWorkspaceId);
-    if (ws) ws.activeEnvironmentId = id;
-    saveConfig(cfg);
-    reloadConfig();
-    return { ok: true };
-  });
+  ipcMain.handle("env:setActive", (_e, id: string | null) => commandRegistry.invoke("env.setActive", { id }, ctx));
 
   ipcMain.handle("script:execute", (_e, opts: IpcScriptOpts) => {
     return executeIpcScript(opts);
@@ -194,16 +217,7 @@ export function registerCoreHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle("workspace:setActive", (_e, id: string) => {
-    const cfg = loadConfig();
-    const ws = (cfg.workspaces ?? []).find((w) => w.id === id);
-    if (!ws) return { ok: false };
-    cfg.activeWorkspaceId = id;
-    cfg.activeEnvironmentId = ws.activeEnvironmentId;
-    saveConfig(cfg);
-    reloadConfig();
-    return { ok: true, config: loadConfig() };
-  });
+  ipcMain.handle("workspace:setActive", (_e, id: string) => commandRegistry.invoke("workspace.setActive", { id }, ctx));
 
   ipcMain.handle("request:replay",
     (_e, method: string, url: string, headers: Record<string, string>, bodyBase64: string) =>
