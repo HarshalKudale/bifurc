@@ -29,9 +29,14 @@ interface SavedWsdl {
   importedAt: number; createdAt: number; workspaceId: string;
 }
 
-// P2 work item 7 — only soap.fetchWsdl/execute convert here, same reasoning as
-// graphqlHandlers.ts: the CRUD-factory channels and the WSDL-CRUD channels (no protocol command
-// exists for them yet) wait for the CRUD collapse.
+// P2 work item 7 — soap.fetchWsdl/execute convert here directly; soap:addRequest/updateRequest/
+// deleteRequest and soap:addMock/updateMock/deleteMock already route through the CommandRegistry
+// too, via the `registerEntityCrudHandlers()` calls below (the CRUD collapse — see
+// `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's tenth batch).
+// Only `soap:addWsdl/deleteWsdl/listWsdls` remain unconverted: they don't track a `configKey`
+// array the way every `CrudFactoryOpts` kind does (WSDLs are written straight to disk, nothing
+// mirrors them into `AppConfig`), and no protocol command exists for them yet — a genuinely
+// different shape from the CRUD collapse, not just an unfinished slice of it.
 const ctx = { bus };
 
 commandRegistry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {
