@@ -1,7 +1,7 @@
 import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { generateCA, installCA, getCertStatus } from "@/proxy/certManager";
+import { generateCA, getCertStatus } from "@/proxy/certManager";
 import { appDataDir } from "@/store/appSettings";
 
 export function registerTlsHandlers() {
@@ -12,12 +12,6 @@ export function registerTlsHandlers() {
     } catch (e: unknown) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
-  });
-
-  ipcMain.handle("tls:installCA", () => {
-    const certPath = path.join(appDataDir(), "ca-cert.pem");
-    if (!fs.existsSync(certPath)) return { ok: false, error: "No CA certificate found. Generate one first." };
-    return installCA(certPath);
   });
 
   ipcMain.handle("tls:exportCert", async () => {
