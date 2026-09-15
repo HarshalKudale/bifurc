@@ -4,8 +4,8 @@
  */
 
 import { ChildProcess, spawn } from "child_process";
-import { BrowserWindow } from "electron";
 import { readEntity } from "@/store/workspaceFs";
+import { bus } from "@/events/bus";
 import {
     ApplicationConfig,
     AppProcessState,
@@ -23,11 +23,6 @@ const MAX_LOG_LINES = 5000;
 
 class ProcessSpawner {
     private processes: Map<string, RunningProcess> = new Map();
-    private mainWindow: BrowserWindow | null = null;
-
-    setMainWindow(win: BrowserWindow): void {
-        this.mainWindow = win;
-    }
 
     /**
      * Start an application by ID.
@@ -247,8 +242,10 @@ class ProcessSpawner {
     }
 
     private sendToRenderer(channel: string, data: unknown): void {
-        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-            this.mainWindow.webContents.send(channel, data);
+        if (channel === "app:log") {
+            bus.emitTyped("process.output", data as { appId: string; stream: "stdout" | "stderr" | "system"; data: string; ts: number });
+        } else if (channel === "app:statusChange") {
+            bus.emitTyped("process.statusChange", data as { appId: string; status: string; [key: string]: unknown });
         }
     }
 }

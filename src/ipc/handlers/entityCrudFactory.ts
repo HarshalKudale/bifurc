@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain } from "electron";
 import { loadConfig, saveConfig, generateId, AppConfig } from "@/store/config";
 import { 
   writeEntity, deleteEntityFile, writeFlatEntity, deleteFlatEntityFile,
@@ -8,7 +8,8 @@ import {
 } from "@/store/workspaceFs";
 import { getGit } from "@/store/gitStore";
 import { reloadConfig } from "@/proxy/server";
-import { invalidateCache, getWorkspaceSyncStatus } from "@/sync/statusTracker";
+import { invalidateCache } from "@/sync/statusTracker";
+import { bus, emitEntityStatus } from "@/events/bus";
 
 export async function isGitTracked(wsId: string, relPath: string): Promise<boolean> {
   try {
@@ -24,21 +25,6 @@ export function syncEnabledSet(wsId: string, kind: string, id: string, enabled: 
   if (!set) set = bootstrapEnabledSet(wsId, kind);
   if (enabled) set.add(id); else set.delete(id);
   writeEnabledSet(wsId, kind, set);
-}
-
-export function notifyRendererRefresh(): void {
-  const windows = BrowserWindow.getAllWindows();
-  for (const w of windows) {
-    if (!w.isDestroyed()) w.webContents.send("companion:refresh");
-  }
-}
-
-export function broadcastEntityStatus(wsId: string): void {
-  getWorkspaceSyncStatus(wsId).then((status) => {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) w.webContents.send("sync:entityStatus", { wsId, status });
-    });
-  }).catch(() => { });
 }
 
 export interface CrudFactoryOpts<T> {
@@ -108,10 +94,10 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
     // started working after some unrelated action happened to reload the config.
     reloadConfig();
 
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     
     if (["mock", "request"].includes(opts.ipcPrefix ?? "")) {
-      notifyRendererRefresh();
+      bus.emitTyped("entity.changed", { wsId, kind: opts.kind, id: newEntity.id, action: "created" });
     }
     
     return newEntity;
@@ -146,7 +132,7 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
     // add handler).
     reloadConfig();
 
-    broadcastEntityStatus(wsId);
+    emitEntityStatus(wsId);
     return { ok: true };
   });
 
@@ -192,7 +178,7 @@ export function registerEntityCrudHandlers<T extends { id: string; workspaceId?:
       reloadConfig();
 
       invalidateCache(wsId);
-      broadcastEntityStatus(wsId);
+      emitEntityStatus(wsId);
     }
     
     return { ok: true };

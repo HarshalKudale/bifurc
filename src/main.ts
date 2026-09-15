@@ -10,6 +10,7 @@ import { startCompanionServer, stopCompanionServer } from "@/companion/companion
 import { checkGitInstalled, initWorkspaceRepo } from "@/store/gitStore";
 import { startAutoSync, stopAllAutoSync, setAutoSyncReloadFn } from "@/sync/autoSync";
 import { getSyncConfig } from "@/sync/syncManager";
+import { bus } from "@/events/bus";
 import * as fs from "fs";
 
 
@@ -224,8 +225,6 @@ function createWindow(): void {
     }
   });
 
-  processSpawner.setMainWindow(mainWindow);
-
   mainWindow.on("close", (e) => {
     if (!quitting && loadConfig().minimizeToTray) {
       e.preventDefault();
@@ -297,6 +296,11 @@ if (!gotTheLock) {
     setAutoSyncReloadFn(reloadConfig);
 
     registerIpcHandlers();
+
+    // Bridge the engine bus's settings-change notification to the shell's own tray update.
+    // Kept here (not in eventBridge.ts) to avoid an @/main <-> @/ipc/handlers import cycle —
+    // see the comment in eventBridge.ts.
+    bus.onTyped("settings.changed", () => updateTrayMenu());
 
     // First-launch IPC
     ipcMain.handle("app:isFirstLaunch", () => {
