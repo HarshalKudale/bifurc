@@ -499,17 +499,41 @@ creates churn.
 >   the untranslated `"rules"`/`"sockets"` storage kind; `entity:load` with those two kinds
 >   resolves instead of throwing).
 >
-> **Remaining, explicitly out of scope for this pass:** unifying `environments` /
-> `graphqlSchemas` / `protoFiles` / `wsdls` onto the same generic commands (four bespoke handler
-> pairs, each with its own quirk — gating, flat-only storage, add-without-update); and the ~4
+> **Remaining, explicitly out of scope for this pass:** unifying `environments` onto the same
+> generic commands (gated create, flat-only storage, its own quirks); and the ~4
 > `importExport:*` / SPLIT channels already documented above as P3 territory. Note
 > `graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts`'s own `graphql:addRequest/Mock`,
 > `soap:addRequest/Mock`, `grpc:addRequest/Mock` etc. channels are **not** in this remaining
 > list — they already called the same shared `registerEntityCrudHandlers()` this pass rewired
 > (see `crudHandlers.ts` for the other 6 of the 12 covered kinds), so converting the factory
-> once converted all 12 kinds' 36 channels simultaneously, across all 4 call-site files. Only
-> those files' separate, non-factory `graphql:addSchema/deleteSchema/listSchemas` and
-> `soap:addWsdl/deleteWsdl/listWsdls` channels remain unconverted, alongside `environments`.
+> once converted all 12 kinds' 36 channels simultaneously, across all 4 call-site files.
+>
+> **Eleventh batch (this session): `graphqlSchemas`/`protoFiles`/`wsdls` — the last three
+> non-`environments` kinds `EntityKind` carries.** These don't fit `CrudFactoryOpts` at all (no
+> `AppConfig` array, no "update" concept — only add/delete/list, straight to disk via
+> `writeEntity`/`deleteEntityFile`/`readAllEntities`), so rather than stretch the factory to cover
+> a shape it wasn't designed for, a second, smaller registry was added alongside it:
+> `simpleEntityKinds` (a `Set<string>`) plus `createSimpleEntityCore`/`deleteSimpleEntityCore`/
+> `listSimpleEntitiesCore`, consulted as a fallback by `entity.create`/`entity.delete` when a
+> kind isn't in `entityCrudRegistry`, and exclusively by the new `entity.list` command (which
+> until now had zero registered handler — the previous batches' status notes only reserved its
+> name). `registerSimpleEntityHandlers()` mirrors `registerEntityCrudHandlers()`'s shape:
+> `graphql:addSchema/deleteSchema/listSchemas`, `soap:addWsdl/deleteWsdl/listWsdls`, and
+> `grpc:addProto/deleteProto/listProtos` (9 channels, 3 kinds) all now route through
+> `entity.create`/`entity.delete`/`entity.list`, with the same `.entity`/`.entities` unwrapping
+> `registerEntityCrudHandlers` uses to keep the wire response byte-identical. All three kinds are
+> identical strings on both the engine and protocol side, so `entityKindMap.ts` needed no changes.
+> Verified: typecheck, `build:main`, and the full suite (still 1597/1599, same 2 pre-existing
+> `127.0.0.1:1` failures) all clean — `tests/integration/protocolExecution.integration.test.ts`'s
+> existing "graphql schemas round-trip through add → list → delete" / "soap WSDLs round-trip
+> through add → list → delete" / "grpc protos round-trip through add → list → delete" tests are
+> the regression signal here and needed no changes to keep passing.
+>
+> **What's left after this batch:** only `environments` (gated by `subscription/entityCount.ts`'s
+> create limit; also has an "update" unlike the three above) remains outside the CommandRegistry
+> among `EntityKind`'s 16 values, plus the P3-bound `importExport:*` channels. Unifying
+> `environments` is a smaller, well-scoped follow-up — it would need the generic `entity.create`
+> path to carry the create-gate check, which none of the other kinds do today.
 
 ---
 

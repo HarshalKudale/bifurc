@@ -13,15 +13,15 @@
  * transport unless the protocol package knows about it first.
  *
  * Scope of this pass (see `plan/03-phase-2-engine-extraction.md` work item 7 for the full
- * status note): the registry itself is complete and unit-tested, and roughly 100 commands
+ * status note): the registry itself is complete and unit-tested, and roughly 109 commands
  * across `coreHandlers.ts`, the CRUD-factory channels (`entityCrudFactory.ts` — `mock:add`,
  * `rule:update`, `ws:delete`, and every other kind collapse onto `entity.create`/
- * `entity.update`/`entity.delete`), `entity:load`/`entity:setEnabled`, and most of
- * `syncHandlers.ts`/`folderHandlers.ts`/`tlsHandlers.ts`/`runnerHandlers.ts`/
- * `graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts`/`applicationHandlers.ts` now go
- * through it. Still outside its scope: `environments`/`graphqlSchemas`/`protoFiles`/`wsdls`
- * (bespoke handlers, no CRUD-factory involvement) and the P3-bound `importExport:*` SPLIT
- * channels.
+ * `entity.update`/`entity.delete`), `entity:load`/`entity:setEnabled`, the no-`AppConfig`-array
+ * kinds (`graphqlSchemas`/`protoFiles`/`wsdls`, via `entity.create`/`entity.delete`/`entity.list`
+ * and `registerSimpleEntityHandlers()`), and most of `syncHandlers.ts`/`folderHandlers.ts`/
+ * `tlsHandlers.ts`/`runnerHandlers.ts`/`graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts`/
+ * `applicationHandlers.ts` now go through it. Still outside its scope: `environments` (gated,
+ * bespoke create handler) and the P3-bound `importExport:*` SPLIT channels.
  */
 import { type CommandAction, getCommandParamsSchema, isKnownCommand } from "@bifurc/protocol";
 import type { bus } from "@/eventBus";
