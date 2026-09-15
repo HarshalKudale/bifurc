@@ -26,12 +26,15 @@ interface SavedGraphQLSchema {
   introspectedAt?: number; createdAt: number; workspaceId: string;
 }
 
-// P2 work item 7 — only graphql.introspect/execute convert here. `graphql:addRequest/
-// updateRequest/deleteRequest` and `graphql:addMock/updateMock/deleteMock` go through the
-// entityCrudFactory (out of scope until the CRUD collapse, per work item 7's status note), and
-// `graphql:addSchema/deleteSchema/listSchemas` have no protocol command at all yet — the
-// protocol's own comment on `graphql.ts` says GraphQL schema CRUD is meant to collapse into
-// `entity.*` too, so they wait for the same collapsing pass.
+// P2 work item 7 — only graphql.introspect/execute convert here directly; graphql:addRequest/
+// updateRequest/deleteRequest and graphql:addMock/updateMock/deleteMock already route through
+// the CommandRegistry too, via the `registerEntityCrudHandlers()` calls below (the CRUD
+// collapse — see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's
+// tenth batch). Only `graphql:addSchema/deleteSchema/listSchemas` remain unconverted: they don't
+// track a `configKey` array the way every `CrudFactoryOpts` kind does (schemas are written
+// straight to disk, nothing mirrors them into `AppConfig`), and no protocol command exists for
+// them yet — a genuinely different shape from the CRUD collapse, not just an unfinished slice
+// of it.
 const ctx = { bus };
 
 commandRegistry.register("graphql.introspect", async ({ url, headers }: GraphqlIntrospectParams) => {
