@@ -23,9 +23,9 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
-import { setDataDirOverride, getGit, initWorkspaceRepo } from "@/store/gitStore";
-import { initWorkspaceDir, wsDir } from "@/store/workspaceFs";
-import { setSettingsPathOverride, loadSettings } from "@/store/appSettings";
+import { setDataDirOverride, getGit, initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
+import { initWorkspaceDir, wsDir } from "@bifurc/engine/store/workspaceFs";
+import { setSettingsPathOverride, loadSettings } from "@bifurc/engine/store/appSettings";
 import { getSyncConfig, getRemoteHead } from "@/sync/syncManager";
 
 // ── Electron: capture the real handlers instead of registering them ───────────

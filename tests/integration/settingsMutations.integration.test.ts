@@ -50,8 +50,8 @@ import {
 import { startServer, stopServer, isRunning, getPort } from "@/proxy/server";
 import { isCALoaded } from "@/proxy/tlsCert";
 import { generateCA } from "@/proxy/certManager";
-import { loadSettings, type AppSettings } from "@/store/appSettings";
-import { setDataDirOverride } from "@/store/gitStore";
+import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
+import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { stopCompanionServer, getCompanionPort } from "@/companion/companionServer";
 
 // ── Capture the handlers the Settings screen drives ───────────────────────────

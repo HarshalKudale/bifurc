@@ -2,8 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   loadConfig, saveConfig, generateId, SavedRequest, Folder,
-} from "@/store/config";
-import { writeEntity, upsertNameEntry } from "@/store/workspaceFs";
+} from "@bifurc/engine/store/config";
+import { writeEntity, upsertNameEntry } from "@bifurc/engine/store/workspaceFs";
 import { reloadConfig } from "@/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 

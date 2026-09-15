@@ -1,4 +1,4 @@
-// Shared entity interfaces — used by src/store/config.ts, workspaceFs.ts, and gitStore.ts
+// Shared entity interfaces — used by store/config.ts, store/workspaceFs.ts, and store/gitStore.ts
 
 export interface LocalMapping {
   id: string;

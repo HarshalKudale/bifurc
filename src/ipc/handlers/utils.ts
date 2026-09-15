@@ -1,5 +1,5 @@
-import { readEnabledSet, writeEnabledSet, bootstrapEnabledSet } from "@/store/workspaceFs";
-import { getGit } from "@/store/gitStore";
+import { readEnabledSet, writeEnabledSet, bootstrapEnabledSet } from "@bifurc/engine/store/workspaceFs";
+import { getGit } from "@bifurc/engine/store/gitStore";
 
 export function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean): void {
   let set = readEnabledSet(wsId, kind);

@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { loadConfig } from "@/store/config";
+import { loadConfig } from "@bifurc/engine/store/config";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 export async function run(wsId: string, filePath: string): Promise<ExportResult> {

@@ -50,7 +50,48 @@ function dualAliasPlugin() {
   };
 }
 
+/**
+ * `@bifurc/engine/*` must resolve to the engine package's **source**, not its build output.
+ *
+ * This has to be a `resolve.alias` rather than a `resolveId` plugin, and that is a measured
+ * conclusion, not a preference. `@bifurc/engine` is a real npm workspace package, so Node can
+ * resolve it unaided; Vitest therefore treated it as an *external* dependency and loaded the
+ * **built** `dist/*.mjs` through native `import()`. A plugin's `resolveId` is never consulted for an
+ * externalized specifier — confirmed with a temporary probe, which did not fire once — and
+ * `server.deps.inline` alone does not change that either. `resolve.alias` is applied inside Vite's
+ * core resolver *before* the externalization decision, so the rewritten id is a source path outside
+ * `node_modules` and is processed like any other project file.
+ *
+ * Two reasons source matters, both load-bearing:
+ *  - tests must exercise the real code, and `coverage.include` must be able to instrument it.
+ *    Resolving to `dist/` reported all 14 engine files as 0% covered while testing compiled JS.
+ *  - resolving to `dist/` means a source edit that was not rebuilt is silently *not tested* — the
+ *    suite passes green against stale output, which is the worst possible failure mode.
+ *
+ * Production resolves the same specifier to the built package instead — see the `paths` note in the
+ * root `tsconfig.json`.
+ */
+const engineSrc = path.resolve(__dirname, "packages/engine/src").replace(/\\/g, "/");
+const engineAlias = [
+  { find: /^@bifurc\/engine$/, replacement: `${engineSrc}/index.ts` },
+  { find: /^@bifurc\/engine\/(.+)$/, replacement: `${engineSrc}/$1` },
+];
+
 const plugins = [react(), dualAliasPlugin()];
+
+/**
+ * Vite options must be redeclared inside every project, not just at the root.
+ *
+ * This is measured, not stylistic. `resolve.alias` placed only at the root `defineConfig`
+ * level is **never applied** to the project runs: with the alias target deliberately corrupted
+ * to a non-existent directory the suite still passed and still loaded `dist/`, proving no
+ * resolver ever saw the specifier. `plugins` was already duplicated into each project for the
+ * same reason — the `dualAliasPlugin` only works because of it.
+ */
+const viteOptions = {
+  plugins,
+  resolve: { alias: engineAlias },
+};
 
 /**
  * Shared defaults for every project. Each project redeclares these because Vitest
@@ -64,7 +105,7 @@ const shared = {
 };
 
 export default defineConfig({
-  plugins,
+  ...viteOptions,
   test: {
     ...shared,
     /**
@@ -74,7 +115,7 @@ export default defineConfig({
      */
     projects: [
       {
-        plugins,
+        ...viteOptions,
         test: {
           ...shared,
           name: "unit",
@@ -84,7 +125,7 @@ export default defineConfig({
         },
       },
       {
-        plugins,
+        ...viteOptions,
         test: {
           ...shared,
           name: "integration",
@@ -104,6 +145,10 @@ export default defineConfig({
       reportsDirectory: "coverage",
       include: [
         "src/**/*.ts",
+        // The engine package (P2 work item 8). Its source is still exercised through the
+        // `@bifurc/engine/*` alias in tests, so it belongs in the report exactly as `src/**`
+        // did before the move — omitting it would silently drop ~11 files of coverage.
+        "packages/engine/src/**/*.ts",
         "renderer/lib/**/*.ts",
         // Both extensions: the capture/search/tab-reducer logic lives in `.ts` files under
         // renderer/components, and matching only `.tsx` hid it from the report entirely —
@@ -118,7 +163,7 @@ export default defineConfig({
         "src/preload.ts",
         // Type-only modules.
         "**/*.d.ts",
-        "src/store/types.ts",
+        "packages/engine/src/store/types.ts",
         "src/sync/types.ts",
         "src/applications/types.ts",
         "src/ipc/importExport/types.ts",

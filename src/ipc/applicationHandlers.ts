@@ -13,7 +13,7 @@ import type {
 } from "@bifurc/protocol";
 import {
     readAllEntities, writeEntity, deleteEntityFile,
-} from "@/store/workspaceFs";
+} from "@bifurc/engine/store/workspaceFs";
 import { processSpawner } from "@/applications/processSpawner";
 import { generateResolvedCommand } from "@/applications/commandGenerator";
 import { checkPortInUse, killProcessOnPort } from "@/applications/portUtils";
