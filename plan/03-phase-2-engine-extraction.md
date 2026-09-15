@@ -222,6 +222,24 @@ Per `plan/handler-classification.md`, these never cross the wire and must be **r
 `app:isFirstLaunch` / `app:completeFirstLaunch` read `settings.hasSeenWelcome` — that is shell launch
 state, not engine state. Move it.
 
+> **Status (2026-09-15): the first row is done, ahead of P6.** `zoom:get`/`zoom:set`,
+> `theme:get`/`theme:set`, `shell:openExternal`, `shell:setTitleBarOverlay`, `dialog:pickFilePath`,
+> `dialog:pickFolderPath`, `dialog:openFile`, `tls:installCA`, `app:isFirstLaunch`, and
+> `app:completeFirstLaunch` all moved into a new `src/ipc/handlers/clientHandlers.ts` with its own
+> `registerClientHandlers()`, called directly by `src/main.ts` alongside — not from within —
+> `registerIpcHandlers()`. No channel names changed and no renderer code was touched; this is a
+> registration-time reorganization, not a P6 shell-seam change, which is why it was safe to do now
+> rather than waiting for P6. `tls:installCA` moved out of `tlsHandlers.ts` specifically (the rest
+> of that file stays — it reads/writes the CA files themselves, which is engine-side data).
+> Unit-tested in `tests/ipc/clientHandlers.test.ts` (21/21 passing) — these handlers had **no**
+> direct unit coverage before this move.
+>
+> **Not done:** `app:checkUpdate` (SPLIT — stays as-is per its own note in
+> `handler-classification.md`, deferred to P12), `capture:shareJson` (SPLIT, untouched), and
+> `src/main.ts`'s tray/menu/window/zoom-shortcut/titlebar/single-instance code (that code doesn't
+> move until P6 actually stands up a separate engine process — moving it now would be premature
+> without `packages/engine` existing to move it *out of*).
+
 ---
 
 ## Work item 6 — Headless startup path
@@ -349,10 +367,10 @@ electron-builder, tailwind) in one flat list. These must split:
    Do not batch them — when an event goes missing you need to bisect to a single file.
 
 > **Status (2026-09-15): all three done** — see the "Honest status" note under Acceptance criteria.
-> Item 6 (headless startup preflight) was also started this session. **Next up:** item 5 (split
-> the shell-only handlers per `plan/handler-classification.md`), then item 7 (CommandRegistry —
-> deliberately last, per its own note above, since it's the mechanical payoff of items 1–6), then
-> item 8 (the physical `packages/*` restructuring).
+> Items 5 (split shell-only handlers) and 6 (headless startup preflight) were also started this
+> session — item 5's first row is done. **Next up:** item 7 (CommandRegistry — deliberately last,
+> per its own note above, since it's the mechanical payoff of items 1–6), then item 8 (the
+> physical `packages/*` restructuring).
 
 ---
 
@@ -363,7 +381,9 @@ electron-builder, tailwind) in one flat list. These must split:
       is not done. Progress made in place: `src/**` electron-importing files reduced from 22 →
       18 → **16** across sessions — `gitStore.ts`, `companionServer.ts`, `webhookServer.ts`,
       `processSpawner.ts`, `appSettings.ts`, and `workspaceFs.ts` are now electron-free. `src/proxy/`
-      — "the actual product" per this doc's own note — has **zero** Electron imports.)*
+      — "the actual product" per this doc's own note — has **zero** Electron imports. A new
+      `src/ipc/handlers/clientHandlers.ts` was also added this session and does import `electron` —
+      by design, it never moves to `packages/engine` (see work item 5's status note).)*
 - [ ] `grep -rn "BrowserWindow\|app.getPath\|dialog\.\|shell\." packages/engine/src` returns zero.
       *(Same caveat — see the per-item status below for what's actually converted.)*
 - [ ] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
@@ -374,10 +394,10 @@ electron-builder, tailwind) in one flat list. These must split:
       `src/store/paths.ts` (`DataRootNotInitialisedError`), unit-tested
       (`tests/store/paths.test.ts`, 8/8 passing), **and now wired as the primary path** in
       `appSettings.ts`/`workspaceFs.ts` — see the work item 4 status note above.
-- [x] All unit + integration suites pass. *(65 files / 1564 tests as of this session; zero
+- [x] All unit + integration suites pass. *(66 files / 1585 tests as of this session; zero
       regressions.)* The 11 e2e suites remain **unverified** — they cannot run in this sandbox (no
-      desktop session, per `plan/baseline.md` "Environment caveats"). Integration suite: 63/65
-      files green, 1562/1564 tests, matching the documented baseline exactly (the 2 failures are
+      desktop session, per `plan/baseline.md` "Environment caveats"). Integration suite: 64/66
+      files green, 1583/1585 tests, matching the documented baseline exactly (the 2 failures are
       the sandbox network-interceptor caveat, not a regression).
 - [x] No `companion:refresh`; replaced by `entity.changed`. **Internally** — every engine-side
       emission site now emits `bus.emitTyped("entity.changed", ...)`. The wire name
@@ -402,10 +422,13 @@ status note above for the reasoning). Work item 6 (headless startup) is **half d
 additional, non-blocking diagnostic pass — but the pre-existing git-check block was left as its
 own direct call rather than routed through `preflight()`, and the workspace-bootstrap loop (init
 dirs/repos, auto-sync, active-workspace validation) has not been extracted out of `main.ts` into
-the engine. Work items 5, 7, and 8 (splitting shell-only handlers, the CommandRegistry, and the
-physical `packages/*` restructuring + dependency split) are **not started**. See the
-"Cleanup_plan.md status" section of `plan/README.md` for the still-open D6 sub-items that also
-block a complete P2.
+the engine. Work item 5 (split shell-only handlers) is **started**: the 10 pure-CLIENT channels
+now live in `src/ipc/handlers/clientHandlers.ts`, registered separately from
+`registerIpcHandlers()`; the two SPLIT channels in `systemHandlers.ts` (`app:checkUpdate`,
+`capture:shareJson`) and `main.ts`'s tray/window/menu code are untouched, per that item's own
+status note. Work items 7 and 8 (the CommandRegistry and the physical `packages/*` restructuring +
+dependency split) are **not started**. See the "Cleanup_plan.md status" section of
+`plan/README.md` for the still-open D6 sub-items that also block a complete P2.
 
 ---
 
