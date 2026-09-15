@@ -188,6 +188,24 @@ how the e2e data-dir isolation breaks silently (see P6 item 5).
 **Verify `src/store/gitStore.ts`** — it imports `electron` but does not appear in the `app.getPath` grep.
 Find out what it actually needs and remove it.
 
+> **Status (2026-09-15): done.** `src/store/appSettings.ts` and `src/store/workspaceFs.ts` no longer
+> import `electron` — their fallback branch (after the win32 `LOCALAPPDATA` special case and the
+> `*Override` hooks, both checked first, in that order) now calls `dataDir()` from
+> `src/store/paths.ts`. `src/main.ts` calls `setDataRoot(app.getPath("userData"))` once, at the very
+> top of `app.whenReady()`, before any store module is touched — this preserves the exact directory
+> Electron previously resolved, so existing installs see no path change.
+>
+> **Decision taken on the two `*Override` hooks:** they stay separate, not folded into
+> `paths.ts`/`setDataRoot()`. They are proven by the full integration suite (`proxyHarness.ts` et
+> al.) and folding them in was judged a distinct, riskier change than this pass should attempt
+> without the 11 e2e specs available to catch a data-dir isolation regression (still true — see
+> `plan/baseline.md` "Environment caveats"). Revisit this decision once e2e can run.
+>
+> `gitStore.ts` was verified in a prior session: it does not import `electron` at all any more (it
+> only needed `workspaceFs`'s `wsDir`/`setDataRootOverride`, both already Electron-free).
+>
+> `electron`-importing files in `src/` are now down to 16 (from 18 at the start of this session).
+
 ---
 
 ## Work item 5 — Split out the shell-only handlers
@@ -232,9 +250,23 @@ export async function preflight(): Promise<StartupCheck[]>
 The Electron shell renders failures in a dialog; the CLI prints them; the Docker entrypoint exits
 non-zero with the message on stderr. **One check, three presentations.**
 
-Also extract the workspace bootstrap from `main.ts:265–294` (init dirs, init repos, start auto-sync,
-validate active workspace, create a default one) into the engine — it is engine work that currently
-lives in the shell.
+> **Status (2026-09-15): half done.** `src/startup.ts` implements exactly this —
+> `preflight({ dataDir, ports? })` runs all four checks (`checkGitInstalled()` reused from
+> `gitStore.ts`, a data-dir write probe, `checkPortInUse()` reused from `applications/portUtils.ts`
+> per configured port, and a cheap `typeof createCA === "function"` mkcert-loaded check) and never
+> throws. Unit-tested in `tests/startup.test.ts` (5/5 passing).
+>
+> The wiring in `main.ts` is deliberately conservative: the pre-existing git-required
+> `dialog.showErrorBox` + `app.quit()` block is untouched (same behaviour, same ordering), so
+> user-visible behaviour is unchanged. `preflight()` is additionally called once settings are
+> loaded (needed for the real configured ports) and any non-ok check is only `console.warn`'d —
+> it does not yet block startup for `data-dir-unwritable` / `port-in-use` / `mkcert-unusable`.
+> Whether those should become blocking (and whether the git check should be re-routed through
+> `preflight()` instead of its own direct call) is a product decision left open, not an oversight.
+>
+> **Not done:** extracting the workspace bootstrap from `main.ts` (init dirs, init repos, start
+> auto-sync, validate active workspace, create a default one) into the engine — it still lives in
+> the shell's `app.whenReady()` handler, unchanged.
 
 ---
 
@@ -316,33 +348,37 @@ electron-builder, tailwind) in one flat list. These must split:
 3. **Then item 2's remaining 7 sites, one commit each.** One file per commit, full test run per commit.
    Do not batch them — when an event goes missing you need to bisect to a single file.
 
+> **Status (2026-09-15): all three done** — see the "Honest status" note under Acceptance criteria.
+> Item 6 (headless startup preflight) was also started this session. **Next up:** item 5 (split
+> the shell-only handlers per `plan/handler-classification.md`), then item 7 (CommandRegistry —
+> deliberately last, per its own note above, since it's the mechanical payoff of items 1–6), then
+> item 8 (the physical `packages/*` restructuring).
+
 ---
 
 ## Acceptance criteria
 
 - [ ] `grep -rn "from \"electron\"" packages/engine/src` returns **zero** results. *(Not yet
       applicable — `packages/engine` does not exist yet; the physical restructuring in work item 8
-      is not done. Progress made in place: `src/**` electron-importing files reduced from 22 to 18
-      by this session — `gitStore.ts`, `companionServer.ts`, `webhookServer.ts`, and
-      `processSpawner.ts` are now electron-free. `src/proxy/` — "the actual product" per this
-      doc's own note — now has **zero** Electron imports, down from one.)*
+      is not done. Progress made in place: `src/**` electron-importing files reduced from 22 →
+      18 → **16** across sessions — `gitStore.ts`, `companionServer.ts`, `webhookServer.ts`,
+      `processSpawner.ts`, `appSettings.ts`, and `workspaceFs.ts` are now electron-free. `src/proxy/`
+      — "the actual product" per this doc's own note — has **zero** Electron imports.)*
 - [ ] `grep -rn "BrowserWindow\|app.getPath\|dialog\.\|shell\." packages/engine/src` returns zero.
       *(Same caveat — see the per-item status below for what's actually converted.)*
 - [ ] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
-      *(Not done — needs work item 6 (headless startup) and item 8 (package extraction), neither
-      attempted this session.)*
+      *(Not done — needs item 8's package extraction. Item 6's preflight() now exists in
+      `src/startup.ts` and is wired into `main.ts`, but nothing runs it from a bare Node script yet
+      since there is no engine entrypoint outside Electron.)*
 - [x] `setDataRoot()` not called → loud error, not a silent cwd fallback. Implemented in
       `src/store/paths.ts` (`DataRootNotInitialisedError`), unit-tested
-      (`tests/store/paths.test.ts`, 8/8 passing). **Not yet wired as the primary path** in
-      `appSettings.ts`/`workspaceFs.ts` — see the work item 4 note below for why that was
-      deliberately deferred.
-- [x] All 35 unit suites pass. *(48 files / 1234 tests as of this session — the count has grown
-      since the plan's baseline because P0/P1 added test files; zero regressions verified by
-      diffing against `plan/baseline.md`'s 45/1035 + this session's additions.)* The 11 e2e suites
-      are **unverified** — they cannot run in this sandbox (no desktop session, per
-      `plan/baseline.md` "Environment caveats"). Integration suite reverified: 323/325, matching
-      baseline exactly (the 2 failures are the documented sandbox network-interceptor caveat, not
-      a regression).
+      (`tests/store/paths.test.ts`, 8/8 passing), **and now wired as the primary path** in
+      `appSettings.ts`/`workspaceFs.ts` — see the work item 4 status note above.
+- [x] All unit + integration suites pass. *(65 files / 1564 tests as of this session; zero
+      regressions.)* The 11 e2e suites remain **unverified** — they cannot run in this sandbox (no
+      desktop session, per `plan/baseline.md` "Environment caveats"). Integration suite: 63/65
+      files green, 1562/1564 tests, matching the documented baseline exactly (the 2 failures are
+      the sandbox network-interceptor caveat, not a regression).
 - [x] No `companion:refresh`; replaced by `entity.changed`. **Internally** — every engine-side
       emission site now emits `bus.emitTyped("entity.changed", ...)`. The wire name
       `companion:refresh` still exists, deliberately, in the temporary shell bridge
@@ -358,14 +394,18 @@ electron-builder, tailwind) in one flat list. These must split:
 
 **Honest status:** work items 1 (EventBus), 2 (broadcast inversion, all 8 sites), and 3
 (`processSpawner` mainWindow removal) are **done and verified** — full unit + integration suite
-green, zero regressions. Work item 4 (data dir) is **half done** — the resolution utility exists
-and is tested, but wiring it into `appSettings.ts`/`workspaceFs.ts` as the primary path (and
-deciding what happens to the two `*Override` test hooks) was **deliberately deferred**: the plan
-itself flags this exact spot as "how the e2e data-dir isolation breaks silently", and e2e cannot
-run in this sandbox to catch that class of regression. Work items 5, 6, 7, and 8 (splitting
-shell-only handlers, headless startup/preflight, the CommandRegistry, and the physical
-`packages/*` restructuring + dependency split) are **not started**. See the "Cleanup_plan.md
-status" section of `plan/README.md` for the still-open D6 sub-items that also block a complete P2.
+green, zero regressions. Work item 4 (data dir) is now **done**: `setDataRoot()` is the primary
+path in `appSettings.ts`/`workspaceFs.ts`, wired from `main.ts`'s `app.whenReady()`; the two
+`*Override` test hooks were deliberately kept separate rather than folded in (see the work item 4
+status note above for the reasoning). Work item 6 (headless startup) is **half done**:
+`src/startup.ts`'s `preflight()` exists, is unit-tested, and is wired into `main.ts` as an
+additional, non-blocking diagnostic pass — but the pre-existing git-check block was left as its
+own direct call rather than routed through `preflight()`, and the workspace-bootstrap loop (init
+dirs/repos, auto-sync, active-workspace validation) has not been extracted out of `main.ts` into
+the engine. Work items 5, 7, and 8 (splitting shell-only handlers, the CommandRegistry, and the
+physical `packages/*` restructuring + dependency split) are **not started**. See the
+"Cleanup_plan.md status" section of `plan/README.md` for the still-open D6 sub-items that also
+block a complete P2.
 
 ---
 
