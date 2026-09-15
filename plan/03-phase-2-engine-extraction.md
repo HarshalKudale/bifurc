@@ -435,6 +435,81 @@ creates churn.
 > session's three schema-gap findings (`audit.list`, `runner.saveConfig`, `import.commit`) as a
 > concrete reminder to check every collapsed command against real renderer payloads and targeted
 > tests, not just the schema shape.
+>
+> **Tenth batch (this session): the CRUD collapse itself — `entityCrudFactory.ts`'s 36 channels
+> (12 kinds x add/update/delete) plus `entity:load`/`entity:setEnabled`.** This is the "recommended
+> next slice" from the previous session, done as its own dedicated pass:
+>
+> - `entityCrudFactory.ts`'s three `ipcMain.handle` bodies were extracted into
+>   `createEntityCore`/`updateEntityCore`/`deleteEntityCore` — byte-for-byte the same logic,
+>   just callable from more than one place. Every kind's `opts` (previously only closed over by
+>   its own three handlers) is now also stored in a module-level `entityCrudRegistry: Map<string,
+>   CrudFactoryOpts<any>>`, keyed by the engine-internal storage `kind` string, looked up lazily
+>   at invoke time (not at registration time), so it does not matter which of
+>   `crudHandlers.ts`/`graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts` registers first.
+> - Three new commands — `entity.create`, `entity.update`, `entity.delete` — are registered once,
+>   at module load, dispatching to whichever kind's core function `entityCrudRegistry` resolves.
+>   `registerEntityCrudHandlers()`'s legacy per-kind `ipcMain.handle` bodies are now thin
+>   adapters calling `commandRegistry.invoke("entity.create/update/delete", …)`, exactly work
+>   item 7's own before/after shape. **One genuine return-shape mismatch surfaced and was
+>   bridged, not left as a gap:** `entity.create`'s frozen result is `{id, entity}`, but the
+>   legacy `mock:add`/`rule:add`/etc. channels have always returned the raw created entity —
+>   the adapter unwraps `.entity` before returning, so the wire response stays byte-identical.
+>   `entity.update`/`entity.delete` already returned `{ok: true}` on both sides, so those pass
+>   straight through with no unwrapping.
+> - **A real, load-bearing kind-naming mismatch was found and bridged with a translation table
+>   (`src/commands/entityKindMap.ts`), not left undone.** The frozen `EntityKind` enum (used by
+>   `entity.create`/`update`/`delete`/`load`) renames two of the twelve CRUD kinds relative to
+>   their engine-internal storage `kind` string: `"rules"` (the real value used by `writeEntity`,
+>   `readEnabledSet`, every `ProxyRulesPanel.tsx` call site, etc.) is `"proxyRules"` on the wire;
+>   `"sockets"` is `"wsConnections"`. Unlike this session's earlier schema-gap findings
+>   (`audit.list`, `runner.saveConfig`, `import.commit` — all left unconverted because the gap
+>   was a structural incompatibility with no safe 1:1 mapping), this one *is* a safe, consistent
+>   rename with no structural difference, so it was bridged with `toProtocolKind()`/
+>   `toEngineKind()` rather than left as a gap. The other ten CRUD kinds, plus the four
+>   non-CRUD-factory kinds already carried by `EntityKind` (`environments`, `graphqlSchemas`,
+>   `protoFiles`, `wsdls`), are identical strings on both sides and pass through unchanged.
+>   `EntitySetEnabledParams.kind`, by contrast, was already restricted to the six literal
+>   engine-internal strings that carry enabled-state (`mocks`, `mappings`, `rules`,
+>   `graphqlMocks`, `soapMocks`, `grpcMocks`) — it needs no translation at all, a design
+>   inconsistency with the generic `EntityKind` worth knowing about but not worth fixing here.
+> - `entity:load` and `entity:setEnabled` (previously two hand-written `coreHandlers.ts` handlers,
+>   not `entityCrudFactory`-generated) were converted the same way: their bodies moved into
+>   `commandRegistry.register("entity.load"/"entity.setEnabled", …)` at module scope (same
+>   convention as `config.get`/`env.setActive`), and the `ipcMain.handle` bodies became thin
+>   adapters. `entity:setEnabled`'s pre-existing `{ok:false, error:"invalid_kind"}` guard for an
+>   unrecognised kind is kept **ahead of** `commandRegistry.invoke()`, not inside the registered
+>   handler — `EntitySetEnabledParams.kind` is a strict 6-value enum, so an invalid kind would
+>   otherwise fail Zod validation and throw instead of resolving gracefully, a real behaviour
+>   change the guard exists specifically to prevent.
+> - **Scope boundary, deliberately not crossed:** `entity.create`/`entity.update`/`entity.delete`
+>   only dispatch kinds present in `entityCrudRegistry` — the twelve `entityCrudFactory.ts`
+>   kinds. `environments` (gated by `subscription/entityCount.ts`'s create limit, flat storage,
+>   no folder concept) and `graphqlSchemas`/`protoFiles`/`wsdls` (add + delete only, no update,
+>   via `graphql:addSchema`/`grpc:addProto`/`soap:addWsdl` — none of them `entityCrudFactory`-
+>   generated) keep their own bespoke handlers untouched; calling the generic commands with one
+>   of those four kinds throws a clear "not routed through the CommandRegistry yet" error rather
+>   than silently doing the wrong thing. Unifying those four is a separate, smaller follow-up,
+>   not attempted this pass.
+> - Verified: `npm run typecheck` and `npm run build:main` are clean; the full suite is
+>   1597/1599 (the 2 failures are a pre-existing, unrelated `127.0.0.1:1` connectivity quirk in
+>   this sandbox — confirmed by reproducing them against the pre-change `git stash` tree too).
+>   Five new tests in `tests/ipc/handlers.test.ts` (`entity.* CommandRegistry collapse`) pin the
+>   two kind-translation cases specifically (`rule:add`/`ws:add` still call `writeEntity` with
+>   the untranslated `"rules"`/`"sockets"` storage kind; `entity:load` with those two kinds
+>   resolves instead of throwing).
+>
+> **Remaining, explicitly out of scope for this pass:** unifying `environments` /
+> `graphqlSchemas` / `protoFiles` / `wsdls` onto the same generic commands (four bespoke handler
+> pairs, each with its own quirk — gating, flat-only storage, add-without-update); and the ~4
+> `importExport:*` / SPLIT channels already documented above as P3 territory. Note
+> `graphqlHandlers.ts`/`soapHandlers.ts`/`grpcHandlers.ts`'s own `graphql:addRequest/Mock`,
+> `soap:addRequest/Mock`, `grpc:addRequest/Mock` etc. channels are **not** in this remaining
+> list — they already called the same shared `registerEntityCrudHandlers()` this pass rewired
+> (see `crudHandlers.ts` for the other 6 of the 12 covered kinds), so converting the factory
+> once converted all 12 kinds' 36 channels simultaneously, across all 4 call-site files. Only
+> those files' separate, non-factory `graphql:addSchema/deleteSchema/listSchemas` and
+> `soap:addWsdl/deleteWsdl/listWsdls` channels remain unconverted, alongside `environments`.
 
 ---
 
@@ -509,6 +584,19 @@ electron-builder, tailwind) in one flat list. These must split:
 > schemas importable from `src/` at all. See work item 7's own status note for the full detail,
 > the three real schema-gap findings (`audit.list`, `runner.saveConfig`, `import.commit`), and
 > why the remaining ~55 handlers are next but not yet done.
+>
+> **Status (this session, continued): the CRUD collapse landed.** `entityCrudFactory.ts` — the
+> factory behind all 12 CRUD kinds across `crudHandlers.ts`/`graphqlHandlers.ts`/
+> `soapHandlers.ts`/`grpcHandlers.ts` — now routes its 36 add/update/delete channels through
+> three new generic commands (`entity.create`/`entity.update`/`entity.delete`), and
+> `coreHandlers.ts`'s `entity:load`/`entity:setEnabled` route through `entity.load`/
+> `entity.setEnabled` the same way. `src/commands/entityKindMap.ts` bridges the one real
+> naming mismatch this required (engine `"rules"`/`"sockets"` vs. protocol
+> `"proxyRules"`/`"wsConnections"`). Total now: **~100 commands** routed through the
+> `CommandRegistry`. See work item 7's own status note (tenth batch) for the full detail —
+> what's bridged, what's deliberately still out (`environments`, `graphqlSchemas`, `protoFiles`,
+> `wsdls`, and the P3-bound `importExport:*` channels), and the new regression tests that pin
+> the kind translation.
 
 ---
 
