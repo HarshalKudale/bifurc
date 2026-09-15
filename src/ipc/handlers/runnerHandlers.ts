@@ -1,7 +1,67 @@
 import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+import type { RunnerGetHistoryParams, RunnerListFolderIdsParams } from "@bifurc/protocol";
 import { wsDir as workspaceDir } from "@/store/workspaceFs";
+import { commandRegistry } from "@/commands/registry";
+import { bus } from "@/eventBus";
+
+// P2 work item 7 — only runner:getHistory/listFolderIds convert here (their params are just
+// workspaceId/folderId, matching the frozen schema and the real preload.ts call sites exactly).
+// Three others in this file were checked and rejected, each for the same reason `audit.list`
+// was last commit — a real mismatch between the frozen, `.strict()` protocol schema and actual
+// handler behaviour, not a registration-only move:
+//   - runner:saveReport / runner:exportReport take the real `CollectionRunReport` object
+//     (`renderer/lib/collectionRunner.ts`), which carries `requestId`, `url`, `testLogs`,
+//     `preScriptError`, `postScriptError` per result — none of which are in the protocol's
+//     `RunResult`/`RunReport` schemas. `runner:exportReport` is additionally SPLIT (engine should
+//     return content, client owns the save dialog) but today's handler still owns the dialog.
+//   - runner:saveConfig / runner:loadConfig were tried and reverted: the protocol's
+//     `RunnerConfigSchema` requires exactly `{requestOrder, delayMs}`, but
+//     `tests/integration/runnerStorage.integration.test.ts` (and, by extension, real callers)
+//     save configs like `{delayMs, stopOnFailure, iterations}` with no `requestOrder` at all —
+//     the on-disk config is genuinely free-form, not the schema's fixed shape. Converting these
+//     failed that integration suite immediately, which is exactly the check this pass is for.
+const ctx = { bus };
+
+commandRegistry.register("runner.getHistory", ({ workspaceId, folderId }: RunnerGetHistoryParams) => {
+  try {
+    const runsDir = path.join(workspaceDir(workspaceId), "requests", ".runs", folderId);
+    if (!fs.existsSync(runsDir)) return [];
+    const entries = fs.readdirSync(runsDir).filter((d) => {
+      return fs.statSync(path.join(runsDir, d)).isDirectory();
+    });
+    return entries.map((ts) => {
+      const reportFile = path.join(runsDir, ts, "report.json");
+      if (!fs.existsSync(reportFile)) return null;
+      try {
+        const data = JSON.parse(fs.readFileSync(reportFile, "utf-8"));
+        return {
+          timestamp: Number(ts),
+          summary: {
+            total: data.totalTests ?? 0,
+            passed: data.passedTests ?? 0,
+            failed: data.failedTests ?? 0,
+          },
+        };
+      } catch { return null; }
+    }).filter(Boolean).sort((a: any, b: any) => b.timestamp - a.timestamp);
+  } catch {
+    return [];
+  }
+});
+
+commandRegistry.register("runner.listFolderIds", ({ workspaceId }: RunnerListFolderIdsParams) => {
+  try {
+    const runsDir = path.join(workspaceDir(workspaceId), "requests", ".runs");
+    if (!fs.existsSync(runsDir)) return [];
+    return fs.readdirSync(runsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && fs.existsSync(path.join(runsDir, e.name, "runner.json")))
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+});
 
 export function registerRunnerHandlers() {
   ipcMain.handle("runner:saveReport", (_e, wsId: string, report: any) => {
@@ -44,32 +104,8 @@ export function registerRunnerHandlers() {
     }
   });
 
-  ipcMain.handle("runner:getHistory", (_e, wsId: string, folderId: string) => {
-    try {
-      const runsDir = path.join(workspaceDir(wsId), "requests", ".runs", folderId);
-      if (!fs.existsSync(runsDir)) return [];
-      const entries = fs.readdirSync(runsDir).filter((d) => {
-        return fs.statSync(path.join(runsDir, d)).isDirectory();
-      });
-      return entries.map((ts) => {
-        const reportFile = path.join(runsDir, ts, "report.json");
-        if (!fs.existsSync(reportFile)) return null;
-        try {
-          const data = JSON.parse(fs.readFileSync(reportFile, "utf-8"));
-          return {
-            timestamp: Number(ts),
-            summary: {
-              total: data.totalTests ?? 0,
-              passed: data.passedTests ?? 0,
-              failed: data.failedTests ?? 0,
-            },
-          };
-        } catch { return null; }
-      }).filter(Boolean).sort((a: any, b: any) => b.timestamp - a.timestamp);
-    } catch {
-      return [];
-    }
-  });
+  ipcMain.handle("runner:getHistory", (_e, workspaceId: string, folderId: string) =>
+    commandRegistry.invoke("runner.getHistory", { workspaceId, folderId }, ctx));
 
   ipcMain.handle("runner:saveConfig", (_e, wsId: string, folderId: string, config: any) => {
     try {
@@ -92,17 +128,8 @@ export function registerRunnerHandlers() {
     }
   });
 
-  ipcMain.handle("runner:listFolderIds", (_e, wsId: string) => {
-    try {
-      const runsDir = path.join(workspaceDir(wsId), "requests", ".runs");
-      if (!fs.existsSync(runsDir)) return [];
-      return fs.readdirSync(runsDir, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && fs.existsSync(path.join(runsDir, e.name, "runner.json")))
-        .map((e) => e.name);
-    } catch {
-      return [];
-    }
-  });
+  ipcMain.handle("runner:listFolderIds", (_e, workspaceId: string) =>
+    commandRegistry.invoke("runner.listFolderIds", { workspaceId }, ctx));
 }
 
 function generateRunnerHtml(report: any): string {
