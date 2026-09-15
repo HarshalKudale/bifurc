@@ -33,8 +33,14 @@ interface SavedProtoFile {
 // P2 work item 7 — grpc.execute/reflect/mockServerStatus/startMockServer/stopMockServer are pure
 // stubs (pinned by tests/integration/protocolExecution.integration.test.ts, Cleanup_plan.md
 // §1.5 D6 disposition: wontfix — see packages/protocol/src/commands/grpc.ts's own comment), and
-// their params match the frozen schema exactly, so all five convert. The CRUD-factory channels
-// and grpc:addProto/deleteProto/listProtos (no protocol command yet) wait for the CRUD collapse.
+// their params match the frozen schema exactly, so all five convert. grpc:addRequest/
+// updateRequest/deleteRequest and grpc:addMock/updateMock/deleteMock already route through the
+// CommandRegistry too, via the `registerEntityCrudHandlers()` calls below (the CRUD collapse —
+// see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's tenth
+// batch). Only `grpc:addProto/deleteProto/listProtos` remain unconverted: they don't track a
+// `configKey` array the way every `CrudFactoryOpts` kind does (protos are written straight to
+// disk, nothing mirrors them into `AppConfig`), and no protocol command exists for them yet — a
+// genuinely different shape from the CRUD collapse, not just an unfinished slice of it.
 const ctx = { bus };
 
 commandRegistry.register("grpc.execute", async (_params: GrpcExecuteParams) => {
