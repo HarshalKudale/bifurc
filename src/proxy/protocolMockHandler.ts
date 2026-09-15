@@ -1,5 +1,5 @@
 import * as net from "net";
-import { Environment } from "@/store/config";
+import { Environment } from "@bifurc/engine/store/config";
 import { resolveVars, serveMock } from "@/proxy/mockHandler";
 
 /**

@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { initWorkspaceDir } from "@/store/workspaceFs";
+import { initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
 import {
     initWorkspaceRepo,
     commitMutation,
@@ -25,7 +25,7 @@ import {
     getCommitChangedFiles,
     getEntityAtCommit,
     setDataDirOverride,
-} from "@/store/gitStore";
+} from "@bifurc/engine/store/gitStore";
 
 let ws: WorkspaceFixture;
 let createCommit: string;

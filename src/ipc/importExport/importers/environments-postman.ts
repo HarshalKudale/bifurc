@@ -1,9 +1,9 @@
 import * as fs from "fs";
 import {
   loadConfig, saveConfig, generateId, Environment,
-} from "@/store/config";
-import type { EnvVariable } from "@/store/types";
-import { writeFlatEntity, readAllEntities } from "@/store/workspaceFs";
+} from "@bifurc/engine/store/config";
+import type { EnvVariable } from "@bifurc/engine/store/types";
+import { writeFlatEntity, readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import { reloadConfig } from "@/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 

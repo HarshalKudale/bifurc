@@ -2,13 +2,13 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen } from "ele
 import * as path from "path";
 import { registerIpcHandlers } from "@/ipc/handlers";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
-import { loadConfig } from "@/store/config";
-import { loadSettings, saveSettings } from "@/store/appSettings";
+import { loadConfig } from "@bifurc/engine/store/config";
+import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import { startServer } from "@/proxy/server";
 import { startCompanionServer } from "@/companion/companionServer";
-import { checkGitInstalled } from "@/store/gitStore";
+import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@/eventBus";
-import { setDataRoot, dataDir } from "@/store/paths";
+import { setDataRoot, dataDir } from "@bifurc/engine/store/paths";
 import { preflight, bootstrapWorkspaces } from "@/startup";
 import { shutdownEngine } from "@/shutdown";
 
@@ -93,7 +93,7 @@ export function updateTrayMenu(): void {
       checked: cfg.minimizeToTray,
       click: (item) => {
         const current = loadConfig();
-        const { saveConfig } = require("@/store/config");
+        const { saveConfig } = require("@bifurc/engine/store/config");
         saveConfig({ ...current, minimizeToTray: item.checked });
         updateTrayMenu();
       },

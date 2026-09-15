@@ -3,7 +3,7 @@
  * Used by both exporters and importers.
  */
 
-import { Folder, MockRule, SavedRequest } from "@/store/config";
+import { Folder, MockRule, SavedRequest } from "@bifurc/engine/store/config";
 import {
   PMHeader, PMUrl, PMBody, PMEvent, PMRequest, PMResponse, PMItem, PMCollection,
   mkId, urlRaw, hToRecord, bodyToText, eventsToScripts, recordToH,

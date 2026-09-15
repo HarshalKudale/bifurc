@@ -6,11 +6,11 @@ import { executeIpcScript, IpcScriptOpts } from "@/proxy/scriptExecutor";
 import {
   loadConfig, saveConfig, loadEntity, generateId, AppConfig,
   Environment, Workspace,
-} from "@/store/config";
+} from "@bifurc/engine/store/config";
 import {
   initWorkspaceDir, wsDir as workspaceDir, readEnabledSet
-} from "@/store/workspaceFs";
-import { initWorkspaceRepo } from "@/store/gitStore";
+} from "@bifurc/engine/store/workspaceFs";
+import { initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
 import { discoverServices } from "@/proxy/service-discovery";
 import {
   startServer, stopServer, isRunning, getPort, getServerError,
@@ -18,8 +18,8 @@ import {
 } from "@/proxy/server";
 import { bus, emitEntityStatus } from "@/eventBus";
 import { restartCompanionServer } from "@/companion/companionServer";
-import { generateRandomWorkspaceName } from "@/lib/randomNames";
-import { gateCreate } from "@/subscription/entityCount";
+import { generateRandomWorkspaceName } from "@bifurc/engine/lib/randomNames";
+import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@/sync/statusTracker";
 import { commandRegistry } from "@/commands/registry";

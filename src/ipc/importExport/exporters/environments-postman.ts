@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { loadConfig, Environment } from "@/store/config";
+import { loadConfig, Environment } from "@bifurc/engine/store/config";
 import type { ExportResult } from "@/ipc/importExport/types";
 
 function envToPostman(env: Environment): object {

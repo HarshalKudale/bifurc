@@ -1,6 +1,6 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-14 · suite: **1360 tests / 61 files, all passing**_
+_Last reviewed: 2026-09-15 · suite: **1616 tests / 69 files** (1 known failure — see §7)_
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read
@@ -16,7 +16,8 @@ produced by the test-suite review. Read the top section for commands; read
 
 ## 1. Commands
 
-Run everything from the repo root or from `bifurc/`.
+Run everything from the repository root. (The app *is* the root — it was flattened on 2026-09-14,
+so there is no `cd bifurc` any more.)
 
 | Command | What it runs | Use it for |
 |---|---|---|
@@ -25,7 +26,7 @@ Run everything from the repo root or from `bifurc/`.
 | `npm run test:integration` | Integration project only (`tests/integration/**`) | Verifying real proxy routing. |
 | `npm run test:watch` | Unit project in watch mode | TDD. |
 | `npm run test:ci` | All projects **with coverage + thresholds** | What CI runs. Fails on a coverage regression. |
-| `npm run typecheck` | `tsc --noEmit` over `src/` | Main-process types. |
+| `npm run typecheck` | `build:packages`, then `tsc --noEmit` over `src/` | Main-process types. Builds `packages/*` first so it cannot pass against a stale `dist/`. |
 | `npm run typecheck:e2e` | `tsc -p e2e/tsconfig.json` | E2E spec types. |
 | `npm run typecheck:renderer` | `tsc -p tsconfig.renderer.json` | **Known failing** — see [§7](#7-known-issues-found-during-this-review). Tracks renderer type debt. |
 | `npm run test:e2e` | Builds the app, then runs Playwright against real Electron | Full UI regression. Needs a display (or `xvfb-run` on Linux). |
@@ -186,44 +187,74 @@ behaviour that changed live state with nothing behind it (and it found a third b
 
 | Metric | Before (same scope¹) | **Now** | Change |
 |---|---:|---:|---:|
-| Statements | 24.16% | **46.14%** | +22.0 pts |
-| Branches | 14.87% | **31.30%** | +16.4 pts |
-| Functions | 17.11% | **34.34%** | +17.2 pts |
-| Lines | 25.49% | **48.39%** | +22.9 pts |
+| Statements | 24.16% | **47.96%** | +23.8 pts |
+| Branches | 14.87% | **31.98%** | +17.1 pts |
+| Functions | 17.11% | **36.30%** | +19.2 pts |
+| Lines | 25.49% | **50.35%** | +24.9 pts |
 
 ¹ Both columns use the *widened* `include` scope (which adds `renderer/panels/**/*.tsx`, ~0%
 covered), so the comparison is apples-to-apples. The original narrow-scope baseline was
 27.71% statements; the widened scope *lowered* the headline to 24.16% at the time, and the
-current 46.14% is a real gain on top of that larger denominator.
+current 47.96% is a real gain on top of that larger denominator.
 
 ² These are the figures from the last full run. V8 instrumentation is not perfectly
 deterministic — two identical runs move a given figure by ~0.05 pt (the seventh pass read
 46.14% statements where the sixth read 45.96%). Treat them as "the last run", not a
 constant, and re-measure rather than copy when you change the suite.
 
-Suite size: **61 files / 1360 tests passing** (was 35 files / 778 tests).
+³ **Scope changed on 2026-09-15** when the engine extraction moved `src/{store,lib,subscription}`
+into `packages/engine/src`. Those 13 files are the *same code under the same tests*, and their
+per-file coverage is provably unchanged (see §4.8). Two new groups entered the report:
+
+| Group | Files | Statements | Note |
+|---|---:|---:|---|
+| `packages/engine/src` | 14 | 606 | The moved files + a new re-export barrel (`index.ts`, 0%). |
+| `packages/protocol/src` | 16 | 106 | **Sourcemap artefact** — `packages/protocol/dist/index.js` is executed through its `exports` map, and V8 remaps it back through `dist/index.js.map` (whose `sources` list `../src/commands/*.ts`). Numbers are therefore approximate and ~100%. Present since P2 work item 7 wired the registry to `@bifurc/protocol`. |
+
+The denominator grew from 11,129 to 11,443 statements while the percentage still rose, so this
+is a genuine improvement rather than a scope artefact.
+
+Suite size: **69 files / 1616 tests** (was 61 files / 1360 tests at the last review; the growth
+is P2 work items 5–7). One test fails — `tests/spike/protocolPoc.test.ts` → `soap.execute`,
+a known pre-existing failure that also reproduces on the pre-change tree (see §7).
 
 ### 4.2 Coverage by area (current config)
 
 | Area | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
-| `renderer/components` | **13.5%** | 13.4% | 8.7% | **14.6%** |
-| `renderer/lib` | **82.9%** | **75.1%** | **75.0%** | **84.1%** |
+| `packages/engine/src` | **77.1%** | 62.9% | **81.5%** | **79.8%** |
+| `packages/protocol/src` ³ | 97.2% | — | 25.0% | 97.2% |
+| `renderer/components` | **13.5%** | 13.3% | 8.7% | **14.6%** |
+| `renderer/lib` | **82.9%** | **74.8%** | **75.0%** | **84.1%** |
 | `renderer/panels` | 0.0% | 0.0% | 0.0% | 0.0% |
-| `src/applications` | **86.9%** | 76.5% | 78.8% | 90.9% |
-| `src/companion` | **94.1%** | 81.4% | 76.2% | **93.9%** |
-| `src/ipc` | **76.4%** | 52.8% | 75.9% | 79.3% |
-| `src/lib` | 30.0% | 2.8% | 22.2% | 31.8% |
-| `src/proxy` | **87.1%** | 77.8% | 89.3% | 88.7% |
-| `src/store` | **82.8%** | 68.8% | 84.1% | 87.6% |
-| `src/subscription` | 100.0% | 100.0% | 100.0% | 100.0% |
-| `src/sync` | **78.1%** | **57.0%** | **78.8%** | **81.0%** |
-| **TOTAL** | **46.14%** | **31.30%** | **34.34%** | **48.39%** |
+| `src/` (root files) ⁴ | **98.6%** | **85.0%** | **94.1%** | **98.4%** |
+| `src/applications` | **87.5%** | 77.0% | 81.3% | 91.6% |
+| `src/commands` | 100.0% | 100.0% | 100.0% | 100.0% |
+| `src/companion` | **95.3%** | 83.3% | 76.5% | **95.1%** |
+| `src/ipc` | **79.1%** | 55.8% | 79.7% | 82.1% |
+| `src/proxy` | **87.2%** | 77.9% | 89.7% | 88.9% |
+| `src/sync` | **77.8%** | **56.7%** | **80.3%** | **80.6%** |
+| **TOTAL** | **47.96%** | **31.98%** | **36.30%** | **50.35%** |
 
-Bold areas are the ones this review moved materially: `src/applications` 1.1% → 86.9%,
-`src/companion` 0.8% → **94.1%**, `src/ipc` 24.5% → 76.4%, `src/proxy` 61.7% → 87.1%,
-`src/store` → 82.8%, `src/sync` 64.5% → 78.1%, `renderer/lib` 67.5% → 82.9% (the collection
-runner and its report generator were at 0%), and `renderer/components` 1.8% → 13.5%.
+³ `packages/protocol/src` has no branch data because V8 records none for those remapped Zod
+schemas. Its numbers come from the sourcemap-remapped `dist/` bundle (see §4.1 footnote 3), so
+treat them as indicative. Its 25.0% functions is a single arrow function in
+`src/commands/index.ts`, not a broad gap.
+
+⁴ `src/eventBus.ts` (100%), `src/shutdown.ts` (100%), `src/startup.ts` (97.9%). `src/main.ts` and
+`src/preload.ts` are excluded — they are process entry points, exercised by launching the app.
+
+**Rows removed on 2026-09-15:** `src/lib`, `src/store` and `src/subscription` no longer exist in
+`src/` — they are `packages/engine/src/{lib,store,subscription}` now, reported as the single
+`packages/engine/src` row above. Their pre-move figures were `src/store` 82.8/68.8/84.1/87.6,
+`src/subscription` 100/100/100/100, `src/lib` 30.0/2.8/22.2/31.8 — the combined row reads
+77.1/62.9/81.5/79.8, the drop being entirely the new 0%-covered `index.ts` barrel (§4.8).
+
+Bold areas are the ones the original review moved materially: `src/applications` 1.1% → 87.5%,
+`src/companion` 0.8% → **95.3%**, `src/ipc` 24.5% → 79.1%, `src/proxy` 61.7% → 87.2%,
+`packages/engine/src` (formerly `src/store`) → 77.1%, `src/sync` 64.5% → 77.8%,
+`renderer/lib` 67.5% → 82.9% (the collection runner and its report generator were at 0%), and
+`renderer/components` 1.8% → 13.5%.
 
 > **Scope correction (2026-09-14, fourth pass).** `renderer/components` read **1.8%** until
 > this review, and the change is not from new tests — the `include` glob listed only `.tsx`
@@ -328,7 +359,57 @@ server is the browser extension's only write path into the workspace.
 > The remaining 11.5% of `tlsIntercept.ts` is the post-handshake body/header parsing branch
 > and the `tlsSocket` error handler, which the integration path exercises only indirectly.
 
-A full HTML report is written to `bifurc/coverage/index.html` by `npm run test:coverage`.
+### 4.8 The engine extraction specifically
+
+P2 work item 8 moved `src/{store,lib,subscription}` → `packages/engine/src/`. That is a pure move:
+no logic changed, so **each moved file must report exactly the coverage it reported before the
+move** — the same denominator (proof the code is untouched) and the same numerator (proof the same
+tests still reach it). Anything else means the move was not behaviour-preserving.
+
+| File (engine-relative) | Lines before | Lines after | |
+|---|---:|---:|---|
+| `lib/randomNames.ts` | 100.0% | 100.0% | ✓ |
+| `lib/randomizer.ts` | 26.2% | 26.2% | ✓ |
+| `store/appSettings.ts` | 85.7% | 85.7% | ✓ |
+| `store/config.ts` | 95.6% | 95.6% | ✓ (statements 84.8→86.2) |
+| `store/gitStore.ts` | 94.4% | 94.4% | ✓ |
+| `store/paths.ts` | — | 87.5% | new to the report ⁵ |
+| `store/workspaceFs.ts` | 88.0% | 88.0% | ✓ |
+| `store/workspace/fsDirectorySync.ts` | 100.0% | 100.0% | ✓ |
+| `store/workspace/fsEnabledSet.ts` | 100.0% | 100.0% | ✓ |
+| `store/workspace/fsNamesIndex.ts` | 100.0% | 100.0% | ✓ |
+| `store/workspace/fsPendingDeletions.ts` | 50.0% | 50.0% | ✓ |
+| `store/workspace/fsRead.ts` | 47.1% | 47.1% | ✓ |
+| `subscription/entityCount.ts` | 100.0% | 100.0% | ✓ |
+
+11 of the 12 comparable files are identical on **all four** metrics *including the raw
+covered/total counts*. `store/config.ts` is identical on lines and has the same totals
+(138 statements / 134 branches / 55 functions) but a **higher** numerator — P2 items 5–7 added
+tests that reach more of it. Identical denominators are the load-bearing part: they prove no
+statement was added, removed or restructured.
+
+⁵ `store/paths.ts` is absent from `coverage-baseline/` because that snapshot predates the
+data-dir resolver (commit `d814e38`), not because the move lost it.
+
+**The one 0% file is new, and it is a barrel.** `packages/engine/src/index.ts` is the package's
+public entry point, re-exporting each module as a namespace. Nothing imports it yet — tests and
+production both use deep specifiers (`@bifurc/engine/store/config`) — so it contributes 0% across
+~14 statements. It is deliberately *not* excluded: unlike `renderer/components/ui/index.ts`
+(pure re-exports of presentational components), this barrel becomes the real engine API when
+`createEngine()` lands, and it should be covered then rather than hidden now.
+
+> **Why this measurement was impossible until 2026-09-15.** The engine originally reported **all
+> 14 files at 0%** while the suite still passed 1615/1616. `@bifurc/engine` is a real npm
+> workspace package, so Vitest treated it as *external* and loaded the **built**
+> `packages/engine/dist/*.mjs` through native `import()` — bypassing Vite's resolvers entirely.
+> Tests were therefore running against compiled output, and a source edit that was never rebuilt
+> would have been **silently untested**. The fix is `resolve.alias` mapping `@bifurc/engine/*` to
+> `packages/engine/src/*` — but it only works when redeclared **inside each `test.projects`
+> entry**. Root-level `resolve.alias` (like root-level `plugins`) is not inherited by project runs;
+> that is why `dualAliasPlugin` had always been duplicated in. A `deps.inline` pattern was tried
+> and is **not** needed. See §5 for the config details.
+
+A full HTML report is written to `coverage/index.html` by `npm run test:coverage`.
 
 ---
 
@@ -348,10 +429,33 @@ A full HTML report is written to `bifurc/coverage/index.html` by `npm run test:c
 - **`dualAliasPlugin` no longer resolves to a directory.** The `""` extension matched
   `renderer/lib/strings/` before the `index.ts` fallback could run, so Vite was handed a
   directory id and any module importing the `strings` barrel was untestable.
+- **2026-09-15 — `@bifurc/engine/*` is aliased to engine *source*.** Two things about this are
+  easy to get wrong:
+  1. It must be a `resolve.alias`, not a `resolveId` plugin. `@bifurc/engine` is a real npm
+     workspace package, so Vitest externalizes it and native `import()` loads the built
+     `dist/*.mjs`. A plugin's `resolveId` is never consulted for an externalized specifier
+     (verified: a probe inside `resolveId` never fired, and a deliberately **bogus** alias target
+     was ignored while the suite still passed against `dist`). `resolve.alias` runs inside Vite's
+     core resolver, before the externalization decision.
+  2. It must be redeclared **inside every `test.projects` entry**. Root-level `resolve.alias` is
+     not inherited by project runs — which is exactly why `plugins` was already duplicated in, and
+     why `dualAliasPlugin` worked while the engine alias silently did nothing. The config now
+     shares one `viteOptions` object (`{ plugins, resolve: { alias } }`) across the root and both
+     projects.
+  A `deps.inline: [/^@bifurc\/engine(\/|$)/]` pattern was tried during the investigation and is
+  **not** needed — the alias alone is sufficient and is the only mechanism that works.
+- `coverage.include` gained `packages/engine/src/**/*.ts`. This is load-bearing, not decorative:
+  `src/**/*.ts` does **not** match `packages/*/src/**` (verified against the same glob engine
+  Vitest uses), so without it the 13 moved files would silently vanish from the report.
+  `coverage.exclude`'s `src/store/types.ts` entry became `packages/engine/src/store/types.ts`.
 
 ### `package.json` (root and `bifurc/`)
 - New: `test:unit`, `test:integration`, `test:ci`, `typecheck:e2e`, `typecheck:renderer`.
 - `test:watch` now watches the unit project only.
+- **2026-09-15, for the engine package:** `build:packages` (protocol, then engine),
+  `build:main` (`build:packages && tsc && tsc-alias`), `typecheck:packages`, and a `prepare`
+  hook running `build:packages`. `typecheck` now runs `build:packages` first — see the
+  *Build-robustness fixes* table in §7.
 
 ### `.github/workflows/test.yml`
 - New **`typecheck` job** (gates `src/` and E2E specs) so type errors fail before tests run.
@@ -387,7 +491,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > `decompressUtils` (100%), `responseUtils` (87%), `scriptContext` (96%) /
 > `scriptExecutor` (89%), the whole import/export tree (`importExport.integration`,
 > `importExportFormats.integration`, `registry.test`), `src/applications/**` (87%),
-> `src/subscription/entityCount.ts` (100%), `src/companion/allowedActions.ts` (100%), the
+> `packages/engine/src/subscription/entityCount.ts` (100%), `src/companion/allowedActions.ts` (100%), the
 > Audit Log screen (`auditLog.integration`), **the "hit Send" path**
 > (`protocolExecution.integration` — REST replay, GraphQL execute/introspect, SOAP
 > execute/fetchWsdl, Health Bar polling), **folder management** and **workspace CRUD**
@@ -477,6 +581,8 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 | Coverage had no gate | no `thresholds` in `vitest.config.ts` | **Fixed** — ratchet added |
 | Coverage **under-reported** the renderer | `include` listed only `renderer/components/**/*.tsx`, hiding 17 `.ts` files — three of which already had passing tests | **Fixed** — `.ts` added; type-only/barrel files excluded. See §4.2 |
 | `dualAliasPlugin` resolved to a **directory** | the `""` extension matched `renderer/lib/strings/` before the `index.ts` fallback, so Vite got a directory id and any module importing the `strings` barrel failed to load | **Fixed** — skip directories, fall through to the index lookup |
+| **Engine tests ran against built `dist/`, not source** — all 14 engine files reported 0% while the suite passed 1615/1616 | `@bifurc/engine` is a real npm workspace package, so Vitest externalized it and native `import()` loaded `packages/engine/dist/*.mjs`. Proof: a source-only export marker read `false`; a `resolveId` probe never fired; a deliberately **bogus** alias target was ignored and the suite still passed | **Fixed** — `resolve.alias` → engine source, redeclared inside each `test.projects` entry. The worst case this hid: a source edit that was never rebuilt was **silently untested**. See §4.8 and §5 |
+| A fresh clone could not `npm run typecheck` | `dist/` is gitignored repo-wide and CI ran only `npm ci`, so `@bifurc/protocol` had no build output → 10× `TS2307: Cannot find module '@bifurc/protocol'` | **Fixed** — see the *Build-robustness fixes* table below |
 | Dead code in `src/sync` | `fetchRemoteHead()` / `performGitClone()` have zero call sites; `getRemoteHead()` re-implements the former, `setRemote()` the latter | **Open** (item 9) |
 | `mkId()` collision probability | `Date.now().toString(36) + rand(4)` | **Open** (item 13) |
 
@@ -497,12 +603,12 @@ what the running proxy served afterwards.
 | Proxy-rule export wrote the **UI stubs** (`targetType`, `targetExternal`, `targetMappingId`, `useRegex` and both scripts blanked), so re-importing silently destroyed every rule | `src/ipc/importExport/exporters/{proxyrules-json,workspace-json}.ts` | read `readAllEntities(wsId, "rules")` + re-inject `enabled` from `enabled.json` |
 | Workspace import **never wrote rule files to disk** (relied on `saveConfig()`, which deliberately skips them) → imported workspace proxied nothing | `src/ipc/importExport/importers/workspace-json.ts` | explicit `writeEntity(..., "rules", …)` loop + enabled set + `upsertNameEntry` |
 | Disabled mappings/mocks came back **enabled** after import (`if (m.enabled) set.add()` with no `else`; missing flag ⇒ enabled) | `src/ipc/importExport/importers/workspace-json.ts` | both-branch enabled sets (`set.add` / `set.delete`) |
-| Audit Log showed **no changed files for a workspace's first commit** | `src/store/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
+| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/store/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
 | REST **Send** could fail with a spurious **400 / "socket hang up"** on a later request to the same origin | `src/proxy/serverReplay.ts` `replayRequest` | it sent `connection: close` but did not pin an agent, so Node returned the socket to the global pool whenever the upstream answered `keep-alive` (servers routinely ignore the request's close) and the next request was rejected by the server with `HPE_CLOSED_CONNECTION`. Fixed with `agent: false`. |
 | The exported/saved **HTML run report rendered raw `${…}` placeholders** instead of data — the whole report was inert. The same escaped-interpolation mistake sat in the update-checker's fallback URL | `src/ipc/handlers/runnerHandlers.ts` `generateRunnerHtml`, `src/ipc/handlers/systemHandlers.ts` | un-escaped all 15 interpolations and hardened `esc()` to coerce + escape quotes; fixed the URL template |
 | Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `src/sync/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
 | A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `src/sync/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `src/sync/statusTracker.ts` and shared |
-| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `src/store/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
+| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/store/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
 | The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
 | **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `renderer/lib/createTabReducer.ts`, `renderer/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
 | **Adding, editing or deleting a mock/mapping/rule/request/websocket/webhook did not take effect on the running proxy until something else reloaded the config.** `entityCrudFactory` called `saveConfig(cfg)` then `reloadConfig()` **before** writing the entity file and **before** `syncEnabledSet()`. `reloadConfig()` snapshots the enabled-sets out of `enabled.json`, so `workspaceCfg()` filtered the new entity straight back out of routing — a mock you just added was not served, and a mock you just **deleted kept being served**, until an unrelated action (a settings save, a workspace switch, an app restart) happened to reload. A test that only inspects the handler's return value cannot see this: the config object is correct, the *running server* is stale | `src/ipc/handlers/entityCrudFactory.ts` (`add`, `update`, `delete`) | move `reloadConfig()` to **after** every on-disk write in all three handlers, so the reload sees both the entity file and the updated enabled-set. Proven by mutation: restoring the old ordering makes "stops serving a mock deleted through mock:delete" fail with `expected { from: 'mock' } to deeply equal { upstream: true, … }` |
@@ -512,26 +618,37 @@ what the running proxy served afterwards.
 | Issue | Where | Fix |
 |---|---|---|
 | The companion-port setting was reachable only through a **bare alias `require()`** — `require("@/companion/companionServer")` inside `config:save`. It resolves in the packaged app only because `tsc-alias` post-processes the build output (a static import at the top of the same file is rewritten to `./companion/companionServer`; the dynamic one to `../../companion/companionServer`). That makes a user-facing path depend on the build pipeline, and it is unresolvable at runtime for any test runner | `src/ipc/handlers/coreHandlers.ts` | promoted to a **static import**. There is no import cycle to avoid — nothing under `src/companion` imports `src/ipc`. This is what makes the companion-port test in §3.4 possible at all |
+| **A fresh clone could not type-check.** `dist/` is gitignored repo-wide (for every package, not just the app), but CI ran only `npm ci` before `npm run typecheck`, so no package had build output. `tsc` then failed with 10× `TS2307: Cannot find module '@bifurc/protocol'`. Latent since the protocol package landed in P1 — it went unnoticed because a developer machine always has a stale `dist/` lying around | root `package.json` | added `build:packages`, a `prepare` hook that runs it (`npm ci` executes `prepare`, so CI builds the packages automatically), and made `typecheck` run `build:packages` first. The last part matters beyond CI: without it, `typecheck` would pass locally against a **stale** `dist/` |
 
 ---
 
 ## 8. Verifying this review locally
 
 ```bash
-cd bifurc
+# The repository root IS the app — there is no `cd bifurc` any more (it was flattened 2026-09-14).
 
 # 1. Everything green, thresholds enforced
 npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local
-#    → Test Files 61 passed · Tests 1360 passed · no threshold errors
-#    → Statements 46.14% · Branches 31.30% · Functions 34.34% · Lines 48.39%
+#    → Test Files 1 failed | 68 passed (69) · Tests 1 failed | 1615 passed (1616)
+#    → Statements 47.96% · Branches 31.98% · Functions 36.30% · Lines 50.35%
+#    The single failure is tests/spike/protocolPoc.test.ts → soap.execute (ECONNREFUSED
+#    127.0.0.1:1), a sandbox network-interceptor caveat that reproduces on the pre-change tree.
 
-# 2. Just the routing behaviour the report is about
+# 2. Per project
+npm run test:unit
+#    → Test Files 1 failed | 51 passed (52) · Tests 1 failed | 1283 passed (1284)
 npm run test:integration
-#    → Test Files 16 passed · Tests 325 passed
+#    → Test Files 17 passed (17) · Tests 332 passed (332)
 
-#    (unit alone: `npm run test:unit` → Test Files 45 passed · Tests 1035 passed)
+# 3. Confirm the engine really is tested from source, not from a stale build.
+#    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).
+#    Append a marker to packages/engine/src/store/paths.ts, then:
+npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local
+#    → the coverage table must list packages/engine/src/store/paths.ts. If the engine files are
+#      absent or at 0%, the alias in vitest.config.ts has been lost — and a green suite is then
+#      meaningless, because tests are running against dist/ instead of your edits.
 
-# 3. Confirm the new tests have teeth (mutation checks)
+# 4. Confirm the new tests have teeth (mutation checks)
 #    a) Edit src/proxy/proxyHandler.ts so matchProxyRule never matches, then:
 npm run test:integration
 #    → 6 rule tests fail. Revert the edit.
@@ -546,7 +663,7 @@ npx vitest run --project integration tests/integration/runnerStorage.integration
 #    e) In src/sync/publishService.ts, drop the Set() dedupe, then:
 npx vitest run --project integration tests/integration/gitSync.integration.test.ts
 #    → "treats a folder holding exactly one entity as a single-entity commit" fails. Revert.
-#    f) In src/store/gitStore.ts, remove the workspace.json add, then:
+#    f) In packages/engine/src/store/gitStore.ts, remove the workspace.json add, then:
 npx vitest run --project integration tests/integration/gitRemote.integration.test.ts
 #    → "clones the remote and adopts its workspace identity" fails. Revert.
 #    g) In src/proxy/server.ts, change the 512 * 1024 capture slice to 256 * 1024, then:
@@ -573,8 +690,8 @@ npx vitest run --project integration tests/integration/settingsMutations.integra
 #    l) In src/ipc/handlers/entityCrudFactory.ts, do the same in the ADD handler, then the same
 #       command fails on "serves a mock added through mock:add immediately". Revert.
 
-# 4. Static checks
-npm run typecheck
+# 5. Static checks
+npm run typecheck          # builds both packages first, then type-checks all three projects
 npm run typecheck:e2e
 #    (npm run typecheck:renderer currently reports 152 pre-existing errors — see §7)
 ```
@@ -582,3 +699,7 @@ npm run typecheck:e2e
 > In a sandbox that blocks Vitest's bulk delete of its report directory, add
 > `--coverage.clean=false --coverage.reportsDirectory=coverage-local` (as above). The
 > coverage numbers are still written; only the post-run cleanup is skipped.
+>
+> **Never use `npx tsc`** — it resolves the placeholder npm package, prints a warning, and
+> **exits 0**, so it silently reports success. Use `npm run typecheck`. The same trap applies to
+> piping `vitest` through `grep`: the exit status you get back is `grep`'s, not Vitest's.

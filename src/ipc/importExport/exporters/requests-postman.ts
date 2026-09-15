@@ -1,6 +1,6 @@
 import * as fs from "fs";
-import { loadConfig, SavedRequest, Folder } from "@/store/config";
-import { readAllEntities } from "@/store/workspaceFs";
+import { loadConfig, SavedRequest, Folder } from "@bifurc/engine/store/config";
+import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
 import type { ExportResult } from "@/ipc/importExport/types";
 import { exportRequestsToPostman } from "@/ipc/importExport/formats/postman";
 
