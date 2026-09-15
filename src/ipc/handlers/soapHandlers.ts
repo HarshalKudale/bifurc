@@ -1,11 +1,6 @@
 import { ipcMain } from "electron";
 import type { SoapFetchWsdlParams, SoapExecuteParams } from "@bifurc/protocol";
-import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
-import { loadConfig } from "@/store/config";
-import { generateId } from "@/store/config";
-import {
-  writeEntity, deleteEntityFile, readAllEntities,
-} from "@/store/workspaceFs";
+import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { commandRegistry } from "@/commands/registry";
 import { bus } from "@/eventBus";
 
@@ -33,10 +28,11 @@ interface SavedWsdl {
 // deleteRequest and soap:addMock/updateMock/deleteMock already route through the CommandRegistry
 // too, via the `registerEntityCrudHandlers()` calls below (the CRUD collapse — see
 // `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's tenth batch).
-// Only `soap:addWsdl/deleteWsdl/listWsdls` remain unconverted: they don't track a `configKey`
-// array the way every `CrudFactoryOpts` kind does (WSDLs are written straight to disk, nothing
-// mirrors them into `AppConfig`), and no protocol command exists for them yet — a genuinely
-// different shape from the CRUD collapse, not just an unfinished slice of it.
+// `soap:addWsdl/deleteWsdl/listWsdls` now route through the same registry too, via
+// `registerSimpleEntityHandlers()` — they don't track a `configKey` array the way every
+// `CrudFactoryOpts` kind does (WSDLs are written straight to disk, nothing mirrors them into
+// `AppConfig`), and have no "update" concept, so they go through the smaller
+// `entity.create`/`entity.delete`/`entity.list` fallback path instead.
 const ctx = { bus };
 
 commandRegistry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {
@@ -113,25 +109,9 @@ export function registerSoapHandlers() {
     getNameEntry: (mock) => ({ name: mock.name, soapActionPattern: mock.soapActionPattern }),
   });
 
-  ipcMain.handle("soap:addWsdl", async (_e, wsdl: Omit<SavedWsdl, "id" | "createdAt">) => {
-    const cfg = loadConfig();
-    const wsId = (wsdl as any).workspaceId ?? cfg.activeWorkspaceId;
-    const newWsdl: SavedWsdl = { ...wsdl, id: generateId(), createdAt: Date.now(), workspaceId: wsId };
-    writeEntity(wsId, "wsdls", newWsdl.id, newWsdl, null);
-    return newWsdl;
-  });
-
-  ipcMain.handle("soap:deleteWsdl", async (_e, id: string) => {
-    const cfg = loadConfig();
-    const wsId = cfg.activeWorkspaceId;
-    deleteEntityFile(wsId, "wsdls", id);
-    return { ok: true };
-  });
-
-  ipcMain.handle("soap:listWsdls", async () => {
-    const cfg = loadConfig();
-    const wsId = cfg.activeWorkspaceId;
-    return readAllEntities<SavedWsdl>(wsId, "wsdls");
+  registerSimpleEntityHandlers<SavedWsdl>({
+    kind: "wsdls",
+    ipcAdd: "soap:addWsdl", ipcDelete: "soap:deleteWsdl", ipcList: "soap:listWsdls",
   });
 
   ipcMain.handle("soap:fetchWsdl", (_e, url: string) =>

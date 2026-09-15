@@ -3,9 +3,7 @@ import type {
   GrpcExecuteParams, GrpcReflectParams, GrpcMockServerStatusParams,
   GrpcStartMockServerParams, GrpcStopMockServerParams,
 } from "@bifurc/protocol";
-import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
-import { loadConfig, generateId } from "@/store/config";
-import { writeEntity, deleteEntityFile, readAllEntities } from "@/store/workspaceFs";
+import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { commandRegistry } from "@/commands/registry";
 import { bus } from "@/eventBus";
 
@@ -37,10 +35,11 @@ interface SavedProtoFile {
 // updateRequest/deleteRequest and grpc:addMock/updateMock/deleteMock already route through the
 // CommandRegistry too, via the `registerEntityCrudHandlers()` calls below (the CRUD collapse —
 // see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's tenth
-// batch). Only `grpc:addProto/deleteProto/listProtos` remain unconverted: they don't track a
-// `configKey` array the way every `CrudFactoryOpts` kind does (protos are written straight to
-// disk, nothing mirrors them into `AppConfig`), and no protocol command exists for them yet — a
-// genuinely different shape from the CRUD collapse, not just an unfinished slice of it.
+// batch). `grpc:addProto/deleteProto/listProtos` now route through the same registry too, via
+// `registerSimpleEntityHandlers()` — they don't track a `configKey` array the way every
+// `CrudFactoryOpts` kind does (protos are written straight to disk, nothing mirrors them into
+// `AppConfig`), and have no "update" concept, so they go through the smaller
+// `entity.create`/`entity.delete`/`entity.list` fallback path instead.
 const ctx = { bus };
 
 commandRegistry.register("grpc.execute", async (_params: GrpcExecuteParams) => {
@@ -98,25 +97,9 @@ export function registerGrpcHandlers() {
     }),
   });
 
-  ipcMain.handle("grpc:addProto", async (_e, proto: Omit<SavedProtoFile, "id" | "createdAt">) => {
-    const cfg = loadConfig();
-    const wsId = (proto as any).workspaceId ?? cfg.activeWorkspaceId;
-    const newProto: SavedProtoFile = { ...proto, id: generateId(), createdAt: Date.now(), workspaceId: wsId };
-    writeEntity(wsId, "protoFiles", newProto.id, newProto, null);
-    return newProto;
-  });
-
-  ipcMain.handle("grpc:deleteProto", async (_e, id: string) => {
-    const cfg = loadConfig();
-    const wsId = cfg.activeWorkspaceId;
-    deleteEntityFile(wsId, "protoFiles", id);
-    return { ok: true };
-  });
-
-  ipcMain.handle("grpc:listProtos", async () => {
-    const cfg = loadConfig();
-    const wsId = cfg.activeWorkspaceId;
-    return readAllEntities<SavedProtoFile>(wsId, "protoFiles");
+  registerSimpleEntityHandlers<SavedProtoFile>({
+    kind: "protoFiles",
+    ipcAdd: "grpc:addProto", ipcDelete: "grpc:deleteProto", ipcList: "grpc:listProtos",
   });
 
   ipcMain.handle("grpc:execute", (_e, params: GrpcExecuteParams) =>

@@ -1,11 +1,12 @@
 import { ipcMain } from "electron";
-import type { EntityCreateParams, EntityUpdateParams, EntityDeleteParams } from "@bifurc/protocol";
+import type { EntityCreateParams, EntityUpdateParams, EntityDeleteParams, EntityListParams } from "@bifurc/protocol";
 import { loadConfig, saveConfig, generateId, AppConfig } from "@/store/config";
 import { 
   writeEntity, deleteEntityFile, writeFlatEntity, deleteFlatEntityFile,
   upsertNameEntry, removeNameEntry, 
   addPendingDeletion, findEntityRelPath,
-  readEnabledSet, writeEnabledSet, bootstrapEnabledSet
+  readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
+  readAllEntities,
 } from "@/store/workspaceFs";
 import { getGit } from "@/store/gitStore";
 import { reloadConfig } from "@/proxy/server";
@@ -26,6 +27,14 @@ type EntityBase = { id: string; workspaceId?: string; folderId?: string | null; 
  * registration time) by the generic `entity.create`/`entity.update`/`entity.delete` commands
  * below, so registration order across files does not matter. */
 export const entityCrudRegistry = new Map<string, CrudFactoryOpts<any>>();
+
+/** The three kinds that don't fit `CrudFactoryOpts` at all — `graphqlSchemas`, `protoFiles`,
+ * `wsdls` are written straight to disk with `writeEntity(wsId, kind, id, data, null)`, nothing
+ * mirrors them into an `AppConfig` array, and there is no "update" concept for any of them
+ * (only add/delete/list). Registered via `registerSimpleEntityHandlers()` below, and consulted
+ * as a fallback by `entity.create`/`entity.delete`/`entity.list` when a kind isn't in
+ * `entityCrudRegistry`. */
+export const simpleEntityKinds = new Set<string>();
 
 export async function isGitTracked(wsId: string, relPath: string): Promise<boolean> {
   try {
@@ -205,20 +214,52 @@ async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
   return { ok: true };
 }
 
+// ── "Simple" entities — `graphqlSchemas`/`protoFiles`/`wsdls`. No `AppConfig` array, no update,
+// no folders, no enabled-state: just `writeEntity`/`deleteEntityFile`/`readAllEntities` against
+// the workspace's flat entity store. Byte-for-byte what used to live directly inside
+// `graphql:addSchema`/`grpc:addProto`/`soap:addWsdl` and their `delete`/`list` siblings.
+
+type SimpleEntityBase = { id: string; workspaceId?: string; createdAt?: number };
+
+async function createSimpleEntityCore<T extends SimpleEntityBase>(kind: string, entity: Omit<T, "id" | "createdAt">): Promise<T> {
+  const cfg = loadConfig();
+  const wsId = (entity as any).workspaceId ?? cfg.activeWorkspaceId;
+  const newEntity = { ...entity, id: generateId(), createdAt: Date.now(), workspaceId: wsId } as unknown as T;
+  writeEntity(wsId, kind, newEntity.id, newEntity, null);
+  return newEntity;
+}
+
+async function deleteSimpleEntityCore(kind: string, id: string): Promise<{ ok: boolean }> {
+  const cfg = loadConfig();
+  deleteEntityFile(cfg.activeWorkspaceId, kind, id);
+  return { ok: true };
+}
+
+function listSimpleEntitiesCore<T>(wsId: string, kind: string): T[] {
+  return readAllEntities<T>(wsId, kind);
+}
+
 // ── The collapsed `entity.*` commands (P1 item 2 / P2 work item 7). Registered once, at module
 // load, exactly like `coreHandlers.ts`'s `config.get`/`env.setActive` — they dispatch to
 // whichever kind's `opts` is in `entityCrudRegistry` at invoke time, so it does not matter which
-// `*Handlers.ts` file (and therefore which order) populated the registry first. A kind that
-// hasn't called `registerEntityCrudHandlers()` yet (or never will — `environments`,
-// `graphqlSchemas`, `protoFiles`, `wsdls` have their own bespoke add/delete handlers with no
-// factory involvement) throws a clear error rather than silently no-oping.
+// `*Handlers.ts` file (and therefore which order) populated the registry first. A kind in
+// neither `entityCrudRegistry` nor `simpleEntityKinds` (today: only `environments`, which keeps
+// its own bespoke, gated-create handlers in `coreHandlers.ts`) throws a clear error rather than
+// silently no-oping.
 
 commandRegistry.register("entity.create", async ({ kind, entity, workspaceId }: EntityCreateParams) => {
   const engineKind = toEngineKind(kind);
+  const mergedEntity = { ...entity, workspaceId: workspaceId ?? (entity as any).workspaceId };
   const opts = entityCrudRegistry.get(engineKind);
-  if (!opts) throw new Error(`entity.create: kind "${kind}" is not routed through the CommandRegistry yet`);
-  const created = await createEntityCore(opts, { ...entity, workspaceId: workspaceId ?? (entity as any).workspaceId } as any);
-  return { id: created.id, entity: created as Record<string, unknown> };
+  if (opts) {
+    const created = await createEntityCore(opts, mergedEntity as any);
+    return { id: created.id, entity: created as Record<string, unknown> };
+  }
+  if (simpleEntityKinds.has(engineKind)) {
+    const created = await createSimpleEntityCore(engineKind, mergedEntity as any);
+    return { id: created.id, entity: created as Record<string, unknown> };
+  }
+  throw new Error(`entity.create: kind "${kind}" is not routed through the CommandRegistry yet`);
 });
 
 commandRegistry.register("entity.update", async ({ kind, entity }: EntityUpdateParams) => {
@@ -231,8 +272,17 @@ commandRegistry.register("entity.update", async ({ kind, entity }: EntityUpdateP
 commandRegistry.register("entity.delete", async ({ kind, id }: EntityDeleteParams) => {
   const engineKind = toEngineKind(kind);
   const opts = entityCrudRegistry.get(engineKind);
-  if (!opts) throw new Error(`entity.delete: kind "${kind}" is not routed through the CommandRegistry yet`);
-  return deleteEntityCore(opts, id);
+  if (opts) return deleteEntityCore(opts, id);
+  if (simpleEntityKinds.has(engineKind)) return deleteSimpleEntityCore(engineKind, id);
+  throw new Error(`entity.delete: kind "${kind}" is not routed through the CommandRegistry yet`);
+});
+
+commandRegistry.register("entity.list", ({ workspaceId, kind }: EntityListParams) => {
+  const engineKind = toEngineKind(kind);
+  if (!simpleEntityKinds.has(engineKind)) {
+    throw new Error(`entity.list: kind "${kind}" is not routed through the CommandRegistry yet`);
+  }
+  return { entities: listSimpleEntitiesCore<Record<string, unknown>>(workspaceId, engineKind) };
 });
 
 export function registerEntityCrudHandlers<T extends EntityBase>(opts: CrudFactoryOpts<T>) {
@@ -257,5 +307,44 @@ export function registerEntityCrudHandlers<T extends EntityBase>(opts: CrudFacto
 
   ipcMain.handle(opts.ipcDelete || `${opts.ipcPrefix}:delete`, async (_e, id: string) => {
     return commandRegistry.invoke("entity.delete", { kind: protocolKind, id }, ctx);
+  });
+}
+
+export interface SimpleEntityOpts {
+  /** Engine-internal storage kind, e.g. `"graphqlSchemas"`. */
+  kind: string;
+  ipcAdd: string;
+  ipcDelete: string;
+  ipcList: string;
+}
+
+/** Registers the three no-`AppConfig`-array, no-update kinds (`graphqlSchemas`, `protoFiles`,
+ * `wsdls`) the same way `registerEntityCrudHandlers` registers the twelve full-CRUD kinds: the
+ * legacy per-kind channels become thin adapters over `commandRegistry.invoke()`. */
+export function registerSimpleEntityHandlers<T extends SimpleEntityBase>(opts: SimpleEntityOpts) {
+  simpleEntityKinds.add(opts.kind);
+  const protocolKind = toProtocolKind(opts.kind);
+
+  ipcMain.handle(opts.ipcAdd, async (_e, entity: Omit<T, "id" | "createdAt">) => {
+    const result = await commandRegistry.invoke(
+      "entity.create",
+      { kind: protocolKind, entity, workspaceId: (entity as any).workspaceId },
+      ctx,
+    ) as { id: string; entity: Record<string, unknown> };
+    return result.entity;
+  });
+
+  ipcMain.handle(opts.ipcDelete, async (_e, id: string) => {
+    return commandRegistry.invoke("entity.delete", { kind: protocolKind, id }, ctx);
+  });
+
+  ipcMain.handle(opts.ipcList, async () => {
+    const wsId = loadConfig().activeWorkspaceId;
+    const result = await commandRegistry.invoke(
+      "entity.list",
+      { workspaceId: wsId, kind: protocolKind },
+      ctx,
+    ) as { entities: Record<string, unknown>[] };
+    return result.entities;
   });
 }
