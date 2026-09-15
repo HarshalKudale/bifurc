@@ -23,6 +23,7 @@ import { BrowserWindow } from "electron";
 
 import { createWorkspace, getFreePort, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 import { setDataDirOverride } from "@/store/gitStore";
+import { wireEventBridge } from "@/ipc/eventBridge";
 import {
   startCompanionServer,
   stopCompanionServer,
@@ -55,6 +56,10 @@ async function initRepo(): Promise<void> {
 }
 
 beforeEach(async () => {
+  // companionServer.ts emits on the engine bus (P2); this test observes "the renderer
+  // contract" — what the shell's temporary eventBridge.ts forwards to webContents — so it
+  // must wire that bridge itself, same as `registerIpcHandlers()` does in production.
+  wireEventBridge();
   ws = createWorkspace({});
   // Clears the git cache and repoints the data root at the fresh temp workspace.
   setDataDirOverride(ws.dataRoot);

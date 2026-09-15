@@ -320,15 +320,52 @@ electron-builder, tailwind) in one flat list. These must split:
 
 ## Acceptance criteria
 
-- [ ] `grep -rn "from \"electron\"" packages/engine/src` returns **zero** results.
+- [ ] `grep -rn "from \"electron\"" packages/engine/src` returns **zero** results. *(Not yet
+      applicable — `packages/engine` does not exist yet; the physical restructuring in work item 8
+      is not done. Progress made in place: `src/**` electron-importing files reduced from 22 to 18
+      by this session — `gitStore.ts`, `companionServer.ts`, `webhookServer.ts`, and
+      `processSpawner.ts` are now electron-free. `src/proxy/` — "the actual product" per this
+      doc's own note — now has **zero** Electron imports, down from one.)*
 - [ ] `grep -rn "BrowserWindow\|app.getPath\|dialog\.\|shell\." packages/engine/src` returns zero.
+      *(Same caveat — see the per-item status below for what's actually converted.)*
 - [ ] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
-- [ ] `setDataRoot()` not called → loud error, not a silent cwd fallback.
-- [ ] All 35 unit suites pass. The 11 e2e suites pass unchanged (the app still runs via the old path).
-- [ ] No `companion:refresh`; replaced by `entity.changed`.
-- [ ] `coreHandlers` no longer imports from `main`.
-- [ ] `packages/engine` has no renderer or Electron dependency in its `package.json`.
-- [ ] Engine package builds to ESM + CJS + types.
+      *(Not done — needs work item 6 (headless startup) and item 8 (package extraction), neither
+      attempted this session.)*
+- [x] `setDataRoot()` not called → loud error, not a silent cwd fallback. Implemented in
+      `src/store/paths.ts` (`DataRootNotInitialisedError`), unit-tested
+      (`tests/store/paths.test.ts`, 8/8 passing). **Not yet wired as the primary path** in
+      `appSettings.ts`/`workspaceFs.ts` — see the work item 4 note below for why that was
+      deliberately deferred.
+- [x] All 35 unit suites pass. *(48 files / 1234 tests as of this session — the count has grown
+      since the plan's baseline because P0/P1 added test files; zero regressions verified by
+      diffing against `plan/baseline.md`'s 45/1035 + this session's additions.)* The 11 e2e suites
+      are **unverified** — they cannot run in this sandbox (no desktop session, per
+      `plan/baseline.md` "Environment caveats"). Integration suite reverified: 323/325, matching
+      baseline exactly (the 2 failures are the documented sandbox network-interceptor caveat, not
+      a regression).
+- [x] No `companion:refresh`; replaced by `entity.changed`. **Internally** — every engine-side
+      emission site now emits `bus.emitTyped("entity.changed", ...)`. The wire name
+      `companion:refresh` still exists, deliberately, in the temporary shell bridge
+      (`src/ipc/eventBridge.ts`) that translates it back for the current, unmodified renderer —
+      removing the wire name entirely is P5/P6 work (updating the renderer's listener).
+- [x] `coreHandlers` no longer imports from `main`. Verified — the `updateTrayMenu()` call became
+      `bus.emitTyped("settings.changed", {})`; `src/main.ts` itself subscribes
+      (`bus.onTyped("settings.changed", () => updateTrayMenu())`), which keeps the dependency
+      pointing the correct direction (shell depends on engine bus, not the reverse).
+- [ ] `packages/engine` has no renderer or Electron dependency in its `package.json`. *(N/A —
+      package doesn't exist yet.)*
+- [ ] Engine package builds to ESM + CJS + types. *(N/A — same reason.)*
+
+**Honest status:** work items 1 (EventBus), 2 (broadcast inversion, all 8 sites), and 3
+(`processSpawner` mainWindow removal) are **done and verified** — full unit + integration suite
+green, zero regressions. Work item 4 (data dir) is **half done** — the resolution utility exists
+and is tested, but wiring it into `appSettings.ts`/`workspaceFs.ts` as the primary path (and
+deciding what happens to the two `*Override` test hooks) was **deliberately deferred**: the plan
+itself flags this exact spot as "how the e2e data-dir isolation breaks silently", and e2e cannot
+run in this sandbox to catch that class of regression. Work items 5, 6, 7, and 8 (splitting
+shell-only handlers, headless startup/preflight, the CommandRegistry, and the physical
+`packages/*` restructuring + dependency split) are **not started**. See the "Cleanup_plan.md
+status" section of `plan/README.md` for the still-open D6 sub-items that also block a complete P2.
 
 ---
 

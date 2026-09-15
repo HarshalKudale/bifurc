@@ -11,7 +11,7 @@
 
 import * as http from "http";
 import { EventEmitter } from "events";
-import { BrowserWindow } from "electron";
+import { bus } from "@/events/bus";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -133,12 +133,8 @@ export function startWebhookServer(port: number): void {
       // Emit to main process listeners (IPC forward)
       webhookEmitter.emit("payload", payload);
 
-      // Forward to all renderer windows
-      BrowserWindow.getAllWindows().forEach((w) => {
-        if (!w.isDestroyed()) {
-          w.webContents.send("webhook:payload", payload);
-        }
-      });
+      // Emit on the bus — the shell's eventBridge.ts forwards to renderer windows.
+      bus.emitTyped("webhook.payload", payload);
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, received: true }));

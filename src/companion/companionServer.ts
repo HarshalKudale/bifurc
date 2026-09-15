@@ -13,7 +13,6 @@
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { BrowserWindow } from "electron";
 import { ALLOWED_ACTIONS } from "@/companion/allowedActions";
 import {
     loadConfig, saveConfig, generateId, AppConfig,
@@ -24,8 +23,9 @@ import {
     readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
     readIndex, writeIndex, sanitizeDirName, wsDir,
 } from "@/store/workspaceFs";
-import { getWorkspaceSyncStatus, invalidateCache } from "@/sync/statusTracker";
+import { invalidateCache } from "@/sync/statusTracker";
 import { reloadConfig } from "@/proxy/server";
+import { bus, emitEntityStatus } from "@/events/bus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -49,31 +49,6 @@ let currentPort: number = 9271;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function broadcastEntityStatus(wsId: string): void {
-    // `getWorkspaceSyncStatus()` is async. Serializing the *Promise* (rather than its
-    // resolved value) yields `{}`, so the renderer was always told "nothing is dirty"
-    // and an entity added from the browser extension never showed its unsaved-changes
-    // dot. Stay non-blocking — the WebSocket reply must not wait on a git call — but
-    // send the resolved map.
-    void getWorkspaceSyncStatus(wsId)
-        .then((status) => {
-            // Serialize the status to plain object to avoid "Failed to serialize arguments" error
-            const serializedStatus = JSON.parse(JSON.stringify(status));
-            for (const w of BrowserWindow.getAllWindows()) {
-                if (!w.isDestroyed()) {
-                    try {
-                        w.webContents.send("sync:entityStatus", { wsId, status: serializedStatus });
-                    } catch (err) {
-                        console.error('[companion] Failed to broadcast entity status:', err);
-                    }
-                }
-            }
-        })
-        .catch((err) => {
-            console.error('[companion] Failed to compute entity status:', err);
-        });
-}
-
 function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean): void {
     const current = readEnabledSet(wsId, kind) ?? bootstrapEnabledSet(wsId, kind);
     if (enabled) {
@@ -82,13 +57,6 @@ function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean
         current.delete(id);
     }
     writeEnabledSet(wsId, kind, current);
-}
-
-function notifyRendererRefresh(): void {
-    const windows = BrowserWindow.getAllWindows();
-    for (const w of windows) {
-        if (!w.isDestroyed()) w.webContents.send("companion:refresh");
-    }
 }
 
 // ── Action handlers ───────────────────────────────────────────────────────────
@@ -143,8 +111,8 @@ function handleMockAdd(mock: Omit<MockRule, "id" | "createdAt">): MockRule {
         url: newMock.urlPattern,
     });
     reloadConfig();
-    broadcastEntityStatus(wsId);
-    notifyRendererRefresh();
+    emitEntityStatus(wsId);
+    bus.emitTyped("entity.changed", { wsId, kind: "mocks", id: newMock.id, action: "created" });
     return newMock;
 }
 
@@ -176,8 +144,8 @@ function handleRequestAdd(req: Omit<SavedRequest, "id" | "createdAt">): SavedReq
         url: newReq.url,
     });
     reloadConfig();
-    broadcastEntityStatus(wsId);
-    notifyRendererRefresh();
+    emitEntityStatus(wsId);
+    bus.emitTyped("entity.changed", { wsId, kind: "requests", id: newReq.id, action: "created" });
     return newReq;
 }
 
@@ -216,7 +184,7 @@ function handleFolderAdd(payload: { kind: string; name: string; parentId?: strin
     const idx = readIndex(wsId, fsKind);
     idx.folders.push(folder);
     writeIndex(wsId, fsKind, idx);
-    notifyRendererRefresh();
+    bus.emitTyped("entity.changed", { wsId, kind: fsKind, id: folder.id, action: "created" });
     return folder;
 }
 

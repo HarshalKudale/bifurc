@@ -172,7 +172,6 @@ import { loadConfig, saveConfig, generateId, loadEntity } from "@/store/config";
 import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@/store/gitStore";
 import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@/proxy/server";
 import { discoverServices } from "@/proxy/service-discovery";
-import { updateTrayMenu } from "@/main";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 
@@ -278,10 +277,14 @@ describe("src/ipc/handlers.ts", () => {
       expect(startServer).toHaveBeenCalledWith(9999);
     });
 
-    it("calls updateTrayMenu after saving", () => {
+    it("emits settings.changed on the bus after saving (P2: tray update is the shell's job now)", async () => {
+      const { bus } = await import("@/events/bus");
+      const listener = vi.fn();
+      bus.onTyped("settings.changed", listener);
       const incoming: AppConfig = { ...makeDefaultConfig() };
       getHandler("config:save")(EVENT, incoming);
-      expect(updateTrayMenu).toHaveBeenCalled();
+      expect(listener).toHaveBeenCalled();
+      bus.offTyped("settings.changed", listener);
     });
   });
 
