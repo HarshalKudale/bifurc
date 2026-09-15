@@ -1,7 +1,13 @@
 import { ipcMain } from "electron";
+import type {
+  GrpcExecuteParams, GrpcReflectParams, GrpcMockServerStatusParams,
+  GrpcStartMockServerParams, GrpcStopMockServerParams,
+} from "@bifurc/protocol";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { loadConfig, generateId } from "@/store/config";
 import { writeEntity, deleteEntityFile, readAllEntities } from "@/store/workspaceFs";
+import { commandRegistry } from "@/commands/registry";
+import { bus } from "@/eventBus";
 
 interface SavedGrpcRequest {
   id: string; name: string; serverAddress: string; serviceName: string; methodName: string;
@@ -23,6 +29,33 @@ interface SavedProtoFile {
   parsedServices?: { name: string; methods: { name: string; inputType: string; outputType: string; clientStreaming: boolean; serverStreaming: boolean }[] }[];
   createdAt: number; workspaceId: string;
 }
+
+// P2 work item 7 — grpc.execute/reflect/mockServerStatus/startMockServer/stopMockServer are pure
+// stubs (pinned by tests/integration/protocolExecution.integration.test.ts, Cleanup_plan.md
+// §1.5 D6 disposition: wontfix — see packages/protocol/src/commands/grpc.ts's own comment), and
+// their params match the frozen schema exactly, so all five convert. The CRUD-factory channels
+// and grpc:addProto/deleteProto/listProtos (no protocol command yet) wait for the CRUD collapse.
+const ctx = { bus };
+
+commandRegistry.register("grpc.execute", async (_params: GrpcExecuteParams) => {
+  return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js and @grpc/proto-loader to enable gRPC calls." };
+});
+
+commandRegistry.register("grpc.reflect", async (_params: GrpcReflectParams) => {
+  return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js to enable server reflection." };
+});
+
+commandRegistry.register("grpc.mockServerStatus", async (_params: GrpcMockServerStatusParams) => {
+  return { running: false, port: 9102 };
+});
+
+commandRegistry.register("grpc.startMockServer", async (_params: GrpcStartMockServerParams) => {
+  return { ok: false, error: "gRPC mock server not yet implemented. Install @grpc/grpc-js to enable." };
+});
+
+commandRegistry.register("grpc.stopMockServer", async (_params: GrpcStopMockServerParams) => {
+  return { ok: true };
+});
 
 export function registerGrpcHandlers() {
   registerEntityCrudHandlers<SavedGrpcRequest>({
@@ -80,26 +113,18 @@ export function registerGrpcHandlers() {
     return readAllEntities<SavedProtoFile>(wsId, "protoFiles");
   });
 
-  ipcMain.handle("grpc:execute", async (_e, { serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection }: {
-    serverAddress: string; serviceName: string; methodName: string; requestBody: string;
-    metadata: Record<string, string>; protoFileId: string | null; useReflection: boolean;
-  }) => {
-    return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js and @grpc/proto-loader to enable gRPC calls." };
-  });
+  ipcMain.handle("grpc:execute", (_e, params: GrpcExecuteParams) =>
+    commandRegistry.invoke("grpc.execute", params, ctx));
 
-  ipcMain.handle("grpc:reflect", async (_e, { serverAddress }: { serverAddress: string }) => {
-    return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js to enable server reflection." };
-  });
+  ipcMain.handle("grpc:reflect", (_e, params: GrpcReflectParams) =>
+    commandRegistry.invoke("grpc.reflect", params, ctx));
 
-  ipcMain.handle("grpc:mockServerStatus", async () => {
-    return { running: false, port: 9102 };
-  });
+  ipcMain.handle("grpc:mockServerStatus", () =>
+    commandRegistry.invoke("grpc.mockServerStatus", {}, ctx));
 
-  ipcMain.handle("grpc:startMockServer", async () => {
-    return { ok: false, error: "gRPC mock server not yet implemented. Install @grpc/grpc-js to enable." };
-  });
+  ipcMain.handle("grpc:startMockServer", () =>
+    commandRegistry.invoke("grpc.startMockServer", {}, ctx));
 
-  ipcMain.handle("grpc:stopMockServer", async () => {
-    return { ok: true };
-  });
+  ipcMain.handle("grpc:stopMockServer", () =>
+    commandRegistry.invoke("grpc.stopMockServer", {}, ctx));
 }
