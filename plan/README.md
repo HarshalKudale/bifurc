@@ -188,7 +188,7 @@ Update this table as you go. It is the single source of truth for programme stat
 | 00 Decisions | ✅ **done** | 2026-09-14 | ✅ | D1–D9 resolved |
 | P0 De-risk | ✅ **done** | 2026-09-15 | ✅ | Spike 4 (protocol PoC) confirmed the renderer-unchanged thesis — see `plan/spike-results.md`. Spikes 1/3 skipped (D4/D5); spike 2 still optional. |
 | P1 Protocol | ✅ **done** | 2026-09-15 | ✅ | `packages/protocol` — 89 commands, errors, events, `hello` handshake. `plan/handler-classification.md` complete. Frozen at v1.0.0, see `plan/protocol-changes.md`. |
-| P2 Engine extraction | ⬜ not started | | | **nearly unblocked** — see "Cleanup_plan.md status" below (D6) |
+| P2 Engine extraction | 🟡 in progress | 2026-09-15 | ⬜ | Broadcast inversion done (EventBus + all 8 sites + `processSpawner`); data-dir/CommandRegistry/package-restructure not started. See `03-phase-2-engine-extraction.md` for the itemised status. |
 | P3 File ops | ⬜ not started | | | |
 | P4 Transport | ⬜ not started | | | |
 | P5 RPC client | ⬜ not started | | | |

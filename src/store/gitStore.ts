@@ -2,7 +2,6 @@ import simpleGit, { SimpleGit } from "simple-git";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { app } from "electron";
 import { AuditAction, AuditEntity, AuditEntry } from "@/store/types";
 import { wsDir as _wsDir, setDataRootOverride } from "@/store/workspaceFs";
 

@@ -1,17 +1,11 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { Folder } from "@/store/config";
 import { loadConfig, saveConfig } from "@/store/config";
 import { generateId } from "@/store/config";
 import { readIndex, writeIndex, wsDir as workspaceDir, sanitizeDirName, deleteEntityDir } from "@/store/workspaceFs";
-
-function notifyRendererRefresh(): void {
-  const windows = BrowserWindow.getAllWindows();
-  for (const w of windows) {
-    if (!w.isDestroyed()) w.webContents.send("companion:refresh");
-  }
-}
+import { bus } from "@/events/bus";
 
 type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock";
 
@@ -46,7 +40,7 @@ export function registerFolderHandlers() {
     const idx = readIndex(wsId, conf.fsKind as any);
     idx.folders.push(newFolder);
     writeIndex(wsId, conf.fsKind as any, idx);
-    notifyRendererRefresh();
+    bus.emitTyped("entity.changed", { wsId, kind, id: newFolder.id, action: "created" });
     return newFolder;
   });
 
