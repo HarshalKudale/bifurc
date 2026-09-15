@@ -17,6 +17,10 @@ interface RunningProcess {
     proc: ChildProcess;
     state: AppProcessState;
     logBuffer: AppLogChunk[];
+    /** True once a stop has been initiated for this entry. Makes `stop()` — and therefore
+     * `stopAll()` — idempotent: the shell, a supervisor restart and a SIGTERM handler may all ask
+     * for the same process to stop, and only the first request should signal it. */
+    stopping: boolean;
 }
 
 const MAX_LOG_LINES = 5000;
@@ -95,7 +99,7 @@ class ProcessSpawner {
         state.pid = pid;
         state.status = mode === "debug" ? "debugging" : "running";
 
-        const entry: RunningProcess = { proc, state, logBuffer };
+        const entry: RunningProcess = { proc, state, logBuffer, stopping: false };
         this.processes.set(appId, entry);
 
         // Stream stdout
@@ -153,10 +157,17 @@ class ProcessSpawner {
 
     /**
      * Stop a running application.
+     *
+     * Idempotent: a second call for a process whose stop is already in flight is a no-op. Without
+     * this, shutdown being requested twice (shell quit + supervisor SIGTERM) would re-`taskkill`
+     * the same pid and re-emit "stopping" status/log events — and a late call on an already-exited
+     * process would flip its status back from `exited` to `stopping`.
      */
     stop(appId: string): void {
         const entry = this.processes.get(appId);
         if (!entry || !entry.proc) return;
+        if (entry.stopping) return;
+        entry.stopping = true;
 
         entry.state.status = "stopping";
         this.emitLog(appId, entry.logBuffer, "system", "\n[Stopping process...]\n");
@@ -217,7 +228,11 @@ class ProcessSpawner {
     }
 
     /**
-     * Stop all running processes (called on app quit).
+     * Stop all running processes (called on engine shutdown).
+     *
+     * Idempotent by virtue of `stop()`'s per-entry guard: calling this twice does not re-signal
+     * anything already stopping, and entries stay in the map afterwards so `getState()` /
+     * `getLogs()` keep working for a client that reads them during shutdown.
      */
     stopAll(): void {
         for (const [appId] of this.processes) {

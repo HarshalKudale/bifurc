@@ -1,20 +1,16 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen } from "electron";
 import * as path from "path";
-import { processSpawner } from "@/applications/processSpawner";
 import { registerIpcHandlers } from "@/ipc/handlers";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
-import { loadConfig, generateId } from "@/store/config";
+import { loadConfig } from "@/store/config";
 import { loadSettings, saveSettings } from "@/store/appSettings";
-import { initWorkspaceDir, dataRoot, wsDir } from "@/store/workspaceFs";
-import { startServer, stopServer } from "@/proxy/server";
-import { startCompanionServer, stopCompanionServer } from "@/companion/companionServer";
-import { checkGitInstalled, initWorkspaceRepo } from "@/store/gitStore";
-import { startAutoSync, stopAllAutoSync, setAutoSyncReloadFn } from "@/sync/autoSync";
-import { getSyncConfig } from "@/sync/syncManager";
+import { startServer } from "@/proxy/server";
+import { startCompanionServer } from "@/companion/companionServer";
+import { checkGitInstalled } from "@/store/gitStore";
 import { bus } from "@/eventBus";
 import { setDataRoot, dataDir } from "@/store/paths";
-import { preflight } from "@/startup";
-import * as fs from "fs";
+import { preflight, bootstrapWorkspaces } from "@/startup";
+import { shutdownEngine } from "@/shutdown";
 
 
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
@@ -288,37 +284,11 @@ if (!gotTheLock) {
       }
     });
 
-    // Init dirs/repos for all known workspaces first
-    for (const ws of settings.workspaces) {
-      initWorkspaceDir(ws.id, ws.name);
-      await initWorkspaceRepo(ws.id);
-      const syncCfg = getSyncConfig(ws.id);
-      if (syncCfg?.autoSync) startAutoSync(ws.id);
-    }
-
-    // Validate active workspace — fallback or create new if its dir is missing
-    const wsDirExists = (id: string) => {
-      try { return fs.statSync(wsDir(id)).isDirectory(); } catch { return false; }
-    };
-    if (!wsDirExists(settings.activeWorkspaceId)) {
-      const valid = settings.workspaces.find((w) => wsDirExists(w.id));
-      if (valid) {
-        settings.activeWorkspaceId = valid.id;
-        saveSettings(settings);
-      } else {
-        // No valid workspace on disk — create a fresh empty one
-        const id = generateId();
-        const name = "Workspace 1";
-        settings.workspaces = [{ id, name, activeEnvironmentId: null }];
-        settings.activeWorkspaceId = id;
-        saveSettings(settings);
-        initWorkspaceDir(id, name);
-        await initWorkspaceRepo(id);
-      }
-    }
-
-    const { reloadConfig } = require("@/proxy/server");
-    setAutoSyncReloadFn(reloadConfig);
+    // P2 work item 6: the workspace bootstrap (create each workspace's dirs + git repo, start
+    // auto-sync where configured, then repair or create the active workspace) now lives in the
+    // engine — see `bootstrapWorkspaces()` in `src/startup.ts` — so the CLI and Docker entrypoints
+    // run the identical sequence. It returns the effective settings rather than mutating ours.
+    settings = (await bootstrapWorkspaces(settings)).settings;
 
     registerIpcHandlers();
     registerClientHandlers();
@@ -338,10 +308,9 @@ if (!gotTheLock) {
 
   app.on("before-quit", () => {
     quitting = true;
-    processSpawner.stopAll();
-    stopAllAutoSync();
-    stopCompanionServer();
-    stopServer();
+    // Idempotent by design (P2 work item 3): the shell quitting, a supervisor restarting a crashed
+    // engine and a SIGTERM handler may all ask for this, in any order. See `src/shutdown.ts`.
+    void shutdownEngine();
   });
 
   app.on("window-all-closed", () => {
