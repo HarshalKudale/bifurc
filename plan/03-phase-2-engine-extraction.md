@@ -646,8 +646,10 @@ packages/
 
 > **Corrected 2026-09-15:** this tree originally listed `events/bus.ts`. The EventBus has always
 > been a single file, `src/eventBus.ts`, and it moved to `packages/engine/src/eventBus.ts` in layer 2
-> — there is no `events/` directory and never was. The tree above is now the *target*; as of layer 2
-> the moved entries are `store/`, `lib/`, `subscription/`, `proxy/`, `sync/` and `eventBus.ts`.
+> — there is no `events/` directory and never was. The tree above is now the *target*; as of layer 3
+> the moved entries are `store/`, `lib/`, `subscription/`, `proxy/`, `sync/`, `eventBus.ts`,
+> `applications/`, `companion/` and `commands/`. Only `startup.ts` (and `shutdown.ts`, which the
+> target tree does not list) remain to move.
 
 ### Build config
 
@@ -674,21 +676,27 @@ electron-builder, tailwind) in one flat list. These must split:
 
 **Getting this split wrong is how you end up shipping CodeMirror inside a Docker image.**
 
-### Status (2026-09-15): started — package created, two layers moved
+### Status (2026-09-16): started — package created, three layers moved
 
 The package, its build and the resolution story are **done and verified**. The move is being done
 in layers rather than one commit, per this doc's own mitigation ("do one package first, prove the
 pattern, then move the rest").
 
-**Layer 2 — `proxy/`, `sync/` and `eventBus.ts` — has also moved.** These three had to go together,
+**Layer 3 — `applications/`, `companion/`, `commands/` — has also moved.** 7 files, 48 statements
+rewritten across 26 files. The cleanest layer yet: all 7 files reported *identical* coverage before
+and after, on all four metrics including raw covered/total counts. `ws` joined the engine as its
+third runtime dependency (it is `companion/` that needs it, as predicted). Layer 3 is also where the
+`coverage.exclude` list turned out to contain a **wrong** entry — see the note in `TESTING.md` §5.
+
+**Layer 2 — `proxy/`, `sync/` and `eventBus.ts` — has moved too.** These three had to go together,
 and the reason is worth recording: `eventBus.ts` imports `@/proxy/logEmitter` and
 `@/proxy/webhookServer` (types) and `@/sync/statusTracker` (a value), while `proxy/**` imports
 `@/eventBus` for `bus.emitTyped`. Moving any one of them alone would have left the engine importing
-*out* of the package. 28 files moved, 177 statements rewritten across 88 files.
+*out* of the package. 28 files moved, 177 import statements plus 12 `vi.mock` specifiers rewritten.
 
 ```
 packages/engine/
-  package.json        # @bifurc/engine, deps: mkcert + simple-git; no electron, no renderer
+  package.json        # @bifurc/engine, deps: mkcert, simple-git, ws; no electron, no renderer
   tsconfig.json       # moduleResolution: bundler, types: [node], noEmit
   tsup.config.ts      # ESM + CJS + .d.ts, structure-preserving multi-entry
   src/
@@ -698,19 +706,24 @@ packages/engine/
     proxy/            # moved from src/proxy   (19 files)   — layer 2
     sync/             # moved from src/sync    (8 files)    — layer 2
     eventBus.ts       # moved from src/eventBus.ts          — layer 2
+    applications/     # moved from src/applications (4)     — layer 3
+    companion/        # moved from src/companion (2)        — layer 3
+    commands/         # moved from src/commands (2)         — layer 3
     index.ts          # provisional barrel — see below
 ```
 
-Layer 2 needed only **one** new runtime dependency, `mkcert` (used by `proxy/tlsCert.ts`); everything
-else in the two directories is Node builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`,
-`zlib`, `fs`, `path`, `os`, `events`) plus the already-present `simple-git`. `ws` is **not** needed
-yet — it belongs to `companion/`, which has not moved.
+Layer 2 needed one new runtime dependency, `mkcert` (used by `proxy/tlsCert.ts`); everything else in
+`proxy/` and `sync/` is Node builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`,
+`zlib`, `fs`, `path`, `os`, `events`) plus the already-present `simple-git`. Layer 3 added `ws`
+(`companion/companionServer.ts`).
 
 **Why the bottom layer went first:** it is the only part of the engine with no outgoing `@/` dependency
 on the rest of the app (`store/` imports only itself; `lib/` and `subscription/` import nothing
 internal at all). That made it the cheapest place to prove the package boundary end to end. Layer 2
-is the first layer that *does* have internal couplings to untangle, which is why the `eventBus` ↔
-`proxy`/`sync` cycle had to be handled as one unit rather than three.
+was the first layer that *did* have internal couplings to untangle, which is why the `eventBus` ↔
+`proxy`/`sync` cycle had to be handled as one unit rather than three. Layer 3 was measured clean
+before it started — its only `@/` import was internal to the layer — which is why it needed no
+special handling and came back 7/7 exact.
 
 **The build must not bundle — this is load-bearing, not a style choice.** `store/paths.ts` holds
 the resolved data root as module-level state, and `store/config.ts` / `store/gitStore.ts` hold
@@ -811,20 +824,22 @@ have produced a bogus `@bifurc/engine/subscription/gate` specifier during the re
 
 The remaining engine modules move next, in dependency order, each verified against the full suite:
 
-1. ~~`proxy/` (the actual product) and `sync/`~~ — **done (layer 2, 2026-09-15)**, together with
-   `eventBus.ts`, which they are mutually coupled to. 28 files, 189 statements rewritten across
-   95 files; `mkcert` added as the engine's second runtime dependency.
-2. `applications/`, `companion/`, `commands/` — depend on the above. `companion/` is what pulls in
-   `ws`, so that dependency moves with it.
-3. `startup.ts` and `shutdown.ts` — already Electron-free, they just need to move.
+1. ~~`proxy/` (the actual product) and `sync/`~~ — **done (layer 2)**, together with `eventBus.ts`,
+   which they are mutually coupled to. 28 files, 189 statements rewritten across 95 files; `mkcert`
+   added as the engine's second runtime dependency.
+2. ~~`applications/`, `companion/`, `commands/`~~ — **done (layer 3)**. 7 files, 48 statements
+   across 26 files, 7/7 exact on all four coverage metrics. `ws` moved with `companion/`, as
+   predicted.
+3. `startup.ts` and `shutdown.ts` — already Electron-free, they just need to move. These are the
+   last two engine files in `src/`.
 4. `createEngine(opts)` — the real public API, which is what finally satisfies the
    "engine starts from a bare Node script with `--data-dir`" acceptance criterion
-5. Dependency split completion: `ws`, `js-yaml`, `archiver`, `unzipper` and
-   `@bifurc/protocol` move out of the root flat list as their modules move
-   (`mkcert` and `simple-git` have already moved).
+5. Dependency split completion: `js-yaml`, `archiver`, `unzipper` and `@bifurc/protocol` move out
+   of the root flat list as their modules move (`mkcert`, `simple-git` and `ws` have already moved).
+   `@bifurc/protocol` is a package dependency rather than a bare one, so it is a separate decision.
 
-Left in `src/` by design: `ipc/` (the registration layer this phase replaces), `main.ts`,
-`preload.ts`.
+After step 3, `src/` contains only `ipc/` (the registration layer this phase replaces), `main.ts`
+and `preload.ts`.
 
 **Not part of item 8, but found while doing it:** the packaged app cannot resolve `@bifurc/protocol`
 or `@bifurc/engine`, because `build.files` covers only `dist/**/*` + `package.json`. Dev mode and the
@@ -984,23 +999,23 @@ plus `entity:load`/`entity:setEnabled`, onto `entity.create`/`entity.update`/`en
 except for the P3-bound `importExport:*` SPLIT channels** — every `EntityKind` value routes
 through the CommandRegistry, ~112 commands total. See work item 7's own status note (tenth
 through twelfth batches) for the full detail. Work item 8 (the physical `packages/*`
-restructuring + dependency split) is now **started, with its infrastructure done and two of four
+restructuring + dependency split) is now **started, with its infrastructure done and three of four
 layers moved**. `packages/engine`
 exists as a real linked npm workspace with its own `tsup` pipeline (structure-preserving ESM + CJS +
 `.d.ts`), its own `tsconfig.json`, and a `package.json` whose runtime dependencies are
-`mkcert` and `simple-git`; it has **zero** Electron imports and **zero**
+`mkcert`, `simple-git` and `ws`; it has **zero** Electron imports and **zero**
 `BrowserWindow`/`dialog.`/`\bshell.` references. **Layer 1** moved
 `src/{store,lib,subscription}` → `packages/engine/src/` (14 files, via `git mv` so blame survives)
 and rewrote 254 referencing statements across 97 files. **Layer 2** moved
 `src/{proxy,sync}` + `src/eventBus.ts` (28 files) and rewrote 189 statements across 95 files —
 those three had to go together because `eventBus` and `proxy`/`sync` import each other.
-Renderer: **zero** files in both layers, because its `@/` alias points at `renderer/`. `packages/protocol`
+**Layer 3** moved `src/{applications,companion,commands}` (7 files, 48 statements across 26 files).
+Renderer: **zero** files in every layer, because its `@/` alias points at `renderer/`. `packages/protocol`
 remains a real linked workspace and is the other inter-package dependency. A latent CI bug was
 found and fixed along the way: neither package's `dist` is committed, CI only ran `npm ci`, and a
 fresh clone therefore failed `npm run typecheck` with `TS2307` for `@bifurc/protocol` — a new
 `build:packages` script wired to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`
-makes installs self-sufficient. What remains in item 8: moving `applications/`, `companion/` and
-`commands/`, then `startup.ts` and `shutdown.ts`, and
+makes installs self-sufficient. What remains in item 8: moving `startup.ts` and `shutdown.ts`, then
 building the real `createEngine()` public API — which is what finally satisfies the "engine starts
 from a bare Node script with `--data-dir`" criterion. The dependency split is correspondingly
 partial: the engine declares its own deps and no Electron/renderer deps, but the deps of the
@@ -1008,16 +1023,24 @@ not-yet-moved modules necessarily stay in the root list. See the "Cleanup_plan.m
 `plan/README.md` for the still-open D6 sub-items that also block a complete P2.
 
 **The move is now verified as behaviour-preserving, by measurement rather than by assertion.** The
-full suite runs **1615/1616 over 69 files** — identical to the pre-move baseline — and the one
-failure is the documented sandbox `ECONNREFUSED` caveat, not a regression. The stronger evidence is
-per-file coverage: **11 of the 12 moved files that were in the pre-move report are identical on all
-four metrics including the raw covered/total counts**, and the twelfth (`store/config.ts`) has
-identical totals (138 statements / 134 branches / 55 functions) with a *higher* numerator, because
-P2 items 5–7 added tests that reach more of it. Identical denominators are the load-bearing part —
-they prove no statement was added, removed or restructured. Headline coverage is **47.96% /
-31.98% / 36.30% / 50.35%** (statements / branches / functions / lines), up from 46.14 / 31.30 /
-34.34 / 48.39, against a denominator that *grew* from 11,129 to 11,443 statements — so this is a
-genuine improvement, not a scope artefact. See `TESTING.md` §4.8.
+full suite runs **1615/1616 over 69 files** — identical to the pre-move baseline at every layer —
+and the one failure is the documented sandbox `ECONNREFUSED` caveat, not a regression. The stronger
+evidence is per-file coverage, layer by layer:
+
+| Layer | Files compared | Identical on all 4 metrics | Regressions | Missing |
+|---|---:|---:|---:|---:|
+| 1 — `store/`, `lib/`, `subscription/` | 12 | 11 | 0 | 0 |
+| 2 — `proxy/`, `sync/`, `eventBus.ts` | 27 | 26 | 0 | 0 |
+| 3 — `applications/`, `companion/`, `commands/` | 7 | **7** | 0 | 0 |
+
+"Identical" includes the raw covered/total counts, not just the percentages. The two files that
+moved did so in the **up** direction, with identical totals: `store/config.ts` because P2 items 5–7
+added tests that reach more of it, and `sync/gitOps.ts` because a real-git fallback branch happened
+to execute more in that run (line-level lcov data confirms which lines). Identical denominators are
+the load-bearing part — they prove no statement was added, removed or restructured. Headline
+coverage is **48.00% / 31.99% / 36.30% / 50.39%** (statements / branches / functions / lines), up
+from 46.14 / 31.30 / 34.34 / 48.39, against a denominator that *grew* from 11,129 to 11,446
+statements — so this is a genuine improvement, not a scope artefact. See `TESTING.md` §4.8.
 
 That verification only became possible after fixing the test-resolution bug described above: before
 it, the engine reported **all 14 files at 0%** while the suite passed, because tests were running

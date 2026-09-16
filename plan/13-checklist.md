@@ -179,14 +179,15 @@ optional and blocks nothing.
 - [x] Replace `registerIpcHandlers()` with the `CommandRegistry` — `src/commands/registry.ts`,
       **~112 commands** across 13 files, covering every `EntityKind` value. Only the P3-bound
       `importExport:*` SPLIT channels remain outside it.
-- [x] **`git mv` the moved modules (preserve blame)** — two layers moved.
+- [x] **`git mv` the moved modules (preserve blame)** — three layers moved, 49 files total.
       **Layer 1** (bottom of the graph): `src/store/` (11 files), `src/lib/` (2),
       `src/subscription/` (1) → `packages/engine/src/`.
       **Layer 2**: `src/proxy/` (19 files), `src/sync/` (8), `src/eventBus.ts` (1) → 28 files.
       These three had to move **together**: `eventBus.ts` imports `@/proxy/logEmitter`,
       `@/proxy/webhookServer` and `@/sync/statusTracker`, while `proxy/**` imports `@/eventBus`.
       Moving any one alone would have left the engine importing *out* of its own package.
-      Done with `git mv`, so blame survives.
+      **Layer 3**: `src/applications/` (4 files), `src/companion/` (2), `src/commands/` (2) → 7 files.
+      Done with `git mv`, so blame survives. Only `startup.ts` and `shutdown.ts` remain in `src/`.
 - [x] **`tsup` build for `packages/engine`** — `packages/engine/tsup.config.ts`. Multi-entry with
       the directory structure preserved (`dist/store/config.js`), ESM + CJS + `.d.ts`, mirroring
       the `packages/protocol` pattern. **`bundle: false` is deliberate and load-bearing**:
@@ -222,14 +223,15 @@ optional and blocks nothing.
       and wired it to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`, so
       installs are now self-sufficient for both packages.
 - [ ] **Split the dependencies** — **partially**: `packages/engine` declares its own deps
-      (`mkcert`, `simple-git`) and its own build devDeps (`tsup`, `typescript`, `@types/node`), and
-      has **no** Electron or renderer dependency. Layer 2 needed exactly one new dependency,
+      (`mkcert`, `simple-git`, `ws`) and its own build devDeps (`tsup`, `typescript`, `@types/node`),
+      and has **no** Electron or renderer dependency. Layer 2 needed exactly one new dependency,
       `mkcert` (used by `proxy/tlsCert.ts`) — everything else in `proxy/` and `sync/` is Node
       builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`, `zlib`, `fs`, `path`, `os`,
-      `events`). The remaining engine deps (`ws`, `js-yaml`, `archiver`, `unzipper`,
-      `@bifurc/protocol`) are still in the root flat list, because the modules that use them have
-      not moved yet — removing them now would break the shell. They move with their modules.
-      Note `ws` is **not** needed yet: it belongs to `companion/`, which has not moved.
+      `events`). Layer 3 added `ws` (`companion/companionServer.ts`), as predicted. The remaining
+      engine deps (`js-yaml`, `archiver`, `unzipper`, `@bifurc/protocol`) are still in the root flat
+      list, because the modules that use them have not moved yet — removing them now would break the
+      shell. `@bifurc/protocol` is a package dependency rather than a bare one, so it is a separate
+      decision.
 - [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` and
       `packages/engine` are both real linked npm workspaces built with their own `tsup` pipelines.
       `apps/*` does not exist yet, and the Electron shell is still the repo root — that switch is
@@ -240,11 +242,11 @@ optional and blocks nothing.
       either specifier. Dev mode and the whole test suite are unaffected. Assigned to P6/P12, not
       fixed here.
 
-**Gate:** **not yet green, and two things stand between here and it.** Work item 8 is **started,
-with its infrastructure done and two of four layers moved** — the package exists, builds, is
-linked, and `store/`+`lib/`+`subscription/`+`proxy/`+`sync/`+`eventBus.ts` have physically moved.
-What remains is moving the *rest* of the engine's modules (`applications/`, `companion/`,
-`commands/`, `startup.ts`, `shutdown.ts`) and building `createEngine()` — which is what makes the
+**Gate:** **not yet green, and one thing stands between here and it.** Work item 8 is **started,
+with its infrastructure done and three of four layers moved** — the package exists, builds, is
+linked, and 49 files have physically moved (`store/`, `lib/`, `subscription/`, `proxy/`, `sync/`,
+`eventBus.ts`, `applications/`, `companion/`, `commands/`). What remains is moving the last two
+engine files (`startup.ts`, `shutdown.ts`) and building `createEngine()` — which is what makes the
 "engine starts from a bare Node script with `--data-dir`" criterion satisfiable. Items 1–7 are
 otherwise closed apart from
 the two items above explicitly left open on product grounds.

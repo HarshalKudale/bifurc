@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * `src/companion/companionServer.ts` was at 0%. It is the *only* code path by which a
+ * `packages/engine/src/companion/companionServer.ts` was at 0%. It is the *only* code path by which a
  * lower-trust caller (a browser extension, i.e. anything running in the user's browser)
  * can write into the user's workspace, and `ALLOWED_ACTIONS` is the single gate that
  * keeps that surface additive-only. The allowlist itself was pinned by a unit test, but
@@ -30,7 +30,7 @@ import {
   restartCompanionServer,
   getCompanionPort,
   isCompanionRunning,
-} from "@/companion/companionServer";
+} from "@bifurc/engine/companion/companionServer";
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 

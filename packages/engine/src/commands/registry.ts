@@ -25,7 +25,7 @@
  * `importExport:*` SPLIT channels.
  */
 import { type CommandAction, getCommandParamsSchema, isKnownCommand } from "@bifurc/protocol";
-import type { bus } from "@bifurc/engine/eventBus";
+import type { bus } from "../eventBus";
 
 /** Carried into every handler — the bus today, session/auth once P4 exists (per the plan's own
  * description of `ctx`: "carries the session ... and the bus"). */
