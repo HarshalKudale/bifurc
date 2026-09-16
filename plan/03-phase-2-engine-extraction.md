@@ -142,7 +142,7 @@ supervisor restart, and a SIGTERM handler may all call it.
 > spawner now emits `process.output` / `process.statusChange` on the bus). This session closed the
 > lifecycle half:
 >
-> - **`src/shutdown.ts`** is new and Electron-free. It exports `shutdownEngine(): Promise<void>` and
+> - **`packages/engine/src/shutdown.ts`** is new and Electron-free. It exports `shutdownEngine(): Promise<void>` and
 >   `isShuttingDown(): boolean`. The teardown sequence (spawner → pollers → companion server → proxy
 >   server) is memoised behind a single in-flight promise, so the shell quitting, a supervisor
 >   SIGTERM and a crash handler can all call it in the same tick and exactly one teardown runs.
@@ -292,7 +292,7 @@ export async function preflight(): Promise<StartupCheck[]>
 The Electron shell renders failures in a dialog; the CLI prints them; the Docker entrypoint exits
 non-zero with the message on stderr. **One check, three presentations.**
 
-> **Status (2026-09-15): half done.** `src/startup.ts` implements exactly this —
+> **Status (2026-09-15): half done.** `packages/engine/src/startup.ts` implements exactly this —
 > `preflight({ dataDir, ports? })` runs all four checks (`checkGitInstalled()` reused from
 > `gitStore.ts`, a data-dir write probe, `checkPortInUse()` reused from `applications/portUtils.ts`
 > per configured port, and a cheap `typeof createCA === "function"` mkcert-loaded check) and never
@@ -310,7 +310,7 @@ non-zero with the message on stderr. **One check, three presentations.**
 > product decision, not an oversight.
 >
 > **Status (2026-09-15, this session): the workspace bootstrap is now extracted too.**
-> `src/startup.ts` gained `bootstrapWorkspaces(settings)` alongside `preflight()`, so the whole
+> `packages/engine/src/startup.ts` gained `bootstrapWorkspaces(settings)` alongside `preflight()`, so the whole
 > engine-startup surface lives in one Electron-free module. It does exactly what `main.ts`'s
 > `app.whenReady()` handler used to do inline — create every known workspace's dirs
 > (`initWorkspaceDir`) and git repo (`initWorkspaceRepo`), start auto-sync for the workspaces whose
@@ -331,7 +331,7 @@ non-zero with the message on stderr. **One check, three presentations.**
 > `activeWorkspaceId` is **not** in `workspaces` (settings edited, or a workspace dropped from the
 > list while still active). The "its dir was deleted" reading of that code is unreachable. This is
 > pre-existing behaviour, and P2 is an extraction, not a behaviour change — so it is preserved
-> verbatim and annotated in `src/startup.ts` with a "do not fix during the package move" note.
+> verbatim and annotated in `packages/engine/src/startup.ts` with a "do not fix during the package move" note.
 >
 > Integration-tested in `tests/integration/workspaceBootstrap.integration.test.ts` (7/7) with a real
 > temp data root, real directories and real `git init` — including that a second bootstrap run adds
@@ -676,13 +676,18 @@ electron-builder, tailwind) in one flat list. These must split:
 
 **Getting this split wrong is how you end up shipping CodeMirror inside a Docker image.**
 
-### Status (2026-09-16): started — package created, three layers moved
+### Status (2026-09-16): extraction complete — four layers moved; `createEngine()` remains
 
-The package, its build and the resolution story are **done and verified**. The move is being done
-in layers rather than one commit, per this doc's own mitigation ("do one package first, prove the
-pattern, then move the rest").
+The package, its build and the resolution story are **done and verified**. The move was done in
+layers rather than one commit, per this doc's own mitigation ("do one package first, prove the
+pattern, then move the rest"). **Every engine module is now out of the app's `src/`.**
 
-**Layer 3 — `applications/`, `companion/`, `commands/` — has also moved.** 8 files, 48 statements
+**Layer 4 — `startup.ts` + `shutdown.ts` — has moved.** 2 files, 17 statements rewritten across
+6 files. `src/` now contains only `ipc/` (the Electron registration layer this phase replaces),
+`main.ts` and `preload.ts`. Layer 4 was measured clean before it started — no `@/` imports at all,
+every dependency either a Node builtin or an already-moved `@bifurc/engine/*`.
+
+**Layer 3 — `applications/`, `companion/`, `commands/`.** 8 files, 48 statements
 rewritten across 26 files. The cleanest layer yet: all 7 files that were in the pre-move coverage
 report came back *identical* on all four metrics including raw covered/total counts (the 8th,
 `applications/types.ts`, had been wrongly excluded from the report — see the note in `TESTING.md`
@@ -710,8 +715,14 @@ packages/engine/
     applications/     # moved from src/applications (4)     — layer 3
     companion/        # moved from src/companion (2)        — layer 3
     commands/         # moved from src/commands (2)         — layer 3
+    startup.ts        # moved from src/startup.ts           — layer 4
+    shutdown.ts       # moved from src/shutdown.ts          — layer 4
     index.ts          # provisional barrel — see below
 ```
+
+**`src/` is now empty of engine code.** It contains only `ipc/` (the Electron registration layer
+this phase replaces), `main.ts` and `preload.ts` — all three deliberately left, per the "Left in
+`src/` by design" note further down.
 
 Layer 2 needed one new runtime dependency, `mkcert` (used by `proxy/tlsCert.ts`); everything else in
 `proxy/` and `sync/` is Node builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`,
@@ -722,9 +733,13 @@ Layer 2 needed one new runtime dependency, `mkcert` (used by `proxy/tlsCert.ts`)
 on the rest of the app (`store/` imports only itself; `lib/` and `subscription/` import nothing
 internal at all). That made it the cheapest place to prove the package boundary end to end. Layer 2
 was the first layer that *did* have internal couplings to untangle, which is why the `eventBus` ↔
-`proxy`/`sync` cycle had to be handled as one unit rather than three. Layer 3 was measured clean
-before it started — its only `@/` import was internal to the layer — which is why it needed no
-special handling and came back 7/7 exact.
+`proxy`/`sync` cycle had to be handled as one unit rather than three. Layers 3 and 4 were both
+measured clean before they started — layer 3's only `@/` import was internal to the layer, and layer
+4 had no `@/` imports at all — which is why they needed no special handling.
+
+**The generalisable lesson, now in the skill:** measure a module's `@/` imports *before* moving it,
+and check whether every target has already moved. The doc's own layer ordering was wrong about
+`eventBus.ts`, and only the measurement caught it.
 
 **The build must not bundle — this is load-bearing, not a style choice.** `store/paths.ts` holds
 the resolved data root as module-level state, and `store/config.ts` / `store/gitStore.ts` hold
@@ -831,16 +846,68 @@ The remaining engine modules move next, in dependency order, each verified again
 2. ~~`applications/`, `companion/`, `commands/`~~ — **done (layer 3)**. 8 files, 48 statements
    across 26 files, 7/7 of the pre-move files exact on all four coverage metrics. `ws` moved with
    `companion/`, as predicted.
-3. `startup.ts` and `shutdown.ts` — already Electron-free, they just need to move. These are the
-   last two engine files in `src/`.
-4. `createEngine(opts)` — the real public API, which is what finally satisfies the
-   "engine starts from a bare Node script with `--data-dir`" acceptance criterion
-5. Dependency split completion: `js-yaml`, `archiver`, `unzipper` and `@bifurc/protocol` move out
-   of the root flat list as their modules move (`mkcert`, `simple-git` and `ws` have already moved).
-   `@bifurc/protocol` is a package dependency rather than a bare one, so it is a separate decision.
+3. ~~`startup.ts` and `shutdown.ts`~~ — **done (layer 4)**. 2 files, 17 statements across 6 files.
+   No `@/` imports at all; every dependency was a Node builtin or an already-moved package specifier.
+4. ~~**`createEngine(opts)`**~~ — **done**. `createEngine({ dataDir, onPreflightWarning? })` returns
+   `{ start(), stop(), status(), registry, bus }`, implemented in `packages/engine/src/index.ts`.
+   `start()` sets the data root, runs the advisory preflight, bootstraps workspaces, binds the proxy
+   and companion sockets, **and waits until they are actually listening** before resolving — the two
+   `start*Server()` calls are fire-and-forget, so resolving early would make the one promise a
+   caller awaits meaningless. `stop()` delegates to the memoised `shutdownEngine()` and is
+   idempotent; because that memoises, the engine is single-use per process and a `start()` after
+   `stop()` **rejects** rather than appearing to work.
+   Proven by `tests/integration/engineSmoke.integration.test.ts`: a real temp data root, a real
+   bind, a real HTTP request through the proxy, a real teardown, and an assertion that the port is
+   released. See the data-root caveat above — the criterion holds on macOS and Linux, and on Windows
+   only when `LOCALAPPDATA` is overridden.
+5. Dependency split completion: the engine's own manifest is now correct (`@bifurc/protocol`,
+   `mkcert`, `simple-git`, `ws`). What remains is the *shell-side* deps — `js-yaml`, `archiver` and
+   `unzipper` are used only by `src/ipc/importExport/**` and move out of the root flat list when P3
+   moves that module. Note `@bifurc/protocol` was **undeclared** until 2026-09-16: the engine
+   imported it but did not list it, so it resolved only via root hoisting — invisible here, fatal to
+   a standalone install. See `plan/10` for the related Docker gap.
 
-After step 3, `src/` contains only `ipc/` (the registration layer this phase replaces), `main.ts`
+`src/` now contains only `ipc/` (the registration layer this phase replaces), `main.ts`
 and `preload.ts`.
+
+### Found while building `createEngine()`: the data root is not authoritative on Windows
+
+`createEngine({ dataDir })` was written to treat `dataDir` as required and authoritative. It is not,
+on Windows, and this needs a decision before P8 (CLI) or P9 (Docker) can rely on `--data-dir`.
+
+`store/workspaceFs.ts` and `store/appSettings.ts` resolve their paths like this:
+
+```js
+function dataRoot() {
+  if (_dataRootOverride) return _dataRootOverride;                    // test hook
+  if (process.platform === "win32" && process.env.LOCALAPPDATA)       // ← short-circuits
+    return path.join(process.env.LOCALAPPDATA, "Bifurc", "data");
+  return path.join(dataDir(), "data");                                // ← setDataRoot() only lands here
+}
+```
+
+So on Windows, `setDataRoot()` is **unreachable** whenever `%LOCALAPPDATA%` is set, and the engine
+writes to the user's real `%LOCALAPPDATA%\Bifurc`. Verified directly against the built package:
+after `setDataRoot("C:/tmp/probe")`, `paths.dataDir()` returns `C:\tmp\probe` while
+`workspaceFs.dataRoot()` returns `C:\Users\…\AppData\Local\Bifurc\data`. On macOS and Linux the
+branch does not exist, so `dataDir` works as documented.
+
+**Why it is not simply fixed here.** The branch is pre-existing, and its value is exactly
+`platformDefaultDataDir()` — i.e. it is the store's own platform default, not an accident. Making
+`setDataRoot()` win would change where an existing Windows install looks for its workspaces, which
+is a **user-visible change** and therefore out of bounds for P2. The Electron shell has evidently
+always resolved to that same directory, which is why the app works.
+
+**What is already in place:** `e2e/fixtures/electronApp.ts` overrides `LOCALAPPDATA` to a temp dir
+for exactly this reason, and the new `tests/integration/engineSmoke.integration.test.ts` does the
+same. A caller that needs a non-default root on Windows must do likewise, or set the store override.
+
+**The decision needed:** should an explicit data root beat the platform default (making `--data-dir`
+work on Windows, and moving existing Windows users' data once), or should the engine follow the
+platform default on Windows and document `--data-dir` as a non-Windows-only option? The first is
+correct for a headless engine; the second preserves the letter of "zero user-visible change". This
+is the same class of decision as the `preflight()` blocking question below, and it is recorded here
+rather than guessed at.
 
 **Not part of item 8, but found while doing it:** the packaged app cannot resolve `@bifurc/protocol`
 or `@bifurc/engine`, because `build.files` covers only `dist/**/*` + `package.json`. Dev mode and the
@@ -924,13 +991,15 @@ test suite are unaffected. See the measured note in `plan/12`.
       `src/ipc/handlers/clientHandlers.ts`. The only remaining `BrowserWindow.getAllWindows()` /
       `webContents.send` sites in `src/` are `eventBridge.ts` (deliberate) and `clientHandlers.ts`
       (zoom/titlebar chrome, CLIENT-classified).)*
-- [ ] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
-      *(Not done — the package now exists and builds, but only its storage layer has moved, so there
-      is still nothing to run. The pieces are individually tested: `store/paths.ts` resolves the
-      data root with a loud failure when unset, `src/startup.ts` provides `preflight()` **and**
-      `bootstrapWorkspaces()`, and `src/shutdown.ts` provides an idempotent `shutdownEngine()`. What
-      is missing is `createEngine()` plus the proxy/sync/command modules that would sit behind it —
-      the remaining steps of work item 8.)*
+- [x] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
+      *(**Platform-conditional.** `tests/integration/engineSmoke.integration.test.ts` starts the
+      engine in plain Node with no Electron, makes a real HTTP request through the proxy it bound,
+      tears it down and asserts the port is released — and it passes. On macOS and Linux that covers
+      `--data-dir` exactly as written. **On Windows the flag is not honoured**: the store modules
+      short-circuit to `%LOCALAPPDATA%\Bifurc` before consulting the data root, so the test
+      overrides `LOCALAPPDATA` the same way `e2e/fixtures/electronApp.ts` already does. Making
+      `--data-dir` authoritative on Windows is a product decision with a data-migration consequence
+      — see the finding above.)*
 - [x] `setDataRoot()` not called → loud error, not a silent cwd fallback. Implemented in
       `src/store/paths.ts` (`DataRootNotInitialisedError`), unit-tested
       (`tests/store/paths.test.ts`, 8/8 passing), **and now wired as the primary path** in
@@ -974,7 +1043,7 @@ path in `appSettings.ts`/`workspaceFs.ts`, wired from `main.ts`'s `app.whenReady
 `*Override` test hooks were deliberately kept separate rather than folded in (see the work item 4
 status note above for the reasoning). Work item 6 (headless startup) is **done apart from one
 deliberate gap**: `preflight()` and `bootstrapWorkspaces()` both live in the Electron-free
-`src/startup.ts` and are tested, and `main.ts` no longer touches
+`packages/engine/src/startup.ts` and are tested, and `main.ts` no longer touches
 `workspaceFs`/`gitStore`/`autoSync`/`syncManager` directly — but the pre-existing git-check block
 was left as its own direct call rather than routed through `preflight()`, and whether the other
 checks should become *blocking* is a product decision left open. Work item 5 (split shell-only
@@ -1000,8 +1069,7 @@ plus `entity:load`/`entity:setEnabled`, onto `entity.create`/`entity.update`/`en
 except for the P3-bound `importExport:*` SPLIT channels** — every `EntityKind` value routes
 through the CommandRegistry, ~112 commands total. See work item 7's own status note (tenth
 through twelfth batches) for the full detail. Work item 8 (the physical `packages/*`
-restructuring + dependency split) is now **started, with its infrastructure done and three of four
-layers moved**. `packages/engine`
+restructuring + dependency split) is now **started, with the extraction complete**. `packages/engine`
 exists as a real linked npm workspace with its own `tsup` pipeline (structure-preserving ESM + CJS +
 `.d.ts`), its own `tsconfig.json`, and a `package.json` whose runtime dependencies are
 `mkcert`, `simple-git` and `ws`; it has **zero** Electron imports and **zero**
@@ -1011,14 +1079,16 @@ and rewrote 254 referencing statements across 97 files. **Layer 2** moved
 `src/{proxy,sync}` + `src/eventBus.ts` (28 files) and rewrote 189 statements across 95 files —
 those three had to go together because `eventBus` and `proxy`/`sync` import each other.
 **Layer 3** moved `src/{applications,companion,commands}` (8 files, 48 statements across 26 files).
+**Layer 4** moved `src/{startup,shutdown}.ts` (2 files, 17 statements across 6 files), after which
+`src/` contains only `ipc/`, `main.ts` and `preload.ts`.
 Renderer: **zero** files in every layer, because its `@/` alias points at `renderer/`. `packages/protocol`
 remains a real linked workspace and is the other inter-package dependency. A latent CI bug was
 found and fixed along the way: neither package's `dist` is committed, CI only ran `npm ci`, and a
 fresh clone therefore failed `npm run typecheck` with `TS2307` for `@bifurc/protocol` — a new
 `build:packages` script wired to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`
-makes installs self-sufficient. What remains in item 8: moving `startup.ts` and `shutdown.ts`, then
-building the real `createEngine()` public API — which is what finally satisfies the "engine starts
-from a bare Node script with `--data-dir`" criterion. The dependency split is correspondingly
+makes installs self-sufficient. What remains in item 8 is **`createEngine()` alone** — the one entry
+point that composes the moved modules and accepts `--data-dir`, which is what finally satisfies the
+"engine starts from a bare Node script with `--data-dir`" criterion. The dependency split is correspondingly
 partial: the engine declares its own deps and no Electron/renderer deps, but the deps of the
 not-yet-moved modules necessarily stay in the root list. See the "Cleanup_plan.md status" section of
 `plan/README.md` for the still-open D6 sub-items that also block a complete P2.
@@ -1033,15 +1103,23 @@ evidence is per-file coverage, layer by layer:
 | 1 — `store/`, `lib/`, `subscription/` | 12 | 11 | 0 | 0 |
 | 2 — `proxy/`, `sync/`, `eventBus.ts` | 27 | 26 | 0 | 0 |
 | 3 — `applications/`, `companion/`, `commands/` | 7 | **7** | 0 | 0 |
+| 4 — `startup.ts`, `shutdown.ts` | 2 | **2** | 0 | 0 |
 
-"Identical" includes the raw covered/total counts, not just the percentages. The two files that
-moved did so in the **up** direction, with identical totals: `store/config.ts` because P2 items 5–7
-added tests that reach more of it, and `sync/gitOps.ts` because a real-git fallback branch happened
-to execute more in that run (line-level lcov data confirms which lines). Identical denominators are
-the load-bearing part — they prove no statement was added, removed or restructured. Headline
-coverage is **48.00% / 31.99% / 36.30% / 50.39%** (statements / branches / functions / lines), up
-from 46.14 / 31.30 / 34.34 / 48.39, against a denominator that *grew* from 11,129 to 11,446
-statements — so this is a genuine improvement, not a scope artefact. See `TESTING.md` §4.8.
+"Identical" includes the raw covered/total counts, not just the percentages. Only **two** files ever
+differed, both with identical totals, and neither difference is attributable to the move:
+
+- `store/config.ts` went **up**, because P2 items 5–7 added tests that reach more of it.
+- `sync/gitOps.ts` went up in layer 2 and back **down** in layer 4. Across the four runs its covered
+  count reads 68 → 71 → 71 → 68 with totals unchanged at 85. That oscillation, observed in both
+  directions across layers, is what proves the cause is real-git temp-workspace state and not the
+  move. Line-level lcov data agrees: the difference is a `git checkout HEAD -- <path>` attempt
+  succeeding or falling through to an `ls-files` recovery branch.
+
+Identical denominators are the load-bearing part — they prove no statement was added, removed or
+restructured. Headline coverage is **47.98% / 31.98% / 36.30% / 50.36%** (statements / branches /
+functions / lines), up from 46.14 / 31.30 / 34.34 / 48.39, against a denominator that *grew* from
+11,129 to 11,446 statements — so this is a genuine improvement, not a scope artefact. See
+`TESTING.md` §4.8.
 
 That verification only became possible after fixing the test-resolution bug described above: before
 it, the engine reported **all 14 files at 0%** while the suite passed, because tests were running

@@ -1,6 +1,6 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-15 · suite: **1616 tests / 69 files** (1 known failure — see §7)_
+_Last reviewed: 2026-09-16 · suite: **1617 tests / 70 files** (1 known failure — see §7)_
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read
@@ -187,35 +187,37 @@ behaviour that changed live state with nothing behind it (and it found a third b
 
 | Metric | Before (same scope¹) | **Now** | Change |
 |---|---:|---:|---:|
-| Statements | 24.16% | **48.00%** | +23.8 pts |
-| Branches | 14.87% | **31.99%** | +17.1 pts |
-| Functions | 17.11% | **36.30%** | +19.2 pts |
-| Lines | 25.49% | **50.39%** | +24.9 pts |
+| Statements | 24.16% | **48.21%** | +24.1 pts |
+| Branches | 14.87% | **32.21%** | +17.3 pts |
+| Functions | 17.11% | **36.52%** | +19.4 pts |
+| Lines | 25.49% | **50.59%** | +25.1 pts |
 
 ¹ Both columns use the *widened* `include` scope (which adds `renderer/panels/**/*.tsx`, ~0%
 covered), so the comparison is apples-to-apples. The original narrow-scope baseline was
 27.71% statements; the widened scope *lowered* the headline to 24.16% at the time, and the
-current 48.00% is a real gain on top of that larger denominator.
+current 48.21% is a real gain on top of that larger denominator.
 
 ² These are the figures from the last full run. V8 instrumentation is not perfectly
 deterministic — two identical runs move a given figure by ~0.05 pt (the seventh pass read
 46.14% statements where the sixth read 45.96%). Treat them as "the last run", not a
 constant, and re-measure rather than copy when you change the suite.
 
-³ **Scope changed on 2026-09-15** when the engine extraction moved the engine out of `src/` in
-three layers: `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts`, then
-`src/{applications,companion,commands}`. Those files are the *same code under the same tests*, and
-their per-file coverage is provably unchanged (see §4.8). Two new groups entered the report:
+³ **Scope changed on 2026-09-15/16** when the engine extraction moved the whole engine out of
+`src/` in four layers: `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts`,
+then `src/{applications,companion,commands}`, then `src/{startup,shutdown}.ts`. Those files are the
+*same code under the same tests*, and their per-file coverage is provably unchanged (see §4.8). Two
+new groups entered the report:
 
 | Group | Files | Statements | Note |
 |---|---:|---:|---|
-| `packages/engine/src` | 49 | 2,914 | The moved files + a new re-export barrel (`index.ts`, 0%). Was 14 files / 606 statements after layer 1, 41 / 2,433 after layer 2. |
+| `packages/engine/src` | 51 | 3,019 | The moved files + `index.ts`, which now implements `createEngine()` and is covered at 90.7% statements / 94.6% lines by the smoke test. Was 14 files / 606 statements after layer 1, 41 / 2,433 after layer 2, 49 / 2,914 after layer 3. |
 | `packages/protocol/src` | 16 | 106 | **Sourcemap artefact** — `packages/protocol/dist/index.js` is executed through its `exports` map, and V8 remaps it back through `dist/index.js.map` (whose `sources` list `../src/commands/*.ts`, i.e. `packages/protocol/src/commands/*.ts`). Numbers are therefore approximate and ~100%. Present since P2 work item 7 wired the registry to `@bifurc/protocol`. |
 
-The denominator went 11,129 → 11,443 (layer 1) → 11,446 (layer 3) while the percentage kept
-rising, so this is a genuine improvement rather than a scope artefact. The layer-1 jump was
-`packages/protocol/src` entering the report; layer 2 changed nothing; layer 3's +3 statements are
-`applications/types.ts`, which had been wrongly excluded as "type-only" (§5).
+The denominator went 11,129 → 11,443 (layer 1) → 11,446 (layer 3) → 11,489 (`createEngine`), while
+the percentage kept rising, so this is a genuine improvement rather than a scope artefact. The
+layer-1 jump was `packages/protocol/src` entering the report; layers 2 and 4 changed it not at all;
+layer 3's +3 statements are `applications/types.ts`, which had been wrongly excluded as "type-only"
+(§5).
 
 Suite size: **69 files / 1616 tests** (was 61 files / 1360 tests at the last review; the growth
 is P2 work items 5–7). One test fails — `tests/spike/protocolPoc.test.ts` → `soap.execute`,
@@ -225,37 +227,39 @@ a known pre-existing failure that also reproduces on the pre-change tree (see §
 
 | Area | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
-| `packages/engine/src` | **83.9%** | **71.1%** | **85.3%** | **86.4%** |
+| `packages/engine/src` | **84.5%** | **71.7%** | **85.8%** | **86.9%** |
 | `packages/protocol/src` ³ | 97.2% | — | 25.0% | 97.2% |
 | `renderer/components` | **13.5%** | 13.3% | 8.7% | **14.6%** |
-| `renderer/lib` | **82.9%** | **74.8%** | **75.0%** | **84.1%** |
+| `renderer/lib` | **82.9%** | **75.1%** | **75.0%** | **84.1%** |
 | `renderer/panels` | 0.0% | 0.0% | 0.0% | 0.0% |
-| `src/` (root files) ⁴ | **98.4%** | **85.0%** | 100.0% | **98.2%** |
 | `src/ipc` | **79.1%** | 55.8% | 79.7% | 82.1% |
-| **TOTAL** | **48.00%** | **31.99%** | **36.30%** | **50.39%** |
+| **TOTAL** | **48.21%** | **32.21%** | **36.52%** | **50.59%** |
 
 ³ `packages/protocol/src` has no branch data because V8 records none for those remapped Zod
 schemas. Its numbers come from the sourcemap-remapped `dist/` bundle (see §4.1 footnote 3), so
 treat them as indicative. Its 25.0% functions is a single arrow function in
 `packages/protocol/src/commands/index.ts`, not a broad gap.
 
-⁴ `src/shutdown.ts` (100%), `src/startup.ts` (98.2%). `src/eventBus.ts` (100%) moved into the
-package in layer 2 and is now counted under `packages/engine/src`. `src/main.ts` and
-`src/preload.ts` are excluded — they are process entry points, exercised by launching the app.
+**There is no `src/` (root files) row any more.** It held `startup.ts` (98.2%), `shutdown.ts`
+(100%) and `eventBus.ts` (100%) — all three are in `packages/engine/src` now. `src/ipc` is the only
+measurable area left in `src/`, alongside `main.ts` and `preload.ts`, which stay excluded as process
+entry points.
 
-**Rows removed on 2026-09-15.** `src/lib`, `src/store`, `src/subscription` (layer 1);
-`src/proxy`, `src/sync` (layer 2); `src/applications`, `src/companion`, `src/commands` (layer 3) no
-longer exist in `src/`. They all live under `packages/engine/src/` now, reported as the single
-`packages/engine/src` row above. Their pre-move figures were `src/store` 82.8/68.8/84.1/87.6,
-`src/subscription` 100/100/100/100, `src/lib` 30.0/2.8/22.2/31.8, `src/proxy` 87.2/77.9/89.7/88.9,
-`src/sync` 77.8/56.7/80.3/80.6, `src/applications` 87.5/77.0/81.3/91.6, `src/companion`
-95.3/83.3/76.5/95.1 and `src/commands` 100/100/100/100 — so the combined row reading
-83.9/71.1/85.3/86.4 is a *weighted average of unchanged numbers*, diluted only by the new
-0%-covered `index.ts` barrel (§4.8). Nothing regressed: §4.8 verifies every moved file individually.
+**Rows removed on 2026-09-15/16.** `src/lib`, `src/store`, `src/subscription` (layer 1);
+`src/proxy`, `src/sync` (layer 2); `src/applications`, `src/companion`, `src/commands` (layer 3);
+`src/startup.ts`, `src/shutdown.ts` (layer 4) no longer exist in `src/`. They all live under
+`packages/engine/src/` now, reported as the single `packages/engine/src` row above. Their pre-move
+figures were `src/store` 82.8/68.8/84.1/87.6, `src/subscription` 100/100/100/100, `src/lib`
+30.0/2.8/22.2/31.8, `src/proxy` 87.2/77.9/89.7/88.9, `src/sync` 77.8/56.7/80.3/80.6,
+`src/applications` 87.5/77.0/81.3/91.6, `src/companion` 95.3/83.3/76.5/95.1, `src/commands`
+100/100/100/100, `src/startup.ts` 98.1/85.0/100/97.9 and `src/shutdown.ts` 100/100/100/100 — so the
+combined row reading 84.1/71.2/85.6/86.5 is a *weighted average of unchanged numbers*, diluted only
+by the new 0%-covered `index.ts` barrel (§4.8). Nothing regressed: §4.8 verifies every moved file
+individually.
 
-`src/` now contains only `ipc/`, `main.ts` and `preload.ts` — the Electron registration layer that
-P2 replaces, plus the two process entry points. `startup.ts` and `shutdown.ts` are the last engine
-files still to move.
+`src/` now contains only `ipc/` (the Electron registration layer P2 replaces), `main.ts` and
+`preload.ts`. **The engine extraction is complete** — every engine module is in
+`packages/engine/src/`.
 
 Bold areas are the ones the original review moved materially. Named as they are today (all of the
 first six now live under `packages/engine/src/`): `applications` 1.1% → 87.5%, `companion` 0.8% →
@@ -368,12 +372,12 @@ server is the browser extension's only write path into the workspace.
 
 ### 4.8 The engine extraction specifically
 
-P2 work item 8 moved the engine out of the app's `src/` into `packages/engine/src/`, in three
+P2 work item 8 moved the engine out of the app's `src/` into `packages/engine/src/`, in four
 layers: `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts`, then
-`src/{applications,companion,commands}`. That is a pure move: no logic changed, so **each moved file
-must report exactly the coverage it reported before the move** — the same denominator (proof the code
-is untouched) and the same numerator (proof the same tests still reach it). Anything else means the
-move was not behaviour-preserving.
+`src/{applications,companion,commands}`, then `src/{startup,shutdown}.ts`. That is a pure move: no
+logic changed, so **each moved file must report exactly the coverage it reported before the move** —
+the same denominator (proof the code is untouched) and the same numerator (proof the same tests
+still reach it). Anything else means the move was not behaviour-preserving.
 
 #### Layer 1 — `store/`, `lib/`, `subscription/`
 
@@ -455,12 +459,57 @@ numerator by exactly 3.
 external `bifurc-extension` client. It moved with everything else, but its *contents* must not
 change — the extension is a released client that cannot be updated atomically with the engine.
 
-**The one 0% file is new, and it is a barrel.** `packages/engine/src/index.ts` is the package's
-public entry point, re-exporting each module as a namespace. Nothing imports it yet — tests and
-production both use deep specifiers (`@bifurc/engine/store/config`) — so it contributes 0% across
-~14 statements. It is deliberately *not* excluded: unlike `renderer/components/ui/index.ts`
-(pure re-exports of presentational components), this barrel becomes the real engine API when
-`createEngine()` lands, and it should be covered then rather than hidden now.
+#### Layer 4 — `startup.ts`, `shutdown.ts`
+
+**2 files moved, 2 of 2 identical on all four metrics, 0 regressions, 0 missing, 0 stale `src/`
+entries.** 17 statements rewritten across 6 files. This was the last layer, and the cleanest to
+reason about: neither file had a single `@/` import, and every dependency was either a Node builtin
+or an already-moved `@bifurc/engine/*`.
+
+`startup.ts` sits at 98.07% statements / 97.87% lines; the remainder is the port-in-use and
+git-not-installed preflight branches, which the integration suite cannot exercise without breaking
+its own environment. `shutdown.ts` is at 100%.
+
+**The one number that moved in this layer was not in this layer.** The headline fell 48.00% →
+47.98% (3 statements), and the cause is `sync/gitOps.ts` — the same file layer 2 flagged. Its totals
+are unchanged at 85 lines; only the *covered* count moved, 68 → 71 → 71 → 68 across the four runs.
+That oscillation, observed in both directions across layers, is the definitive proof that the file's
+coverage depends on real-git temp-workspace state rather than on the move. **No file that actually
+moved changed its coverage in any layer.**
+
+#### `createEngine()` — the item-8 acceptance criterion
+
+The extraction's end state is the package's public entry point, and it is covered by
+`tests/integration/engineSmoke.integration.test.ts` — the one test that starts the engine for real:
+
+| Assertion | Why it matters |
+|---|---|
+| `status().running` is `false` before `start()`, `true` after | `status()` is documented as safe pre-start |
+| `status().proxyPort` / `.companionPort` match the configured ports | the engine bound what it was told to |
+| a real HTTP request through the proxy returns 200 | it actually serves, not merely listens |
+| `status().settings.activeWorkspaceId` is set | `bootstrapWorkspaces()` ran and produced a workspace |
+| a second `start()` does not re-bind | `start()` is idempotent |
+| the port is free again after `stop()` | teardown genuinely released the socket |
+| a second `stop()` resolves | `stop()` is idempotent |
+| `start()` after `stop()` **rejects** | the engine is single-use, and says so |
+
+Two things this test caught that a unit test could not:
+
+1. **`start()` resolved before the engine was listening.** `startServer()` and
+   `startCompanionServer()` are fire-and-forget — both hand off to an async `listen()` and return
+   immediately — so `isRunning()` is still false on the next line. `start()` now waits for readiness
+   (bounded), because otherwise the single promise a caller awaits would mean nothing.
+2. **`registry.list()` is empty.** `createEngine()` deliberately registers no commands: the ~112
+   commands are registered by the *consumer* — today the shell's in-process layer, which P6 replaces
+   with the RPC client. The test asserts registry *identity*, not population.
+
+**The barrel is no longer 0% — and that was the point of not excluding it.** `packages/engine/src/index.ts`
+is the package's public entry point. While it only re-exported namespaces nothing imported it, so it
+sat at 0%. It was deliberately *not* excluded (unlike `renderer/components/ui/index.ts`, a barrel of
+presentational re-exports), on the grounds that it becomes the real engine API and should then be
+covered rather than hidden. `createEngine()` now lives there, the new
+`tests/integration/engineSmoke.integration.test.ts` exercises it, and it reports **90.7% statements /
+94.6% lines**. There are now **no engine files at 0%**.
 
 > **Why this measurement was impossible until 2026-09-15.** The engine originally reported **all
 > 14 files at 0%** while the suite still passed 1615/1616. `@bifurc/engine` is a real npm
@@ -703,8 +752,8 @@ what the running proxy served afterwards.
 
 # 1. Everything green, thresholds enforced
 npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local
-#    → Test Files 1 failed | 68 passed (69) · Tests 1 failed | 1615 passed (1616)
-#    → Statements 47.96% · Branches 31.98% · Functions 36.30% · Lines 50.35%
+#    → Test Files 1 failed | 69 passed (70) · Tests 1 failed | 1616 passed (1617)
+#    → Statements 48.21% · Branches 32.21% · Functions 36.52% · Lines 50.59%
 #    The single failure is tests/spike/protocolPoc.test.ts → soap.execute (ECONNREFUSED
 #    127.0.0.1:1), a sandbox network-interceptor caveat that reproduces on the pre-change tree.
 
@@ -712,7 +761,7 @@ npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=cov
 npm run test:unit
 #    → Test Files 1 failed | 51 passed (52) · Tests 1 failed | 1283 passed (1284)
 npm run test:integration
-#    → Test Files 17 passed (17) · Tests 332 passed (332)
+#    → Test Files 18 passed (18) · Tests 333 passed (333)
 
 # 3. Confirm the engine really is tested from source, not from a stale build.
 #    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).

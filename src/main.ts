@@ -9,8 +9,8 @@ import { startCompanionServer } from "@bifurc/engine/companion/companionServer";
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@bifurc/engine/eventBus";
 import { setDataRoot, dataDir } from "@bifurc/engine/store/paths";
-import { preflight, bootstrapWorkspaces } from "@/startup";
-import { shutdownEngine } from "@/shutdown";
+import { preflight, bootstrapWorkspaces } from "@bifurc/engine/startup";
+import { shutdownEngine } from "@bifurc/engine/shutdown";
 
 
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
@@ -268,7 +268,7 @@ if (!gotTheLock) {
     let settings = loadSettings();
 
     // Non-fatal headless-startup diagnostics (data dir writable, ports free, mkcert usable) —
-    // see src/startup.ts (P2 work item 6). Logged only: the shell has always tolerated port
+    // see packages/engine/src/startup.ts (P2 work item 6). Logged only: the shell has always tolerated port
     // conflicts (the server reports its own bind failure via bus.emit("server.error", ...)), so
     // this adds visibility without changing existing behaviour.
     preflight({
@@ -286,7 +286,7 @@ if (!gotTheLock) {
 
     // P2 work item 6: the workspace bootstrap (create each workspace's dirs + git repo, start
     // auto-sync where configured, then repair or create the active workspace) now lives in the
-    // engine — see `bootstrapWorkspaces()` in `src/startup.ts` — so the CLI and Docker entrypoints
+    // engine — see `bootstrapWorkspaces()` in `packages/engine/src/startup.ts` — so the CLI and Docker entrypoints
     // run the identical sequence. It returns the effective settings rather than mutating ours.
     settings = (await bootstrapWorkspaces(settings)).settings;
 
@@ -309,7 +309,7 @@ if (!gotTheLock) {
   app.on("before-quit", () => {
     quitting = true;
     // Idempotent by design (P2 work item 3): the shell quitting, a supervisor restarting a crashed
-    // engine and a SIGTERM handler may all ask for this, in any order. See `src/shutdown.ts`.
+    // engine and a SIGTERM handler may all ask for this, in any order. See `packages/engine/src/shutdown.ts`.
     void shutdownEngine();
   });
 
