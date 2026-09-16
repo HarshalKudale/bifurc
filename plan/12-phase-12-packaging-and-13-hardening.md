@@ -48,7 +48,39 @@ Release flow (`.github/workflows/release.yml`): `prepare` → `build-windows` (w
 | Engine binary in `extraResources` | As above |
 | Dev-vs-packaged path resolution | **Reuse `iconPath()`** (`main.ts:36–39`) — it already handles `app.isPackaged` with a dev fallback. Do not add a second convention. |
 | `asar` | The engine binary must be **outside** the asar (`extraResources` is). A binary inside an asar cannot be executed. |
-| Workspace restructure | `files` / `directories` may need updating now that deps live in `packages/*`. |
+| Workspace restructure | `files` / `directories` may need updating now that deps live in `packages/*`. **See the measured note below — this row is now concrete, and the in-process case is already broken.** |
+
+### Measured 2026-09-15 — the **in-process** case has no packaging support today
+
+The section above describes the P6 end state, where the engine is a **separate process** launched from
+`extraResources`. Until then the engine is an ordinary npm package that `dist/main.js` `require()`s
+**in-process** — and that path has no packaging support at all right now.
+
+Evidence, from the last real build (`release/win-unpacked/resources/app.asar`, built 2026-09-10) plus
+the current `dist/`:
+
+| Fact | Value |
+|---|---|
+| `build.files` | `["dist/**/*", "package.json"]` |
+| asar top level | `node_modules/`, `dist/`, `package.json` — electron-builder *does* add production deps |
+| `node_modules/@bifurc` **in the asar** | **absent** |
+| app files requiring `@bifurc/protocol` | `dist/commands/registry.js` |
+| app files requiring `@bifurc/engine` | 20+, including `dist/main.js` |
+
+`@bifurc/protocol` (since P2 item 7) and `@bifurc/engine` (since item 8) are declared as root
+dependencies, but they resolve through **workspace symlinks** into `packages/`. electron-builder does
+not dereference those into the asar, so a packaged build has no way to resolve either specifier.
+
+**Stated precisely:** the 2026-09-10 asar predates both dependencies, so it cannot demonstrate the
+failure directly — it confirms only that nothing outside `dist/`, `package.json` and production
+`node_modules` is copied. Confirming the failure end-to-end needs one `electron-builder --dir` run
+against the current tree.
+
+This is **not** a P2 blocker — dev mode and the whole test suite resolve fine through the symlink, and
+P6 replaces the mechanism anyway. But it must not be discovered at a release build. When it lands,
+two options: add `packages/{engine,protocol}/dist/**/*` to `files` **and** make the bare specifier
+resolvable, or have `tsc-alias` rewrite `@bifurc/*` to a relative path into a vendored directory.
+The CI assertion at the end of this section should be extended to cover whichever is chosen.
 
 ### There is a precedent for this exact failure
 

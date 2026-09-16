@@ -2,7 +2,7 @@ import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import type { ConfigGetParams, EnvSetActiveParams, WorkspaceSetActiveParams, EntityLoadParams, EntitySetEnabledParams } from "@bifurc/protocol";
-import { executeIpcScript, IpcScriptOpts } from "@/proxy/scriptExecutor";
+import { executeIpcScript, IpcScriptOpts } from "@bifurc/engine/proxy/scriptExecutor";
 import {
   loadConfig, saveConfig, loadEntity, generateId, AppConfig,
   Environment, Workspace,
@@ -11,17 +11,17 @@ import {
   initWorkspaceDir, wsDir as workspaceDir, readEnabledSet
 } from "@bifurc/engine/store/workspaceFs";
 import { initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
-import { discoverServices } from "@/proxy/service-discovery";
+import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
 import {
   startServer, stopServer, isRunning, getPort, getServerError,
   reloadConfig, replayRequest,
-} from "@/proxy/server";
-import { bus, emitEntityStatus } from "@/eventBus";
+} from "@bifurc/engine/proxy/server";
+import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
 import { restartCompanionServer } from "@/companion/companionServer";
 import { generateRandomWorkspaceName } from "@bifurc/engine/lib/randomNames";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
-import { invalidateCache } from "@/sync/statusTracker";
+import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
 import { commandRegistry } from "@/commands/registry";
 import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";

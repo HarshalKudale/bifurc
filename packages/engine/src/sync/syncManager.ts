@@ -1,7 +1,7 @@
-import { getGit, initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
-import { wsDir } from "@bifurc/engine/store/workspaceFs";
-import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
-import { SyncConfig, SyncMeta, SyncState, SyncStatus } from "@/sync/types";
+import { getGit, initWorkspaceRepo } from "../store/gitStore";
+import { wsDir } from "../store/workspaceFs";
+import { loadSettings, saveSettings } from "../store/appSettings";
+import { SyncConfig, SyncMeta, SyncState, SyncStatus } from "./types";
 import simpleGit, { SimpleGitProgressEvent } from "simple-git";
 import * as fs from "fs";
 import * as path from "path";

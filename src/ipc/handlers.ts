@@ -12,8 +12,8 @@ import { registerCrudHandlers } from "@/ipc/handlers/crudHandlers";
 import { registerRunnerHandlers } from "@/ipc/handlers/runnerHandlers";
 import { registerCoreHandlers } from "@/ipc/handlers/coreHandlers";
 
-import { onSyncStatusChange } from "@/sync/syncManager";
-import { bus } from "@/eventBus";
+import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
+import { bus } from "@bifurc/engine/eventBus";
 import { wireEventBridge } from "@/ipc/eventBridge";
 
 export function registerIpcHandlers(): void {

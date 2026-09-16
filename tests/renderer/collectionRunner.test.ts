@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runCollection, type RunnerRequestResult } from "@/lib/collectionRunner";
 import { runTestScript } from "@/lib/testRunner";
 import { generateHtmlReport, saveRunnerReport, getRunHistory } from "@/lib/runnerReport";
-import { executeIpcScript } from "@/proxy/scriptExecutor";
+import { executeIpcScript } from "@bifurc/engine/proxy/scriptExecutor";
 import type { Environment, SavedRequest } from "@/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

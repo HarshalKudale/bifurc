@@ -164,7 +164,7 @@ export default defineConfig({
         // Type-only modules.
         "**/*.d.ts",
         "packages/engine/src/store/types.ts",
-        "src/sync/types.ts",
+        "packages/engine/src/sync/types.ts",
         "src/applications/types.ts",
         "src/ipc/importExport/types.ts",
         "renderer/components/modals/import-export/types.ts",

@@ -27,9 +27,9 @@ import { checkPortInUse } from "@/applications/portUtils";
 import { saveSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
 import { initWorkspaceDir, wsDir } from "@bifurc/engine/store/workspaceFs";
 import { generateId } from "@bifurc/engine/store/config";
-import { getSyncConfig } from "@/sync/syncManager";
-import { setAutoSyncReloadFn, startAutoSync } from "@/sync/autoSync";
-import { reloadConfig } from "@/proxy/server";
+import { getSyncConfig } from "@bifurc/engine/sync/syncManager";
+import { setAutoSyncReloadFn, startAutoSync } from "@bifurc/engine/sync/autoSync";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
 
 export type StartupCheckCode =
   | "git-missing"

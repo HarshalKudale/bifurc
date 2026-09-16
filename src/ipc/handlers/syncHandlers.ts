@@ -10,16 +10,16 @@ import type {
 import {
   setRemote, disconnect, syncPush, syncPull, getSyncState, setAutoSync,
   getSyncConfig, getRemoteHead,
-} from "@/sync/syncManager";
-import { startAutoSync, stopAutoSync, updateLastKnownHead } from "@/sync/autoSync";
-import { getFileDiff, discardChanges, syncChanges, getFileHistory } from "@/sync/gitOps";
-import { getWorkspaceSyncStatus, invalidateCache } from "@/sync/statusTracker";
+} from "@bifurc/engine/sync/syncManager";
+import { startAutoSync, stopAutoSync, updateLastKnownHead } from "@bifurc/engine/sync/autoSync";
+import { getFileDiff, discardChanges, syncChanges, getFileHistory } from "@bifurc/engine/sync/gitOps";
+import { getWorkspaceSyncStatus, invalidateCache } from "@bifurc/engine/sync/statusTracker";
 import { loadConfig, saveConfig } from "@bifurc/engine/store/config";
-import { reloadConfig } from "@/proxy/server";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
 import {
   queryLog, getEntityAtCommit, getCommitChangedFiles, QueryLogOptions, AuditEntity,
 } from "@bifurc/engine/store/gitStore";
-import { bus, emitEntityStatus } from "@/eventBus";
+import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
 import { commandRegistry } from "@/commands/registry";
 
 // P2 work item 7 — these are the second batch of commands wired through the CommandRegistry,

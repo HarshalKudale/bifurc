@@ -6,7 +6,7 @@ import {
   ScriptResponse,
 } from "@/lib/scriptRunner";
 import type { Environment, SavedRequest } from "@/types";
-import { executeIpcScript } from "@/proxy/scriptExecutor";
+import { executeIpcScript } from "@bifurc/engine/proxy/scriptExecutor";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

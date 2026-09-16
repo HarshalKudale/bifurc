@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as http from "http";
-import { buildResponseHeaders, parseRawHeaders } from "@/proxy/responseUtils";
+import { buildResponseHeaders, parseRawHeaders } from "@bifurc/engine/proxy/responseUtils";
 
 /**
  * These two helpers are the only place where upstream headers are turned into

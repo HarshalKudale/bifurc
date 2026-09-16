@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { workspaceCfg, activeEnv, loadEnabledSets, mkId } from "@/proxy/serverUtils";
+import { workspaceCfg, activeEnv, loadEnabledSets, mkId } from "@bifurc/engine/proxy/serverUtils";
 import type { AppConfig } from "@bifurc/engine/store/config";
 import type { Environment, LocalMapping, MockRule, ProxyRule } from "@bifurc/engine/store/types";
 import { createWorkspace, type WorkspaceFixture } from "../integration/proxyHarness";

@@ -6,7 +6,7 @@ import {
 } from "@bifurc/engine/store/config";
 import { wsDir, initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
 import { initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
-import { reloadConfig } from "@/proxy/server";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 

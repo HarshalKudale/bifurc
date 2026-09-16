@@ -29,7 +29,7 @@ vi.mock("@bifurc/engine/subscription/entityCount", () => ({
 // mocked above, and its API is `gateCreate`/`gateEnable` — not `canCreate`/`canEnable`). It was
 // left over from a pre-history refactor and removed during P2 work item 8.
 
-vi.mock("../../src/proxy/server", () => ({
+vi.mock("@bifurc/engine/proxy/server", () => ({
   startServer: vi.fn(),
   stopServer: vi.fn(),
   isRunning: vi.fn(() => true),
@@ -39,11 +39,11 @@ vi.mock("../../src/proxy/server", () => ({
   replayRequest: vi.fn(),
 }));
 
-vi.mock("../../src/proxy/logEmitter", () => ({
+vi.mock("@bifurc/engine/proxy/logEmitter", () => ({
   logEmitter: mockLogEmitter,
 }));
 
-vi.mock("../../src/proxy/service-discovery", () => ({
+vi.mock("@bifurc/engine/proxy/service-discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 
@@ -169,8 +169,8 @@ vi.mock("@bifurc/engine/store/config", () => ({
 
 import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/store/config";
 import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
-import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@/proxy/server";
-import { discoverServices } from "@/proxy/service-discovery";
+import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@bifurc/engine/proxy/server";
+import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import { commandRegistry } from "@/commands/registry";
@@ -277,7 +277,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("emits settings.changed on the bus after saving (P2: tray update is the shell's job now)", async () => {
-      const { bus } = await import("@/eventBus");
+      const { bus } = await import("@bifurc/engine/eventBus");
       const listener = vi.fn();
       bus.onTyped("settings.changed", listener);
       const incoming: AppConfig = { ...makeDefaultConfig() };

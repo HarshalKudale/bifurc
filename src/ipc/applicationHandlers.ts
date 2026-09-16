@@ -19,7 +19,7 @@ import { generateResolvedCommand } from "@/applications/commandGenerator";
 import { checkPortInUse, killProcessOnPort } from "@/applications/portUtils";
 import type { ApplicationConfig } from "@/applications/types";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 function generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

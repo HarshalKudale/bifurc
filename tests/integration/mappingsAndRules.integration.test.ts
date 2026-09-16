@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { logEmitter } from "@/proxy/server";
+import { logEmitter } from "@bifurc/engine/proxy/server";
 import {
   createWorkspace,
   startProxy,

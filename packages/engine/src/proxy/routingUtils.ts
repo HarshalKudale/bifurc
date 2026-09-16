@@ -1,11 +1,11 @@
 import * as net from "net";
-import { AppConfig, Environment } from "@bifurc/engine/store/config";
-import { RequestLogEntry, emitLog } from "@/proxy/logEmitter";
-import { sendHtml } from "@/proxy/pages";
-import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "@/proxy/mockHandler";
-import { matchGraphQLMock, matchSoapMock, serveProtocolMock, GraphQLMockDef, SoapMockDef } from "@/proxy/protocolMockHandler";
-import { matchProxyRule, proxyWithScripts, proxyToUpstream, fetchUpstreamResponse } from "@/proxy/proxyHandler";
-import { replayRequest } from "@/proxy/server";
+import { AppConfig, Environment } from "../store/config";
+import { RequestLogEntry, emitLog } from "./logEmitter";
+import { sendHtml } from "./pages";
+import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "./mockHandler";
+import { matchGraphQLMock, matchSoapMock, serveProtocolMock, GraphQLMockDef, SoapMockDef } from "./protocolMockHandler";
+import { matchProxyRule, proxyWithScripts, proxyToUpstream, fetchUpstreamResponse } from "./proxyHandler";
+import { replayRequest } from "./server";
 
 export function handleProxyRouting(
   socket: net.Socket,

@@ -4,12 +4,12 @@ vi.mock("@bifurc/engine/lib/randomizer", () => ({
     resolveRandomizers: vi.fn((text: string) => text),
 }));
 
-vi.mock("@/proxy/mockHandler", async (importOriginal) => {
-    const orig = await importOriginal<typeof import("@/proxy/mockHandler")>();
+vi.mock("@bifurc/engine/proxy/mockHandler", async (importOriginal) => {
+    const orig = await importOriginal<typeof import("@bifurc/engine/proxy/mockHandler")>();
     return { ...orig };
 });
 
-import { matchGraphQLMock, matchSoapMock, serveProtocolMock } from "@/proxy/protocolMockHandler";
+import { matchGraphQLMock, matchSoapMock, serveProtocolMock } from "@bifurc/engine/proxy/protocolMockHandler";
 
 const createSocket = () => ({ writable: true, write: vi.fn(), end: vi.fn() } as any);
 

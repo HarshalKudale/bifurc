@@ -14,8 +14,8 @@
  * "refetch everything", so that is what it gets, byte-identical to before this file existed.
  */
 import { BrowserWindow } from "electron";
-import { bus } from "@/eventBus";
-import { logEmitter } from "@/proxy/logEmitter";
+import { bus } from "@bifurc/engine/eventBus";
+import { logEmitter } from "@bifurc/engine/proxy/logEmitter";
 
 function broadcast(channel: string, payload?: unknown): void {
   for (const w of BrowserWindow.getAllWindows()) {

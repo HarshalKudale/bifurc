@@ -84,14 +84,14 @@ describe("syncManager", () => {
 
   it("setRemote: connects empty workspace to empty remote", async () => {
     const bare = await makeBareRemote();
-    const { setRemote } = await import("../../src/sync/syncManager");
+    const { setRemote } = await import("@bifurc/engine/sync/syncManager");
     const result = await setRemote(WS_ID, bare, "main");
     expect(result.ok).toBe(true);
   }, 30_000);
 
   it("setRemote: saves syncConfig to appSettings", async () => {
     const bare = await makeBareRemote();
-    const { setRemote, getSyncConfig } = await import("../../src/sync/syncManager");
+    const { setRemote, getSyncConfig } = await import("@bifurc/engine/sync/syncManager");
     await setRemote(WS_ID, bare, "main");
     const cfg = getSyncConfig(WS_ID);
     expect(cfg?.remote).toBe(bare);
@@ -101,7 +101,7 @@ describe("syncManager", () => {
 
   it("setRemote: clones non-empty remote into empty workspace", async () => {
     const nonEmptyRemote = await makeNonEmptyRemote();
-    const { setRemote, getSyncConfig } = await import("../../src/sync/syncManager");
+    const { setRemote, getSyncConfig } = await import("@bifurc/engine/sync/syncManager");
 
     const result = await setRemote(WS_ID, nonEmptyRemote, "main");
     expect(result.ok).toBe(true);
@@ -120,7 +120,7 @@ describe("syncManager", () => {
 
   it("setRemote: clone adopts remote workspace id+name in app.json", async () => {
     const nonEmptyRemote = await makeNonEmptyRemote(); // remote has id="other", name="Other"
-    const { setRemote } = await import("../../src/sync/syncManager");
+    const { setRemote } = await import("@bifurc/engine/sync/syncManager");
 
     const result = await setRemote(WS_ID, nonEmptyRemote, "main");
     expect(result.ok).toBe(true);
@@ -150,7 +150,7 @@ describe("syncManager", () => {
       fs.writeFileSync(path.join(dir, kind, "index.json"), JSON.stringify({ folders: [], order: [] }), "utf-8");
     }
 
-    const { setRemote } = await import("../../src/sync/syncManager");
+    const { setRemote } = await import("@bifurc/engine/sync/syncManager");
     const result = await setRemote(WS_ID, nonEmptyRemote, "main");
 
     // Should clone (not fail with "Remote is not empty")
@@ -170,7 +170,7 @@ describe("syncManager", () => {
     await getGit(WS_ID).add(".");
     await getGit(WS_ID).commit("add mapping");
 
-    const { setRemote } = await import("../../src/sync/syncManager");
+    const { setRemote } = await import("@bifurc/engine/sync/syncManager");
     const result = await setRemote(WS_ID, nonEmptyRemote, "main");
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/not empty/i);
@@ -178,7 +178,7 @@ describe("syncManager", () => {
 
   it("disconnect: removes syncConfig and remote", async () => {
     const bare = await makeBareRemote();
-    const { setRemote, disconnect, getSyncConfig } = await import("../../src/sync/syncManager");
+    const { setRemote, disconnect, getSyncConfig } = await import("@bifurc/engine/sync/syncManager");
     await setRemote(WS_ID, bare, "main");
     await disconnect(WS_ID);
     const cfg = getSyncConfig(WS_ID);
@@ -186,14 +186,14 @@ describe("syncManager", () => {
   }, 30_000);
 
   it("syncPush: returns error when no remote configured", async () => {
-    const { syncPush } = await import("../../src/sync/syncManager");
+    const { syncPush } = await import("@bifurc/engine/sync/syncManager");
     const result = await syncPush(WS_ID);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/no remote/i);
   });
 
   it("syncPull: returns error when no remote configured", async () => {
-    const { syncPull } = await import("../../src/sync/syncManager");
+    const { syncPull } = await import("@bifurc/engine/sync/syncManager");
     const result = await syncPull(WS_ID);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/no remote/i);
@@ -201,7 +201,7 @@ describe("syncManager", () => {
 
   it("syncPush: succeeds after connecting to empty remote", async () => {
     const bare = await makeBareRemote();
-    const { setRemote, syncPush } = await import("../../src/sync/syncManager");
+    const { setRemote, syncPush } = await import("@bifurc/engine/sync/syncManager");
     await setRemote(WS_ID, bare, "main");
     const result = await syncPush(WS_ID);
     expect(result.ok).toBe(true);
@@ -209,7 +209,7 @@ describe("syncManager", () => {
 
   it("syncPull: reports updated=false when already up to date", async () => {
     const bare = await makeBareRemote();
-    const { setRemote, syncPull, syncPush } = await import("../../src/sync/syncManager");
+    const { setRemote, syncPull, syncPush } = await import("@bifurc/engine/sync/syncManager");
     await setRemote(WS_ID, bare, "main");
     await syncPush(WS_ID);
     const result = await syncPull(WS_ID);
@@ -219,7 +219,7 @@ describe("syncManager", () => {
 
   it("setAutoSync: updates autoSync flag in syncConfig", async () => {
     const bare = await makeBareRemote();
-    const { setRemote, setAutoSync, getSyncConfig } = await import("../../src/sync/syncManager");
+    const { setRemote, setAutoSync, getSyncConfig } = await import("@bifurc/engine/sync/syncManager");
     await setRemote(WS_ID, bare, "main");
     await setAutoSync(WS_ID, true);
     const cfg = getSyncConfig(WS_ID);
@@ -227,7 +227,7 @@ describe("syncManager", () => {
   }, 30_000);
 
   it("getSyncState: returns idle state initially", async () => {
-    const { getSyncState } = await import("../../src/sync/syncManager");
+    const { getSyncState } = await import("@bifurc/engine/sync/syncManager");
     const state = getSyncState(WS_ID);
     expect(state.status).toBe("idle");
     expect(state.error).toBeNull();

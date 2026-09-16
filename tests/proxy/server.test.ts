@@ -62,7 +62,7 @@ import {
   reloadConfig,
   replayRequest,
   logEmitter,
-} from "@/proxy/server";
+} from "@bifurc/engine/proxy/server";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ function makeMockHttpResponse(
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("src/proxy/server.ts", () => {
+describe("@bifurc/engine/proxy/server", () => {
   let mockSrv: ReturnType<typeof makeMockServer>;
 
   beforeEach(() => {

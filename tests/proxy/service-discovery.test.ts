@@ -5,7 +5,7 @@ vi.mock("child_process", () => ({
   execSync: vi.fn(),
 }));
 
-import { discoverServices } from "@/proxy/service-discovery";
+import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ function psProcessesJson(procs: Array<{ Id: number; Name: string }>): string {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("src/proxy/service-discovery.ts", () => {
+describe("@bifurc/engine/proxy/service-discovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

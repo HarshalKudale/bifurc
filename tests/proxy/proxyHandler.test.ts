@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { matchProxyRule } from "@/proxy/proxyHandler";
+import { matchProxyRule } from "@bifurc/engine/proxy/proxyHandler";
 import type { LocalMapping, ProxyRule } from "@bifurc/engine/store/types";
 
 function mapping(overrides: Partial<LocalMapping> = {}): LocalMapping {

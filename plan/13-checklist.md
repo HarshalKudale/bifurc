@@ -179,8 +179,13 @@ optional and blocks nothing.
 - [x] Replace `registerIpcHandlers()` with the `CommandRegistry` — `src/commands/registry.ts`,
       **~112 commands** across 13 files, covering every `EntityKind` value. Only the P3-bound
       `importExport:*` SPLIT channels remain outside it.
-- [x] **`git mv` the moved modules (preserve blame)** — the bottom layer moved:
-      `src/store/` (11 files), `src/lib/` (2), `src/subscription/` (1) → `packages/engine/src/`.
+- [x] **`git mv` the moved modules (preserve blame)** — two layers moved.
+      **Layer 1** (bottom of the graph): `src/store/` (11 files), `src/lib/` (2),
+      `src/subscription/` (1) → `packages/engine/src/`.
+      **Layer 2**: `src/proxy/` (19 files), `src/sync/` (8), `src/eventBus.ts` (1) → 28 files.
+      These three had to move **together**: `eventBus.ts` imports `@/proxy/logEmitter`,
+      `@/proxy/webhookServer` and `@/sync/statusTracker`, while `proxy/**` imports `@/eventBus`.
+      Moving any one alone would have left the engine importing *out* of its own package.
       Done with `git mv`, so blame survives.
 - [x] **`tsup` build for `packages/engine`** — `packages/engine/tsup.config.ts`. Multi-entry with
       the directory structure preserved (`dist/store/config.js`), ESM + CJS + `.d.ts`, mirroring
@@ -196,9 +201,15 @@ optional and blocks nothing.
       via `resolve.alias` pointing at the engine **source** (so tests exercise real code and
       coverage can instrument it), and Node at runtime via the package's `exports` map — note
       `tsc-alias` deliberately leaves `@bifurc/engine/*` bare rather than rewriting it to a
-      relative path, exactly as it already does for `@bifurc/protocol`. **254 statements across
-      97 files** rewritten (src 69 files, tests 37 files, renderer **0** — the renderer's `@/`
-      alias points at `renderer/`, so it never referenced the moved layer).
+      relative path, exactly as it already does for `@bifurc/protocol`. **Layer 1: 254 statements
+      across 97 files** rewritten (src 69 files, tests 37 files, renderer **0** — the renderer's `@/`
+      alias points at `renderer/`, so it never referenced the moved layer). **Layer 2: 189
+      statements across 95 files** (177 import-shaped, plus 12 `vi.mock()` specifiers that an
+      import-shaped regex misses entirely). Two layer-2-specific traps, both silent:
+      engine-internal imports must be **relative** (23 `@bifurc/engine/store/*` self-imports would
+      otherwise resolve through the `exports` map to `dist/` at runtime and load a *second copy* of
+      module state), and `vi.mock("@/sync/x")` is a plain call, not a `from` — a stale mock
+      specifier silently stops being hermetic because the real module loads instead.
       **Measured, not assumed:** it must be a `resolve.alias` *and* it must be redeclared inside
       every `test.projects` entry. A `resolveId` plugin never fires (the package is externalized
       first), and root-level `resolve.alias` — like root-level `plugins` — is not inherited by
@@ -211,22 +222,31 @@ optional and blocks nothing.
       and wired it to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`, so
       installs are now self-sufficient for both packages.
 - [ ] **Split the dependencies** — **partially**: `packages/engine` declares its own deps
-      (`simple-git`) and its own build devDeps (`tsup`, `typescript`, `@types/node`), and has
-      **no** Electron or renderer dependency. The rest of the engine's deps (`ws`, `js-yaml`,
-      `mkcert`, `archiver`, `unzipper`, `@bifurc/protocol`) are still in the root flat list,
-      because the modules that use them have not moved yet — removing them now would break the
-      shell. They move with their modules in the remaining steps.
+      (`mkcert`, `simple-git`) and its own build devDeps (`tsup`, `typescript`, `@types/node`), and
+      has **no** Electron or renderer dependency. Layer 2 needed exactly one new dependency,
+      `mkcert` (used by `proxy/tlsCert.ts`) — everything else in `proxy/` and `sync/` is Node
+      builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`, `zlib`, `fs`, `path`, `os`,
+      `events`). The remaining engine deps (`ws`, `js-yaml`, `archiver`, `unzipper`,
+      `@bifurc/protocol`) are still in the root flat list, because the modules that use them have
+      not moved yet — removing them now would break the shell. They move with their modules.
+      Note `ws` is **not** needed yet: it belongs to `companion/`, which has not moved.
 - [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` and
       `packages/engine` are both real linked npm workspaces built with their own `tsup` pipelines.
       `apps/*` does not exist yet, and the Electron shell is still the repo root — that switch is
       P6's job.
+- [ ] **Packaging follows the new package layout** — see the measured note in `plan/12`: with the
+      app's `dist/**` now requiring `@bifurc/protocol` and `@bifurc/engine` at runtime, and
+      `build.files` covering only `dist/**/*` + `package.json`, a packaged build cannot resolve
+      either specifier. Dev mode and the whole test suite are unaffected. Assigned to P6/P12, not
+      fixed here.
 
-**Gate:** **not yet green, but only one thing stands between here and it.** Work item 8 is now
-**started and its infrastructure is done** — the package exists, builds, is linked, and the bottom
-layer has physically moved. What remains is moving the *rest* of the engine's modules
-(`proxy/`, `sync/`, `applications/`, `companion/`, `commands/`, `eventBus.ts`, `startup.ts`,
-`shutdown.ts`) and building `createEngine()` — which is what makes the "engine starts from a bare
-Node script with `--data-dir`" criterion satisfiable. Items 1–7 are otherwise closed apart from
+**Gate:** **not yet green, and two things stand between here and it.** Work item 8 is **started,
+with its infrastructure done and two of four layers moved** — the package exists, builds, is
+linked, and `store/`+`lib/`+`subscription/`+`proxy/`+`sync/`+`eventBus.ts` have physically moved.
+What remains is moving the *rest* of the engine's modules (`applications/`, `companion/`,
+`commands/`, `startup.ts`, `shutdown.ts`) and building `createEngine()` — which is what makes the
+"engine starts from a bare Node script with `--data-dir`" criterion satisfiable. Items 1–7 are
+otherwise closed apart from
 the two items above explicitly left open on product grounds.
 
 Verified after this change: `npm run typecheck` and `npm run typecheck:packages` clean;

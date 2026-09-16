@@ -5,7 +5,7 @@ import type {
 } from "@bifurc/protocol";
 import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 interface SavedGrpcRequest {
   id: string; name: string; serverAddress: string; serviceName: string; methodName: string;

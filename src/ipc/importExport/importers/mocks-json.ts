@@ -5,7 +5,7 @@ import {
 import {
   writeEntity, upsertNameEntry, readEnabledSet, writeEnabledSet, bootstrapEnabledSet, readAllEntities,
 } from "@bifurc/engine/store/workspaceFs";
-import { reloadConfig } from "@/proxy/server";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 
 function syncEnabled(wsId: string, id: string, enabled: boolean): void {

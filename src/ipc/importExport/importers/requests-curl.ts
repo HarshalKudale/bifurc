@@ -3,7 +3,7 @@ import {
   loadConfig, saveConfig, generateId, SavedRequest,
 } from "@bifurc/engine/store/config";
 import { writeEntity, upsertNameEntry } from "@bifurc/engine/store/workspaceFs";
-import { reloadConfig } from "@/proxy/server";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 
 // ── cURL parser (duplicated from renderer/lib/curlParser.ts for main process use) ──

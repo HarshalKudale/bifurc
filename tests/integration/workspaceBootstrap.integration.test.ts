@@ -8,13 +8,13 @@ import simpleGit from "simple-git";
 // the duration of the suite. Everything else runs for real: real temp data root, real directories,
 // real `git init`, real settings persistence. Mocking the store layer here would test nothing,
 // because the whole point of the extraction is that the *same* on-disk effects still happen.
-vi.mock("@/sync/autoSync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/sync/autoSync")>()),
+vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/sync/autoSync")>()),
   startAutoSync: vi.fn(),
 }));
 
 import { bootstrapWorkspaces } from "@/startup";
-import { startAutoSync } from "@/sync/autoSync";
+import { startAutoSync } from "@bifurc/engine/sync/autoSync";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import type { AppSettings } from "@bifurc/engine/store/appSettings";

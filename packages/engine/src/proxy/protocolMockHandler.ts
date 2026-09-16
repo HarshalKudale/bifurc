@@ -1,6 +1,6 @@
 import * as net from "net";
-import { Environment } from "@bifurc/engine/store/config";
-import { resolveVars, serveMock } from "@/proxy/mockHandler";
+import { Environment } from "../store/config";
+import { resolveVars, serveMock } from "./mockHandler";
 
 /**
  * GraphQL mock: matches by endpoint URL pattern + operation type + operation name.

@@ -5,7 +5,7 @@
  * ---------------
  * `tests/proxy/tlsCert.test.ts` mocks `mkcert`, so it pins the *wiring* of
  * `loadCA` / `generateHostCert` but never produces a real certificate, and
- * `src/proxy/tlsIntercept.ts` sat at 0% — the highest-risk untested file in the repo.
+ * `packages/engine/src/proxy/tlsIntercept.ts` sat at 0% — the highest-risk untested file in the repo.
  * This is the code that terminates TLS for every `https://` request a user routes
  * through Bifurc, so a bug here is a bug in the product's core promise.
  *
@@ -50,9 +50,9 @@ import {
   type RunningProxy,
   type WorkspaceFixture,
 } from "./proxyHarness";
-import { generateCA } from "@/proxy/certManager";
-import { isCALoaded } from "@/proxy/tlsCert";
-import { logEmitter, type RequestLogEntry } from "@/proxy/logEmitter";
+import { generateCA } from "@bifurc/engine/proxy/certManager";
+import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
+import { logEmitter, type RequestLogEntry } from "@bifurc/engine/proxy/logEmitter";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

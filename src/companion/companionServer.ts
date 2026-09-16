@@ -23,9 +23,9 @@ import {
     readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
     readIndex, writeIndex, sanitizeDirName, wsDir,
 } from "@bifurc/engine/store/workspaceFs";
-import { invalidateCache } from "@/sync/statusTracker";
-import { reloadConfig } from "@/proxy/server";
-import { bus, emitEntityStatus } from "@/eventBus";
+import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
+import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

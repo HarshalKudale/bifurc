@@ -28,7 +28,7 @@ import * as net from "net";
 import * as http from "http";
 import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
-import { startServer, stopServer } from "@/proxy/server";
+import { startServer, stopServer } from "@bifurc/engine/proxy/server";
 
 export const TEST_WS = "ws-test";
 export const TEST_WS_NAME = "Integration Workspace";

@@ -4,7 +4,7 @@ import * as path from "path";
 import type { RunnerGetHistoryParams, RunnerListFolderIdsParams } from "@bifurc/protocol";
 import { wsDir as workspaceDir } from "@bifurc/engine/store/workspaceFs";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 // P2 work item 7 — only runner:getHistory/listFolderIds convert here (their params are just
 // workspaceId/folderId, matching the frozen schema and the real preload.ts call sites exactly).

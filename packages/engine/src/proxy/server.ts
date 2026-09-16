@@ -1,19 +1,19 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig, AppConfig, Environment, ProxyRule } from "@bifurc/engine/store/config";
-import { readEnabledSet, bootstrapEnabledSet, readAllEntities } from "@bifurc/engine/store/workspaceFs";
-import { HOP_BY_HOP } from "@/proxy/constants";
-import { sendHtml, buildHomePage, buildNotMappedPage } from "@/proxy/pages";
-import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "@/proxy/mockHandler";
-import { matchGraphQLMock, matchSoapMock, serveProtocolMock, GraphQLMockDef, SoapMockDef } from "@/proxy/protocolMockHandler";
-import { tcpTunnel, proxyToUpstream, passthroughToUpstream, passthroughToUpstreamHttps, matchProxyRule, proxyWithScripts, fetchUpstreamResponse } from "@/proxy/proxyHandler";
-import { loadCA, unloadCA, isCALoaded, clearCertCache } from "@/proxy/tlsCert";
-import { interceptTls } from "@/proxy/tlsIntercept";
-import { decompressBody, stripContentEncoding } from "@/proxy/decompressUtils";
-import { handleProxyRouting } from "@/proxy/routingUtils";
-import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "@/proxy/logEmitter";
-export { RequestLogEntry, logEmitter, emitLogChunk } from "@/proxy/logEmitter";
+import { loadConfig, AppConfig, Environment, ProxyRule } from "../store/config";
+import { readEnabledSet, bootstrapEnabledSet, readAllEntities } from "../store/workspaceFs";
+import { HOP_BY_HOP } from "./constants";
+import { sendHtml, buildHomePage, buildNotMappedPage } from "./pages";
+import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "./mockHandler";
+import { matchGraphQLMock, matchSoapMock, serveProtocolMock, GraphQLMockDef, SoapMockDef } from "./protocolMockHandler";
+import { tcpTunnel, proxyToUpstream, passthroughToUpstream, passthroughToUpstreamHttps, matchProxyRule, proxyWithScripts, fetchUpstreamResponse } from "./proxyHandler";
+import { loadCA, unloadCA, isCALoaded, clearCertCache } from "./tlsCert";
+import { interceptTls } from "./tlsIntercept";
+import { decompressBody, stripContentEncoding } from "./decompressUtils";
+import { handleProxyRouting } from "./routingUtils";
+import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "./logEmitter";
+export { RequestLogEntry, logEmitter, emitLogChunk } from "./logEmitter";
 
 import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./serverUtils";
 

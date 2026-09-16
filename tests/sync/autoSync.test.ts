@@ -4,13 +4,13 @@ const mockGetSyncConfig = vi.fn();
 const mockSyncPull = vi.fn();
 const mockGetRemoteHead = vi.fn();
 
-vi.mock("@/sync/syncManager", () => ({
+vi.mock("@bifurc/engine/sync/syncManager", () => ({
     getSyncConfig: (...args: any[]) => mockGetSyncConfig(...args),
     syncPull: (...args: any[]) => mockSyncPull(...args),
     getRemoteHead: (...args: any[]) => mockGetRemoteHead(...args),
 }));
 
-import { startAutoSync, stopAutoSync, stopAllAutoSync, updateLastKnownHead } from "@/sync/autoSync";
+import { startAutoSync, stopAutoSync, stopAllAutoSync, updateLastKnownHead } from "@bifurc/engine/sync/autoSync";
 
 describe("autoSync", () => {
     beforeEach(() => {

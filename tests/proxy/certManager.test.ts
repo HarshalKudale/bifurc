@@ -14,7 +14,7 @@ vi.mock("child_process", () => ({
     execSync: vi.fn(),
 }));
 
-import { generateCA, installCA, getCertStatus } from "@/proxy/certManager";
+import { generateCA, installCA, getCertStatus } from "@bifurc/engine/proxy/certManager";
 import * as cp from "child_process";
 
 describe("generateCA()", () => {
