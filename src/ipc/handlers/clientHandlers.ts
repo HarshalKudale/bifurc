@@ -19,7 +19,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { loadSettings, saveSettings, appDataDir } from "@bifurc/engine/store/appSettings";
 import { getMainWindow } from "@/main";
-import { installCA } from "@/proxy/certManager";
+import { installCA } from "@bifurc/engine/proxy/certManager";
 
 function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
   return themeId === "light"

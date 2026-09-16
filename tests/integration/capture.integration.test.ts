@@ -1,7 +1,7 @@
 /**
  * Happy-path workflow test for **Capture** — the capture half of capture-and-replay.
  *
- * The Capture screen is fed by `logEmitter` (`src/proxy/logEmitter.ts`): the proxy builds a
+ * The Capture screen is fed by `logEmitter` (`packages/engine/src/proxy/logEmitter.ts`): the proxy builds a
  * `RequestLogEntry` for every request it serves — method/url/host/status, `via` (how it was
  * fulfilled), the target, the duration, and **base64 request/response bodies so the entry can
  * be replayed or turned into a mock**. Nothing asserted any of that before: the *replay* half
@@ -19,8 +19,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import type { RequestLogEntry } from "@/proxy/logEmitter";
-import { logEmitter } from "@/proxy/logEmitter";
+import type { RequestLogEntry } from "@bifurc/engine/proxy/logEmitter";
+import { logEmitter } from "@bifurc/engine/proxy/logEmitter";
 import {
     createWorkspace,
     startUpstream,

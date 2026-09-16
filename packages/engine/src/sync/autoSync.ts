@@ -1,4 +1,4 @@
-import { getSyncConfig, syncPull, getRemoteHead } from "@/sync/syncManager";
+import { getSyncConfig, syncPull, getRemoteHead } from "./syncManager";
 
 // Lazy import to avoid circular dependency — server.ts imports syncManager indirectly
 let _reloadConfig: (() => void) | null = null;

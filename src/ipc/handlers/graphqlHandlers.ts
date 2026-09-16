@@ -2,7 +2,7 @@ import { ipcMain } from "electron";
 import type { GraphqlIntrospectParams, GraphqlExecuteParams } from "@bifurc/protocol";
 import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 interface SavedGraphQLRequest {
   id: string; name: string; endpointUrl: string; headers: Record<string, string>;

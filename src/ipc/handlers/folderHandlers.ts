@@ -8,7 +8,7 @@ import { Folder } from "@bifurc/engine/store/config";
 import { loadConfig, saveConfig } from "@bifurc/engine/store/config";
 import { generateId } from "@bifurc/engine/store/config";
 import { readIndex, writeIndex, wsDir as workspaceDir, sanitizeDirName, deleteEntityDir } from "@bifurc/engine/store/workspaceFs";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 import { commandRegistry } from "@/commands/registry";
 
 type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock";

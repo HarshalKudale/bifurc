@@ -2,7 +2,7 @@ import { ipcMain } from "electron";
 import type { SoapFetchWsdlParams, SoapExecuteParams } from "@bifurc/protocol";
 import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 interface SavedSoapRequest {
   id: string; name: string; endpointUrl: string; soapAction: string;
