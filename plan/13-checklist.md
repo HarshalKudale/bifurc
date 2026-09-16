@@ -179,14 +179,14 @@ optional and blocks nothing.
 - [x] Replace `registerIpcHandlers()` with the `CommandRegistry` — `src/commands/registry.ts`,
       **~112 commands** across 13 files, covering every `EntityKind` value. Only the P3-bound
       `importExport:*` SPLIT channels remain outside it.
-- [x] **`git mv` the moved modules (preserve blame)** — three layers moved, 49 files total.
+- [x] **`git mv` the moved modules (preserve blame)** — three layers moved, 50 files total.
       **Layer 1** (bottom of the graph): `src/store/` (11 files), `src/lib/` (2),
       `src/subscription/` (1) → `packages/engine/src/`.
       **Layer 2**: `src/proxy/` (19 files), `src/sync/` (8), `src/eventBus.ts` (1) → 28 files.
       These three had to move **together**: `eventBus.ts` imports `@/proxy/logEmitter`,
       `@/proxy/webhookServer` and `@/sync/statusTracker`, while `proxy/**` imports `@/eventBus`.
       Moving any one alone would have left the engine importing *out* of its own package.
-      **Layer 3**: `src/applications/` (4 files), `src/companion/` (2), `src/commands/` (2) → 7 files.
+      **Layer 3**: `src/applications/` (4 files), `src/companion/` (2), `src/commands/` (2) → 8 files.
       Done with `git mv`, so blame survives. Only `startup.ts` and `shutdown.ts` remain in `src/`.
 - [x] **`tsup` build for `packages/engine`** — `packages/engine/tsup.config.ts`. Multi-entry with
       the directory structure preserved (`dist/store/config.js`), ESM + CJS + `.d.ts`, mirroring
@@ -244,7 +244,7 @@ optional and blocks nothing.
 
 **Gate:** **not yet green, and one thing stands between here and it.** Work item 8 is **started,
 with its infrastructure done and three of four layers moved** — the package exists, builds, is
-linked, and 49 files have physically moved (`store/`, `lib/`, `subscription/`, `proxy/`, `sync/`,
+linked, and 50 files have physically moved (`store/`, `lib/`, `subscription/`, `proxy/`, `sync/`,
 `eventBus.ts`, `applications/`, `companion/`, `commands/`). What remains is moving the last two
 engine files (`startup.ts`, `shutdown.ts`) and building `createEngine()` — which is what makes the
 "engine starts from a bare Node script with `--data-dir`" criterion satisfiable. Items 1–7 are
