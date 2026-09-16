@@ -187,15 +187,15 @@ behaviour that changed live state with nothing behind it (and it found a third b
 
 | Metric | Before (same scope¹) | **Now** | Change |
 |---|---:|---:|---:|
-| Statements | 24.16% | **48.21%** | +24.1 pts |
-| Branches | 14.87% | **32.21%** | +17.3 pts |
-| Functions | 17.11% | **36.52%** | +19.4 pts |
-| Lines | 25.49% | **50.59%** | +25.1 pts |
+| Statements | 24.16% | **49.07%** | +24.9 pts |
+| Branches | 14.87% | **32.66%** | +17.8 pts |
+| Functions | 17.11% | **37.26%** | +20.2 pts |
+| Lines | 25.49% | **51.52%** | +26.0 pts |
 
 ¹ Both columns use the *widened* `include` scope (which adds `renderer/panels/**/*.tsx`, ~0%
 covered), so the comparison is apples-to-apples. The original narrow-scope baseline was
 27.71% statements; the widened scope *lowered* the headline to 24.16% at the time, and the
-current 48.21% is a real gain on top of that larger denominator.
+current 49.07% is a real gain on top of that larger denominator.
 
 ² These are the figures from the last full run. V8 instrumentation is not perfectly
 deterministic — two identical runs move a given figure by ~0.05 pt (the seventh pass read
@@ -210,30 +210,56 @@ new groups entered the report:
 
 | Group | Files | Statements | Note |
 |---|---:|---:|---|
-| `packages/engine/src` | 51 | 3,019 | The moved files + `index.ts`, which now implements `createEngine()` and is covered at 90.7% statements / 94.6% lines by the smoke test. Was 14 files / 606 statements after layer 1, 41 / 2,433 after layer 2, 49 / 2,914 after layer 3. |
-| `packages/protocol/src` | 16 | 106 | **Sourcemap artefact** — `packages/protocol/dist/index.js` is executed through its `exports` map, and V8 remaps it back through `dist/index.js.map` (whose `sources` list `../src/commands/*.ts`, i.e. `packages/protocol/src/commands/*.ts`). Numbers are therefore approximate and ~100%. Present since P2 work item 7 wired the registry to `@bifurc/protocol`. |
+| `packages/engine/src` | 54 | 3,227 | The moved files + `index.ts`, which now implements `createEngine()` and is covered at 90.7% statements / 94.6% lines by the smoke test. Was 14 files / 606 statements after layer 1, 41 / 2,433 after layer 2, 49 / 2,914 after layer 3, 51 / 3,019 after `createEngine()`. The last +3 files / +208 statements are P3's blob layer (§4.9). |
+| `packages/protocol/src` | 17 | 114 | **Sourcemap artefact** — `packages/protocol/dist/index.js` is executed through its `exports` map, and V8 remaps it back through `dist/index.js.map` (whose `sources` list `../src/commands/*.ts`, i.e. `packages/protocol/src/commands/*.ts`). Numbers are therefore approximate and ~100%. Present since P2 work item 7 wired the registry to `@bifurc/protocol`. The 17th file / +8 statements are `commands/blob.ts` (P3). |
 
-The denominator went 11,129 → 11,443 (layer 1) → 11,446 (layer 3) → 11,489 (`createEngine`), while
-the percentage kept rising, so this is a genuine improvement rather than a scope artefact. The
-layer-1 jump was `packages/protocol/src` entering the report; layers 2 and 4 changed it not at all;
-layer 3's +3 statements are `applications/types.ts`, which had been wrongly excluded as "type-only"
-(§5).
+The denominator went 11,129 → 11,443 (layer 1) → 11,446 (layer 3) → 11,489 (`createEngine`) →
+**11,705** (P3 blob layer), while the percentage kept rising, so this is a genuine improvement rather
+than a scope artefact. Every step is accounted for: the layer-1 jump was `packages/protocol/src`
+entering the report; layers 2 and 4 changed it not at all; layer 3's +3 statements are
+`applications/types.ts`, which had been wrongly excluded as "type-only" (§5); and P3's +216 is
+exactly `blob/{store,sweep,commands}.ts` (+208, all covered above 90%) plus the four new
+`blob.*` Zod schemas in `packages/protocol/src/commands/blob.ts` (+8).
 
-Suite size: **69 files / 1616 tests** (was 61 files / 1360 tests at the last review; the growth
-is P2 work items 5–7). One test fails — `tests/spike/protocolPoc.test.ts` → `soap.execute`,
-a known pre-existing failure that also reproduces on the pre-change tree (see §7).
+Suite size: **73 files / 1,714 tests** (was 69 files / 1,616 tests at the last review; the growth is
+P2 work items 5–7 plus P3's blob layer). Two tests fail — `tests/spike/protocolPoc.test.ts` →
+`soap.execute` and `tests/integration/upstreamFetch.integration.test.ts` → "rejects when the upstream
+is unreachable", both members of the known pre-existing sandbox family (§7, and
+`plan/baseline.md`'s "Environment caveats").
+
+> **The P3 delta reconciles exactly, and it is worth showing how** — a count that moves without an
+> explanation is how a suite quietly loses tests. The last run recorded before P3 was **70 files /
+> 1,617 tests** (unit 1,284 / integration 333); P3 is **73 files / 1,714 tests** (unit 1,381 /
+> integration 333). That is `+3` files and `+97` unit tests, splitting as:
+>
+> - **`+89`** — the three new `tests/blob/*` suites (58 + 20 + 11).
+> - **`+8`** — `packages/protocol/src/commands/index.test.ts`, **a file nobody edited**.
+>
+> The second one is the interesting one. That suite generates **two tests per entry in `COMMANDS`**
+> (`for (const action of actions) { it("… accepts a valid payload"); it("… rejects an invalid payload"); }`)
+> plus one completeness check, so its total is `1 + 2 × commands`. P1 froze **89** commands → 179
+> tests; P3 added four `blob.*` commands → **93** commands → **187** tests, which is what the file
+> reports today. Adding a command therefore adds two tests to a file you did not touch, and any
+> future test-count delta should be reconciled rather than waved through.
+> `npx vitest list | wc -l` (or `--project unit`) is the cheap way to confirm a total without
+> running anything.
+>
+> **Correcting the record:** the session note written when the blob primitives landed recorded this
+> as "187 protocol tests green (183 + 4)". The 187 is right; the arithmetic was not. It is
+> `179 + 8`, not `183 + 4` — the suite emits **two** tests per command, not one.
+
 
 ### 4.2 Coverage by area (current config)
 
 | Area | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
-| `packages/engine/src` | **84.5%** | **71.7%** | **85.8%** | **86.9%** |
-| `packages/protocol/src` ³ | 97.2% | — | 25.0% | 97.2% |
+| `packages/engine/src` | **85.2%** | **72.4%** | **86.7%** | **87.6%** |
+| `packages/protocol/src` ³ | 97.4% | — | 25.0% | 97.4% |
 | `renderer/components` | **13.5%** | 13.3% | 8.7% | **14.6%** |
-| `renderer/lib` | **82.9%** | **75.1%** | **75.0%** | **84.1%** |
+| `renderer/lib` | **82.9%** | **74.8%** | **75.0%** | **84.1%** |
 | `renderer/panels` | 0.0% | 0.0% | 0.0% | 0.0% |
-| `src/ipc` | **79.1%** | 55.8% | 79.7% | 82.1% |
-| **TOTAL** | **48.21%** | **32.21%** | **36.52%** | **50.59%** |
+| `src/ipc` | **79.0%** | 55.7% | 79.7% | 82.1% |
+| **TOTAL** | **49.07%** | **32.66%** | **37.26%** | **51.52%** |
 
 ³ `packages/protocol/src` has no branch data because V8 records none for those remapped Zod
 schemas. Its numbers come from the sourcemap-remapped `dist/` bundle (see §4.1 footnote 3), so
@@ -524,6 +550,59 @@ covered rather than hidden. `createEngine()` now lives there, the new
 
 A full HTML report is written to `coverage/index.html` by `npm run test:coverage`.
 
+### 4.9 The blob layer specifically (P3 work item 1)
+
+| File | Statements | Branches | Functions | Lines |
+|---|---:|---:|---:|---:|
+| `packages/engine/src/blob/commands.ts` | **100%** | **100%** | **100%** | **100%** |
+| `packages/engine/src/blob/store.ts` | **98.3%** | **95.9%** | **100%** | **99.1%** |
+| `packages/engine/src/blob/sweep.ts` | **90.1%** | **91.7%** | **100%** | **92.2%** |
+| `packages/protocol/src/commands/blob.ts` | **100%** | **100%** | **100%** | **100%** |
+
+89 tests in `tests/blob/{store,sweep,commands}.test.ts`. Every one runs against a **real temp data
+root** with real files, real hashes and real `rename`s — mocking `fs` here would test the mock,
+because the whole reason the store exists is that it touches the filesystem in a specific way.
+
+**The three suites pin different things, deliberately:**
+
+- `store.test.ts` (58) pins the **contract**: round-trip, SHA-256 against an independently computed
+  digest, chunked reads that reassemble byte-for-byte, `eof` at the right slice, offset bounds,
+  release semantics, the sliding lease, and the ingress limits.
+- `sweep.test.ts` (20) pins the **reclamation rules**: expiry by `createdAt`, the mtime fallback for
+  a metadata-less directory, abandoned staging files, stray files, and the two rules that keep it
+  safe — it never creates the root, and it never throws.
+- `commands.test.ts` (11) pins the **seam**: that the frozen protocol schemas validate before the
+  store is reached, and that a valid payload reaches the real store.
+
+**Four properties are asserted because they are the ones a future edit would silently break:**
+
+1. **The blob root is under `dataDir()`** (`path.relative(dataDir(), blobRoot()) === "blobs"`). This
+   is the Docker-volume requirement from `plan/04`'s risk table — a root outside the data root is a
+   blob that vanishes when a container restarts, and nothing else in the suite would notice.
+2. **The content is a real file.** `fs.statSync(...).isFile()` — because `unzipper.Open.file()` will
+   not accept a buffer and `archiver` pipes to a `WriteStream`. A future "optimisation" to an
+   in-memory store would pass every other test and break both zip paths.
+3. **`meta.json` is written last, and "metadata exists ⇒ the blob is usable" is an invariant.**
+   The suite deletes the metadata and asserts the blob then reads as *not found* rather than as
+   truncated content — which is the reason for the write order. It also deletes the *content* and
+   asserts *not found*, which is why `readMeta()` checks both: without that check `statBlob` would
+   happily report a size and a SHA-256 for bytes that are not on disk.
+4. **`blobId` cannot express a path.** 15 hostile ids (`"../../etc/passwd"`, `"..\\..\\windows"`,
+   `"blob_000…0/../../x"`, …) are rejected on all four entry points with `blob-invalid-id`, and every
+   accepted path is asserted to be a direct child of the root. P13 lists the blob traversal test as
+   *the most likely thing to be missed*; it is here.
+
+**Time is a parameter, not a mock.** `putBlob`/`statBlob`/`readBlob`/`sweepBlobs` all take an
+optional `now`. That is why every TTL assertion is exact and readable (`T0 + BLOB_TTL_MS` is the
+boundary, `- 1` is one millisecond short of it) instead of depending on fake timers and a
+clock-skewed race. The one place fake timers *are* used is `startBlobSweeper`, where the interval is
+the thing under test rather than the arithmetic.
+
+**The ingress cap is tested without allocating 140 MB.** The pre-decode rules are extracted as
+`assertIngressWithinLimit(declared, base64Length, maxBytes)` and exercised directly, and the staging
+cap takes an optional `maxBytes` — the alternative would be a test that writes a real 100 MB file to
+disk or builds a 140 MB base64 string, which is a test nobody keeps running.
+
 ---
 
 ## 5. Workflow changes
@@ -532,9 +611,11 @@ A full HTML report is written to `coverage/index.html` by `npm run test:coverage
 - Split into two **projects**: `unit` (fast, no sockets) and `integration` (real servers,
   `fileParallelism: false` so port-binding output stays readable).
 - **Coverage thresholds** added as a ratchet, then raised after each pass
-  (`statements 46 / branches 31 / functions 34 / lines 48`; originally `23 / 14 / 16 / 24`).
-  New untested code now fails CI instead of silently lowering coverage. Raise these as gaps
-  close — never lower them to make a build pass.
+  (`statements 47 / branches 31 / functions 35 / lines 49`; originally `23 / 14 / 16 / 24`, then
+  `46 / 31 / 34 / 48` through P2). New untested code now fails CI instead of silently lowering
+  coverage. Raise these as gaps close — never lower them to make a build pass. The P3 ratchet left
+  `branches` alone on purpose: 2 pts below the 32.66% actual is 30, and ratcheting *down* is the
+  thing the policy forbids.
 - Reporters expanded to `text`, `text-summary`, `html`, `json-summary`, `lcov`.
 - `include` widened to `renderer/panels/**`, then to `renderer/components/**/*.ts` (the glob
   had matched only `.tsx`, hiding 17 files — see §4.2). Type-only and pure-constant modules
@@ -752,16 +833,23 @@ what the running proxy served afterwards.
 
 # 1. Everything green, thresholds enforced
 npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local
-#    → Test Files 1 failed | 69 passed (70) · Tests 1 failed | 1616 passed (1617)
-#    → Statements 48.21% · Branches 32.21% · Functions 36.52% · Lines 50.59%
-#    The single failure is tests/spike/protocolPoc.test.ts → soap.execute (ECONNREFUSED
-#    127.0.0.1:1), a sandbox network-interceptor caveat that reproduces on the pre-change tree.
+#    → Test Files 2 failed | 71 passed (73) · Tests 2 failed | 1712 passed (1714)
+#    → Statements 49.07% · Branches 32.66% · Functions 37.26% · Lines 51.52%
+#    Both failures are the sandbox network-interceptor family (a transparent proxy answers
+#    127.0.0.1:1 with a synthetic 404 instead of refusing): tests/spike/protocolPoc.test.ts →
+#    soap.execute, and tests/integration/upstreamFetch.integration.test.ts → "rejects when the
+#    upstream is unreachable". Both reproduce on the pre-change tree — see plan/baseline.md
+#    "Environment caveats". Which members of the family trip varies run to run, which is why the
+#    coverage command above deselects all three by name.
 
 # 2. Per project
 npm run test:unit
-#    → Test Files 1 failed | 51 passed (52) · Tests 1 failed | 1283 passed (1284)
+#    → Test Files 1 failed | 54 passed (55) · Tests 1 failed | 1380 passed (1381)
+#      (the failure is the spike's soap.execute; on a run where it does not trip, 1381 pass)
 npm run test:integration
-#    → Test Files 18 passed (18) · Tests 333 passed (333)
+#    → Test Files 1 failed | 17 passed (18) · Tests 1 failed | 332 passed (333)
+#      (upstreamFetch's dead-endpoint case — the other member of the same family; expect
+#       333 passed on a clean run)
 
 # 3. Confirm the engine really is tested from source, not from a stale build.
 #    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).
@@ -812,6 +900,42 @@ npx vitest run --project integration tests/integration/settingsMutations.integra
 #      `expected { from: 'mock' } to deeply equal { upstream: true, path: '/api/hello' }`. Revert.
 #    l) In src/ipc/handlers/entityCrudFactory.ts, do the same in the ADD handler, then the same
 #       command fails on "serves a mock added through mock:add immediately". Revert.
+#    m) P3 blob store. In packages/engine/src/blob/store.ts, disable the `bytes.length !== params.size`
+#       check in putBlob, then:
+npx vitest run tests/blob
+#    → 3 tests fail: "rejects a decoded length that disagrees with the declared size" and
+#      "rejects a payload of unrecognised characters, which the lenient decoder would silently
+#      shorten" (store.test.ts), plus "propagates a store error rather than swallowing it"
+#      (commands.test.ts). That is the whole point of the check — Node's base64 decoder ignores
+#      characters it does not recognise, so without it a truncated payload stages as a smaller but
+#      valid-looking blob. Revert.
+#    n) In packages/engine/src/blob/store.ts, disable the content-existence check in readMeta, then:
+npx vitest run tests/blob
+#    → exactly 1 test fails: "treats a blob directory with metadata but no content as not found".
+#      Without the check, statBlob reports a size and a SHA-256 for bytes that are not on disk.
+#      Revert.
+#    o) In packages/engine/src/blob/sweep.ts, change `meta.createdAt + ttlMs <= now` to `< now`, then:
+npx vitest run tests/blob
+#    → 4 tests fail, led by "reclaims a blob whose lease has run out, and reports what it freed":
+#      the boundary is inclusive by contract (`createdAt + TTL` is expired, not "expires in 1 ms").
+#      The other three sweep exactly at the boundary. Revert.
+#    p) In packages/engine/src/blob/sweep.ts, disable the `entry.name === BLOB_STAGING_DIR_NAME`
+#       branch so `.staging/` falls through to the blob-directory path, then:
+npx vitest run tests/blob
+#    → 2 tests fail: "reclaims an abandoned staged file once it is old" and "does not resurrect a
+#      blob that was already released". The mechanism is worth stating because the obvious guess is
+#      wrong: the branch is not what protects an in-flight write (that test still passes), it is
+#      what makes a staged file age by its **own** mtime rather than by its parent directory's.
+#      Without it, a staged file whose directory mtime is fresh is never reclaimed — a slow leak,
+#      which is exactly what the sweep exists to prevent. Revert.
+#    q) In packages/engine/src/index.ts, remove the `stopBlobSweeper?.()` line from stop(), then:
+npx vitest run --project integration tests/integration/engineSmoke.integration.test.ts
+#    → **still passes.** Verified, and deliberately recorded as an unpinned line: the sweeper's
+#      timer is `unref()`d, so a missed teardown cannot hold the process open — the unref, not the
+#      stop() call, is the safety property. `startBlobSweeper`'s own stop is pinned in
+#      sweep.test.ts ("runs on the interval and stops when told"); what is not pinned is
+#      createEngine *calling* it. Keep the line — an engine that has stopped should stop sweeping —
+#      but do not mistake it for the thing that makes teardown safe. Revert.
 
 # 5. Static checks
 npm run typecheck          # builds both packages first, then type-checks all three projects

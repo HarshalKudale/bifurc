@@ -38,6 +38,7 @@ import { startCompanionServer, getCompanionPort, isCompanionRunning } from "./co
 import { bus } from "./eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
 import { shutdownEngine } from "./shutdown";
+import { startBlobSweeper } from "./blob/sweep";
 import { commandRegistry, type CommandRegistry } from "./commands/registry";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,10 +147,23 @@ export function createEngine(opts: EngineOptions): Engine {
   let autoSyncStarted: string[] = [];
   let startPromise: Promise<EngineStatus> | null = null;
   let stopped = false;
+  /**
+   * P3 work item 1 — the blob TTL sweep. Owned by the lifecycle rather than by a caller because
+   * an unswept blob root only grows: in Docker (P9) that is a volume that fills up forever, and
+   * the whole point of the sweep is that nobody has to remember it exists.
+   *
+   * The timer is unref'd (`startBlobSweeper()`), so this is housekeeping, not a reason for the
+   * process to stay alive.
+   */
+  let stopBlobSweeper: (() => void) | null = null;
 
   async function doStart(): Promise<EngineStatus> {
     // Must come first: every store module resolves through the data root.
     setDataRoot(opts.dataDir);
+
+    // After `setDataRoot()` — the sweep resolves its root through it. It deliberately does not
+    // create the directory, so a fresh install sweeps nothing until the first `blob.put`.
+    stopBlobSweeper = startBlobSweeper();
 
     settings = loadSettings();
 
@@ -229,6 +243,11 @@ export function createEngine(opts: EngineOptions): Engine {
     async stop(): Promise<void> {
       if (stopped) return;
       stopped = true;
+      // Stopped here rather than inside `shutdownEngine()`: that function is memoised and shared
+      // with the shell's `before-quit`, so it can only ever run once — but the sweeper is
+      // per-engine-instance and its lifetime is this object's, not the process's.
+      stopBlobSweeper?.();
+      stopBlobSweeper = null;
       await shutdownEngine();
     },
 
@@ -259,3 +278,5 @@ export * as companion from "./companion/companionServer";
 export * as commands from "./commands/registry";
 export * as startup from "./startup";
 export * as shutdown from "./shutdown";
+export * as blob from "./blob/store";
+export * as blobSweep from "./blob/sweep";
