@@ -22,14 +22,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
 import { createCA } from "mkcert";
-import { checkGitInstalled, initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
-import { checkPortInUse } from "@bifurc/engine/applications/portUtils";
-import { saveSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
-import { initWorkspaceDir, wsDir } from "@bifurc/engine/store/workspaceFs";
-import { generateId } from "@bifurc/engine/store/config";
-import { getSyncConfig } from "@bifurc/engine/sync/syncManager";
-import { setAutoSyncReloadFn, startAutoSync } from "@bifurc/engine/sync/autoSync";
-import { reloadConfig } from "@bifurc/engine/proxy/server";
+import { checkGitInstalled, initWorkspaceRepo } from "./store/gitStore";
+import { checkPortInUse } from "./applications/portUtils";
+import { saveSettings, type AppSettings } from "./store/appSettings";
+import { initWorkspaceDir, wsDir } from "./store/workspaceFs";
+import { generateId } from "./store/config";
+import { getSyncConfig } from "./sync/syncManager";
+import { setAutoSyncReloadFn, startAutoSync } from "./sync/autoSync";
+import { reloadConfig } from "./proxy/server";
 
 export type StartupCheckCode =
   | "git-missing"

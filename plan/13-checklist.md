@@ -157,7 +157,7 @@ optional and blocks nothing.
       wire name survives only in the temporary `src/ipc/eventBridge.ts` shim, by design)
 - [x] Break the `coreHandlers` → `main` import cycle
 - [x] Remove the `mainWindow` reference from `processSpawner.ts`
-- [x] Make engine shutdown idempotent — `src/shutdown.ts` (`shutdownEngine()`, memoised), plus a
+- [x] Make engine shutdown idempotent — `packages/engine/src/shutdown.ts` (`shutdownEngine()`, memoised), plus a
       per-entry guard in `processSpawner.stop()` so `stopAll()` is repeatable. `main.ts`'s
       `before-quit` is now one call. Unit-tested (`tests/shutdown.test.ts`, 6/6)
 - [x] Split out shell-only handlers (zoom, theme, titlebar, dialogs, openExternal, first-launch) —
@@ -173,13 +173,13 @@ optional and blocks nothing.
       `data-dir-unwritable` / `port-in-use` / `mkcert-unusable` should become *blocking* — is a
       product decision, left open.
 - [x] Move workspace bootstrap out of `main.ts` into the engine — `bootstrapWorkspaces()` in
-      `src/startup.ts`; `main.ts` is now a single call and no longer touches
+      `packages/engine/src/startup.ts`; `main.ts` is now a single call and no longer touches
       `workspaceFs`/`gitStore`/`autoSync` directly. Integration-tested with real dirs + real git
       (`tests/integration/workspaceBootstrap.integration.test.ts`, 7/7)
 - [x] Replace `registerIpcHandlers()` with the `CommandRegistry` — `src/commands/registry.ts`,
       **~112 commands** across 13 files, covering every `EntityKind` value. Only the P3-bound
       `importExport:*` SPLIT channels remain outside it.
-- [x] **`git mv` the moved modules (preserve blame)** — three layers moved, 50 files total.
+- [x] **`git mv` the moved modules (preserve blame)** — four layers moved, 52 files total.
       **Layer 1** (bottom of the graph): `src/store/` (11 files), `src/lib/` (2),
       `src/subscription/` (1) → `packages/engine/src/`.
       **Layer 2**: `src/proxy/` (19 files), `src/sync/` (8), `src/eventBus.ts` (1) → 28 files.
@@ -187,7 +187,8 @@ optional and blocks nothing.
       `@/proxy/webhookServer` and `@/sync/statusTracker`, while `proxy/**` imports `@/eventBus`.
       Moving any one alone would have left the engine importing *out* of its own package.
       **Layer 3**: `src/applications/` (4 files), `src/companion/` (2), `src/commands/` (2) → 8 files.
-      Done with `git mv`, so blame survives. Only `startup.ts` and `shutdown.ts` remain in `src/`.
+      **Layer 4**: `src/startup.ts`, `src/shutdown.ts` → 2 files.
+      Done with `git mv`, so blame survives. `src/` is now empty of engine code.
 - [x] **`tsup` build for `packages/engine`** — `packages/engine/tsup.config.ts`. Multi-entry with
       the directory structure preserved (`dist/store/config.js`), ESM + CJS + `.d.ts`, mirroring
       the `packages/protocol` pattern. **`bundle: false` is deliberate and load-bearing**:
@@ -222,16 +223,22 @@ optional and blocks nothing.
       a fresh clone with `TS2307: Cannot find module '@bifurc/protocol'`. Added `build:packages`
       and wired it to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`, so
       installs are now self-sufficient for both packages.
-- [ ] **Split the dependencies** — **partially**: `packages/engine` declares its own deps
-      (`mkcert`, `simple-git`, `ws`) and its own build devDeps (`tsup`, `typescript`, `@types/node`),
-      and has **no** Electron or renderer dependency. Layer 2 needed exactly one new dependency,
-      `mkcert` (used by `proxy/tlsCert.ts`) — everything else in `proxy/` and `sync/` is Node
-      builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`, `zlib`, `fs`, `path`, `os`,
-      `events`). Layer 3 added `ws` (`companion/companionServer.ts`), as predicted. The remaining
-      engine deps (`js-yaml`, `archiver`, `unzipper`, `@bifurc/protocol`) are still in the root flat
-      list, because the modules that use them have not moved yet — removing them now would break the
-      shell. `@bifurc/protocol` is a package dependency rather than a bare one, so it is a separate
-      decision.
+- [ ] **Split the dependencies** — **done for the engine, pending for the shell.** `packages/engine`
+      declares its own runtime deps (`@bifurc/protocol`, `mkcert`, `simple-git`, `ws`) and its own
+      build devDeps (`tsup`, `typescript`, `@types/node`), and has **no** Electron or renderer
+      dependency. Layer 2 added `mkcert` (`proxy/tlsCert.ts`), layer 3 added `ws`
+      (`companion/companionServer.ts`). Everything else the engine requires is a Node builtin
+      (`child_process`, `crypto`, `events`, `fs`, `http`, `https`, `net`, `os`, `path`, `tls`, `vm`,
+      `zlib`).
+      **`@bifurc/protocol` was missing until 2026-09-16** — `commands/registry.ts` imported it but the
+      manifest did not declare it, so it resolved only because npm hoists it into the root
+      `node_modules`. That is invisible in this repo and fatal to a standalone install, which is
+      exactly what P9's image is. Found by measuring the engine's `dist` requires against its
+      manifest; fixed, with the lockfile regenerated.
+      **`js-yaml`, `archiver` and `unzipper` are NOT engine dependencies** — earlier revisions of
+      this checklist listed them as such, which was wrong. They are used only by
+      `src/ipc/importExport/**` (openapi import, zip export/import), which is still shell-side; they
+      move when P3 moves that module. Declaring them on the engine now would be incorrect.
 - [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` and
       `packages/engine` are both real linked npm workspaces built with their own `tsup` pipelines.
       `apps/*` does not exist yet, and the Electron shell is still the repo root — that switch is
@@ -242,14 +249,16 @@ optional and blocks nothing.
       either specifier. Dev mode and the whole test suite are unaffected. Assigned to P6/P12, not
       fixed here.
 
-**Gate:** **not yet green, and one thing stands between here and it.** Work item 8 is **started,
-with its infrastructure done and three of four layers moved** — the package exists, builds, is
-linked, and 50 files have physically moved (`store/`, `lib/`, `subscription/`, `proxy/`, `sync/`,
-`eventBus.ts`, `applications/`, `companion/`, `commands/`). What remains is moving the last two
-engine files (`startup.ts`, `shutdown.ts`) and building `createEngine()` — which is what makes the
-"engine starts from a bare Node script with `--data-dir`" criterion satisfiable. Items 1–7 are
-otherwise closed apart from
-the two items above explicitly left open on product grounds.
+**Gate:** ✅ **met, with two items explicitly left open on product grounds.** Work item 8 is **done**:
+the package exists, builds and is linked; **all 52 engine files have physically moved** in four
+layers; `src/` contains only `ipc/` (the registration layer this phase replaces), `main.ts` and
+`preload.ts`; and **`createEngine({ dataDir })` → `{ start(), stop(), status(), registry, bus }`**
+is implemented and exercised end to end by `tests/integration/engineSmoke.integration.test.ts` — the
+engine starts headless, serves over a real socket, and shuts down cleanly. Items 1–7 are otherwise
+closed apart from the two items above explicitly left open on product grounds, **plus one new
+decision this work surfaced**: on Windows the store modules resolve to `%LOCALAPPDATA%\Bifurc`
+before consulting the data root, so `--data-dir` is not authoritative there — see the finding in
+`plan/03` work item 8.
 
 Verified after this change: `npm run typecheck` and `npm run typecheck:packages` clean;
 `npm run build:main` clean; full suite **1615/1616 across 69 files** — identical to the baseline,

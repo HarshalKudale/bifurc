@@ -13,7 +13,7 @@ vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
   startAutoSync: vi.fn(),
 }));
 
-import { bootstrapWorkspaces } from "@/startup";
+import { bootstrapWorkspaces } from "@bifurc/engine/startup";
 import { startAutoSync } from "@bifurc/engine/sync/autoSync";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
@@ -64,7 +64,7 @@ describe("startup/bootstrapWorkspaces (integration)", () => {
     // A *listed* workspace always has its directory created by the bootstrap loop before the
     // existence check runs, so this branch is only reachable with an empty list (fresh install) or
     // an active id that is not in the list at all. Pre-existing behaviour, preserved verbatim by
-    // the extraction — see the quirk note in `src/startup.ts`.
+    // the extraction — see the quirk note in `packages/engine/src/startup.ts`.
     const seeded = seedSettings({
       workspaces: [],
       activeWorkspaceId: "gone-a",
@@ -91,7 +91,7 @@ describe("startup/bootstrapWorkspaces (integration)", () => {
 
   it("repairs an active workspace id that is not in the workspace list", async () => {
     // An `activeWorkspaceId` absent from `workspaces` is the reachable form of "the active
-    // workspace is gone" — see the quirk note in `src/startup.ts`.
+    // workspace is gone" — see the quirk note in `packages/engine/src/startup.ts`.
     const seeded = seedSettings({
       workspaces: [
         { id: "ws-real", name: "Real", activeEnvironmentId: null },
