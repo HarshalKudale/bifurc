@@ -123,6 +123,15 @@ const FIXTURES: Record<CommandAction, { valid: unknown; invalid: unknown }> = {
   "import.preflight": { valid: { kind: "mocks", format: "json", workspaceId: "ws1" }, invalid: { format: "json", workspaceId: "ws1" } },
   "import.commit": { valid: { kind: "mocks", format: "json", workspaceId: "ws1" }, invalid: { kind: "mocks", workspaceId: "ws1" } },
 
+  "blob.put": {
+    valid: { filename: "export.json", mimeType: "application/json", size: 2, data: "e30=" },
+    // missing filename
+    invalid: { mimeType: "application/json", size: 2, data: "e30=" },
+  },
+  "blob.stat": { valid: { blobId: "b1" }, invalid: {} },
+  "blob.read": { valid: { blobId: "b1", offset: 0, length: 1024 }, invalid: { blobId: "b1", offset: -1 } },
+  "blob.release": { valid: { blobId: "b1" }, invalid: {} },
+
   "script.execute": { valid: { script: "1+1", context: "pre", envVars: {} }, invalid: { script: "1+1", context: "bogus", envVars: {} } },
   "request.replay": { valid: { method: "GET", url: "http://x", headers: {}, body: "" }, invalid: { method: "GET", url: "http://x" } },
   "healthbar.getServices": { valid: { workspaceId: "ws1" }, invalid: {} },
