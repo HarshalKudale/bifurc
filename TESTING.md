@@ -435,9 +435,13 @@ passes — a mock that no longer matches its subject is worse than no mock).
 
 #### Layer 3 — `applications/`, `companion/`, `commands/`
 
-The cleanest layer yet: **7 files moved, 7 of 7 identical on all four metrics including raw
-covered/total counts, 0 regressions, 0 missing, 0 stale `src/` entries.** 48 statements rewritten
-across 26 files (45 imports + 3 `vi.mock`). `ws` joined the engine as its third runtime dependency.
+The cleanest layer yet: **8 files moved, 7 of 7 that were in the pre-move report identical on all
+four metrics including raw covered/total counts, 0 regressions, 0 missing, 0 stale `src/` entries.**
+48 statements rewritten across 26 files (45 imports + 3 `vi.mock`). `ws` joined the engine as its
+third runtime dependency.
+
+(The 8th file is `applications/types.ts`, absent from the pre-move report because it was excluded —
+see the next paragraph.)
 
 The layer-3 rewrite also produced the one **deliberate** scope change in this document:
 `coverage.exclude` listed `src/applications/types.ts` under "Type-only modules", but that file
