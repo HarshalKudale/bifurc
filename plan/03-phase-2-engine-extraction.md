@@ -632,7 +632,7 @@ packages/
   engine/
     src/
       commands/      # registry + command implementations
-      events/bus.ts
+      eventBus.ts    # NOT events/bus.ts — see the note below
       proxy/         # moved from src/proxy
       store/         # moved from src/store
       sync/          # moved from src/sync
@@ -643,6 +643,11 @@ packages/
     package.json
     tsup.config.ts
 ```
+
+> **Corrected 2026-09-15:** this tree originally listed `events/bus.ts`. The EventBus has always
+> been a single file, `src/eventBus.ts`, and it moved to `packages/engine/src/eventBus.ts` in layer 2
+> — there is no `events/` directory and never was. The tree above is now the *target*; as of layer 2
+> the moved entries are `store/`, `lib/`, `subscription/`, `proxy/`, `sync/` and `eventBus.ts`.
 
 ### Build config
 
@@ -669,27 +674,43 @@ electron-builder, tailwind) in one flat list. These must split:
 
 **Getting this split wrong is how you end up shipping CodeMirror inside a Docker image.**
 
-### Status (2026-09-15): started — package created, bottom layer moved
+### Status (2026-09-15): started — package created, two layers moved
 
 The package, its build and the resolution story are **done and verified**. The move is being done
 in layers rather than one commit, per this doc's own mitigation ("do one package first, prove the
-pattern, then move the rest"). **Layer 1 — the bottom of the dependency graph — has moved:**
+pattern, then move the rest").
+
+**Layer 2 — `proxy/`, `sync/` and `eventBus.ts` — has also moved.** These three had to go together,
+and the reason is worth recording: `eventBus.ts` imports `@/proxy/logEmitter` and
+`@/proxy/webhookServer` (types) and `@/sync/statusTracker` (a value), while `proxy/**` imports
+`@/eventBus` for `bus.emitTyped`. Moving any one of them alone would have left the engine importing
+*out* of the package. 28 files moved, 177 statements rewritten across 88 files.
 
 ```
 packages/engine/
-  package.json        # @bifurc/engine, deps: simple-git only; no electron, no renderer
+  package.json        # @bifurc/engine, deps: mkcert + simple-git; no electron, no renderer
   tsconfig.json       # moduleResolution: bundler, types: [node], noEmit
   tsup.config.ts      # ESM + CJS + .d.ts, structure-preserving multi-entry
   src/
-    store/            # moved from src/store   (11 files)
-    lib/              # moved from src/lib     (2 files)
-    subscription/     # moved from src/subscription (1 file)
+    store/            # moved from src/store   (11 files)   — layer 1
+    lib/              # moved from src/lib     (2 files)    — layer 1
+    subscription/     # moved from src/subscription (1)     — layer 1
+    proxy/            # moved from src/proxy   (19 files)   — layer 2
+    sync/             # moved from src/sync    (8 files)    — layer 2
+    eventBus.ts       # moved from src/eventBus.ts          — layer 2
     index.ts          # provisional barrel — see below
 ```
 
-**Why the bottom layer first:** it is the only part of the engine with no outgoing `@/` dependency
+Layer 2 needed only **one** new runtime dependency, `mkcert` (used by `proxy/tlsCert.ts`); everything
+else in the two directories is Node builtins (`child_process`, `http`, `https`, `net`, `tls`, `vm`,
+`zlib`, `fs`, `path`, `os`, `events`) plus the already-present `simple-git`. `ws` is **not** needed
+yet — it belongs to `companion/`, which has not moved.
+
+**Why the bottom layer went first:** it is the only part of the engine with no outgoing `@/` dependency
 on the rest of the app (`store/` imports only itself; `lib/` and `subscription/` import nothing
-internal at all). That makes it the cheapest place to prove the package boundary end to end.
+internal at all). That made it the cheapest place to prove the package boundary end to end. Layer 2
+is the first layer that *does* have internal couplings to untangle, which is why the `eventBus` ↔
+`proxy`/`sync` cycle had to be handled as one unit rather than three.
 
 **The build must not bundle — this is load-bearing, not a style choice.** `store/paths.ts` holds
 the resolved data root as module-level state, and `store/config.ts` / `store/gitStore.ts` hold
@@ -739,6 +760,23 @@ shares a single `viteOptions` object across the root and both projects.
 `src/**/*.ts` does **not** match `packages/*/src/**`, so without it the moved files would vanish
 from the report entirely.
 
+**Layer 2 added two rewrite passes that layer 1 did not need, and both are silent-failure traps:**
+
+- **Self-imports must become relative inside the package.** After layer 1 the moved files already
+  contained 23 `@bifurc/engine/store/*` self-imports. Left alone they *appear* to work, but they
+  resolve through the `exports` map to `dist/` at **runtime** while the rest of the engine loads from
+  source — i.e. **two live copies of module state**, which is precisely the silent-singleton failure
+  `bundle: false` exists to prevent. Any file moved into `packages/engine/src` must use relative
+  paths for engine-internal imports.
+- **`vi.mock()` is not matched by an import-shaped regex.** Layer 2's first four passes rewrote 177
+  specifiers and still left **12 stale mock specifiers across 7 files**, because
+  `vi.mock("@/sync/autoSync", …)` is a plain function call, not a `from "…"`. A mock whose specifier
+  no longer matches the code under test is worse than no mock: the real module loads and the test
+  silently stops being hermetic. The rewriter must match
+  `/\bvi\.(mock|doMock|unmock|importActual|importMock)\(\s*(["'])([^"']+)\2/g` — while **not**
+  touching `tests/renderer/**`, whose `@/lib/*`, `@/hooks/*` and `@/components/*` mocks belong to the
+  renderer's own alias space.
+
 Worth recording: `tsc-alias` does **not** rewrite `@bifurc/engine/*` to a relative path the way it
 rewrites `@/*`. It leaves it bare, exactly as it already leaves `@bifurc/protocol` bare, and Node
 resolves it through the workspace symlink and the `exports` map. This was verified by inspecting
@@ -773,16 +811,24 @@ have produced a bogus `@bifurc/engine/subscription/gate` specifier during the re
 
 The remaining engine modules move next, in dependency order, each verified against the full suite:
 
-1. `proxy/` (the actual product) and `sync/` — both depend only on `store/`
-2. `applications/`, `companion/`, `commands/`, `eventBus.ts` — depend on the above
-3. `startup.ts` and `shutdown.ts` — already Electron-free, they just need to move
+1. ~~`proxy/` (the actual product) and `sync/`~~ — **done (layer 2, 2026-09-15)**, together with
+   `eventBus.ts`, which they are mutually coupled to. 28 files, 189 statements rewritten across
+   95 files; `mkcert` added as the engine's second runtime dependency.
+2. `applications/`, `companion/`, `commands/` — depend on the above. `companion/` is what pulls in
+   `ws`, so that dependency moves with it.
+3. `startup.ts` and `shutdown.ts` — already Electron-free, they just need to move.
 4. `createEngine(opts)` — the real public API, which is what finally satisfies the
    "engine starts from a bare Node script with `--data-dir`" acceptance criterion
-5. Dependency split completion: `ws`, `js-yaml`, `mkcert`, `archiver`, `unzipper` and
+5. Dependency split completion: `ws`, `js-yaml`, `archiver`, `unzipper` and
    `@bifurc/protocol` move out of the root flat list as their modules move
+   (`mkcert` and `simple-git` have already moved).
 
 Left in `src/` by design: `ipc/` (the registration layer this phase replaces), `main.ts`,
 `preload.ts`.
+
+**Not part of item 8, but found while doing it:** the packaged app cannot resolve `@bifurc/protocol`
+or `@bifurc/engine`, because `build.files` covers only `dist/**/*` + `package.json`. Dev mode and the
+test suite are unaffected. See the measured note in `plan/12`.
 
 ---
 
@@ -849,13 +895,19 @@ Left in `src/` by design: `ipc/` (the registration layer this phase replaces), `
       and `gitStore.ts`, `companionServer.ts`, `webhookServer.ts`, `processSpawner.ts`,
       `appSettings.ts`, `workspaceFs.ts`, `startup.ts`, `shutdown.ts` and `eventBus.ts` are all
       clean. They become package-level guarantees as each module moves.)*
-- [x] `grep -rn "BrowserWindow\|app.getPath\|dialog\.\|shell\." packages/engine/src` returns zero.
-      *(Verified 2026-09-15: **zero**. Three comments in `store/{paths,appSettings,workspaceFs}.ts`
-      originally quoted `setDataRoot(app.getPath("userData"))` while explaining what the shell does;
-      they were reworded to keep the same information without the token, so this stays a clean,
-      automatable check rather than one with three known false positives. The only remaining
-      `BrowserWindow.getAllWindows()` / `webContents.send` sites in `src/` are `eventBridge.ts`
-      (deliberate) and `clientHandlers.ts` (zoom/titlebar chrome, CLIENT-classified).)*
+- [x] `grep -rnE "BrowserWindow|app\.getPath|dialog\.|\bshell\." packages/engine/src` returns zero.
+      *(Verified 2026-09-15: **zero**. Two classes of false positive were removed rather than
+      tolerated, because a criterion that greps clean is worth more than one with documented
+      exceptions. (1) Three comments in `store/{paths,appSettings,workspaceFs}.ts` and one in
+      `eventBus.ts` quoted `setDataRoot(app.getPath("userData"))` / `BrowserWindow.getAllWindows()`
+      while explaining what the shell does; they were reworded to keep the same information without
+      the token. (2) `proxy/service-discovery.ts` holds a literal Windows path ending in
+      `powershell.exe`, which the unanchored pattern `shell\.` matched — so the pattern is now
+      `\bshell\.`, which is the *correct* semantic (Electron's `shell` API is always a standalone
+      identifier) and still catches real usage: it matches `shell.openExternal(url)` in
+      `src/ipc/handlers/clientHandlers.ts`. The only remaining `BrowserWindow.getAllWindows()` /
+      `webContents.send` sites in `src/` are `eventBridge.ts` (deliberate) and `clientHandlers.ts`
+      (zoom/titlebar chrome, CLIENT-classified).)*
 - [ ] Engine starts from a bare Node script with `--data-dir`, serves, and shuts down cleanly.
       *(Not done — the package now exists and builds, but only its storage layer has moved, so there
       is still nothing to run. The pieces are individually tested: `store/paths.ts` resolves the
@@ -932,20 +984,23 @@ plus `entity:load`/`entity:setEnabled`, onto `entity.create`/`entity.update`/`en
 except for the P3-bound `importExport:*` SPLIT channels** — every `EntityKind` value routes
 through the CommandRegistry, ~112 commands total. See work item 7's own status note (tenth
 through twelfth batches) for the full detail. Work item 8 (the physical `packages/*`
-restructuring + dependency split) is now **started, with its infrastructure done**. `packages/engine`
+restructuring + dependency split) is now **started, with its infrastructure done and two of four
+layers moved**. `packages/engine`
 exists as a real linked npm workspace with its own `tsup` pipeline (structure-preserving ESM + CJS +
-`.d.ts`), its own `tsconfig.json`, and a `package.json` whose only runtime dependency is
-`simple-git`; it has **zero** Electron imports and **zero** `BrowserWindow`/`dialog.`/`shell.`
-references. The bottom of the dependency graph has physically moved —
-`src/{store,lib,subscription}` → `packages/engine/src/`, 14 files, via `git mv` so blame survives —
-and all 254 referencing statements across 97 files were rewritten to `@bifurc/engine/*`
-(renderer: **zero** files, because its `@/` alias points at `renderer/`). `packages/protocol`
+`.d.ts`), its own `tsconfig.json`, and a `package.json` whose runtime dependencies are
+`mkcert` and `simple-git`; it has **zero** Electron imports and **zero**
+`BrowserWindow`/`dialog.`/`\bshell.` references. **Layer 1** moved
+`src/{store,lib,subscription}` → `packages/engine/src/` (14 files, via `git mv` so blame survives)
+and rewrote 254 referencing statements across 97 files. **Layer 2** moved
+`src/{proxy,sync}` + `src/eventBus.ts` (28 files) and rewrote 189 statements across 95 files —
+those three had to go together because `eventBus` and `proxy`/`sync` import each other.
+Renderer: **zero** files in both layers, because its `@/` alias points at `renderer/`. `packages/protocol`
 remains a real linked workspace and is the other inter-package dependency. A latent CI bug was
 found and fixed along the way: neither package's `dist` is committed, CI only ran `npm ci`, and a
 fresh clone therefore failed `npm run typecheck` with `TS2307` for `@bifurc/protocol` — a new
 `build:packages` script wired to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`
-makes installs self-sufficient. What remains in item 8: moving `proxy/`, `sync/`,
-`applications/`, `companion/`, `commands/`, `eventBus.ts`, `startup.ts` and `shutdown.ts`, and
+makes installs self-sufficient. What remains in item 8: moving `applications/`, `companion/` and
+`commands/`, then `startup.ts` and `shutdown.ts`, and
 building the real `createEngine()` public API — which is what finally satisfies the "engine starts
 from a bare Node script with `--data-dir`" criterion. The dependency split is correspondingly
 partial: the engine declares its own deps and no Electron/renderer deps, but the deps of the

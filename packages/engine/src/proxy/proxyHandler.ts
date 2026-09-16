@@ -1,13 +1,13 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { ProxyRule, LocalMapping } from "@bifurc/engine/store/config";
-import { HOP_BY_HOP } from "@/proxy/constants";
-import { sendHtml } from "@/proxy/pages";
-import { executeRequestScript, executeResponseScript } from "@/proxy/scriptExecutor";
-import { decompressBody, stripContentEncoding } from "@/proxy/decompressUtils";
-import { emitLogChunk } from "@/proxy/logEmitter";
-import { handleProxyResponse, parseRawHeaders } from "@/proxy/responseUtils";
+import { ProxyRule, LocalMapping } from "../store/config";
+import { HOP_BY_HOP } from "./constants";
+import { sendHtml } from "./pages";
+import { executeRequestScript, executeResponseScript } from "./scriptExecutor";
+import { decompressBody, stripContentEncoding } from "./decompressUtils";
+import { emitLogChunk } from "./logEmitter";
+import { handleProxyResponse, parseRawHeaders } from "./responseUtils";
 
 export function tcpTunnel(
   socket: net.Socket,

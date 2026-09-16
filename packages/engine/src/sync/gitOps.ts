@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { getGit, queryLog } from "@bifurc/engine/store/gitStore";
+import { getGit, queryLog } from "../store/gitStore";
 import {
   wsDir,
   readEntity,
@@ -10,13 +10,13 @@ import {
   getPendingDeletions,
   removePendingDeletion,
   EntityNameEntry,
-} from "@bifurc/engine/store/workspaceFs";
-import { publishEntities } from "@/sync/publishService";
+} from "../store/workspaceFs";
+import { publishEntities } from "./publishService";
 import {
   getWorkspaceSyncStatus,
   invalidateCache,
   EntitySyncStatus,
-} from "@/sync/statusTracker";
+} from "./statusTracker";
 
 export interface FileDiffResult {
   hasDiff: boolean;

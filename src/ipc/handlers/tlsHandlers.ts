@@ -1,10 +1,10 @@
 import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { generateCA, getCertStatus } from "@/proxy/certManager";
+import { generateCA, getCertStatus } from "@bifurc/engine/proxy/certManager";
 import { appDataDir } from "@bifurc/engine/store/appSettings";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 // P2 work item 7 — only tls.generate/certStatus/removeCert convert here: all three take no
 // params (`z.object({}).strict()` in packages/protocol/src/commands/tls.ts) and are pure

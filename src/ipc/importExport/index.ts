@@ -2,7 +2,7 @@ import { ipcMain, dialog } from "electron";
 import { getAllFormats, getExporter, getImporter } from "@/ipc/importExport/registry";
 import type { EntityKind, ExportRequest, PreflightRequest, ImportRequest } from "@/ipc/importExport/types";
 import { commandRegistry } from "@/commands/registry";
-import { bus } from "@/eventBus";
+import { bus } from "@bifurc/engine/eventBus";
 
 // Import registry side effects (registers all formats)
 import "./registry";
