@@ -4,8 +4,8 @@
  */
 
 import { ChildProcess, spawn } from "child_process";
-import { readEntity } from "@bifurc/engine/store/workspaceFs";
-import { bus } from "@bifurc/engine/eventBus";
+import { readEntity } from "../store/workspaceFs";
+import { bus } from "../eventBus";
 import {
     ApplicationConfig,
     AppProcessState,

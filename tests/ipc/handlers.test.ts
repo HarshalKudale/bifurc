@@ -173,7 +173,7 @@ import { startServer, stopServer, isRunning, getPort, getServerError, reloadConf
 import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
-import { commandRegistry } from "@/commands/registry";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
 
 // ── Helper: get registered handler ───────────────────────────────────────────
 

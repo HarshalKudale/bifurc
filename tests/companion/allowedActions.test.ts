@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ALLOWED_ACTIONS } from "@/companion/allowedActions";
+import { ALLOWED_ACTIONS } from "@bifurc/engine/companion/allowedActions";
 
 /**
  * This set is a security boundary: it decides which IPC actions the browser

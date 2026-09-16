@@ -14,9 +14,9 @@
  * This module is intentionally Electron-free. Keep it that way: it is on the `packages/engine`
  * side of the seam.
  */
-import { processSpawner } from "@/applications/processSpawner";
+import { processSpawner } from "@bifurc/engine/applications/processSpawner";
 import { stopAllAutoSync } from "@bifurc/engine/sync/autoSync";
-import { stopCompanionServer } from "@/companion/companionServer";
+import { stopCompanionServer } from "@bifurc/engine/companion/companionServer";
 import { stopServer } from "@bifurc/engine/proxy/server";
 
 /**

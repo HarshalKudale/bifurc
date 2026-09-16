@@ -6,12 +6,12 @@ import * as path from "path";
 vi.mock("@bifurc/engine/store/gitStore", () => ({
   checkGitInstalled: vi.fn(),
 }));
-vi.mock("@/applications/portUtils", () => ({
+vi.mock("@bifurc/engine/applications/portUtils", () => ({
   checkPortInUse: vi.fn(),
 }));
 
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
-import { checkPortInUse } from "@/applications/portUtils";
+import { checkPortInUse } from "@bifurc/engine/applications/portUtils";
 import { preflight } from "@/startup";
 
 describe("startup/preflight", () => {

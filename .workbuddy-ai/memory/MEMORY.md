@@ -9,18 +9,18 @@ Session history: `memory/YYYY-MM-DD.md`.
 
 - **Flat single-package repo** — the app IS the root (was `bifurc/` before 2026-09-14). `workspaces:
   ["packages/*"]`. Paths root-relative — **never `cd bifurc`**.
-- **`packages/engine`** (P2 item 8, started 2026-09-15): **two layers moved** — `src/{store,lib,
-  subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts`. Those three are mutually coupled
-  (`eventBus` imports `proxy`/`sync`; `proxy` imports `eventBus`), so they cannot be split across
-  layers. Still in `src/`: `applications/`, `companion/`, `commands/`, `startup.ts`, `shutdown.ts`
-  — then the real `createEngine()`, which is what blocks the "engine starts from a bare Node script
-  with `--data-dir`" criterion. Deliberately open: git `dialog.showErrorBox` not routed via
-  `preflight()`; `importExport:*` out of the registry until P3.
-- **Packaging does NOT follow the package split** (found 2026-09-15, owned by `plan/12`).
-  `build.files` is `["dist/**/*","package.json"]` and electron-builder does not dereference the
-  `node_modules/@bifurc/*` workspace symlinks, so a **packaged** build cannot resolve
-  `@bifurc/engine/*` or `@bifurc/protocol` — dev mode and the test suite are fine. Never claim
-  "the app still works" without this caveat.
+- **`packages/engine`** (P2 item 8, started 2026-09-15): **three layers moved** (49 files) —
+  `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts` (mutually coupled, so
+  they could not be split), then `src/{applications,companion,commands}`. Runtime deps: `mkcert`,
+  `simple-git`, `ws`. Still in `src/`: `startup.ts` and `shutdown.ts` (plus `ipc/`, `main.ts`,
+  `preload.ts` by design) — then the real `createEngine()`, which is what blocks the "engine starts
+  from a bare Node script with `--data-dir`" criterion. Deliberately open: git `dialog.showErrorBox`
+  not routed via `preflight()`; `importExport:*` out of the registry until P3.
+- **Packaging does NOT follow the package split** (owned by `plan/12`). `build.files` covers only
+  `dist/**/*` + `package.json`, and electron-builder does not dereference the
+  `node_modules/@bifurc/*` workspace symlinks — so a **packaged** build cannot resolve
+  `@bifurc/engine/*` or `@bifurc/protocol`. Dev mode and tests are fine. Never claim "the app still
+  works" without this caveat.
 - **P6 (shell seam) is the only milestone**; everything after is additive. Track C parked. Hard
   rules: **no renderer edits P1–P6**; no `ws` transport before auth; `window.api` byte-identical
   through P5–P6. `../bifurc-extension` is an external client; its 4 commands are frozen API.
@@ -37,8 +37,10 @@ Session history: `memory/YYYY-MM-DD.md`.
 - **`src/shutdown.ts`** — memoised idempotent `shutdownEngine()` (spawner → pollers → companion →
   proxy). `processSpawner.stop()` has a per-entry `stopping` guard; entries stay in the map so
   `getState`/`getLogs` survive shutdown.
-- **`src/commands/registry.ts`** — ~112 commands validating against frozen `@bifurc/protocol` Zod
-  schemas; `entityKindMap.ts` bridges `"rules"`/`"sockets"` ↔ `"proxyRules"`/`"wsConnections"`.
+- **`packages/engine/src/commands/registry.ts`** — ~112 commands validating against frozen
+  `@bifurc/protocol` Zod schemas; `entityKindMap.ts` bridges `"rules"`/`"sockets"` ↔
+  `"proxyRules"`/`"wsConnections"`. `companion/allowedActions.ts` is the **frozen** API for the
+  external `bifurc-extension` — it moved, but its contents must not change.
 - `packages/engine/src/proxy/` has **zero** Electron imports. `companionServer.ts` (still in
   `src/companion/`) already speaks `{id,action,payload}` → `{id,ok,data,error}` over loopback WS
   9271 — generalise for P4. **No auth**; the `127.0.0.1` bind is its whole access control.

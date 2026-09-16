@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { CommandRegistry } from "@/commands/registry";
+import { CommandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
 
 // `CommandRegistry` validates against the real, frozen `@bifurc/protocol` schemas — no mocking

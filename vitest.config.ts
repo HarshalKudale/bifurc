@@ -165,7 +165,11 @@ export default defineConfig({
         "**/*.d.ts",
         "packages/engine/src/store/types.ts",
         "packages/engine/src/sync/types.ts",
-        "src/applications/types.ts",
+        // NOT excluded: `packages/engine/src/applications/types.ts`. Despite the name it is not a
+        // type-only module — it exports `DEFAULT_DEBUG_PORTS`, `RUN_CONFIG_TYPE_LABELS` and
+        // `RUN_CONFIG_TYPE_ICONS` as real runtime values. The old `src/applications/types.ts` entry
+        // was excluding live code from the report purely on the strength of its filename. It is
+        // loaded by `applicationHandlers.ts`, so it reports as covered.
         "src/ipc/importExport/types.ts",
         "renderer/components/modals/import-export/types.ts",
         "renderer/components/search/searchTypes.ts",

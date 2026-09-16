@@ -20,7 +20,7 @@ import {
   queryLog, getEntityAtCommit, getCommitChangedFiles, QueryLogOptions, AuditEntity,
 } from "@bifurc/engine/store/gitStore";
 import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
-import { commandRegistry } from "@/commands/registry";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
 
 // P2 work item 7 — these are the second batch of commands wired through the CommandRegistry,
 // following coreHandlers.ts's proof of concept. Every command here is already a clean 1:1 with

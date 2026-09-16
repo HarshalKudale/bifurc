@@ -1,7 +1,7 @@
 /**
  * Spike 4 — protocol envelope.
  *
- * Generalises the shape that `src/companion/companionServer.ts` already ships in
+ * Generalises the shape that `packages/engine/src/companion/companionServer.ts` already ships in
  * production (`{id, action, payload}` → `{id, ok, data, error}`), with the two
  * changes P4 will need: a structured error (code + retryable) instead of a bare
  * string, and an explicit protocol version for the future `hello` handshake.

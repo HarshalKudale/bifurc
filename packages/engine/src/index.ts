@@ -4,9 +4,10 @@
  * **Provisional (P2 work item 8, in progress).** The plan's end state for this file is the public
  * API `createEngine(opts) -> { start(), stop(), registry, bus, status() }` with **nothing else
  * exported** (`plan/03-phase-2-engine-extraction.md`, work item 8). That is not reachable yet:
- * the storage layer, the proxy, sync, and the event bus have physically moved into this package,
- * but `applications/`, `commands/`, `startup.ts`, `shutdown.ts` and the transport layers are still
- * in the app's `src/` and follow in later steps of the same work item.
+ * the storage layer, the proxy, sync, the event bus, the application supervisor, the companion
+ * server and the command registry have all physically moved into this package, but `startup.ts`
+ * and `shutdown.ts` — and the `createEngine()` that ties them together — are still in the app's
+ * `src/` and follow in the last step of the same work item.
  *
  * Until then this barrel exposes the moved layers as **namespaces** rather than flattened
  * star-exports. Two reasons:
@@ -34,3 +35,6 @@ export * as randomizer from "./lib/randomizer";
 export * as eventBus from "./eventBus";
 export * as proxy from "./proxy/server";
 export * as sync from "./sync/syncManager";
+export * as applications from "./applications/processSpawner";
+export * as companion from "./companion/companionServer";
+export * as commands from "./commands/registry";

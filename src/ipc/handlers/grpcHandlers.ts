@@ -4,7 +4,7 @@ import type {
   GrpcStartMockServerParams, GrpcStopMockServerParams,
 } from "@bifurc/protocol";
 import { registerEntityCrudHandlers, registerSimpleEntityHandlers } from "@/ipc/handlers/entityCrudFactory";
-import { commandRegistry } from "@/commands/registry";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
 
 interface SavedGrpcRequest {

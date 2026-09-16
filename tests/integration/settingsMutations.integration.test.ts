@@ -52,7 +52,7 @@ import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
 import { generateCA } from "@bifurc/engine/proxy/certManager";
 import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
-import { stopCompanionServer, getCompanionPort } from "@/companion/companionServer";
+import { stopCompanionServer, getCompanionPort } from "@bifurc/engine/companion/companionServer";
 
 // ── Capture the handlers the Settings screen drives ───────────────────────────
 
@@ -388,7 +388,7 @@ describe("settings — changing the companion port moves the WebSocket server", 
 
     // Boot the companion on `first` exactly as the app does at startup.
     invoke("config:save", { ...invoke("config:get"), companionPort: first });
-    const { startCompanionServer } = await import("@/companion/companionServer");
+    const { startCompanionServer } = await import("@bifurc/engine/companion/companionServer");
     startCompanionServer(first);
     await waitForPort(first, true);
     expect(getCompanionPort()).toBe(first);
@@ -408,7 +408,7 @@ describe("settings — changing the companion port moves the WebSocket server", 
     while (second === first) second = await getFreePort();
 
     invoke("config:save", { ...invoke("config:get"), companionPort: first });
-    const { startCompanionServer } = await import("@/companion/companionServer");
+    const { startCompanionServer } = await import("@bifurc/engine/companion/companionServer");
     startCompanionServer(first);
     await waitForPort(first, true);
 
