@@ -82,6 +82,40 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
 ENTRYPOINT ["node", "engine/index.js"]
 ```
 
+> **⚠️ This Dockerfile cannot boot as written — it has no `node_modules`.** Measured during P2 item 8:
+> `packages/engine/dist/**` keeps **bare** requires for its runtime dependencies (`bundle: false` is
+> load-bearing — `store/paths.ts` holds the data root as module-level state, so bundling would inline
+> a private copy into every entry), and the image copies only `dist/` and the root `package.json`.
+> So the first `require` of `mkcert`, `simple-git`, `ws` or `@bifurc/protocol` throws
+> `Cannot find module`. `COPY package.json ./` does not help: nothing installs from it, and it is the
+> *root* manifest, which also declares Electron and React.
+>
+> The runtime third-party set is exactly four packages:
+>
+> | Package | Needed by |
+> |---|---|
+> | `@bifurc/protocol` | `commands/registry.ts` (the Zod schemas every command validates against) |
+> | `mkcert` | `proxy/tlsCert.ts` — pure JS (`node-forge`), no extra binary, as the note below says |
+> | `simple-git` | `store/gitStore.ts`, `sync/*` |
+> | `ws` | `companion/companionServer.ts` |
+>
+> Everything else the engine requires is a Node builtin (`child_process`, `crypto`, `events`, `fs`,
+> `http`, `https`, `net`, `os`, `path`, `tls`, `vm`, `zlib`).
+>
+> Two ways to close it, both to be decided at P9:
+>
+> 1. `COPY packages/engine/package.json packages/protocol/package.json` + `RUN npm ci --omit=dev`
+>    against a trimmed manifest — smallest image, needs a lockfile strategy for a partial workspace.
+> 2. Bundle the four dependencies into `dist/` at image-build time (a second `tsup` pass with
+>    `noExternal`) — no `node_modules` in the image at all, but it gives up the singleton property
+>    that `bundle: false` protects, so it needs care around `store/paths.ts`.
+>
+> **`@bifurc/protocol` was also an undeclared dependency** until this was measured — the engine
+> imported it but `packages/engine/package.json` did not list it, so it resolved only by root
+> hoisting. Fixed 2026-09-16. A standalone install (`npm pack`, `npm ci --workspace`) would have
+> missed it.
+
+
 Notes:
 - **`mkcert` is pure JS** (`node-forge`) — no extra binary needed for cert generation. Verified.
 - **Non-root by default.** The engine no longer installs CAs (that moved to the client in P3), so it does

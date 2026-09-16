@@ -14,10 +14,10 @@
  * This module is intentionally Electron-free. Keep it that way: it is on the `packages/engine`
  * side of the seam.
  */
-import { processSpawner } from "@bifurc/engine/applications/processSpawner";
-import { stopAllAutoSync } from "@bifurc/engine/sync/autoSync";
-import { stopCompanionServer } from "@bifurc/engine/companion/companionServer";
-import { stopServer } from "@bifurc/engine/proxy/server";
+import { processSpawner } from "./applications/processSpawner";
+import { stopAllAutoSync } from "./sync/autoSync";
+import { stopCompanionServer } from "./companion/companionServer";
+import { stopServer } from "./proxy/server";
 
 /**
  * The in-flight or completed shutdown. Memoised so the second and later callers await the same

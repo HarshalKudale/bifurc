@@ -31,7 +31,7 @@ async function harness(): Promise<Harness> {
   const autoSync = await import("@bifurc/engine/sync/autoSync");
   const companion = await import("@bifurc/engine/companion/companionServer");
   const proxy = await import("@bifurc/engine/proxy/server");
-  const shutdown = await import("@/shutdown");
+  const shutdown = await import("@bifurc/engine/shutdown");
   return {
     shutdownEngine: shutdown.shutdownEngine,
     isShuttingDown: shutdown.isShuttingDown,
