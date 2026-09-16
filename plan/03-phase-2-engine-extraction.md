@@ -682,11 +682,12 @@ The package, its build and the resolution story are **done and verified**. The m
 in layers rather than one commit, per this doc's own mitigation ("do one package first, prove the
 pattern, then move the rest").
 
-**Layer 3 — `applications/`, `companion/`, `commands/` — has also moved.** 7 files, 48 statements
-rewritten across 26 files. The cleanest layer yet: all 7 files reported *identical* coverage before
-and after, on all four metrics including raw covered/total counts. `ws` joined the engine as its
-third runtime dependency (it is `companion/` that needs it, as predicted). Layer 3 is also where the
-`coverage.exclude` list turned out to contain a **wrong** entry — see the note in `TESTING.md` §5.
+**Layer 3 — `applications/`, `companion/`, `commands/` — has also moved.** 8 files, 48 statements
+rewritten across 26 files. The cleanest layer yet: all 7 files that were in the pre-move coverage
+report came back *identical* on all four metrics including raw covered/total counts (the 8th,
+`applications/types.ts`, had been wrongly excluded from the report — see the note in `TESTING.md`
+§5). `ws` joined the engine as its third runtime dependency (it is `companion/` that needs it, as
+predicted when `companion/` was still in `src/`).
 
 **Layer 2 — `proxy/`, `sync/` and `eventBus.ts` — has moved too.** These three had to go together,
 and the reason is worth recording: `eventBus.ts` imports `@/proxy/logEmitter` and
@@ -827,9 +828,9 @@ The remaining engine modules move next, in dependency order, each verified again
 1. ~~`proxy/` (the actual product) and `sync/`~~ — **done (layer 2)**, together with `eventBus.ts`,
    which they are mutually coupled to. 28 files, 189 statements rewritten across 95 files; `mkcert`
    added as the engine's second runtime dependency.
-2. ~~`applications/`, `companion/`, `commands/`~~ — **done (layer 3)**. 7 files, 48 statements
-   across 26 files, 7/7 exact on all four coverage metrics. `ws` moved with `companion/`, as
-   predicted.
+2. ~~`applications/`, `companion/`, `commands/`~~ — **done (layer 3)**. 8 files, 48 statements
+   across 26 files, 7/7 of the pre-move files exact on all four coverage metrics. `ws` moved with
+   `companion/`, as predicted.
 3. `startup.ts` and `shutdown.ts` — already Electron-free, they just need to move. These are the
    last two engine files in `src/`.
 4. `createEngine(opts)` — the real public API, which is what finally satisfies the
@@ -1009,7 +1010,7 @@ exists as a real linked npm workspace with its own `tsup` pipeline (structure-pr
 and rewrote 254 referencing statements across 97 files. **Layer 2** moved
 `src/{proxy,sync}` + `src/eventBus.ts` (28 files) and rewrote 189 statements across 95 files —
 those three had to go together because `eventBus` and `proxy`/`sync` import each other.
-**Layer 3** moved `src/{applications,companion,commands}` (7 files, 48 statements across 26 files).
+**Layer 3** moved `src/{applications,companion,commands}` (8 files, 48 statements across 26 files).
 Renderer: **zero** files in every layer, because its `@/` alias points at `renderer/`. `packages/protocol`
 remains a real linked workspace and is the other inter-package dependency. A latent CI bug was
 found and fixed along the way: neither package's `dist` is committed, CI only ran `npm ci`, and a
