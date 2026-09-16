@@ -12,8 +12,8 @@ import { getGit } from "@bifurc/engine/store/gitStore";
 import { reloadConfig } from "@bifurc/engine/proxy/server";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
 import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
-import { commandRegistry } from "@/commands/registry";
-import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { toProtocolKind, toEngineKind } from "@bifurc/engine/commands/entityKindMap";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 
 const ctx = { bus };

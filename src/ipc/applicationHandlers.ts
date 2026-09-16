@@ -14,11 +14,11 @@ import type {
 import {
     readAllEntities, writeEntity, deleteEntityFile,
 } from "@bifurc/engine/store/workspaceFs";
-import { processSpawner } from "@/applications/processSpawner";
-import { generateResolvedCommand } from "@/applications/commandGenerator";
-import { checkPortInUse, killProcessOnPort } from "@/applications/portUtils";
-import type { ApplicationConfig } from "@/applications/types";
-import { commandRegistry } from "@/commands/registry";
+import { processSpawner } from "@bifurc/engine/applications/processSpawner";
+import { generateResolvedCommand } from "@bifurc/engine/applications/commandGenerator";
+import { checkPortInUse, killProcessOnPort } from "@bifurc/engine/applications/portUtils";
+import type { ApplicationConfig } from "@bifurc/engine/applications/types";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
 
 function generateId(): string {

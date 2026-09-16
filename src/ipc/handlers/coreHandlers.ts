@@ -17,16 +17,16 @@ import {
   reloadConfig, replayRequest,
 } from "@bifurc/engine/proxy/server";
 import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
-import { restartCompanionServer } from "@/companion/companionServer";
+import { restartCompanionServer } from "@bifurc/engine/companion/companionServer";
 import { generateRandomWorkspaceName } from "@bifurc/engine/lib/randomNames";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
-import { commandRegistry } from "@/commands/registry";
-import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { toProtocolKind, toEngineKind } from "@bifurc/engine/commands/entityKindMap";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 
-// P2 work item 7 (CommandRegistry) proof-of-concept — see `src/commands/registry.ts` for the
+// P2 work item 7 (CommandRegistry) proof-of-concept — see `packages/engine/src/commands/registry.ts` for the
 // rationale and current scope. These three commands were picked because they cover both shapes
 // (`config.get` has no params; `env.setActive`/`workspace.setActive` have a simple named-param
 // object that already matches its legacy channel's single positional argument 1:1) without
@@ -123,7 +123,7 @@ export function registerCoreHandlers() {
     }
     if (incoming.companionPort !== prev.companionPort) {
       // Statically imported (see the top of this file) rather than `require`d here.
-      // A bare `require("@/companion/companionServer")` only resolves because
+      // A bare `require("@bifurc/engine/companion/companionServer")` only resolves because
       // `tsc-alias` post-processes the build output — which makes this user-facing
       // path depend on the build pipeline, and makes it impossible to exercise from
       // a test runner (the alias is not resolvable at runtime). There is no import

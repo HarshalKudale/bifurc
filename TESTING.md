@@ -187,34 +187,35 @@ behaviour that changed live state with nothing behind it (and it found a third b
 
 | Metric | Before (same scope¹) | **Now** | Change |
 |---|---:|---:|---:|
-| Statements | 24.16% | **47.99%** | +23.8 pts |
+| Statements | 24.16% | **48.00%** | +23.8 pts |
 | Branches | 14.87% | **31.99%** | +17.1 pts |
 | Functions | 17.11% | **36.30%** | +19.2 pts |
-| Lines | 25.49% | **50.38%** | +24.9 pts |
+| Lines | 25.49% | **50.39%** | +24.9 pts |
 
 ¹ Both columns use the *widened* `include` scope (which adds `renderer/panels/**/*.tsx`, ~0%
 covered), so the comparison is apples-to-apples. The original narrow-scope baseline was
 27.71% statements; the widened scope *lowered* the headline to 24.16% at the time, and the
-current 47.99% is a real gain on top of that larger denominator.
+current 48.00% is a real gain on top of that larger denominator.
 
 ² These are the figures from the last full run. V8 instrumentation is not perfectly
 deterministic — two identical runs move a given figure by ~0.05 pt (the seventh pass read
 46.14% statements where the sixth read 45.96%). Treat them as "the last run", not a
 constant, and re-measure rather than copy when you change the suite.
 
-³ **Scope changed on 2026-09-15** when the engine extraction moved `src/{store,lib,subscription}`
-(layer 1) and then `src/{proxy,sync}` + `src/eventBus.ts` (layer 2) into `packages/engine/src`.
-Those files are the *same code under the same tests*, and their per-file coverage is provably
-unchanged (see §4.8). Two new groups entered the report:
+³ **Scope changed on 2026-09-15** when the engine extraction moved the engine out of `src/` in
+three layers: `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts`, then
+`src/{applications,companion,commands}`. Those files are the *same code under the same tests*, and
+their per-file coverage is provably unchanged (see §4.8). Two new groups entered the report:
 
 | Group | Files | Statements | Note |
 |---|---:|---:|---|
-| `packages/engine/src` | 41 | 2,433 | The moved files + a new re-export barrel (`index.ts`, 0%). Was 14 files / 606 statements after layer 1. |
-| `packages/protocol/src` | 16 | 106 | **Sourcemap artefact** — `packages/protocol/dist/index.js` is executed through its `exports` map, and V8 remaps it back through `dist/index.js.map` (whose `sources` list `../src/commands/*.ts`). Numbers are therefore approximate and ~100%. Present since P2 work item 7 wired the registry to `@bifurc/protocol`. |
+| `packages/engine/src` | 49 | 2,914 | The moved files + a new re-export barrel (`index.ts`, 0%). Was 14 files / 606 statements after layer 1, 41 / 2,433 after layer 2. |
+| `packages/protocol/src` | 16 | 106 | **Sourcemap artefact** — `packages/protocol/dist/index.js` is executed through its `exports` map, and V8 remaps it back through `dist/index.js.map` (whose `sources` list `../src/commands/*.ts`, i.e. `packages/protocol/src/commands/*.ts`). Numbers are therefore approximate and ~100%. Present since P2 work item 7 wired the registry to `@bifurc/protocol`. |
 
-The denominator is unchanged across both layers — 11,443 statements — while the percentage rose,
-so this is a genuine improvement rather than a scope artefact. Layer 1 *did* grow the denominator
-(11,129 → 11,443) because `packages/protocol/src` entered the report at the same time.
+The denominator went 11,129 → 11,443 (layer 1) → 11,446 (layer 3) while the percentage kept
+rising, so this is a genuine improvement rather than a scope artefact. The layer-1 jump was
+`packages/protocol/src` entering the report; layer 2 changed nothing; layer 3's +3 statements are
+`applications/types.ts`, which had been wrongly excluded as "type-only" (§5).
 
 Suite size: **69 files / 1616 tests** (was 61 files / 1360 tests at the last review; the growth
 is P2 work items 5–7). One test fails — `tests/spike/protocolPoc.test.ts` → `soap.execute`,
@@ -224,41 +225,43 @@ a known pre-existing failure that also reproduces on the pre-change tree (see §
 
 | Area | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
-| `packages/engine/src` | **82.7%** | **69.3%** | **85.7%** | **85.1%** |
+| `packages/engine/src` | **83.9%** | **71.1%** | **85.3%** | **86.4%** |
 | `packages/protocol/src` ³ | 97.2% | — | 25.0% | 97.2% |
 | `renderer/components` | **13.5%** | 13.3% | 8.7% | **14.6%** |
 | `renderer/lib` | **82.9%** | **74.8%** | **75.0%** | **84.1%** |
 | `renderer/panels` | 0.0% | 0.0% | 0.0% | 0.0% |
 | `src/` (root files) ⁴ | **98.4%** | **85.0%** | 100.0% | **98.2%** |
-| `src/applications` | **87.5%** | 77.0% | 81.3% | 91.6% |
-| `src/commands` | 100.0% | 100.0% | 100.0% | 100.0% |
-| `src/companion` | **95.3%** | 83.3% | 76.5% | **95.1%** |
 | `src/ipc` | **79.1%** | 55.8% | 79.7% | 82.1% |
-| **TOTAL** | **47.99%** | **31.99%** | **36.30%** | **50.38%** |
+| **TOTAL** | **48.00%** | **31.99%** | **36.30%** | **50.39%** |
 
 ³ `packages/protocol/src` has no branch data because V8 records none for those remapped Zod
 schemas. Its numbers come from the sourcemap-remapped `dist/` bundle (see §4.1 footnote 3), so
 treat them as indicative. Its 25.0% functions is a single arrow function in
-`src/commands/index.ts`, not a broad gap.
+`packages/protocol/src/commands/index.ts`, not a broad gap.
 
 ⁴ `src/shutdown.ts` (100%), `src/startup.ts` (98.2%). `src/eventBus.ts` (100%) moved into the
 package in layer 2 and is now counted under `packages/engine/src`. `src/main.ts` and
 `src/preload.ts` are excluded — they are process entry points, exercised by launching the app.
 
-**Rows removed on 2026-09-15.** `src/lib`, `src/store`, `src/subscription` (layer 1) and
-`src/proxy`, `src/sync` (layer 2) no longer exist in `src/`; they are
-`packages/engine/src/{lib,store,subscription,proxy,sync}` now, reported as the single
+**Rows removed on 2026-09-15.** `src/lib`, `src/store`, `src/subscription` (layer 1);
+`src/proxy`, `src/sync` (layer 2); `src/applications`, `src/companion`, `src/commands` (layer 3) no
+longer exist in `src/`. They all live under `packages/engine/src/` now, reported as the single
 `packages/engine/src` row above. Their pre-move figures were `src/store` 82.8/68.8/84.1/87.6,
-`src/subscription` 100/100/100/100, `src/lib` 30.0/2.8/22.2/31.8, `src/proxy` 87.2/77.9/89.7/88.9
-and `src/sync` 77.8/56.7/80.3/80.6 — so the combined row reading 82.7/69.3/85.7/85.1 is a
-*weighted average of unchanged numbers*, diluted only by the new 0%-covered `index.ts` barrel
-(§4.8). Nothing regressed: §4.8 verifies every moved file individually.
+`src/subscription` 100/100/100/100, `src/lib` 30.0/2.8/22.2/31.8, `src/proxy` 87.2/77.9/89.7/88.9,
+`src/sync` 77.8/56.7/80.3/80.6, `src/applications` 87.5/77.0/81.3/91.6, `src/companion`
+95.3/83.3/76.5/95.1 and `src/commands` 100/100/100/100 — so the combined row reading
+83.9/71.1/85.3/86.4 is a *weighted average of unchanged numbers*, diluted only by the new
+0%-covered `index.ts` barrel (§4.8). Nothing regressed: §4.8 verifies every moved file individually.
 
-Bold areas are the ones the original review moved materially: `src/applications` 1.1% → 87.5%,
-`src/companion` 0.8% → **95.3%**, `src/ipc` 24.5% → 79.1%, `packages/engine/src/proxy` 61.7% →
-87.2% (as `src/proxy` before the move), `packages/engine/src/store` → 82.8%, `src/sync` 64.5% →
-77.8%, `renderer/lib` 67.5% → 82.9% (the collection runner and its report generator were at 0%),
-and `renderer/components` 1.8% → 13.5%.
+`src/` now contains only `ipc/`, `main.ts` and `preload.ts` — the Electron registration layer that
+P2 replaces, plus the two process entry points. `startup.ts` and `shutdown.ts` are the last engine
+files still to move.
+
+Bold areas are the ones the original review moved materially. Named as they are today (all of the
+first six now live under `packages/engine/src/`): `applications` 1.1% → 87.5%, `companion` 0.8% →
+**95.3%**, `ipc` 24.5% → 79.1%, `proxy` 61.7% → 87.2%, `store` → 82.8%, `sync` 64.5% → 77.8%,
+`renderer/lib` 67.5% → 82.9% (the collection runner and its report generator were at 0%), and
+`renderer/components` 1.8% → 13.5%.
 
 > **Scope correction (2026-09-14, fourth pass).** `renderer/components` read **1.8%** until
 > this review, and the change is not from new tests — the `include` glob listed only `.tsx`
@@ -348,7 +351,7 @@ server is the browser extension's only write path into the workspace.
 |---|---:|---:|
 | `packages/engine/src/proxy/tlsIntercept.ts` | 0.0% | **88.5%** (100% of lines) |
 | `packages/engine/src/proxy/tlsCert.ts` | 71.0% | **90.3%** |
-| `src/companion/companionServer.ts` | 0.0% | **94.0%** |
+| `packages/engine/src/companion/companionServer.ts` | 0.0% | **94.0%** |
 | `renderer/lib/createTabReducer.ts` | 100.0% | **100.0%** |
 | `renderer/components/graphql/graphqlTabReducer.ts` | 0.0% | **92.9%** |
 | `renderer/components/grpc/grpcTabReducer.ts` | 0.0% | **88.9%** |
@@ -365,11 +368,12 @@ server is the browser extension's only write path into the workspace.
 
 ### 4.8 The engine extraction specifically
 
-P2 work item 8 moved the engine out of the app's `src/` into `packages/engine/src/`, in two layers:
-`src/{store,lib,subscription}` first, then `src/{proxy,sync}` + `src/eventBus.ts`. That is a pure
-move: no logic changed, so **each moved file must report exactly the coverage it reported before the
-move** — the same denominator (proof the code is untouched) and the same numerator (proof the same
-tests still reach it). Anything else means the move was not behaviour-preserving.
+P2 work item 8 moved the engine out of the app's `src/` into `packages/engine/src/`, in three
+layers: `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts`, then
+`src/{applications,companion,commands}`. That is a pure move: no logic changed, so **each moved file
+must report exactly the coverage it reported before the move** — the same denominator (proof the code
+is untouched) and the same numerator (proof the same tests still reach it). Anything else means the
+move was not behaviour-preserving.
 
 #### Layer 1 — `store/`, `lib/`, `subscription/`
 
@@ -428,6 +432,24 @@ commands. The direction is benign — a previously-dead fallback path is now exe
 self-imports would otherwise load a second copy of module state from `dist/`), and `vi.mock()`
 calls are not matched by an import-shaped regex (12 stale mock specifiers survived the first four
 passes — a mock that no longer matches its subject is worse than no mock).
+
+#### Layer 3 — `applications/`, `companion/`, `commands/`
+
+The cleanest layer yet: **7 files moved, 7 of 7 identical on all four metrics including raw
+covered/total counts, 0 regressions, 0 missing, 0 stale `src/` entries.** 48 statements rewritten
+across 26 files (45 imports + 3 `vi.mock`). `ws` joined the engine as its third runtime dependency.
+
+The layer-3 rewrite also produced the one **deliberate** scope change in this document:
+`coverage.exclude` listed `src/applications/types.ts` under "Type-only modules", but that file
+exports `DEFAULT_DEBUG_PORTS`, `RUN_CONFIG_TYPE_LABELS` and `RUN_CONFIG_TYPE_ICONS` — real runtime
+values. The exclusion was made on the strength of the filename and had been hiding live code. Rather
+than carry a wrong exclusion to the new path, the entry was **removed**; the file now reports 3/3
+lines at 100%, which is why the denominator grew by exactly 3 statements (11,443 → 11,446) and the
+numerator by exactly 3.
+
+**Layer 3's structural note:** `companion/allowedActions.ts` is the frozen API surface for the
+external `bifurc-extension` client. It moved with everything else, but its *contents* must not
+change — the extension is a released client that cannot be updated atomically with the engine.
 
 **The one 0% file is new, and it is a barrel.** `packages/engine/src/index.ts` is the package's
 public entry point, re-exporting each module as a namespace. Nothing imports it yet — tests and
@@ -490,6 +512,12 @@ A full HTML report is written to `coverage/index.html` by `npm run test:coverage
   `packages/engine/src/sync/types.ts` (layer 2). **Check this every layer** — an exclude entry that
   no longer matches does not error, it just silently starts counting a type-only module as
   uncovered code.
+- **Layer 3 found the mirror-image bug: an exclude that was always wrong.** The list carried
+  `src/applications/types.ts` under "Type-only modules", but that file exports three runtime
+  constants. The exclusion was made on the strength of the filename and had been hiding live,
+  fully-covered code from the report. The entry was **removed** rather than carried to the new
+  path, and the file now reports 100%. Filename-based exclusions are a standing hazard — check
+  that a `types.ts` really is type-only before adding one.
 
 ### `package.json` (root and `bifurc/`)
 - New: `test:unit`, `test:integration`, `test:ci`, `typecheck:e2e`, `typecheck:renderer`.
@@ -532,8 +560,8 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > **Closed in the second through seventh passes (2026-09-14):** these items are now done —
 > `decompressUtils` (100%), `responseUtils` (87%), `scriptContext` (96%) /
 > `scriptExecutor` (89%), the whole import/export tree (`importExport.integration`,
-> `importExportFormats.integration`, `registry.test`), `src/applications/**` (87%),
-> `packages/engine/src/subscription/entityCount.ts` (100%), `src/companion/allowedActions.ts` (100%), the
+> `importExportFormats.integration`, `registry.test`), `packages/engine/src/applications/**` (87%),
+> `packages/engine/src/subscription/entityCount.ts` (100%), `packages/engine/src/companion/allowedActions.ts` (100%), the
 > Audit Log screen (`auditLog.integration`), **the "hit Send" path**
 > (`protocolExecution.integration` — REST replay, GraphQL execute/introspect, SOAP
 > execute/fetchWsdl, Health Bar polling), **folder management** and **workspace CRUD**
@@ -554,7 +582,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > remains is listed here.
 
 ### High — security / correctness
-1. **`src/companion/companionServer.ts` has no authentication.** It binds to `127.0.0.1`,
+1. **`packages/engine/src/companion/companionServer.ts` has no authentication.** It binds to `127.0.0.1`,
    which is the whole of its access control. `ALLOWED_ACTIONS` is now proven to be *enforced*
    (a forbidden action is refused and writes nothing), but any local process can still open a
    socket and call the four allowed actions. Worth a deliberate decision, not a test.
@@ -570,7 +598,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 4. **Search / command palette** — `searchUtils`/`searchHelpers`/`searchModules` are now
    measured (58–85%), but `searchPanelUtils.ts` sits at 14% and no test types a query, opens
    a result and lands on the right entity.
-5. **`src/applications/portUtils.ts` (67.8% stmt / 31.3% br)** — `killProcessOnPort`'s real
+5. **`packages/engine/src/applications/portUtils.ts` (67.8% stmt / 31.3% br)** — `killProcessOnPort`'s real
    kill path is intentionally not exercised (destructive); the resolve/free-port branches are.
 6. **Dead code in `src/sync`** — `fetchRemoteHead()` and `performGitClone()`
    (`gitSyncOps.ts`) are exported but never called; `restoreEntity()` (`publishService.ts`)
@@ -651,7 +679,7 @@ what the running proxy served afterwards.
 | Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `packages/engine/src/sync/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
 | A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/sync/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/sync/statusTracker.ts` and shared |
 | Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/store/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
-| The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
+| The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `packages/engine/src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
 | **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `renderer/lib/createTabReducer.ts`, `renderer/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
 | **Adding, editing or deleting a mock/mapping/rule/request/websocket/webhook did not take effect on the running proxy until something else reloaded the config.** `entityCrudFactory` called `saveConfig(cfg)` then `reloadConfig()` **before** writing the entity file and **before** `syncEnabledSet()`. `reloadConfig()` snapshots the enabled-sets out of `enabled.json`, so `workspaceCfg()` filtered the new entity straight back out of routing — a mock you just added was not served, and a mock you just **deleted kept being served**, until an unrelated action (a settings save, a workspace switch, an app restart) happened to reload. A test that only inspects the handler's return value cannot see this: the config object is correct, the *running server* is stale | `src/ipc/handlers/entityCrudFactory.ts` (`add`, `update`, `delete`) | move `reloadConfig()` to **after** every on-disk write in all three handlers, so the reload sees both the entity file and the updated enabled-set. Proven by mutation: restoring the old ordering makes "stops serving a mock deleted through mock:delete" fail with `expected { from: 'mock' } to deeply equal { upstream: true, … }` |
 
@@ -711,7 +739,7 @@ npx vitest run --project integration tests/integration/gitRemote.integration.tes
 #    g) In packages/engine/src/proxy/server.ts, change the 512 * 1024 capture slice to 256 * 1024, then:
 npx vitest run --project integration tests/integration/capture.integration.test.ts
 #    → "caps an oversized captured response body" fails. Revert.
-#    h) In src/companion/companionServer.ts, drop the `await` on getWorkspaceSyncStatus (or
+#    h) In packages/engine/src/companion/companionServer.ts, drop the `await` on getWorkspaceSyncStatus (or
 #       serialize the promise again), then:
 npx vitest run --project integration tests/integration/companionServer.integration.test.ts
 #    → "tells the renderer to refresh, and reports the new entity as dirty" fails. Revert.

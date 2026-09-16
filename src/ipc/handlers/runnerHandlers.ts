@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { RunnerGetHistoryParams, RunnerListFolderIdsParams } from "@bifurc/protocol";
 import { wsDir as workspaceDir } from "@bifurc/engine/store/workspaceFs";
-import { commandRegistry } from "@/commands/registry";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
 
 // P2 work item 7 — only runner:getHistory/listFolderIds convert here (their params are just
