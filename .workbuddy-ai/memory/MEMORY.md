@@ -9,7 +9,7 @@ Session history: `memory/YYYY-MM-DD.md`.
 
 - **Flat single-package repo** — the app IS the root (was `bifurc/` before 2026-09-14). `workspaces:
   ["packages/*"]`. Paths root-relative — **never `cd bifurc`**.
-- **`packages/engine`** (P2 item 8, started 2026-09-15): **three layers moved** (49 files) —
+- **`packages/engine`** (P2 item 8, started 2026-09-15): **three layers moved** (50 files) —
   `src/{store,lib,subscription}`, then `src/{proxy,sync}` + `src/eventBus.ts` (mutually coupled, so
   they could not be split), then `src/{applications,companion,commands}`. Runtime deps: `mkcert`,
   `simple-git`, `ws`. Still in `src/`: `startup.ts` and `shutdown.ts` (plus `ipc/`, `main.ts`,
