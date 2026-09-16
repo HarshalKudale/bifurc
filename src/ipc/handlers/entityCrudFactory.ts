@@ -9,9 +9,9 @@ import {
   readAllEntities,
 } from "@bifurc/engine/store/workspaceFs";
 import { getGit } from "@bifurc/engine/store/gitStore";
-import { reloadConfig } from "@/proxy/server";
-import { invalidateCache } from "@/sync/statusTracker";
-import { bus, emitEntityStatus } from "@/eventBus";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
+import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
+import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
 import { commandRegistry } from "@/commands/registry";
 import { toProtocolKind, toEngineKind } from "@/commands/entityKindMap";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";

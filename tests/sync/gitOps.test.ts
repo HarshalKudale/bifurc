@@ -8,7 +8,7 @@ import {
   discardChanges,
   syncChanges,
   getFileHistory,
-} from "../../src/sync/gitOps";
+} from "@bifurc/engine/sync/gitOps";
 import {
   writeEntity,
   readEntity,

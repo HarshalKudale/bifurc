@@ -8,7 +8,7 @@
  * the whole Audit Log silently empty, and nothing asserted it before.
  *
  * Before this suite the path was covered only in mocked-unit form:
- * `src/sync/publishService.ts` sat at 54%, `src/sync/gitOps.ts` at 74% (branches 32%),
+ * `packages/engine/src/sync/publishService.ts` sat at 54%, `packages/engine/src/sync/gitOps.ts` at 74% (branches 32%),
  * and `src/ipc/handlers/syncHandlers.ts` at 25%. These drive the REAL registered IPC
  * handlers against a REAL git repository in a temp workspace and assert the commits,
  * diffs and files that actually land on disk. Only Electron itself is mocked.

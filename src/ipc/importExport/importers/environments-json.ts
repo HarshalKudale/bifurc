@@ -3,7 +3,7 @@ import {
   loadConfig, saveConfig, generateId, Environment,
 } from "@bifurc/engine/store/config";
 import { writeFlatEntity, readAllEntities } from "@bifurc/engine/store/workspaceFs";
-import { reloadConfig } from "@/proxy/server";
+import { reloadConfig } from "@bifurc/engine/proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "@/ipc/importExport/types";
 
 function parse(filePath: string): Environment[] {

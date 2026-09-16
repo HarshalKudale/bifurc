@@ -1,7 +1,7 @@
 /**
  * P2 work item 1 — the EventBus.
  *
- * Copies `src/proxy/logEmitter.ts`'s pattern (a plain `EventEmitter`, no Electron) rather than
+ * Copies `proxy/logEmitter.ts`'s pattern (a plain `EventEmitter`, no Electron) rather than
  * inventing a new one — see `plan/03-phase-2-engine-extraction.md` work item 1. This is the
  * single place every engine module emits domain events; nothing in this file imports
  * `electron`. The Electron shell (today: `src/ipc/eventBridge.ts`, pre-P6) subscribes to this
@@ -11,9 +11,9 @@
  * moves there verbatim — it already has zero Electron coupling.
  */
 import { EventEmitter } from "events";
-import type { RequestLogEntry } from "@/proxy/logEmitter";
-import type { WebhookPayload } from "@/proxy/webhookServer";
-import { getWorkspaceSyncStatus } from "@/sync/statusTracker";
+import type { RequestLogEntry } from "./proxy/logEmitter";
+import type { WebhookPayload } from "./proxy/webhookServer";
+import { getWorkspaceSyncStatus } from "./sync/statusTracker";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };
@@ -53,9 +53,9 @@ export const bus = new EngineEventBus();
 /**
  * Shared replacement for the THREE near-identical local `broadcastEntityStatus()` functions
  * that used to live in `coreHandlers.ts`, `entityCrudFactory.ts`, and `syncHandlers.ts` (plus a
- * fourth, slightly different copy in `companionServer.ts`) — each reaching into
- * `BrowserWindow.getAllWindows()` directly. One implementation, emitted on the bus; the shell's
- * `eventBridge.ts` (pre-P6) is the only remaining place that touches `BrowserWindow` for this.
+ * fourth, slightly different copy in `companionServer.ts`) — each reaching into the shell's open
+ * windows directly. One implementation, emitted on the bus; the shell's `eventBridge.ts` (pre-P6)
+ * is the only remaining place that fans an event out to windows.
  */
 export function emitEntityStatus(wsId: string): void {
   getWorkspaceSyncStatus(wsId)

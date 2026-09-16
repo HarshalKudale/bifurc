@@ -1,8 +1,8 @@
 import * as http from "http";
 import * as net from "net";
-import { HOP_BY_HOP } from "@/proxy/constants";
-import { emitLogChunk } from "@/proxy/logEmitter";
-import { decompressBody, stripContentEncoding } from "@/proxy/decompressUtils";
+import { HOP_BY_HOP } from "./constants";
+import { emitLogChunk } from "./logEmitter";
+import { decompressBody, stripContentEncoding } from "./decompressUtils";
 
 export function buildResponseHeaders(res: http.IncomingMessage) {
   let head = `HTTP/1.1 ${res.statusCode} ${res.statusMessage ?? ""}\r\n`;
@@ -76,9 +76,9 @@ export function handleProxyResponse(
 }
 
 import * as https from "https";
-import { ProxyRule } from "@bifurc/engine/store/config";
-import { sendHtml } from "@/proxy/pages";
-import { executeRequestScript, executeResponseScript } from "@/proxy/scriptExecutor";
+import { ProxyRule } from "../store/config";
+import { sendHtml } from "./pages";
+import { executeRequestScript, executeResponseScript } from "./scriptExecutor";
 
 export function passthroughToUpstream(
   socket: net.Socket,

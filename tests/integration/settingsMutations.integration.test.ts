@@ -47,9 +47,9 @@ import {
   type UpstreamServer,
   type WorkspaceFixture,
 } from "./proxyHarness";
-import { startServer, stopServer, isRunning, getPort } from "@/proxy/server";
-import { isCALoaded } from "@/proxy/tlsCert";
-import { generateCA } from "@/proxy/certManager";
+import { startServer, stopServer, isRunning, getPort } from "@bifurc/engine/proxy/server";
+import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
+import { generateCA } from "@bifurc/engine/proxy/certManager";
 import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { stopCompanionServer, getCompanionPort } from "@/companion/companionServer";

@@ -25,7 +25,7 @@ vi.mock("@/main", () => ({
   getMainWindow: vi.fn(() => null),
 }));
 
-vi.mock("@/proxy/certManager", () => ({
+vi.mock("@bifurc/engine/proxy/certManager", () => ({
   installCA: vi.fn(() => ({ ok: true })),
 }));
 
@@ -58,7 +58,7 @@ vi.mock("electron", () => ({
   shell: { openExternal: vi.fn() },
 }));
 
-import { installCA } from "@/proxy/certManager";
+import { installCA } from "@bifurc/engine/proxy/certManager";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 
 function getHandler(channel: string) {

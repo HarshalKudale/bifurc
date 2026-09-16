@@ -39,7 +39,7 @@ vi.mock("@bifurc/engine/subscription/entityCount", () => ({
 // mocked above, and its API is `gateCreate`/`gateEnable` — not `canCreate`/`canEnable`). It was
 // left over from a pre-history refactor and removed during P2 work item 8.
 
-vi.mock("../../src/proxy/server", () => ({
+vi.mock("@bifurc/engine/proxy/server", () => ({
   startServer: vi.fn(),
   stopServer: vi.fn(),
   isRunning: vi.fn(() => true),
@@ -49,11 +49,11 @@ vi.mock("../../src/proxy/server", () => ({
   replayRequest: vi.fn(),
 }));
 
-vi.mock("../../src/proxy/logEmitter", () => ({
+vi.mock("@bifurc/engine/proxy/logEmitter", () => ({
   logEmitter: new EventEmitter(),
 }));
 
-vi.mock("../../src/proxy/service-discovery", () => ({
+vi.mock("@bifurc/engine/proxy/service-discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 

@@ -15,7 +15,7 @@ import {
     getWebhookPort,
     getWebhookServerError,
     webhookEmitter,
-} from "@/proxy/webhookServer";
+} from "@bifurc/engine/proxy/webhookServer";
 
 describe("webhook registry", () => {
     beforeEach(() => {

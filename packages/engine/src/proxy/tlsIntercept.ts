@@ -1,6 +1,6 @@
 import * as net from "net";
 import * as tls from "tls";
-import { generateHostCert } from "@/proxy/tlsCert";
+import { generateHostCert } from "./tlsCert";
 
 export type DecryptedRequestCallback = (
   socket: tls.TLSSocket,

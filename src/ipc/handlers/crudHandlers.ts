@@ -1,7 +1,7 @@
 import { ipcMain } from "electron";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 import { loadConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "@bifurc/engine/store/config";
-import { registerActiveWebhook, unregisterActiveWebhook, startWebhookServer, stopWebhookServer, isWebhookServerRunning, getWebhookPort, getWebhookServerError } from "@/proxy/webhookServer";
+import { registerActiveWebhook, unregisterActiveWebhook, startWebhookServer, stopWebhookServer, isWebhookServerRunning, getWebhookPort, getWebhookServerError } from "@bifurc/engine/proxy/webhookServer";
 
 export function registerCrudHandlers() {
   // ── Mappings ───────────────────────────────────────────────────────────────

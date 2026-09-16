@@ -3,7 +3,7 @@
  *
  * Bifurc's data story is "publish on demand, then sync": a workspace can be wired to a
  * git remote, pushed to, and cloned from on another machine. That entire surface —
- * `src/sync/syncManager.ts`, `src/sync/gitSyncOps.ts` — was previously covered only by
+ * `packages/engine/src/sync/syncManager.ts`, `packages/engine/src/sync/gitSyncOps.ts` — was previously covered only by
  * mocked-unit tests, and `gitSyncOps.ts` sat at **19%**. `setRemote()` in particular has
  * three materially different branches (empty→empty push, empty→non-empty clone, and the
  * refusal when both sides have data) and none of them was exercised.
@@ -26,7 +26,7 @@ import { execFileSync } from "child_process";
 import { setDataDirOverride, getGit, initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
 import { initWorkspaceDir, wsDir } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride, loadSettings } from "@bifurc/engine/store/appSettings";
-import { getSyncConfig, getRemoteHead } from "@/sync/syncManager";
+import { getSyncConfig, getRemoteHead } from "@bifurc/engine/sync/syncManager";
 
 // ── Electron: capture the real handlers instead of registering them ───────────
 

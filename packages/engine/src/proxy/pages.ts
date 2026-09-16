@@ -1,5 +1,5 @@
 import * as net from "net";
-import { AppConfig } from "@bifurc/engine/store/config";
+import { AppConfig } from "../store/config";
 
 export function sendHtml(socket: net.Socket, status: number, htmlBody: string): void {
   if (!socket.writable) return;
