@@ -13,19 +13,19 @@
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ALLOWED_ACTIONS } from "@/companion/allowedActions";
+import { ALLOWED_ACTIONS } from "./allowedActions";
 import {
     loadConfig, saveConfig, generateId, AppConfig,
     MockRule, SavedRequest, Folder,
-} from "@bifurc/engine/store/config";
+} from "../store/config";
 import {
     writeEntity, upsertNameEntry, findEntityRelPath,
     readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
     readIndex, writeIndex, sanitizeDirName, wsDir,
-} from "@bifurc/engine/store/workspaceFs";
-import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
-import { reloadConfig } from "@bifurc/engine/proxy/server";
-import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
+} from "../store/workspaceFs";
+import { invalidateCache } from "../sync/statusTracker";
+import { reloadConfig } from "../proxy/server";
+import { bus, emitEntityStatus } from "../eventBus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

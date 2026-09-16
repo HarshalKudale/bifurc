@@ -23,7 +23,7 @@ import * as path from "path";
 import { randomBytes } from "crypto";
 import { createCA } from "mkcert";
 import { checkGitInstalled, initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
-import { checkPortInUse } from "@/applications/portUtils";
+import { checkPortInUse } from "@bifurc/engine/applications/portUtils";
 import { saveSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
 import { initWorkspaceDir, wsDir } from "@bifurc/engine/store/workspaceFs";
 import { generateId } from "@bifurc/engine/store/config";
