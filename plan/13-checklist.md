@@ -270,6 +270,16 @@ test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desk
 ## Section 4 — P3 File ops (1.5–2.5 weeks)
 
 - [ ] Read `../File_Ops_Protocol.md` in full
+- [x] **Specify the blob primitives in `@bifurc/protocol`** — `blob.put` / `blob.stat` / `blob.read`
+      / `blob.release` in `packages/protocol/src/commands/blob.ts`, registered in `COMMANDS` with
+      fixtures in `index.test.ts` (187 protocol tests green). This was listed as a P3 **precondition**
+      in `plan/04`, but P1 only landed the envelope half (`Capability.BLOB`) and made `export.ts`
+      `blobId`-shaped — the commands themselves never existed, so P3 could not start. Added
+      2026-09-16. The four tuning values are exported protocol constants
+      (`BLOB_INLINE_THRESHOLD_BYTES` 1 MB, `BLOB_MAX_INGRESS_BYTES` 100 MB, `BLOB_TTL_MS` 1 h,
+      `BLOB_READ_CHUNK_BYTES` 512 KB) rather than magic numbers, because the client needs them to
+      know whether to expect a `blobId` or an inline payload. `BlobRef` is the shared
+      `{ blobId } | { inline }` shape that domain results adopt in the conversion pass below.
 - [ ] Build the blob store (`put` / `stat` / `read` / `release`) with tests
 - [ ] Blob TTL sweep
 - [ ] Size cap enforced **before** allocation
