@@ -267,9 +267,9 @@ test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desk
 
 ---
 
-## Section 4 — P3 File ops (1.5–2.5 weeks)
+## Section 4 — P3 File ops (1.5–2.5 weeks) 🟡 IN PROGRESS 2026-09-16
 
-- [ ] Read `../File_Ops_Protocol.md` in full
+- [x] Read `../File_Ops_Protocol.md` in full
 - [x] **Specify the blob primitives in `@bifurc/protocol`** — `blob.put` / `blob.stat` / `blob.read`
       / `blob.release` in `packages/protocol/src/commands/blob.ts`, registered in `COMMANDS` with
       fixtures in `index.test.ts` (187 protocol tests green). This was listed as a P3 **precondition**
@@ -280,9 +280,32 @@ test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desk
       `BLOB_READ_CHUNK_BYTES` 512 KB) rather than magic numbers, because the client needs them to
       know whether to expect a `blobId` or an inline payload. `BlobRef` is the shared
       `{ blobId } | { inline }` shape that domain results adopt in the conversion pass below.
-- [ ] Build the blob store (`put` / `stat` / `read` / `release`) with tests
-- [ ] Blob TTL sweep
-- [ ] Size cap enforced **before** allocation
+- [x] **Build the blob store (`put` / `stat` / `read` / `release`) with tests** —
+      `packages/engine/src/blob/store.ts`. Layout is `<dataDir>/blobs/<blobId>/{content,meta.json}`,
+      a **real file per blob** because `unzipper.Open.file()` will not take a buffer and `archiver`
+      pipes to a `WriteStream`. `meta.json` is written **last**, so a `put` that dies mid-write
+      leaves a directory that reads as *not found* rather than as truncated content. SHA-256 on
+      write. Typed `BlobError` codes (`blob-not-found` / `blob-invalid-id` / `blob-too-large` /
+      `blob-size-mismatch` / `blob-invalid-offset`) rather than bare `Error`s, because P4's transport
+      has to classify them into the protocol error envelope. `blobContentPath()` is exposed for the
+      two zip files, which genuinely need a path.
+- [x] **Blob TTL sweep** — `packages/engine/src/blob/sweep.ts`. `sweepBlobs()` reclaims expired
+      blobs (by `createdAt`), metadata-less orphan directories (by mtime — a crashed `put`),
+      abandoned `.staging/` files and stray files directly under the root. It never creates the
+      root and never throws: a per-entry `try`/`catch` plus an `onError` channel, because a sweeper
+      that can take the engine down is worse than one that skips a pass.
+      `startBlobSweeper()` runs it on an **unref'd** interval (a sixth of the TTL) and returns an
+      idempotent stop function. Wired into `createEngine()`'s `start()`/`stop()`.
+- [x] **Size cap enforced before allocation** — `assertIngressWithinLimit()`, checked before the
+      base64 decode: declared size over the cap, or a base64 string too long to decode under it,
+      both reject without allocating. The decoded length must then **equal** the declared size,
+      which is the only integrity check available — Node's base64 decoder silently ignores
+      unrecognised characters, so without it a truncated payload would stage as a smaller but
+      perfectly valid-looking blob.
+- [x] **Register the four `blob.*` commands** — `packages/engine/src/blob/commands.ts`
+      (`registerBlobCommands`). A function, not an import side effect: `createEngine()` registers
+      **no** commands by design, and the consumer registers what it is willing to serve. The shell's
+      call site lands with items 3–4.
 - [ ] Convert `environments-json` exporter **and** importer end-to-end (prove the pattern)
 - [ ] Bulk-convert the remaining 30 mechanical files
 - [ ] `workspace-zip` exporter (archiver → staged file → blob)
@@ -300,6 +323,36 @@ test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desk
 - [ ] Update `ImportExportModal.tsx` to carry `blobId` not `filePath`
 
 **Gate:** round-trip green for all 17 formats; no `dialog.*` in the engine; no `filePath` in the protocol.
+
+### P3 progress notes
+
+**Blob store and sweep are done and independently verified** (`tests/blob/{store,sweep,commands}.test.ts`,
+88 tests, real temp data roots, real files). The store is deliberately **not yet reachable from the
+shell**: `registerBlobCommands()` exists and is tested, but nothing calls it, because the shell's
+`importExport:*` layer is what items 3–4 replace. That is the intended order — `plan/04`'s "How to
+start" is explicit that the blob store lands first, before any exporter is touched.
+
+**Not yet done in item 1: moving `src/ipc/importExport/` into the engine.** The blob store has no
+dependency on it, and the move is item 2's first step, so it is deliberately deferred rather than
+half-done. `plan/04`'s "Preconditions" still lists it as outstanding, correctly.
+
+**Two things found while building this, both recorded rather than fixed:**
+
+1. **The `import` condition of `@bifurc/engine`'s `exports` map is unloadable by Node.** `tsup`
+   emits extensionless relative specifiers in the ESM output (`dist/blob/sweep.mjs` does
+   `from "./store"`, `dist/eventBus.mjs` does `from "./sync/statusTracker"`), and Node's ESM
+   resolver requires an extension. The CJS build is fine (`require("./store")` resolves) and is
+   what `main` points at, so nothing in the shell or the suite is affected — but an ESM consumer
+   would get `ERR_MODULE_NOT_FOUND`. Pre-existing since P2 layer 2; assigned to P9/P12.
+2. **The blob root follows `dataDir()`, which is *not* authoritative on Windows** — the same
+   pre-existing defect `plan/03` records for the workspace store. `paths.dataDir()` honours
+   `setDataRoot()` on every platform, so the blob root does too; but `workspaceFs.dataRoot()` checks
+   `%LOCALAPPDATA%` first on Windows. A Windows `--data-dir` run would therefore put workspaces in
+   `%LOCALAPPDATA%\Bifurc` and blobs in the flag's directory. Harmless for Docker (Linux), which is
+   the deployment the blob volume exists for; needs the same product decision already outstanding
+   before P8/P9.
+
+
 
 ---
 

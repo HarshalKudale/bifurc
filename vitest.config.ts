@@ -187,14 +187,20 @@ export default defineConfig({
        * of the renderer. Raise these numbers as gaps are closed; never lower them to
        * make CI pass.
        *
-       * Current actuals (see TESTING.md): statements 46.14%, branches 31.30%,
-       * functions 34.34%, lines 48.39%.
+       * Current actuals (see TESTING.md §4.1): statements 49.07%, branches 32.66%,
+       * functions 37.26%, lines 51.52% — measured 2026-09-16, at the end of P3 work item 1.
+       *
+       * Set ~2 pts below the actuals, with one exception: `branches` stays at 31 because
+       * 2 pts below 32.66 is 30, and ratcheting *down* is exactly what the policy forbids.
+       * A floor that sits on the actual would be a flaky build rather than a stricter one —
+       * V8 instrumentation moves a figure by ~0.05 pt between identical runs, and the
+       * real-git suites oscillate more than that (§4.8).
        */
       thresholds: {
-        statements: 46,
+        statements: 47,
         branches: 31,
-        functions: 34,
-        lines: 48,
+        functions: 35,
+        lines: 49,
       },
     },
   },

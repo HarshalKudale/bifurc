@@ -22,10 +22,89 @@ authority for the user's machine.
   work item 1's "not magic numbers in two places".
 - Engine has an injected data dir (P2 item 4) — the blob store lives under it. ✅
 - `src/ipc/importExport/` has moved. ⬜ **Still in the shell** — this is work item 2's first step.
+  Deferred deliberately, not overlooked: the blob store (work item 1) has **no** dependency on it,
+  and `plan/04`'s own "How to start" sequences the store first. Moving 39 files and *then* rewriting
+  34 of them in the same pass would make a bad change hard to attribute.
 
 ---
 
 ## Work item 1 — The blob store
+
+> **✅ Implemented 2026-09-16** — `packages/engine/src/blob/{store,sweep,commands}.ts`, with
+> `tests/blob/{store,sweep,commands}.test.ts` (88 tests against real temp data roots).
+>
+> **Layout:** `<dataDir>/blobs/<blobId>/content` + `meta.json`, plus `<dataDir>/blobs/.staging/`
+> for in-flight writes. `<blobId>` is a **directory** and the bytes are a **real file** inside it,
+> which is what the table below demands — `unzipper.Open.file()` will not take a buffer and
+> `archiver` pipes to a `WriteStream`. Metadata lives beside the content rather than in a sidecar
+> index, so `release` is one recursive delete and there is no second structure to keep in sync.
+>
+> **`meta.json` is written last.** Every read path gates on it, so a `put` that dies mid-write
+> leaves a directory that reads as *not found* rather than as truncated content. The orphan is
+> reclaimed by the sweep. A poor man's atomic write, with no rename dance.
+>
+> **Errors are typed.** `BlobError` carries a `code` (`blob-not-found`, `blob-invalid-id`,
+> `blob-too-large`, `blob-size-mismatch`, `blob-invalid-offset`) because P4's transport has to
+> translate them into the protocol error envelope and cannot pattern-match a message string. The
+> four `blob.*` result types carry no error field, so the envelope is the only place an error can
+> live — handlers therefore throw rather than returning `{ok:false}`.
+>
+> **The size cap is checked before allocating, and there are three rules, in increasing cost:**
+> the declared size must fit `BLOB_MAX_INGRESS_BYTES`; the base64 string must be short enough to
+> *possibly* decode under it (a 1 GB string decodes to ~750 MB — the exact OOM being prevented);
+> and then the decoded length must **equal** the declared size. That last one is the only integrity
+> check available: Node's base64 decoder silently ignores unrecognised characters, so without it a
+> truncated payload stages as a *smaller but perfectly valid* blob. The pre-decode rules are
+> extracted as `assertIngressWithinLimit()` so the bound is testable without allocating 140 MB.
+>
+> **The lease slides on read.** `statBlob` reports `ttlRemainingMs` but does not extend it; `readBlob`
+> does, on every read that returns bytes. A 100 MB export pulled at the default 512 KB chunk size is
+> ~200 round-trips, and without this a slow client could have its blob swept out from under it
+> mid-transfer. A zero-byte read at the end does not extend it, so an idle client cannot hold a blob
+> alive forever by polling.
+>
+> **Path traversal is defended twice:** `blobId` must match `^blob_[0-9a-f]{32}$` (which cannot
+> express `..`, a separator, or user-chosen text at all), and `blobDir()` then asserts the resolved
+> path is a direct child of the root. P13 lists the traversal test as the most likely thing to be
+> missed; it is in `store.test.ts` against 15 hostile ids.
+>
+> **`createStaging()`** covers the one producer that cannot hand over a `Buffer` — the workspace zip
+> exporter pipes `archiver` into a `WriteStream` and never holds the archive in memory. The caller
+> writes to `handle.path` and calls `commit()` (hash by streaming, then `rename` into place — same
+> volume by construction, so a 200 MB archive moves in constant time) or `discard()`. An abandoned
+> handle is reclaimed by the sweep even if the process dies first.
+>
+> **The sweep** (`sweep.ts`) reclaims expired blobs by `createdAt`, metadata-less orphans by mtime
+> (a crashed `put`), abandoned staged files, and stray files directly under the root. It never
+> creates the root and never throws — a per-entry `try`/`catch` with an `onError` channel, because a
+> sweeper that can take the engine down is worse than one that skips a pass.
+> `startBlobSweeper()` runs it on an **unref'd** interval (a sixth of the TTL) and returns an
+> idempotent stop function; `createEngine()` starts it in `start()` and stops it in `stop()`.
+> The unref matters: an interval that kept the event loop alive would mean an engine, CLI or
+> container that never exits unless someone remembers to stop it.
+>
+> **`registerBlobCommands(registry)`** binds the four frozen protocol commands to the store. It is a
+> function rather than an import side effect because `createEngine()` registers **no** commands by
+> design — the consumer registers what it is willing to serve. The shell's call site lands with
+> items 3–4, when `importExport:*` becomes the first real consumer of a staged blob.
+>
+> **Deliberately not done here:** moving `src/ipc/importExport/` into the engine. The blob store has
+> no dependency on it and the move is item 2's first step, so it is deferred rather than half-done —
+> see the Preconditions note below.
+>
+> **Two findings, recorded not fixed:**
+>
+> 1. **`@bifurc/engine`'s `import` export condition is unloadable by Node.** `tsup` emits
+>    extensionless relative specifiers in the ESM output (`dist/blob/sweep.mjs` → `from "./store"`;
+>    `dist/eventBus.mjs` → `from "./sync/statusTracker"`), and Node's ESM resolver requires an
+>    extension. CJS is fine and is what `main` points at, so neither the shell nor the suite is
+>    affected; an ESM consumer would get `ERR_MODULE_NOT_FOUND`. Pre-existing since P2 layer 2 —
+>    assigned to P9/P12.
+> 2. **The blob root follows `dataDir()`, which is not authoritative on Windows.** `paths.dataDir()`
+>    honours `setDataRoot()` on every platform, so the blob root does too — but on Windows
+>    `workspaceFs.dataRoot()` checks `%LOCALAPPDATA%` first. A Windows `--data-dir` run would split
+>    workspaces and blobs across two directories. Harmless for the Linux/Docker case the blob volume
+>    exists for; needs the same product decision already outstanding before P8/P9 (see `plan/03`).
 
 ```
 packages/engine/src/blob/
