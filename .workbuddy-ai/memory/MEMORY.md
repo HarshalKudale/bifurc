@@ -25,6 +25,13 @@
   `../bifurc-extension` is an external client — its 4 commands are frozen API.
 - **The app runs `packages/engine/dist/`; tests run `src/`** (via `resolve.alias`) — different
   artifacts. **`npm run build:packages` after any engine source edit.**
+- **`@bifurc/engine`'s `import` export condition is unloadable by Node** (found 2026-09-16, P3).
+  `tsup` emits **extensionless relative specifiers** in the ESM output — `dist/blob/sweep.mjs` does
+  `from "./store"`, `dist/eventBus.mjs` does `from "./sync/statusTracker"` — and Node's ESM resolver
+  requires an extension, so `import "@bifurc/engine/…"` throws `ERR_MODULE_NOT_FOUND`. Pre-existing
+  since P2 layer 2. The **CJS** build is fine (`require("./store")` resolves) and is what `main`
+  points at, so the shell, the suite and `require()` consumers are unaffected. Matters for P8/P9 if
+  either imports rather than requires. Assigned to P9/P12; not fixed in P3.
 
 ## Engine facts (verified — do not re-derive)
 
@@ -41,6 +48,16 @@
 - `proxy/` has **zero** Electron imports. `companionServer.ts` speaks `{id,action,payload}` →
   `{id,ok,data,error}` over loopback WS 9271 — generalise for P4. **No auth**; the `127.0.0.1` bind
   is its whole access control.
+- **`blob/` — P3 work item 1, done 2026-09-16.** `<dataDir>/blobs/<blobId>/{content,meta.json}` +
+  `.staging/`. A **real file** per blob (not a buffer — `unzipper.Open.file()` rejects one and
+  `archiver` pipes to a `WriteStream`), `meta.json` written **last** so a crashed `put` reads as
+  *not found* rather than as truncated bytes, SHA-256 on write, three size checks ordered by
+  increasing cost (declared → base64 length → decoded **must equal** declared), `read` slides the
+  lease while `stat` does not, unref'd TTL sweeper owned by `createEngine()`'s start/stop.
+  `registerBlobCommands(registry)` binds the four frozen `blob.*` commands — **nothing calls it
+  yet**; the shell wiring lands with items 3–4. Tests: `tests/blob/**` (89, real temp roots).
+  `js-yaml`/`archiver`/`unzipper` still belong to `src/ipc/importExport/**` — that module has
+  **not** moved into the engine yet (item 2's first step).
 
 ## Environment gotchas
 
@@ -53,8 +70,9 @@
   `npm run typecheck`. Piping vitest through `grep` returns grep's status, not vitest's.
 - Sandbox, three traps: (1) `vitest --coverage` fails bulk-deleting its output dir — use
   `--coverage.clean=false --coverage.reportsDirectory=coverage-run<N>` with a **fresh** dir; a
-  *failing* test aborts the report, so deselect `soap.execute` via
-  `--testNamePattern='^(?!.*soap\.execute)'`. (2) After ~50+ deletions in a turn, `tsup`'s
+  *failing* test aborts the report entirely, so deselect **all three** of the flaky family:
+  `--testNamePattern='^(?!.*(?:soap\.execute|rejects when the upstream is unreachable|WSDL cannot be fetched)).*$'`.
+  (2) After ~50+ deletions in a turn, `tsup`'s
   `bundle-require` cannot unlink its temp config, so builds fail — not a code bug. (3) Electron E2E
   needs a desktop session — **cannot run here**.
 - Known flaky family: tests asserting a connection to a dead endpoint *fails* (`soap.execute`,
