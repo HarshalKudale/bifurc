@@ -14,8 +14,14 @@ authority for the user's machine.
 ## Preconditions
 
 - `blob.put` / `blob.stat` / `blob.read` / `blob.release` specified in `@bifurc/protocol`.
-- Engine has an injected data dir (P2 item 4) — the blob store lives under it.
-- `packages/engine/src/ipc/importExport/` has moved.
+  ✅ **Met 2026-09-16** — `packages/protocol/src/commands/blob.ts`. This precondition was **not**
+  actually satisfied by P1: P1 landed only the envelope half (`Capability.BLOB`) and made
+  `export.ts` `blobId`-shaped, leaving the four commands undefined, so this phase could not start.
+  The tuning values (`BLOB_INLINE_THRESHOLD_BYTES`, `BLOB_MAX_INGRESS_BYTES`, `BLOB_TTL_MS`,
+  `BLOB_READ_CHUNK_BYTES`) are exported constants so the client and the engine agree on them, per
+  work item 1's "not magic numbers in two places".
+- Engine has an injected data dir (P2 item 4) — the blob store lives under it. ✅
+- `src/ipc/importExport/` has moved. ⬜ **Still in the shell** — this is work item 2's first step.
 
 ---
 

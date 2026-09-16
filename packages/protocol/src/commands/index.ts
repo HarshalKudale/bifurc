@@ -27,6 +27,7 @@ import * as SyncCmd from "./sync";
 import * as AuditCmd from "./audit";
 import * as TlsCmd from "./tls";
 import * as ExportCmd from "./export";
+import * as BlobCmd from "./blob";
 import * as MiscCmd from "./misc";
 
 export * from "./entity";
@@ -43,6 +44,7 @@ export * from "./sync";
 export * from "./audit";
 export * from "./tls";
 export * from "./export";
+export * from "./blob";
 export * from "./misc";
 
 interface CommandSpec {
@@ -164,6 +166,13 @@ export const COMMANDS = {
   "export.create": spec(ExportCmd.ExportCreateParams, "importExport:export"),
   "import.preflight": spec(ExportCmd.ImportPreflightParams, "importExport:preflight"),
   "import.commit": spec(ExportCmd.ImportCommitParams, "importExport:import"),
+
+  // blob.* — the staging layer (P3). New in P3, so there is no legacy channel to record; the wire
+  // name is repeated here purely to keep the map uniform. See `File_Ops_Protocol.md` §3.
+  "blob.put": spec(BlobCmd.BlobPutParams, "blob:put"),
+  "blob.stat": spec(BlobCmd.BlobStatParams, "blob:stat"),
+  "blob.read": spec(BlobCmd.BlobReadParams, "blob:read"),
+  "blob.release": spec(BlobCmd.BlobReleaseParams, "blob:release"),
 
   // misc
   "script.execute": spec(MiscCmd.ScriptExecuteParams, "script:execute"),
