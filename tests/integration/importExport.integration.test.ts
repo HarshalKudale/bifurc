@@ -27,10 +27,11 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { getExporter, getImporter } from "@/ipc/importExport/registry";
+import { getExporter, getImporter } from "@bifurc/engine/importExport/registry";
+import { exportToFile, importFile, preflightFile, sourceFromFile } from "./importExportHarness";
 import { loadConfig } from "@bifurc/engine/store/config";
 import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
-import type { EntityKind, CollisionStrategy } from "@/ipc/importExport/types";
+import type { EntityKind, CollisionStrategy } from "@bifurc/engine/importExport/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 // `workspaceId` is set on every fixture because that is what the real CRUD
@@ -204,19 +205,19 @@ describe("import/export round trip", () => {
             expect(importer, `no importer for ${c.kind}/${c.format}`).toBeDefined();
 
             const file = path.join(outDir, `${c.kind}-${c.format}.out`);
-            const exp = await exporter!.run(TEST_WS, file);
+            const exp = await exportToFile(TEST_WS, exporter!, file);
             expect(exp.ok, `export failed: ${exp.error}`).toBe(true);
             expect(fs.existsSync(file)).toBe(true);
 
             // 2. preflight must see the entity and report it as a collision
-            const pf = importer!.preflight(TEST_WS, file);
+            const pf = preflightFile(importer!, TEST_WS, file);
             expect(pf.ok, `preflight failed: ${pf.error}`).toBe(true);
             expect(pf.itemCount).toBe(c.itemCount ?? 1);
             expect(pf.collisionIds).toContain(c.id);
 
             // 3. import into a brand-new, empty workspace
             newWorkspace();
-            const res = await importer!.run(TEST_WS, file, "override");
+            const res = await importFile(importer!, TEST_WS, file, "override");
             expect(res.ok, `import failed: ${res.error}`).toBe(true);
             // Nothing collides in a fresh workspace, so every item in the file lands.
             expect(res.imported).toBe(c.itemCount ?? 1);
@@ -239,22 +240,22 @@ describe("proxy rule enabled state", () => {
         // on import and the imported workspace would silently proxy nothing.
         newWorkspace((ws) => seedEntities(ws, "rules", [{ ...RULE, enabled: true }]));
         const file = path.join(outDir, "rule-enabled.json");
-        expect((await getExporter("proxyRules", "proxyrules-json")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("proxyRules", "proxyrules-json")!, file)).ok).toBe(true);
         expect(JSON.parse(fs.readFileSync(file, "utf-8")).proxyRules[0].enabled).toBe(true);
 
         newWorkspace();
-        expect((await getImporter("proxyRules", "proxyrules-json")!.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(getImporter("proxyRules", "proxyrules-json")!, TEST_WS, file, "override")).ok).toBe(true);
         expect(loadConfig().proxyRules.find((r) => r.id === RULE.id)!.enabled).toBe(true);
     });
 
     it("carries a disabled rule through as disabled", async () => {
         newWorkspace((ws) => seedEntities(ws, "rules", [{ ...RULE, enabled: false }]));
         const file = path.join(outDir, "rule-disabled.json");
-        expect((await getExporter("proxyRules", "proxyrules-json")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("proxyRules", "proxyrules-json")!, file)).ok).toBe(true);
         expect(JSON.parse(fs.readFileSync(file, "utf-8")).proxyRules[0].enabled).toBe(false);
 
         newWorkspace();
-        expect((await getImporter("proxyRules", "proxyrules-json")!.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(getImporter("proxyRules", "proxyrules-json")!, TEST_WS, file, "override")).ok).toBe(true);
         expect(loadConfig().proxyRules.find((r) => r.id === RULE.id)!.enabled).toBe(false);
     });
 });
@@ -268,14 +269,14 @@ describe("cURL export/import", () => {    it("preserves method, url, body, heade
         const importer = getImporter("requests", "requests-curl")!;
         const file = path.join(outDir, "requests.curl");
 
-        expect((await exporter.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, exporter, file)).ok).toBe(true);
 
-        const pf = importer.preflight(TEST_WS, file);
+        const pf = preflightFile(importer, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
         newWorkspace();
-        const res = await importer.run(TEST_WS, file, "override");
+        const res = await importFile(importer, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
         expect(res.imported).toBe(1);
 
@@ -300,16 +301,16 @@ describe("dotenv export/import", () => {
         const importer = getImporter("environments", "environments-dotenv")!;
         const file = path.join(outDir, "env.env");
 
-        const exp = await exporter.run(TEST_WS, file);
+        const exp = await exportToFile(TEST_WS, exporter, file);
         expect(exp.ok, exp.error).toBe(true);
         expect(fs.readFileSync(file, "utf-8")).toContain("TOKEN=abc123");
 
-        const pf = importer.preflight(TEST_WS, file);
+        const pf = preflightFile(importer, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(2);
 
         newWorkspace();
-        const res = await importer.run(TEST_WS, file, "override");
+        const res = await importFile(importer, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
 
         // dotenv flattens every environment into ONE file and one imported env —
@@ -335,14 +336,14 @@ describe("dotenv export/import", () => {
         const importer = getImporter("environments", "environments-dotenv")!;
         const file = path.join(outDir, "env-quote.env");
 
-        expect((await exporter.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, exporter, file)).ok).toBe(true);
         const text = fs.readFileSync(file, "utf-8");
         expect(text).toContain('SPACED="a b"');
         expect(text).toContain('HASHED="x#y"');
         expect(text).toContain("PLAIN=plain");
 
         newWorkspace();
-        expect((await importer.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(importer, TEST_WS, file, "override")).ok).toBe(true);
         const env = readAllEntities<any>(TEST_WS, "environments").find((e) => e.id !== "__global__");
         const vars = Object.fromEntries(env.variables.map((v: any) => [v.key, v.value]));
         expect(vars).toEqual({ SPACED: "a b", HASHED: "x#y", PLAIN: "plain" });
@@ -356,7 +357,7 @@ describe("collision strategies", () => {
         newWorkspace((ws) => seedEntities(ws, "mocks", [MOCK]));
         const exporter = getExporter("mocks", "mocks-json")!;
         const file = path.join(outDir, "collisions-mocks.json");
-        expect((await exporter.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, exporter, file)).ok).toBe(true);
         return file;
     }
 
@@ -370,7 +371,7 @@ describe("collision strategies", () => {
                 seedEntities(ws, "mocks", [{ ...MOCK, name: "PRE-EXISTING", responseStatus: 500 }]);
             }
         });
-        const res = await getImporter("mocks", "mocks-json")!.run(TEST_WS, file, strategy);
+        const res = await importFile(getImporter("mocks", "mocks-json")!, TEST_WS, file, strategy);
         return { res, mocks: readAllEntities<any>(TEST_WS, "mocks") };
     }
 
@@ -429,26 +430,32 @@ describe("preflight", () => {
             ["websockets", "websockets-json"],
             ["webhooks", "webhooks-json"],
         ] as Array<[EntityKind, string]>) {
-            const pf = getImporter(kind, format)!.preflight(TEST_WS, file);
+            const pf = preflightFile(getImporter(kind, format)!, TEST_WS, file);
             expect(pf.ok, `${kind}/${format} accepted a foreign schema`).toBe(false);
             expect(pf.error, `${kind}/${format} produced no error message`).toBeTruthy();
         }
     });
 
-    it("reports an error for a missing file rather than throwing", () => {
+    it("fails at the client's read, not inside the engine, when the file is missing", () => {
         newWorkspace();
-        const pf = getImporter("mocks", "mocks-json")!.preflight(TEST_WS, path.join(outDir, "does-not-exist.json"));
-        expect(pf.ok).toBe(false);
-        expect(pf.error).toBeTruthy();
+        // This replaces a pre-P3 test that asserted the *importer* returned `{ok:false, error}` for
+        // a path that did not exist. That scenario is no longer expressible: the importer takes
+        // content, so it cannot be handed a path at all, and there is no engine-side filesystem
+        // lookup left to fail. The equivalent question is now "who owns the read?", and the answer
+        // is the client — which is the point of `File_Ops_Protocol.md` §1.
+        //
+        // The engine-side twin of this case (a well-formed `blobId` that does not exist) is pinned
+        // in `importExportBlob.integration.test.ts`.
+        expect(() => sourceFromFile(path.join(outDir, "does-not-exist.json"))).toThrow();
     });
 
     it("reports zero collisions when the workspace is empty", async () => {
         newWorkspace((ws) => seedEntities(ws, "mocks", [MOCK]));
         const file = path.join(outDir, "empty-target.json");
-        expect((await getExporter("mocks", "mocks-json")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("mocks", "mocks-json")!, file)).ok).toBe(true);
 
         newWorkspace();
-        const pf = getImporter("mocks", "mocks-json")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("mocks", "mocks-json")!, TEST_WS, file);
         expect(pf.ok).toBe(true);
         expect(pf.itemCount).toBe(1);
         expect(pf.collisionIds).toEqual([]);

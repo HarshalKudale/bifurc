@@ -40,7 +40,7 @@ vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
   startAutoSync: vi.fn(),
 }));
 
-import { createEngine } from "@bifurc/engine";
+import { createEngine, createInProcessTransport } from "@bifurc/engine";
 import { setDataRoot, resetDataRootForTests } from "@bifurc/engine/store/paths";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
@@ -150,6 +150,45 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
     const res = await get(proxyPort);
     expect(res.status).toBe(200);
     expect(res.body).toContain("Bifurc");
+
+    // ── P4 item 3: one event log, and it outlives the session that filled it ──
+    //
+    // The acceptance criterion is "replay works inside the buffer", and the property that makes it
+    // work is that `seq` belongs to the **engine**, not to a session. A reconnect is a new session, so
+    // a per-session counter would make a client's `lastSeq` refer to events from a session that no
+    // longer exists. Exercised here, through the public API and two real transports, because that
+    // scope is the one thing about replay that cannot be seen from inside a single session's tests.
+    expect(engine.log.newestSeq).toBe(0);
+    expect(engine.log.retainedNames()).toEqual([]); // retention is lazy: nothing subscribed yet
+
+    const before = createInProcessTransport(engine.registry, { bus: engine.bus, log: engine.log });
+    const gapFiller: string[] = [];
+    const off = before.subscribe(["event.server.error"], (e) => gapFiller.push(String(e.payload)));
+    engine.bus.emitTyped("server.error", "while-connected");
+    await vi.waitFor(() => expect(gapFiller).toEqual(["while-connected"]));
+
+    // The blip: the session goes away and the engine keeps working.
+    off();
+    await before.close();
+    engine.bus.emitTyped("server.error", "during-the-blip-1");
+    engine.bus.emitTyped("server.error", "during-the-blip-2");
+    expect(engine.log.newestSeq).toBe(3);
+
+    // The reconnect: a **new** transport, a new session, and the engine's own seqs in the backlog.
+    const after = createInProcessTransport(engine.registry, { bus: engine.bus, log: engine.log });
+    const replayed: { seq: number; payload: unknown }[] = [];
+    after.subscribe(["event.server.error"], (e) => replayed.push({ seq: e.seq, payload: e.payload }));
+
+    // `replayFrom(1)` because the client saw up to seq 1 before the blip — the number it would put on
+    // `hello.lastSeq`. A per-session counter would have restarted at 1 here and replayed the wrong
+    // two events, or none at all.
+    const outcome = engine.log.replayFrom(1, ["event.server.error"]);
+    expect(outcome.kind === "replay" && outcome.events.map((e) => e.payload)).toEqual([
+      "during-the-blip-1",
+      "during-the-blip-2",
+    ]);
+    expect(outcome.kind === "replay" && outcome.events.map((e) => e.seq)).toEqual([2, 3]);
+    await after.close();
 
     // ── start() is idempotent ────────────────────────────────────────────────
     const second = await engine.start();

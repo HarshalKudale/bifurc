@@ -16,7 +16,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { getExporter, getImporter } from "@/ipc/importExport/registry";
+import { getExporter, getImporter } from "@bifurc/engine/importExport/registry";
+import { exportToFile, importFile, preflightFile } from "./importExportHarness";
 import { loadConfig } from "@bifurc/engine/store/config";
 import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
 
@@ -121,16 +122,16 @@ describe("WireMock round trip", () => {
         seedEntities(src, "mocks", [MOCK]);
 
         const file = path.join(outDir, "mocks-wiremock.json");
-        expect((await getExporter("mocks", "mocks-wiremock")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("mocks", "mocks-wiremock")!, file)).ok).toBe(true);
 
         // WireMock keeps the original id, so it can be located directly.
-        const pf = getImporter("mocks", "mocks-wiremock")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("mocks", "mocks-wiremock")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
         expect(pf.collisionIds).toContain(MOCK.id);
 
         newWorkspace();
-        const res = await getImporter("mocks", "mocks-wiremock")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("mocks", "mocks-wiremock")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
 
         const m = readAllEntities<any>(TEST_WS, "mocks").find((x) => x.id === MOCK.id);
@@ -152,9 +153,9 @@ describe("WireMock round trip", () => {
         seedEntities(src, "mocks", [MOCK_REGEX]);
 
         const file = path.join(outDir, "mocks-wiremock-regex.json");
-        expect((await getExporter("mocks", "mocks-wiremock")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("mocks", "mocks-wiremock")!, file)).ok).toBe(true);
         newWorkspace();
-        expect((await getImporter("mocks", "mocks-wiremock")!.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(getImporter("mocks", "mocks-wiremock")!, TEST_WS, file, "override")).ok).toBe(true);
 
         const m = readAllEntities<any>(TEST_WS, "mocks").find((x) => x.id === MOCK_REGEX.id);
         expect(m.useRegex).toBe(true);
@@ -167,12 +168,12 @@ describe("WireMock round trip", () => {
         seedEntities(src, "mocks", [{ ...MOCK, id: "mock-any", method: "*" }]);
 
         const file = path.join(outDir, "mocks-wiremock-any.json");
-        expect((await getExporter("mocks", "mocks-wiremock")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("mocks", "mocks-wiremock")!, file)).ok).toBe(true);
         const written = JSON.parse(fs.readFileSync(file, "utf-8"));
         expect(written.mappings[0].request.method).toBe("ANY");
 
         newWorkspace();
-        expect((await getImporter("mocks", "mocks-wiremock")!.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(getImporter("mocks", "mocks-wiremock")!, TEST_WS, file, "override")).ok).toBe(true);
         const m = readAllEntities<any>(TEST_WS, "mocks").find((x) => x.id === "mock-any");
         expect(m.method).toBe("*");
     });
@@ -184,11 +185,11 @@ describe("WireMock round trip", () => {
         ]), "utf-8");
 
         newWorkspace();
-        const pf = getImporter("mocks", "mocks-wiremock")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("mocks", "mocks-wiremock")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
-        const res = await getImporter("mocks", "mocks-wiremock")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("mocks", "mocks-wiremock")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
         const m = readAllEntities<any>(TEST_WS, "mocks").find((x) => x.id === "bare-1");
         expect(m.name).toBe("Bare");
@@ -203,13 +204,13 @@ describe("Postman round trip", () => {
         seedEntities(src, "mocks", [MOCK]);
 
         const file = path.join(outDir, "mocks-postman.json");
-        expect((await getExporter("mocks", "mocks-postman")!.run(TEST_WS, file)).ok).toBe(true);
-        const pf = getImporter("mocks", "mocks-postman")!.preflight(TEST_WS, file);
+        expect((await exportToFile(TEST_WS, getExporter("mocks", "mocks-postman")!, file)).ok).toBe(true);
+        const pf = preflightFile(getImporter("mocks", "mocks-postman")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
         newWorkspace();
-        const res = await getImporter("mocks", "mocks-postman")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("mocks", "mocks-postman")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
         expect(res.imported).toBe(1);
 
@@ -227,13 +228,13 @@ describe("Postman round trip", () => {
         seedEntities(src, "requests", [REQUEST]);
 
         const file = path.join(outDir, "requests-postman.json");
-        expect((await getExporter("requests", "requests-postman")!.run(TEST_WS, file)).ok).toBe(true);
-        const pf = getImporter("requests", "requests-postman")!.preflight(TEST_WS, file);
+        expect((await exportToFile(TEST_WS, getExporter("requests", "requests-postman")!, file)).ok).toBe(true);
+        const pf = preflightFile(getImporter("requests", "requests-postman")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
         newWorkspace();
-        const res = await getImporter("requests", "requests-postman")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("requests", "requests-postman")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
 
         const reqs = readAllEntities<any>(TEST_WS, "requests");
@@ -252,13 +253,13 @@ describe("HAR round trip", () => {
         seedEntities(src, "requests", [REQUEST]);
 
         const file = path.join(outDir, "requests.har");
-        expect((await getExporter("requests", "requests-har")!.run(TEST_WS, file)).ok).toBe(true);
-        const pf = getImporter("requests", "requests-har")!.preflight(TEST_WS, file);
+        expect((await exportToFile(TEST_WS, getExporter("requests", "requests-har")!, file)).ok).toBe(true);
+        const pf = preflightFile(getImporter("requests", "requests-har")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
         newWorkspace();
-        const res = await getImporter("requests", "requests-har")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("requests", "requests-har")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
 
         const reqs = readAllEntities<any>(TEST_WS, "requests");
@@ -277,7 +278,7 @@ describe("HAR round trip", () => {
         seedEntities(src, "requests", [REQUEST]);
 
         const file = path.join(outDir, "requests-shape.har");
-        expect((await getExporter("requests", "requests-har")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("requests", "requests-har")!, file)).ok).toBe(true);
 
         const har = JSON.parse(fs.readFileSync(file, "utf-8"));
         expect(har.log.version).toBe("1.2");
@@ -291,7 +292,7 @@ describe("HAR round trip", () => {
         const file = path.join(outDir, "not-a-har.json");
         fs.writeFileSync(file, JSON.stringify({ hello: "world" }), "utf-8");
         newWorkspace();
-        const pf = getImporter("requests", "requests-har")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("requests", "requests-har")!, TEST_WS, file);
         expect(pf.ok).toBe(false);
         expect(pf.error).toBeTruthy();
     });
@@ -303,18 +304,18 @@ describe("Insomnia round trip", () => {
         seedEntities(src, "requests", [REQUEST]);
 
         const file = path.join(outDir, "requests-insomnia.json");
-        expect((await getExporter("requests", "requests-insomnia")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("requests", "requests-insomnia")!, file)).ok).toBe(true);
 
         const written = JSON.parse(fs.readFileSync(file, "utf-8"));
         expect(written.__export_format).toBe(4);
         expect(written.resources.some((r: any) => r._type === "request")).toBe(true);
 
-        const pf = getImporter("requests", "requests-insomnia")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("requests", "requests-insomnia")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
         newWorkspace();
-        const res = await getImporter("requests", "requests-insomnia")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("requests", "requests-insomnia")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
 
         const reqs = readAllEntities<any>(TEST_WS, "requests");
@@ -330,7 +331,7 @@ describe("Insomnia round trip", () => {
         const file = path.join(outDir, "not-insomnia.json");
         fs.writeFileSync(file, JSON.stringify({ __export_format: 4 }), "utf-8");
         newWorkspace();
-        const pf = getImporter("requests", "requests-insomnia")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("requests", "requests-insomnia")!, TEST_WS, file);
         expect(pf.ok).toBe(false);
     });
 });
@@ -341,19 +342,19 @@ describe("OpenAPI round trip", () => {
         seedEntities(src, "requests", [REQUEST]);
 
         const file = path.join(outDir, "requests-openapi.json");
-        expect((await getExporter("requests", "requests-openapi")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("requests", "requests-openapi")!, file)).ok).toBe(true);
 
         const spec = JSON.parse(fs.readFileSync(file, "utf-8"));
         expect(spec.openapi).toBe("3.0.3");
         expect(Object.keys(spec.paths)).toEqual(["/items"]);
         expect(spec.paths["/items"].post.summary).toBe("Fmt Request");
 
-        const pf = getImporter("requests", "requests-openapi")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("requests", "requests-openapi")!, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         expect(pf.itemCount).toBe(1);
 
         newWorkspace();
-        const res = await getImporter("requests", "requests-openapi")!.run(TEST_WS, file, "override");
+        const res = await importFile(getImporter("requests", "requests-openapi")!, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
         expect(res.imported).toBe(1);
 
@@ -369,7 +370,7 @@ describe("OpenAPI round trip", () => {
         const file = path.join(outDir, "not-openapi.json");
         fs.writeFileSync(file, JSON.stringify({ paths: {} }), "utf-8");
         newWorkspace();
-        const pf = getImporter("requests", "requests-openapi")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("requests", "requests-openapi")!, TEST_WS, file);
         expect(pf.ok).toBe(false);
         expect(pf.error).toContain("OpenAPI");
     });
@@ -383,7 +384,7 @@ describe("workspace snapshot round trip", () => {
         seedAll(src);
 
         const file = path.join(outDir, "workspace.json");
-        const exp = await getExporter("workspace", "workspace-json")!.run(TEST_WS, file);
+        const exp = await exportToFile(TEST_WS, getExporter("workspace", "workspace-json")!, file);
         expect(exp.ok, exp.error).toBe(true);
 
         const snapshot = JSON.parse(fs.readFileSync(file, "utf-8"));
@@ -399,14 +400,14 @@ describe("workspace snapshot round trip", () => {
         expect(snapshot.data.proxyRules[0].requestScript).toBe(RULE.requestScript);
 
         const importer = getImporter("workspace", "workspace-json")!;
-        const pf = importer.preflight(TEST_WS, file);
+        const pf = preflightFile(importer, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
         // 1 mock + 1 mapping + 1 rule + 1 request + 1 socket + 1 webhook + 2 envs
         // (the implicit `__global__` env is included in the snapshot).
         expect(pf.itemCount).toBe(8);
 
         newWorkspace();
-        const res = await importer.run(TEST_WS, file, "override");
+        const res = await importFile(importer, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
         expect(res.imported).toBe(8);
 
@@ -469,11 +470,11 @@ describe("workspace snapshot round trip", () => {
         seedEntities(src, "rules", [{ ...RULE, id: "rule-off", enabled: false }]);
 
         const file = path.join(outDir, "workspace-disabled.json");
-        expect((await getExporter("workspace", "workspace-json")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("workspace", "workspace-json")!, file)).ok).toBe(true);
 
         newWorkspace();
         const importer = getImporter("workspace", "workspace-json")!;
-        expect((await importer.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(importer, TEST_WS, file, "override")).ok).toBe(true);
 
         const cfg = loadConfig();
         expect(cfg.mappings.find((m) => m.id === "map-off")!.enabled).toBe(false);
@@ -485,14 +486,14 @@ describe("workspace snapshot round trip", () => {
         const src = newWorkspace();
         seedAll(src);
         const file = path.join(outDir, "workspace-name.json");
-        expect((await getExporter("workspace", "workspace-json")!.run(TEST_WS, file)).ok).toBe(true);
+        expect((await exportToFile(TEST_WS, getExporter("workspace", "workspace-json")!, file)).ok).toBe(true);
 
         newWorkspace();
         const importer = getImporter("workspace", "workspace-json")!;
-        expect((await importer.run(TEST_WS, file, "override")).ok).toBe(true);
+        expect((await importFile(importer, TEST_WS, file, "override")).ok).toBe(true);
 
         // Import again into the same install — the second workspace must be renamed.
-        const second = await importer.run(TEST_WS, file, "override");
+        const second = await importFile(importer, TEST_WS, file, "override");
         expect(second.ok, second.error).toBe(true);
 
         const names = loadConfig().workspaces.map((w) => w.name);
@@ -504,7 +505,7 @@ describe("workspace snapshot round trip", () => {
         const file = path.join(outDir, "not-workspace.json");
         fs.writeFileSync(file, JSON.stringify({ schema: "lp-mocks-v1" }), "utf-8");
         newWorkspace();
-        const pf = getImporter("workspace", "workspace-json")!.preflight(TEST_WS, file);
+        const pf = preflightFile(getImporter("workspace", "workspace-json")!, TEST_WS, file);
         expect(pf.ok).toBe(false);
         expect(pf.error).toContain("lp-workspace-v1");
     });

@@ -460,7 +460,9 @@ creates churn.
 > All 10 channels (`list`, `save`, `delete`, `start`, `stop`, `getState`, `getAllStates`,
 > `getLogs`, `checkPort`, `killPort`) convert.
 >
-> **Ninth batch (this session): `src/ipc/importExport/index.ts` — only `export.formats`.**
+> **Ninth batch (this session): `src/ipc/importExport/index.ts` (since renamed
+> `src/ipc/importExportHandlers.ts` when the rest of that directory moved to the engine in P3
+> layer 5) — only `export.formats`.**
 > The other three channels in this file (`importExport:export/preflight/import`) were checked
 > and rejected — **two separate real gaps, not one**:
 > - `export.create`/`import.preflight` are SPLIT (this file's own header comment already says
@@ -775,7 +777,7 @@ Three candidate mechanisms were tested and only one works:
 | Mechanism | Result |
 |---|---|
 | `resolveId` plugin (as `dualAliasPlugin` does for `@/`) | **Never invoked.** Vitest externalizes the specifier before any plugin resolver runs. Verified with a temporary `console.error` probe that never printed. |
-| `deps.inline: [/^@bifurc\/engine(\/|$)/]` (and the legacy `server.deps.inline`) | **No effect.** Not needed once the alias works. |
+| `deps.inline: [/^@bifurc\/engine(\/\|$)/]` (and the legacy `server.deps.inline`) | **No effect.** Not needed once the alias works. |
 | `resolve.alias` | **Works** — but only when redeclared inside each `test.projects` entry. |
 
 The last point is the one that cost the most time. `resolve.alias` placed at the root
@@ -861,9 +863,13 @@ The remaining engine modules move next, in dependency order, each verified again
    released. See the data-root caveat above — the criterion holds on macOS and Linux, and on Windows
    only when `LOCALAPPDATA` is overridden.
 5. Dependency split completion: the engine's own manifest is now correct (`@bifurc/protocol`,
-   `mkcert`, `simple-git`, `ws`). What remains is the *shell-side* deps — `js-yaml`, `archiver` and
-   `unzipper` are used only by `src/ipc/importExport/**` and move out of the root flat list when P3
-   moves that module. Note `@bifurc/protocol` was **undeclared** until 2026-09-16: the engine
+   `archiver`, `js-yaml`, `mkcert`, `simple-git`, `unzipper`, `ws`). The shell-side half closed on
+   2026-09-16 (P3 layer 5): `js-yaml`, `archiver` and `unzipper` were used only by
+   `src/ipc/importExport/**`, and that module has now moved to
+   `packages/engine/src/importExport/**`, so they are engine dependencies and nothing in `src/` or
+   `renderer/` references them any more. They are still declared in the root `package.json` as well
+   — dropping them there changes what electron-builder walks, and packaging does not yet follow the
+   package split (`plan/12`). Note `@bifurc/protocol` was **undeclared** until 2026-09-16: the engine
    imported it but did not list it, so it resolved only via root hoisting — invisible here, fatal to
    a standalone install. See `plan/10` for the related Docker gap.
 
@@ -933,7 +939,7 @@ test suite are unaffected. See the measured note in `plan/12`.
 > `coreHandlers.ts` (`config.get`, `env.setActive`, `workspace.setActive`), `syncHandlers.ts`
 > (16 of 19), `folderHandlers.ts` (all 4), `tlsHandlers.ts` (3 of 6), `runnerHandlers.ts`
 > (2 of 6), `graphqlHandlers.ts` (2 of 8), `soapHandlers.ts` (2 of 8), `grpcHandlers.ts` (5 of 8),
-> `applicationHandlers.ts` (all 10), and `src/ipc/importExport/index.ts` (1 of 4). This also
+> `applicationHandlers.ts` (all 10), and `src/ipc/importExportHandlers.ts` (1 of 4). This also
 > required landing a small, scoped slice of item 8 early: `packages/protocol` is now a real
 > linked npm workspace dependency (`"@bifurc/protocol": "*"`), which is what makes its Zod
 > schemas importable from `src/` at all. See work item 7's own status note for the full detail,
@@ -1056,7 +1062,7 @@ unit-tested, and proven on 48 commands across `coreHandlers.ts` (`config.get`, `
 `workspace.setActive`), `syncHandlers.ts` (16 of 19), `folderHandlers.ts` (all 4),
 `tlsHandlers.ts` (3 of 6), `runnerHandlers.ts` (2 of 6), `graphqlHandlers.ts` (2 of 8),
 `soapHandlers.ts` (2 of 8), `grpcHandlers.ts` (5 of 8), `applicationHandlers.ts` (all 10), and
-`src/ipc/importExport/index.ts` (1 of 4); converting `audit.list`,
+`src/ipc/importExportHandlers.ts` (1 of 4); converting `audit.list`,
 `runner.saveConfig`, and `import.commit` each exposed a real gap between the frozen protocol schema and actual
 handler/renderer usage, so all three were deliberately left unconverted rather than silently breaking
 real functionality — see work item 7's status note. **Since then, three further passes closed

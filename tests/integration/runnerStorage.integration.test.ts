@@ -82,6 +82,18 @@ function makeReport(overrides: Record<string, any> = {}) {
 beforeAll(async () => {
   ws = createWorkspace();
   const { registerRunnerHandlers } = await import("@/ipc/handlers/runnerHandlers");
+  // P3 made `runner:exportReport` a thin client: it shows the dialog, then calls the engine's
+  // `runner.exportReport` command and writes the artifact it gets back. The renderer-facing
+  // contract is unchanged (`{ok:false}` on cancel, `{ok:true, filePath}` on success), so every
+  // assertion below still holds — but the engine half has to be registered, exactly as
+  // `src/ipc/handlers.ts` registers it in production. Without this the handler returns
+  // `{ok:false, error: 'No handler registered for command "runner.exportReport".'}` and the two
+  // file-writing tests fail with `ENOENT` on a file that was never written.
+  const { registerBlobCommands } = await import("@bifurc/engine/blob/commands");
+  const { registerFileOpsCommands } = await import("@bifurc/engine/fileOps/commands");
+  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  registerBlobCommands(commandRegistry);
+  registerFileOpsCommands(commandRegistry);
   registerRunnerHandlers();
 });
 

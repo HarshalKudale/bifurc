@@ -63,14 +63,41 @@ export const BLOB_READ_CHUNK_BYTES = 512 * 1024;
 /**
  * A reference to staged content — either a `blobId` the client can pull, or the bytes inline.
  *
- * Domain commands that produce an artifact (`export.create`, `runner.exportReport`,
- * `audit.export`, `capture.shareJson`) return this shape. `export.ts`'s result interfaces still
- * carry the older `blobId?` / `filePath?` pair; they adopt `BlobRef` during P3's conversion pass
- * (`plan/04` work item 2), which is why this type lives here rather than being inlined per command.
+ * Every domain command that produces an artifact returns `ArtifactResult` below, which is this
+ * type plus the metadata the client needs to save it without a second round-trip. The five egress
+ * channels are `export.create`, `tls.exportCert`, `runner.exportReport`, `capture.shareJson` and
+ * `audit.export` (`File_Ops_Protocol.md` §4).
  *
  * Exactly one of the two is set. `blobId` wins if both somehow arrive.
  */
 export type BlobRef = { blobId: string; inline?: never } | { blobId?: never; inline: string };
+
+/**
+ * What the client needs to write an artifact without calling `blob.stat`.
+ *
+ * `size` is the decoded byte length (not the base64 length) and `sha256` is the digest of those
+ * bytes, so the client can verify what it wrote. `mimeType` is metadata only — no consumer branches
+ * on it today, but a client that downloads rather than saves (P7's web UI) needs it.
+ */
+export type ArtifactMeta = {
+  suggestedName: string;
+  size: number;
+  mimeType: string;
+  sha256: string;
+};
+
+/**
+ * The result shape of every egress artifact command.
+ *
+ * `sha256` is present on the inline branch too, and deliberately so: it means a client never has to
+ * branch on which shape it received to know whether a digest exists.
+ *
+ * `canceled` is carried because a client that shows no dialog (a web UI downloading instead) has
+ * nothing to cancel, while one that does needs to distinguish "the user said no" from "it failed".
+ */
+export type ArtifactResult =
+  | ({ ok: true } & ArtifactMeta & BlobRef)
+  | { ok: false; error: string; canceled?: boolean };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // blob.put — ingress, client → engine
