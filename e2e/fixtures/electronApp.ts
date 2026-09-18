@@ -57,6 +57,35 @@ export const test = base.extend<ElectronFixtures>({
 
     page: async ({ electronApp }, use) => {
         const window = await electronApp.firstWindow();
+
+        /**
+         * Accept the Terms of Service screen before the app renders.
+         *
+         * `renderer/App.tsx:23` gates the entire shell on
+         * `usePersistedState<boolean>("app:tos-accepted", false)` — if that key is absent the app
+         * returns `<TermsAcceptanceScreen />` and nothing else is reachable. `usePersistedState` is
+         * backed by plain `localStorage` (`renderer/lib/storage.ts`), so this is **per-profile
+         * renderer state, not `app.json`**.
+         *
+         * That distinction is the whole reason this lives here rather than in `sampleData.ts`:
+         * `writeSampleWorkspace()` writes `app.json` (`hasSeenWelcome: true`, which drives
+         * `app:isFirstLaunch`) and cannot reach `localStorage`. The fresh `--user-data-dir` created
+         * above starts with empty storage, so without this every test lands on the TOS screen.
+         *
+         * `addInitScript` runs before any page script on the **next** navigation, so the reload
+         * below is what makes it take effect — it is seeded before `App.tsx` reads the key. The
+         * value is JSON-encoded because `readStorage` does `JSON.parse`, and `JSON.parse("true")`
+         * is the boolean the hook expects.
+         */
+        await window.addInitScript(() => {
+            try {
+                localStorage.setItem("app:tos-accepted", "true");
+            } catch {
+                /* Storage unavailable: the TOS screen will show and the test will fail loudly. */
+            }
+        });
+        await window.reload();
+
         // Wait for the app to be fully loaded
         await window.waitForLoadState("domcontentloaded");
         await use(window);
