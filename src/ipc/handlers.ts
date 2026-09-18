@@ -20,7 +20,10 @@ import { registerImportExportCommands } from "@bifurc/engine/importExport/comman
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
 import { registerServerCommands } from "@bifurc/engine/proxy/serverCommands";
+import { registerWebhookCommands } from "@bifurc/engine/proxy/webhookCommands";
 import { registerConfigCommands } from "@bifurc/engine/store/configCommands";
+import { registerMiscCommands } from "@bifurc/engine/miscCommands";
+import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
 import { wireEventBridge } from "@/ipc/eventBridge";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
@@ -56,6 +59,27 @@ export function registerIpcHandlers(): void {
   // `registry.invoke()` answered `UNKNOWN_COMMAND`. `config.save` is the more consequential of the
   // two halves: it is the settings path, and it carries the server restart.
   registerConfigCommands(commandRegistry);
+  // P6 finding 5, step 3b-2 (third slice): the two `webhook.*` active-registration commands and the
+  // three `webhookServer.*` lifecycle commands. Same class of bug as the ten above — served only by
+  // `ipcMain.handle` bodies in `crudHandlers.ts`, so `registry.invoke()` answered `UNKNOWN_COMMAND`,
+  // and `@bifurc/client` advertised five methods it could not deliver. The listening server, its port
+  // and its error state are all engine state in `proxy/webhookServer.ts`.
+  //
+  // `webhookServer.start` is the one handler in this batch that is not a literal copy: the shell body
+  // ignored its (non-existent) argument, while `WebhookServerStartParams` declares an optional `port`.
+  // The engine half honours it and falls back to `cfg.webhookPort ?? 9101`, so every existing caller
+  // — all of which pass nothing — gets exactly the old behaviour.
+  registerWebhookCommands(commandRegistry);
+  // P6 finding 5, step 3b-2 (fourth slice): the five `misc.ts` commands — `healthbar.getServices` /
+  // `healthbar.saveServices` / `healthbar.checkUrl`, `request.replay` and `script.execute`. All five
+  // were `ipcMain.handle` bodies in `coreHandlers.ts`; every function they call already lives in the
+  // engine. `healthbar.checkUrl` is the one body that could not be copied literally: its shell version
+  // used `require("https")`, and `require` does not exist in the engine's ESM build output.
+  registerMiscCommands(commandRegistry);
+  // P6 finding 5, step 3b-2 (fifth slice): `runner.saveReport`. Its two siblings
+  // (`runner.saveConfig` / `runner.loadConfig`) are `BLOCKED` by the frozen protocol and stay on their
+  // legacy channels; `runner.exportReport` had already moved.
+  registerRunnerCommands(commandRegistry);
 
   registerImportExportHandlers();
   registerApplicationHandlers();
