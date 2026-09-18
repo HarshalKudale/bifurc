@@ -161,6 +161,56 @@ prove the seam. The process split then becomes a change of transport *behind* a 
 That ordering is also what makes the rollback flag meaningful: `BIFURC_ENGINE_RPC=0` restores
 `registerIpcHandlers()` only while both paths exist.
 
+### 5. Step 3 is not mechanical: 25 of the 93 commands have no registry implementation
+
+Measured 2026-09-18, after step 3a. `plan/07`'s step 3 reads as a mechanical flip — "route all methods
+through the bridge, delete `registerIpcHandlers()`" — and warns only to "expect failures in the
+shell-only handlers first". The failures are not a handful of shell concerns. They are **25 missing
+engine implementations**:
+
+```
+app.checkUpdate   audit.list        config.save          healthbar.checkUrl
+healthbar.getServices  healthbar.saveServices         proxy.status
+request.replay    runner.loadConfig runner.saveConfig   runner.saveReport
+script.execute    server.restart    server.start        server.status
+server.stop       services.discover webhook.registerActive
+webhook.unregisterActive            webhookServer.start  webhookServer.status
+webhookServer.stop                  workspace.add        workspace.delete
+workspace.rename
+```
+
+68 of the 93 are registered and route trivially. The 25 above are served **only** by a shell
+`ipcMain.handle` body on their legacy channel, so `registry.invoke("<command>")` answers
+`UNKNOWN_COMMAND`. Verified two ways: a test over the real `registerIpcHandlers()` (`tests/ipc/handlers.test.ts`'s
+"registry coverage" block) and by grep — `grep '"runner.saveReport"' src/ packages/engine/src/` finds
+three references (the protocol table, the scope table, the shell handler) and **zero** registrations.
+
+**Why this matters more than a to-do list.** `@bifurc/client` classifies **all 25** as
+`{kind: "transport"}` — a 1:1 mapping onto a protocol command. So `client.serverStatus()` calls
+`registry.invoke("server.status")`, which the real shell cannot answer. The client therefore does not
+merely lack 25 methods; it **advertises 25 it cannot deliver against the real engine**, and nothing
+noticed because P5 tested it against the conformance suite's *stub* registry and step 2 routes only
+`config:get`. The surface test cannot see this either — every key is exposed correctly; only the
+implementation behind 25 of them is missing.
+
+The one entry the plan and the client disagree about is `app.checkUpdate`: the "Local handlers stay
+local" table calls it a shell half, the client classifies it `transport`. One is wrong, and the
+decision belongs with whoever implements it.
+
+**Consequences for the plan.**
+
+1. **Step 3 splits.** 3b-1 routes the 68 registered commands (mechanical, and safe while
+   `registerIpcHandlers()` still runs). 3b-2 implements the 25 in the engine. Only then can the legacy
+   handlers be deleted.
+2. **`registerIpcHandlers()` cannot be deleted before 3b-2.** Deleting it while a command has neither a
+   registry entry nor a channel would break that method on **both** paths at once, and the surface test
+   would still pass — the key stays exposed. This is the phase's one genuinely silent failure mode, so
+   the inventory is now a **ratchet** in `tests/ipc/handlers.test.ts`: implementing a command fails the
+   test until its name leaves the list, and a new command that lands unregistered fails immediately.
+3. **The `plan/07` "Local handlers stay local" table is incomplete.** It lists 13 local members and
+   they match `ClientLocal` exactly — but it does not mention that 25 *routable* commands are
+   unimplemented, which is the larger half of the work.
+
 ---
 
 ## The rule for this phase
@@ -217,6 +267,11 @@ Per the P5 shim table, these are implemented in the shell and never cross the RP
 | Platform | `window.api.platform` |
 | CA install | `tls:installCA` (per `File_Ops_Protocol.md` §6.2) |
 | Update check | `app:checkUpdate` — shell half |
+
+> **This table is the smaller half of step 3.** It lists the keys that must *never* be routed — and it
+> matches `ClientLocal` exactly. What it does not say is that **25 of the 93 protocol commands have no
+> registry implementation at all**, so they cannot be routed yet even though the client classifies them
+> as routable. See finding 5 above for the list and the consequences.
 
 ---
 
@@ -344,6 +399,16 @@ Delete the flag in the next release, once the seam has survived real usage.
    suite. If it is green, the bridge works.
 3. **Route all methods through the bridge, delete `registerIpcHandlers()`, run everything.** Expect
    failures in the shell-only handlers first — that is the expected shape of the work.
+
+   **Corrected 2026-09-18 (finding 5):** the failures are not a handful of shell concerns but **25
+   unimplemented engine commands**, so this step is two steps:
+
+   - **3b-1** — route the **68** registered commands. Mechanical, and safe to do while
+     `registerIpcHandlers()` still runs.
+   - **3b-2** — implement the **25** missing commands in the engine.
+   - **then** delete `registerIpcHandlers()` and `eventBridge.ts`. Deleting them earlier would break
+     each of the 25 on **both** paths at once, and the surface test would still pass because the key
+     stays exposed.
 
 ---
 
@@ -606,10 +671,10 @@ suite's job.
 
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after step 3a: **101 files / 2,464 tests** — 2,423 passed, 40
-      skipped, and the one documented `soap.execute` flake. (After finding 1: 100 / 2,445 — 2,404
-      passed. After step 2: 99 / 2,436 — 2,395. Before step 2: 97 / 2,418. The "35 unit suites" this
-      criterion used to say predated P2–P5 entirely.)
+- [ ] **Unit suites pass.** Baseline after the step-3b inventory: **101 files / 2,467 tests** — 2,426
+      passed, 40 skipped, and the one documented `soap.execute` flake. (After step 3a: 101 / 2,464 —
+      2,423 passed. After finding 1: 100 / 2,445 — 2,404. After step 2: 99 / 2,436 — 2,395. Before
+      step 2: 97 / 2,418. The "35 unit suites" this criterion used to say predated P2–P5 entirely.)
 - [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
       normal terminal, see Preconditions.
 - [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
