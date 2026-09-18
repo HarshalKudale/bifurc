@@ -57,9 +57,9 @@ import {
  * Guard against a double registration.
  *
  * `ipcMain.handle()` **throws** if a handler already exists for the channel, and
- * `registerIpcHandlers()` is documented as call-once. This mirrors `wireEventBridge()`'s idempotence
- * note rather than relying on the caller, because a thrown `Attempted to register a second handler`
- * at startup presents as "the app did not open a window", which points nowhere near the cause.
+ * `registerIpcHandlers()` is documented as call-once. This guards rather than relying on the caller,
+ * because a thrown `Attempted to register a second handler` at startup presents as "the app did not
+ * open a window", which points nowhere near the cause.
  */
 let registered = false;
 

@@ -60,11 +60,18 @@ export const RPC_CHANNEL = "engine:rpc";
  *
  * ## Why the renderer cannot just keep the legacy channels
  *
- * It can, and it does — `src/ipc/eventBridge.ts` still broadcasts `sync:status`, `log:entry` and the
- * other seven, and **this step does not touch them**. The point of adding this channel now is that
- * `registerIpcHandlers()` and `wireEventBridge()` are deleted together (step 3), and an event path
- * that has never carried a single frame is not something to discover a problem in on the day the
- * fallback disappears.
+ * When this channel was added (step 3a) it could, and it did: `src/ipc/eventBridge.ts` was still
+ * broadcasting `sync:status`, `log:entry` and the other seven, and that step did not touch them. The
+ * point of adding this channel *then* was that the legacy event path was going to be deleted, and an
+ * event path that has never carried a single frame is not something to discover a problem in on the
+ * day the fallback disappears.
+ *
+ * **That has now happened.** Step 3c (`eb4c207`) deleted `eventBridge.ts` — but **not** together with
+ * `registerIpcHandlers()`, which is what this comment originally predicted. Only the event half of
+ * step 3 was replaceable: the command half still has four keys with no registry implementation and
+ * four artifact-egress methods, so `registerIpcHandlers()` shrinks rather than disappears. The
+ * lesson is worth keeping — the two deletions looked like one because they were described as one, and
+ * a shared sentence in a plan is not a shared precondition.
  *
  * ## Why one channel rather than one per event
  *

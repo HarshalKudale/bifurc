@@ -178,7 +178,7 @@ describe("the IPC event channel (P6 step 3)", () => {
   it("skips a destroyed window rather than throwing inside the broadcast", async () => {
     // A window can be torn down between the subscription and the event, and `webContents.send()` on a
     // destroyed window throws — inside a bus listener, where a throw unwinds into machinery that is
-    // not expecting it. `eventBridge.ts` guards this the same way.
+    // not expecting it. The `eventBridge.ts` this replaced guarded it the same way.
     const { bus, call } = await loadBridge();
     const live = addWindow();
     const dead = addWindow(true);

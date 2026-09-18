@@ -294,8 +294,12 @@ if (!gotTheLock) {
     registerClientHandlers();
 
     // Bridge the engine bus's settings-change notification to the shell's own tray update.
-    // Kept here (not in eventBridge.ts) to avoid an @/main <-> @/ipc/handlers import cycle —
-    // see the comment in eventBridge.ts.
+    // It lives here, beside the tray it updates, rather than in `@/ipc/handlers` — that would be an
+    // `@/main` <-> `@/ipc/handlers` import cycle. (This used to cite `eventBridge.ts` as the
+    // alternative home; step 3c deleted that file, and the cycle argument is the one that stands.)
+    //
+    // Load-bearing for `config.save`: the registry handler no longer calls `updateTrayMenu()` itself,
+    // so this subscription is the only thing that keeps the tray in step with the settings.
     bus.onTyped("settings.changed", () => updateTrayMenu());
 
     createWindow();
