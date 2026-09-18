@@ -245,18 +245,22 @@ describe("src/ipc/handlers.ts", () => {
      * `plan/07`'s step 3 is "route all methods through the bridge, delete `registerIpcHandlers()`",
      * and it warns to "expect failures in the shell-only handlers first". This is that list, measured
      * rather than discovered one failure at a time — and it is bigger than the plan implies:
-     * **25 of the 93 commands have no registry implementation at all.** They are served by a shell
-     * `ipcMain.handle` body on a legacy channel, so `registry.invoke("<command>")` answers
+     * **25 of the 93 commands had no registry implementation at all.** They were served only by a
+     * shell `ipcMain.handle` body on a legacy channel, so `registry.invoke("<command>")` answered
      * `UNKNOWN_COMMAND`.
      *
      * ## Why it is a *ratchet* rather than a report
      *
      * `@bifurc/client` classifies every one of these as `{kind: "transport"}`, i.e. a 1:1 mapping onto
-     * a protocol command — so `client.serverStatus()` calls `registry.invoke("server.status")` and
-     * fails. The client's surface therefore **claims 25 methods it cannot deliver against the real
-     * shell**, and nothing noticed because the preload only routes `config:get` today. Pinning the
-     * list here means it can only shrink **deliberately**: implementing a command makes this fail
+     * a protocol command — so `client.serverStatus()` called `registry.invoke("server.status")` and
+     * failed. The client's surface therefore **advertised methods it could not deliver against the
+     * real shell**, and nothing noticed because the preload only routes `config:get` today. Pinning
+     * the list here means it can only shrink **deliberately**: implementing a command makes this fail
      * until the name is removed, and a new command that lands unregistered fails immediately.
+     *
+     * It has now shrunk once. Step 3b-2's first slice moved the six proxy/server-lifecycle commands
+     * into `packages/engine/src/proxy/serverCommands.ts`, so the list went 25 → 19; that edit is the
+     * ratchet doing its job rather than a change to the assertion.
      *
      * This asserts *registration*, not behaviour. A command can be registered and still do the wrong
      * thing; that is what the conformance suite and each handler's own tests are for.
@@ -265,11 +269,14 @@ describe("src/ipc/handlers.ts", () => {
       /**
        * Commands with no `registry.register()` anywhere, verified by grep and by this test.
        *
-       * Every one is engine work that has not been moved yet, **not** a shell concern — the proxy
-       * server, the webhook server, workspaces, audit, the runner and the healthbar all live in
-       * `packages/engine`. `app.checkUpdate` is the one open question: `plan/07` calls it a "shell
-       * half", the client classifies it `transport`, and the third case below records the
-       * disagreement without resolving it.
+       * Every one is engine work that has not been moved yet, **not** a shell concern — the webhook
+       * server, workspaces, audit, the runner and the healthbar all live in `packages/engine`.
+       * `app.checkUpdate` is the one open question: `plan/07` calls it a "shell half", the client
+       * classifies it `transport`, and the third case below records the disagreement without
+       * resolving it.
+       *
+       * The six `server.*` / `proxy.status` / `services.discover` entries that were here have moved
+       * out (see the block comment above), which is why this is 19 rather than 25.
        */
       const NOT_IN_REGISTRY = [
         "app.checkUpdate",
@@ -278,17 +285,11 @@ describe("src/ipc/handlers.ts", () => {
         "healthbar.checkUrl",
         "healthbar.getServices",
         "healthbar.saveServices",
-        "proxy.status",
         "request.replay",
         "runner.loadConfig",
         "runner.saveConfig",
         "runner.saveReport",
         "script.execute",
-        "server.restart",
-        "server.start",
-        "server.status",
-        "server.stop",
-        "services.discover",
         "webhook.registerActive",
         "webhook.unregisterActive",
         "webhookServer.start",
@@ -352,6 +353,67 @@ describe("src/ipc/handlers.ts", () => {
         // deliberately does not decide which — it only records that the disagreement exists, so the
         // decision is made when the command is actually implemented rather than by accident.
         expect(SURFACE.checkUpdate).toMatchObject({ kind: "transport", command: "app.checkUpdate" });
+      });
+
+      /**
+       * The ratchet above asserts *registration*; this asserts *delivery*, for the six commands that
+       * step 3b-2 has moved so far.
+       *
+       * The distinction is the entire point of finding 5, and it is easy to lose: a command can be
+       * registered and still return nothing useful. Registration is what makes `registry.invoke()`
+       * stop throwing `UNKNOWN_COMMAND` — which is what `@bifurc/client` needs — but only an
+       * invocation proves the client's `serverStatus()` would actually get a status back.
+       *
+       * These call the registry **directly**, with no `ipcMain` in the path, because that is exactly
+       * how a transport calls it. `ctx` is built the way the engine's own callers build it: a bus and
+       * **no session**, since a session-less caller is the engine itself and holds every scope.
+       */
+      it("delivers the six moved commands through the registry, not just the channel", async () => {
+        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { bus } = await import("@bifurc/engine/eventBus");
+        const ctx = { bus };
+
+        vi.mocked(isRunning).mockReturnValue(true);
+        vi.mocked(getPort).mockReturnValue(8080);
+        vi.mocked(getServerError).mockReturnValue(null);
+
+        // Two views of the same `isRunning()`, with deliberately different payloads — collapsing them
+        // would silently change one of `serverStatus` / `proxyStatus`.
+        expect(commandRegistry.invoke("server.status", {}, ctx)).toEqual({
+          running: true,
+          port: 8080,
+          error: null,
+        });
+        expect(commandRegistry.invoke("proxy.status", {}, ctx)).toEqual({ running: true });
+
+        // `start` / `stop` / `restart` read the port from `loadConfig()` rather than taking it as a
+        // parameter, so the assertion is on the engine calls, not on the returned `{ok:true}`.
+        expect(commandRegistry.invoke("server.start", {}, ctx)).toEqual({ ok: true });
+        expect(startServer).toHaveBeenCalledWith(currentConfig.port);
+        expect(commandRegistry.invoke("server.stop", {}, ctx)).toEqual({ ok: true });
+        expect(stopServer).toHaveBeenCalled();
+
+        // `restart` is stop-then-start, not a distinct code path — and the order is the contract:
+        // starting before stopping would rebind a port the old listener still holds.
+        vi.mocked(startServer).mockClear();
+        vi.mocked(stopServer).mockClear();
+        expect(commandRegistry.invoke("server.restart", {}, ctx)).toEqual({ ok: true });
+        expect(vi.mocked(stopServer).mock.invocationCallOrder[0])
+          .toBeLessThan(vi.mocked(startServer).mock.invocationCallOrder[0]);
+
+        expect(commandRegistry.invoke("services.discover", {}, ctx)).toEqual([]);
+        expect(discoverServices).toHaveBeenCalled();
+      });
+
+      it("refuses a payload the frozen protocol schema rejects, rather than passing it through", async () => {
+        // The registry validates **before** the handler runs, so a transport gets `BAD_REQUEST` from
+        // the same place for every command. Asserted here because 3b-2's new handlers take no params,
+        // which makes it tempting to assume `{}` is merely conventional — it is enforced.
+        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { bus } = await import("@bifurc/engine/eventBus");
+
+        expect(() => commandRegistry.invoke("server.status", { unexpected: 1 }, { bus }))
+          .toThrow(/Invalid payload for command "server\.status"/);
       });
     });
   });
