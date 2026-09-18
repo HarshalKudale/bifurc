@@ -236,6 +236,124 @@ describe("src/ipc/handlers.ts", () => {
         expect(registeredHandlers.has(channel)).toBe(true);
       });
     }
+
+    /**
+     * The **step 3b inventory** — which protocol commands the registry actually implements.
+     *
+     * ## Why this exists
+     *
+     * `plan/07`'s step 3 is "route all methods through the bridge, delete `registerIpcHandlers()`",
+     * and it warns to "expect failures in the shell-only handlers first". This is that list, measured
+     * rather than discovered one failure at a time — and it is bigger than the plan implies:
+     * **25 of the 93 commands have no registry implementation at all.** They are served by a shell
+     * `ipcMain.handle` body on a legacy channel, so `registry.invoke("<command>")` answers
+     * `UNKNOWN_COMMAND`.
+     *
+     * ## Why it is a *ratchet* rather than a report
+     *
+     * `@bifurc/client` classifies every one of these as `{kind: "transport"}`, i.e. a 1:1 mapping onto
+     * a protocol command — so `client.serverStatus()` calls `registry.invoke("server.status")` and
+     * fails. The client's surface therefore **claims 25 methods it cannot deliver against the real
+     * shell**, and nothing noticed because the preload only routes `config:get` today. Pinning the
+     * list here means it can only shrink **deliberately**: implementing a command makes this fail
+     * until the name is removed, and a new command that lands unregistered fails immediately.
+     *
+     * This asserts *registration*, not behaviour. A command can be registered and still do the wrong
+     * thing; that is what the conformance suite and each handler's own tests are for.
+     */
+    describe("registry coverage (the step 3b inventory)", () => {
+      /**
+       * Commands with no `registry.register()` anywhere, verified by grep and by this test.
+       *
+       * Every one is engine work that has not been moved yet, **not** a shell concern — the proxy
+       * server, the webhook server, workspaces, audit, the runner and the healthbar all live in
+       * `packages/engine`. `app.checkUpdate` is the one open question: `plan/07` calls it a "shell
+       * half", the client classifies it `transport`, and the third case below records the
+       * disagreement without resolving it.
+       */
+      const NOT_IN_REGISTRY = [
+        "app.checkUpdate",
+        "audit.list",
+        "config.save",
+        "healthbar.checkUrl",
+        "healthbar.getServices",
+        "healthbar.saveServices",
+        "proxy.status",
+        "request.replay",
+        "runner.loadConfig",
+        "runner.saveConfig",
+        "runner.saveReport",
+        "script.execute",
+        "server.restart",
+        "server.start",
+        "server.status",
+        "server.stop",
+        "services.discover",
+        "webhook.registerActive",
+        "webhook.unregisterActive",
+        "webhookServer.start",
+        "webhookServer.status",
+        "webhookServer.stop",
+        "workspace.add",
+        "workspace.delete",
+        "workspace.rename",
+      ];
+
+      it("implements every protocol command except the pinned list", async () => {
+        const { COMMANDS } = await import("@bifurc/protocol");
+        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+
+        const missing = Object.keys(COMMANDS)
+          .filter((c) => !commandRegistry.isRegistered(c as never))
+          .sort();
+
+        expect(missing).toEqual([...NOT_IN_REGISTRY].sort());
+      });
+
+      it("still serves every unregistered command on a legacy channel", async () => {
+        // The other half of the claim, and the reason step 3 cannot simply delete
+        // `registerIpcHandlers()`: each of these commands is *reachable* today, just not through the
+        // registry. If one lost its channel without gaining a registry entry, that method would stop
+        // working on **both** paths at once — a silent regression the surface test could not see,
+        // because the key would still be exposed.
+        const { COMMANDS } = await import("@bifurc/protocol");
+
+        for (const command of NOT_IN_REGISTRY) {
+          const channel = (COMMANDS as Record<string, { legacyChannel?: string }>)[command]
+            ?.legacyChannel;
+          expect(channel, `${command} has no legacyChannel in the protocol table`).toBeTruthy();
+          expect(registeredHandlers.has(channel!), `${command}'s channel "${channel}" is not registered`)
+            .toBe(true);
+        }
+      });
+
+      it("confirms the client claims all 25 are routable, which is why the list matters", async () => {
+        // The finding in one assertion: the client classifies **every one** of the 25 as `transport`
+        // or `shim` — a 1:1 mapping onto a protocol command — so it would call `registry.invoke()`
+        // for each and get `UNKNOWN_COMMAND`. So the client does not merely lack 25 methods; it
+        // *advertises* 25 it cannot deliver against the real shell.
+        //
+        // Imported relatively because `SURFACE` is not re-exported from the package root (only
+        // `surface.ts` has it) and the alias in `vitest.config.ts` covers `@bifurc/engine/*` only.
+        // Read-only data, so the relative hop costs nothing but honesty about where the contract lives.
+        const { SURFACE } = await import("../../packages/client/src/surface");
+
+        const claimed = NOT_IN_REGISTRY.filter((command) =>
+          Object.values(SURFACE).some(
+            (e) => (e.kind === "transport" || e.kind === "shim") && e.command === command,
+          ),
+        ).sort();
+
+        expect(claimed).toEqual([...NOT_IN_REGISTRY].sort());
+
+        // Worth stating rather than leaving to be re-derived: the one entry the *plan* disagrees
+        // about is `app.checkUpdate`. `plan/07`'s "Local handlers stay local" table calls it "shell
+        // half", while the client classifies it `transport`. One of the two is wrong, and this test
+        // deliberately does not decide which — it only records that the disagreement exists, so the
+        // decision is made when the command is actually implemented rather than by accident.
+        expect(SURFACE.checkUpdate).toMatchObject({ kind: "transport", command: "app.checkUpdate" });
+      });
+    });
   });
 
   // ── config:get ────────────────────────────────────────────────────────
