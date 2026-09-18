@@ -59,7 +59,17 @@
   while the renderer wants one entry, so `onLogEntry` is the one subscription the client does **not**
   pass through. **The unit suite is weak evidence for the flip** — it tests handlers, not the preload,
   whose only coverage is the key count — so **e2e is the real gate**.
-- **P6 — next: the two `ClientLocal` hooks (routes the last 9), then 3c** — delete
+- **P6 — 3b-1 complete: 136 of 144 keys route.** The two `ClientLocal` hooks landed —
+  `client:writeArtifact` in `src/ipc/handlers/clientHandlers.ts` (save dialog + write) and
+  `readArtifactFile` (a pass-through to `dialog:openFile`). **`registerClientHandlers()` is called from
+  `src/main.ts:294`, NOT from `registerIpcHandlers()`** — client channels are independent of the
+  handler groups 3c deletes. **The 8 still held back are 4 unroutable + 4 client-side defects**, and
+  those 4 are the real finding: **"the command is registered" ≠ "the client's method is equivalent."**
+  `exportData` would corrupt the binary `workspace-zip` (`writeArtifact` takes a decoded *string*);
+  `exportRunnerReport` hardcodes `format:"json"` and drops the shell's HTML choice;
+  `preflightImport`/`importData` open their own dialog and may add a second. All three break **after**
+  the engine has done its job correctly — audit before routing, do not assume.
+- **P6 — next: fix those three client-side gaps, then 3c** — delete
   `registerIpcHandlers()` + `eventBridge.ts`. **3c cannot delete everything**: the 4 unroutable commands
   must keep a channel, so `registerIpcHandlers()` shrinks rather than disappears until P12 and a
   protocol change resolve them.
