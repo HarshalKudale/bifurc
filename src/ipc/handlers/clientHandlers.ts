@@ -158,6 +158,38 @@ export function registerClientHandlers(): void {
   // `certLifecycle.installEngineCa()` owns it.
   ipcMain.handle("tls:installCA", () => installEngineCa());
 
+  // ── Artifact egress — the client half of an engine-produced artifact ────────
+  //
+  // `File_Ops_Protocol.md` §4: the engine produces the bytes, the **user** chooses where they go, and
+  // only the client can put them there. So this is a save dialog plus a write and nothing else.
+  //
+  // It is deliberately **not** a protocol command. A remote engine must never choose a path on the
+  // user's machine, which is why `@bifurc/client` takes `writeArtifact` as an injected hook instead of
+  // routing it: P7's browser downloads, P8's CLI writes to stdout or a flag, and only a desktop shell
+  // shows this dialog.
+  //
+  // `content` is a **decoded string**, not base64 — that is `ClientLocal.writeArtifact`'s contract,
+  // and it is the reason this channel is only used for text artifacts. See the note in
+  // `src/preload.ts` about `workspace-zip`.
+  ipcMain.handle(
+    "client:writeArtifact",
+    async (_e, content: string, suggestedName: string, mimeType: string) => {
+      const win = BrowserWindow.getFocusedWindow();
+      const ext = path.extname(suggestedName).replace(/^\./, "") || "txt";
+      const { filePath, canceled } = await dialog.showSaveDialog(win!, {
+        defaultPath: suggestedName,
+        filters: [{ name: mimeType || "File", extensions: [ext] }],
+      });
+      if (canceled || !filePath) return { ok: false, canceled: true };
+      try {
+        fs.writeFileSync(filePath, content, "utf-8");
+        return { ok: true, filePath };
+      } catch (err) {
+        return { ok: false, error: (err as Error)?.message ?? "Could not write the file" };
+      }
+    },
+  );
+
   // ── First-launch UX state — was inline in main.ts's app.whenReady() ───────
   ipcMain.handle("app:isFirstLaunch", () => {
     const s = loadSettings();

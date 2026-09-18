@@ -256,7 +256,7 @@ this would have been a **data-loss bug in saved run history**, not a type error 
 ### 3b-1 — the preload flip (2026-09-18)
 
 **`src/preload.ts` is no longer a channel table.** It was 136 hand-written `ipcRenderer.invoke`
-calls; it is now `{ ...client }` plus **thirteen explicit overrides**. **131 of the 144 keys route
+calls; it is now `{ ...client }` plus **eight explicit overrides**. **136 of the 144 keys route
 through the bridge.**
 
 The reason the table could just be deleted is that `renderer/types/window.ts` was never the contract
@@ -272,15 +272,39 @@ what P5's `shape.test-d.ts` proves and what makes the flip mechanical rather tha
 `UNKNOWN_COMMAND`, so they stay on their channels until the protocol moves. Not a backlog —
 `app.checkUpdate` is P12's, and the two `runner.*Config` are blocked by a **passing test**.
 
-**Nine are artifact egress** and need two `ClientLocal` hooks this shell does not provide yet:
-`writeArtifact` and `readArtifactFile`. They are `exportData`, `preflightImport`, `importData`,
-`exportAudit`, `tlsImportCert`, `tlsImportKey`, `tlsExportCert`, `exportRunnerReport`,
-`shareCaptureJson`. The **engine** half of every one is already a registered command — what is
-missing is the *client* half, a save dialog and a file write. Routing them now would resolve
-`{ ok: false, error: "this client cannot write files" }`, which is a **worse** failure than the
-working legacy channel because it looks like the export failed rather than the bridge. Wiring the two
-hooks is a self-contained change; mixing a new channel into the flip would make the flip's own
-failures unreadable.
+#### The two `ClientLocal` hooks, and the five they unlocked
+
+`clientHandlers.ts` gained `client:writeArtifact` (a save dialog plus a write) and the preload now
+supplies `readArtifactFile` (a pass-through to `dialog:openFile`, which already returns exactly
+`LocalFileContent`). Both are **client** channels — deliberately not protocol commands, because a
+remote engine must never choose a path on the user's machine. That is why `@bifurc/client` takes them
+as injected hooks at all: P7's browser downloads instead.
+
+They unlocked five of the nine: `exportAudit`, `tlsExportCert`, `shareCaptureJson`, `tlsImportCert`,
+`tlsImportKey`.
+
+#### Four artifact methods held back, each for a specific defect in the *client*
+
+Auditing the four that remained turned up three real problems, and **none of them is a shell problem**
+— they are gaps in the client's egress path that routing would have exposed as user-visible
+regressions:
+
+- **`exportData` would corrupt the binary `workspace-zip`.** `ClientLocal.writeArtifact` takes a
+  **decoded string**, and the client base64-decodes into a utf-8 string before handing it over. A ZIP
+  routed through the bridge is corrupt on arrival. This needs a binary variant of `writeArtifact` (or
+  one that takes base64) before `exportData` can move — a change to `@bifurc/client`, not to the shell.
+- **`exportRunnerReport` would drop the HTML choice.** The client hardcodes `format: "json"`, while
+  `runnerHandlers.ts` derives the format from the extension the user picked (`.html` is the default).
+  Routing it silently removes HTML export.
+- **`preflightImport` / `importData` may open a second dialog.** The client opens its *own* picker and
+  ignores any path in `req`. That is right for a blob-based client, but it is a second dialog unless
+  the renderer never supplied a path. Unverified — it stays on the known-good channel until the e2e
+  import spec confirms it.
+
+The general lesson, and the reason this was worth auditing rather than flipping: **"the command is
+registered" is not "the client's method is equivalent."** The registry says nothing about what the
+client does with the result, and three of these four break *after* the engine has done its job
+correctly.
 
 #### Two preconditions that were checked rather than assumed
 
@@ -301,6 +325,11 @@ for byte the pre-flip figure — and the surface test still reports **144 keys**
 evidence here than it was for 3b-2: the unit suite tests *handlers*, not the preload, and the
 preload's only coverage is the key count. A wrong argument mapping would pass everything and break
 the app. **The e2e suite is the real gate for this step and it cannot be run from the agent shell.**
+
+The one piece of genuinely new shell code here — `client:writeArtifact` — does have its own tests
+(`tests/ipc/clientHandlers.test.ts`), because it is new rather than moved: it asserts the bytes and
+path handed to `fs`, that the picker is pre-filled from the engine's suggested name, and that *cancel*
+stays distinguishable from *failure*.
 
 ### 5b. The remaining 15 are not one category — audited, not assumed
 
@@ -865,15 +894,15 @@ suite's job.
 
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after **step 3b-2 (all five slices)**: **101 files / 2,471 tests**
-      — **2,430 passed**, 40 skipped, and the one documented `soap.execute` flake
-      (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After the step-3b inventory:
-      101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423. After finding 1: 100 / 2,445 — 2,404.
-      After step 2: 99 / 2,436 — 2,395. Before step 2: 97 / 2,418. The "35 unit suites" this criterion
-      used to say predated P2–P5 entirely.
-      *(3b-2's own five slices added **net zero** test cases — one `it` was renamed and the rest of the
-      work was extending the existing ratchet and delivery tests — so the +4 against 2,467 is slices
-      1–2's verification, not this one's. Measured, not inferred.)*
+- [ ] **Unit suites pass.** Baseline after **step 3b-1 (the flip + the two hooks)**: **101 files /
+      2,475 tests** — **2,434 passed**, 40 skipped, and the one documented `soap.execute` flake
+      (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After step 3b-2: 101 / 2,471 —
+      2,430. After the step-3b inventory: 101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423.
+      After finding 1: 100 / 2,445 — 2,404. After step 2: 99 / 2,436 — 2,395. Before step 2: 97 /
+      2,418. The "35 unit suites" this criterion used to say predated P2–P5 entirely.
+      *(3b-1 added **exactly +4** — the `client:writeArtifact` cases, the only genuinely new code in
+      the step. Everything else moved rather than being written, and the flip itself added none, so
+      the flip's own delta is zero. Measured, not inferred.)*
 - [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
       normal terminal, see Preconditions.
 - [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
