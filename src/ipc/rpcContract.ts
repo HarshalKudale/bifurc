@@ -36,7 +36,7 @@
  * **renderer** process. An `import type` is erased by the compiler and leaves no `require` behind,
  * so the contract costs the preload nothing and pulls no engine code into the renderer bundle.
  */
-import type { RpcError } from "@bifurc/protocol";
+import type { EventEnvelope, RpcError } from "@bifurc/protocol";
 
 /**
  * The single channel the bridge listens on.
@@ -47,9 +47,56 @@ import type { RpcError } from "@bifurc/protocol";
  */
 export const RPC_CHANNEL = "engine:rpc";
 
+/**
+ * The channel the **engine pushes events on** — main → renderer, the direction `ipcMain.handle`
+ * cannot serve.
+ *
+ * ## Why this needs a channel of its own rather than riding `RPC_CHANNEL`
+ *
+ * `ipcMain.handle` / `ipcRenderer.invoke` is a **request/response** pair: one invoke, one resolve.
+ * Events have no request to answer, so there is nothing to resolve and no `invoke` to hang them on.
+ * The push direction is `webContents.send` → `ipcRenderer.on`, which is a different Electron API and
+ * therefore a different channel.
+ *
+ * ## Why the renderer cannot just keep the legacy channels
+ *
+ * It can, and it does — `src/ipc/eventBridge.ts` still broadcasts `sync:status`, `log:entry` and the
+ * other seven, and **this step does not touch them**. The point of adding this channel now is that
+ * `registerIpcHandlers()` and `wireEventBridge()` are deleted together (step 3), and an event path
+ * that has never carried a single frame is not something to discover a problem in on the day the
+ * fallback disappears.
+ *
+ * ## Why one channel rather than one per event
+ *
+ * The legacy side uses one channel per event (`sync:status`, `log:chunk`, …), which is why
+ * `eventBridge.ts` needs nine subscriptions and a per-event `broadcast()` call. Here the event name
+ * travels **inside** the envelope, exactly as it does on every other transport, so the preload needs
+ * exactly one `ipcRenderer.on` and dispatches by name. That is also what makes the frame shape
+ * identical to `socket`/`ws`/`stdio`: an `EventEnvelope` is what `EventLog` produces and what
+ * `eventPump` writes, so nothing new is invented at this boundary.
+ */
+export const EVENT_CHANNEL = "engine:event";
+
+/**
+ * The control frames that ride `RPC_CHANNEL` but are **not** commands.
+ *
+ * These are the protocol's `RESERVED_ACTIONS` (`packages/engine/src/transport/types.ts`), and the
+ * bridge has to recognise them because it is a transport boundary: `subscribe`/`unsubscribe` are
+ * transport control, not engine commands, and a registry that received one would answer
+ * `UNKNOWN_COMMAND`. That module refuses to load if the protocol ever grows a real command by either
+ * name, so the branch below cannot shadow anything.
+ *
+ * They are **not** re-exported from the engine module here: the preload imports this file, and a value
+ * import of `@bifurc/engine/transport/types` would be a second copy of the name table in the renderer
+ * bundle. The two strings are duplicated with the guard as the thing that keeps them honest — a
+ * mismatch fails `tests/ipc/eventChannel.test.ts`, which asserts them against `RESERVED_ACTIONS`.
+ */
+export const SUBSCRIBE_ACTION = "subscribe";
+export const UNSUBSCRIBE_ACTION = "unsubscribe";
+
 /** One request, exactly as the preload sends it. */
 export interface RpcFrame {
-  /** A `@bifurc/protocol` command name, e.g. `config.get`. */
+  /** A `@bifurc/protocol` command name, e.g. `config.get` — or a reserved control action. */
   cmd: string;
   payload: unknown;
 }
@@ -62,3 +109,9 @@ export interface RpcFrame {
  * client's per-method annotations are what actually narrow it on the far side.
  */
 export type RpcResult = { ok: true; value: unknown } | { ok: false; error: RpcError };
+
+/**
+ * What crosses `EVENT_CHANNEL`. Aliased rather than re-declared so the two cannot drift: this is the
+ * protocol's own envelope, the same type `EventLog` emits and `eventPump` writes.
+ */
+export type EventFrame = EventEnvelope;

@@ -501,12 +501,115 @@ step 3, when `eventBridge.ts` is deleted and the transport becomes the only path
 
 ---
 
+## Step 3a — the push channel (2026-09-18)
+
+**Events now have a real path.** `ipcTransport.subscribe()` no longer throws; it attaches one
+`ipcRenderer.on(EVENT_CHANNEL)` and dispatches by `envelope.event`, and the main half keeps one engine
+subscription per wire name and broadcasts each envelope to every live window.
+
+This is the piece **step 3 cannot be done without**. `registerIpcHandlers()` and `wireEventBridge()` are
+deleted together, so the moment the legacy handlers go, all nine event channels go with them. An event
+path that has never carried a frame is not something to discover a problem in on the day the fallback
+disappears.
+
+| File | Role |
+|---|---|
+| `src/ipc/rpcContract.ts` | `EVENT_CHANNEL`, `EventFrame`, and the two control-action names |
+| `src/ipc/rpcBridge.ts` | per-name refcount, broadcast, `subscribe`/`unsubscribe` control frames |
+| `src/ipcTransport.ts` | the dispatcher, the local name check, `close()` releases everything |
+| `tests/ipc/eventChannel.test.ts` | 12 cases, main half |
+| `tests/ipc/ipcTransport.test.ts` | 9 → **16**; the `UNSUPPORTED`-refusal case is replaced |
+
+### Why a second channel, and why `RPC_CHANNEL` cannot serve
+
+`ipcMain.handle` / `ipcRenderer.invoke` is a request/response pair — one invoke, one resolve. An event
+has no request to answer, so there is nothing to resolve and no `invoke` to hang it on. The push
+direction is `webContents.send` → `ipcRenderer.on`, a different Electron API and therefore a different
+channel. The frame that crosses it is a plain `EventEnvelope`, the same type `EventLog` emits and
+`eventPump` writes, so nothing new is invented at this boundary.
+
+### Five decisions
+
+1. **One channel, not one per event.** The legacy side uses nine (`sync:status`, `log:chunk`, …), which
+   is why `eventBridge.ts` needs nine subscriptions. Here the event name travels *inside* the envelope,
+   exactly as on every other transport, so the preload needs one `ipcRenderer.on`.
+
+2. **A per-name count of *renderers*, not of callbacks.** The preload refcounts too, but the two answer
+   different questions: the preload's says "how many callbacks in this renderer want this name", this
+   one says "how many renderers want it". Only the second can decide whether the engine should still be
+   delivering — and a single window closing must not unsubscribe a second window still listening, which
+   is what a `Set` keyed by name would have done.
+
+3. **Broadcast to all windows, and let the preload filter.** This matches `eventBridge.ts`'s existing
+   semantics, so the engine side is genuinely process-wide and one subscription per name is the whole
+   need. A renderer that did not ask for a name has no callback registered and drops the frame.
+   Per-window subscriptions would mean per-window `send` — a different feature (targeted delivery) that
+   nothing asks for and the legacy path never had.
+
+4. **Control frames are recognised before commands.** `subscribe`/`unsubscribe` are the protocol's
+   `RESERVED_ACTIONS`, and `transport/types.ts` refuses to load if the protocol ever grows a real
+   command by either name — so the branch cannot shadow anything. A test asserts the bridge's two
+   duplicated strings against `RESERVED_ACTIONS`, because the contract duplicates them deliberately (a
+   value import would put a second copy of the wire-name table in the renderer bundle).
+
+5. **A batch of names is all-or-nothing, validated against the name table.** Without a pre-flight,
+   `["event.sync.status", "nonsense"]` would subscribe the first, fail on the second, and return a
+   rejected request — leaving a live subscription with **no handle to release it**, since the detacher
+   is only returned on success. That is a leak, not an inconvenience. The check is against
+   `BUS_NAME_BY_WIRE_NAME`, *not* a dry run through the transport: `EventLog`'s retention listeners are
+   attached on the first subscribe for a name and deliberately outlive their subscribers, so a dry run
+   would permanently retain a name the batch then rejected.
+
+### The one thing `subscribe()` cannot do, and why that is acceptable
+
+The contract says `subscribe()` throws **synchronously**. `ipcRenderer.invoke` is asynchronous, so a
+rejection from the main half cannot become a synchronous throw. Two things make this a documented
+limitation rather than a hole:
+
+- **The realistic failure is synchronous anyway.** An unknown wire name is refused locally against the
+  same table `inProcess.ts` uses, with the same code and the same wording — so the common mistake throws
+  where the contract says it should.
+- **A dead bridge is not silent.** Every `request()` already fails loudly with `ENGINE_ERROR`, so a
+  subscribe that quietly does nothing cannot be the *first* symptom. The alternative — letting the
+  rejection escape a `void`ed promise — is an unhandled rejection in the preload, which is worse than a
+  documented no-op on an already-broken transport.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `tests/ipc/eventChannel.test.ts` | **12 passed** |
+| `tests/ipc/ipcTransport.test.ts` | **16 passed** (was 9) |
+| `npm run typecheck` | clean — protocol, engine, client |
+| full suite | **2,423 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the finding-1 baseline (2,404) | **exactly +19** = 7 + 12, no other movement |
+| `git diff --stat renderer/` | **empty** |
+
+**The case that matters most** is *"carries `log.entry` end to end"*: it spans `logEmitter` →
+`wireLogEventsToBus()` → `EventLog` → `EVENT_CHANNEL`, and it is the only test in the repo that
+exercises finding 1's fix through a consumer. It was **confirmed non-vacuous** rather than assumed — it
+failed with an empty `sent` until the wiring was added, which is precisely the shape of the original
+defect. It also asserts the wire projection (`ts` → `timestamp`, capture bodies dropped) and that
+`event.log.entry` arrives as a **batch of one**, since that shape belongs to `@bifurc/protocol` rather
+than to the coalescing.
+
+**What step 3a does not do, deliberately:** it changes nothing the renderer can see. The preload's seven
+`on*` methods still use the legacy channels and `eventBridge.ts` still broadcasts them, so the phase
+stays revertable and the new path can be deleted with nothing to unpick. Wiring the renderer onto it is
+step 3b.
+
+**Still unproven:** the real Electron round trip for events, exactly as for commands — both ends are
+mocked here, so `webContents.send` → `ipcRenderer.on` across a real process boundary remains the e2e
+suite's job.
+
+---
+
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after finding 1: **100 files / 2,445 tests** — 2,404 passed, 40
-      skipped, and the one documented `soap.execute` flake. (After step 2: 99 / 2,436 — 2,395 passed.
-      Before step 2: 97 / 2,418. The "35 unit suites" this criterion used to say predated P2–P5
-      entirely.)
+- [ ] **Unit suites pass.** Baseline after step 3a: **101 files / 2,464 tests** — 2,423 passed, 40
+      skipped, and the one documented `soap.execute` flake. (After finding 1: 100 / 2,445 — 2,404
+      passed. After step 2: 99 / 2,436 — 2,395. Before step 2: 97 / 2,418. The "35 unit suites" this
+      criterion used to say predated P2–P5 entirely.)
 - [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
       normal terminal, see Preconditions.
 - [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).

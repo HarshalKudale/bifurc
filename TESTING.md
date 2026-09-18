@@ -245,11 +245,14 @@ current. The direction will be **upward**: the client is the most thoroughly cov
 repo relative to its size (5 suites / 54 tests against 5 source files), which is what a phase whose
 entire value is a shape guarantee should look like. Re-measure rather than copy.
 
-Suite size: **97 files / 2,418 tests** (measured 2026-09-18, undeselected: `2377 passed | 1 failed |
-40 skipped`; the failure is the documented `soap.execute` dead-endpoint flake below). The last step
-was P5's client package — 96 / 2,401 with `client.test.ts`, 95 / 2,388 before it, and 75 / 1,791 at the
-previous review, 73 / 1,714 before that, 69 / 1,616 before that. The growth is P2 work items 5–7, P3's
-blob layer, P3's items 3–4 channel conversion, P4's transport + conformance suite, and P5's client.
+Suite size: **101 files / 2,464 tests** (measured 2026-09-18 after P6 step 3a, undeselected: `2423 passed |
+1 failed | 40 skipped`; the failure is the documented `soap.execute` dead-endpoint flake below). The
+last steps were P6's shell seam — 100 / 2,445 after finding 1 (9 new), 99 / 2,436 after step 2 (18 new),
+and 101 / 2,464 after step 3a (the push channel: 7 added to `ipcTransport.test.ts`, 12 in the new
+`eventChannel.test.ts`). Before that, P5's client package — 97 / 2,418, 96 / 2,401 with
+`client.test.ts`, 95 / 2,388 before it, and 75 / 1,791 at the previous review, 73 / 1,714 before that,
+69 / 1,616 before that. The growth is P2 work items 5–7, P3's blob layer, P3's items 3–4 channel
+conversion, P4's transport + conformance suite, P5's client, and P6's seam.
 **Up to two tests fail, and *which* two varies between runs** — they are always
 drawn from one known pre-existing sandbox family (§7, and `plan/baseline.md`'s "Environment
 caveats"). The family is *every test that asserts a connection to a dead endpoint fails*: the
