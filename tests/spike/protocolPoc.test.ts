@@ -111,7 +111,7 @@ vi.mock("../../src/main", () => ({
   updateTrayMenu: vi.fn(),
 }));
 
-vi.mock("../../src/ipc/importExport/registry", () => ({
+vi.mock("@bifurc/engine/importExport/registry", () => ({
   getAllFormats: vi.fn(() => ({})),
   getFormats: vi.fn(() => []),
   getExporter: vi.fn(() => null),
@@ -178,6 +178,12 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     const { registerGraphqlHandlers } = await import("../../src/ipc/handlers/graphqlHandlers");
     const { registerSoapHandlers } = await import("../../src/ipc/handlers/soapHandlers");
     const { registerTlsHandlers } = await import("../../src/ipc/handlers/tlsHandlers");
+    // P3 work item 5: `tls:generate` is now a thin client of the `tls.generate` **command**, which
+    // moved from this file's `registerTlsHandlers()` into the engine
+    // (`@bifurc/engine/proxy/certCommands`). `src/ipc/handlers.ts` wires both; a suite that
+    // registers handlers by hand has to wire both too, or the channel exists with nothing behind it.
+    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { registerCertCommands } = await import("@bifurc/engine/proxy/certCommands");
 
     registerCoreHandlers();
     registerCrudHandlers();
@@ -185,6 +191,7 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerGraphqlHandlers();
     registerSoapHandlers();
     registerTlsHandlers();
+    registerCertCommands(commandRegistry);
 
     const transport = createInProcessTransport((channel) => registeredHandlers.get(channel));
     client = createProtocolClient(transport);
@@ -276,8 +283,13 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
   it("tls.generate — real mkcert CA generation succeeds end-to-end", async () => {
     const result = await client.tlsGenerate();
     expect(result.ok).toBe(true);
+    // The pre-P3 renderer shape, preserved verbatim: `TlsSettingsSection.tsx` needs both paths to
+    // record the CA in the settings, and `window.api` is byte-identical through P6.
     expect(result.certPath).toContain("ca-cert.pem");
     expect(result.keyPath).toContain("ca-key.pem");
+    // Additive in P3 work item 5: the engine reports an identity instead of paths, and the shell
+    // passes the fingerprint through on the channel. The renderer ignores it until P7.
+    expect(result.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
   // ── envelope semantics ────────────────────────────────────────────────

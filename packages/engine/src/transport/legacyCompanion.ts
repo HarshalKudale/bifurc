@@ -1,19 +1,68 @@
 /**
- * Companion WebSocket Server
+ * Companion WebSocket server — **v1, deprecated, frozen.** The browser extension's bridge into
+ * the app, kept alive for a deprecation window so the released extension keeps working.
  *
- * Provides a localhost-only WebSocket bridge that allows the companion browser
- * extension to execute IPC-equivalent commands (e.g. mock:add, request:add)
- * without going through Electron's IPC (which requires renderer access).
+ * Provides a localhost-only WebSocket bridge that allows the companion browser extension to
+ * execute IPC-equivalent commands (e.g. mock:add, request:add) without going through Electron's
+ * IPC (which requires renderer access).
  *
  * Protocol:
  *   Client → Server: { id: string, action: string, payload: any }
  *   Server → Client: { id: string, ok: boolean, data?: any, error?: string }
+ *
+ * ## Why this file moved, and why it is still here
+ *
+ * P4 work item 1 asks for it to leave `src/companion/` ("the directory name `companion` will make
+ * no sense once the browser extension is just another client") — done, it now sits beside the
+ * transports it is being superseded by. It has **not** been rewritten to delegate to the
+ * `CommandRegistry`, and that is a decision with evidence, not an omission: see below.
+ *
+ * It is scheduled for deletion once the extension speaks v2. Until then it is the *only* thing the
+ * released extension can talk to, so it stays byte-compatible and keeps serving port 9271.
+ *
+ * ## The v1 envelope is frozen, and `error` must stay a **string**
+ *
+ * `../bifurc-extension` interpolates the error directly — `devtools-panel.js` does
+ * ``showToast(`✗ Error: ${resp.error || "Unknown error"}`)``. An `{code, message, details}` object
+ * would render as `[object Object]`. So this endpoint can never adopt the enriched `RpcError` that
+ * `transport/ws.ts` serves; that is a v2 change on the extension's side.
+ *
+ * The extension also sends **no `hello`** and is a bare `{id, action, payload}` client, and for
+ * `folder:add` it reads `resp.data.id` (`devtools-panel.js`) to pass as the `folderId` of the bulk
+ * create that follows. All three are load-bearing.
+ *
+ * ## These four actions are NOT aliases of registry commands — do not "simplify" them
+ *
+ * The obvious migration is to map `mock:add` → `entity.create`, `folder:add` → `folder.add`,
+ * `config:get` → `config.get` and delete the hand-written bodies. **That would break the frozen
+ * contract in four ways**, and it would break the additive-only property this allowlist exists to
+ * guarantee. Verified against `src/ipc/handlers/crudHandlers.ts`, `entityCrudFactory.ts` and
+ * `folderHandlers.ts` on 2026-09-18:
+ *
+ * | | v1 (here) | registry equivalent |
+ * |---|---|---|
+ * | mock validation | `"urlPattern is required"` | `"urlPattern is required **for mocks**"` |
+ * | request validation | `"url is required"` | `"url is required **for requests**"` |
+ * | duplicate mock | adds verbatim | `onAddConflict` **disables an existing enabled mock** |
+ * | blank folder name | refused, `"name is required"` | **no check** — creates a folder named `"   "` |
+ * | unknown folder kind | `"Unknown folder kind: bogus"` | `TypeError` from `FOLDER_CONFIG[undefined]` |
+ *
+ * The first four are asserted verbatim by `tests/integration/companionServer.integration.test.ts`
+ * (exact `error` strings), so aliasing fails those tests outright. The third is the serious one:
+ * `onAddConflict` mutates *existing* state, which contradicts `V1_COMPANION_ACTIONS`' own
+ * documented rule that the companion is a lower-trust caller and may only **add**. A browser page
+ * capturing a URL the user already has mocked would silently switch that mock off.
+ *
+ * So the v2 mapping is a **decision to be taken, not a refactor to be performed** — either the
+ * extension inherits the registry's de-duplication (and the additive-only guarantee is formally
+ * relaxed), or the v2 commands keep explicit additive semantics. `plan/05`'s item 1 records the
+ * same table. Do not resolve it by editing this file.
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ALLOWED_ACTIONS } from "./allowedActions";
+import { V1_COMPANION_ACTIONS } from "./legacyCompanionActions";
 import {
     loadConfig, saveConfig, generateId, AppConfig,
     MockRule, SavedRequest, Folder,
@@ -207,7 +256,7 @@ function handleConnection(ws: WebSocket): void {
             return;
         }
 
-        if (!ALLOWED_ACTIONS.has(action)) {
+        if (!V1_COMPANION_ACTIONS.has(action)) {
             ws.send(JSON.stringify({ id, ok: false, error: `Action "${action}" is not allowed` }));
             return;
         }
