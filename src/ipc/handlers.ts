@@ -19,6 +19,7 @@ import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
+import { registerServerCommands } from "@bifurc/engine/proxy/serverCommands";
 import { wireEventBridge } from "@/ipc/eventBridge";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
@@ -38,6 +39,17 @@ export function registerIpcHandlers(): void {
   // only while the two are the same process. `tls:installCA` did **not** come with them: the host
   // trust store is CLIENT-classified and stays in `clientHandlers.ts`.
   registerCertCommands(commandRegistry);
+  // P6 finding 5, step 3b-2 (first slice): `server.status` / `server.start` / `server.stop` /
+  // `server.restart` / `proxy.status` / `services.discover`. These six were served **only** by
+  // `ipcMain.handle` bodies in `systemHandlers.ts` and `coreHandlers.ts`, so `registry.invoke()`
+  // answered `UNKNOWN_COMMAND` for all of them — which is why `@bifurc/client` advertised six
+  // methods it could not deliver against the real engine. The proxy server and its port/error state
+  // are engine state, not shell state.
+  //
+  // Those shell bodies **stay as they are** for now, which is deliberate rather than an oversight:
+  // re-pointing them at the registry would make them depend on this function having run, and two
+  // suites register handler *groups* without it. See `serverCommands.ts`'s header for the full trap.
+  registerServerCommands(commandRegistry);
 
   registerImportExportHandlers();
   registerApplicationHandlers();
