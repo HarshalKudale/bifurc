@@ -46,9 +46,23 @@
   moving anything carrying a big object. **5c, unfixed:** `config.get`, `env.setActive`,
   `workspace.setActive`, `entity.load`, `entity.setEnabled` are registered **from the shell**, so a
   containerised engine (P9) answers `UNKNOWN_COMMAND`; the ratchet cannot see it.
-- **P6 — next: 3b-1/3c.** Route the 89 registered commands through the bridge, **then** delete
-  `registerIpcHandlers()` + `eventBridge.ts` together (deleting the handlers takes all nine legacy event
-  channels with them).
+- **P6 — step 3b-1 DONE (2026-09-18): the preload flip.** `src/preload.ts` is no longer a 136-call
+  channel table; it is `{ ...client }` plus **13 overrides**, so **131 of 144 keys** route through the
+  bridge. The table could be deleted outright because **`src/preload.ts` was always the contract, not
+  `renderer/types/window.ts`**, and `@bifurc/client` satisfies it **positional args included** — so the
+  flip is mechanical, not a rewrite. **13 held back, two groups:** 4 with no registry implementation
+  (`checkUpdate`, `listAudit`, `saveRunnerConfig`, `loadRunnerConfig`) and 9 artifact-egress needing two
+  `ClientLocal` hooks the shell lacks (`writeArtifact` / `readArtifactFile`) — routing those would
+  resolve `{ok:false,"cannot write files"}`, worse than the working channel. **Two preconditions that
+  were checked, not assumed:** `config.save` no longer calls `updateTrayMenu()` — the registry emits
+  `settings.changed` and **`src/main.ts:299` subscribes**; and `event.log.entry` arrives as a **batch**
+  while the renderer wants one entry, so `onLogEntry` is the one subscription the client does **not**
+  pass through. **The unit suite is weak evidence for the flip** — it tests handlers, not the preload,
+  whose only coverage is the key count — so **e2e is the real gate**.
+- **P6 — next: the two `ClientLocal` hooks (routes the last 9), then 3c** — delete
+  `registerIpcHandlers()` + `eventBridge.ts`. **3c cannot delete everything**: the 4 unroutable commands
+  must keep a channel, so `registerIpcHandlers()` shrinks rather than disappears until P12 and a
+  protocol change resolve them.
 
 ## Git
 
