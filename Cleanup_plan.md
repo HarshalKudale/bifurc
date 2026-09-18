@@ -143,7 +143,7 @@ These two hooks handle overlapping persistence logic. Consolidate into a single 
 
 ### 2.9 JSON Import/Export Factory (Backend)
 
-#### [NEW] `src/ipc/importExport/jsonFactory.ts`
+#### [NEW] `packages/engine/src/importExport/jsonFactory.ts`
 All `*-json.ts` importers and exporters share nearly identical logic, differing only by variable names and schema strings. Create a parameterized factory to eliminate ~15 near-identical files.
 
 ---

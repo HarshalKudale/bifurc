@@ -21,6 +21,10 @@ import * as path from "path";
 import * as os from "os";
 import type { RequestLogEntry } from "@bifurc/engine/proxy/logEmitter";
 import { logEmitter } from "@bifurc/engine/proxy/logEmitter";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { registerBlobCommands } from "@bifurc/engine/blob/commands";
+import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
 import {
     createWorkspace,
     startUpstream,
@@ -141,6 +145,20 @@ beforeAll(async () => {
 
     logEmitter.on("request", onRequest);
     proxy = await startProxy();
+
+    // P3 made `capture:shareJson` a thin client: it shows the dialog, calls the engine's
+    // `capture.shareJson` and writes the artifact that comes back. The renderer-facing contract is
+    // unchanged, so every assertion below still holds — but the engine half has to be registered,
+    // exactly as `src/ipc/handlers.ts` registers it in production.
+    //
+    // `setDataRoot()` is supplied as well as the fixture's own override, because `blobRoot()`
+    // resolves through `dataDir()` while the workspace store resolves through `setDataRootOverride`.
+    // `createWorkspace()` only sets the latter, so without this a capture large enough to cross
+    // `BLOB_INLINE_THRESHOLD_BYTES` would fail with `DataRootNotInitialisedError` instead of
+    // staging a blob.
+    setDataRoot(ws.root);
+    registerBlobCommands(commandRegistry);
+    registerFileOpsCommands(commandRegistry);
     registerSystemHandlers();
 });
 
@@ -149,6 +167,9 @@ afterAll(() => {
     proxy?.stop();
     void upstream?.close();
     ws?.cleanup();
+    // `ws.cleanup()` resets the workspace and settings overrides; `dataDir()` is a third, separate
+    // override and would otherwise leak the deleted temp root into the next file's run.
+    resetDataRootForTests();
 });
 
 beforeEach(() => {

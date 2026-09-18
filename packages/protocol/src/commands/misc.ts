@@ -4,6 +4,7 @@
  * only), `capture.shareJson` (SPLIT — engine half only).
  */
 import { z } from "zod";
+import type { ArtifactResult } from "./blob";
 
 const HeaderMap = z.record(z.string(), z.string());
 
@@ -96,9 +97,4 @@ export const CaptureShareJsonParams = z.object({
   suggestedName: z.string().optional(),
 }).strict();
 export type CaptureShareJsonParams = z.infer<typeof CaptureShareJsonParams>;
-export interface CaptureShareJsonResult {
-  ok: boolean;
-  content?: string;
-  suggestedFilename?: string;
-  error?: string;
-}
+export type CaptureShareJsonResult = ArtifactResult;

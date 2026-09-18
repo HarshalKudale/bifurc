@@ -110,6 +110,26 @@ export class BlobError extends Error {
   }
 }
 
+/**
+ * Turn a thrown error into a result's `error` string, keeping `BlobError`'s code greppable.
+ *
+ * The artifact result types carry no error-code field — P1 froze them with a plain `error: string`,
+ * so the envelope is the only place a code can live, and these paths never reach the envelope.
+ * Prefixing keeps `blob-too-large` distinguishable from "not a valid lp-mocks-v1 file" instead of
+ * flattening both into an anonymous message.
+ *
+ * Shared by every command that reads or writes a blob, so the five egress channels and the ingress
+ * ones report the same failure the same way.
+ *
+ * **Recorded, not fixed:** P4's transport should decide whether blob-layer failures ought to
+ * propagate as thrown typed errors so the error envelope can carry `code` and `retryable` properly.
+ * Doing it now would mean changing the frozen result shapes.
+ */
+export function describeBlobError(err: unknown): string {
+  if (err instanceof BlobError) return `${err.code}: ${err.message}`;
+  return err instanceof Error ? err.message : String(err);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Paths
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,9 +176,23 @@ function blobDir(blobId: string): string {
 }
 
 /**
- * Absolute path of a blob's bytes — the path `archiver` writes to and `unzipper.Open.file()`
- * reads from. Exposed because the zip exporter/importer genuinely needs it (work item 2's two
- * non-mechanical files); nothing else should use it instead of `readBlob`.
+ * Absolute path of a blob's bytes.
+ *
+ * Two kinds of caller need this, and neither should use `readBlob`:
+ *
+ *  - the two **stream-shaped** import/export files (`workspace-zip`), because
+ *    `unzipper.Open.file()` will not take a buffer and `archiver` pipes to a `WriteStream`;
+ *  - the **in-process** consumers in `importExport/commands.ts`, which are reading a file on the
+ *    engine's own disk and have no reason to go through a chunked, base64-encoding wire primitive.
+ *
+ * `readBlob` exists for the **transport**: it chunks, base64-encodes, and slides the lease. A
+ * same-process read is a different thing and doing it via `readBlob` would mean encoding a 5 MB
+ * HAR to base64 in 512 KB slices and decoding it again on the other side of a function call.
+ *
+ * One consequence worth knowing: an in-process read does **not** refresh the lease. `import.commit`
+ * reads a blob that `import.preflight` already read, and the user may sit on the collision dialog
+ * for a while in between. Past `BLOB_TTL_MS` that surfaces as a clean `blob-not-found`, not as
+ * corruption — the sweep only ever collects whole blobs.
  */
 export function blobContentPath(blobId: string): string {
   return path.join(blobDir(blobId), BLOB_CONTENT_NAME);
@@ -241,6 +275,10 @@ export function readMetaFromDir(dir: string): BlobMeta | null {
 function sha256Of(buf: Buffer): string {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
+
+/** Exported for the egress path (`importExport/commands.ts`), which hashes an inline payload that
+ *  never becomes a blob and so cannot get the digest back from `putBlob`. */
+export { sha256Of };
 
 /**
  * SHA-256 of a file on disk, read in bounded chunks.
@@ -363,6 +401,38 @@ function writeBlob(bytes: Buffer, filename: string, mimeType: string, now: numbe
   writeMeta(dir, { blobId, filename, mimeType, size: bytes.length, sha256, createdAt: now });
 
   return { blobId, sha256 };
+}
+
+/**
+ * Stage bytes the **engine itself produced** — the egress half of the blob layer.
+ *
+ * `putBlob` is the *ingress* path: it is built around not trusting a client (three size rules, a
+ * decode, and a decoded-length equality check that is the only integrity check available over
+ * base64). None of that applies here, because the caller hands over a `Buffer` it just built. The
+ * alternative — base64-encoding the engine's own output so it can be re-decoded by the ingress
+ * validator — would be a tautological check plus a 33% memory tax on every large export.
+ *
+ * The size cap still applies. It is documented as a DoS guard rather than a product limit, but it
+ * also bounds what a single export can add to the data volume, and a 100 MB artifact is already
+ * far past anything the UI offers. Exceeding it throws `blob-too-large` rather than silently
+ * filling the disk.
+ *
+ * Used by `export.create` for any artifact above `BLOB_INLINE_THRESHOLD_BYTES`; below that the
+ * artifact goes out inline and never reaches the store at all.
+ */
+export function putBlobBytes(
+  bytes: Buffer,
+  filename: string,
+  mimeType: string,
+  now: number = Date.now(),
+): BlobPutResult {
+  if (bytes.length > BLOB_MAX_INGRESS_BYTES) {
+    throw new BlobError(
+      "blob-too-large",
+      `Artifact of ${bytes.length} bytes exceeds the ${BLOB_MAX_INGRESS_BYTES}-byte limit.`,
+    );
+  }
+  return writeBlob(bytes, filename, mimeType, now);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
