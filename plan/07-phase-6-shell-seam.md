@@ -253,6 +253,55 @@ not: `CollectionRunReport`'s 9 fields and `RunnerRequestResult`'s 11 are all pre
 this would have been a **data-loss bug in saved run history**, not a type error — the exact failure
 `RunResult`'s own header describes for P1.
 
+### 3b-1 — the preload flip (2026-09-18)
+
+**`src/preload.ts` is no longer a channel table.** It was 136 hand-written `ipcRenderer.invoke`
+calls; it is now `{ ...client }` plus **thirteen explicit overrides**. **131 of the 144 keys route
+through the bridge.**
+
+The reason the table could just be deleted is that `renderer/types/window.ts` was never the contract
+— `src/preload.ts` was — and `@bifurc/client` was built in P5 to satisfy that contract exactly,
+**positional arguments included** (`loadEntity: (wsId, kind, id) => call("loadEntity", { workspaceId:
+wsId, kind, id })`). So the client's methods are drop-in replacements for the old bodies, which is
+what P5's `shape.test-d.ts` proves and what makes the flip mechanical rather than a rewrite.
+
+#### The thirteen held back, in two groups that need two different fixes
+
+**Four have no registry implementation** (`§5b`): `checkUpdate` (SPLIT), `listAudit` (NARROWED),
+`saveRunnerConfig` / `loadRunnerConfig` (BLOCKED). Routing them converts a working method into an
+`UNKNOWN_COMMAND`, so they stay on their channels until the protocol moves. Not a backlog —
+`app.checkUpdate` is P12's, and the two `runner.*Config` are blocked by a **passing test**.
+
+**Nine are artifact egress** and need two `ClientLocal` hooks this shell does not provide yet:
+`writeArtifact` and `readArtifactFile`. They are `exportData`, `preflightImport`, `importData`,
+`exportAudit`, `tlsImportCert`, `tlsImportKey`, `tlsExportCert`, `exportRunnerReport`,
+`shareCaptureJson`. The **engine** half of every one is already a registered command — what is
+missing is the *client* half, a save dialog and a file write. Routing them now would resolve
+`{ ok: false, error: "this client cannot write files" }`, which is a **worse** failure than the
+working legacy channel because it looks like the export failed rather than the bridge. Wiring the two
+hooks is a self-contained change; mixing a new channel into the flip would make the flip's own
+failures unreadable.
+
+#### Two preconditions that were checked rather than assumed
+
+1. **`config.save` no longer calls `updateTrayMenu()`.** The registry handler emits
+   `settings.changed` on the bus instead. That is only equivalent because `src/main.ts:299`
+   subscribes — `bus.onTyped("settings.changed", () => updateTrayMenu())`. Without that
+   subscription, routing `saveConfig` would have silently stopped updating the tray.
+2. **`event.log.entry` arrives as a batch; the renderer expects one entry.** `eventPump.ts` coalesces
+   under the same wire name, so a pass-through would hand the capture panel `{entries}` at exactly
+   the moment there was most traffic to show. `onLogEntry` is the one subscription the client does
+   **not** pass through — it unwraps the batch and calls back once per entry, matching the legacy
+   `log:entry` channel.
+
+#### What this does and does not prove
+
+The suite is **unchanged** — 2,430 passed / 40 skipped / 1 failed (the `soap.execute` flake), byte
+for byte the pre-flip figure — and the surface test still reports **144 keys**. But that is weaker
+evidence here than it was for 3b-2: the unit suite tests *handlers*, not the preload, and the
+preload's only coverage is the key count. A wrong argument mapping would pass everything and break
+the app. **The e2e suite is the real gate for this step and it cannot be run from the agent shell.**
+
 ### 5b. The remaining 15 are not one category — audited, not assumed
 
 The first version of the ratchet said every remaining command was "engine work that has not been
@@ -541,8 +590,10 @@ Delete the flag in the next release, once the seam has survived real usage.
    **Corrected 2026-09-18 (finding 5):** the failures are not a handful of shell concerns but **25
    unimplemented engine commands**, so this step is two steps:
 
-   - **3b-1** — route the **68** registered commands. Mechanical, and safe to do while
-     `registerIpcHandlers()` still runs.
+   - **3b-1** — route the registered commands. ✅ **done 2026-09-18: 131 of 144 keys** go through the
+     client; the thirteen held back are listed in *3b-1 — the preload flip* above. (The plan used to
+     say "the 68"; it is 89 registered now, minus the four with no implementation, minus the nine
+     artifact-egress ones.)
    - **3b-2** — implement the **25** missing commands in the engine. ✅ **done 2026-09-18: 21 moved;**
      the remaining four are `NARROWED` / `BLOCKED` / `SPLIT` and are **not** moves (§5b). Do **not**
      re-point the shell bodies at the registry while doing it — see §5a; that trap applies to all five
