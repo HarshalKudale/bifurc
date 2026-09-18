@@ -1,7 +1,9 @@
 import { ipcMain, dialog, app } from "electron";
 import * as fs from "fs";
+import type { CaptureShareJsonResult } from "@bifurc/protocol";
 import { stopServer, startServer } from "@bifurc/engine/proxy/server";
 import { loadConfig } from "@bifurc/engine/store/config";
+import { call, writeArtifact } from "@/ipc/fileOpsClient";
 
 export function registerSystemHandlers() {
   ipcMain.handle("server:restart", () => {
@@ -143,13 +145,19 @@ export function registerSystemHandlers() {
 
   ipcMain.handle("capture:shareJson", async (_e, entries: unknown[], suggestedName?: string) => {
     try {
+      // Dialog FIRST — `File_Ops_Protocol.md` §3.2. The engine serializes; this file decides where
+      // the bytes go and writes them.
       const { filePath, canceled } = await dialog.showSaveDialog({
         title: "Share Captured Requests",
         defaultPath: suggestedName || "captured-requests.json",
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
-      fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), "utf-8");
+
+      const artifact = await call<CaptureShareJsonResult>("capture.shareJson", { entries, suggestedName });
+      if (!artifact.ok) return { ok: false, error: artifact.error };
+
+      writeArtifact(artifact, filePath);
       return { ok: true, filePath };
     } catch (err: any) {
       return { ok: false, error: err?.message ?? "Share failed" };

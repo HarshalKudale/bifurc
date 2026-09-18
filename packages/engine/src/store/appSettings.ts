@@ -22,6 +22,35 @@ export interface WorkspaceMeta {
   syncMeta?: WorkspaceSyncMeta | null;
 }
 
+/**
+ * The CA this **client** has installed into its own OS trust store (P3 work item 5).
+ *
+ * The engine half of the lifecycle reports an identity for the CA it holds
+ * (`proxy/certManager.ts#CertIdentity`); this is the client half's record of *acting* on one, and
+ * the two are compared to detect drift. It carries the **PEM** and not only the fingerprint because
+ * un-trusting needs the actual certificate: once the engine regenerates, its copy is gone, and
+ * `certutil` / `security` / `trust` will not remove a certificate you cannot hand them.
+ *
+ * **Client-owned; the engine never reads it.** It lives in this file because `AppSettings` is
+ * already where shell-only state lives (`zoomLevel`, `themeId`, `hasSeenWelcome`), not because the
+ * engine has any use for it. `loadConfig()` builds `AppConfig` from an explicit field list, so this
+ * key cannot reach the renderer's `config:get` payload and `window.api` stays byte-identical
+ * (`README.md` non-negotiable #3).
+ *
+ * The PEM is a **public** certificate — the private key never leaves the engine's data dir.
+ */
+export interface TrustedCa {
+  /** `sha256:<64 lowercase hex>` over the DER, as reported by `tls.certStatus`. */
+  fingerprint: string;
+  /** SHA-1, uppercase, no separators — what `certutil -delstore` and `security -Z` want. */
+  thumbprintSha1: string;
+  /** The subject DN, for describing the record in a UI. Never parsed. */
+  subject: string;
+  /** The certificate itself, so it can be un-trusted after the engine has forgotten it. */
+  pem: string;
+  installedAt: number;
+}
+
 export interface AppSettings {
   port: number;
   webhookPort: number;
@@ -30,6 +59,8 @@ export interface AppSettings {
   tlsEnabled: boolean;
   tlsCaCertPath: string | null;
   tlsCaKeyPath: string | null;
+  /** See `TrustedCa`. Absent or `null` means this client has never installed the CA. */
+  tlsTrustedCa?: TrustedCa | null;
   workspaces: WorkspaceMeta[];
   activeWorkspaceId: string;
   /** False on first ever launch — renderer shows the welcome/login screen */
@@ -56,6 +87,7 @@ function makeDefaultSettings(): AppSettings {
     tlsEnabled: false,
     tlsCaCertPath: null,
     tlsCaKeyPath: null,
+    tlsTrustedCa: null,
     workspaces: [{ id, name: "Workspace 1", activeEnvironmentId: null }],
     activeWorkspaceId: id,
     hasSeenWelcome: false,

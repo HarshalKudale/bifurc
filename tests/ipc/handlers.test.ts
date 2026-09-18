@@ -102,7 +102,7 @@ vi.mock("../../src/main", () => ({
 
 // Mock the importExport sub-system — its handlers register via the captured mockIpcMain,
 // so we let registerImportExportHandlers run but stub out every importer/exporter.
-vi.mock("../../src/ipc/importExport/registry", () => ({
+vi.mock("@bifurc/engine/importExport/registry", () => ({
   getAllFormats: vi.fn(() => ({})),
   getFormats: vi.fn(() => []),
   getExporter: vi.fn(() => null),

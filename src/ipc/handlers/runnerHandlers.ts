@@ -1,10 +1,16 @@
 import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import type { RunnerGetHistoryParams, RunnerListFolderIdsParams } from "@bifurc/protocol";
+import type {
+  RunnerExportReportResult,
+  RunnerGetHistoryParams,
+  RunnerListFolderIdsParams,
+} from "@bifurc/protocol";
 import { wsDir as workspaceDir } from "@bifurc/engine/store/workspaceFs";
+import { renderRunnerHtml } from "@bifurc/engine/runner/reportHtml";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
+import { call, writeArtifact } from "@/ipc/fileOpsClient";
 
 // P2 work item 7 — only runner:getHistory/listFolderIds convert here (their params are just
 // workspaceId/folderId, matching the frozen schema and the real preload.ts call sites exactly).
@@ -13,9 +19,10 @@ import { bus } from "@bifurc/engine/eventBus";
 // handler behaviour, not a registration-only move:
 //   - runner:saveReport / runner:exportReport take the real `CollectionRunReport` object
 //     (`renderer/lib/collectionRunner.ts`), which carries `requestId`, `url`, `testLogs`,
-//     `preScriptError`, `postScriptError` per result — none of which are in the protocol's
-//     `RunResult`/`RunReport` schemas. `runner:exportReport` is additionally SPLIT (engine should
-//     return content, client owns the save dialog) but today's handler still owns the dialog.
+//     `preScriptError`, `postScriptError` per result. P3 **widened `RunReport` in
+//     `@bifurc/protocol` to include them** and converted `runner:exportReport`; `runner:saveReport`
+//     is still an inline handler because it writes into the *workspace* rather than to a path the
+//     user chose, so it is not one of `File_Ops_Protocol.md` §4's egress channels.
 //   - runner:saveConfig / runner:loadConfig were tried and reverted: the protocol's
 //     `RunnerConfigSchema` requires exactly `{requestOrder, delayMs}`, but
 //     `tests/integration/runnerStorage.integration.test.ts` (and, by extension, real callers)
@@ -72,8 +79,9 @@ export function registerRunnerHandlers() {
       fs.mkdirSync(runDir, { recursive: true });
       fs.writeFileSync(path.join(runDir, "report.json"), JSON.stringify(report, null, 2), "utf-8");
 
-      // Generate HTML report
-      const html = generateRunnerHtml(report);
+      // Generate HTML report — rendered by the engine (`@bifurc/engine/runner/reportHtml`), because
+      // it is a generated artifact and `runner:exportReport` needs the same renderer.
+      const html = renderRunnerHtml(report);
       fs.writeFileSync(path.join(runDir, "report.html"), html, "utf-8");
       return { ok: true };
     } catch (err: any) {
@@ -85,6 +93,10 @@ export function registerRunnerHandlers() {
     try {
       const folderName = (report.folderName as string) ?? "collection";
       const ts = new Date(report.startedAt as number).toISOString().replace(/[:.]/g, "-");
+
+      // Dialog FIRST, then the engine renders — `File_Ops_Protocol.md` §3.2. The default path is
+      // still built here from the report, because the renderer sends the report and the dialog has
+      // to be shown before the command runs.
       const { filePath, canceled } = await dialog.showSaveDialog({
         title: "Export Runner Report",
         defaultPath: `${folderName}-report-${ts}.html`,
@@ -94,10 +106,20 @@ export function registerRunnerHandlers() {
         ],
       });
       if (canceled || !filePath) return { ok: false };
-      const content = filePath.endsWith(".json")
-        ? JSON.stringify(report, null, 2)
-        : generateRunnerHtml(report);
-      fs.writeFileSync(filePath, content, "utf-8");
+
+      // The format is the client's to decide — only it knows what the user typed. The pre-P3
+      // handler tested `filePath.endsWith(".json")` and rendered accordingly; the same test now
+      // happens here and the answer travels with the request.
+      const format = filePath.endsWith(".json") ? "json" : "html";
+
+      const artifact = await call<RunnerExportReportResult>("runner.exportReport", { report, format });
+      if (!artifact.ok) return { ok: false, error: artifact.error };
+
+      try {
+        writeArtifact(artifact, filePath);
+      } catch (err: any) {
+        return { ok: false, error: err?.message };
+      }
       return { ok: true, filePath };
     } catch (err: any) {
       return { ok: false, error: err?.message };
@@ -130,65 +152,4 @@ export function registerRunnerHandlers() {
 
   ipcMain.handle("runner:listFolderIds", (_e, workspaceId: string) =>
     commandRegistry.invoke("runner.listFolderIds", { workspaceId }, ctx));
-}
-
-function generateRunnerHtml(report: any): string {
-  const duration = ((report.completedAt - report.startedAt) / 1000).toFixed(2);
-  const timestamp = new Date(report.startedAt).toISOString();
-  const esc = (s: unknown) =>
-    String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Run Report - ${esc(report.folderName)}</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 24px; }
-.header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #333; }
-.header h1 { font-size: 20px; color: #fff; margin-bottom: 8px; }
-.meta { font-size: 12px; color: #888; }
-.summary { display: flex; gap: 24px; margin-bottom: 24px; padding: 16px; background: #222; border-radius: 8px; }
-.stat { text-align: center; }
-.stat .value { font-size: 24px; font-weight: bold; }
-.stat .label { font-size: 11px; color: #888; text-transform: uppercase; }
-.passed { color: #4caf50; }
-.failed { color: #f44336; }
-.request { margin-bottom: 12px; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-.req-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #252535; }
-.method { font-size: 11px; font-weight: bold; color: #64b5f6; font-family: monospace; }
-.name { font-size: 13px; flex: 1; }
-.status { font-weight: bold; font-family: monospace; }
-.time { font-size: 11px; color: #888; }
-.tests { padding: 8px 12px; }
-.test-item { display: flex; gap: 8px; padding: 4px 0; font-size: 12px; font-family: monospace; }
-</style>
-</head>
-<body>
-<div class="header">
-<h1>Collection Run: ${esc(report.folderName)}</h1>
-<div class="meta">${timestamp} &bull; Duration: ${duration}s</div>
-</div>
-<div class="summary">
-<div class="stat"><div class="value">${report.totalRequests}</div><div class="label">Requests</div></div>
-<div class="stat"><div class="value passed">${report.passedTests}</div><div class="label">Passed</div></div>
-<div class="stat"><div class="value failed">${report.failedTests}</div><div class="label">Failed</div></div>
-<div class="stat"><div class="value">${duration}s</div><div class="label">Duration</div></div>
-</div>
-${(report.results ?? []).map((r: any) => `
-<div class="request">
-<div class="req-header">
-<span class="method">${esc(r.method)}</span>
-<span class="name">${esc(r.requestName)}</span>
-${r.status != null ? `<span class="status">${r.status}</span>` : ""}
-<span class="time">${r.responseTime}ms</span>
-</div>
-${(r.tests?.length || r.error) ? `<div class="tests">
-${r.error ? `<div class="test-item failed">✗ Error: ${esc(r.error)}</div>` : ""}
-${(r.tests ?? []).map((t: any) => `<div class="test-item ${t.passed ? "passed" : "failed"}">${t.passed ? "✓" : "✗"} ${esc(t.name)}${t.error ? ` — ${esc(t.error)}` : ""}</div>`).join("")}
-</div>` : ""}
-</div>`).join("")}
-</body>
-</html>`;
 }
