@@ -73,26 +73,37 @@
   log events — `registerIpcHandlers()` does. **Step 3b is next:** route all methods, then delete
   `registerIpcHandlers()` + `eventBridge.ts` together (deleting the handlers takes all nine legacy event
   channels with them).
-- **P6 — finding 5 (2026-09-18): step 3 is NOT mechanical.** **25 of the 93 protocol commands have no
-  registry implementation** — they are served **only** by a shell `ipcMain.handle` body, so
-  `registry.invoke("<cmd>")` → `UNKNOWN_COMMAND`. 68 route trivially. The list:
-  `config.save`, `server.start/stop/restart/status`, `proxy.status`, `services.discover`,
-  `workspace.add/rename/delete`, `webhook.registerActive/unregisterActive`,
-  `webhookServer.start/stop/status`, `runner.saveReport/saveConfig/loadConfig`, `audit.list`,
-  `script.execute`, `request.replay`, `healthbar.getServices/saveServices/checkUrl`, `app.checkUpdate`.
-  **`@bifurc/client` classifies all 25 as `{kind:"transport"}`**, so it **advertises 25 methods it cannot
-  deliver against the real engine** — unnoticed because P5 tested against the conformance suite's
-  **stub** registry (it asserts *reachability*, not behaviour) and step 2 routes only `config:get`.
-  **The surface test cannot see this**: the key is exposed; the implementation behind it is missing.
-  **So step 3 = 3b-1** (route the 68, safe while the legacy handlers run) → **3b-2** (implement the 25) →
-  **then** delete `registerIpcHandlers()` + `eventBridge.ts`. Deleting earlier breaks each of the 25 on
-  **both** paths at once with the surface test still green. The inventory is a **ratchet** in
-  `tests/ipc/handlers.test.ts` ("registry coverage"), so implementing a command fails until its name
-  leaves the list. Open disagreement, deliberately unresolved: `app.checkUpdate` is a "shell half" per
-  `plan/07` but `transport` per the client. **Useful:** the protocol's `COMMANDS` table already carries
-  **`legacyChannel`** for all 93, so command↔channel mapping is machine-readable; `COMMANDS` is exported
-  from `@bifurc/protocol` but **`SURFACE` is not** re-exported from the client root (only
-  `packages/client/src/surface.ts` has it).
+- **P6 — finding 5 (2026-09-18): step 3 is NOT mechanical.** **25 of the 93 protocol commands had no
+  registry implementation** — served **only** by a shell `ipcMain.handle` body, so
+  `registry.invoke("<cmd>")` → `UNKNOWN_COMMAND`. **`@bifurc/client` classifies all 25 as
+  `{kind:"transport"}`**, so it **advertised 25 methods it could not deliver** — unnoticed because P5
+  tested against the conformance suite's **stub** registry (reachability, not behaviour) and step 2
+  routes only `config:get`. **The surface test cannot see it**: the key is exposed; the implementation
+  behind it is missing. **Step 3 = 3b-1** (route the 68, safe while the legacy handlers run) → **3b-2**
+  (implement the 25) → **then** delete `registerIpcHandlers()` + `eventBridge.ts`; deleting earlier
+  breaks each of the 25 on **both** paths with the surface test still green. The inventory is a
+  **ratchet** in `tests/ipc/handlers.test.ts` ("registry coverage"). **Useful:** `COMMANDS` carries
+  **`legacyChannel`** for all 93 and is exported; **`SURFACE` is not** re-exported from the client root.
+- **P6 — 3b-2: 10 of 25 moved, and the rest are FOUR categories, not one (`d0e0f48`, `bda0713`).**
+  Moved: `proxy/serverCommands.ts` (6 — `server.status/start/stop/restart`, `proxy.status`,
+  `services.discover`) then `store/configCommands.ts` (4 — `config.save`, `workspace.add/rename/delete`);
+  ratchet 25 → 19 → 15. Auditing the 15 against their frozen schemas showed "not yet moved" is false:
+  **MOVABLE 11**; **NARROWED 1** = `audit.list` (`AuditListParams` lacks the `filePath`/`fromTs`/`toTs`
+  that `QueryLogOptions` has, and `.strict()` turns that into `BAD_REQUEST` — but nothing passes them
+  today, so it is *latent*, not live); **BLOCKED 2** = `runner.saveConfig`/`runner.loadConfig` (blocked
+  by a **passing** test: `runnerStorage.integration.test.ts:207` saves `{delayMs, stopOnFailure,
+  iterations}` and round-trips it, while `RunnerConfigSchema` **requires** `requestOrder`);
+  **SPLIT 1** = `app.checkUpdate` — the protocol's own comment **resolves** the plan-vs-client
+  disagreement: SPLIT, schema = "the interim engine-half contract", **P12 moves it client-side**, and
+  `AppCheckUpdateResult` has no `currentVersion`/`hasUpdate`. So step 3 ends at **89 + 2 + 1 + 1**, not
+  93. **The trap:** do **NOT** re-point the legacy bodies at the registry. `config:get` works that way
+  only because `config.get` is registered at **module scope** in `coreHandlers.ts`, whereas
+  `register*Commands` are called from `registerIpcHandlers()` — two suites register handler *groups*
+  without it, so re-pointing broke six tests with `UNKNOWN_COMMAND` at **invocation** time (nothing
+  catches it at build time; the shell's handler file looks untouched). **Mirror problem, recorded in
+  `plan/07` §5c and unfixed:** `config.get`, `env.setActive`, `workspace.setActive`, `entity.load` and
+  `entity.setEnabled` are registered **from the shell**, so a containerised engine (P9) would answer
+  `UNKNOWN_COMMAND` for them — and the ratchet cannot see it.
 
 ## Git
 
@@ -102,11 +113,14 @@
   **Split rule: a file belongs to the phase whose commit would not otherwise build** — not the phase it is
   *about*. `shutdown.ts`'s companion re-import is P4 (it follows P4's move), not P6.
 - **P6's commits are `1268bfd` (step 2) → `1027fc9` (memory) → `26eda19` (finding 1) → `feefcff`
-  (memory) → `38dc914` (step 3a).** `origin/standalone-engine` is kept in sync with HEAD.
+  (memory) → `38dc914` (step 3a) → `90ac375` (memory) → `1c1cd4c` (finding-5 ratchet) → `10a1dc7`
+  (memory) → `d0e0f48` (3b-2 slice 1) → `bda0713` (3b-2 slice 2).** `origin/standalone-engine` is kept in
+  sync with HEAD.
   **The push is a clean fast-forward; verify each tree read-only (`git grep <rev>`) — do not check out
-  old commits, the object store has already been lost once.** A push may be SIGTERM'd at the GCM window:
-  retry with `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git push …` so it fails fast with a real message
-  instead of hanging, and confirm with `git ls-remote origin standalone-engine`.
+  old commits, the object store has already been lost once.** A push may be SIGTERM'd at the GCM window
+  (2026-09-18: twice in a row). **`GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo GCM_INTERACTIVE=never git push
+  …` is what got it through** — try that first, then confirm with `git ls-remote origin
+  standalone-engine`.
 
 ## Env
 
