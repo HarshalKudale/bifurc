@@ -149,6 +149,10 @@ export default defineConfig({
         // `@bifurc/engine/*` alias in tests, so it belongs in the report exactly as `src/**`
         // did before the move — omitting it would silently drop ~11 files of coverage.
         "packages/engine/src/**/*.ts",
+        // The client package (P5). Same reasoning as the engine entry above: it is exercised
+        // through source in tests, and omitting it would report the whole package as uncovered
+        // while it has a suite of its own.
+        "packages/client/src/**/*.ts",
         "renderer/lib/**/*.ts",
         // Both extensions: the capture/search/tab-reducer logic lives in `.ts` files under
         // renderer/components, and matching only `.tsx` hid it from the report entirely —
@@ -165,12 +169,14 @@ export default defineConfig({
         "**/*.d.ts",
         "packages/engine/src/store/types.ts",
         "packages/engine/src/sync/types.ts",
+        // Moved here from `src/ipc/importExport/types.ts` in the layer-5 move. Re-checked, not merely
+        // relocated: all ten exports are `type` / `interface` declarations, with no runtime values.
+        "packages/engine/src/importExport/types.ts",
         // NOT excluded: `packages/engine/src/applications/types.ts`. Despite the name it is not a
         // type-only module — it exports `DEFAULT_DEBUG_PORTS`, `RUN_CONFIG_TYPE_LABELS` and
         // `RUN_CONFIG_TYPE_ICONS` as real runtime values. The old `src/applications/types.ts` entry
         // was excluding live code from the report purely on the strength of its filename. It is
         // loaded by `applicationHandlers.ts`, so it reports as covered.
-        "src/ipc/importExport/types.ts",
         "renderer/components/modals/import-export/types.ts",
         "renderer/components/search/searchTypes.ts",
         "renderer/components/sidebar/FolderTree.types.ts",
