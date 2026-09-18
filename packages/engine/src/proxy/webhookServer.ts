@@ -133,7 +133,8 @@ export function startWebhookServer(port: number): void {
       // Emit to main process listeners (IPC forward)
       webhookEmitter.emit("payload", payload);
 
-      // Emit on the bus — the shell's eventBridge.ts forwards to renderer windows.
+      // Emit on the bus — that is how a payload reaches a client. The shell carries it over
+      // `EVENT_CHANNEL`; the `webhookEmitter.emit` above is the in-process shortcut that predates it.
       bus.emitTyped("webhook.payload", payload);
 
       res.writeHead(200, { "Content-Type": "application/json" });
