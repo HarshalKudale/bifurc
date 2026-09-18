@@ -2,22 +2,33 @@ import { describe, it, expect } from "vitest";
 import {
     getAllFormats,
     getFormats,
+    getEntry,
     getExporter,
     getImporter,
+    getPathExporter,
+    getPathImporter,
     registerFormat,
-} from "@/ipc/importExport/registry";
-import type { EntityKind } from "@/ipc/importExport/types";
+} from "@bifurc/engine/importExport/registry";
+import type { EntityKind } from "@bifurc/engine/importExport/types";
 
 /**
  * The registry is the single source of truth for what the Import/Export dialog
- * offers. Two failure modes are invisible until a user clicks the button:
+ * offers. Three failure modes are invisible until a user clicks the button:
  *
  *   1. a format declares `supportsExport: true` but was never given an exporter
- *      (the dialog offers it, then returns "No exporter for ..."), and
+ *      (the dialog offers it, then returns "No exporter for ..."),
  *   2. an `EntityKind` is added to the type union but no format is registered
- *      for it (the panel renders an empty format dropdown).
+ *      for it (the panel renders an empty format dropdown), and
+ *   3. a format's implementation is filed in the wrong slot — `workspace-zip` is
+ *      path-shaped and every other format is content-shaped, and a mix-up there
+ *      compiles fine and only fails when someone exports a real workspace.
  *
- * Both are pure data-consistency bugs, so they are cheap to pin down here.
+ * All three are pure data-consistency bugs, so they are cheap to pin down here.
+ *
+ * The registry has **two** shapes per direction since P3 work item 2:
+ * `exporter`/`importer` take and return content, and `pathExporter`/`pathImporter`
+ * take a path. The assertions below accept either, and then pin down exactly which
+ * format is allowed to use the path-shaped pair.
  */
 
 /** Kept in sync with `EntityKind` in types.ts — the assertion below is the guard. */
@@ -79,9 +90,17 @@ describe("importExport registry", () => {
         for (const [kind, formats] of Object.entries(getAllFormats())) {
             for (const f of formats) {
                 if (!f.supportsExport) continue;
+                // A format is served either content-shaped (`exporter`, 33 of 34 files) or
+                // path-shaped (`pathExporter`, `workspace-zip` alone). Requiring `exporter`
+                // unconditionally would fail on the one documented exception; requiring neither
+                // would let a format that promises export but has no implementation through.
                 const exporter = getExporter(kind as EntityKind, f.id);
-                expect(exporter, `${kind}/${f.id} claims supportsExport but has no exporter`).toBeDefined();
-                expect(typeof exporter!.run).toBe("function");
+                const pathExporter = getPathExporter(kind as EntityKind, f.id);
+                expect(
+                    exporter ?? pathExporter,
+                    `${kind}/${f.id} claims supportsExport but has neither an exporter nor a pathExporter`,
+                ).toBeDefined();
+                expect(typeof (exporter ?? pathExporter)!.run).toBe("function");
             }
         }
     });
@@ -91,9 +110,13 @@ describe("importExport registry", () => {
             for (const f of formats) {
                 if (!f.supportsImport) continue;
                 const importer = getImporter(kind as EntityKind, f.id);
-                expect(importer, `${kind}/${f.id} claims supportsImport but has no importer`).toBeDefined();
-                expect(typeof importer!.run).toBe("function");
-                expect(typeof importer!.preflight).toBe("function");
+                const pathImporter = getPathImporter(kind as EntityKind, f.id);
+                expect(
+                    importer ?? pathImporter,
+                    `${kind}/${f.id} claims supportsImport but has neither an importer nor a pathImporter`,
+                ).toBeDefined();
+                expect(typeof (importer ?? pathImporter)!.run).toBe("function");
+                expect(typeof (importer ?? pathImporter)!.preflight).toBe("function");
             }
         }
     });
@@ -103,12 +126,60 @@ describe("importExport registry", () => {
             for (const f of formats) {
                 if (!f.supportsExport) {
                     expect(getExporter(kind as EntityKind, f.id)).toBeUndefined();
+                    expect(getPathExporter(kind as EntityKind, f.id)).toBeUndefined();
                 }
                 if (!f.supportsImport) {
                     expect(getImporter(kind as EntityKind, f.id)).toBeUndefined();
+                    expect(getPathImporter(kind as EntityKind, f.id)).toBeUndefined();
                 }
             }
         }
+    });
+
+    it("serves workspace-zip through the path-shaped slots and nothing else", () => {
+        // `workspace-zip` is the one genuinely non-mechanical case (P3 work item 2): `archiver`
+        // pipes into a WriteStream and `unzipper.Open.file()` rejects a buffer, so neither half can
+        // honour the content-shaped interface. The risk this guards is a future edit "fixing" it
+        // into `exporter`/`importer` — which would compile, then fail at runtime on a real archive.
+        expect(getPathExporter("workspace", "workspace-zip")).toBeDefined();
+        expect(getPathImporter("workspace", "workspace-zip")).toBeDefined();
+        expect(getExporter("workspace", "workspace-zip")).toBeUndefined();
+        expect(getImporter("workspace", "workspace-zip")).toBeUndefined();
+        // Its sibling in the same kind IS content-shaped, so the split is per-format, not per-kind.
+        expect(getExporter("workspace", "workspace-json")).toBeDefined();
+        expect(getPathExporter("workspace", "workspace-json")).toBeUndefined();
+    });
+
+    it("exposes no path-shaped slot outside workspace-zip", () => {
+        for (const [kind, formats] of Object.entries(getAllFormats())) {
+            for (const f of formats) {
+                if (kind === "workspace" && f.id === "workspace-zip") continue;
+                expect(
+                    getPathExporter(kind as EntityKind, f.id),
+                    `${kind}/${f.id} has a pathExporter but is not the documented exception`,
+                ).toBeUndefined();
+                expect(
+                    getPathImporter(kind as EntityKind, f.id),
+                    `${kind}/${f.id} has a pathImporter but is not the documented exception`,
+                ).toBeUndefined();
+            }
+        }
+    });
+
+    it("resolves the whole entry, which is what the command layer branches on", () => {
+        // `export.create` / `import.preflight` / `import.commit` use `getEntry()` rather than the
+        // narrowed getters, because they must decide inline-vs-staging *before* calling anything.
+        // `getEntry` is therefore load-bearing for every one of the 34 formats, not just the zip.
+        const zip = getEntry("workspace", "workspace-zip");
+        expect(zip?.pathExporter).toBeDefined();
+        expect(zip?.exporter).toBeUndefined();
+
+        const json = getEntry("environments", "environments-json");
+        expect(json?.exporter).toBeDefined();
+        expect(json?.importer).toBeDefined();
+        expect(json?.pathExporter).toBeUndefined();
+
+        expect(getEntry("workspace", "no-such-format")).toBeUndefined();
     });
 
     it("resolves exporters and importers by their exact format id", () => {
@@ -132,6 +203,9 @@ describe("importExport registry", () => {
         expect(getFormats("not-a-kind" as EntityKind)).toEqual([]);
         expect(getExporter("not-a-kind" as EntityKind, "mocks-json")).toBeUndefined();
         expect(getImporter("not-a-kind" as EntityKind, "mocks-json")).toBeUndefined();
+        expect(getPathExporter("not-a-kind" as EntityKind, "workspace-zip")).toBeUndefined();
+        expect(getPathImporter("not-a-kind" as EntityKind, "workspace-zip")).toBeUndefined();
+        expect(getEntry("not-a-kind" as EntityKind, "mocks-json")).toBeUndefined();
     });
 
     it("appends newly registered formats instead of replacing existing ones", () => {

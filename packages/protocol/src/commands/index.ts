@@ -46,6 +46,13 @@ export * from "./tls";
 export * from "./export";
 export * from "./blob";
 export * from "./misc";
+// `COMMAND_FIXTURES` — one valid and one invalid payload per command. Exported from the package
+// rather than left inside `index.test.ts` because the transport conformance suite
+// (`packages/engine/tests/conformance/`) drives its every-command matrix off the same table, and two
+// copies of a 93-entry table is a guarantee that one will be wrong. `fixtures.ts` imports
+// `CommandAction` from here with `import type`, which is erased — so this re-export creates no
+// runtime cycle.
+export * from "./fixtures";
 
 interface CommandSpec {
   params: z.ZodType;

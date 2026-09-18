@@ -25,8 +25,17 @@ vi.mock("@/main", () => ({
   getMainWindow: vi.fn(() => null),
 }));
 
-vi.mock("@bifurc/engine/proxy/certManager", () => ({
-  installCA: vi.fn(() => ({ ok: true })),
+/**
+ * `tls:installCA` used to be mocked at `@bifurc/engine/proxy/certManager`, because the handler
+ * called `installCA()` from inside the engine. P3 work item 5 moved the OS trust store to the
+ * client (`src/ipc/certTrust.ts`) and the composition to `src/ipc/certLifecycle.ts`, so the seam to
+ * mock moved with it. The platform command shapes are asserted exactly, with no mocking at all, in
+ * `tests/ipc/certTrust.test.ts`; the ordering and record-keeping rules in
+ * `tests/ipc/certLifecycle.test.ts`. What is left to assert *here* is only that the channel is
+ * registered and delegates — which is all this file is for.
+ */
+vi.mock("@/ipc/certLifecycle", () => ({
+  installEngineCa: vi.fn(() => ({ ok: true })),
 }));
 
 vi.mock("fs", async (importOriginal) => {
@@ -58,7 +67,7 @@ vi.mock("electron", () => ({
   shell: { openExternal: vi.fn() },
 }));
 
-import { installCA } from "@bifurc/engine/proxy/certManager";
+import { installEngineCa } from "@/ipc/certLifecycle";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 
 function getHandler(channel: string) {
@@ -165,9 +174,9 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
   });
 
   describe("tls:installCA handler", () => {
-    it("delegates to certManager.installCA when a CA cert exists", () => {
+    it("delegates to the client-side lifecycle, which owns the OS trust store", () => {
       const result = getHandler("tls:installCA")(EVENT);
-      expect(installCA).toHaveBeenCalled();
+      expect(installEngineCa).toHaveBeenCalled();
       expect(result).toEqual({ ok: true });
     });
   });

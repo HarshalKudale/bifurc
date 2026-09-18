@@ -9,17 +9,19 @@
  * once `packages/engine` exists: this file simply never moves there.
  *
  * `tls:installCA` is the one exception worth calling out: it lives here (not in
- * `tlsHandlers.ts`) because it shells out to `certutil` / `security` /
- * `sudo update-ca-certificates` to mutate the *host's* trust store — a host-scoped, client-local
+ * `tlsHandlers.ts`) because it mutates the *host's* trust store — a host-scoped, client-local
  * mutation per `File_Ops_Protocol.md` §6, unlike the rest of `tlsHandlers.ts` which reads/writes
- * the CA files themselves (engine-side data).
+ * the engine's own CA files. P3 work item 5 made that split explicit: this handler now delegates to
+ * `@/ipc/certLifecycle`, which fetches the certificate over the command registry and drives
+ * `@/ipc/certTrust` — the per-platform install/un-trust. The engine's `certManager` no longer
+ * shells out to anything.
  */
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { loadSettings, saveSettings, appDataDir } from "@bifurc/engine/store/appSettings";
+import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import { getMainWindow } from "@/main";
-import { installCA } from "@bifurc/engine/proxy/certManager";
+import { installEngineCa } from "@/ipc/certLifecycle";
 
 function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
   return themeId === "light"
@@ -148,11 +150,13 @@ export function registerClientHandlers(): void {
   });
 
   // ── Host trust-store mutation — see the file-level comment above ──────────
-  ipcMain.handle("tls:installCA", () => {
-    const certPath = path.join(appDataDir(), "ca-cert.pem");
-    if (!fs.existsSync(certPath)) return { ok: false, error: "No CA certificate found. Generate one first." };
-    return installCA(certPath);
-  });
+  //
+  // The pre-P3 body was `fs.existsSync(appDataDir()/ca-cert.pem)` then `installCA(certPath)` — the
+  // engine's file, installed by an engine function. It now fetches the certificate as an artifact
+  // over the command registry, so it works unchanged when the engine is in another process (P4) or
+  // a container (P9). The "no CA yet" message is the same string the renderer was written against;
+  // `certLifecycle.installEngineCa()` owns it.
+  ipcMain.handle("tls:installCA", () => installEngineCa());
 
   // ── First-launch UX state — was inline in main.ts's app.whenReady() ───────
   ipcMain.handle("app:isFirstLaunch", () => {

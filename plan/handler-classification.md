@@ -210,7 +210,7 @@ Generated: `soapRequest`, `soapMock` × add/update/delete = 6 channels.
 | 104 | `tls:importKey` | **SPLIT** | client picks file, engine imports content | ingress channel |
 | 105 | `tls:removeCert` | ENGINE | `tls.removeCert` | **P3: becomes two-sided** — engine removes its copy, client's trust-store removal is separate (`tls:installCA`'s inverse) |
 
-### `src/ipc/importExport/index.ts` (4)
+### `src/ipc/importExportHandlers.ts` (4)
 
 | # | Current channel | Class | New command | Notes |
 |---|---|---|---|---|
@@ -319,7 +319,7 @@ grep -rn "filePath.split\|path.basename(filePath)" src/
 
 | Location | Action |
 |---|---|
-| `src/ipc/importExport/importers/environments-dotenv.ts:55` | derives the imported environment's name from the uploaded file's basename — becomes an explicit `filename` field passed alongside the blob (P3 item) |
+| `packages/engine/src/importExport/importers/environments-dotenv.ts:55` | derives the imported environment's name from the uploaded file's basename — becomes an explicit `filename` field passed alongside the blob (P3 item) |
 
 No other occurrences found in `src/` as of 2026-09-15.
 

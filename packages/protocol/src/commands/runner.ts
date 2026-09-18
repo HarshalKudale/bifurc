@@ -1,19 +1,37 @@
 /**
  * `runner.*` — collection runner report storage and per-folder run configuration.
- * `runner.saveReport`/`runner.exportReport` currently take `report: any` — flagged in the P0
- * spike as needing a proper schema rather than carrying `z.unknown()` forward as a habit. Typed
- * loosely here (`RunReport` shape below) pending that follow-up; still an improvement over `any`
- * because the wire envelope itself is validated.
+ * `runner.saveReport`/`runner.exportReport` take the renderer's `CollectionRunReport` — flagged in
+ * the P0 spike as needing a proper schema rather than carrying `z.unknown()` forward as a habit.
+ * Typed here (`RunReport` below) and **widened in P3** to carry every field the renderer's real
+ * `RunnerRequestResult` has, because a schema narrower than its only caller silently truncates it.
  */
 import { z } from "zod";
+import type { ArtifactResult } from "./blob";
 
 const RunResult = z.object({
+  /**
+   * These four are carried by the renderer's real `RunnerRequestResult`
+   * (`renderer/lib/collectionRunner.ts`) and were dropped by the P1 schema, which was written from
+   * the HTML renderer's field *usage* rather than from the type. `z.object()` strips unknown keys,
+   * so their absence silently truncated the **JSON** report export — the HTML renderer touches only
+   * fields the schema happened to have, which is exactly why this would have shipped unnoticed.
+   */
+  requestId: z.string().optional(),
+  url: z.string().optional(),
+  testLogs: z.array(z.string()).optional(),
+  preScriptError: z.string().optional(),
+  postScriptError: z.string().optional(),
   requestName: z.string(),
   method: z.string(),
   status: z.number().nullable().optional(),
   responseTime: z.number().optional(),
   error: z.string().optional(),
-  tests: z.array(z.object({ name: z.string(), passed: z.boolean(), error: z.string().optional() })).optional(),
+  tests: z.array(z.object({
+    name: z.string(),
+    passed: z.boolean(),
+    error: z.string().optional(),
+    durationMs: z.number().optional(),
+  })).optional(),
 });
 
 const RunReport = z.object({
@@ -38,19 +56,14 @@ export interface RunnerSaveReportResult {
   error?: string;
 }
 
-/** SPLIT (work item 1): engine renders HTML/JSON content; the client owns the save dialog and
- * the actual file write, per `File_Ops_Protocol.md`. Returns rendered content, not a path. */
+/** SPLIT — engine renders HTML/JSON; the client owns the save dialog and the file write, per
+ * `File_Ops_Protocol.md` §4. Returns the artifact, never a path. */
 export const RunnerExportReportParams = z.object({
   report: RunReport,
   format: z.enum(["html", "json"]),
 }).strict();
 export type RunnerExportReportParams = z.infer<typeof RunnerExportReportParams>;
-export interface RunnerExportReportResult {
-  ok: boolean;
-  content?: string;
-  suggestedFilename?: string;
-  error?: string;
-}
+export type RunnerExportReportResult = ArtifactResult;
 
 export const RunnerGetHistoryParams = z.object({
   workspaceId: z.string(),

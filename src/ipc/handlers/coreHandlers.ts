@@ -17,12 +17,12 @@ import {
   reloadConfig, replayRequest,
 } from "@bifurc/engine/proxy/server";
 import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
-import { restartCompanionServer } from "@bifurc/engine/companion/companionServer";
+import { restartCompanionServer } from "@bifurc/engine/transport/legacyCompanion";
 import { generateRandomWorkspaceName } from "@bifurc/engine/lib/randomNames";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { commandRegistry, mayAffectUnnamedEntities, type CommandContext } from "@bifurc/engine/commands/registry";
 import { toProtocolKind, toEngineKind } from "@bifurc/engine/commands/entityKindMap";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 
@@ -72,8 +72,14 @@ commandRegistry.register("entity.load", ({ workspaceId, kind, id }: EntityLoadPa
   return { ok: true, entity };
 });
 
-commandRegistry.register("entity.setEnabled", async ({ workspaceId, kind, id, enabled }: EntitySetEnabledParams) => {
-  if (enabled && kind === "mocks") {
+commandRegistry.register("entity.setEnabled", async ({ workspaceId, kind, id, enabled }: EntitySetEnabledParams, ctx: CommandContext) => {
+  // Enabling an entity resolves conflicts by *disabling* same-signature siblings, which reaches entities
+  // the caller never named — the same privilege `entity.create`'s `onAddConflict` exercises, so it takes
+  // the same gate and must agree with it. See `mayAffectUnnamedEntities()`. The toggle itself is
+  // unconditional: only the sibling-disabling half is narrowed.
+  const mayResolveConflicts = mayAffectUnnamedEntities(ctx);
+
+  if (enabled && mayResolveConflicts && kind === "mocks") {
     const cfg = loadConfig();
     const target = (cfg.mocks ?? []).find((m) => m.id === id);
     if (target) {
@@ -86,7 +92,7 @@ commandRegistry.register("entity.setEnabled", async ({ workspaceId, kind, id, en
       }
     }
   }
-  if (enabled && kind === "rules") {
+  if (enabled && mayResolveConflicts && kind === "rules") {
     const cfg = loadConfig();
     const target = (cfg.proxyRules ?? []).find((r) => r.id === id);
     if (target) {
@@ -123,11 +129,12 @@ export function registerCoreHandlers() {
     }
     if (incoming.companionPort !== prev.companionPort) {
       // Statically imported (see the top of this file) rather than `require`d here.
-      // A bare `require("@bifurc/engine/companion/companionServer")` only resolves because
+      // A bare `require("@bifurc/engine/transport/legacyCompanion")` only resolves because
       // `tsc-alias` post-processes the build output — which makes this user-facing
       // path depend on the build pipeline, and makes it impossible to exercise from
       // a test runner (the alias is not resolvable at runtime). There is no import
-      // cycle to avoid: nothing under `src/companion` imports `src/ipc`.
+      // cycle to avoid: `legacyCompanion.ts` imports only `store/`, `sync/`, `proxy/`
+      // and `eventBus` — never `src/ipc`.
       restartCompanionServer(incoming.companionPort);
     }
     return { ok: true };

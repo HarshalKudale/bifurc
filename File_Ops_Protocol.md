@@ -27,7 +27,7 @@ Every crossing is bytes over RPC, never a path.
 
 ### 2.1 The import/export interface is already string-in / string-out
 
-This is the single biggest finding. `src/ipc/importExport/registry.ts`:
+This is the single biggest finding. `packages/engine/src/importExport/registry.ts`:
 
 ```ts
 export interface ExporterFn { run(wsId: string, filePath: string): Promise<ExportResult>; }
@@ -211,6 +211,29 @@ with WSDL / proto / cert, which *do* become persisted entities and are copied in
 Certs are **not** just "fetch a file". There are two halves that live on different machines and can
 silently drift apart.
 
+> **🟢 Implemented in P3 work item 5, 2026-09-17 — as a mechanism. The UI is P7.**
+>
+> | Piece | Where it lives now |
+> |---|---|
+> | the engine half — generate, identify, delete | `packages/engine/src/proxy/certManager.ts` |
+> | the three lifecycle commands | `packages/engine/src/proxy/certCommands.ts` |
+> | the client half — install, un-trust, probe, Firefox | `src/ipc/certTrust.ts` |
+> | the composition — bytes + trust store + drift record | `src/ipc/certLifecycle.ts` |
+>
+> `certManager.installCA()` is **deleted**; the engine no longer shells out to anything. Everything
+> the client needs is **additive** — `window.api` is byte-identical through P6
+> (`README.md` non-negotiable #3) — so the drift warning, the Firefox note and the two-sided
+> `removeCert` result are all *available* but *unrendered* until P7.
+>
+> **Two deviations from the sketches below, both deliberate and both recorded in `plan/04` §5a/§5d:**
+>
+> 1. **No `certBlobId`.** The blob store is transient (`BLOB_TTL_MS` = 1 h); the CA is durable with a
+>    ten-year validity. They are opposites, the proxy needs a real file path, and `tls.exportCert`
+>    already moves the bytes. A durable blob would be a second source of truth for one certificate.
+> 2. **`certutil -delstore` exits 0 whether or not it deleted anything**, so the un-trust result is
+>    built on a **re-query** (`certutil -store -user Root <thumbprint>`, exit 17 when absent) rather
+>    than on the delete command's exit status. §6.2's table is otherwise implemented as written.
+
 ### 6.1 Two halves, and the drift problem
 
 ```
@@ -231,12 +254,18 @@ engine A — and the client still trusts the *old* CA. Symptom: opaque TLS error
 **Mitigation — carry a fingerprint:**
 
 ```
-tls.status → { generated: bool, fingerprint: "sha256:ab12…", certBlobId }
+tls.status → { generated: bool, fingerprint: "sha256:ab12…" }
+                                  // `certBlobId` is NOT implemented — see the note in §6
 ```
 
 The client stores the fingerprint it installed and compares on connect. On mismatch: "the engine's CA
 has changed since you trusted it — reinstall." This is cheap and removes a whole class of confusing
 bug reports.
+
+The client's record also carries the **PEM**, not only the fingerprint: once the engine regenerates,
+its copy of the *trusted* certificate is gone, and `certutil` / `security` / `trust` will not remove a
+certificate you cannot hand them. A fingerprint can tell you the CA changed; only the certificate can
+tell the OS to stop trusting it.
 
 ### 6.2 Privilege matrix for install
 
@@ -253,6 +282,21 @@ Linux needs a different approach in a GUI client. Options, in preference order:
 3. Fall back to: write the cert to a known location, show exact instructions, open the containing
    folder. Ugly but never fails.
 
+**Implemented in that order** (`certTrust.installPlan()`), with one correction: `pkexec` is offered
+only when `trust` exists, because `pkexec trust anchor` elevates the same binary rather than
+substituting for it — emitting it without `trust` produces a `command not found` that reads like a
+permissions problem. `installCA()` walks the chain and falls through on *failure* as well as on
+absence, so a `trust` that refuses degrades to `pkexec` rather than to an error.
+
+The fallback also **keeps the certificate file** — `installEngineCa()` deletes its staged copy unless
+the result says `needsManualInstall`, because an instruction naming a path we just deleted is not an
+instruction.
+
+**Verification status.** The ordering and the degradation are tested
+(`tests/ipc/certTrust.test.ts`). Whether `trust anchor` really avoids elevation could not be tested
+from a Windows development machine and is recorded as an unchecked **P9/P12** row in
+`plan/13-checklist.md`, along with the macOS path and the missing Linux probe.
+
 ### 6.3 The Firefox gotcha — flag this in the UI
 
 **Firefox does not use the OS trust store.** It ships its own NSS store. Installing the CA via
@@ -266,6 +310,12 @@ because users will blame the engine. Two mitigations:
 - Optionally detect Firefox and offer to install into its NSS store directly.
 
 This is worth handling deliberately rather than discovering it in issue reports.
+
+**Detection is implemented** (`certTrust.detectFirefox()`, per-platform profile and binary paths) and
+`firefoxDetected` is already on both `tls:installCA` and `tls:certStatus` results. An **unlaunched**
+Firefox counts as present: a missing profiles directory is not evidence of absence, and a
+freshly-installed Firefox with no profiles yet belongs to exactly the user about to hit this. The note
+itself is a renderer change and is P7.
 
 ---
 
@@ -322,7 +372,7 @@ dropped:
 And one behavioural leak — the only place a **display name is derived from a path**:
 
 ```ts
-// src/ipc/importExport/importers/environments-dotenv.ts:55
+// packages/engine/src/importExport/importers/environments-dotenv.ts:55
 const name = filePath.split(/[/\\]/).pop()?.replace(/\.env.*$/, "") ?? "Imported";
 ```
 

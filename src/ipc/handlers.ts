@@ -1,4 +1,4 @@
-import { registerImportExportHandlers } from "@/ipc/importExport/index";
+import { registerImportExportHandlers } from "@/ipc/importExportHandlers";
 import { registerApplicationHandlers } from "@/ipc/applicationHandlers";
 
 import { registerTlsHandlers } from "@/ipc/handlers/tlsHandlers";
@@ -14,9 +14,30 @@ import { registerCoreHandlers } from "@/ipc/handlers/coreHandlers";
 
 import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
 import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { registerBlobCommands } from "@bifurc/engine/blob/commands";
+import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
+import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
+import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
 import { wireEventBridge } from "@/ipc/eventBridge";
 
 export function registerIpcHandlers(): void {
+  // P3: the engine-side command surface the shell is willing to serve. `createEngine()` registers
+  // **no** commands by design — the consumer declares what it is willing to serve — so this is
+  // where the shell, today's only client, does that. All three are explicit calls rather than
+  // module side effects, because `CommandRegistry.register()` throws on a double registration and
+  // an explicit call site makes "exactly once" checkable by reading one function.
+  registerBlobCommands(commandRegistry);
+  registerImportExportCommands(commandRegistry);
+  // P3 work items 3–4: `tls.exportCert` / `tls.importCert` / `tls.importKey`,
+  // `runner.exportReport`, `audit.export`, `capture.shareJson`.
+  registerFileOpsCommands(commandRegistry);
+  // P3 work item 5: `tls.generate` / `tls.certStatus` / `tls.removeCert`. Moved here from
+  // `handlers/tlsHandlers.ts`, which was serving engine commands from the client half — it works
+  // only while the two are the same process. `tls:installCA` did **not** come with them: the host
+  // trust store is CLIENT-classified and stays in `clientHandlers.ts`.
+  registerCertCommands(commandRegistry);
+
   registerImportExportHandlers();
   registerApplicationHandlers();
 

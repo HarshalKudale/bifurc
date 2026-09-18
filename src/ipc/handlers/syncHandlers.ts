@@ -5,7 +5,7 @@ import type {
   SyncGetStateParams, SyncSetAutoSyncParams, SyncGetEntityStatusParams,
   GitDiffParams, GitDiscardParams, GitSyncParams, GitHistoryParams,
   EntityPublishParams, EntityRestoreParams, FolderPublishParams,
-  AuditDiffParams, HistoryListParams, HistoryDiffParams,
+  AuditDiffParams, HistoryListParams, HistoryDiffParams, AuditExportResult,
 } from "@bifurc/protocol";
 import {
   setRemote, disconnect, syncPush, syncPull, getSyncState, setAutoSync,
@@ -21,15 +21,15 @@ import {
 } from "@bifurc/engine/store/gitStore";
 import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { call, writeArtifact } from "@/ipc/fileOpsClient";
 
 // P2 work item 7 — these are the second batch of commands wired through the CommandRegistry,
 // following coreHandlers.ts's proof of concept. Every command here is already a clean 1:1 with
 // its legacy channel (no entityCrudFactory involvement), which is exactly the "next slice"
-// `plan/03-phase-2-engine-extraction.md`'s work item 7 status note calls for. `audit:export` is
-// deliberately left untouched — it is SPLIT (see `packages/protocol/src/commands/audit.ts`): the
-// engine half only renders `{format}` -> content, while today's handler also owns the Electron
-// save dialog. Splitting that apart is a real behavioural change, not a registration-only move,
-// so it is out of scope here.
+// `plan/03-phase-2-engine-extraction.md`'s work item 7 status note calls for. `audit:export` was
+// SPLIT (see `packages/protocol/src/commands/audit.ts`) and was **converted in P3 work item 3**:
+// the engine now renders `{format}` -> artifact and this file owns the Electron save dialog and the
+// file write, per `File_Ops_Protocol.md` §4.
 const ctx = { bus };
 
 commandRegistry.register("sync.setRemote", async ({ workspaceId, remote, branch }: SyncSetRemoteParams) => {
@@ -213,8 +213,10 @@ export function registerSyncHandlers() {
     commandRegistry.invoke("history.diff", { commitHash, filePath, workspaceId }, ctx));
 
   ipcMain.handle("audit:export", async (_e, format: "json" | "csv") => {
-    const cfg = loadConfig();
-    const { entries } = await queryLog({ workspaceId: cfg.activeWorkspaceId, limit: 0 });
+    // Dialog FIRST. The pre-P3 handler queried the whole log and *then* asked for a path, so
+    // cancelling still paid for a `git log` over every commit the workspace has. "Fail fast on
+    // cancel" (`File_Ops_Protocol.md` §3.2) is the whole difference here, because `limit: 0` means
+    // the entire history.
     const { filePath, canceled } = await dialog.showSaveDialog({
       title: "Export Audit Log",
       defaultPath: `audit-log.${format}`,
@@ -222,18 +224,13 @@ export function registerSyncHandlers() {
     });
     if (canceled || !filePath) return { ok: false };
 
-    if (format === "json") {
-      fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), "utf-8");
-    } else {
-      const header = "commitHash,ts,action,entity,entityId,entityName,workspaceId,actor";
-      const rows = entries.map((e) =>
-        [
-          e.commitHash, e.ts, e.action, e.entity, e.entityId,
-          `"${e.entityName.replace(/"/g, '""')}"`,
-          e.workspaceId, e.actor,
-        ].join(",")
-      );
-      fs.writeFileSync(filePath, [header, ...rows].join("\n"), "utf-8");
+    const artifact = await call<AuditExportResult>("audit.export", { format });
+    if (!artifact.ok) return { ok: false, error: artifact.error };
+
+    try {
+      writeArtifact(artifact, filePath);
+    } catch (err: any) {
+      return { ok: false, error: err?.message };
     }
     return { ok: true };
   });
