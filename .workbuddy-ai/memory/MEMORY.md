@@ -1,107 +1,70 @@
 # Bifurc — Project Memory
 
-**Detail lives in the repo.** Status → `plan/README.md`; env/suites → `TESTING.md`; phase mechanics →
-`plan/07`; traps → the `bifurc-*` skills. Keep this file to durable facts only.
+**Detail lives in the repo.** Status → `plan/README.md`; env/suites → `TESTING.md`; P6 mechanics →
+`plan/07`; traps → the `bifurc-*` skills. Durable facts only.
 
 ## Layout
 
 - **Flat repo — the app IS the root.** `workspaces: ["packages/*"]`; **never `cd bifurc`**.
-- **App runs `packages/engine/dist/`; tests run `src/`** (vitest alias) → **`npm run build:packages` after
-  engine edits.** `vitest.config.ts`'s alias covers `@bifurc/engine/*` **only** → `@bifurc/protocol` and
-  `@bifurc/client` resolve to their built `dist/`, so an un-rebuilt edit to either is **silently
-  untested**; **`npm test` does not build first.** Root `tsc` is `include: ["src/**/*"]` → root
-  `tests/**` unchecked.
-- **P6 is the only milestone.** **No renderer edits P1–P6**; `window.api` byte-identical through P5–P6;
-  `../bifurc-extension`'s 4 commands are **frozen**. **Only 3 shell files may change in P6**: `main.ts`,
-  `preload.ts`, the shell-only handler module.
+- **App runs `packages/*/dist/`; tests run `src/`** → **`npm run build:packages` after ANY package
+  edit.** The vitest alias covers `@bifurc/engine/*` **only**, so `@bifurc/protocol`/`@bifurc/client`
+  resolve to built `dist/` — an un-rebuilt edit is **silently untested**; `npm test` doesn't build.
+- **P6 is the only milestone.** **No renderer edits P1–P6**; `window.api` byte-identical.
 
 ## Phase state
 
-- **P0–P2 done. P3 items 1–6 done** (item 5 open as *UI*, deferred to P7 — renderer edit).
-- **P4 — 8/10.** Open = the **extension release** + item 4's audit **record** (neither is code here).
-  A handler that *resolves* `{ok:false,error}` is an envelope-level **success** (only a **throw** fails).
-- **P5 done 2026-09-18.** `packages/client`, 5 suites / 54 tests. Spec = **`src/surface.ts`** (the
-  **144-key** surface). **`src/preload.ts` is the authority, not `renderer/types/window.ts`** (declares
-  140, wrong both ways). Regressions are caught by `packages/client/tests/surface.test.ts` — it imports
-  the **real** preload under a mocked Electron and diffs `Object.keys` against `SURFACE_KEYS`, so
-  `close()` must stay **non-enumerable**. Mechanics → `bifurc-client-surface` skill.
-- **P6 — step 2, finding 1, and step 3a done.** The seam carries `config:get` over
-  `client → ipcTransport → ipcRenderer.invoke("engine:rpc") → rpcBridge → registry.invoke`; events ride
-  a **second** channel (`EVENT_CHANNEL`, `webContents.send` → `ipcRenderer.on`) because `invoke` is
-  request/response. `TransportKind` gained `"ipc"`. Legacy `registerIpcHandlers()` still runs — deleting
-  it is the **last** act of step 3.
-- **P6 — step 3b-2 DONE (2026-09-18): 21 of 25 moved**, ratchet **25 → 19 → 15 → 10 → 5 → 4**, across
-  `proxy/serverCommands.ts` (6), `store/configCommands.ts` (4), `proxy/webhookCommands.ts` (5),
-  `miscCommands.ts` (5), `runner/runnerCommands.ts` (1). `MOVABLE` is **deleted, not emptied** — an empty
-  array invites the next unimplemented command to be filed there by default. What remains is not a
-  backlog: **NARROWED 1** (`audit.list` — schema omits `filePath`; latent), **BLOCKED 2**
-  (`runner.saveConfig`/`loadConfig` — a *passing* test saves a config `RunnerConfigSchema` rejects, and
-  the ratchet asserts the block itself), **SPLIT 1** (`app.checkUpdate` — P12). Step 3 ends at
-  **89 + 2 + 1 + 1**, not 93. **Three traps:** (1) do **NOT** re-point the shell's legacy `ipcMain.handle`
-  bodies at the registry (`register*Commands` are called *from* `registerIpcHandlers()`, so two suites
-  reach an empty registry → `UNKNOWN_COMMAND` at invocation time); (2) **`require()` inside a handler
-  body** is invisible to `tsc` and to tests but **fatal in the engine's ESM output** — `tsup` emits
-  `.mjs` too, so it throws at call time; use static imports; (3) **"the schema accepts the payload" ≠
-  "it preserves it"** — a plain `z.object()` **strips** unknown keys, so check for truncation before
-  moving anything carrying a big object. **5c, unfixed:** `config.get`, `env.setActive`,
-  `workspace.setActive`, `entity.load`, `entity.setEnabled` are registered **from the shell**, so a
-  containerised engine (P9) answers `UNKNOWN_COMMAND`; the ratchet cannot see it.
-- **P6 — step 3b-1 DONE (2026-09-18): the preload flip.** `src/preload.ts` is no longer a 136-call
-  channel table; it is `{ ...client }` plus **13 overrides**, so **131 of 144 keys** route through the
-  bridge. The table could be deleted outright because **`src/preload.ts` was always the contract, not
-  `renderer/types/window.ts`**, and `@bifurc/client` satisfies it **positional args included** — so the
-  flip is mechanical, not a rewrite. **13 held back, two groups:** 4 with no registry implementation
-  (`checkUpdate`, `listAudit`, `saveRunnerConfig`, `loadRunnerConfig`) and 9 artifact-egress needing two
-  `ClientLocal` hooks the shell lacks (`writeArtifact` / `readArtifactFile`) — routing those would
-  resolve `{ok:false,"cannot write files"}`, worse than the working channel. **Two preconditions that
-  were checked, not assumed:** `config.save` no longer calls `updateTrayMenu()` — the registry emits
-  `settings.changed` and **`src/main.ts:299` subscribes**; and `event.log.entry` arrives as a **batch**
-  while the renderer wants one entry, so `onLogEntry` is the one subscription the client does **not**
-  pass through. **The unit suite is weak evidence for the flip** — it tests handlers, not the preload,
-  whose only coverage is the key count — so **e2e is the real gate**.
-- **P6 — 3b-1 complete: 136 of 144 keys route.** The two `ClientLocal` hooks landed —
-  `client:writeArtifact` in `src/ipc/handlers/clientHandlers.ts` (save dialog + write) and
-  `readArtifactFile` (a pass-through to `dialog:openFile`). **`registerClientHandlers()` is called from
-  `src/main.ts:294`, NOT from `registerIpcHandlers()`** — client channels are independent of the
-  handler groups 3c deletes. **The 8 still held back are 4 unroutable + 4 client-side defects**, and
-  those 4 are the real finding: **"the command is registered" ≠ "the client's method is equivalent."**
-  `exportData` would corrupt the binary `workspace-zip` (`writeArtifact` takes a decoded *string*);
-  `exportRunnerReport` hardcodes `format:"json"` and drops the shell's HTML choice;
-  `preflightImport`/`importData` open their own dialog and may add a second. All three break **after**
-  the engine has done its job correctly — audit before routing, do not assume.
-- **P6 — next: fix those three client-side gaps, then 3c** — delete
-  `registerIpcHandlers()` + `eventBridge.ts`. **3c cannot delete everything**: the 4 unroutable commands
-  must keep a channel, so `registerIpcHandlers()` shrinks rather than disappears until P12 and a
-  protocol change resolve them.
+- **P0–P2 done, P3 items 1–6 done** (item 5 open as *UI* → P7). **P4 8/10** — remaining is the
+  extension release + an audit record, neither code here. A handler *resolving* `{ok:false}` is an
+  envelope **success**; only a **throw** fails. **P5 done** — spec = `src/surface.ts` (144 keys);
+  **`src/preload.ts` is the authority, not `renderer/types/window.ts`**; `close()` non-enumerable.
+- **P6: steps 1–2, finding 1, 3a, 3b-1, 3b-2, 3c + finding 6 done.** 3b-2 implemented 21 of 25
+  missing commands (ratchet 25→4; the 4 left aren't a backlog — `audit.list` NARROWED, the two
+  `runner.*Config` BLOCKED by a *passing* test, `app.checkUpdate` → P12). 3b-1 made the preload
+  `{ ...client }` + overrides → **136 of 144** route. 3c deleted `eventBridge.ts`;
+  `registerIpcHandlers()` can't be deleted (4 unroutable keys need a channel) — it shrinks until P12.
+- **§5c unfixed:** `config.get`, `env.setActive`, `workspace.setActive`, `entity.load`,
+  `entity.setEnabled` register **from the shell**, so a containerised engine answers
+  `UNKNOWN_COMMAND`; the ratchet can't see it.
+- **The last 4 keys need one primitive: the dialog must run BEFORE the command** (`File_Ops_Protocol.md`
+  §3.2). `writeArtifact` bundles "ask where" + "write", forcing the dialog after the render → needs a
+  `pickSavePath` hook. The 2 imports also need `readArtifactFile(path?)`: the renderer round-trips
+  `res.filePath` from preflight into `importData`, but the client returns `import.preflight` verbatim
+  (engine only knew a `blobId` → `undefined`) and `importData` **ignores** `req.filePath` → 2nd dialog.
 
-## Git
+## Traps that cost real time
 
-- **P3–P6 committed** (`68f9cb7`, `4e4f84c`, `2fb78b5`, `8dcaadb`, … through `8471b7b`). `origin/
-  standalone-engine` tracks HEAD. **Verify old trees read-only (`git grep <rev>`) — never check out;
-  the object store has been lost once.**
-- **A push pops a GCM GUI window and dies without it.** Push with
-  `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo GCM_INTERACTIVE=never git push …`, then confirm via
-  `git ls-remote origin standalone-engine`.
+- **Don't re-point the shell's legacy `ipcMain.handle` bodies at the registry** — `register*Commands`
+  run *from* `registerIpcHandlers()`, so two suites reach an empty registry.
+- **`require()` in a handler body** is invisible to tsc and tests but **fatal in the engine's ESM
+  output**; use static imports.
+- **"Schema accepts the payload" ≠ "it preserves it"** — plain `z.object()` **strips** unknown keys.
+- **"The command is registered" ≠ "the client's method is equivalent."** Audit before routing; 3 of
+  the 4 held-back egress keys broke *after* the engine did its job correctly.
+- **Artifacts are bytes.** `writeArtifact` takes **base64**; the channel writes a Buffer. Any UTF-8
+  round-trip corrupts `workspace-zip`.
+- **`blob.read` is paged**: 512 KB cap, `eof` is the only terminator, result is `{data, eof}`. Loop
+  with `offset`. Inline threshold is 1 MB, so almost every real export is a blob.
+- **A fake transport answering every request with `{ok:true}` hides whole branches** — no client test
+  reached either branch of `artifactToFile`. Assert requested `offset`s, not just results.
+- **The unit suite is weak evidence for the preload flip** (it tests handlers, not the preload).
+  **e2e is the real gate** and can't run from the agent shell.
 
-## Env
+## Git / env
 
-- **NEVER `git stash`** (wiped `.git/objects/pack`). **`git fetch` here does NOT persist
-  remote-tracking refs** → never trust `origin/*`; ask with `git ls-remote`.
+- **NEVER `git stash`** (wiped the object store once). **`git fetch` doesn't persist remote-tracking
+  refs** → never trust `origin/*`; use `git ls-remote`. **Verify old trees read-only** (`git grep
+  <rev>`), never check out.
+- **A push pops a GCM GUI window and dies** — `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo
+  GCM_INTERACTIVE=never git push …`, then confirm with `git ls-remote`.
 - **`npx tsc` is not the compiler** → `npm run typecheck`.
-- **`vitest run --project <name> <path>` is BROKEN (Vitest 4.1.5)** — every file dies at the first
-  `describe`. Drop `--project` when filtering by path. **`npm run test:unit` / `test:integration` are
-  fine.** Lesson: a failure uniform across files that share nothing is an *invocation* bug.
-- **NEVER launch Electron from the agent shell** — GPU process can't start, Electron hard-exits (exit 3);
-  a 5-line app fails identically. The **user** runs `npm run dev` / `test:e2e`.
-- **Safe-delete guard refuses past ~50 deletions per turn**, killing `build:packages` and Playwright
-  cleanup. The `env -u …` prefix is unreliable. **`git clean -fdX <path>` is the way through** (git does
-  its own unlink). **A failed `tsup` run leaves the package entry points deleted** — check
-  `dist/index.js`/`.mjs`/`.d.ts` exist afterwards (`dist/` is gitignored, git won't tell you).
-- **Linking a new workspace package needs a manual Windows junction** — `npm install` can't (it runs
-  `build:packages`, which trips the guard) and Git Bash's `ln -s` yields an **empty directory**.
-  `New-Item -ItemType Junction -Path node_modules\@bifurc\<pkg> -Target packages\<pkg>`, then
-  `node -e "require.resolve('@bifurc/<pkg>')"`.
+- **`vitest run --project <name> <path>` is BROKEN (Vitest 4.1.5)** — drop `--project` when filtering.
+  A failure uniform across unrelated files is an *invocation* bug.
+- **NEVER launch Electron from the agent shell** (GPU process fails, exit 3); the **user** runs
+  `npm run dev` / `test:e2e`.
+- **Safe-delete guard refuses past ~50 deletions/turn**, killing `build:packages`; **`git clean -fdX
+  <path>` is the way through.** A failed `tsup` leaves entry points deleted — check `dist/index.js`.
+- **Linking a new workspace package needs a manual Windows junction** (`New-Item -ItemType Junction`),
+  then `node -e "require.resolve('@bifurc/<pkg>')"`.
 - **A suite capturing `ipcMain.handle` needs `register*Commands(registry)` in `beforeAll`**, else
-  `No handler registered` + `ENOENT` reads as an fs bug.
-- **e2e is the renderer's only coverage** (11 specs / 46 tests) and **11 of those 46 cannot fail**.
-  Detail → `bifurc-test-coverage` skill.
+  `ENOENT` reads as an fs bug.
+- **e2e is the renderer's only coverage** (11 specs/46 tests); **11 of 46 cannot fail**.
