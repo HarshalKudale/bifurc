@@ -45,6 +45,10 @@ vi.mock("fs", async (importOriginal) => {
     existsSync: vi.fn(() => true),
     statSync: vi.fn(() => ({ size: 10 })),
     readFileSync: vi.fn(() => Buffer.from("hello")),
+    // Real until now: no handler in this file wrote anything. `client:writeArtifact` does, and a
+    // test must not touch a real disk — the assertion is on the *bytes and path handed to it*, which
+    // a spy records and a real write would hide.
+    writeFileSync: vi.fn(),
   };
 });
 
@@ -63,12 +67,16 @@ vi.mock("electron", () => ({
   },
   dialog: {
     showOpenDialog: vi.fn(() => Promise.resolve({ canceled: true, filePaths: [] })),
+    // Default: the user accepts. Individual tests override it to model a cancel.
+    showSaveDialog: vi.fn(() => Promise.resolve({ canceled: false, filePath: "/tmp/out.json" })),
   },
   shell: { openExternal: vi.fn() },
 }));
 
 import { installEngineCa } from "@/ipc/certLifecycle";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
+import { dialog } from "electron";
+import * as fs from "fs";
 
 function getHandler(channel: string) {
   const h = registeredHandlers.get(channel);
@@ -190,6 +198,59 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
       const result = getHandler("app:completeFirstLaunch")(EVENT);
       expect(result).toEqual({ ok: true });
       expect(currentSettings.hasSeenWelcome).toBe(true);
+    });
+  });
+
+  /**
+   * `client:writeArtifact` — the client half of an engine-produced artifact, and the hook that
+   * unlocked five of the nine artifact-egress methods in `src/preload.ts`.
+   *
+   * The contract it has to honour is `File_Ops_Protocol.md` §4: the engine produces the bytes and the
+   * **user** chooses where they go. So the assertions that matter are that the dialog is pre-filled
+   * from the engine's suggested name, that the bytes and path handed to `fs` are exactly what the
+   * engine produced, and that *cancel* is distinguishable from *failure* — the renderer shows
+   * different UI for "you said no" and "the write broke", and collapsing them would make an
+   * unwritable disk look like a dismissed dialog.
+   */
+  describe("client:writeArtifact handler", () => {
+    const writeArtifact = (content: string, suggestedName: string, mimeType = "application/json") =>
+      getHandler("client:writeArtifact")(EVENT, content, suggestedName, mimeType);
+
+    // Set per test rather than inherited: `vi.clearAllMocks()` clears *calls* but not
+    // *implementations*, so the "user cancels" case below would otherwise leak into every later case
+    // in this describe and make them all fail for the wrong reason.
+    beforeEach(() => {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: "/tmp/out.json" } as never);
+    });
+
+    it("writes the content to the path the user chose, and reports it back", async () => {
+      const result = await writeArtifact('{"a":1}', "capture.json");
+      expect(fs.writeFileSync).toHaveBeenCalledWith("/tmp/out.json", '{"a":1}', "utf-8");
+      expect(result).toEqual({ ok: true, filePath: "/tmp/out.json" });
+    });
+
+    it("pre-fills the picker from the engine's suggestion and filters on its extension", async () => {
+      await writeArtifact("a,b\n", "audit.csv", "text/csv");
+      expect(dialog.showSaveDialog).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          defaultPath: "audit.csv",
+          filters: [{ name: "text/csv", extensions: ["csv"] }],
+        }),
+      );
+    });
+
+    it("reports a cancel rather than an error, and writes nothing", async () => {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: undefined } as never);
+      expect(await writeArtifact("x", "x.txt")).toEqual({ ok: false, canceled: true });
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("turns a failed write into a reported error rather than a rejection", async () => {
+      vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+        throw new Error("EACCES");
+      });
+      expect(await writeArtifact("x", "x.txt")).toEqual({ ok: false, error: "EACCES" });
     });
   });
 });
