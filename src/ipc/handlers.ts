@@ -20,6 +20,7 @@ import { registerImportExportCommands } from "@bifurc/engine/importExport/comman
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
 import { registerServerCommands } from "@bifurc/engine/proxy/serverCommands";
+import { registerConfigCommands } from "@bifurc/engine/store/configCommands";
 import { wireEventBridge } from "@/ipc/eventBridge";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
@@ -50,6 +51,11 @@ export function registerIpcHandlers(): void {
   // re-pointing them at the registry would make them depend on this function having run, and two
   // suites register handler *groups* without it. See `serverCommands.ts`'s header for the full trap.
   registerServerCommands(commandRegistry);
+  // P6 finding 5, step 3b-2 (second slice): `config.save` and the three `workspace.*` lifecycle
+  // commands. Same class of bug as the six above — served only by shell `ipcMain.handle` bodies, so
+  // `registry.invoke()` answered `UNKNOWN_COMMAND`. `config.save` is the more consequential of the
+  // two halves: it is the settings path, and it carries the server restart.
+  registerConfigCommands(commandRegistry);
 
   registerImportExportHandlers();
   registerApplicationHandlers();

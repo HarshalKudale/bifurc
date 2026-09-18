@@ -211,13 +211,83 @@ decision belongs with whoever implements it.
    they match `ClientLocal` exactly — but it does not mention that 25 *routable* commands are
    unimplemented, which is the larger half of the work.
 
-**3b-2 progress.** First slice landed: the six proxy/server-lifecycle commands
-(`server.status` / `server.start` / `server.stop` / `server.restart` / `proxy.status` /
-`services.discover`) now live in `packages/engine/src/proxy/serverCommands.ts`, registered from
-`registerIpcHandlers()`. The ratchet went **25 → 19**. That module is the only registration site for
-all six — the engine's own `transport/auth/scopes.ts` had already assigned them scopes
-(`read` for the three status/discovery commands, `admin` for the three lifecycle ones), which is
-independent evidence they were always engine commands.
+**3b-2 progress.** Two slices landed, **10 of the 25** moved:
+
+- *Slice 1* — the six proxy/server-lifecycle commands (`server.status` / `server.start` /
+  `server.stop` / `server.restart` / `proxy.status` / `services.discover`) in
+  `packages/engine/src/proxy/serverCommands.ts`.
+- *Slice 2* — `config.save` + the three `workspace.*` lifecycle commands in
+  `packages/engine/src/store/configCommands.ts`.
+
+Both modules are the only registration site for their commands. The engine's own
+`transport/auth/scopes.ts` had already assigned the first six scopes (`read` for the three
+status/discovery commands, `admin` for the three lifecycle ones) — independent evidence they were
+always engine commands. The ratchet went **25 → 19 → 15**.
+
+### 5b. The remaining 15 are not one category — audited, not assumed
+
+The first version of the ratchet said every remaining command was "engine work that has not been
+moved yet". **Auditing all 19 against their frozen schemas showed that is false.** `runnerHandlers.ts`
+had already recorded the reason for three of them, and the audit generalised it. The entries split by
+*why* they are unimplemented, because the four reasons need four different responses:
+
+| Category | Count | Meaning | Response |
+| --- | --- | --- | --- |
+| `MOVABLE` | 11 | The schema accepts every payload the handler accepts. | Move it. |
+| `NARROWED` | 1 | The schema accepts a **strict subset**, and `.strict()` makes the difference a `BAD_REQUEST`. | A decision, not a move. |
+| `BLOCKED` | 2 | The schema rejects payloads a **currently passing test** uses. | Cannot move until the frozen protocol changes. |
+| `SPLIT` | 1 | The protocol declares an engine-half contract that **deliberately differs** from the shell implementation. | Not a move at all. |
+
+**`NARROWED` — `audit.list`.** `AuditListParams` has no `filePath` / `fromTs` / `toTs`, but
+`QueryLogOptions`, the type the handler actually takes, does. So a caller passing `filePath` gets
+`BAD_REQUEST` through the registry where the legacy channel answered it. The honest caveat: nothing
+currently passes those — `listAudit` is on `window.api` and no renderer code calls it — so the
+narrowing is **latent, not live**. That is why it is neither `MOVABLE` (moving it silently reduces the
+command's accepted params) nor `BLOCKED` (nothing is actually broken). P9's whole point is *new*
+clients, and a remote client is exactly the caller that would find the missing fields.
+
+**`BLOCKED` — `runner.saveConfig` / `runner.loadConfig`.** Blocked by a **passing test**, which is the
+strongest evidence available: `tests/integration/runnerStorage.integration.test.ts:207` saves
+`{delayMs: 250, stopOnFailure: true, iterations: 3}` and line 210 asserts an exact round-trip — while
+`RunnerConfigSchema` **requires** `requestOrder` and `RunnerLoadConfigResult` *declares* that fixed
+shape as what a load returns. So neither the request nor the response can satisfy the frozen schema.
+The ratchet now asserts this block directly (parsing the real config through the schema must fail), so
+if anyone later widens `RunnerConfigSchema` the test fails and says these two have become movable —
+rather than leaving them filed as "unimplemented" forever.
+
+**`SPLIT` — `app.checkUpdate`.** The disagreement this plan recorded ("shell half" per the local-handlers
+table, `transport` per the client) is **resolved by the protocol's own comment**: `misc.ts` marks it
+SPLIT, with the schema as "the interim engine-half contract" and a note that **P12 moves it fully
+client-side**. Neither side was simply wrong — the GitHub fetch is engine-safe outbound network, while
+`app.getVersion()` and the `process.platform` asset match are client-local. The concrete consequence is
+that `AppCheckUpdateResult` has **no `currentVersion` and no `hasUpdate`** — the two fields the shell
+handler's success branch returns — so the engine half cannot be produced by moving that body. It needs
+the split written.
+
+**The corollary worth carrying forward:** "unimplemented in the registry" is not a synonym for "engine
+work outstanding". Three of the 25 were blocked by the frozen protocol and one was a split, so step 3
+cannot end with all 93 registered — it ends with **89 registered + 2 blocked + 1 narrowed + 1 split**,
+and the ratchet is what keeps that honest.
+
+### 5c. The mirror problem: five engine commands are registered *from the shell*
+
+Found while writing `store/configCommands.ts`, and deliberately **not** fixed there.
+
+`packages/protocol/src/commands/config.ts` declares `config.get`, `env.setActive` and
+`workspace.setActive`; `entity.ts` adds `entity.load` and `entity.setEnabled`. All five are registered
+— but at **module scope in `src/ipc/handlers/coreHandlers.ts`**, i.e. in the *shell*, not in
+`packages/engine`.
+
+That is finding 5 on the other side of the seam. On a containerised engine (P9),
+`createEngine()` + a transport would have **none** of the five registered, so `config.get` would answer
+`UNKNOWN_COMMAND` — the same failure, reached from the opposite direction. They are invisible to the
+current ratchet because it only asks whether a command is registered *in this process*, and in this
+process the shell has registered them.
+
+Not fixed here because it is a different change with a different blast radius: P6 is about commands the
+registry cannot serve at all, and moving an already-registered command between packages can break
+callers that currently work. It needs its own pass — and the ratchet will not catch it, so it should be
+written down rather than rediscovered.
 
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
@@ -438,9 +508,9 @@ Delete the flag in the next release, once the seam has survived real usage.
 
    - **3b-1** — route the **68** registered commands. Mechanical, and safe to do while
      `registerIpcHandlers()` still runs.
-   - **3b-2** — implement the **25** missing commands in the engine. **In progress: 6 done, 19 left**
-     (see "3b-2 progress" above). Do **not** re-point the shell bodies at the registry while doing it —
-     see §5a.
+   - **3b-2** — implement the **25** missing commands in the engine. **In progress: 10 done, 15 left**
+     — and only 11 of those 15 are actually movable (§5b). Do **not** re-point the shell bodies at the
+     registry while doing it — see §5a.
    - **then** delete `registerIpcHandlers()` and `eventBridge.ts`. Deleting them earlier would break
      each of the 25 on **both** paths at once, and the surface test would still pass because the key
      stays exposed.
