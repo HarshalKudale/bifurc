@@ -58,7 +58,7 @@ export interface ProtocolClient {
     body: string,
   ): Promise<{ status: number; headers: Record<string, string>; body: string; durationMs: number }>;
   // privileged
-  tlsGenerate(): Promise<{ ok: boolean; certPath?: string; keyPath?: string; error?: string }>;
+  tlsGenerate(): Promise<{ ok: boolean; certPath?: string; keyPath?: string; fingerprint?: string; error?: string }>;
 }
 
 let nextId = 0;

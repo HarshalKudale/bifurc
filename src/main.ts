@@ -5,7 +5,7 @@ import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 import { loadConfig } from "@bifurc/engine/store/config";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import { startServer } from "@bifurc/engine/proxy/server";
-import { startCompanionServer } from "@bifurc/engine/companion/companionServer";
+import { startCompanionServer } from "@bifurc/engine/transport/legacyCompanion";
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@bifurc/engine/eventBus";
 import { setDataRoot, dataDir } from "@bifurc/engine/store/paths";

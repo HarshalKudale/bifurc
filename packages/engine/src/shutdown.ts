@@ -16,7 +16,7 @@
  */
 import { processSpawner } from "./applications/processSpawner";
 import { stopAllAutoSync } from "./sync/autoSync";
-import { stopCompanionServer } from "./companion/companionServer";
+import { stopCompanionServer } from "./transport/legacyCompanion";
 import { stopServer } from "./proxy/server";
 
 /**

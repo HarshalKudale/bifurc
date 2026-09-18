@@ -12,7 +12,7 @@ import { getGit } from "@bifurc/engine/store/gitStore";
 import { reloadConfig } from "@bifurc/engine/proxy/server";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
 import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { commandRegistry, mayAffectUnnamedEntities, type CommandContext } from "@bifurc/engine/commands/registry";
 import { toProtocolKind, toEngineKind } from "@bifurc/engine/commands/entityKindMap";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 
@@ -80,7 +80,12 @@ export interface CrudFactoryOpts<T> {
 // function's body is byte-for-byte what used to live directly inside the corresponding
 // `ipcMain.handle` callback; nothing here changes behaviour, only where the code lives.
 
-async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, entity: Omit<T, "id" | "createdAt">): Promise<T> {
+/**
+ * `mayResolveConflicts` is **required** rather than defaulted, so a new caller has to decide instead of
+ * inheriting the privileged path. It is `mayAffectUnnamedEntities(ctx)` at the one call site below —
+ * see that predicate for why conflict resolution is not a plain `write`.
+ */
+async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, entity: Omit<T, "id" | "createdAt">, mayResolveConflicts: boolean): Promise<T> {
   if (opts.validate) opts.validate(entity as Partial<T>);
 
   const cfg = loadConfig() as any;
@@ -94,8 +99,28 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
 
   cfg[opts.configKey] = cfg[opts.configKey] ?? [];
 
-  if (opts.onAddConflict) {
+  // Skipped entirely for a caller that may not touch entities it did not name — the created entity is
+  // still stored, so this narrows the *side effect* and not the command. Only `mocks` and `rules` set
+  // `onAddConflict`, so for every other kind the flag changes nothing.
+  if (opts.onAddConflict && mayResolveConflicts) {
+    // `onAddConflict` disables siblings by mutating `cfg`, but **`saveConfig()` cannot persist that**:
+    // `writeEntity()` strips `enabled` on the way out, because enabled state lives exclusively in
+    // `enabled.json` (see `workspaceFs.ts`). So before this diff existed the mutation was silently
+    // lost — the sibling stayed enabled on disk and would have switched itself back on the moment the
+    // new entity was deleted. `entity.setEnabled`'s equivalent loop has always written through
+    // `syncEnabledSet`, which is why the two sites disagreed about the same rule. This is that same
+    // write, derived from a diff so the per-kind `onAddConflict` lambdas stay as simple as they are.
+    const enabledBefore = new Map<string, unknown>(
+      (cfg[opts.configKey] ?? []).map((e: any) => [e.id, e.enabled]),
+    );
     opts.onAddConflict(cfg, newEntity);
+    if (opts.hasEnabledState) {
+      for (const e of (cfg[opts.configKey] ?? []) as any[]) {
+        if (enabledBefore.has(e.id) && enabledBefore.get(e.id) !== e.enabled) {
+          syncEnabledSet(wsId, opts.kind, e.id, !!e.enabled);
+        }
+      }
+    }
   }
 
   if (opts.ipcPrefix === "rule" || opts.ipcPrefix === "mock") {
@@ -267,7 +292,7 @@ function listSimpleEntitiesCore<T>(wsId: string, kind: string): T[] {
 // neither `entityCrudRegistry` nor `simpleEntityKinds` throws a clear error rather than
 // silently no-oping — today every `EntityKind` value is registered in one or the other.
 
-commandRegistry.register("entity.create", async ({ kind, entity, workspaceId }: EntityCreateParams) => {
+commandRegistry.register("entity.create", async ({ kind, entity, workspaceId }: EntityCreateParams, ctx: CommandContext) => {
   const engineKind = toEngineKind(kind);
   const mergedEntity = { ...entity, workspaceId: workspaceId ?? (entity as any).workspaceId };
   const opts = entityCrudRegistry.get(engineKind);
@@ -283,7 +308,7 @@ commandRegistry.register("entity.create", async ({ kind, entity, workspaceId }: 
       const gate = gateCreate(wsId, opts.gateKind);
       if (!gate.allowed) return { error: "limit_reached", ...gate };
     }
-    const created = await createEntityCore(opts, mergedEntity as any);
+    const created = await createEntityCore(opts, mergedEntity as any, mayAffectUnnamedEntities(ctx));
     return { id: created.id, entity: created as Record<string, unknown> };
   }
   if (simpleEntityKinds.has(engineKind)) {

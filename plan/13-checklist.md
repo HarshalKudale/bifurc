@@ -165,7 +165,11 @@ optional and blocks nothing.
       `registerClientHandlers()`, unit-tested (`tests/ipc/clientHandlers.test.ts`, 21/21).
       Remaining: the two SPLIT channels (`app:checkUpdate` → P12, `capture:shareJson`) and
       `main.ts`'s tray/window/menu code, which cannot move until `packages/engine` exists.
-- [x] Move `tls:installCA` out of the engine — done, into `clientHandlers.ts`
+- [x] Move `tls:installCA` out of the engine — done, into `clientHandlers.ts`. **P3 item 5 finished
+      the job**: the channel was in the right place but the *implementation* was still
+      `certManager.installCA()` shelling out from inside the engine. It is now
+      `certLifecycle.installEngineCa()` → `certTrust.installCA()`, and the engine reports only an
+      identity for its CA.
 - [ ] Replace the git `dialog.showErrorBox` with `preflight()` — **not done, deliberately**.
       `preflight()` exists and runs in `main.ts`, but the pre-existing git-required block still
       makes its own direct `checkGitInstalled()` call and still shows the dialog, preserving
@@ -224,10 +228,13 @@ optional and blocks nothing.
       and wired it to `prepare` (which `npm ci` runs) plus `build:main` and `typecheck`, so
       installs are now self-sufficient for both packages.
 - [ ] **Split the dependencies** — **done for the engine, pending for the shell.** `packages/engine`
-      declares its own runtime deps (`@bifurc/protocol`, `mkcert`, `simple-git`, `ws`) and its own
+      declares its own runtime deps (`@bifurc/protocol`, `archiver`, `js-yaml`, `mkcert`,
+      `simple-git`, `unzipper`, `ws`) and its own
       build devDeps (`tsup`, `typescript`, `@types/node`), and has **no** Electron or renderer
       dependency. Layer 2 added `mkcert` (`proxy/tlsCert.ts`), layer 3 added `ws`
-      (`companion/companionServer.ts`). Everything else the engine requires is a Node builtin
+      (`companion/companionServer.ts`), layer 5 added `archiver`, `unzipper` and `js-yaml` when
+      `src/ipc/importExport/**` moved into `packages/engine/src/importExport/**`. Everything else the
+      engine requires is a Node builtin
       (`child_process`, `crypto`, `events`, `fs`, `http`, `https`, `net`, `os`, `path`, `tls`, `vm`,
       `zlib`).
       **`@bifurc/protocol` was missing until 2026-09-16** — `commands/registry.ts` imported it but the
@@ -235,10 +242,12 @@ optional and blocks nothing.
       `node_modules`. That is invisible in this repo and fatal to a standalone install, which is
       exactly what P9's image is. Found by measuring the engine's `dist` requires against its
       manifest; fixed, with the lockfile regenerated.
-      **`js-yaml`, `archiver` and `unzipper` are NOT engine dependencies** — earlier revisions of
-      this checklist listed them as such, which was wrong. They are used only by
-      `src/ipc/importExport/**` (openapi import, zip export/import), which is still shell-side; they
-      move when P3 moves that module. Declaring them on the engine now would be incorrect.
+      **`js-yaml`, `archiver` and `unzipper` were shell-side until layer 5.** Earlier revisions of
+      this checklist correctly listed them as *not* engine dependencies — they were used only by
+      `src/ipc/importExport/**` (openapi import, zip export/import), which was then still in the
+      shell. That module has now moved, so they are engine dependencies as of 2026-09-16. They stay
+      declared in the root `package.json` as well: removing them there changes what electron-builder
+      walks, and packaging does not yet follow the package split (`plan/12`).
 - [ ] Restructure to `packages/*` + `apps/*` workspaces — **partially**: `packages/protocol` and
       `packages/engine` are both real linked npm workspaces built with their own `tsup` pipelines.
       `apps/*` does not exist yet, and the Electron shell is still the repo root — that switch is
@@ -267,7 +276,7 @@ test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desk
 
 ---
 
-## Section 4 — P3 File ops (1.5–2.5 weeks) 🟡 IN PROGRESS 2026-09-16
+## Section 4 — P3 File ops (1.5–2.5 weeks) 🟡 IN PROGRESS 2026-09-17
 
 - [x] Read `../File_Ops_Protocol.md` in full
 - [x] **Specify the blob primitives in `@bifurc/protocol`** — `blob.put` / `blob.stat` / `blob.read`
@@ -306,37 +315,124 @@ test. The 11 e2e specs remain unverified (cannot run in this sandbox — no desk
       (`registerBlobCommands`). A function, not an import side effect: `createEngine()` registers
       **no** commands by design, and the consumer registers what it is willing to serve. The shell's
       call site lands with items 3–4.
-- [ ] Convert `environments-json` exporter **and** importer end-to-end (prove the pattern)
-- [ ] Bulk-convert the remaining 30 mechanical files
-- [ ] `workspace-zip` exporter (archiver → staged file → blob)
-- [ ] `workspace-zip` importer (blob → `unzipper.Open.file()`)
-- [ ] Rewire 5 egress channels (dialog-first ordering)
-- [ ] Rewire 4 ingress channels (upload once, reference twice)
-- [ ] Fix `environments-dotenv.ts:55` name derivation → explicit `filename`
-- [ ] Grep for any remaining `filePath.split` / `path.basename(filePath)`
-- [ ] Cert: `tls.generate` returns a fingerprint
-- [ ] Cert: delete `installCA` from the engine
-- [ ] Cert: `removeCert` becomes two-sided
-- [ ] Cert: fingerprint drift detection
-- [ ] Cert: Firefox warning in the UI
-- [ ] Remove all path leaks from protocol types + `renderer/types/window.ts`
-- [ ] Update `ImportExportModal.tsx` to carry `blobId` not `filePath`
+- [x] **Move `src/ipc/importExport/` into the engine** — 38 files to
+      `packages/engine/src/importExport/{exporters,importers,formats}` plus `registry.ts` /
+      `types.ts`; the `electron`-importing adapter stays behind as `src/ipc/importExportHandlers.ts`.
+      Brings `archiver`, `unzipper` and `js-yaml` across as engine dependencies.
+- [x] Convert `environments-json` exporter **and** importer end-to-end (prove the pattern) — 2026-09-17
+- [x] Bulk-convert the remaining 30 mechanical files — 2026-09-17. `scripts/p3-convert-importexport.py`
+      asserts an exact `(old, new, count)` pair per file and refuses to run if any `fs.` reference
+      survives; re-running it is a no-op. 32 files total (16 formats × 2 directions).
+- [x] `workspace-zip` exporter (archiver → staged file → blob) — 2026-09-17
+- [x] `workspace-zip` importer (blob → `unzipper.Open.file()`) — 2026-09-17
+- [x] Fix `environments-dotenv.ts:55` name derivation → explicit `filename` — 2026-09-17, plus the
+      `|| "Imported"` fallback for a file named exactly `.env`
+- [x] Grep for any remaining `filePath.split` / `path.basename(filePath)` — 2026-09-17. The plan's
+      grep is **incomplete**: it does not match `path.extname`, which is what
+      `importers/requests-openapi.ts` used, and that one is worse (a staged blob has no extension, so
+      every YAML spec would have taken the JSON branch).
+- [x] Rewire the `importExport:export` egress channel (dialog-first ordering) — 2026-09-17
+- [x] Rewire the `importExport:preflight` / `importExport:import` ingress pair (upload once,
+      reference twice) — 2026-09-17
+- [x] Rewire the other 4 egress channels (`tls:exportCert`, `runner:exportReport`,
+      `capture:shareJson`, `audit:export`) — 2026-09-17. Engine half in
+      `packages/engine/src/fileOps/commands.ts`; client half in `src/ipc/fileOpsClient.ts` (the
+      shared `call` / `writeArtifact` / `uploadLocalFile` / `pullBlob` / `releaseQuietly` plumbing,
+      extracted when the *second* channel needed the blob-chunk loop). The inline-vs-blob decision
+      lives once, in `packages/engine/src/blob/publish.ts`. The HTML report renderer moved to
+      `packages/engine/src/runner/reportHtml.ts`. **`audit:export` became dialog-first**, which
+      also fixed a real cost: it used to run `queryLog({limit: 0})` — the whole `git log` — before
+      asking the user where to put the result, so cancelling paid for the full query.
+- [x] Rewire the other 3 ingress channels (`tls:importCert`, `tls:importKey`, `grpc:addProto`) —
+      2026-09-17. The first two are converted; **`grpc:addProto` needs no change** and the row is
+      closed on that finding, not skipped: `ProtoExplorer.tsx:147–152` already reads its file
+      through `window.api.openFileDialog()` (which returns `{base64, name}` — content, never a
+      path) and sends content. `soap:addWsdl` is the same, and is not even a file picker — the
+      WSDL comes from `soapFetchWsdl(url)`. Both already satisfy §5 by a different route, so
+      `blob.put` would add two round-trips and a staging store for no boundary gain.
+- [x] Remove the remaining path leaks from protocol types (`tls:*`, `runner:exportReport`,
+      `capture:shareJson`) — 2026-09-17. All five egress results are now `ArtifactResult`, and both
+      TLS ingress params take a `blobId`. `tls:generate`'s `certPath`/`keyPath` stay until item 5's
+      fingerprint model replaces them. Three categories are now distinguished in `plan/04` item 6:
+      an engine path over the wire (fixed), the client's own chosen path echoed to the renderer
+      (not a leak), and an engine path the shell synthesises for the renderer (real, deferred to
+      P7 by non-negotiable #3).
+      **One extra leak found and fixed:** `tls.importCert` read `blobContentPath(blobId)` directly,
+      and that helper validates the id's *shape* but never checks existence — so a swept blob
+      produced a raw `ENOENT: … open 'I:\…\blobs\blob_…\content'`, an absolute engine path in a
+      protocol result. Now goes through `statBlob()` first, yielding a typed `blob-not-found` with
+      a path-free message.
+- [x] Cert: `tls.generate` returns a fingerprint — `identifyCert()` parses the DER with
+      `crypto.X509Certificate` and reports `sha256:<64 hex>` plus the SHA-1 thumbprint; `tls.certStatus`
+      reports the same value. `certPath`/`keyPath` are gone from both results, and the shell
+      synthesises them for the renderer (category 3, **P7**).
+- [x] Cert: delete `installCA` from the engine — deleted from `proxy/certManager.ts` along with
+      `InstallResult`. The engine no longer shells out to anything; the install moved to
+      `src/ipc/certTrust.ts`, and the three lifecycle commands moved to
+      `packages/engine/src/proxy/certCommands.ts`.
+- [x] Cert: `removeCert` becomes two-sided — the engine returns `engineRemoved`; the shell composes
+      `clientUntrusted` and `clientUntrustNote`, and either half may succeed alone. **Showing it is P7.**
+- [x] Cert: fingerprint drift detection — `AppSettings.tlsTrustedCa` (fingerprint + SHA-1 thumbprint +
+      PEM + subject), `summariseTrust()` → `none | trusted | stale`, and a stale entry is un-trusted
+      before the new one is installed. **Rendering the warning is P7.**
+- [ ] Cert: Firefox warning in the UI — **detection done** (`certTrust.detectFirefox()`, per-platform
+      roots, an unlaunched Firefox counted as present) and `firefoxDetected` is on both
+      `tls:installCA` and `tls:certStatus` results. The note itself is a renderer change: **P7**.
+- [ ] Update `ImportExportModal.tsx` to carry `blobId` not `filePath` — **deferred to P7**: the
+      renderer must stay byte-identical through P6, and the shell bridges `filePath` → `blobId`
+      in `pendingUploads`, so the wire contract is blob-shaped without touching the renderer.
 
 **Gate:** round-trip green for all 17 formats; no `dialog.*` in the engine; no `filePath` in the protocol.
+→ **All three met for every channel that crosses the engine/client file boundary as of
+2026-09-17.** `history.list` / `history.diff` still take a `filePath`, correctly — it is a
+workspace-relative path the client learned from a previous `history.list` result, never a path on
+the user's machine.
 
 ### P3 progress notes
 
-**Blob store and sweep are done and independently verified** (`tests/blob/{store,sweep,commands}.test.ts`,
-88 tests, real temp data roots, real files). The store is deliberately **not yet reachable from the
-shell**: `registerBlobCommands()` exists and is tested, but nothing calls it, because the shell's
-`importExport:*` layer is what items 3–4 replace. That is the intended order — `plan/04`'s "How to
-start" is explicit that the blob store lands first, before any exporter is touched.
+**Blob store, sweep and the four `blob.*` commands are done and independently verified**
+(`tests/blob/{store,sweep,commands}.test.ts`, real temp data roots, real files). `registerBlobCommands()`
+is now **reachable from the shell** — `src/ipc/handlers.ts` calls it alongside
+`registerImportExportCommands()`, so the blob layer has a real consumer rather than only a test.
 
-**Not yet done in item 1: moving `src/ipc/importExport/` into the engine.** The blob store has no
-dependency on it, and the move is item 2's first step, so it is deliberately deferred rather than
-half-done. `plan/04`'s "Preconditions" still lists it as outstanding, correctly.
+**Item 2 is complete: all 34 files take and return content.** `packages/engine/src/importExport/types.ts`
+defines the interface, `registry.ts` wires it, and `filePath` is gone from every signature. The 32
+mechanical files were converted by script; `workspace-zip` (both directions) keeps a path-based
+signature behind separate `PathExporterFn` / `PathImporterFn` registry slots, because `archiver` pipes
+to a `WriteStream` and `unzipper.Open.file()` rejects a buffer. Keeping those in their own slots rather
+than behind a legacy adapter makes "the importer interface takes content" true everywhere else and
+makes the `workspace-zip`-last ordering enforceable.
 
-**Two things found while building this, both recorded rather than fixed:**
+**Three production bugs were found and fixed doing it** — all three invisible to the old suite, and
+all three recorded in `TESTING.md` §7:
+
+1. **`workspace-zip` export threw on every call.** `import archiver from "archiver"` + `archiver("zip", …)`
+   is the v5–v7 API; `archiver` 8 is pure ESM with no default export, so the call was
+   `undefined(...)`. `@types/archiver` was pinned at **7**, describing the old API, so `tsc` was
+   satisfied. Fixed as `import { ZipArchive } from "archiver"` + `new ZipArchive({ zlib: { level: 6 } })`
+   **and** `@types/archiver` `^7.0.0` → `^8.0.0` — the two halves must move together, or the compiler
+   keeps endorsing a call shape the runtime rejects.
+2. **A YAML OpenAPI spec was previewed with a fabricated item count, and a malformed file was offered
+   as importable.** `requests-openapi.ts` had two parsers: `run()` used `loadSpec()`, `preflight()`
+   used `JSON.parse` with a `Math.floor(lines / 3)` fallback. `loadSpec()` was `async` (it used
+   `await import("js-yaml")`) and `preflight` is synchronous on `ImporterFn`, which is how they
+   drifted. Now one synchronous `loadSpec()` serves both.
+3. **`environments-dotenv` named the environment `""` for a file called exactly `.env`** — the
+   `|| "Imported"` fallback was in the plan's snippet but not in the code.
+
+**One protocol defect fixed:** `ImportCommitParams.collisionStrategy` was frozen as
+`["skip", "overwrite", "rename"]` while every real call site uses `["keep", "override", "new"]`, so
+`import.commit` would have rejected every real import. Corrected and recorded in
+`plan/protocol-changes.md`.
+
+**Item 7 (renderer) is deferred to P7.** `plan/README.md`'s non-negotiable #3 forbids renderer edits
+through P6, and `window.api` must stay byte-identical — that is the regression signal for the whole
+extraction. The renderer therefore still sends and expects `filePath`; `src/ipc/importExportHandlers.ts`
+bridges it to a `blobId` in a `pendingUploads` map, so the **wire** is blob-shaped while the renderer
+is untouched. This resolves the contradiction between `plan/04` item 7 and non-negotiable #3 in favour
+of the non-negotiable.
+
+**Two things recorded rather than fixed:**
 
 1. **The `import` condition of `@bifurc/engine`'s `exports` map is unloadable by Node.** `tsup`
    emits extensionless relative specifiers in the ESM output (`dist/blob/sweep.mjs` does
@@ -351,6 +447,77 @@ half-done. `plan/04`'s "Preconditions" still lists it as outstanding, correctly.
    `%LOCALAPPDATA%\Bifurc` and blobs in the flag's directory. Harmless for Docker (Linux), which is
    the deployment the blob volume exists for; needs the same product decision already outstanding
    before P8/P9.
+
+**Test-side note.** `tests/integration/importExportHarness.ts` is new: it holds the two client-side
+shims (`exportToFile`, `preflightFile`/`importFile`/`sourceFromFile`) that the two format-level suites
+use to read and write plain files, so those suites keep testing **codecs** while
+`tests/integration/importExportBlob.integration.test.ts` (45 tests) tests the **transport** through the
+real command layer. One pre-existing test was rewritten rather than deleted: "reports an error for a
+missing file rather than throwing" described a scenario that is no longer expressible, because the
+importer no longer sees paths — it now asserts the failure surfaces at the *client's* read, and the
+engine-side twin (a `blobId` that does not exist) lives in the blob suite.
+
+**Items 3–4 are now complete: all five egress and all three ingress channels are converted.** The
+six channels that are not import/export live in `packages/engine/src/fileOps/commands.ts`
+(`registerFileOpsCommands`), and the client half is `src/ipc/fileOpsClient.ts`. Three structural
+decisions are worth recording because each removed a class of duplication rather than a single copy:
+
+- **`packages/engine/src/blob/publish.ts` holds the inline-vs-blob decision, once.** All five egress
+  channels return the same `ArtifactResult`, so all five must decide the same way. Below
+  `BLOB_INLINE_THRESHOLD_BYTES` the artifact never touches the store; above it, it is staged and the
+  client pulls it with `blob.read`. `sha256` is computed on **both** branches so a client never has
+  to branch on which shape it received to know whether a digest exists.
+- **`src/ipc/fileOpsClient.ts` holds the client plumbing, once.** `call()`, `writeArtifact()`,
+  `uploadLocalFile()`, `pullBlob()`, `releaseQuietly()`, `mimeFor()`. Extracted when the *second*
+  channel needed the blob-chunk loop — the point at which the duplication stopped being
+  hypothetical. Five hand-written copies would have been five chances to drop the
+  `chunk.length === 0` guard.
+- **`packages/engine/src/runner/reportHtml.ts`** takes the HTML report renderer, because rendering a
+  report is producing a *generated artifact* and therefore belongs on the engine side of the
+  boundary. The dialog and the `writeFileSync` stayed in the shell. It is typed against the
+  protocol's `RunReport` rather than `any`, and `completedAt` is optional there, so the duration
+  falls back to `startedAt` (0.00s) instead of rendering `NaN`.
+
+**A fourth latent data-loss bug was found by this pass**, and it is the same class as the
+`collisionStrategy` defect: `RunReport` in `@bifurc/protocol` was typed from the **HTML renderer's
+field usage** rather than from the renderer's real `CollectionRunReport`. `requestId`, `url`,
+`testLogs`, `preScriptError`, `postScriptError` and `TestResultEntry.durationMs` were all missing.
+`z.object()` **strips unknown keys**, so routing a real report through the schema silently truncated
+the **JSON** export — and because the HTML renderer touches only fields the schema happened to have,
+the truncation was invisible to the one consumer that existed. Widened, and asserted field by field.
+
+**Three behaviour changes were made deliberately, not incidentally**, and each is a decision a
+reviewer should be able to disagree with:
+
+1. `audit:export` is now **dialog-first**, so cancelling no longer pays for a `queryLog({limit: 0})`
+   over the workspace's whole `git log`. The cost of the ordering change is that the status message
+   now precedes the dialog.
+2. `tls:exportCert` is the one channel that is deliberately **not** dialog-first: it asks
+   `tls.certStatus` before showing anything, preserving the pre-P3 `fs.existsSync` check. Making a
+   user dismiss a save dialog to be told "no CA generated yet" is worse than one extra round-trip
+   for a 2 KB file.
+3. `tls.importCert` / `tls.importKey` **can now return an `error` string** where they previously
+   returned a bare `{ok: false}`. The renderer ignores both shapes identically, so this is additive.
+
+**The three suites that drive the real shell handlers had to be taught the new split.**
+`runnerStorage`, `capture` and `auditLog` capture `ipcMain.handle` registrations and call them
+directly, which is the right way to test a thin client — but the client now delegates to the engine,
+so each `beforeAll` must register the engine half the way `src/ipc/handlers.ts` does. This is a
+*fixture* change, not a contract change: the renderer-facing shapes are unchanged, and
+`runner:exportReport` / `capture:shareJson` still return `{ok: false}` on cancel and
+`{ok: true, filePath}` on success. The failure mode when it is missed is instructive and worth
+remembering — the handler returns `{ok:false, error: 'No handler registered for command …'}` and the
+file-writing assertions then fail with `ENOENT` on a file that was never written, which reads like a
+filesystem bug rather than a registration one.
+
+**Recorded rather than fixed: `tls.importCert` used to leak an engine path on a missing blob.**
+`blobContentPath()` validates the id's *shape* but never checks that the blob exists, so reading it
+directly turned "the user left the dialog open past `BLOB_TTL_MS`" into a raw
+`ENOENT: no such file or directory, open 'I:\…\blobs\blob_…\content'` — an absolute engine-side path
+in a protocol result, from a channel whose entire purpose is that no path crosses the boundary.
+Fixed by reading through `statBlob()` first, which yields a typed `blob-not-found` with a path-free
+message. This is the kind of leak the item-6 grep cannot find, because it is a *runtime* string
+rather than a type.
 
 
 
@@ -489,6 +656,28 @@ half-done. `plan/04`'s "Preconditions" still lists it as outstanding, correctly.
 - [ ] Structured JSON logs on stdout
 - [ ] Multi-arch per the P0 decision
 - [ ] Document the full CA workflow including Firefox
+
+#### P9/P12 — the certificate trust store, unverifiable from Windows
+
+> **Recorded, not skipped.** P3 work item 5 built the client-side trust store
+> (`src/ipc/certTrust.ts`) on a Windows development machine. Windows is the one platform whose
+> behaviour could be **measured** — and measuring it changed the design twice (§5d of `plan/04`). The
+> other two are implemented from documentation and asserted only as **command shapes**
+> (`tests/ipc/certTrust.test.ts`). These three rows are what remains, and each needs a real machine.
+
+- [ ] **Linux: does `trust anchor <cert>` install without elevation?** This is the difference between
+      a clean one-click Linux install and a `pkexec` prompt, and `File_Ops_Protocol.md` §6.2 asks for
+      it explicitly. `installPlan()` prefers it and falls through to `pkexec` and then to written
+      instructions; the **ordering** is tested, the **elevation** is not.
+- [ ] **Linux: does `trust anchor --remove <cert>` actually remove, and is there a probe?**
+      `probeTrust()` returns `null` on Linux — it cannot answer — so `uninstallCA()` reports
+      `verified: undefined` rather than a `false` that would claim a check nobody performed. Windows
+      got a real probe (`certutil -store` exits 17 when the certificate is absent); Linux needs an
+      equivalent or the un-trust stays unverified forever.
+- [ ] **macOS: the whole path, both directions.** `security add-trusted-cert -d -r trustRoot -k
+      <loginKeychain>` to install, and `security delete-certificate -Z <sha1> -t` to remove — where
+      the question is specifically whether `-t` clears the **trust settings** and not only the
+      keychain entry. Neither command has been run on a Mac.
 
 ---
 

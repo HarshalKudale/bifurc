@@ -11,11 +11,12 @@
  * The engine deliberately does **not** invent a data directory. `opts.dataDir` is required, and
  * `store/paths.ts` throws `DataRootNotInitialisedError` rather than falling back to the cwd — a
  * silent fallback would write the user's workspaces somewhere surprising. The Electron shell passes
- * `app.getPath("userData")`.
+ * Electron's per-user `userData` directory.
  *
  * ## Provisional surface (removed at P6)
  *
- * During P2–P5 the shell's own registration layer (`src/ipc/**`, 54 files) deep-imports
+ * During P2–P5 the shell's own registration layer (`src/ipc/**`, 17 files — it was 54 before P3
+ * moved `src/ipc/importExport/**` into this package) deep-imports
  * `@bifurc/engine/store/config` and friends directly, and so does `src/main.ts`. Those consumers are
  * replaced wholesale in P6 by the RPC client, at which point this barrel drops to the public API
  * alone. The namespaces below exist so that interim deep-import surface is explicit and obviously
@@ -34,12 +35,13 @@
 import { setDataRoot, dataDir, isDataRootSet } from "./store/paths";
 import { loadSettings, type AppSettings } from "./store/appSettings";
 import { startServer, isRunning, getPort, getServerError } from "./proxy/server";
-import { startCompanionServer, getCompanionPort, isCompanionRunning } from "./companion/companionServer";
+import { startCompanionServer, getCompanionPort, isCompanionRunning } from "./transport/legacyCompanion";
 import { bus } from "./eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
 import { shutdownEngine } from "./shutdown";
 import { startBlobSweeper } from "./blob/sweep";
 import { commandRegistry, type CommandRegistry } from "./commands/registry";
+import { EventLog } from "./transport/eventLog";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -50,7 +52,7 @@ export interface EngineOptions {
    * Absolute path to the data root. Required, and the engine never invents one — `store/paths.ts`
    * throws `DataRootNotInitialisedError` rather than falling back to the cwd, because a silent
    * fallback would write the user's workspaces somewhere surprising. The Electron shell passes
-   * `app.getPath("userData")`; a CLI passes `--data-dir`.
+   * Electron's per-user `userData` directory; a CLI passes `--data-dir`.
    *
    * ⚠️ **On Windows this is not authoritative, and that is a known defect.** `workspaceFs.dataRoot()`
    * and `appSettings.settingsPath()` check `%LOCALAPPDATA%` **before** consulting the data root, so
@@ -116,6 +118,20 @@ export interface Engine {
   readonly registry: CommandRegistry;
   /** The engine's event bus. */
   readonly bus: typeof bus;
+  /**
+   * The engine's **event log** — one `seq` authority and one bounded ring buffer for the whole
+   * process, created here rather than per transport (P4 work item 3).
+   *
+   * The scope is the point. `plan/05`'s own `hello` sketch presents a `lastSeq` with no session id to
+   * disambiguate it, so the number is only meaningful if it belongs to the engine: a reconnect is a
+   * *new session*, and a per-session counter would give the same number two different meanings across
+   * one. So this is created once, handed to every transport `createEngine()`'s caller builds, and
+   * closed by `stop()` — after which no transport may use it.
+   *
+   * Retention is **lazy**: nothing is retained, and no bus listener is attached, until something
+   * subscribes to an event name. An engine that never uses events pays nothing for this.
+   */
+  readonly log: EventLog;
 }
 
 /**
@@ -156,6 +172,17 @@ export function createEngine(opts: EngineOptions): Engine {
    * process to stay alive.
    */
   let stopBlobSweeper: (() => void) | null = null;
+
+  /**
+   * P4 work item 3 — the event log, one per engine instance.
+   *
+   * Created eagerly rather than on first use because it is free until something subscribes (retention
+   * is lazy), and because a lazily-created shared object is a race: two transports asking for it at
+   * once would each get their own, which is exactly the split-brain the engine-scoped counter exists
+   * to prevent. Created **before** `start()` so a transport built from this engine can subscribe even
+   * if the proxy never comes up.
+   */
+  const log = new EventLog({ bus });
 
   async function doStart(): Promise<EngineStatus> {
     // Must come first: every store module resolves through the data root.
@@ -248,14 +275,84 @@ export function createEngine(opts: EngineOptions): Engine {
       // per-engine-instance and its lifetime is this object's, not the process's.
       stopBlobSweeper?.();
       stopBlobSweeper = null;
+      // Same reasoning as the sweeper: the log is per-instance, so it is closed here rather than in
+      // the memoised shutdown. Closing it detaches the retention listeners, which is what stops the
+      // engine numbering events after it has been told to stop.
+      log.close();
       await shutdownEngine();
     },
 
     status,
     registry: commandRegistry,
     bus,
+    log,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P4 — the transport layer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Deliberately above the provisional divider: the transport is the engine's **permanent** client
+ * surface, not an interim deep-import shim. `Transport` is what P5's typed client, P7's web UI, P8's
+ * CLI and P9's Docker image all speak, so it must not be filed under "removed at P6".
+ *
+ * `createInProcessTransport(registry)` composes the two things `createEngine()` already returns,
+ * which is why the factory takes a registry rather than reaching for the `commandRegistry` singleton:
+ * a transport that hard-coded the singleton could not be pointed at a test's own registry, and the
+ * conformance suite needs exactly that.
+ *
+ * `createWsServer` / `createWsTransport` are the same contract over a socket. The server binds
+ * **loopback by default and refuses a non-loopback bind without both an explicit opt-in and TLS**
+ * (work item 5), so exporting it does not export a remotely-reachable surface — see `transport/ws.ts`.
+ *
+ * `createSocketServer` / `createSocketTransport` / `defaultSocketPath` are the same contract over a
+ * unix domain socket or a Windows named pipe — D3's decided transport for the desktop shell (P6). Its
+ * access control is the socket file's `0600` mode, asserted before `createSocketServer()` resolves, so
+ * it too exports no surface another local user can reach. See `transport/socket.ts`.
+ *
+ * See `packages/engine/src/transport/types.ts` for the two decisions that matter — that `request()`
+ * resolves with a handler's value *uninspected* (so `{ok:false}` stays data, keeping `window.api`
+ * byte-identical), and that bus event names are bridged to wire names in one validated place.
+ */
+export { createInProcessTransport, type InProcessTransportOptions } from "./transport/inProcess";
+export {
+  DEFAULT_MAX_AGE_MS,
+  DEFAULT_MAX_EVENTS,
+  EventLog,
+  type EventLogOptions,
+  type LoggedEvent,
+  type ReplayOutcome,
+} from "./transport/eventLog";
+export type { EngineEvent, Transport, TransportKind } from "./transport/types";
+export {
+  BUS_EVENTS_NOT_ON_THE_WIRE,
+  BUS_NAME_BY_WIRE_NAME,
+  WIRE_NAME_BY_BUS_NAME,
+  assertBridgeIsTotal,
+  wireNameFor,
+} from "./transport/types";
+export { createAuthenticatedTransport } from "./transport/auth/authenticated";
+export {
+  CLOSE_CODE_POLICY,
+  createWsServer,
+  createWsTransport,
+  DEFAULT_WS_HOST,
+  type WsServer,
+  type WsServerAuthOptions,
+  type WsServerOptions,
+  type WsTransportOptions,
+} from "./transport/ws";
+export {
+  createSocketServer,
+  createSocketTransport,
+  defaultSocketPath,
+  type SocketServer,
+  type SocketServerAuthOptions,
+  type SocketServerOptions,
+  type SocketTransportOptions,
+} from "./transport/socket";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Provisional surface — removed at P6 (see the header)
@@ -274,9 +371,11 @@ export * as eventBus from "./eventBus";
 export * as proxy from "./proxy/server";
 export * as sync from "./sync/syncManager";
 export * as applications from "./applications/processSpawner";
-export * as companion from "./companion/companionServer";
+export * as companion from "./transport/legacyCompanion";
 export * as commands from "./commands/registry";
 export * as startup from "./startup";
 export * as shutdown from "./shutdown";
 export * as blob from "./blob/store";
 export * as blobSweep from "./blob/sweep";
+export * as importExport from "./importExport/registry";
+export * as importExportCommands from "./importExport/commands";

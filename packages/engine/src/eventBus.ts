@@ -31,7 +31,43 @@ export interface EngineEvents {
   "settings.changed": Record<string, never>;
 }
 
-class EngineEventBus extends EventEmitter {
+/**
+ * The runtime counterpart of `EngineEvents`' keys.
+ *
+ * `EngineEvents` is a type, so it vanishes at runtime and nothing can enumerate it — which means the
+ * P4 transport's bus-name ↔ wire-name bridge (`transport/types.ts`) has nothing to validate itself
+ * against. Without this list, `assertBridgeIsTotal()` would be checking a protocol-derived map
+ * against an empty set and would pass no matter how wrong the mapping was.
+ *
+ * Typed as `readonly (keyof EngineEvents)[]`, so adding a member to `EngineEvents` and forgetting to
+ * list it here is a compile error, and adding it here but not to the interface is one too. Keep the
+ * two in step; `transport/types.ts` fails at import time if a bus event here has no wire name and is
+ * not in its explicit `BUS_EVENTS_NOT_ON_THE_WIRE` list.
+ */
+export const ENGINE_EVENT_NAMES: readonly (keyof EngineEvents)[] = [
+  "sync.status",
+  "sync.entityStatus",
+  "log.entry",
+  "log.chunk",
+  "server.error",
+  "entity.changed",
+  "webhook.payload",
+  "process.output",
+  "process.statusChange",
+  "settings.changed",
+];
+
+/**
+ * Exported (rather than left module-private) so that a **test** can create an isolated bus.
+ *
+ * The `bus` singleton below is process-wide by design, and Vitest shares a module registry across
+ * every test file in a worker. That makes the singleton the wrong thing for the P4 conformance suite
+ * to assert listener accounting against: a subscription leaked by one test is still attached when the
+ * next one runs, so `listenerCount()` drifts and the failure looks like a transport bug in whichever
+ * test happens to run second. `createInProcessTransport()` takes an optional `bus` for exactly this
+ * reason, and this export is what makes that option usable.
+ */
+export class EngineEventBus extends EventEmitter {
   emitTyped<K extends keyof EngineEvents>(event: K, payload: EngineEvents[K]): void {
     this.emit(event, payload);
   }

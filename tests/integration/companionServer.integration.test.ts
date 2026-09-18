@@ -3,11 +3,17 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * `packages/engine/src/companion/companionServer.ts` was at 0%. It is the *only* code path by which a
+ * `packages/engine/src/transport/legacyCompanion.ts` (moved there from
+ * `src/companion/companionServer.ts` by P4 work item 1) was at 0%. It is the *only* code path by which a
  * lower-trust caller (a browser extension, i.e. anything running in the user's browser)
- * can write into the user's workspace, and `ALLOWED_ACTIONS` is the single gate that
+ * can write into the user's workspace, and `V1_COMPANION_ACTIONS` is the single gate that
  * keeps that surface additive-only. The allowlist itself was pinned by a unit test, but
  * nothing proved the server *enforces* it.
+ *
+ * That additive-only property is why this file's contract matters beyond the extension: it is
+ * the reason the four v1 actions could not simply be aliased onto `entity.create`/`folder.add`
+ * when the server moved — the registry's mock create can *disable an existing mock*, which is a
+ * mutation of existing state. See `legacyCompanion.ts`'s header for the four verified differences.
  *
  * This suite starts the real `WebSocketServer`, connects real `ws` clients, and asserts
  * against the real files on disk. Nothing is mocked except Electron itself (a browser
@@ -30,7 +36,7 @@ import {
   restartCompanionServer,
   getCompanionPort,
   isCompanionRunning,
-} from "@bifurc/engine/companion/companionServer";
+} from "@bifurc/engine/transport/legacyCompanion";
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
