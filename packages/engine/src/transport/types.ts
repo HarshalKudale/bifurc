@@ -46,8 +46,24 @@ import {
   type RpcError,
 } from "@bifurc/protocol";
 
-/** The four transports `plan/05` work item 2 requires. Only `in-process` exists so far. */
-export type TransportKind = "in-process" | "stdio" | "ws" | "socket";
+/**
+ * The transport kinds.
+ *
+ * `in-process`, `stdio`, `ws` and `socket` are `plan/05` work item 2's four, all of which now exist.
+ * `"ipc"` is P6's fifth: the Electron shell's `ipcMain` → `ipcRenderer` hop.
+ *
+ * It is a kind of its own rather than a flavour of `"in-process"`, and the distinction is not
+ * cosmetic. The shell bridge really does cross a process boundary — the renderer is a separate
+ * process behind `contextIsolation: true` — so it shares `in-process`'s *dispatch* but not its
+ * *trust model*: it needs the same error projection a wire transport needs (Electron flattens a
+ * rejection into a plain `Error` and drops `.code`), and it cannot deliver events at all. Labelling
+ * it `"in-process"` would put anything that keys off the kind onto the wrong branch — which is
+ * exactly the sort of thing that costs someone an afternoon.
+ *
+ * Adding the member is safe: nothing switches on the union. `session.ts` merely stores it and
+ * `auth.test.ts` asserts it is forwarded from the inner transport.
+ */
+export type TransportKind = "in-process" | "stdio" | "ws" | "socket" | "ipc";
 
 /**
  * An event as it crosses the transport, matching `@bifurc/protocol`'s `EventEnvelope`.

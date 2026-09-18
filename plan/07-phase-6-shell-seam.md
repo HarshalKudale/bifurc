@@ -343,12 +343,96 @@ Delete the flag in the next release, once the seam has survived real usage.
 
 ---
 
+## Step 2 — what landed (2026-09-18)
+
+**The seam carries traffic.** `config:get` — and only `config:get` — now goes
+`client → ipcTransport → ipcRenderer.invoke("engine:rpc") → rpcBridge → registry.invoke("config.get")`,
+while the legacy `config:get` channel stays registered and serving. The other 143 keys are untouched.
+
+| File | Role |
+|---|---|
+| `packages/engine/src/transport/types.ts` | `TransportKind` gains `"ipc"` |
+| `src/ipc/rpcContract.ts` | the channel name + the discriminated frame; imported by **both** halves |
+| `src/ipc/rpcBridge.ts` | main half — `createInProcessTransport(commandRegistry, { bus })` behind `ipcMain.handle` |
+| `src/ipcTransport.ts` | preload half — `kind: "ipc"`, unwraps the result, rebuilds `EngineError` |
+| `src/ipc/handlers.ts` | calls `registerRpcBridge()` last |
+| `src/preload.ts` | builds the client; `getConfig` routed |
+| `package.json` | the `@bifurc/client` dependency (see below) |
+
+### Two things the plan's own snippet gets wrong
+
+1. **`createClient(createIpcTransport())` does not compile.** `CreateClientOptions.local` is
+   **required** — `client/src/local.ts` is explicit that there is no sensible default for a native
+   picker or an OS trust store. And the snippet's `{...client, ...local}` is redundant: the client
+   *already* delegates all 13 local members to `local` (`client/src/index.ts:481–493`). The correct
+   shape is `createClient(createIpcTransport(), { local: { …13 } })`, spread once.
+
+2. **`@bifurc/client` was not linked, so the preload could not have loaded.** `node_modules/@bifurc/`
+   held symlinks for `engine` and `protocol` only, and the root `package.json` did not depend on the
+   client. `build:main` is `tsc && tsc-alias` — **no bundling** — so the import survives as a bare
+   `require("@bifurc/client")` in `dist/preload.js`, and an unresolvable require there means
+   `exposeInMainWorld` never runs: `window.api` is `undefined` and *the whole renderer dies*. The
+   dependency was added and the link created.
+
+   **`npm install` cannot be used to create the link.** The root `prepare` script runs
+   `build:packages`, whose `tsup` cleanup deletes the previous output and trips this environment's
+   safe-delete guard (`SAFE_DELETE_BULK_CONFIRM_REQUIRED`). Create the link directly — a Windows
+   junction, because Git Bash's `ln -s` silently produces an **empty directory** instead.
+
+### A new finding: `@bifurc/client` has no vitest alias
+
+`vitest.config.ts` aliases `@bifurc/engine/*` to source and nothing else, so a **bare** import of
+`@bifurc/client` resolves through `node_modules` to `packages/client/dist/`. The client's own suites
+import `../src/…` relatively and therefore do test source; but `src/preload.ts`'s import — and so
+`packages/client/tests/surface.test.ts`'s view of it — reads the **built** package. This is the same
+silent-staleness class `MEMORY.md` records for `@bifurc/protocol`: **rebuild the client after editing
+its source, or the preload is tested against a stale build.** Deliberately not changed here — adding an
+alias is a separate decision with its own blast radius.
+
+### What step 2 deliberately does not do
+
+**No events.** `ipcTransport.subscribe()` throws `UNSUPPORTED`, which the transport contract requires
+rather than accepting a subscription it can never fire. That is safe only because the client's hub is
+**lazy**: nothing calls `subscribe()` until a listener registers, and the preload's seven `on*` methods
+still use the legacy channels. `tests/ipc/ipcTransport.test.ts` pins that assumption — if the hub ever
+becomes eager, it fails at client-construction time rather than in the field. Finding 1 (`log.*` never
+reaches the bus) and the push channel are step 3's problem, not this one's.
+
+### How step 2 was verified — and the limit of that verification
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | clean — protocol, engine, client |
+| root `tsc --noEmit` (covers `src/**`) | clean |
+| the two new suites (`rpcBridge`, `ipcTransport`) | **18 passed** |
+| full suite | **2,395 passed** / 40 skipped / **1 failed** — the documented `soap.execute` flake, unchanged |
+| `dist/preload.js` requires | resolve; the compiled bridge graph loads and `kind === "ipc"` |
+| **the exposed surface** | **144 keys**, both-direction diff against `SURFACE_KEYS` clean |
+
+That last row is stronger than it looks. `packages/client/tests/surface.test.ts` imports the **real**
+`src/preload.ts` under a mocked Electron and captures the object handed to
+`contextBridge.exposeInMainWorld`. So *"the renderer's surface is unchanged"* is asserted against the
+actual object rather than against a type — which is the only version of that claim worth having, given
+`renderer/types/window.ts` is known to under-declare.
+
+**What none of this proves: that Electron's real IPC round trip works.** `ipcRenderer.invoke` is mocked
+on one side and `ipcMain.handle` on the other, so the wire *between* them is the one thing untested
+here. That is the e2e suite's job, and it has to be run from a normal terminal (see Preconditions).
+
+---
+
 ## Acceptance criteria
 
-- [ ] **35 unit suites pass.** Same count as baseline.
-- [ ] **11 e2e specs pass, unmodified.** Same count as baseline.
+- [ ] **Unit suites pass.** Baseline after step 2: **99 files / 2,436 tests** — 2,395 passed, 40
+      skipped, and the one documented `soap.execute` flake. (Before step 2: 97 / 2,418. The "35 unit
+      suites" this criterion used to say predated P2–P5 entirely.)
+- [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
+      normal terminal, see Preconditions.
 - [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
-- [ ] Key-diff script reports `window.api` identical to baseline.
+- [ ] `window.api` is identical to baseline. The instrument is
+      **`packages/client/tests/surface.test.ts`**, which imports the real `src/preload.ts` under a
+      mocked Electron and diffs the exposed keys against `SURFACE_KEYS` in both directions. It is a
+      test, not the standalone script this criterion used to name.
 - [ ] App launches, engine spawns, handshake completes, UI is functional.
 - [ ] Engine crash → automatic restart with backoff; UI shows an error after 3 failures.
 - [ ] Shell quit → engine exits; **no orphaned process** (`ps`/Task Manager verified).

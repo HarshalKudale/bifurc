@@ -103,6 +103,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
+    "@bifurc/client": "*",
     "@bifurc/engine": "*",
     "@bifurc/protocol": "*",
     "@codemirror/autocomplete": "^6.20.2",

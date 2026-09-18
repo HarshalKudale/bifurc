@@ -1,8 +1,72 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+import { createClient } from "@bifurc/client";
+
+import { createIpcTransport } from "./ipcTransport";
+
+/**
+ * P6 work item 1, step 2 — the shell's first RPC client.
+ *
+ * `plan/07`'s step 2 routes **one** method (`config:get`) through the RPC path and leaves the other
+ * 143 on the legacy `ipcRenderer.invoke` channels. That is why this file still looks like a
+ * hand-written channel table below: it *is* one, and it is meant to be, until step 3.
+ *
+ * The point of building the whole client for one method is to prove the seam carries real traffic.
+ * A bridge that is only exercised by a test is not evidence that the shell can be moved onto it —
+ * and the failure modes here (a `require` that does not resolve, an error code that does not survive
+ * the hop, a subscription attempted too early) are all invisible to unit tests and all fatal in the
+ * app. One method is enough to expose every one of them, while keeping the blast radius to a single
+ * caller if the bridge is wrong.
+ *
+ * ## Why `local` is built here rather than being another `ipcRenderer` table
+ *
+ * `createClient` requires it: `ClientLocal` is the 13 keys that act on **the machine the client runs
+ * on** — native pickers, the OS trust store, theme, zoom, launch state. They are not RPC and must
+ * never be: `tlsInstallCA` mutates the *user's* trust store, so routing it would let an engine
+ * install a root certificate on the client. The client takes them as a dependency rather than
+ * guessing, which is also what makes it impossible to route one by accident.
+ *
+ * Each of the 13 is the same channel this file already used, so nothing changes behaviourally: the
+ * implementations below are moved verbatim from the `api` object further down. They are duplicated
+ * for the length of step 2 — the client needs them, and the exposed surface still needs them — and
+ * step 3 collapses the two.
+ *
+ * `platform` is the exception: it never crossed IPC at all. It is `process.platform`, read in the
+ * preload, because the renderer cannot ask the main process a question whose answer is a constant.
+ */
+const client = createClient(createIpcTransport(), {
+  local: {
+    openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+    setTitleBarOverlay: (color: string, symbolColor: string) =>
+      ipcRenderer.invoke("shell:setTitleBarOverlay", color, symbolColor),
+    getTheme: () => ipcRenderer.invoke("theme:get"),
+    setTheme: (themeId: string) => ipcRenderer.invoke("theme:set", themeId),
+    tlsInstallCA: () => ipcRenderer.invoke("tls:installCA"),
+    openFileDialog: () => ipcRenderer.invoke("dialog:openFile"),
+    pickFilePath: (title: string, filters?: unknown) => ipcRenderer.invoke("dialog:pickFilePath", title, filters),
+    pickFolderPath: (title: string) => ipcRenderer.invoke("dialog:pickFolderPath", title),
+    platform: process.platform,
+    isFirstLaunch: () => ipcRenderer.invoke("app:isFirstLaunch"),
+    completeFirstLaunch: () => ipcRenderer.invoke("app:completeFirstLaunch"),
+    getZoomLevel: () => ipcRenderer.invoke("zoom:get"),
+    setZoomLevel: (level: number) => ipcRenderer.invoke("zoom:set", level),
+  },
+});
+
 contextBridge.exposeInMainWorld("api", {
   checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
-  getConfig: () => ipcRenderer.invoke("config:get"),
+  // ── P6 step 2: the single method on the RPC path ──────────────────────────
+  //
+  // Was `ipcRenderer.invoke("config:get")`. It now goes
+  // `client → ipcTransport → ipcRenderer.invoke("engine:rpc") → rpcBridge → registry.invoke("config.get")`,
+  // and the legacy `config:get` channel stays registered and serving — the two paths coexist on
+  // purpose so the phase can be reverted without unpicking anything.
+  //
+  // The observable contract is unchanged: `config.get` is already routed through the registry on the
+  // main side (`coreHandlers.ts:116`), so both paths reach the same handler and resolve the same
+  // value. What differs is only what happens on *failure* — the RPC path rebuilds the `EngineError`
+  // instead of losing its code to Electron's flattened rejection.
+  getConfig: () => client.getConfig(),
   loadEntity: (wsId: string, kind: string, id: string) => ipcRenderer.invoke("entity:load", wsId, kind, id),
   setEntityEnabled: (wsId: string, kind: string, id: string, enabled: boolean) => ipcRenderer.invoke("entity:setEnabled", wsId, kind, id, enabled),
   saveConfig: (config: unknown) => ipcRenderer.invoke("config:save", config),
