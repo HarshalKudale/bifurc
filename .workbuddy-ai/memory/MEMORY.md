@@ -51,9 +51,28 @@
   not a replacement** (`eventBridge.ts` reads the bus for six events but `logEmitter` directly for these
   three), so nothing double-delivers until step 3 deletes the legacy path. **One blocking finding still
   stands for step 3** (detail → `plan/07`): **`ipcMain.handle`→`ipcRenderer.invoke` drops `err.code`**,
-  which `withRetry` branches on — hence the discriminated `{ok:true,value}|{ok:false,error}`. **Step 3 =
-  route all methods, delete `registerIpcHandlers()`, and build the push channel** (Electron IPC is
-  request/response, so `seq`-carrying events need their own channel + replay/reconnect).
+  which `withRetry` branches on — hence the discriminated `{ok:true,value}|{ok:false,error}`.
+- **P6 — step 3a done 2026-09-18 (`38dc914`).** Events have a real path:
+  `ipcTransport.subscribe()` attaches **one** `ipcRenderer.on("engine:event")` and dispatches by
+  `envelope.event`; main keeps one engine subscription per wire name and broadcasts to every window.
+  `EVENT_CHANNEL` is a **second** channel because `ipcMain.handle`/`invoke` is request/response — an event
+  has no request to answer (push is `webContents.send` → `ipcRenderer.on`); the frame is a plain
+  `EventEnvelope`. Five decisions: **one channel not one per event** (the name travels inside the
+  envelope); **main counts *renderers*, not callbacks** (a `Set` keyed by name would let one window
+  closing unsubscribe another); **broadcast to all + let the preload filter**; **control frames before
+  commands** (`subscribe`/`unsubscribe` are `RESERVED_ACTIONS`, and the two strings are **deliberately
+  duplicated** in `rpcContract.ts` — a value import would put a second copy of the wire-name table in the
+  renderer bundle — guarded by a test against `RESERVED_ACTIONS`); and **a name batch is all-or-nothing,
+  validated against `BUS_NAME_BY_WIRE_NAME`, NOT by a dry run** — `EventLog`'s retention listeners attach
+  on first subscribe and outlive their subscribers, so a dry run would permanently retain a name the batch
+  then rejected; without the pre-flight a bad name leaves a live subscription with **no handle to release
+  it**. **One documented limitation:** `subscribe()` cannot throw synchronously across async
+  `ipcRenderer.invoke`, so the local name check is what honours the contract; a dead bridge already fails
+  every `request()` loudly. **Two test traps:** the preload suite's Electron mock had **only `invoke`**
+  (`ipcRenderer.on is not a function` reads as a transport bug), and the bridge alone does **not** wire the
+  log events — `registerIpcHandlers()` does. **Step 3b is next:** route all methods, then delete
+  `registerIpcHandlers()` + `eventBridge.ts` together (deleting the handlers takes all nine legacy event
+  channels with them).
 
 ## Git
 
@@ -62,12 +81,12 @@
   **`plan/07`'s own rollback step 2** — had nothing to revert to; that, not tidiness, was the risk.
   **Split rule: a file belongs to the phase whose commit would not otherwise build** — not the phase it is
   *about*. `shutdown.ts`'s companion re-import is P4 (it follows P4's move), not P6.
-- **`origin/standalone-engine` is at `26eda19`** and in sync with HEAD — the P3–P6 stretch **plus**
-  `1268bfd` (step 2), `1027fc9` (memory) and `26eda19` (finding 1). **The push is a clean fast-forward;
-  verify each tree read-only (`git grep <rev>`) — do not check out old commits, the object store has
-  already been lost once.** A push may be SIGTERM'd at the GCM window: retry with
-  `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git push …` so it fails fast with a real message instead of
-  hanging, and confirm with `git ls-remote origin standalone-engine`.
+- **P6's commits are `1268bfd` (step 2) → `1027fc9` (memory) → `26eda19` (finding 1) → `feefcff`
+  (memory) → `38dc914` (step 3a).** `origin/standalone-engine` is kept in sync with HEAD.
+  **The push is a clean fast-forward; verify each tree read-only (`git grep <rev>`) — do not check out
+  old commits, the object store has already been lost once.** A push may be SIGTERM'd at the GCM window:
+  retry with `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git push …` so it fails fast with a real message
+  instead of hanging, and confirm with `git ls-remote origin standalone-engine`.
 
 ## Env
 
