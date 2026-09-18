@@ -4,8 +4,10 @@
  * Copies `proxy/logEmitter.ts`'s pattern (a plain `EventEmitter`, no Electron) rather than
  * inventing a new one — see `plan/03-phase-2-engine-extraction.md` work item 1. This is the
  * single place every engine module emits domain events; nothing in this file imports
- * `electron`. The Electron shell (today: `src/ipc/eventBridge.ts`, pre-P6) subscribes to this
- * bus and forwards to `webContents`. P4's transport subscribes to it too, for remote clients.
+ * `electron`. The Electron shell subscribes to this bus and forwards to `webContents` — as of P6
+ * step 3c that is `src/ipc/rpcBridge.ts`, which broadcasts every subscribed event over
+ * `EVENT_CHANNEL`; the `eventBridge.ts` that used to do it was deleted. P4's transport subscribes to
+ * it too, for remote clients.
  *
  * Once `packages/engine` exists as its own package (the rest of P2's work item 8), this file
  * moves there verbatim — it already has zero Electron coupling.
@@ -90,8 +92,8 @@ export const bus = new EngineEventBus();
  * Shared replacement for the THREE near-identical local `broadcastEntityStatus()` functions
  * that used to live in `coreHandlers.ts`, `entityCrudFactory.ts`, and `syncHandlers.ts` (plus a
  * fourth, slightly different copy in `companionServer.ts`) — each reaching into the shell's open
- * windows directly. One implementation, emitted on the bus; the shell's `eventBridge.ts` (pre-P6)
- * is the only remaining place that fans an event out to windows.
+ * windows directly. One implementation, emitted on the bus; the shell's `rpcBridge.ts` is now the
+ * only place that fans an event out to windows (step 3c deleted the `eventBridge.ts` that used to).
  */
 export function emitEntityStatus(wsId: string): void {
   getWorkspaceSyncStatus(wsId)
@@ -114,8 +116,8 @@ const wiredLogBuses = new WeakSet<EngineEventBus>();
  * `EngineEvents` declares `log.entry`, `log.chunk` and `server.error`; `ENGINE_EVENT_NAMES` lists all
  * three; `BUS_NAME_BY_WIRE_NAME` maps them, `assertBridgeIsTotal()` asserts them at import time, and
  * the P4 conformance suite has cases for them. **Nothing ever emitted them.** They travelled only
- * through the separate `logEmitter` EventEmitter, and the shell's `eventBridge.ts` — the file P6
- * deletes — subscribed to `logEmitter` **directly**.
+ * through the separate `logEmitter` EventEmitter, and the shell's `eventBridge.ts` — the file step 3c
+ * deleted — subscribed to `logEmitter` **directly**.
  *
  * So the moment the renderer's subscriptions move onto the transport, `onLogEntry`, `onLogChunk` and
  * `onServerError` have nothing to deliver: the capture panel, the request-log panel and the

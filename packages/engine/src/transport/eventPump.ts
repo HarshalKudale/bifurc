@@ -58,8 +58,9 @@
  * The cost, stated rather than hidden: `window.api`'s `onLogEntry` is per-entry and stays that way
  * (it is a frozen P1 surface and the shell's bridge is what expands a batch into per-entry
  * broadcasts), so the expansion that (a) would have done inside the transport happens one layer
- * higher, in the shell. `src/ipc/eventBridge.ts` is where that will land when P5/P6 migrate the shell
- * onto a transport; today the shell is still in-process and unaffected.
+ * higher, in the client. `@bifurc/client`'s `onLogEntry` is where it landed: it is the one
+ * subscription that is not a pass-through, unwrapping `{entries}` and calling the callback once per
+ * entry — which is exactly what the shell's `eventBridge.ts` did before step 3c deleted it.
  *
  * ## Only `log.entry` coalesces, and that is the whole policy table
  *
