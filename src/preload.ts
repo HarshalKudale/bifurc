@@ -15,10 +15,10 @@ import { createIpcTransport } from "./ipcTransport";
  * contract exactly, positional arguments included. So `{ ...client }` *is* the surface, and the
  * surface test in `packages/client/tests/surface.test.ts` asserts it against the real object.
  *
- * ## Why thirteen keys are still `ipcRenderer.invoke`, and why that is not sloppiness
+ * ## Why eight keys are still `ipcRenderer.invoke`, and why that is not sloppiness
  *
- * Step 3b-1 routes everything that can be routed. The remaining thirteen cannot, for two different
- * reasons, and the distinction matters because they need two different fixes:
+ * Step 3b-1 routes everything that can safely be routed. The remaining eight cannot, for two
+ * different reasons, and the distinction matters because they need two different fixes:
  *
  * **Four have no registry implementation at all** (`plan/07` §5b). `checkUpdate`, `listAudit`,
  * `saveRunnerConfig`, `loadRunnerConfig` are pinned in the ratchet as `SPLIT` / `NARROWED` /
@@ -27,14 +27,14 @@ import { createIpcTransport } from "./ipcTransport";
  * this is *not* a backlog: `app.checkUpdate` is resolved by P12, and the two `runner.*Config` are
  * blocked by a **passing test** that saves a config the frozen schema rejects.
  *
- * **Nine are artifact egress** and need two `ClientLocal` hooks this shell does not provide yet
- * (`writeArtifact` / `readArtifactFile`). The engine side is ready — `capture.shareJson`,
- * `audit.export`, `runner.exportReport`, `tls.exportCert` and the two `tls.import*` are all
- * registered commands — but the *client* half of an egress is a save dialog and a file write, and
- * that has to live in the shell. Wiring those two hooks is a separate, self-contained change; doing
- * it here would mix a new channel into the flip and make the flip's own failures unreadable.
+ * **Four are artifact egress that would regress if routed.** The two `ClientLocal` hooks they need
+ * (`writeArtifact` / `readArtifactFile`) now exist — see `clientHandlers.ts` — and they unlocked five
+ * of this group (`exportAudit`, `tlsExportCert`, `shareCaptureJson`, `tlsImportCert`, `tlsImportKey`).
+ * The remaining four each have a specific defect in the *client's* egress path, listed where they are
+ * overridden below: `exportData` would corrupt the binary `workspace-zip`, `exportRunnerReport` would
+ * drop the HTML choice, and the two imports would open a second dialog.
  *
- * So the count is **131 routed, 13 held back**, and every held-back key says why.
+ * So the count is **136 routed, 8 held back**, and every held-back key says why.
  *
  * ## The two things that made routing safe, both checked rather than assumed
  *
@@ -73,6 +73,17 @@ const client = createClient(createIpcTransport(), {
     completeFirstLaunch: () => ipcRenderer.invoke("app:completeFirstLaunch"),
     getZoomLevel: () => ipcRenderer.invoke("zoom:get"),
     setZoomLevel: (level: number) => ipcRenderer.invoke("zoom:set", level),
+
+    // ── The two filesystem hooks that unlock the artifact-egress methods ────
+    //
+    // `writeArtifact` is a save dialog and a write — the client half of every egress. The engine
+    // produces the bytes; only the user chooses where they go, and only this process can put them
+    // there. `readArtifactFile` is the mirror for imports, and `dialog:openFile` already returns
+    // exactly `LocalFileContent` (or `{error}` over its 1 MB limit, or `null` on cancel), so it is a
+    // pass-through rather than a new channel.
+    writeArtifact: (content: string, suggestedName: string, mimeType: string) =>
+      ipcRenderer.invoke("client:writeArtifact", content, suggestedName, mimeType),
+    readArtifactFile: () => ipcRenderer.invoke("dialog:openFile"),
   },
 });
 
@@ -90,21 +101,26 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("runner:saveConfig", wsId, folderId, config),
   loadRunnerConfig: (wsId: string, folderId: string) => ipcRenderer.invoke("runner:loadConfig", wsId, folderId),
 
-  // ── Nine artifact egress methods — need `writeArtifact` / `readArtifactFile` ──
+  // ── Four artifact-egress methods held back, each for a specific reason ────
   //
-  // The engine half of every one of these is a registered command already; what is missing is the
-  // client half (a save dialog and a file write, or an open dialog and a read). Until those two
-  // `ClientLocal` hooks exist in this shell, the client's egress methods would resolve
-  // `{ ok: false, error: "this client cannot write files" }` — which is a worse failure than the
-  // working legacy channel, because it looks like the export failed rather than the bridge.
+  // The two `ClientLocal` hooks above now exist, so most of this group routes. These four do not,
+  // and **each would be a user-visible regression** rather than a missing feature — which is why they
+  // are pinned here with their reason instead of being quietly routed:
+  //
+  // - `exportData` — `workspace-zip` is a **binary** format, and `ClientLocal.writeArtifact` takes a
+  //   decoded *string*. The client base64-decodes into a utf-8 string before handing it over, so a
+  //   ZIP routed through the bridge would be corrupted on write. This is a real gap in the client's
+  //   egress contract, not a shell problem: `writeArtifact` needs a binary variant (or to take
+  //   base64) before `exportData` can move.
+  // - `exportRunnerReport` — the client hardcodes `format: "json"`, but the shell's dialog offers
+  //   **HTML or JSON** (`runnerHandlers.ts` derives the format from the chosen extension). Routing it
+  //   would silently remove HTML export.
+  // - `preflightImport` / `importData` — the client opens its **own** file dialog and ignores any path
+  //   in `req`. That is right for a blob-based client, but it is a second dialog unless the renderer
+  //   never supplied a path in the first place. Unverified, so it stays on the channel that is known
+  //   to work; confirm against the e2e import spec before flipping.
   exportData: (req: unknown) => ipcRenderer.invoke("importExport:export", req),
   preflightImport: (req: unknown) => ipcRenderer.invoke("importExport:preflight", req),
   importData: (req: unknown) => ipcRenderer.invoke("importExport:import", req),
-  exportAudit: (format: "json" | "csv") => ipcRenderer.invoke("audit:export", format),
-  tlsImportCert: () => ipcRenderer.invoke("tls:importCert"),
-  tlsImportKey: () => ipcRenderer.invoke("tls:importKey"),
-  tlsExportCert: () => ipcRenderer.invoke("tls:exportCert"),
   exportRunnerReport: (report: unknown) => ipcRenderer.invoke("runner:exportReport", report),
-  shareCaptureJson: (entries: unknown[], suggestedName?: string) =>
-    ipcRenderer.invoke("capture:shareJson", entries, suggestedName),
 });
