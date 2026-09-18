@@ -39,10 +39,21 @@
   **Two traps:** `CreateClientOptions.local` is **required** (`plan/07`'s snippet omits it, and its
   `{...client, ...local}` is redundant — the client already delegates all 13), and **`@bifurc/client` was
   not linked**, so the preload's bare `require` would have left `window.api` `undefined` and killed the
-  whole renderer. Two blocking findings still stand for step 3 (detail → `plan/07`):
-  **`log.entry`/`log.chunk`/`server.error` never reach the bus** (only `logEmitter`), so a transport-only
-  P6 silently kills the capture + log panels; and **`ipcMain.handle`→`ipcRenderer.invoke` drops
-  `err.code`**, which `withRetry` branches on — hence the discriminated `{ok:true,value}|{ok:false,error}`.
+  whole renderer. **Finding 1 is FIXED** (`26eda19`): `wireLogEventsToBus()` in
+  `packages/engine/src/eventBus.ts`, called from **both** `createEngine()`'s `doStart()` (**before**
+  `startServer()`, or a bind failure's `server.error` is the one event that gets away) and
+  `registerIpcHandlers()`; idempotent per bus via a **`WeakSet`** (two callers expected; a boolean would
+  wrongly suppress a *second* bus), detach clears the flag. **The name mapping is hand-written and cannot
+  be derived** — `logEmitter` says `request`/`chunk`/`server-error`, the bus says
+  `log.entry`/`log.chunk`/`server.error`, and unlike the bus↔wire bridge there is no uniform prefix to
+  strip, so `assertBridgeIsTotal()` cannot check it. **`log.entry` carries ONE entry, not
+  `{entries:[…]}`** — batching is a *wire* concern owned by `eventPump.ts`'s `toClientEvent`. **Additive,
+  not a replacement** (`eventBridge.ts` reads the bus for six events but `logEmitter` directly for these
+  three), so nothing double-delivers until step 3 deletes the legacy path. **One blocking finding still
+  stands for step 3** (detail → `plan/07`): **`ipcMain.handle`→`ipcRenderer.invoke` drops `err.code`**,
+  which `withRetry` branches on — hence the discriminated `{ok:true,value}|{ok:false,error}`. **Step 3 =
+  route all methods, delete `registerIpcHandlers()`, and build the push channel** (Electron IPC is
+  request/response, so `seq`-carrying events need their own channel + replay/reconnect).
 
 ## Git
 
@@ -51,9 +62,12 @@
   **`plan/07`'s own rollback step 2** — had nothing to revert to; that, not tidiness, was the risk.
   **Split rule: a file belongs to the phase whose commit would not otherwise build** — not the phase it is
   *about*. `shutdown.ts`'s companion re-import is P4 (it follows P4's move), not P6.
-- **`origin/standalone-engine` = `97c7b1f`, so pushing HEAD is a clean fast-forward.** It has **not been
-  pushed**: GCM prompted and the push was terminated. Verify each tree **read-only** (`git grep <rev>`) —
-  do not check out old commits, the object store has already been lost once.
+- **`origin/standalone-engine` is at `26eda19`** and in sync with HEAD — the P3–P6 stretch **plus**
+  `1268bfd` (step 2), `1027fc9` (memory) and `26eda19` (finding 1). **The push is a clean fast-forward;
+  verify each tree read-only (`git grep <rev>`) — do not check out old commits, the object store has
+  already been lost once.** A push may be SIGTERM'd at the GCM window: retry with
+  `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git push …` so it fails fast with a real message instead of
+  hanging, and confirm with `git ls-remote origin standalone-engine`.
 
 ## Env
 
@@ -67,6 +81,15 @@
   `https://github.com/HarshalKudale/bifurc.git`; **reads are anonymous** (`fetch`/`ls-remote` never prompt)
   but **writes are not**. The push dies if the window is not completed, and `-u` still records the upstream.
 - **`npx tsc` is NOT the compiler** → use `npm run typecheck`.
+- **`vitest run --project <name> <path>` is BROKEN here (Vitest 4.1.5)** — every collected file dies with
+  `TypeError: Cannot read properties of undefined (reading 'config')` at the first `describe`, or
+  `Error: Vitest failed to find the current suite`. A **runner** failure, and **total**: root `tests/**`
+  and `packages/**` alike, so it reads as "my change broke everything". Bisected to the *combination* —
+  `vitest run <path>` alone passes, `vitest list --project unit` lists 1,982 cases fine. **Drop
+  `--project` when filtering by path**, or run the whole project. `npm run test:unit` / `test:integration`
+  are unaffected (no path filter). The per-file commands in `TESTING.md` carry `--project` and are wrong
+  here. **General lesson: when a failure is uniform across files that share nothing, suspect the
+  invocation before the diff** — the tell was a root test that imports no engine code failing identically.
 - **NEVER launch Electron from the agent shell.** The GPU process can't start, Electron **hard-exits**
   (`FATAL: GPU process isn't usable`, exit 3), and every e2e test reads as `firstWindow: Target page…
   closed`. **A minimal 5-line Electron app fails identically**, and `dangerouslyDisableSandbox` does **not**
