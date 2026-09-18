@@ -211,18 +211,47 @@ decision belongs with whoever implements it.
    they match `ClientLocal` exactly — but it does not mention that 25 *routable* commands are
    unimplemented, which is the larger half of the work.
 
-**3b-2 progress.** Two slices landed, **10 of the 25** moved:
+**3b-2 is complete.** Five slices landed, **21 of the 25** moved; the other four are `NARROWED` /
+`BLOCKED` / `SPLIT` and are not moves at all (§5b). The ratchet went **25 → 19 → 15 → 10 → 5 → 4**.
 
-- *Slice 1* — the six proxy/server-lifecycle commands (`server.status` / `server.start` /
-  `server.stop` / `server.restart` / `proxy.status` / `services.discover`) in
-  `packages/engine/src/proxy/serverCommands.ts`.
-- *Slice 2* — `config.save` + the three `workspace.*` lifecycle commands in
-  `packages/engine/src/store/configCommands.ts`.
+| Slice | Commands | Module | Ratchet |
+| --- | --- | --- | --- |
+| 1 | `server.status` / `server.start` / `server.stop` / `server.restart` / `proxy.status` / `services.discover` | `packages/engine/src/proxy/serverCommands.ts` | 25 → 19 |
+| 2 | `config.save` + `workspace.add` / `workspace.rename` / `workspace.delete` | `packages/engine/src/store/configCommands.ts` | 19 → 15 |
+| 3 | `webhook.registerActive` / `webhook.unregisterActive` / `webhookServer.start` / `webhookServer.status` / `webhookServer.stop` | `packages/engine/src/proxy/webhookCommands.ts` | 15 → 10 |
+| 4 | `healthbar.getServices` / `healthbar.saveServices` / `healthbar.checkUrl` / `request.replay` / `script.execute` | `packages/engine/src/miscCommands.ts` | 10 → 5 |
+| 5 | `runner.saveReport` | `packages/engine/src/runner/runnerCommands.ts` | 5 → 4 |
 
-Both modules are the only registration site for their commands. The engine's own
-`transport/auth/scopes.ts` had already assigned the first six scopes (`read` for the three
-status/discovery commands, `admin` for the three lifecycle ones) — independent evidence they were
-always engine commands. The ratchet went **25 → 19 → 15**.
+Each module is the only registration site for its commands. The engine's own
+`transport/auth/scopes.ts` had already assigned **every one of the 21** scopes before the modules
+existed — independent evidence, in all five slices, that these were always engine commands.
+
+**Two slices were not literal copies, and both reasons generalise.**
+
+- *Slice 3, `webhookServer.start`.* The shell body read `cfg.webhookPort ?? 9101` and ignored any
+  argument, because its channel took none; `WebhookServerStartParams` declares `port` as optional. The
+  engine half honours it and falls back to the config chain, so every existing caller — all of which
+  pass nothing — gets exactly the old behaviour. Honouring a declared parameter is not a behaviour
+  change; ignoring one would leave a schema the implementation contradicts.
+- *Slice 4, `healthbar.checkUrl`.* The shell body used `require("https")` / `require("http")`
+  **inside** the handler. `require` does not exist in the engine's **ESM** build output (`tsup` emits
+  `.mjs` alongside `.cjs`), so a verbatim copy would have thrown at call time on the ESM entry point
+  while typechecking and every unit test passed. Both modules are now imported statically, as
+  `serverReplay.ts` and `webhookServer.ts` already do. **This is a class to watch for in every
+  remaining move**: `require` inside a function body is invisible to `tsc` and to the test runner.
+
+**One gap carried over deliberately.** `RequestReplayResult` declares `durationMs` and `replayRequest`
+does not return it, so `request.replay` has never carried a field its own frozen contract advertises.
+It is moved as-is, for the same reason `configCommands.ts` left `workspace.add`'s odd failure shape
+alone — changing a command's result shape while moving it hides the move behind a contract change. The
+renderer does not read it (it times the call itself).
+
+**`runner.saveReport` needed a check that is not obvious.** `RunReport` is a plain `z.object()`, and
+zod's `z.object()` **strips unknown keys** — so "the schema accepts the payload" is not the same as
+"the schema preserves it". The question was whether parsing loses any field the renderer sends. It does
+not: `CollectionRunReport`'s 9 fields and `RunnerRequestResult`'s 11 are all present. Had it stripped,
+this would have been a **data-loss bug in saved run history**, not a type error — the exact failure
+`RunResult`'s own header describes for P1.
 
 ### 5b. The remaining 15 are not one category — audited, not assumed
 
@@ -233,10 +262,16 @@ had already recorded the reason for three of them, and the audit generalised it.
 
 | Category | Count | Meaning | Response |
 | --- | --- | --- | --- |
-| `MOVABLE` | 11 | The schema accepts every payload the handler accepts. | Move it. |
+| `MOVABLE` | **0 — all moved** | The schema accepts every payload the handler accepts. | Move it. ✅ **done.** |
 | `NARROWED` | 1 | The schema accepts a **strict subset**, and `.strict()` makes the difference a `BAD_REQUEST`. | A decision, not a move. |
 | `BLOCKED` | 2 | The schema rejects payloads a **currently passing test** uses. | Cannot move until the frozen protocol changes. |
 | `SPLIT` | 1 | The protocol declares an engine-half contract that **deliberately differs** from the shell implementation. | Not a move at all. |
+
+**`MOVABLE` is 0 as of 2026-09-18** — all 21 have a registry implementation, so the ratchet's movable
+half is deleted from `tests/ipc/handlers.test.ts` rather than left empty. That deletion is deliberate
+signalling: an empty `MOVABLE` array invites the next reader to file the next unimplemented command
+there by default, whereas deleting it forces the classification to be argued again. What remains is
+one `NARROWED`, two `BLOCKED` and one `SPLIT`, each pinned with its own reason.
 
 **`NARROWED` — `audit.list`.** `AuditListParams` has no `filePath` / `fromTs` / `toTs`, but
 `QueryLogOptions`, the type the handler actually takes, does. So a caller passing `filePath` gets
@@ -508,9 +543,12 @@ Delete the flag in the next release, once the seam has survived real usage.
 
    - **3b-1** — route the **68** registered commands. Mechanical, and safe to do while
      `registerIpcHandlers()` still runs.
-   - **3b-2** — implement the **25** missing commands in the engine. **In progress: 10 done, 15 left**
-     — and only 11 of those 15 are actually movable (§5b). Do **not** re-point the shell bodies at the
-     registry while doing it — see §5a.
+   - **3b-2** — implement the **25** missing commands in the engine. ✅ **done 2026-09-18: 21 moved;**
+     the remaining four are `NARROWED` / `BLOCKED` / `SPLIT` and are **not** moves (§5b). Do **not**
+     re-point the shell bodies at the registry while doing it — see §5a; that trap applies to all five
+     slices.
+   - **3b-1 → 3c** — route the now-89 registered commands through the bridge, **then** delete
+     `registerIpcHandlers()` + `eventBridge.ts`. This is the remaining work in step 3.
    - **then** delete `registerIpcHandlers()` and `eventBridge.ts`. Deleting them earlier would break
      each of the 25 on **both** paths at once, and the surface test would still pass because the key
      stays exposed.
@@ -776,10 +814,15 @@ suite's job.
 
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after the step-3b inventory: **101 files / 2,467 tests** — 2,426
-      passed, 40 skipped, and the one documented `soap.execute` flake. (After step 3a: 101 / 2,464 —
-      2,423 passed. After finding 1: 100 / 2,445 — 2,404. After step 2: 99 / 2,436 — 2,395. Before
-      step 2: 97 / 2,418. The "35 unit suites" this criterion used to say predated P2–P5 entirely.)
+- [ ] **Unit suites pass.** Baseline after **step 3b-2 (all five slices)**: **101 files / 2,471 tests**
+      — **2,430 passed**, 40 skipped, and the one documented `soap.execute` flake
+      (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After the step-3b inventory:
+      101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423. After finding 1: 100 / 2,445 — 2,404.
+      After step 2: 99 / 2,436 — 2,395. Before step 2: 97 / 2,418. The "35 unit suites" this criterion
+      used to say predated P2–P5 entirely.
+      *(3b-2's own five slices added **net zero** test cases — one `it` was renamed and the rest of the
+      work was extending the existing ratchet and delivery tests — so the +4 against 2,467 is slices
+      1–2's verification, not this one's. Measured, not inferred.)*
 - [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
       normal terminal, see Preconditions.
 - [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).

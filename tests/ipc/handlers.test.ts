@@ -47,6 +47,27 @@ vi.mock("@bifurc/engine/proxy/service-discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 
+// `serverReplay.ts` makes a real outbound HTTP call, so it must be mocked — and it is mocked at *its
+// own* path rather than through `proxy/server`'s re-export, because `miscCommands.ts` imports it
+// directly (importing the lighter module beats pulling in the whole proxy server for one function).
+vi.mock("@bifurc/engine/proxy/serverReplay", () => ({
+  replayRequest: vi.fn(() => Promise.resolve({ status: 200, headers: {}, body: "" })),
+}));
+
+// `webhookServer.ts` owns a real listening `http.Server` as module-level state, so the real module
+// must not be reached from a unit test — `webhookServer.start` would bind a port. Mocked rather than
+// left real for the same reason `proxy/server` is. `webhookEmitter` is deliberately absent: nothing
+// outside `webhookServer.ts` itself reads it, so omitting it proves no consumer depends on it.
+vi.mock("@bifurc/engine/proxy/webhookServer", () => ({
+  registerActiveWebhook: vi.fn(),
+  unregisterActiveWebhook: vi.fn(),
+  startWebhookServer: vi.fn(),
+  stopWebhookServer: vi.fn(),
+  isWebhookServerRunning: vi.fn(() => false),
+  getWebhookPort: vi.fn(() => 9101),
+  getWebhookServerError: vi.fn(() => null),
+}));
+
 vi.mock("@bifurc/engine/store/gitStore", () => ({
   commitMutation: vi.fn(() => Promise.resolve("abc123")),
   queryLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
@@ -171,6 +192,16 @@ import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/s
 import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
 import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@bifurc/engine/proxy/server";
 import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
+import {
+  registerActiveWebhook,
+  unregisterActiveWebhook,
+  startWebhookServer,
+  stopWebhookServer,
+  isWebhookServerRunning,
+  getWebhookPort,
+  getWebhookServerError,
+} from "@bifurc/engine/proxy/webhookServer";
+import { replayRequest as replayRequestImpl } from "@bifurc/engine/proxy/serverReplay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
@@ -258,10 +289,20 @@ describe("src/ipc/handlers.ts", () => {
      * the list here means it can only shrink **deliberately**: implementing a command makes this fail
      * until the name is removed, and a new command that lands unregistered fails immediately.
      *
-     * It has now shrunk twice. Step 3b-2's first slice moved the six proxy/server-lifecycle commands
-     * into `packages/engine/src/proxy/serverCommands.ts` (25 → 19), and its second moved
-     * `config.save` + the three `workspace.*` commands into `packages/engine/src/store/configCommands.ts`
-     * (19 → 15). Both edits are the ratchet doing its job rather than changes to the assertion.
+     * It has now shrunk five times, and the `MOVABLE` half of it is empty. Step 3b-2's slices moved
+     * the six proxy/server-lifecycle commands into `packages/engine/src/proxy/serverCommands.ts`
+     * (25 → 19); `config.save` + the three `workspace.*` commands into
+     * `packages/engine/src/store/configCommands.ts` (19 → 15); the five `webhook.*` /
+     * `webhookServer.*` commands into `packages/engine/src/proxy/webhookCommands.ts` (15 → 10); the
+     * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5); and
+     * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
+     * the ratchet doing its job rather than a change to the assertion.
+     *
+     * **What is left is not a backlog.** The remaining four are one `NARROWED`, two `BLOCKED` and one
+     * `SPLIT` — each pinned below with the reason a mechanical move is the wrong response. Step 3
+     * therefore ends at **89 registered + 2 blocked + 1 narrowed + 1 split**, not 93, and the
+     * remaining four are resolved by P12 (`app.checkUpdate`) and by a protocol change
+     * (`runner.*Config`, `audit.list`) rather than by more moving.
      *
      * ## Why the list is now three lists
      *
@@ -285,26 +326,20 @@ describe("src/ipc/handlers.ts", () => {
      */
     describe("registry coverage (the step 3b inventory)", () => {
       /**
-       * The 11 that can be moved as-is, verified by grep and by this test.
+       * `MOVABLE` used to live here, and is now **gone rather than empty** — which is the point of the
+       * list, so it is worth saying why the deletion is the signal.
        *
-       * Every one is engine work, **not** a shell concern — the webhook server, the runner and the
-       * healthbar all live in `packages/engine`. The six `server.*` / `proxy.status` /
-       * `services.discover` entries and the four `config.save` / `workspace.*` entries that were here
-       * have moved out, which is why this is 11 rather than 25.
+       * It held every command that could be moved into the engine as-is: the six `server.*` /
+       * `proxy.status` / `services.discover`, the four `config.save` / `workspace.*`, the five
+       * `webhook.*` / `webhookServer.*`, the five `misc.ts` ones (`healthbar.*` ×3, `request.replay`,
+       * `script.execute`) and `runner.saveReport`. All 21 now have registry implementations, so every
+       * command that was ever classified movable has moved.
+       *
+       * What remains is deliberately *not* a to-do list of the same kind: it is one `NARROWED`, two
+       * `BLOCKED` and one `SPLIT`, each pinned with the reason it cannot simply be moved. Keeping an
+       * empty `MOVABLE` array would invite the next reader to file the next unimplemented command
+       * there by default; deleting it forces the classification to be argued again.
        */
-      const MOVABLE = [
-        "healthbar.checkUrl",
-        "healthbar.getServices",
-        "healthbar.saveServices",
-        "request.replay",
-        "runner.saveReport",
-        "script.execute",
-        "webhook.registerActive",
-        "webhook.unregisterActive",
-        "webhookServer.start",
-        "webhookServer.status",
-        "webhookServer.stop",
-      ];
 
       /**
        * The schema is **narrower than the handler**, and `.strict()` makes that fatal rather than
@@ -353,7 +388,7 @@ describe("src/ipc/handlers.ts", () => {
        */
       const SPLIT = ["app.checkUpdate"];
 
-      const NOT_IN_REGISTRY = [...MOVABLE, ...NARROWED, ...BLOCKED.map((b) => b.command), ...SPLIT];
+      const NOT_IN_REGISTRY = [...NARROWED, ...BLOCKED.map((b) => b.command), ...SPLIT];
 
       it("implements every protocol command except the pinned list", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
@@ -460,8 +495,8 @@ describe("src/ipc/handlers.ts", () => {
       });
 
       /**
-       * The ratchet above asserts *registration*; this asserts *delivery*, for the ten commands that
-       * step 3b-2 has moved so far.
+       * The ratchet above asserts *registration*; this asserts *delivery*, for the 21 commands that
+       * step 3b-2 has moved.
        *
        * The distinction is the entire point of finding 5, and it is easy to lose: a command can be
        * registered and still return nothing useful. Registration is what makes `registry.invoke()`
@@ -472,7 +507,7 @@ describe("src/ipc/handlers.ts", () => {
        * how a transport calls it. `ctx` is built the way the engine's own callers build it: a bus and
        * **no session**, since a session-less caller is the engine itself and holds every scope.
        */
-      it("delivers the ten moved commands through the registry, not just the channel", async () => {
+      it("delivers the 21 moved commands through the registry, not just the channel", async () => {
         const { commandRegistry } = await import("@bifurc/engine/commands/registry");
         const { bus } = await import("@bifurc/engine/eventBus");
         const ctx = { bus };
@@ -549,6 +584,134 @@ describe("src/ipc/handlers.ts", () => {
         expect(await commandRegistry.invoke("workspace.delete", { id: added.id }, ctx)).toEqual({ ok: true });
         expect((currentConfig.workspaces ?? []).find((w) => w.id === added.id)).toBeUndefined();
         expect((currentConfig.workspaces ?? []).length).toBe(wsCountBefore);
+
+        // ── slice 3: webhook.* and webhookServer.* ────────────────────────
+
+        // `webhook.registerActive` / `unregisterActive` take the pair the renderer already sends; the
+        // assertion is that both halves reach the engine's active-suffix registry rather than only one.
+        expect(
+          commandRegistry.invoke("webhook.registerActive", { webhookId: "w1", urlSuffix: "/x" }, ctx),
+        ).toEqual({ ok: true });
+        expect(registerActiveWebhook).toHaveBeenCalledWith("w1", "/x");
+
+        expect(commandRegistry.invoke("webhook.unregisterActive", { webhookId: "w1" }, ctx)).toEqual({
+          ok: true,
+        });
+        expect(unregisterActiveWebhook).toHaveBeenCalledWith("w1");
+
+        // `webhookServer.start` — the port resolution is the whole point of this assertion. With no
+        // `port` on the wire it must fall back to the config chain exactly as the shell body did,
+        // because that is what every existing caller sends.
+        currentConfig = { ...makeDefaultConfig(), webhookPort: 9200 };
+        expect(commandRegistry.invoke("webhookServer.start", {}, ctx)).toEqual({ ok: true });
+        expect(startWebhookServer).toHaveBeenCalledWith(9200);
+
+        // …and a declared `port` must win, since `WebhookServerStartParams` advertises one. This is
+        // the one handler in this batch that is not a literal copy of its shell body.
+        expect(commandRegistry.invoke("webhookServer.start", { port: 9300 }, ctx)).toEqual({ ok: true });
+        expect(startWebhookServer).toHaveBeenCalledWith(9300);
+
+        // The `?? 9101` last resort: `webhookPort` is non-optional on `AppConfig`, so this is
+        // defensive — but a config written by an older release is exactly how it would be missing.
+        currentConfig = { ...makeDefaultConfig() } as AppConfig;
+        delete (currentConfig as { webhookPort?: number }).webhookPort;
+        expect(commandRegistry.invoke("webhookServer.start", {}, ctx)).toEqual({ ok: true });
+        expect(startWebhookServer).toHaveBeenCalledWith(9101);
+
+        expect(commandRegistry.invoke("webhookServer.stop", {}, ctx)).toEqual({ ok: true });
+        expect(stopWebhookServer).toHaveBeenCalled();
+
+        // `webhookServer.status` — three fields, and `error` is `null` rather than absent because the
+        // renderer's status widget reads it unconditionally.
+        vi.mocked(isWebhookServerRunning).mockReturnValue(true);
+        vi.mocked(getWebhookPort).mockReturnValue(9200);
+        vi.mocked(getWebhookServerError).mockReturnValue(null);
+        expect(commandRegistry.invoke("webhookServer.status", {}, ctx)).toEqual({
+          running: true,
+          port: 9200,
+          error: null,
+        });
+
+        // ── slice 4: the five misc.ts commands ─────────────────────────────
+
+        // `healthbar.getServices` — the missing-file case is what this reaches (`fs` is automocked, so
+        // `existsSync` is falsy), and the contract is `[]` rather than a throw, because the panel
+        // renders "no services yet" from it.
+        expect(commandRegistry.invoke("healthbar.getServices", { workspaceId: "ws1" }, ctx)).toEqual([]);
+
+        // `healthbar.saveServices` — **the path is the assertion**. It is derived from the workspace
+        // id, so a wrong id writes one workspace's healthbar config into another's directory, and the
+        // failure would be invisible until a user opened the wrong workspace.
+        expect(
+          commandRegistry.invoke(
+            "healthbar.saveServices",
+            { workspaceId: "ws1", services: [{ name: "a" }] },
+            ctx,
+          ),
+        ).toEqual({ ok: true });
+        const healthbarPath = String(vi.mocked(fs.writeFileSync).mock.calls.at(-1)?.[0]).replace(
+          /\\/g,
+          "/",
+        );
+        expect(healthbarPath).toContain("/data/ws1/healthbar/services.json");
+
+        // `healthbar.checkUrl` is registered but deliberately **not invoked here**: it makes a real
+        // outbound HTTP request by design, and a unit test that reaches the network is a flake. The
+        // ratchet above asserts its registration; the one non-verbatim change in its body (the
+        // `require("https")` → static import, needed because `require` does not exist in the engine's
+        // ESM output) is checked by `packages/engine`'s build rather than by a call.
+        expect(commandRegistry.isRegistered("healthbar.checkUrl")).toBe(true);
+
+        // `request.replay` — four positional args in the shell body, four named fields on the wire.
+        // The assertion is that they land in the right **slots**; a spread would silently swap them.
+        await commandRegistry.invoke(
+          "request.replay",
+          { method: "GET", url: "http://x", headers: { a: "b" }, body: "Ym9keQ==" },
+          ctx,
+        );
+        expect(replayRequestImpl).toHaveBeenCalledWith("GET", "http://x", { a: "b" }, "Ym9keQ==");
+
+        // `script.execute` — a real `vm` run, not a mock, so this proves the sandbox is reachable
+        // through the registry. `envVars` coming back mutated is the observable effect.
+        const scriptResult = commandRegistry.invoke(
+          "script.execute",
+          {
+            script: "lp.environment.set('k', 'v')",
+            context: "pre",
+            request: { method: "GET", url: "http://x", headers: {}, body: "" },
+            envVars: {},
+          },
+          ctx,
+        ) as { envVars: Record<string, string>; error?: string };
+        expect(scriptResult.error).toBeUndefined();
+        expect(scriptResult.envVars.k).toBe("v");
+
+        // ── slice 5: runner.saveReport ─────────────────────────────────────
+
+        // Two artifacts, not one — the HTML is what the user opens, and it is rendered by the engine
+        // because `runner.exportReport` needs the same renderer. The run directory is keyed by
+        // `folderId` **and** `startedAt`, which is what keeps two runs of one folder apart.
+        vi.mocked(fs.writeFileSync).mockClear();
+        const report = {
+          folderId: "f1",
+          folderName: "Folder",
+          startedAt: 1700000000000,
+          completedAt: 1700000001000,
+          totalRequests: 1,
+          totalTests: 1,
+          passedTests: 1,
+          failedTests: 0,
+          results: [],
+        };
+        expect(commandRegistry.invoke("runner.saveReport", { workspaceId: "ws1", report }, ctx)).toEqual(
+          { ok: true },
+        );
+        expect(
+          vi.mocked(fs.writeFileSync).mock.calls.map((c) => String(c[0]).replace(/\\/g, "/")),
+        ).toEqual([
+          expect.stringContaining(".runs/f1/1700000000000/report.json"),
+          expect.stringContaining(".runs/f1/1700000000000/report.html"),
+        ]);
       });
 
       it("refuses a payload the frozen protocol schema rejects, rather than passing it through", async () => {
