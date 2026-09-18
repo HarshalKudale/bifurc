@@ -24,7 +24,6 @@ import { registerWebhookCommands } from "@bifurc/engine/proxy/webhookCommands";
 import { registerConfigCommands } from "@bifurc/engine/store/configCommands";
 import { registerMiscCommands } from "@bifurc/engine/miscCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
-import { wireEventBridge } from "@/ipc/eventBridge";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -86,7 +85,7 @@ export function registerIpcHandlers(): void {
 
   // Forward sync status changes onto the bus (P2 work item 2, site #1). `log:entry` /
   // `log:chunk` / `server:error` need no forwarder *here* — `logEmitter` is already
-  // Electron-free, so the shell's `eventBridge.ts` subscribes to it directly.
+  // Electron-free, so `wireLogEventsToBus()` below puts them on the bus directly.
   onSyncStatusChange((wsId, state) => {
     bus.emitTyped("sync.status", { wsId, ...state });
   });
@@ -96,20 +95,15 @@ export function registerIpcHandlers(): void {
   // panel and the server-error banner all go dead — with every unit test still green, because they
   // test the bridge's *mapping* rather than its *traffic*.
   //
-  // **Additive, not a replacement.** `eventBridge.ts` subscribes to the *bus* for six events but to
-  // `logEmitter` directly for these three, so wiring the bus here cannot double-deliver to the
-  // renderer: the legacy channels keep coming from `logEmitter`, and the bus now additionally carries
-  // them for the transport. Both paths run side by side until step 3 deletes the legacy one — and
-  // this call is precisely what makes that deletion possible instead of silently fatal.
+  // The bus is now the **only** path for these three, since step 3c deleted `eventBridge.ts` — the
+  // file that used to read `logEmitter` directly and broadcast the legacy `log:entry` /
+  // `log:chunk` / `server:error` channels. Nothing listens on those channels any more (the preload
+  // subscribes through the RPC bridge), so this call is what keeps the capture panel, the request-log
+  // panel and the server-error banner alive rather than merely additive.
   //
   // On the shell's path specifically, because the shell uses the module singletons and never calls
   // `createEngine()`; wiring it only in the factory would leave today's only client unserved.
   wireLogEventsToBus();
-
-  // Pre-P6: wire the temporary shell bridge so the renderer keeps receiving these events over
-  // the existing `ipcRenderer.on(...)` channels, unchanged, while every emission site below is
-  // converted to the bus one at a time. Deleted wholesale once P6 lands the real transport.
-  wireEventBridge();
 
   // Register all categorized handlers
   registerTlsHandlers();

@@ -1729,57 +1729,21 @@ describe("src/ipc/handlers.ts", () => {
     });
   });
 
-  // ── logEmitter forwarding to BrowserWindow ────────────────────────────
-
-  describe("logEmitter forwarding to BrowserWindow", () => {
-    function makeMockWindow(isDestroyed = false) {
-      return {
-        isDestroyed: vi.fn(() => isDestroyed),
-        webContents: { send: vi.fn() },
-      };
-    }
-
-    it("forwards request log entries to non-destroyed windows", () => {
-      const win = makeMockWindow(false);
-      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win as any]);
-
-      const entry = {
-        id: "e1", ts: 1, method: "GET", url: "http://x.com", host: "x.com",
-        status: 200, via: "proxy" as const, target: null, durationMs: 10,
-        reqHeaders: {}, reqBody: "", resHeaders: {}, resBody: "", resStatus: 200
-      };
-      mockLogEmitter.emit("request", entry);
-
-      expect(win.webContents.send).toHaveBeenCalledWith("log:entry", entry);
-    });
-
-    it("skips destroyed windows when forwarding request log entries", () => {
-      const win = makeMockWindow(true);
-      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win as any]);
-
-      mockLogEmitter.emit("request", { id: "e2", ts: 1 });
-
-      expect(win.webContents.send).not.toHaveBeenCalled();
-    });
-
-    it("forwards server-error events to non-destroyed windows", () => {
-      const win = makeMockWindow(false);
-      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win as any]);
-
-      mockLogEmitter.emit("server-error", "Port in use");
-
-      expect(win.webContents.send).toHaveBeenCalledWith("server:error", "Port in use");
-    });
-
-    it("skips destroyed windows when forwarding server-error events", () => {
-      const win = makeMockWindow(true);
-      vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win as any]);
-
-      mockLogEmitter.emit("server-error", "some error");
-
-      expect(win.webContents.send).not.toHaveBeenCalled();
-    });
-  });
+  // ── logEmitter → bus → EVENT_CHANNEL ───────────────────────────────────
+  //
+  // Four tests used to live here asserting that `logEmitter` events reached
+  // `webContents.send("log:entry" / "server:error", …)`. That was `eventBridge.ts`'s behaviour, and
+  // step 3c deleted that file: after the preload flip nothing subscribes to those channels, so the
+  // bridge was broadcasting into the void. Two of the four were also vacuous — `not.toHaveBeenCalled()`
+  // on a destroyed window passes whether or not anything is wired.
+  //
+  // Both halves it covered are still tested, now on the correct side of the seam:
+  //   - `logEmitter` → **bus**        → `packages/engine/tests/eventBus.logWiring.test.ts` (traffic)
+  //   - **bus** → `EVENT_CHANNEL`     → `tests/ipc/eventChannel.test.ts` (incl. `log.entry` end to end)
+  //
+  // The old block asserted the middle hop that no longer exists, which is why it is deleted rather
+  // than migrated — a migrated version would be asserting that the shell forwards events to a channel
+  // no client listens on, i.e. pinning dead behaviour.
 
   // ── history:list ──────────────────────────────────────────────────────
 
