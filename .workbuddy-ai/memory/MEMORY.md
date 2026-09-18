@@ -73,6 +73,26 @@
   log events — `registerIpcHandlers()` does. **Step 3b is next:** route all methods, then delete
   `registerIpcHandlers()` + `eventBridge.ts` together (deleting the handlers takes all nine legacy event
   channels with them).
+- **P6 — finding 5 (2026-09-18): step 3 is NOT mechanical.** **25 of the 93 protocol commands have no
+  registry implementation** — they are served **only** by a shell `ipcMain.handle` body, so
+  `registry.invoke("<cmd>")` → `UNKNOWN_COMMAND`. 68 route trivially. The list:
+  `config.save`, `server.start/stop/restart/status`, `proxy.status`, `services.discover`,
+  `workspace.add/rename/delete`, `webhook.registerActive/unregisterActive`,
+  `webhookServer.start/stop/status`, `runner.saveReport/saveConfig/loadConfig`, `audit.list`,
+  `script.execute`, `request.replay`, `healthbar.getServices/saveServices/checkUrl`, `app.checkUpdate`.
+  **`@bifurc/client` classifies all 25 as `{kind:"transport"}`**, so it **advertises 25 methods it cannot
+  deliver against the real engine** — unnoticed because P5 tested against the conformance suite's
+  **stub** registry (it asserts *reachability*, not behaviour) and step 2 routes only `config:get`.
+  **The surface test cannot see this**: the key is exposed; the implementation behind it is missing.
+  **So step 3 = 3b-1** (route the 68, safe while the legacy handlers run) → **3b-2** (implement the 25) →
+  **then** delete `registerIpcHandlers()` + `eventBridge.ts`. Deleting earlier breaks each of the 25 on
+  **both** paths at once with the surface test still green. The inventory is a **ratchet** in
+  `tests/ipc/handlers.test.ts` ("registry coverage"), so implementing a command fails until its name
+  leaves the list. Open disagreement, deliberately unresolved: `app.checkUpdate` is a "shell half" per
+  `plan/07` but `transport` per the client. **Useful:** the protocol's `COMMANDS` table already carries
+  **`legacyChannel`** for all 93, so command↔channel mapping is machine-readable; `COMMANDS` is exported
+  from `@bifurc/protocol` but **`SURFACE` is not** re-exported from the client root (only
+  `packages/client/src/surface.ts` has it).
 
 ## Git
 
