@@ -95,7 +95,11 @@ seed has to be in place before `App.tsx` reads the key.
 Four things the plan above does not say, all established by reading the shell and the engine on
 2026-09-18. The first two are **blocking** for work item 1 and are not visible from the plan text.
 
-### 1. The three log events never reach the bus — a transport-only P6 goes silently blind
+### 1. The three log events never reach the bus — a transport-only P6 goes silently blind ✅ resolved 2026-09-18
+
+> **Resolved.** `wireLogEventsToBus()` now lives in `packages/engine/src/eventBus.ts` and is called
+> from **both** `createEngine()`'s `doStart()` and `registerIpcHandlers()`. See
+> *Finding 1 — what landed* below for the verification table.
 
 `EngineEvents` (`packages/engine/src/eventBus.ts`) declares `log.entry`, `log.chunk` and `server.error`.
 `ENGINE_EVENT_NAMES` lists all three. `BUS_NAME_BY_WIRE_NAME` maps them, `assertBridgeIsTotal()` asserts
@@ -395,8 +399,10 @@ alias is a separate decision with its own blast radius.
 rather than accepting a subscription it can never fire. That is safe only because the client's hub is
 **lazy**: nothing calls `subscribe()` until a listener registers, and the preload's seven `on*` methods
 still use the legacy channels. `tests/ipc/ipcTransport.test.ts` pins that assumption — if the hub ever
-becomes eager, it fails at client-construction time rather than in the field. Finding 1 (`log.*` never
-reaches the bus) and the push channel are step 3's problem, not this one's.
+becomes eager, it fails at client-construction time rather than in the field. The **push channel** is
+still step 3's problem, not this one's. (Finding 1, which shared this sentence, was pulled forward and
+fixed on its own — see below. It was a *correctness* defect that already existed, not a consequence of
+this step.)
 
 ### How step 2 was verified — and the limit of that verification
 
@@ -421,11 +427,86 @@ here. That is the e2e suite's job, and it has to be run from a normal terminal (
 
 ---
 
+## Finding 1 — what landed (2026-09-18)
+
+Finding 1 was pulled forward out of step 3 because it is a **pre-existing correctness defect**, not a
+consequence of moving the renderer onto the transport: the three log events were declared, mapped and
+conformance-tested but never emitted on the bus, so any bus-based subscriber was already blind to them.
+
+| File | Role |
+|---|---|
+| `packages/engine/src/eventBus.ts` | `wireLogEventsToBus(target?, source?)` — the shared implementation |
+| `packages/engine/src/index.ts` | wired in `doStart()` (before `startServer`), detached in `stop()` |
+| `src/ipc/handlers.ts` | wired on the shell path, which never calls `createEngine()` |
+| `packages/engine/tests/eventBus.logWiring.test.ts` | 9 cases, all about **traffic** rather than mapping |
+
+### Four decisions worth stating
+
+1. **The name mapping is hand-written and cannot be derived.** `logEmitter` emits `"request"` /
+   `"chunk"` / `"server-error"`; the bus calls them `"log.entry"` / `"log.chunk"` / `"server.error"`.
+   Unlike `transport/types.ts`'s bus↔wire bridge — where the two sets differ by a uniform `event.`
+   prefix and the map is therefore checked by `assertBridgeIsTotal()` — `"request"` and `"log.entry"`
+   share nothing to strip. The bus names win because they are the ones the transport already knows;
+   `logEmitter` is engine-internal and has emitted these three names since before the bus existed.
+
+2. **`log.entry` carries ONE `RequestLogEntry`, not a `{entries: […]}` batch.** Batching is a *wire*
+   concern owned by `eventPump.ts`'s `toClientEvent`, which every serialising transport applies. Putting
+   the batch shape on the bus would hand every in-process subscriber an envelope no engine code
+   produces, and the conformance suite's batch case would be asserting a shape the engine never emits.
+
+3. **Idempotent per bus, via a `WeakSet`, because two callers are expected.** `createEngine()` and
+   `registerIpcHandlers()` both wire it. Today only one runs, but a consumer that does both must not
+   receive every entry twice — and the symptom would be duplicated rows in the capture panel, which
+   reads as a UI bug rather than a wiring one. A module-level boolean instead of a `WeakSet` would have
+   wrongly suppressed wiring a *second, distinct* bus. Detaching clears the flag, so `stop()` followed
+   by a fresh engine in the same process works; a one-shot flag would silently stop all logging forever.
+
+4. **`source` is injectable, for the reason `createInProcessTransport`'s `bus` is.** `logEmitter` is a
+   process-wide singleton and Vitest shares a module registry across every file in a worker, so a test
+   using the default would leave three listeners attached for whatever ran next. The last case asserts
+   the **default** path by traffic on the real singletons, and detaches in `finally`.
+
+### The call site ordering is load-bearing
+
+`wireLogEventsToBus(bus)` is placed **before** `startServer(settings.port)` in `doStart()`. The proxy is
+the only emitter of these three events, and a **bind failure** — the `listen()` error branch — emits
+`server.error`. Wiring after the start would make that the one event that got away, i.e. the failure
+mode would be "the port is busy and the UI says nothing".
+
+### Additive, not a replacement
+
+`eventBridge.ts` subscribes to the **bus** for six events (`sync.status`, `sync.entityStatus`,
+`entity.changed`, `webhook.payload`, `process.output`, `process.statusChange`) but to `logEmitter`
+**directly** for these three. So wiring the bus cannot double-deliver to the renderer: the legacy
+channels keep coming from `logEmitter`, and the bus now *additionally* carries them for the transport.
+Both paths run side by side until step 3 deletes the legacy one — and this call is what makes that
+deletion possible instead of silently fatal.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| the new suite | **9 passed** |
+| `npm run typecheck` | clean — protocol, engine, client |
+| full suite | **2,404 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the step-2 baseline (2,395) | **exactly +9**, no other movement |
+| `packages/*/dist` entry points | present — engine 720 files, client 32, protocol 6 |
+| `wireLogEventsToBus` in the build | present in `dist/index.js` and `dist/eventBus.js` |
+| `git diff --stat renderer/` | **empty** |
+
+The two things this still does **not** prove are the same two step 2 left open: that Electron's real
+IPC round trip works (both ends are mocked), and that a **bus-based** subscriber now receives the three
+events end to end — the wiring is unit-verified, but nothing consumes the bus for them yet. That is
+step 3, when `eventBridge.ts` is deleted and the transport becomes the only path.
+
+---
+
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after step 2: **99 files / 2,436 tests** — 2,395 passed, 40
-      skipped, and the one documented `soap.execute` flake. (Before step 2: 97 / 2,418. The "35 unit
-      suites" this criterion used to say predated P2–P5 entirely.)
+- [ ] **Unit suites pass.** Baseline after finding 1: **100 files / 2,445 tests** — 2,404 passed, 40
+      skipped, and the one documented `soap.execute` flake. (After step 2: 99 / 2,436 — 2,395 passed.
+      Before step 2: 97 / 2,418. The "35 unit suites" this criterion used to say predated P2–P5
+      entirely.)
 - [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
       normal terminal, see Preconditions.
 - [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).

@@ -13,7 +13,7 @@ import { registerRunnerHandlers } from "@/ipc/handlers/runnerHandlers";
 import { registerCoreHandlers } from "@/ipc/handlers/coreHandlers";
 
 import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
-import { bus } from "@bifurc/engine/eventBus";
+import { bus, wireLogEventsToBus } from "@bifurc/engine/eventBus";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
@@ -43,11 +43,26 @@ export function registerIpcHandlers(): void {
   registerApplicationHandlers();
 
   // Forward sync status changes onto the bus (P2 work item 2, site #1). `log:entry` /
-  // `log:chunk` / `server:error` no longer need a forwarder here — `logEmitter` is already
+  // `log:chunk` / `server:error` need no forwarder *here* — `logEmitter` is already
   // Electron-free, so the shell's `eventBridge.ts` subscribes to it directly.
   onSyncStatusChange((wsId, state) => {
     bus.emitTyped("sync.status", { wsId, ...state });
   });
+
+  // P6 finding 1: the three log events must **also** reach the bus, or a transport-only P6 delivers
+  // nothing to `onLogEntry` / `onLogChunk` / `onServerError` and the capture panel, the request-log
+  // panel and the server-error banner all go dead — with every unit test still green, because they
+  // test the bridge's *mapping* rather than its *traffic*.
+  //
+  // **Additive, not a replacement.** `eventBridge.ts` subscribes to the *bus* for six events but to
+  // `logEmitter` directly for these three, so wiring the bus here cannot double-deliver to the
+  // renderer: the legacy channels keep coming from `logEmitter`, and the bus now additionally carries
+  // them for the transport. Both paths run side by side until step 3 deletes the legacy one — and
+  // this call is precisely what makes that deletion possible instead of silently fatal.
+  //
+  // On the shell's path specifically, because the shell uses the module singletons and never calls
+  // `createEngine()`; wiring it only in the factory would leave today's only client unserved.
+  wireLogEventsToBus();
 
   // Pre-P6: wire the temporary shell bridge so the renderer keeps receiving these events over
   // the existing `ipcRenderer.on(...)` channels, unchanged, while every emission site below is
