@@ -37,9 +37,11 @@
  *  2. The push direction exists: `ipcRenderer.invoke` is request/response and cannot carry events, so
  *     `EVENT_CHANNEL` is a separate `webContents.send` → `ipcRenderer.on` path.
  *
- * **Nothing about the renderer changes.** The preload's seven `on*` methods still use the legacy
- * channels and `src/ipc/eventBridge.ts` still broadcasts them; this is an additional path, so the
- * phase stays revertable until step 3 deletes the legacy one.
+ * **The renderer's seven `on*` methods now use this path.** When this was written they still used the
+ * legacy channels and `src/ipc/eventBridge.ts` broadcast them, which made this an *additional* path
+ * and kept the phase revertable. Step 3b-1 flipped the preload onto the client and step 3c
+ * (`eb4c207`) deleted that file, so this is no longer additive — it is how every event reaches the
+ * renderer, and `wireLogEventsToBus()` is what puts the three log events on the bus for it to carry.
  *
  * ## Why the control frames are fire-and-forget, and why that is not the silent no-op the contract bans
  *

@@ -594,8 +594,8 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     onWebhookPayload: (cb) => plain("event.webhook.payload", cb as (p: never) => void),
     /**
      * `event.entity.changed` carries what changed; the renderer's `onCompanionRefresh` only wants
-     * the signal. Discarding the payload here is what `src/ipc/eventBridge.ts` already does for the
-     * legacy IPC channel, so the renderer's behaviour is unchanged — it re-fetches either way.
+     * the signal. Discarding the payload here matches what the legacy `companion:refresh` channel
+     * did, so the renderer's behaviour is unchanged — it re-fetches either way.
      */
     onCompanionRefresh: (cb) => hub.subscribe("event.entity.changed", () => cb()),
 

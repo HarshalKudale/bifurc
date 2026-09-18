@@ -288,11 +288,12 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   onServerError: sub("event.server.error"),
   onWebhookPayload: sub("event.webhook.payload"),
   /**
-   * A shim in disguise. The renderer only wants *a signal* that config changed, and
-   * `src/ipc/eventBridge.ts` deliberately degrades the richer bus event back to the bare
-   * `companion:refresh` IPC for it. The wire event is `event.entity.changed` — the protocol's
-   * own comment records the rename ("`companion:refresh` becomes `entity.changed`"), so the
-   * client subscribes to the payload-carrying event and **discards the payload**.
+   * A shim in disguise. The renderer only wants *a signal* that config changed; the legacy
+   * `companion:refresh` channel carried exactly that, and the shell's `eventBridge.ts` used to
+   * degrade the richer bus event back down to it. The wire event is `event.entity.changed` — the
+   * protocol's own comment records the rename ("`companion:refresh` becomes `entity.changed`") — so
+   * the client subscribes to the payload-carrying event and **discards the payload**, which is what
+   * the legacy channel's consumers already did.
    */
   onCompanionRefresh: sub("event.entity.changed", "payload discarded; the renderer only wants the signal"),
 };
