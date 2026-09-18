@@ -15,7 +15,147 @@ and change nothing the user can see.
 
 - P5 gate green: client satisfies `WindowApi`; key-diff script reports zero differences.
 - Conformance suite green on `stdio` and `ws`.
-- A green baseline: 35 unit suites, 11 e2e specs, all passing **before** any change in this phase.
+- A green baseline: **97 unit suites / 2,418 tests**, 11 e2e specs, all passing **before** any change in
+  this phase. *(Corrected 2026-09-18 — "35 unit suites" was written before P2–P5 added the engine,
+  blob, fileOps and client suites. The e2e figure of 11 was verified: `ls e2e/*.spec.ts | wc -l` = 11 —
+  which is 11 spec files / **46 tests** as Playwright counts them.)*
+
+> **The e2e baseline cannot be captured from an agent shell — run it from your own terminal.**
+>
+> Attempting it produced **46 failed, 0 passed**, every test dying in ~850 ms with
+> `electronApplication.firstWindow: Target page, context or browser has been closed`. The cause is that
+> Electron cannot start a Chromium GPU process when spawned from the agent shell and **hard-exits**:
+>
+> ```
+> FATAL:content\browser\gpu\gpu_data_manager_impl_private.cc:417]
+> GPU process isn't usable. Goodbye.        → exit code 3
+> ```
+>
+> **This is not a defect in Bifurc.** Three controls establish that:
+>
+> 1. `npm run dev` (`npm run build && electron .` — the same binary, the same `dist/main.js`) launches
+>    fine from a normal terminal.
+> 2. A **minimal 5-line Electron app** with no Bifurc code fails identically from the agent shell.
+> 3. `dangerouslyDisableSandbox: true` changes nothing — the limit is the shell's **process context**,
+>    not the sandbox flag.
+>
+> The machine itself is healthy: two adapters, `AMD Radeon(TM) Graphics` and
+> `NVIDIA GeForce RTX 4080 SUPER`, both `Status: OK`.
+>
+> **So no launch flags are needed — not in dev, not in a packaged build.** The two switches already in
+> `main.ts` (`disable-gpu-shader-disk-cache`, `disable-gpu`) predate this and are unrelated hardening.
+> Do not add workarounds to `main.ts` or to `e2e/fixtures/electronApp.ts` for this.
+>
+> Two secondary traps found while probing, both worth keeping:
+> - **`timeout <n> ./electron.exe --no-sandbox …` fails with `bad option: --no-sandbox`** — coreutils'
+>   `timeout` parses the Chromium switches as its own. Chromium switches must go **after** the app path.
+> - **Wrapping the launch in a shell function produces a different, misleading error**
+>   (`TypeError: … reading 'commandLine'`, i.e. `require("electron")` returning a path string = Node
+>   mode). Run each probe as a **plain sequential command**.
+>
+> Consequence for the gate: the **unit** baseline is solid and is what step 2 is judged by. The e2e
+> criterion (*"11 e2e specs pass, unmodified"*) must be run by the user or on a machine whose shell can
+> host a GUI process — record the counts then.
+
+### The TOS gate is the *real* e2e blocker — fixed in the fixture 2026-09-18
+
+Separate from the agent-shell limitation above, the reason the suite fails on a normal machine is
+**first-launch Terms of Service**, and it is worth writing down because the fix is not where you would
+look for it.
+
+`renderer/App.tsx:23` gates the *entire* shell:
+
+```ts
+const [tosAccepted, setTosAccepted] = usePersistedState<boolean>("app:tos-accepted", false);
+if (!tosAccepted) return <TermsAcceptanceScreen onAccept={() => setTosAccepted(true)} />;
+```
+
+`usePersistedState` is backed by plain **`localStorage`** (`renderer/lib/storage.ts` — `getItem` /
+`setItem`, JSON-encoded). So the flag is **per-profile renderer state, not `app.json`**, which means
+`writeSampleWorkspace()` cannot reach it however much you add to it. `sampleData.ts` already writes
+`hasSeenWelcome: true`, and that is *correct but irrelevant* — it drives `app:isFirstLaunch`, a different
+gate. The fixture creates a fresh `--user-data-dir` per test, so `localStorage` starts empty and every
+test lands on the TOS screen.
+
+**Fix:** `e2e/fixtures/electronApp.ts`'s `page` fixture now seeds the key with `addInitScript` and then
+`reload()`s. The reload is load-bearing — `addInitScript` only applies to the *next* navigation, and the
+seed has to be in place before `App.tsx` reads the key.
+
+**Two constraints that shape the fix:**
+- It has to live in the **fixture**, not `sampleData.ts`. The specs stay unmodified (work item 5);
+  the harness is ours to change.
+- It must **not** be solved by editing the renderer (e.g. making the TOS gate read `app.json`). The rule
+  at the top of this document forbids renderer edits in P1–P6, and this would be exactly the
+  "edit the renderer to make it work" failure the risks table lists as **High** likelihood.
+
+---
+
+## Findings from the code, before the first edit
+
+Four things the plan above does not say, all established by reading the shell and the engine on
+2026-09-18. The first two are **blocking** for work item 1 and are not visible from the plan text.
+
+### 1. The three log events never reach the bus — a transport-only P6 goes silently blind
+
+`EngineEvents` (`packages/engine/src/eventBus.ts`) declares `log.entry`, `log.chunk` and `server.error`.
+`ENGINE_EVENT_NAMES` lists all three. `BUS_NAME_BY_WIRE_NAME` maps them, `assertBridgeIsTotal()` asserts
+them at import time, and the conformance suite has cases for them.
+
+**Nothing ever emits them on the bus.** They travel only through the separate `logEmitter`
+EventEmitter (`packages/engine/src/proxy/logEmitter.ts`), and `src/ipc/eventBridge.ts` — the file this
+phase deletes — subscribes to `logEmitter` **directly**. `handlers.ts:44–46` says so in a comment:
+
+> `log:entry` / `log:chunk` / `server:error` no longer need a forwarder here — `logEmitter` is already
+> Electron-free, so the shell's `eventBridge.ts` subscribes to it directly.
+
+So the moment the renderer's subscriptions move onto the transport, `onLogEntry`, `onLogChunk` and
+`onServerError` have nothing to deliver: the capture panel, the request-log panel and the server-error
+banner all go dead. Every unit test stays green, because they test the bridge's *mapping*, not its
+*traffic*.
+
+**The fix belongs in the engine**, as a `wireLogEventsToBus()` alongside `emitEntityStatus()`'s
+precedent, so P7/P8/P9 inherit it rather than each re-solving it. **It must reach the
+`registerIpcHandlers()` path, not just `createEngine()`** — the shell uses the module singletons
+(`commandRegistry`, `bus`, `logEmitter`) and never calls `createEngine()`, so wiring it into the factory
+alone would leave today's only client unserved.
+
+### 2. Electron's IPC loses `err.code`, and the client's retry policy branches on it
+
+A rejection crossing `ipcMain.handle` → `ipcRenderer.invoke` arrives at the renderer as a plain `Error`
+with the message flattened into a string. `EngineError.code` does not survive.
+
+That matters because `packages/client/src/retry.ts` decides whether to retry with
+`isRetryable(err.code)` — the whole three-term policy. Flatten the code and every failure reads as
+unclassified, so the policy either retries everything or nothing.
+
+**The bridge must therefore return a discriminated result** rather than letting the handler reject:
+
+```ts
+{ ok: true, value } | { ok: false, error: RpcError }   // RpcError = {code, message, details?}
+```
+
+and the renderer side must rebuild the error. `toRpcError` (main side) and `remoteErrorToEngineError`
+(renderer side) already exist in `packages/engine/src/transport/types.ts` and are the right halves —
+this is the same problem `stdio` and `ws` solved, one hop earlier.
+
+### 3. `TransportKind` has no `"ipc"` member
+
+`TransportKind = "in-process" | "stdio" | "ws" | "socket"`. The renderer-side bridge is a fifth kind.
+Nothing switches on the union — the only read is `auth.test.ts:712`'s
+`expect(transport.kind).toBe(inner.kind)`, and `session.ts:91` merely stores it — so **adding `"ipc"` is
+safe and is a one-line change** to `packages/engine/src/transport/types.ts`. The alternative, labelling
+the bridge `"in-process"`, is a lie that will cost someone an afternoon.
+
+### 4. Work item 2 is larger than the phase's framing suggests
+
+The phase reads as a *wiring* change, and work item 1 is. But work item 2 ("spawn the engine binary",
+resolve `--data-dir`, pick a socket, handshake, supervise, watchdog the orphan case) replaces the
+process model. The plan's own "How to start" step 2 is the smaller, correct first cut: **keep the
+engine in-process**, build the IPC bridge over `createInProcessTransport(commandRegistry, {bus})`, and
+prove the seam. The process split then becomes a change of transport *behind* a proven seam.
+
+That ordering is also what makes the rollback flag meaningful: `BIFURC_ENGINE_RPC=0` restores
+`registerIpcHandlers()` only while both paths exist.
 
 ---
 

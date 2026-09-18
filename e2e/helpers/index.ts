@@ -98,6 +98,33 @@ export async function chooseProtocol(page: Page, label: RegExp): Promise<void> {
 }
 
 /**
+ * Open the Environments manager.
+ *
+ * It is reached through the titlebar's environment **dropdown**, not by a button of its own.
+ * `EnvSelector` renders the toggle (titled "Switch environment"), and the "Manage Environments…"
+ * item exists **only inside the menu that opens on click**. A locator for that label therefore
+ * matches nothing until the dropdown is open — which is exactly how the previous version of this
+ * test failed: it asserted a control that is not on screen at rest.
+ *
+ * `getByTitle` rather than `getByRole(..., { name })` is deliberate: the toggle's accessible name
+ * comes from its *text content* (the active environment's name, e.g. "Development"), which changes
+ * with the seeded data, while `title` is the stable, intention-revealing attribute.
+ *
+ * Written as the two steps a user actually performs, so a renamed menu item fails here with a
+ * readable assertion instead of surfacing as a mysterious timeout in whichever test called it.
+ */
+export async function openEnvironmentsManager(page: Page): Promise<void> {
+    const toggle = page.getByTitle("Switch environment").first();
+    await expect(toggle).toBeVisible({ timeout: 15_000 });
+    await toggle.click();
+
+    const manage = page.getByRole("button", { name: /Manage Environments/i }).first();
+    await expect(manage).toBeVisible({ timeout: 10_000 });
+    await manage.click();
+    await pause(page, 500);
+}
+
+/**
  * Type into the last visible CodeMirror editor. The protocol editors render several
  * editors per tab, so we walk backwards and use the first one that is visible.
  */
