@@ -306,6 +306,41 @@ registered" is not "the client's method is equivalent."** The registry says noth
 client does with the result, and three of these four break *after* the engine has done its job
 correctly.
 
+#### Follow-up (2026-09-18): the binary one is fixed, and the other three are one gap, not three
+
+Acting on the three findings turned up two more, both in `artifactToFile` and both affecting the five
+egress methods 3b-1 had **already** routed — so this was shipped behaviour, not a prerequisite:
+
+- **`writeArtifact` is now base64 in, bytes out** (`26d2d32`). It took a decoded `string` and the
+  shell wrote it back as `"utf-8"`, which corrupts anything that is not text. That was `exportData`'s
+  blocker; it is gone.
+- **The blob branch was worse than the text branch.** It read `read.content` / `read.base64`, but
+  `BlobReadResult` is `{data, eof}` — so it decoded `""` and wrote an **empty file**, with no error.
+  It also issued a single un-offset `blob.read`, which caps at `BLOB_READ_CHUNK_BYTES` (512 KB) and
+  has no terminator other than `eof`. `BLOB_INLINE_THRESHOLD_BYTES` is 1 MB, so almost every real
+  export took that path. Neither was caught because the client's fake transport answers every request
+  with `{ok:true, echoed:cmd}` and no test ever reached either branch.
+
+With the binary objection gone, the remaining three collapse into **one** missing primitive: *the
+dialog has to run before the command.* `File_Ops_Protocol.md` §3.2 requires it and the reason is not
+cosmetic — the shell's `importExport:export` comment says it plainly: fail fast on cancel, so the
+engine never renders a 200 MB workspace archive the user then abandons. `ClientLocal.writeArtifact`
+bundles "ask where" and "write" into one call, which forces the dialog *after* the render. A
+`pickSavePath` hook is what lets `exportData` and `exportRunnerReport` move.
+
+The two imports need a second, separate primitive, and the earlier "may open a second dialog" is now
+**confirmed and worse than that**. `ImportExportModal.tsx` calls preflight with no path, takes
+`res.filePath` from the result, and feeds that same path back into `importData`:
+
+1. The client's `preflightImport` returns `import.preflight`'s result verbatim, and the engine only
+   ever knew a `blobId` — so `res.filePath` is `undefined`, and the collision branch hands
+   `undefined` to `applyImport`.
+2. The client's `importData` **ignores** `req.filePath` and calls `uploadLocalFile()`, which opens a
+   dialog — a second one, for a file the user already picked.
+
+So: `readArtifactFile` needs an optional path (reuse, don't re-ask), and `preflightImport` needs to
+return the path it chose. Neither is a shell change.
+
 #### Two preconditions that were checked rather than assumed
 
 1. **`config.save` no longer calls `updateTrayMenu()`.** The registry handler emits
@@ -892,14 +927,84 @@ suite's job.
 
 ---
 
+## Step 3c — delete the legacy event path (2026-09-18, `eb4c207`)
+
+`eventBridge.ts` was the temporary *middle hop*: it read `logEmitter` directly and broadcast the legacy
+`log:entry` / `log:chunk` / `server:error` channels, so the renderer could keep receiving events over
+`ipcRenderer.on(...)` unchanged while emission sites moved to the bus one at a time. Step 3a gave
+events a real path and 3b-1 flipped the preload onto it, so the middle hop was dead — confirmed rather
+than assumed, by grepping each of its seven channels for listeners outside the file itself (all zero).
+
+### Why this had to be its own step
+
+Step 3's description was "route all methods, then delete `registerIpcHandlers()` + `eventBridge.ts`
+**together**." They are not the same deletion, and only one of them was ready:
+
+- The **event** path is fully replaced. Nothing listens on the legacy channels any more.
+- The **command** path is not: four of the 144 keys have no registry implementation, and four more are
+  the artifact-egress methods above. Deleting `registerIpcHandlers()` today would break all eight on
+  both paths.
+
+So 3c deletes the half that is genuinely dead and leaves the other half standing.
+
+### The consequence that matters
+
+Deleting it makes `wireLogEventsToBus()` the **only** path for the three log events rather than merely
+an additive one. Finding 1's comment said "additive, not a replacement" — that is now wrong, and the
+comment in `handlers.ts` was updated with it. This call is what keeps the capture panel, the
+request-log panel and the server-error banner alive.
+
+### Two consumers died with it
+
+- `tests/integration/companionServer.integration.test.ts` observed `companion:refresh` /
+  `sync:entityStatus` via `webContents.send` — i.e. *through* the bridge. It now observes
+  `bus.onTyped("entity.changed")` / `bus.onTyped("sync.entityStatus")` directly, which is what it
+  actually meant to assert; the bridge hop was incidental.
+- `tests/ipc/handlers.test.ts` had a four-test block asserting `logEmitter` reached `BrowserWindow`.
+  All four tested the deleted middle hop, and two were vacuous (`not.toHaveBeenCalled()`). Deleted
+  rather than re-pointed: the *traffic* is covered by
+  `packages/engine/tests/eventBus.logWiring.test.ts` and the bus → `EVENT_CHANNEL` hop by
+  `tests/ipc/eventChannel.test.ts`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npx vitest run tests/integration/companionServer.integration.test.ts tests/ipc/` | **10 files / 350 passed** |
+| `npm run typecheck` | clean |
+| full suite | **2,430 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the 3b-1 baseline (2,475) | **exactly −4** = the four deleted tests, no other movement |
+
+---
+
+## Finding 6 — artifact egress was binary-lossy and the blob pull was broken (2026-09-18, `26d2d32`)
+
+Recorded in full under §3b-1's follow-up above. Summary: `writeArtifact` now takes base64 and writes
+bytes; the blob branch of `artifactToFile` now loops over `blob.read` with `offset`, reads the correct
+`data`/`eof` fields, accumulates bytes, and releases in a `finally`. Six new tests, two confirmed
+non-vacuous by mutation.
+
+| Check | Result |
+|---|---|
+| `packages/client/tests` + `tests/ipc/clientHandlers.test.ts` | **89 passed** |
+| `npm run typecheck` | clean |
+| full suite | **2,436 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the 3c baseline (2,471) | **exactly +6**, no other movement |
+| mutation check (`if (read?.eof) break;` → `break;`) | both blob tests fail — they are live |
+
+---
+
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after **step 3b-1 (the flip + the two hooks)**: **101 files /
-      2,475 tests** — **2,434 passed**, 40 skipped, and the one documented `soap.execute` flake
-      (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After step 3b-2: 101 / 2,471 —
-      2,430. After the step-3b inventory: 101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423.
-      After finding 1: 100 / 2,445 — 2,404. After step 2: 99 / 2,436 — 2,395. Before step 2: 97 /
-      2,418. The "35 unit suites" this criterion used to say predated P2–P5 entirely.
+- [ ] **Unit suites pass.** Baseline after **finding 6 (egress fix)**: **101 files / 2,477 tests** —
+      **2,436 passed**, 40 skipped, and the one documented `soap.execute` flake
+      (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After step 3c: 101 / 2,471 —
+      2,430. After **step 3b-1 (the flip + the two hooks)**: 101 / 2,475 — 2,434. After step 3b-2:
+      101 / 2,471 — 2,430. After the step-3b inventory: 101 / 2,467 — 2,426. After step 3a: 101 /
+      2,464 — 2,423. After finding 1: 100 / 2,445 — 2,404. After step 2: 99 / 2,436 — 2,395. Before
+      step 2: 97 / 2,418. The "35 unit suites" this criterion used to say predated P2–P5 entirely.
+      *(3c is **−4**: the deleted vacuous forwarding tests. Finding 6 is **+6**. Both measured, not
+      inferred.)*
       *(3b-1 added **exactly +4** — the `client:writeArtifact` cases, the only genuinely new code in
       the step. Everything else moved rather than being written, and the flip itself added none, so
       the flip's own delta is zero. Measured, not inferred.)*
