@@ -6,7 +6,7 @@ vi.mock("@bifurc/engine/applications/processSpawner", () => ({
   processSpawner: { stopAll: vi.fn() },
 }));
 vi.mock("@bifurc/engine/sync/autoSync", () => ({ stopAllAutoSync: vi.fn() }));
-vi.mock("@bifurc/engine/companion/companionServer", () => ({ stopCompanionServer: vi.fn() }));
+vi.mock("@bifurc/engine/transport/legacyCompanion", () => ({ stopCompanionServer: vi.fn() }));
 vi.mock("@bifurc/engine/proxy/server", () => ({ stopServer: vi.fn() }));
 
 type MockFn = ReturnType<typeof vi.fn>;
@@ -29,7 +29,7 @@ async function harness(): Promise<Harness> {
   vi.resetModules();
   const spawner = await import("@bifurc/engine/applications/processSpawner");
   const autoSync = await import("@bifurc/engine/sync/autoSync");
-  const companion = await import("@bifurc/engine/companion/companionServer");
+  const companion = await import("@bifurc/engine/transport/legacyCompanion");
   const proxy = await import("@bifurc/engine/proxy/server");
   const shutdown = await import("@bifurc/engine/shutdown");
   return {
