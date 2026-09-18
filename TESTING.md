@@ -31,6 +31,19 @@ so there is no `cd bifurc` any more.)
 | `npm run typecheck:renderer` | `tsc -p tsconfig.renderer.json` | **Known failing** — see [§7](#7-known-issues-found-during-this-review). Tracks renderer type debt. |
 | `npm run test:e2e` | Builds the app, then runs Playwright against real Electron | Full UI regression. Needs a display (or `xvfb-run` on Linux). |
 
+> **Note on running a single file — do not combine `--project` with a path filter.** On this
+> environment (Vitest 4.1.5, `test.projects`) the two together break every collected file with
+> `TypeError: Cannot read properties of undefined (reading 'config')` at the first `describe`, or
+> `Error: Vitest failed to find the current suite`. It is a *runner* failure, not a test failure, and it
+> is total: it hits root `tests/**` and `packages/**` alike, so it is easy to misread as "my change broke
+> everything". Verified to be the combination rather than either half — `vitest run <path>` alone passes,
+> and `vitest list --project unit` loads the project config fine and lists 1,982 cases.
+>
+> So the documented per-file commands in this file (e.g. `npx vitest run --project integration
+> tests/integration/…`) are **wrong in this environment**; drop the `--project` flag, or run the whole
+> project. The `npm run test:unit` / `test:integration` scripts are unaffected — they carry no path
+> filter.
+
 > **Note on coverage in restricted environments:** Vitest deletes its `coverage/` directory
 > before and after each run. In sandboxes that block bulk deletes this fails with
 > `SAFE_DELETE_BULK_CONFIRM_REQUIRED`. Work around it with
