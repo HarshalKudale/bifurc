@@ -486,3 +486,146 @@ describe("createClient — every request goes through the retry policy", () => {
     expect(attempts()).toBe(1);
   });
 });
+
+// ── artifact egress ────────────────────────────────────────────────────────
+
+/**
+ * A transport that answers `blob.read` with **real slice semantics** — honouring `offset`, capping
+ * at `chunkBytes`, and setting `eof` only once the last slice has been handed over.
+ *
+ * The stub matters more than the assertions. `blob.read` is a *paged* primitive, so a transport
+ * that returns one fixed object makes a single-read implementation look correct: the bug this
+ * guards against was exactly that, and it produced an empty file rather than an error.
+ */
+function slicingTransport(whole: Uint8Array, chunkBytes: number) {
+  const calls: { cmd: string; payload: unknown }[] = [];
+  const t = fakeTransport();
+  t.request = (cmd, payload) => {
+    calls.push({ cmd, payload });
+    if (cmd === "blob.read") {
+      const offset = (payload as { offset?: number }).offset ?? 0;
+      const slice = whole.subarray(offset, offset + chunkBytes);
+      return Promise.resolve({
+        data: Buffer.from(slice).toString("base64"),
+        eof: offset + slice.length >= whole.length,
+      });
+    }
+    return Promise.resolve({ ok: true, blobId: "blob-1" });
+  };
+  return { t, calls };
+}
+
+/** A `ClientLocal` whose `writeArtifact` records the base64 it was handed. */
+function writingLocal() {
+  const writes: { contentBase64: string; suggestedName: string; mimeType: string }[] = [];
+  const { local } = fakeLocal();
+  return {
+    local: {
+      ...local,
+      writeArtifact: async (contentBase64: string, suggestedName: string, mimeType: string) => {
+        writes.push({ contentBase64, suggestedName, mimeType });
+        return { ok: true, filePath: "/tmp/out" };
+      },
+    } as ClientLocal,
+    writes,
+  };
+}
+
+describe("createClient — artifact egress", () => {
+  it("hands an inline artifact to writeArtifact as base64, untouched", async () => {
+    const { t } = slicingTransport(new Uint8Array(0), 5);
+    // `audit.export`, not `exportAudit` — `call()` maps the surface key onto the command name.
+    t.request = (cmd) =>
+      cmd === "audit.export"
+        ? Promise.resolve({ ok: true, inline: "aGVsbG8gd29ybGQ=", suggestedName: "audit.json" })
+        : Promise.resolve({ ok: true });
+    const { local, writes } = writingLocal();
+    const client = createClient(t, { local });
+
+    await client.exportAudit("json");
+
+    // Not decoded and re-encoded: the same characters the engine sent.
+    expect(writes[0]).toEqual({
+      contentBase64: "aGVsbG8gd29ybGQ=",
+      suggestedName: "audit.json",
+      mimeType: "application/octet-stream",
+    });
+  });
+
+  it("pulls every slice of a blob and hands over the whole thing", async () => {
+    /**
+     * The regression. `blob.read` caps at `BLOB_READ_CHUNK_BYTES` and `eof` is the only terminator,
+     * so a single un-offset read returns the **first** slice and truncates silently. The old
+     * implementation did that *and* read the wrong field names (`content`/`base64` instead of
+     * `data`), which made the file empty rather than short — no error either way.
+     *
+     * 20 bytes in 5-byte slices is four reads; asserting the offsets is what proves the loop
+     * advances by *decoded bytes* and not by base64 characters.
+     */
+    const whole = Buffer.from("0123456789abcdefghij");
+    const { t, calls } = slicingTransport(whole, 5);
+    const { local, writes } = writingLocal();
+    const client = createClient(t, { local });
+
+    await client.exportAudit("json");
+
+    expect(calls.filter((c) => c.cmd === "blob.read").map((c) => (c.payload as { offset: number }).offset))
+      .toEqual([0, 5, 10, 15]);
+    expect(Buffer.from(writes[0].contentBase64, "base64")).toEqual(whole);
+  });
+
+  it("keeps a binary artifact byte-exact through the blob path", async () => {
+    /**
+     * `50 4b 03 04` is a ZIP's magic bytes, and `00 ff fe 80` is not valid UTF-8. Decoding these as
+     * a UTF-8 string and re-encoding corrupts them, which is how `workspace-zip` exports broke.
+     */
+    const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0xfe, 0x80]);
+    const { t } = slicingTransport(zip, 3);
+    const { local, writes } = writingLocal();
+    const client = createClient(t, { local });
+
+    await client.exportAudit("json");
+
+    expect(Buffer.from(writes[0].contentBase64, "base64")).toEqual(zip);
+  });
+
+  it("releases the blob even when a slice read fails", async () => {
+    const released: string[] = [];
+    const t = fakeTransport();
+    t.request = (cmd, payload) => {
+      if (cmd === "blob.read") return Promise.reject(new EngineError(ErrorCode.BAD_REQUEST, "no such blob"));
+      if (cmd === "blob.release") {
+        released.push((payload as { blobId: string }).blobId);
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve({ ok: true, blobId: "blob-1" });
+    };
+    const { local } = writingLocal();
+    const client = createClient(t, { local, retry: { attempts: 1, sleep: async () => {} } });
+
+    await expect(client.exportAudit("json")).rejects.toThrow("no such blob");
+    // The lease survives one pull; a failed pull that skips the release pins bytes until the sweep.
+    expect(released).toEqual(["blob-1"]);
+  });
+
+  it("reports failure rather than succeeding when the client cannot write files", async () => {
+    /**
+     * A browser client (P7) has no `writeArtifact`. It must not resolve `{ok:true}` and claim an
+     * export happened.
+     *
+     * Asserted as a bare `{ok:false}` and not as the message: `BifurcApi["exportAudit"]` is declared
+     * `Promise<{ok: boolean}>`, so `exportAudit` **intentionally** drops the reason — the renderer
+     * cannot read a field the type does not declare. `tlsExportCert` and `shareCaptureJson` keep
+     * theirs because their declared types carry `error`/`canceled`. The distinction is deliberate,
+     * and this test pins the half that discards.
+     */
+    const { t } = slicingTransport(new Uint8Array(0), 5);
+    t.request = (cmd) =>
+      cmd === "audit.export" ? Promise.resolve({ ok: true, inline: "eA==" }) : Promise.resolve({ ok: true });
+    const { local } = fakeLocal(); // no writeArtifact — a browser client
+
+    const client = createClient(t, { local });
+
+    await expect(client.exportAudit("json")).resolves.toEqual({ ok: false });
+  });
+});

@@ -30,9 +30,13 @@ import { createIpcTransport } from "./ipcTransport";
  * **Four are artifact egress that would regress if routed.** The two `ClientLocal` hooks they need
  * (`writeArtifact` / `readArtifactFile`) now exist — see `clientHandlers.ts` — and they unlocked five
  * of this group (`exportAudit`, `tlsExportCert`, `shareCaptureJson`, `tlsImportCert`, `tlsImportKey`).
- * The remaining four each have a specific defect in the *client's* egress path, listed where they are
- * overridden below: `exportData` would corrupt the binary `workspace-zip`, `exportRunnerReport` would
- * drop the HTML choice, and the two imports would open a second dialog.
+ * The remaining four each need a *third* primitive the client does not have yet: a way to choose a
+ * save path **before** the command runs. Full reasoning where they are overridden below.
+ *
+ * Note that `writeArtifact` used to be one of the reasons and no longer is. It took a decoded
+ * `string` and the shell wrote it back as `"utf-8"`, which corrupts any artifact that is not text —
+ * `workspace-zip` is a ZIP. It now takes base64 and writes bytes, so egress is binary-safe and the
+ * five already-routed methods are correct rather than merely reachable.
  *
  * So the count is **136 routed, 8 held back**, and every held-back key says why.
  *
@@ -81,8 +85,12 @@ const client = createClient(createIpcTransport(), {
     // there. `readArtifactFile` is the mirror for imports, and `dialog:openFile` already returns
     // exactly `LocalFileContent` (or `{error}` over its 1 MB limit, or `null` on cancel), so it is a
     // pass-through rather than a new channel.
-    writeArtifact: (content: string, suggestedName: string, mimeType: string) =>
-      ipcRenderer.invoke("client:writeArtifact", content, suggestedName, mimeType),
+    //
+    // `contentBase64` is base64 because egress artifacts are **bytes**, not text: `workspace-zip` is
+    // a ZIP. The channel decodes it once and writes the buffer, so no step in the chain is a
+    // UTF-8 round-trip that could turn a valid archive into a corrupt one.
+    writeArtifact: (contentBase64: string, suggestedName: string, mimeType: string) =>
+      ipcRenderer.invoke("client:writeArtifact", contentBase64, suggestedName, mimeType),
     readArtifactFile: () => ipcRenderer.invoke("dialog:openFile"),
   },
 });
@@ -105,20 +113,33 @@ contextBridge.exposeInMainWorld("api", {
   //
   // The two `ClientLocal` hooks above now exist, so most of this group routes. These four do not,
   // and **each would be a user-visible regression** rather than a missing feature — which is why they
-  // are pinned here with their reason instead of being quietly routed:
+  // are pinned here with their reason instead of being quietly routed.
   //
-  // - `exportData` — `workspace-zip` is a **binary** format, and `ClientLocal.writeArtifact` takes a
-  //   decoded *string*. The client base64-decodes into a utf-8 string before handing it over, so a
-  //   ZIP routed through the bridge would be corrupted on write. This is a real gap in the client's
-  //   egress contract, not a shell problem: `writeArtifact` needs a binary variant (or to take
-  //   base64) before `exportData` can move.
+  // Three of the four need the same missing primitive: **the dialog has to run before the command.**
+  // `File_Ops_Protocol.md` §3.2 requires it, and the reason is not cosmetic — the shell's
+  // `importExport:export` comment says it plainly: fail fast on cancel, so the engine never renders a
+  // 200 MB workspace archive the user then abandons. `ClientLocal.writeArtifact` bundles "ask where"
+  // and "write" into one call, which forces the dialog *after* the render. Splitting out a
+  // `pickSavePath` hook is what lets these three move.
+  //
+  // - `exportData` — blocked on the above. Its **binary** objection is now gone: `writeArtifact` takes
+  //   base64 and writes bytes, so a `workspace-zip` survives (see `clientHandlers.ts`). What remains
+  //   is ordering plus dialog chrome — the shell passes a title, two filters and a derived default
+  //   name, none of which the current hook can express.
   // - `exportRunnerReport` — the client hardcodes `format: "json"`, but the shell's dialog offers
-  //   **HTML or JSON** (`runnerHandlers.ts` derives the format from the chosen extension). Routing it
-  //   would silently remove HTML export.
-  // - `preflightImport` / `importData` — the client opens its **own** file dialog and ignores any path
-  //   in `req`. That is right for a blob-based client, but it is a second dialog unless the renderer
-  //   never supplied a path in the first place. Unverified, so it stays on the channel that is known
-  //   to work; confirm against the e2e import spec before flipping.
+  //   **HTML or JSON** and derives the format from the chosen extension (`runnerHandlers.ts`).
+  //   Choosing the extension *is* choosing the format, so this cannot be fixed after the fact — it is
+  //   the same `pickSavePath` gap, in its starkest form.
+  // - `preflightImport` / `importData` — **now verified, and worse than "maybe a second dialog."**
+  //   `ImportExportModal.tsx` calls preflight with no path, takes `res.filePath` from the result, and
+  //   feeds that same path back into `importData`. Two things break:
+  //     1. The client's `preflightImport` returns `import.preflight`'s result verbatim, and the engine
+  //        only ever knew a `blobId` — so `res.filePath` is `undefined` and the collision branch
+  //        hands `undefined` to `applyImport`.
+  //     2. The client's `importData` **ignores** `req.filePath` and calls `uploadLocalFile()`, which
+  //        opens a dialog — a second one, for a file the user already picked.
+  //   Fixing this needs `readArtifactFile` to accept an optional path (reuse, don't re-ask) and
+  //   `preflightImport` to return the path it chose.
   exportData: (req: unknown) => ipcRenderer.invoke("importExport:export", req),
   preflightImport: (req: unknown) => ipcRenderer.invoke("importExport:preflight", req),
   importData: (req: unknown) => ipcRenderer.invoke("importExport:import", req),

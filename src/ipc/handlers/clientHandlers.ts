@@ -168,12 +168,15 @@ export function registerClientHandlers(): void {
   // routing it: P7's browser downloads, P8's CLI writes to stdout or a flag, and only a desktop shell
   // shows this dialog.
   //
-  // `content` is a **decoded string**, not base64 — that is `ClientLocal.writeArtifact`'s contract,
-  // and it is the reason this channel is only used for text artifacts. See the note in
-  // `src/preload.ts` about `workspace-zip`.
+  // `contentBase64` is **base64**, and the write goes down as raw bytes — that is
+  // `ClientLocal.writeArtifact`'s contract. It was a decoded `string` written as `"utf-8"`, which is
+  // only correct for artifacts that happen to be text: `workspace-zip` is a ZIP, and round-tripping
+  // it through a UTF-8 string replaces every non-ASCII byte with `U+FFFD`, producing a file that
+  // looks right and will not open. Taking base64 and writing a Buffer makes every artifact safe,
+  // including the five that were already text.
   ipcMain.handle(
     "client:writeArtifact",
-    async (_e, content: string, suggestedName: string, mimeType: string) => {
+    async (_e, contentBase64: string, suggestedName: string, mimeType: string) => {
       const win = BrowserWindow.getFocusedWindow();
       const ext = path.extname(suggestedName).replace(/^\./, "") || "txt";
       const { filePath, canceled } = await dialog.showSaveDialog(win!, {
@@ -182,7 +185,7 @@ export function registerClientHandlers(): void {
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
       try {
-        fs.writeFileSync(filePath, content, "utf-8");
+        fs.writeFileSync(filePath, Buffer.from(contentBase64, "base64"));
         return { ok: true, filePath };
       } catch (err) {
         return { ok: false, error: (err as Error)?.message ?? "Could not write the file" };

@@ -71,10 +71,22 @@ export interface ClientLocal {
    * content or a blob reference; only the client can put it on a disk. `suggestedName` is the
    * engine's, and is what the picker should pre-fill.
    *
+   * **`contentBase64` is base64, not a decoded string.** The engine's artifacts are bytes —
+   * `workspace-zip` is a ZIP, and a `.pem` is only accidentally text — and base64 is the one
+   * representation that survives both. An earlier version of this hook took a decoded `string` and
+   * the client got there by base64-decoding into utf-8, which silently corrupts any artifact that
+   * is not valid utf-8: every byte outside the ASCII range becomes `U+FFFD` or worse. Taking
+   * base64 means the client never has to decode at all, and the implementer writes
+   * `Buffer.from(contentBase64, "base64")` (or the platform's equivalent) straight to disk.
+   *
+   * This is also why the hook is byte-oriented rather than text-oriented even though most artifacts
+   * today happen to be JSON: the six callers share one primitive, and one of them being binary is
+   * enough to make "always bytes" the only safe default.
+   *
    * Optional so a client with no filesystem (P7's web UI, which downloads instead) can omit it —
    * the egress methods then reject with a clear error rather than silently resolving `{ok:false}`.
    */
-  writeArtifact?(content: string, suggestedName: string, mimeType: string): Promise<ArtifactWriteResult>;
+  writeArtifact?(contentBase64: string, suggestedName: string, mimeType: string): Promise<ArtifactWriteResult>;
 
   /**
    * Ask the user for a file and return its **content**, for the import/upload paths.

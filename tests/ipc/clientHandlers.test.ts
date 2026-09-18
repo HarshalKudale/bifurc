@@ -213,8 +213,8 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
    * unwritable disk look like a dismissed dialog.
    */
   describe("client:writeArtifact handler", () => {
-    const writeArtifact = (content: string, suggestedName: string, mimeType = "application/json") =>
-      getHandler("client:writeArtifact")(EVENT, content, suggestedName, mimeType);
+    const writeArtifact = (contentBase64: string, suggestedName: string, mimeType = "application/json") =>
+      getHandler("client:writeArtifact")(EVENT, contentBase64, suggestedName, mimeType);
 
     // Set per test rather than inherited: `vi.clearAllMocks()` clears *calls* but not
     // *implementations*, so the "user cancels" case below would otherwise leak into every later case
@@ -223,14 +223,28 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
       vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: "/tmp/out.json" } as never);
     });
 
-    it("writes the content to the path the user chose, and reports it back", async () => {
-      const result = await writeArtifact('{"a":1}', "capture.json");
-      expect(fs.writeFileSync).toHaveBeenCalledWith("/tmp/out.json", '{"a":1}', "utf-8");
+    it("decodes the base64 and writes the bytes to the path the user chose", async () => {
+      const result = await writeArtifact("eyJhIjoxfQ==", "capture.json");
+      expect(fs.writeFileSync).toHaveBeenCalledWith("/tmp/out.json", Buffer.from('{"a":1}', "utf-8"));
       expect(result).toEqual({ ok: true, filePath: "/tmp/out.json" });
     });
 
+    /**
+     * The regression this channel exists to prevent. `UEsDBAD//oA=` is a ZIP's magic bytes followed
+     * by `00 ff fe 80` — none of which is valid UTF-8. Written through a UTF-8 round-trip those
+     * bytes become `U+FFFD` or vanish, so the export is a file that looks like a ZIP and will not
+     * open. Comparing Buffers rather than strings is the whole point: a string comparison would
+     * pass on the corrupted form.
+     */
+    it("writes a binary artifact byte-for-byte (the workspace-zip regression)", async () => {
+      await writeArtifact("UEsDBAD//oA=", "workspace.zip", "application/zip");
+      const written = vi.mocked(fs.writeFileSync).mock.calls[0][1];
+      expect(Buffer.isBuffer(written)).toBe(true);
+      expect(written).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0xfe, 0x80]));
+    });
+
     it("pre-fills the picker from the engine's suggestion and filters on its extension", async () => {
-      await writeArtifact("a,b\n", "audit.csv", "text/csv");
+      await writeArtifact("YSxiCg==", "audit.csv", "text/csv");
       expect(dialog.showSaveDialog).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
@@ -242,7 +256,7 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
 
     it("reports a cancel rather than an error, and writes nothing", async () => {
       vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: undefined } as never);
-      expect(await writeArtifact("x", "x.txt")).toEqual({ ok: false, canceled: true });
+      expect(await writeArtifact("eA==", "x.txt")).toEqual({ ok: false, canceled: true });
       expect(fs.writeFileSync).not.toHaveBeenCalled();
     });
 
@@ -250,7 +264,7 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
       vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
         throw new Error("EACCES");
       });
-      expect(await writeArtifact("x", "x.txt")).toEqual({ ok: false, error: "EACCES" });
+      expect(await writeArtifact("eA==", "x.txt")).toEqual({ ok: false, error: "EACCES" });
     });
   });
 });

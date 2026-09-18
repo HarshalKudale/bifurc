@@ -124,22 +124,48 @@ function commandFor(key: string): string {
 }
 
 /**
- * Decode base64 to a UTF-8 string without assuming Node.
+ * Base64 ↔ bytes without assuming Node.
  *
- * The client has to bundle for P7's web UI, so `Buffer` is not guaranteed. `atob` is the browser
- * primitive; `Buffer` is the Node one. Both are reached through `globalThis` so neither is a
- * hard reference at module scope.
+ * The client has to bundle for P7's web UI, so `Buffer` is not guaranteed. `atob`/`btoa` are the
+ * browser primitives; `Buffer` is the Node one. Both are reached through `globalThis` so neither
+ * is a hard reference at module scope.
+ *
+ * **These are byte-oriented on purpose, and the earlier `decodeBase64` was not.** That one returned
+ * a UTF-8 *string*, which is lossy the moment an artifact is not text: `workspace-zip` is a ZIP, and
+ * decoding its bytes as UTF-8 replaces every non-ASCII byte with `U+FFFD` — a corrupt export that
+ * still looks like a file. Artifacts are bytes, so the client's egress path handles bytes and only
+ * re-encodes to base64 at the boundary the `writeArtifact` hook declares.
  */
-function decodeBase64(b64: string): string {
-  const g = globalThis as unknown as { atob?: (s: string) => string; Buffer?: { from(s: string, e: string): { toString(e: string): string } } };
+function base64ToBytes(b64: string): Uint8Array {
+  const g = globalThis as unknown as {
+    atob?: (s: string) => string;
+    Buffer?: { from(s: string, e: string): Uint8Array };
+  };
+  if (g.Buffer) return new Uint8Array(g.Buffer.from(b64, "base64"));
   if (typeof g.atob === "function") {
     const binary = g.atob(b64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
+    return bytes;
   }
-  if (g.Buffer) return g.Buffer.from(b64, "base64").toString("utf-8");
   throw new Error("@bifurc/client: no base64 decoder available in this environment");
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const g = globalThis as unknown as {
+    btoa?: (s: string) => string;
+    Buffer?: { from(b: Uint8Array): { toString(e: string): string } };
+  };
+  if (g.Buffer) return g.Buffer.from(bytes).toString("base64");
+  if (typeof g.btoa === "function") {
+    let binary = "";
+    // Chunked: `String.fromCharCode(...bytes)` blows the argument limit on a large blob.
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return g.btoa(binary);
+  }
+  throw new Error("@bifurc/client: no base64 encoder available in this environment");
 }
 
 export function createClient(transport: Transport, opts: CreateClientOptions): BifurcClient {
@@ -191,11 +217,63 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
   };
 
   /**
+   * Pull a blob in slices and return its **entire** content as base64.
+   *
+   * The loop is not optional and not an optimisation. `blob.read` returns at most
+   * `BLOB_READ_CHUNK_BYTES` (512 KB) unless asked for more, and `eof` is the only signal that the
+   * last slice has arrived — a single un-offset read silently returns the *first* slice, so any
+   * artifact over 512 KB is truncated with no error anywhere. `BLOB_INLINE_THRESHOLD_BYTES` is
+   * 1 MB, so "large enough to be a blob" and "larger than one chunk" overlap almost completely:
+   * a real workspace export takes this path.
+   *
+   * Slices are accumulated as **bytes**, not by concatenating base64 strings. Each slice is encoded
+   * independently and therefore padded independently, and `=` mid-stream is either a decode error
+   * or a silent truncation depending on the decoder — so the join happens below the encoding.
+   *
+   * `offset` advances by decoded bytes rather than by base64 characters, which are 4/3 as many.
+   */
+  const pullBlob = async (blobId: string): Promise<string> => {
+    const parts: Uint8Array[] = [];
+    let total = 0;
+    let offset = 0;
+    try {
+      for (;;) {
+        const read = (await request("blob.read", { blobId, offset })) as
+          | { data?: string; eof?: boolean }
+          | undefined;
+        const slice = typeof read?.data === "string" ? base64ToBytes(read.data) : new Uint8Array(0);
+        if (slice.length === 0) break;
+        parts.push(slice);
+        total += slice.length;
+        offset += slice.length;
+        if (read?.eof) break;
+      }
+    } finally {
+      // Best-effort, and in a `finally` for the same reason as `fileOpsClient.writeArtifact`: the
+      // lease exists to survive exactly one pull, and a failed pull must not pin bytes until the
+      // sweep notices. A release failure must never fail the export the user actually asked for.
+      await request("blob.release", { blobId }).catch(() => undefined);
+    }
+
+    const whole = new Uint8Array(total);
+    let at = 0;
+    for (const part of parts) {
+      whole.set(part, at);
+      at += part.length;
+    }
+    return bytesToBase64(whole);
+  };
+
+  /**
    * Turn an `ArtifactResult` into a file on the client's disk.
    *
    * The engine decides inline-vs-blob (`File_Ops_Protocol.md` §3.2) and returns `sha256` on **both**
-   * branches, so this only has to check which shape arrived. A blob is released afterwards — the
+   * branches, so this only has to check which shape arrived. A blob is released by `pullBlob` — the
    * lease exists to survive exactly one pull, and leaving it would pin bytes for its whole TTL.
+   *
+   * Content stays base64 from the engine all the way to the `writeArtifact` hook. Nothing here
+   * decodes it, because nothing here needs to: the hook writes bytes, and any decode-and-re-encode
+   * in between is a chance to corrupt an artifact that is not valid UTF-8.
    */
   const artifactToFile = async (result: unknown, fallbackName: string): Promise<ArtifactWriteResult> => {
     const r = result as
@@ -209,20 +287,16 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       return { ok: false, error: "this client cannot write files (no writeArtifact hook)" };
     }
 
-    let content: string;
+    let contentBase64: string;
     if (typeof r.inline === "string") {
-      content = decodeBase64(r.inline);
+      contentBase64 = r.inline;
     } else if (typeof r.blobId === "string") {
-      const blobId = r.blobId;
-      const read = (await request("blob.read", { blobId })) as { content?: string; base64?: string } | undefined;
-      content = typeof read?.content === "string" ? read.content : decodeBase64(read?.base64 ?? "");
-      // Best-effort: a failed release must not turn a successful export into a failure.
-      await request("blob.release", { blobId }).catch(() => undefined);
+      contentBase64 = await pullBlob(r.blobId);
     } else {
       return { ok: false, error: "artifact carried neither inline content nor a blobId" };
     }
 
-    return local.writeArtifact(content, r.suggestedName ?? fallbackName, r.mimeType ?? "application/octet-stream");
+    return local.writeArtifact(contentBase64, r.suggestedName ?? fallbackName, r.mimeType ?? "application/octet-stream");
   };
 
   /** Ask for a file locally, upload it, and return the blob id the command needs. */
