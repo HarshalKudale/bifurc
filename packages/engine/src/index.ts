@@ -36,7 +36,7 @@ import { setDataRoot, dataDir, isDataRootSet } from "./store/paths";
 import { loadSettings, type AppSettings } from "./store/appSettings";
 import { startServer, isRunning, getPort, getServerError } from "./proxy/server";
 import { startCompanionServer, getCompanionPort, isCompanionRunning } from "./transport/legacyCompanion";
-import { bus } from "./eventBus";
+import { bus, wireLogEventsToBus } from "./eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
 import { shutdownEngine } from "./shutdown";
 import { startBlobSweeper } from "./blob/sweep";
@@ -174,6 +174,16 @@ export function createEngine(opts: EngineOptions): Engine {
   let stopBlobSweeper: (() => void) | null = null;
 
   /**
+   * P6 finding 1 — the log-events wiring, per engine instance for the same reason the sweeper is.
+   *
+   * `wireLogEventsToBus()` subscribes to the process-wide `logEmitter`, so an engine that is created
+   * and then discarded without this would leave three listeners attached to a singleton it no longer
+   * owns — and the next engine in the same process would find them already there. Wired in
+   * `doStart()` (the proxy, the only emitter, starts there) and detached in `stop()`.
+   */
+  let stopLogWiring: (() => void) | null = null;
+
+  /**
    * P4 work item 3 — the event log, one per engine instance.
    *
    * Created eagerly rather than on first use because it is free until something subscribes (retention
@@ -208,6 +218,15 @@ export function createEngine(opts: EngineOptions): Engine {
     const boot = await bootstrapWorkspaces(settings);
     settings = boot.settings;
     autoSyncStarted = boot.autoSyncStarted;
+
+    // P6 finding 1. The three log events reach the bus only if something wires them, and the proxy
+    // started two lines below is the only thing that emits them — so this must happen before
+    // `startServer()`, or a bind error's `server.error` would be the one event that got away.
+    //
+    // Wired here and **not only** in the shell's `registerIpcHandlers()` so that P7's web UI, P8's CLI
+    // and P9's Docker image inherit it from the lifecycle instead of each re-solving it. That is the
+    // whole reason the function lives in the engine rather than in the shell.
+    stopLogWiring = wireLogEventsToBus(bus);
 
     startServer(settings.port);
     startCompanionServer(settings.companionPort ?? 9271);
@@ -275,6 +294,11 @@ export function createEngine(opts: EngineOptions): Engine {
       // per-engine-instance and its lifetime is this object's, not the process's.
       stopBlobSweeper?.();
       stopBlobSweeper = null;
+      // Same reasoning again: the log wiring is per-instance, so it is detached here rather than in
+      // the memoised `shutdownEngine()`. Left attached, it would keep forwarding into a bus whose
+      // engine has stopped, and would double up if another engine were ever created in this process.
+      stopLogWiring?.();
+      stopLogWiring = null;
       // Same reasoning as the sweeper: the log is per-instance, so it is closed here rather than in
       // the memoised shutdown. Closing it detaches the retention listeners, which is what stops the
       // engine numbering events after it has been told to stop.
