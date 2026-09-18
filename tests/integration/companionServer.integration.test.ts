@@ -29,7 +29,7 @@ import { BrowserWindow } from "electron";
 
 import { createWorkspace, getFreePort, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
-import { wireEventBridge } from "@/ipc/eventBridge";
+import { bus } from "@bifurc/engine/eventBus";
 import {
   startCompanionServer,
   stopCompanionServer,
@@ -62,10 +62,10 @@ async function initRepo(): Promise<void> {
 }
 
 beforeEach(async () => {
-  // companionServer.ts emits on the engine bus (P2); this test observes "the renderer
-  // contract" — what the shell's temporary eventBridge.ts forwards to webContents — so it
-  // must wire that bridge itself, same as `registerIpcHandlers()` does in production.
-  wireEventBridge();
+  // companionServer.ts emits on the engine bus (P2), and the bus is now the contract: the preload
+  // subscribes through the RPC bridge, so `eventBridge.ts`'s `companion:refresh` /
+  // `sync:entityStatus` channels reached nobody and were deleted in step 3c. This test therefore
+  // listens on the bus directly, which is also what every future transport carries.
   ws = createWorkspace({});
   // Clears the git cache and repoints the data root at the fresh temp workspace.
   setDataDirOverride(ws.dataRoot);
@@ -387,31 +387,39 @@ describe("companion server — the security boundary", () => {
   });
 });
 
-describe("companion server — the renderer contract", () => {
-  it("tells the renderer to refresh, and reports the new entity as dirty", async () => {
-    const win = fakeWindow();
-    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win as any]);
+describe("companion server — the notification contract", () => {
+  it("tells listeners to refresh, and reports the new entity as dirty", async () => {
+    const refreshes: unknown[] = [];
+    const statuses: { wsId: string; status: Record<string, string> }[] = [];
+    const onChanged = () => refreshes.push(1);
+    const onStatus = (p: { wsId: string; status: Record<string, string> }) => statuses.push(p);
+    bus.onTyped("entity.changed", onChanged);
+    bus.onTyped("sync.entityStatus", onStatus);
 
-    const client = await connectClient();
-    const reply = await ask(client, { id: "b1", action: "mock:add", payload: validMockPayload });
-    expect(reply.ok).toBe(true);
+    try {
+      const client = await connectClient();
+      const reply = await ask(client, { id: "b1", action: "mock:add", payload: validMockPayload });
+      expect(reply.ok).toBe(true);
 
-    // The refresh ping is sent synchronously with the action...
-    const sent = (channel: string): any[] =>
-      win.webContents.send.mock.calls.filter((c) => c[0] === channel).map((c) => c[1]);
+      // The refresh ping is emitted synchronously with the action...
+      expect(refreshes).toHaveLength(1);
 
-    expect(sent("companion:refresh")).toHaveLength(1);
+      // ...and the entity-status broadcast is computed asynchronously, so wait for it.
+      const statusPath = `mocks/${reply.data.id}.json`;
+      await waitFor(() => statuses.length > 0);
 
-    // ...and the entity-status broadcast is computed asynchronously, so wait for it.
-    const statusPath = `mocks/${reply.data.id}.json`;
-    await waitFor(() => sent("sync:entityStatus").length > 0);
+      const payload = statuses[0];
+      expect(payload.wsId).toBe(TEST_WS);
+      // The freshly written mock must be reported as an unsaved change. If the status were
+      // serialized before the (async) git query resolved, this would be an empty object.
+      expect(payload.status[statusPath]).toBe("new");
 
-    const payload = sent("sync:entityStatus")[0];
-    expect(payload.wsId).toBe(TEST_WS);
-    // The freshly written mock must be reported as an unsaved change. If the status were
-    // serialized before the (async) git query resolved, this would be an empty object.
-    expect(payload.status[statusPath]).toBe("new");
-
-    client.close();
+      client.close();
+    } finally {
+      // `bus` is the process-wide singleton, and vitest shares a module registry across files in a
+      // worker — a leaked listener here would fire into whatever ran next.
+      bus.offTyped("entity.changed", onChanged);
+      bus.offTyped("sync.entityStatus", onStatus);
+    }
   });
 });
