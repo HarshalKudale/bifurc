@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openPanel } from "./helpers";
+import { openPanel, openEnvironmentsManager } from "./helpers";
 
 test.describe("Application Launch", () => {
     test("window opens with correct title", async ({ page }) => {
@@ -50,8 +50,16 @@ test.describe("Navigation", () => {
         await expect(page.getByRole("button", { name: /Add Rule/i }).first()).toBeVisible();
     });
 
+    /**
+     * The manager is **not** a titlebar button: it lives inside the environment dropdown, so the
+     * dropdown has to be opened first (`openEnvironmentsManager`). This test previously clicked the
+     * "Manage Environments…" label directly, which matches nothing until the menu is open.
+     *
+     * The panel anchor is unchanged and still the real one: `EnvironmentsPanel`'s sidebar footer
+     * button, `strings.environments.newEnvironment` = "New Environment".
+     */
     test("can open the environments manager", async ({ page }) => {
-        await page.getByRole("button", { name: /^Manage Environments/i }).first().click();
+        await openEnvironmentsManager(page);
         await expect(page.getByRole("button", { name: /New Environment/i }).first()).toBeVisible({
             timeout: 10_000,
         });
