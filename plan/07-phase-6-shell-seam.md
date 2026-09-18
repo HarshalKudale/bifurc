@@ -211,6 +211,39 @@ decision belongs with whoever implements it.
    they match `ClientLocal` exactly — but it does not mention that 25 *routable* commands are
    unimplemented, which is the larger half of the work.
 
+**3b-2 progress.** First slice landed: the six proxy/server-lifecycle commands
+(`server.status` / `server.start` / `server.stop` / `server.restart` / `proxy.status` /
+`services.discover`) now live in `packages/engine/src/proxy/serverCommands.ts`, registered from
+`registerIpcHandlers()`. The ratchet went **25 → 19**. That module is the only registration site for
+all six — the engine's own `transport/auth/scopes.ts` had already assigned them scopes
+(`read` for the three status/discovery commands, `admin` for the three lifecycle ones), which is
+independent evidence they were always engine commands.
+
+### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
+
+The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies
+with `commandRegistry.invoke("<command>", {}, ctx)`, the way `config:get` already does. **It was tried
+and reverted. It is a regression, not a style question.**
+
+The difference is *how the command got registered*. `config.get` / `env.setActive` /
+`workspace.setActive` are registered at **module scope** in `coreHandlers.ts`, so importing that file
+populates them. The `register*Commands(registry)` modules are called **explicitly from
+`registerIpcHandlers()`**, so a legacy body delegating to one acquires a hidden ordering dependency on
+a function in a different file — and on a function callers are not obliged to run.
+
+They are not obliged, and two suites already didn't:
+`tests/spike/protocolPoc.test.ts` and `tests/integration/settingsMutations.integration.test.ts`
+register handler *groups* (`registerCoreHandlers()` / `registerSystemHandlers()`) without
+`registerIpcHandlers()`. Re-pointing broke **six** of their tests with `UNKNOWN_COMMAND` —
+`server.status` among them — because the registry they reached was empty. Nothing catches this at
+build time and the shell's own handler file looks untouched; the failure is
+`No handler registered` at *invocation* time.
+
+So the duplication is deliberate and bounded: six one-line bodies, behaviourally identical to the
+handlers in `serverCommands.ts`. It is removed by **step 3**, which deletes `registerIpcHandlers()`
+and the shell's handler groups together — one implementation, no second entry point to keep in sync.
+Re-pointing early trades a temporary, visible duplication for a permanent, invisible coupling.
+
 ---
 
 ## The rule for this phase
@@ -405,7 +438,9 @@ Delete the flag in the next release, once the seam has survived real usage.
 
    - **3b-1** — route the **68** registered commands. Mechanical, and safe to do while
      `registerIpcHandlers()` still runs.
-   - **3b-2** — implement the **25** missing commands in the engine.
+   - **3b-2** — implement the **25** missing commands in the engine. **In progress: 6 done, 19 left**
+     (see "3b-2 progress" above). Do **not** re-point the shell bodies at the registry while doing it —
+     see §5a.
    - **then** delete `registerIpcHandlers()` and `eventBridge.ts`. Deleting them earlier would break
      each of the 25 on **both** paths at once, and the surface test would still pass because the key
      stays exposed.
