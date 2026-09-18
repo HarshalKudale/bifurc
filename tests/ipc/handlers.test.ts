@@ -258,36 +258,45 @@ describe("src/ipc/handlers.ts", () => {
      * the list here means it can only shrink **deliberately**: implementing a command makes this fail
      * until the name is removed, and a new command that lands unregistered fails immediately.
      *
-     * It has now shrunk once. Step 3b-2's first slice moved the six proxy/server-lifecycle commands
-     * into `packages/engine/src/proxy/serverCommands.ts`, so the list went 25 → 19; that edit is the
-     * ratchet doing its job rather than a change to the assertion.
+     * It has now shrunk twice. Step 3b-2's first slice moved the six proxy/server-lifecycle commands
+     * into `packages/engine/src/proxy/serverCommands.ts` (25 → 19), and its second moved
+     * `config.save` + the three `workspace.*` commands into `packages/engine/src/store/configCommands.ts`
+     * (19 → 15). Both edits are the ratchet doing its job rather than changes to the assertion.
+     *
+     * ## Why the list is now three lists
+     *
+     * The first version of this block said every remaining command was "engine work that has not been
+     * moved yet". **Auditing the remaining 19 against their frozen schemas showed that is false**, and
+     * `src/ipc/handlers/runnerHandlers.ts` had already recorded the reason for three of them: a
+     * `.strict()` protocol schema that contradicts what real callers actually send. So the entries are
+     * split by *why* they are unimplemented, because the three reasons need three different responses:
+     *
+     * - `MOVABLE` — the schema accepts every payload the handler accepts. Move it.
+     * - `NARROWED` — the schema accepts a strict subset, and `.strict()` turns the difference into a
+     *   `BAD_REQUEST`. Moving it would silently reduce the command's accepted params, so it needs a
+     *   decision, not a move.
+     * - `BLOCKED` — the schema rejects payloads that a **currently passing** test uses. These cannot
+     *   move until the frozen protocol changes.
+     * - `SPLIT` — the protocol declares an engine-half contract that deliberately differs from the
+     *   shell's implementation. Not a move at all.
      *
      * This asserts *registration*, not behaviour. A command can be registered and still do the wrong
      * thing; that is what the conformance suite and each handler's own tests are for.
      */
     describe("registry coverage (the step 3b inventory)", () => {
       /**
-       * Commands with no `registry.register()` anywhere, verified by grep and by this test.
+       * The 11 that can be moved as-is, verified by grep and by this test.
        *
-       * Every one is engine work that has not been moved yet, **not** a shell concern — the webhook
-       * server, workspaces, audit, the runner and the healthbar all live in `packages/engine`.
-       * `app.checkUpdate` is the one open question: `plan/07` calls it a "shell half", the client
-       * classifies it `transport`, and the third case below records the disagreement without
-       * resolving it.
-       *
-       * The six `server.*` / `proxy.status` / `services.discover` entries that were here have moved
-       * out (see the block comment above), which is why this is 19 rather than 25.
+       * Every one is engine work, **not** a shell concern — the webhook server, the runner and the
+       * healthbar all live in `packages/engine`. The six `server.*` / `proxy.status` /
+       * `services.discover` entries and the four `config.save` / `workspace.*` entries that were here
+       * have moved out, which is why this is 11 rather than 25.
        */
-      const NOT_IN_REGISTRY = [
-        "app.checkUpdate",
-        "audit.list",
-        "config.save",
+      const MOVABLE = [
         "healthbar.checkUrl",
         "healthbar.getServices",
         "healthbar.saveServices",
         "request.replay",
-        "runner.loadConfig",
-        "runner.saveConfig",
         "runner.saveReport",
         "script.execute",
         "webhook.registerActive",
@@ -295,10 +304,56 @@ describe("src/ipc/handlers.ts", () => {
         "webhookServer.start",
         "webhookServer.status",
         "webhookServer.stop",
-        "workspace.add",
-        "workspace.delete",
-        "workspace.rename",
       ];
+
+      /**
+       * The schema is **narrower than the handler**, and `.strict()` makes that fatal rather than
+       * lossy. `AuditListParams` has no `filePath` / `fromTs` / `toTs`, but `QueryLogOptions` — the
+       * type the handler actually takes — does. So a caller passing `filePath` gets `BAD_REQUEST`
+       * through the registry where the legacy channel answered it.
+       *
+       * **The honest caveat:** nothing currently passes those. `auditList` exists on `window.api` and
+       * no renderer code calls it, so the narrowing is latent, not live. That is exactly why this is a
+       * separate category rather than a `BLOCKED` one — and why it should not be quietly moved either.
+       * The whole point of P9 is *new* clients, and a remote client is precisely the caller that would
+       * find the missing fields.
+       */
+      const NARROWED = ["audit.list"];
+
+      /**
+       * Blocked by the frozen protocol, each with a **currently passing test** as the evidence. These
+       * are not "not yet moved" — they cannot be moved without either widening the protocol or
+       * breaking a real caller, and the protocol is frozen for P1–P6.
+       */
+      const BLOCKED = [
+        {
+          command: "runner.saveConfig",
+          reason:
+            "RunnerConfigSchema requires {requestOrder, delayMs}, but tests/integration/runnerStorage" +
+            ".integration.test.ts:207 saves {delayMs, stopOnFailure, iterations} — no requestOrder.",
+        },
+        {
+          command: "runner.loadConfig",
+          reason:
+            "The same schema, and RunnerLoadConfigResult *declares* it as the loaded shape — so a " +
+            "round-trip of the config that test actually saves cannot satisfy it.",
+        },
+      ];
+
+      /**
+       * Not a move: `misc.ts` marks `app.checkUpdate` SPLIT, with the schema as "the interim
+       * engine-half contract" and a note that **P12 moves it fully client-side**. The disagreement
+       * `plan/07` recorded is therefore resolved by the protocol's own comment, and neither side was
+       * simply wrong: the GitHub fetch is engine-safe outbound network, while `app.getVersion()` and
+       * the `process.platform` asset match are client-local.
+       *
+       * The concrete consequence is that `AppCheckUpdateResult` has no `currentVersion` and no
+       * `hasUpdate` — the two fields the shell handler's success branch returns — so the engine half
+       * cannot be produced by moving that body. It needs the split written, which is P12's job.
+       */
+      const SPLIT = ["app.checkUpdate"];
+
+      const NOT_IN_REGISTRY = [...MOVABLE, ...NARROWED, ...BLOCKED.map((b) => b.command), ...SPLIT];
 
       it("implements every protocol command except the pinned list", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
@@ -309,6 +364,49 @@ describe("src/ipc/handlers.ts", () => {
           .sort();
 
         expect(missing).toEqual([...NOT_IN_REGISTRY].sort());
+      });
+
+      it("demonstrates why each BLOCKED command cannot move, using the frozen schema", async () => {
+        // The other direction of ratchet, and the reason these are separated from `MOVABLE`: this
+        // asserts the *block itself*, not just the membership. If someone later widens
+        // `RunnerConfigSchema`, this test fails and says so — at which point `runner.saveConfig` and
+        // `runner.loadConfig` become movable and should be moved, rather than sitting here forever
+        // looking unimplemented.
+        const { RunnerSaveConfigParams, RunnerLoadConfigParams } = await import("@bifurc/protocol");
+
+        // Exactly the payload the passing integration test saves, and exactly the shape it expects
+        // back. Both must be rejected by the frozen schema for this categorisation to be honest.
+        const realConfig = { delayMs: 250, stopOnFailure: true, iterations: 3 };
+
+        expect(
+          RunnerSaveConfigParams.safeParse({ workspaceId: "ws", folderId: "f", config: realConfig })
+            .success,
+        ).toBe(false);
+
+        // `runner.loadConfig` takes no config param at all, so its block is not about the request —
+        // it is that the *result* it declares is the same fixed shape. Parsing the real config
+        // through that shape is what would fail, which is the assertion below.
+        expect(RunnerLoadConfigParams.safeParse({ workspaceId: "ws", folderId: "f" }).success).toBe(true);
+        expect(
+          RunnerSaveConfigParams.shape.config.safeParse(realConfig).success,
+        ).toBe(false);
+
+        expect(BLOCKED.map((b) => b.command).sort()).toEqual(
+          ["runner.loadConfig", "runner.saveConfig"],
+        );
+      });
+
+      it("records that the SPLIT command is a split rather than an unimplemented move", async () => {
+        // `app.checkUpdate` takes no params in its engine half, so nothing about it is schema-blocked
+        // — which is precisely why it must not be filed under `BLOCKED` or `MOVABLE`. The assertion
+        // that matters is that its engine-half schema is empty: the engine half is the GitHub fetch
+        // and nothing else, so any implementation that also computes `hasUpdate` is doing the client's
+        // job and will disagree with P12.
+        const { AppCheckUpdateParams } = await import("@bifurc/protocol");
+
+        expect(AppCheckUpdateParams.safeParse({}).success).toBe(true);
+        expect(Object.keys(AppCheckUpdateParams.shape)).toEqual([]);
+        expect(SPLIT).toEqual(["app.checkUpdate"]);
       });
 
       it("still serves every unregistered command on a legacy channel", async () => {
@@ -328,11 +426,15 @@ describe("src/ipc/handlers.ts", () => {
         }
       });
 
-      it("confirms the client claims all 25 are routable, which is why the list matters", async () => {
-        // The finding in one assertion: the client classifies **every one** of the 25 as `transport`
+      it("confirms the client claims every pinned command is routable, which is why the list matters", async () => {
+        // The finding in one assertion: the client classifies **every one** of these as `transport`
         // or `shim` — a 1:1 mapping onto a protocol command — so it would call `registry.invoke()`
-        // for each and get `UNKNOWN_COMMAND`. So the client does not merely lack 25 methods; it
-        // *advertises* 25 it cannot deliver against the real shell.
+        // for each and get `UNKNOWN_COMMAND`. So the client does not merely lack these methods; it
+        // *advertises* them.
+        //
+        // Note this holds for all four categories, including `SPLIT`: the client calling
+        // `checkUpdate()` and reaching `registry.invoke("app.checkUpdate")` is exactly the mismatch
+        // the protocol's "engine half" note describes.
         //
         // Imported relatively because `SURFACE` is not re-exported from the package root (only
         // `surface.ts` has it) and the alias in `vitest.config.ts` covers `@bifurc/engine/*` only.
@@ -347,16 +449,18 @@ describe("src/ipc/handlers.ts", () => {
 
         expect(claimed).toEqual([...NOT_IN_REGISTRY].sort());
 
-        // Worth stating rather than leaving to be re-derived: the one entry the *plan* disagrees
-        // about is `app.checkUpdate`. `plan/07`'s "Local handlers stay local" table calls it "shell
-        // half", while the client classifies it `transport`. One of the two is wrong, and this test
-        // deliberately does not decide which — it only records that the disagreement exists, so the
-        // decision is made when the command is actually implemented rather than by accident.
+        // The disagreement `plan/07` recorded about `app.checkUpdate` — "shell half" per the plan,
+        // `transport` per the client — is **resolved by the protocol's own comment**, and neither side
+        // was simply wrong: `misc.ts` marks it SPLIT, the GitHub fetch being engine-safe outbound
+        // network and the `app.getVersion()` / `process.platform` comparison being client-local. So
+        // the client's classification is right *for now* (the engine half is reachable over a
+        // transport) and P12 moves it fully client-side. Asserted rather than left in prose because
+        // "one of the two is wrong" was the previous state and is no longer true.
         expect(SURFACE.checkUpdate).toMatchObject({ kind: "transport", command: "app.checkUpdate" });
       });
 
       /**
-       * The ratchet above asserts *registration*; this asserts *delivery*, for the six commands that
+       * The ratchet above asserts *registration*; this asserts *delivery*, for the ten commands that
        * step 3b-2 has moved so far.
        *
        * The distinction is the entire point of finding 5, and it is easy to lose: a command can be
@@ -368,7 +472,7 @@ describe("src/ipc/handlers.ts", () => {
        * how a transport calls it. `ctx` is built the way the engine's own callers build it: a bus and
        * **no session**, since a session-less caller is the engine itself and holds every scope.
        */
-      it("delivers the six moved commands through the registry, not just the channel", async () => {
+      it("delivers the ten moved commands through the registry, not just the channel", async () => {
         const { commandRegistry } = await import("@bifurc/engine/commands/registry");
         const { bus } = await import("@bifurc/engine/eventBus");
         const ctx = { bus };
@@ -403,6 +507,48 @@ describe("src/ipc/handlers.ts", () => {
 
         expect(commandRegistry.invoke("services.discover", {}, ctx)).toEqual([]);
         expect(discoverServices).toHaveBeenCalled();
+
+        // ── slice 2: config.save and the three workspace.* commands ──────────
+
+        // `config.save` — the settings path, and the restart is the part worth asserting. An
+        // implementation that only called `saveConfig` would persist the new port while the live
+        // server kept answering on the old one, which is the bug this branch exists to prevent.
+        vi.mocked(startServer).mockClear();
+        vi.mocked(stopServer).mockClear();
+        expect(
+          commandRegistry.invoke("config.save", { config: { ...makeDefaultConfig(), port: 9876 } }, ctx),
+        ).toEqual({ ok: true });
+        expect(saveConfig).toHaveBeenCalled();
+        expect(stopServer).toHaveBeenCalled();
+        expect(startServer).toHaveBeenCalledWith(9876);
+
+        // `workspace.add` — the gate is mocked to allow, so this is the success path. The trim is the
+        // assertion that matters: `name` comes off the wire as an arbitrary string, and a workspace
+        // named "  Fresh  " would be a directory named that too.
+        const wsCountBefore = (currentConfig.workspaces ?? []).length;
+        const added = (await commandRegistry.invoke("workspace.add", { name: "  Fresh  " }, ctx)) as {
+          id: string;
+          name: string;
+          activeEnvironmentId: string | null;
+        };
+        expect(added.name).toBe("Fresh");
+        expect(added.activeEnvironmentId).toBeNull();
+        expect((currentConfig.workspaces ?? []).length).toBe(wsCountBefore + 1);
+
+        // `workspace.rename` — and note the fallback: a whitespace-only name must leave the old name
+        // rather than blanking it, because `name.trim() || ws.name` is what the shell did.
+        expect(
+          await commandRegistry.invoke("workspace.rename", { id: added.id, name: "Renamed" }, ctx),
+        ).toEqual({ ok: true });
+        expect((currentConfig.workspaces ?? []).find((w) => w.id === added.id)?.name).toBe("Renamed");
+        await commandRegistry.invoke("workspace.rename", { id: added.id, name: "   " }, ctx);
+        expect((currentConfig.workspaces ?? []).find((w) => w.id === added.id)?.name).toBe("Renamed");
+
+        // `workspace.delete` — removing the *inactive* one, so the active-id branch is not what is
+        // under test here; the round-trip is.
+        expect(await commandRegistry.invoke("workspace.delete", { id: added.id }, ctx)).toEqual({ ok: true });
+        expect((currentConfig.workspaces ?? []).find((w) => w.id === added.id)).toBeUndefined();
+        expect((currentConfig.workspaces ?? []).length).toBe(wsCountBefore);
       });
 
       it("refuses a payload the frozen protocol schema rejects, rather than passing it through", async () => {

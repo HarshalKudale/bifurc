@@ -245,10 +245,12 @@ current. The direction will be **upward**: the client is the most thoroughly cov
 repo relative to its size (5 suites / 54 tests against 5 source files), which is what a phase whose
 entire value is a shape guarantee should look like. Re-measure rather than copy.
 
-Suite size: **101 files / 2,469 tests** (measured 2026-09-18 after 3b-2's first slice, undeselected:
-`2428 passed | 1 failed | 40 skipped`; the failure is the documented `soap.execute` dead-endpoint flake
-below). The last steps were P6's shell seam — 101 / 2,469 after moving the six proxy/server-lifecycle
-commands into `packages/engine/src/proxy/serverCommands.ts` (+2), 101 / 2,467 after the
+Suite size: **101 files / 2,471 tests** (measured 2026-09-18 after 3b-2's second slice, undeselected:
+`2430 passed | 1 failed | 40 skipped`; the failure is the documented `soap.execute` dead-endpoint flake
+below). The last steps were P6's shell seam — 101 / 2,471 after moving `config.save` + the three
+`workspace.*` commands into `packages/engine/src/store/configCommands.ts` and splitting the ratchet by
+category (+2), 101 / 2,469 after the six proxy/server-lifecycle commands moved into
+`packages/engine/src/proxy/serverCommands.ts` (+2), 101 / 2,467 after the
 registry-coverage ratchet in `tests/ipc/handlers.test.ts` (+3), 101 / 2,464 after step 3a (the push
 channel), 100 / 2,445 after finding 1, 99 / 2,436 after step 2. Before that, P5's client package —
 97 / 2,418, 96 / 2,401 with
