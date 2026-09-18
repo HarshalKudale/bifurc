@@ -20,6 +20,7 @@ import { registerImportExportCommands } from "@bifurc/engine/importExport/comman
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
 import { wireEventBridge } from "@/ipc/eventBridge";
+import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
   // P3: the engine-side command surface the shell is willing to serve. `createEngine()` registers
@@ -64,4 +65,17 @@ export function registerIpcHandlers(): void {
   registerCrudHandlers();
   registerRunnerHandlers();
   registerCoreHandlers();
+
+  // P6 work item 1, step 2: the RPC bridge, over `createInProcessTransport(commandRegistry)`.
+  //
+  // Deliberately last, and deliberately **in addition to** everything above rather than instead of
+  // it. `plan/07`'s step 2 routes exactly one method (`config:get`) through the new path and leaves
+  // the legacy channels serving the other 143, so a bridge defect costs one method instead of the
+  // whole app — and the phase stays revertable, which it would not be if the old path were deleted
+  // here. Step 3 is the flip; this is the proof that the seam carries traffic at all.
+  //
+  // It must come after the `register*Commands(commandRegistry)` calls at the top of this function:
+  // the bridge dispatches through the registry, and a command that has not been registered yet is an
+  // `UNKNOWN_COMMAND` that only shows up when something finally calls it.
+  registerRpcBridge();
 }
