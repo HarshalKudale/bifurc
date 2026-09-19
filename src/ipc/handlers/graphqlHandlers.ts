@@ -24,84 +24,31 @@ interface SavedGraphQLSchema {
   introspectedAt?: number; createdAt: number; workspaceId: string;
 }
 
-// P2 work item 7 — only graphql.introspect/execute convert here directly; graphql:addRequest/
-// updateRequest/deleteRequest and graphql:addMock/updateMock/deleteMock already route through
-// the CommandRegistry too, via the `registerEntityCrudHandlers()` calls below (the CRUD
-// collapse — see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's
-// tenth batch). `graphql:addSchema/deleteSchema/listSchemas` now route through the same
-// registry too, via `registerSimpleEntityHandlers()` — they don't track a `configKey` array the
-// way every `CrudFactoryOpts` kind does (schemas are written straight to disk, nothing mirrors
-// them into `AppConfig`), and have no "update" concept, so they go through the smaller
-// `entity.create`/`entity.delete`/`entity.list` fallback path instead.
+// ## Channels only — the registry half now lives in the engine
+//
+// `graphql.introspect` / `graphql.execute` used to be registered at **module scope** in this file,
+// which is the `plan/07` §5c defect: a containerised engine (P9) answered `UNKNOWN_COMMAND` for both.
+// Step 3e slice 4 (2026-09-19) moved them into `packages/engine/src/protocols/graphqlCommands.ts`
+// behind `registerGraphqlCommands()`, called from `src/ipc/handlers.ts`.
+//
+// Every channel below **delegates** through `commandRegistry.invoke()` rather than duplicating the
+// body — unlike `runnerHandlers.ts`, where three of the five are self-contained copies. That
+// distinction decides what breaks: a delegating channel is only ever as alive as the registry behind
+// it, so a suite that registers this handler group by hand **must** also call
+// `registerGraphqlCommands(commandRegistry)`, or the channel exists with nothing behind it. The
+// failure is `No handler registered` at *invocation* time, so nothing catches it at build time.
+//
+// The three CRUD groups are a different thing and stay: `graphql:addRequest/updateRequest/
+// deleteRequest`, `graphql:addMock/updateMock/deleteMock` and `graphql:addSchema/deleteSchema/
+// listSchemas` route through the CRUD collapse — see `entityCrudFactory.ts` and
+// `plan/03-phase-2-engine-extraction.md` work item 7's tenth batch. The last group goes through the
+// smaller `registerSimpleEntityHandlers()` path because schemas don't track a `configKey` array the
+// way every `CrudFactoryOpts` kind does (they are written straight to disk, nothing mirrors them into
+// `AppConfig`) and have no "update" concept.
+//
+// P2 work item 7 — `graphql.introspect`/`execute` convert directly: the params match the frozen
+// schema exactly, so no cast or translation is needed.
 const ctx = { bus };
-
-commandRegistry.register("graphql.introspect", async ({ url, headers }: GraphqlIntrospectParams) => {
-  const introspectionQuery = `
-      query IntrospectionQuery {
-        __schema {
-          queryType { name }
-          mutationType { name }
-          subscriptionType { name }
-          types { ...FullType }
-          directives { name description locations args { ...InputValue } }
-        }
-      }
-      fragment FullType on __Type {
-        kind name description
-        fields(includeDeprecated: true) { name description args { ...InputValue } type { ...TypeRef } isDeprecated deprecationReason }
-        inputFields { ...InputValue }
-        interfaces { ...TypeRef }
-        enumValues(includeDeprecated: true) { name description isDeprecated deprecationReason }
-        possibleTypes { ...TypeRef }
-      }
-      fragment InputValue on __InputValue { name description type { ...TypeRef } defaultValue }
-      fragment TypeRef on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } }
-    `;
-  try {
-    const http = url.startsWith("https") ? require("https") : require("http");
-    const body = JSON.stringify({ query: introspectionQuery });
-    const parsed = new URL(url);
-    const reqHeaders: Record<string, string> = { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)), ...headers };
-    const result = await new Promise<string>((resolve, reject) => {
-      const req = http.request({ hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "POST", headers: reqHeaders, rejectUnauthorized: false }, (res: any) => {
-        let data = "";
-        res.on("data", (chunk: string) => { data += chunk; });
-        res.on("end", () => resolve(data));
-      });
-      req.on("error", reject);
-      req.write(body);
-      req.end();
-    });
-    return { ok: true, sdl: result };
-  } catch (err: any) {
-    return { ok: false, error: err.message ?? String(err) };
-  }
-});
-
-commandRegistry.register("graphql.execute", async ({ url, headers, query, variables, operationName }: GraphqlExecuteParams) => {
-  const http = url.startsWith("https") ? require("https") : require("http");
-  let parsedVars: unknown = undefined;
-  try { if (variables && variables.trim()) parsedVars = JSON.parse(variables); } catch { /* leave undefined */ }
-  const body = JSON.stringify({ query, variables: parsedVars, operationName: operationName || undefined });
-  const parsed = new URL(url);
-  const reqHeaders: Record<string, string> = { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)), ...headers };
-  const start = Date.now();
-  const { status, resHeaders, resBody } = await new Promise<{ status: number; resHeaders: Record<string, string>; resBody: string }>((resolve, reject) => {
-    const req = http.request({ hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "POST", headers: reqHeaders, rejectUnauthorized: false }, (res: any) => {
-      let data = "";
-      res.on("data", (chunk: string) => { data += chunk; });
-      res.on("end", () => {
-        const h: Record<string, string> = {};
-        for (const [k, v] of Object.entries(res.headers)) { h[k] = Array.isArray(v) ? v.join(", ") : String(v); }
-        resolve({ status: res.statusCode ?? 0, resHeaders: h, resBody: data });
-      });
-    });
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-  return { status, headers: resHeaders, body: resBody, durationMs: Date.now() - start };
-});
 
 export function registerGraphqlHandlers() {
   registerEntityCrudHandlers<SavedGraphQLRequest>({
