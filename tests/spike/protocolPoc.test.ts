@@ -195,6 +195,10 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // actually drives `soap.execute`, so without these two calls it fails as `No handler registered`.
     const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
     const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
+    // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
+    // `registerCrudHandlers()` above wires the channels and the per-kind options; the four commands
+    // those channels delegate to are the engine half.
+    const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
 
     registerCoreHandlers();
     registerCrudHandlers();
@@ -207,6 +211,7 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerFolderCommands(commandRegistry);
     registerGraphqlCommands(commandRegistry);
     registerSoapCommands(commandRegistry);
+    registerEntityCrudCommands(commandRegistry);
 
     const transport = createInProcessTransport((channel) => registeredHandlers.get(channel));
     client = createProtocolClient(transport);

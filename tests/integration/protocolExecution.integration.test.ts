@@ -220,12 +220,17 @@ beforeAll(async () => {
   const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
   const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
   const { registerGrpcCommands } = await import("@bifurc/engine/protocols/grpcCommands");
+  // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
+  // All three handler groups registered below reach that factory, so without this call their channels
+  // exist with nothing behind them.
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
 
   registerCoreHandlers();
   registerCoreCommands(commandRegistry);
   registerGraphqlCommands(commandRegistry);
   registerSoapCommands(commandRegistry);
   registerGrpcCommands(commandRegistry);
+  registerEntityCrudCommands(commandRegistry);
   registerGraphqlHandlers();
   registerSoapHandlers();
   registerGrpcHandlers();

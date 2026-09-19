@@ -198,6 +198,12 @@ beforeAll(async () => {
   const { commandRegistry } = await import("@bifurc/engine/commands/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   registerCoreCommands(commandRegistry);
+  // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
+  // This goes in the `beforeAll` above, **not** next to `registerCrudHandlers()` in the `beforeEach` —
+  // see the note above for why a registry registration in `beforeEach` kills every test after the
+  // first. The channels below are the ones `beforeEach` re-registers harmlessly.
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  registerEntityCrudCommands(commandRegistry);
 });
 
 afterEach(() => {

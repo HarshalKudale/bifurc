@@ -28,8 +28,8 @@
  *    is stripped by `writeEntity()` and lives in `enabled.json`, so a conflict rule that only mutates
  *    `cfg` changes nothing durable. A test asserting on an in-memory config object cannot see that.
  *
- * Real workspace, real `app.json`, real `entityCrudRegistry`, real `loadConfig()`. Only Electron and
- * the proxy's `reloadConfig` are mocked.
+ * Real workspace, real `app.json`, real per-kind options in the engine's `entityCrudRegistry`, real
+ * `loadConfig()`. Only Electron and the proxy's `reloadConfig` are mocked.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
@@ -67,6 +67,7 @@ import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine
 import { COMPANION_SCOPES, SHELL_SCOPES } from "@bifurc/engine/transport/auth/scopes";
 import { registerCrudHandlers } from "@/ipc/handlers/crudHandlers";
 import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
+import { registerEntityCrudCommands } from "@bifurc/engine/store/entityCrudCommands";
 
 /** The conflict signature both sites compare on, for mocks. */
 const SIG = { method: "GET", urlPattern: "/api/conflict", capturedBody: "" };
@@ -105,6 +106,11 @@ beforeAll(() => {
   // suite that does not run `registerIpcHandlers()` has to make that call itself.
   registerCoreCommands(commandRegistry);
   registerCrudHandlers();
+  // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
+  // `registerCrudHandlers()` wires the *channels* and the per-kind options; the four commands those
+  // channels delegate to are the engine half and have to be registered explicitly. Without this the
+  // channels exist with nothing behind them — `No handler registered` at invocation time.
+  registerEntityCrudCommands(commandRegistry);
 });
 
 beforeEach(() => {
