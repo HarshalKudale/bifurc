@@ -27,6 +27,9 @@ import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
 import { registerAuditCommands } from "@bifurc/engine/store/auditCommands";
 import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
 import { registerFolderCommands } from "@bifurc/engine/store/folderCommands";
+import { registerGraphqlCommands } from "@bifurc/engine/protocols/graphqlCommands";
+import { registerSoapCommands } from "@bifurc/engine/protocols/soapCommands";
+import { registerGrpcCommands } from "@bifurc/engine/protocols/grpcCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -101,8 +104,25 @@ export function registerIpcHandlers(): void {
   // Step 3e slice 3: the four `folder.*` commands, out of `handlers/folderHandlers.ts`'s module scope.
   // Every one of that file's channels **delegates** through `commandRegistry.invoke()`, so the four
   // channels were only ever as alive as this registry — on a containerised engine they had nothing
-  // behind them at all. The remaining module-scope registrations are 44 (see `plan/07` §5c).
+  // behind them at all.
   registerFolderCommands(commandRegistry);
+  // Step 3e slice 4: the nine "protocol client" commands — `graphql.introspect` / `graphql.execute`,
+  // `soap.fetchWsdl` / `soap.execute`, and the five `grpc.*` stubs — out of the three
+  // `handlers/{graphql,soap,grpc}Handlers.ts` module scopes. All three files' channels **delegate**,
+  // so the same reasoning as slice 3 applies: the channel was only ever as alive as this registry.
+  //
+  // Two of the nine needed more than a cut-and-paste. `graphql.*` and `soap.*` reached for their
+  // transport with `require("https")` / `require("http")` *inside the handler*; that is invisible to
+  // tsc and to every unit test, but `require` does not exist in the engine's **ESM** build output, so
+  // a verbatim copy would have thrown at call time in `dist/*.mjs`. They import the builtins
+  // statically now — the same fix `healthbar.checkUrl` needed in the 3b-2 misc slice.
+  registerGraphqlCommands(commandRegistry);
+  registerSoapCommands(commandRegistry);
+  registerGrpcCommands(commandRegistry);
+  // **31 module-scope registrations remain** (`syncHandlers` 17, `applicationHandlers` 10,
+  // `entityCrudFactory` 4), all in `src/ipc/`, all the same §5c defect. `plan/07` §5c is the ledger.
+  // The ratchet cannot see any of them, which is why they are counted by grep
+  // (`grep -rn '^commandRegistry.register(' src/`) rather than by a test.
 
   registerImportExportHandlers();
   registerApplicationHandlers();
