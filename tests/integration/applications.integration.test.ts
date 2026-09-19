@@ -99,6 +99,13 @@ beforeAll(async () => {
     fs.writeFileSync(path.join(ws.root, "stay.js"), `setInterval(() => {}, 1000);\n`, "utf-8");
 
     const { registerApplicationHandlers } = await import("@/ipc/applicationHandlers");
+    // P6 §5c slice 5: the ten `application.*` commands left `applicationHandlers.ts`'s module scope,
+    // and every channel in that file *delegates* through `commandRegistry.invoke()`, so without this
+    // call the channels below exist with nothing behind them — a `No handler registered` at
+    // invocation time, which is why the suite looks green either way until it isn't.
+    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { registerApplicationCommands } = await import("@bifurc/engine/applications/applicationCommands");
+    registerApplicationCommands(commandRegistry);
     registerApplicationHandlers();
 });
 
