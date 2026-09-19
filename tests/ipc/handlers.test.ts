@@ -298,28 +298,31 @@ describe("src/ipc/handlers.ts", () => {
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
      * the ratchet doing its job rather than a change to the assertion.
      *
-     * **What is left is not a backlog.** The remaining four are one `NARROWED`, two `BLOCKED` and one
-     * `SPLIT` — each pinned below with the reason a mechanical move is the wrong response. Step 3
-     * therefore ends at **89 registered + 2 blocked + 1 narrowed + 1 split**, not 93, and the
-     * remaining four are resolved by P12 (`app.checkUpdate`) and by a protocol change
-     * (`runner.*Config`, `audit.list`) rather than by more moving.
+     * **What is left is not a backlog.** The remaining three are two `BLOCKED` and one `SPLIT` — each
+     * pinned below with the reason a mechanical move is the wrong response. `audit.list` used to be
+     * the fourth, filed `NARROWED`; it was **unblocked on 2026-09-19 by widening the schema** rather
+     * than by moving it, which is exactly the response that category existed to demand. So step 3 now
+     * ends at **90 registered + 2 blocked + 1 split**, and the remaining three are resolved by P12
+     * (`app.checkUpdate`) and by a protocol change (`runner.*Config`) rather than by more moving.
      *
-     * ## Why the list is now three lists
+     * ## Why the list is now two lists
      *
      * The first version of this block said every remaining command was "engine work that has not been
      * moved yet". **Auditing the remaining 19 against their frozen schemas showed that is false**, and
      * `src/ipc/handlers/runnerHandlers.ts` had already recorded the reason for three of them: a
      * `.strict()` protocol schema that contradicts what real callers actually send. So the entries are
-     * split by *why* they are unimplemented, because the three reasons need three different responses:
+     * split by *why* they are unimplemented, because the reasons need different responses:
      *
      * - `MOVABLE` — the schema accepts every payload the handler accepts. Move it.
-     * - `NARROWED` — the schema accepts a strict subset, and `.strict()` turns the difference into a
-     *   `BAD_REQUEST`. Moving it would silently reduce the command's accepted params, so it needs a
-     *   decision, not a move.
      * - `BLOCKED` — the schema rejects payloads that a **currently passing** test uses. These cannot
      *   move until the frozen protocol changes.
      * - `SPLIT` — the protocol declares an engine-half contract that deliberately differs from the
      *   shell's implementation. Not a move at all.
+     *
+     * `NARROWED` is **retired, not empty.** It held exactly one command (`audit.list`), and the
+     * category's own prescription was "a decision, not a move" — so the decision was taken: widen the
+     * schema. Leaving an empty array behind would invite the next reader to file the next
+     * schema-mismatch there instead of resolving it.
      *
      * This asserts *registration*, not behaviour. A command can be registered and still do the wrong
      * thing; that is what the conformance suite and each handler's own tests are for.
@@ -335,25 +338,32 @@ describe("src/ipc/handlers.ts", () => {
        * `script.execute`) and `runner.saveReport`. All 21 now have registry implementations, so every
        * command that was ever classified movable has moved.
        *
-       * What remains is deliberately *not* a to-do list of the same kind: it is one `NARROWED`, two
-       * `BLOCKED` and one `SPLIT`, each pinned with the reason it cannot simply be moved. Keeping an
-       * empty `MOVABLE` array would invite the next reader to file the next unimplemented command
-       * there by default; deleting it forces the classification to be argued again.
+       * What remains is deliberately *not* a to-do list of the same kind: it is two `BLOCKED` and one
+       * `SPLIT`, each pinned with the reason it cannot simply be moved. Keeping an empty `MOVABLE`
+       * array would invite the next reader to file the next unimplemented command there by default;
+       * deleting it forces the classification to be argued again.
        */
 
       /**
-       * The schema is **narrower than the handler**, and `.strict()` makes that fatal rather than
-       * lossy. `AuditListParams` has no `filePath` / `fromTs` / `toTs`, but `QueryLogOptions` — the
-       * type the handler actually takes — does. So a caller passing `filePath` gets `BAD_REQUEST`
-       * through the registry where the legacy channel answered it.
+       * `NARROWED` used to live here too, holding exactly one command — `audit.list` — and it is
+       * **retired rather than empty**, for the same reason `MOVABLE` was deleted.
        *
-       * **The honest caveat:** nothing currently passes those. `auditList` exists on `window.api` and
-       * no renderer code calls it, so the narrowing is latent, not live. That is exactly why this is a
-       * separate category rather than a `BLOCKED` one — and why it should not be quietly moved either.
-       * The whole point of P9 is *new* clients, and a remote client is precisely the caller that would
-       * find the missing fields.
+       * Its entry said the schema was narrower than the handler: `AuditListParams` was `.strict()` and
+       * had no `filePath` / `fromTs` / `toTs`, while `QueryLogOptions` — the type the handler takes —
+       * has all three. `.strict()` makes that difference a `BAD_REQUEST` rather than a dropped filter.
+       *
+       * **The caveat that entry gave for calling it latent rather than live was wrong, and the way it
+       * was wrong is the part worth keeping.** It said "nothing currently passes those — `auditList`
+       * exists on `window.api` and no renderer code calls it". That check was a grep for the *method
+       * name*, and `renderer/panels/AuditLogPanel.tsx:61–62` reaches the same command through
+       * `window.api` and sets `fromTs`/`toTs` whenever its date filter is used. So the narrowing was
+       * **live**, and routing this command as it stood would have broken the audit panel's date
+       * filter — invisibly to every test here, because these tests drive the *handler*, not the panel.
+       *
+       * The schema was widened on 2026-09-19 and `packages/engine/src/store/auditCommands.ts` now
+       * implements it. The lesson generalises past this command: **"no caller found by grepping the
+       * method name" is not evidence that there is no caller.**
        */
-      const NARROWED = ["audit.list"];
 
       /**
        * Blocked by the frozen protocol, each with a **currently passing test** as the evidence. These
@@ -388,7 +398,7 @@ describe("src/ipc/handlers.ts", () => {
        */
       const SPLIT = ["app.checkUpdate"];
 
-      const NOT_IN_REGISTRY = [...NARROWED, ...BLOCKED.map((b) => b.command), ...SPLIT];
+      const NOT_IN_REGISTRY = [...BLOCKED.map((b) => b.command), ...SPLIT];
 
       it("implements every protocol command except the pinned list", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
@@ -429,6 +439,27 @@ describe("src/ipc/handlers.ts", () => {
         expect(BLOCKED.map((b) => b.command).sort()).toEqual(
           ["runner.loadConfig", "runner.saveConfig"],
         );
+      });
+
+      it("keeps audit.list's widening — the date filter the panel actually sends", async () => {
+        // Nothing else pins this. The ratchet's other direction asserts that each `BLOCKED` command is
+        // *still* blocked, so a widening cannot go unnoticed there; but `audit.list` has left the list
+        // entirely, so without this test the three fields could be dropped again and the only symptom
+        // would be the audit panel's date filter silently returning everything.
+        //
+        // The payload is exactly what `renderer/panels/AuditLogPanel.tsx:61–62` builds when a
+        // date range is set — which is the whole reason the widening was necessary rather than
+        // optional: under the pre-2026-09-19 `.strict()` schema this was a `BAD_REQUEST`.
+        const { AuditListParams } = await import("@bifurc/protocol");
+
+        expect(
+          AuditListParams.safeParse({ entity: "mock", fromTs: 1, toTs: 2, limit: 50 }).success,
+        ).toBe(true);
+        expect(AuditListParams.safeParse({ filePath: "mocks/root/mock_a.json" }).success).toBe(true);
+
+        // Still `.strict()`: the widening added three named fields, it did not open the schema. A
+        // typo'd filter must keep failing loudly rather than being silently ignored.
+        expect(AuditListParams.safeParse({ fromTS: 1 }).success).toBe(false);
       });
 
       it("records that the SPLIT command is a split rather than an unimplemented move", async () => {
