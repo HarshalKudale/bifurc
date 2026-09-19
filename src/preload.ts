@@ -94,13 +94,12 @@ const client = createClient(createIpcTransport(), {
 contextBridge.exposeInMainWorld("api", {
   ...client,
 
-  // ── Four commands with no registry implementation — see the header ────────
+  // ── Three commands with no registry implementation — see the header ───────
   //
   // Each of these would answer `UNKNOWN_COMMAND` through the bridge. They are pinned in the
   // "registry coverage" ratchet in `tests/ipc/handlers.test.ts`, which is what stops them from being
   // quietly routed here later without the protocol changing first.
   checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
-  listAudit: (opts?: unknown) => ipcRenderer.invoke("audit:list", opts),
   saveRunnerConfig: (wsId: string, folderId: string, config: unknown) =>
     ipcRenderer.invoke("runner:saveConfig", wsId, folderId, config),
   loadRunnerConfig: (wsId: string, folderId: string) => ipcRenderer.invoke("runner:loadConfig", wsId, folderId),
