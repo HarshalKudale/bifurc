@@ -82,9 +82,14 @@ beforeAll(async () => {
   // groups by hand has to wire the engine half too, or the channel exists with nothing behind it.
   const { commandRegistry } = await import("@bifurc/engine/commands/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  // P6 §5c slice 3: the four `folder.*` commands left `folderHandlers.ts`'s module scope too. Every
+  // channel in that file *delegates* through `commandRegistry.invoke()`, so without this call the four
+  // channels below exist with nothing behind them — a `No handler registered` at invocation time.
+  const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
 
   registerCoreHandlers();
   registerCoreCommands(commandRegistry);
+  registerFolderCommands(commandRegistry);
   registerFolderHandlers();
   registerCrudHandlers();
 });
