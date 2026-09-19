@@ -26,6 +26,7 @@ import { registerMiscCommands } from "@bifurc/engine/miscCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
 import { registerAuditCommands } from "@bifurc/engine/store/auditCommands";
 import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
+import { registerFolderCommands } from "@bifurc/engine/store/folderCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -97,6 +98,11 @@ export function registerIpcHandlers(): void {
   // **five** such commands; the real count is **51** across nine shell files, and this is the first
   // slice — the one §5c named explicitly.
   registerCoreCommands(commandRegistry);
+  // Step 3e slice 3: the four `folder.*` commands, out of `handlers/folderHandlers.ts`'s module scope.
+  // Every one of that file's channels **delegates** through `commandRegistry.invoke()`, so the four
+  // channels were only ever as alive as this registry — on a containerised engine they had nothing
+  // behind them at all. The remaining module-scope registrations are 44 (see `plan/07` §5c).
+  registerFolderCommands(commandRegistry);
 
   registerImportExportHandlers();
   registerApplicationHandlers();

@@ -188,6 +188,9 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // engine, for the same reason `tls.generate` moved in P3 — a suite that registers handlers by hand
     // has to wire the engine half too, or the channel exists with nothing behind it.
     const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+    // P6 §5c slice 3: `folder.*` moved out of `folderHandlers.ts`'s module scope as well, and that
+    // file's channels delegate rather than duplicating, so the engine half has to be wired here too.
+    const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
 
     registerCoreHandlers();
     registerCrudHandlers();
@@ -197,6 +200,7 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerTlsHandlers();
     registerCertCommands(commandRegistry);
     registerCoreCommands(commandRegistry);
+    registerFolderCommands(commandRegistry);
 
     const transport = createInProcessTransport((channel) => registeredHandlers.get(channel));
     client = createProtocolClient(transport);
