@@ -700,6 +700,94 @@ real child-process spawns with log streaming; `tests/ipc/handlers.test.ts` **166
 "application.save"`; the twelfth only asserts the channel map, so it correctly still passes — which is
 also a reminder that a "registers every channel" test proves nothing about delivery. **21 remain.**
 
+#### 5c-vi. Slice 6 — the 17 `sync.*` / `git.*` / `history.*` commands, and the self-sufficient suite (2026-09-19, `4c6d8ab`)
+
+The largest single slice by count: all 17 moved from module scope in `src/ipc/handlers/syncHandlers.ts`
+into `packages/engine/src/sync/syncCommands.ts` behind `registerSyncCommands()`. They are `sync.*` (7),
+`git.*` (4), `entity.publish` / `folder.publish` / `entity.restore` (3), `audit.diff` (1) and
+`history.*` (2). **4 module-scope registrations remain** — `entityCrudFactory`'s four `entity.*`.
+
+The shell file keeps **19** channels: the 17 plus `audit:list` and `audit:export`, both of which were
+already delegating and neither of which is part of §5c. `audit:list` is the case §5a is about — its
+body still calls `queryLog` directly rather than through the registry, and per §5a it is **not**
+re-pointed, because the `register*Commands()` modules run from `registerIpcHandlers()` and a
+delegating legacy body would acquire a hidden ordering dependency. `audit:export` is the opposite and
+worth noting as the *legitimate* shape: the channel owns a `dialog.showSaveDialog` (a genuinely
+shell-side concern) and delegates the artifact through `call("audit.export", …)`, which resolves to an
+engine registration in `fileOps/commands.ts`. **The distinction is not "delegates vs. duplicates" but
+"who owns the part the engine cannot have."**
+
+**Nothing had to travel** — the second slice in a row where every dependency was already in
+`packages/engine` (`sync/syncManager`, `sync/autoSync`, `sync/gitOps`, `sync/statusTracker`,
+`store/config`, `store/gitStore`, `proxy/server`, `eventBus`). That is the §5c shape in its purest
+form, as in slice 5.
+
+**One helper that looks collapsible and must not be.** `folder.publish` declares a local
+`sanitizeDirName`, and `store/workspaceFs` exports a function of that exact name which
+`store/folderCommands.ts` already imports — so collapsing them is the obvious tidy-up. They are not
+the same function:
+
+| | `store/workspaceFs.sanitizeDirName` | the local one in `folder.publish` |
+| --- | --- | --- |
+| pattern | `[<>:"/\|?*\x00-\x1f]` | `[<>:"/\|?*]+` |
+| replacement | `""` — stripped | `"-"` |
+| fallback | `\|\| "unnamed"` | none |
+
+`"a:b"` becomes `"ab"` under one and `"a-b"` under the other, and a name made only of illegal
+characters becomes `"unnamed"` versus `"-"`. Collapsing would have silently changed the git path a
+folder publish writes to, for exactly the names a user is most likely to have typed by accident. **Kept
+local and verbatim.** The generalisable rule: **grep the helper's *body*, not its name** — a
+same-named function in the same package is not evidence of sameness, and here the two are used for
+different things anyway (a filesystem directory versus a git pathspec prefix).
+
+**Three bodies that look like one, deliberately left as three.** `git.sync`, `entity.publish` and
+`folder.publish` share a shape — `syncChanges` → `emitEntityStatus` → a best-effort
+`updateLastKnownHead`. They are not identical (only `folder.publish` builds a pathspec prefix), and
+they are kept as three registrations rather than factored into one helper. **Factoring is a
+behaviour-affecting refactor and this is a move**; the same reasoning keeps `git.discard` and
+`entity.restore` as two commands with one body, since the shell's own comment calls the `entity.*` /
+`folder.*` names "backward-compatible … delegating to generic git ops" and both names are in the
+contract the renderer already calls. The silent `catch { }` around `updateLastKnownHead` is preserved
+too — it is unbound and unlogged on purpose, because reading the remote head is bookkeeping and must
+not turn a publish that already happened into a failed one.
+
+**Three load-bearing conditionals, each of which a "clean-up" would flatten:**
+`sync.setRemote` reloads the config only when `result.ok`; `sync.pull` reloads, invalidates the status
+cache and emits an entity status only when `result.ok && result.updated` (a pull that changed nothing
+must not churn the renderer's entity list, and the `updated` half is what makes that true); and
+`sync.setAutoSync` starts or stops the poller from the **requested** `enabled`, not from `result.ok`,
+so the toggle leaves the poller matching what the user asked for even if persisting the setting
+failed. `audit.diff` resolves `{before: null, after: null}` when the commit changed nothing — a
+resolved value, so an envelope **success**, not a throw. `history.list` defaults `limit ?? 100` /
+`offset ?? 0` and falls back to the active workspace; `history.diff` does neither. That asymmetry is
+the shell's and was kept.
+
+**The mutation check is the most informative one of the pass, because it separates three audiences.**
+Commenting out `registerSyncCommands()` produced two distinct failures and one non-failure:
+
+- The ratchet (*"implements every protocol command except the pinned list"*) failed with **exactly the
+  17** names in its missing list — the cleanest possible proof that the call site is the only
+  registration, since the received array *is* the slice's command list.
+- Two `history:list` tests failed with `No handler registered for command "history.list"`, thrown
+  through the delegating channel at `syncHandlers.ts:111`. This is §5a's failure mode observed
+  directly: a delegating channel is only ever as alive as the registry behind it, and the error
+  arrives at **invocation** time, invisible to the compiler.
+- **`gitRemote.integration.test.ts` stayed 24/24 green.** It calls `registerSyncCommands()` itself in
+  `beforeAll`, so it is *self-sufficient* — which is exactly why it cannot detect a missing call site.
+  Before the move this suite was populated by an import side effect (it imports `registerSyncHandlers`
+  statically), so the explicit call reproduces a property it never asserted.
+
+That third bullet is the sharpest thing this slice establishes: **a suite that registers the engine
+half itself is structurally blind to the wiring, and its green is not evidence about the wiring.**
+Slices 3–5 each added such a call to keep suites working; this is the first time the consequence was
+measured rather than inferred.
+
+**Measured:** `npm run typecheck` → EXIT=0; `gitRemote` + `gitSync` + `tests/ipc/handlers.test.ts`
+**219/219**; full suite **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed**, the exact
+baseline (the documented environmental `soap.execute`). Verified after the move that `require(`
+appears **only in comments** across `packages/engine/src` — the `graphql.*` / `soap.*` conversions in
+slice 4 are the last real ones. **4 remain.**
+
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
 The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies
