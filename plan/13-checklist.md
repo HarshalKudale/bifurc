@@ -570,31 +570,48 @@ rather than a type.
 
 ---
 
-## Section 7 — P6 Shell seam ✅ SHIP (2–3 weeks)
+## Section 7 — P6 Shell seam ✅ SHIP (2–3 weeks) 🟡 IN PROGRESS
 
-- [ ] **Baseline re-captured** (35 unit / 11 e2e counts recorded)
-- [ ] Build the IPC transport (renderer → main)
-- [ ] Route **one** method (`config:get`) through RPC, keep `registerIpcHandlers()` for the rest — suite green?
-- [ ] Reimplement `preload.ts` as a client bridge
-- [ ] Implement local handlers (dialogs, zoom, theme, titlebar, platform, installCA, first-launch)
-- [ ] Engine lifecycle: spawn + ready handshake + timeout
-- [ ] Supervision: backoff restart, give up after 3 failures / 60s
-- [ ] Shutdown: SIGTERM → 5s → SIGKILL; no orphans
-- [ ] Socket-close watchdog so a crashed shell does not orphan the engine
-- [ ] Preserve single-instance (one shell → one engine)
-- [ ] Add a "connecting to engine" UI state — never block window creation
-- [ ] Add the engine binary to `extraResources`; reuse `iconPath()`
-- [ ] **Rollback flag** `BIFURC_ENGINE_RPC=0`
-- [ ] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir)
-- [ ] Delete `registerIpcHandlers()` from the default path
-- [ ] Run the full suite
+- [x] **Baseline re-captured** — unit: 97 files / 2,418 before step 2; **101 / 2,503 — 2,462 passed**
+      after step 3b-3. e2e: 11 specs / 46 tests is the figure to compare against, **not yet captured**
+      (needs a normal terminal — see `plan/07` Preconditions)
+- [x] Build the IPC transport (renderer → main) — `src/ipcTransport.ts` + `src/ipc/rpcContract.ts`
+- [x] Route **one** method (`config:get`) through RPC, keep `registerIpcHandlers()` for the rest —
+      step 2, suite green
+- [x] Reimplement `preload.ts` as a client bridge — steps 3b-1 and 3b-3: **140 of the 144 keys** are
+      `{ ...client }`; four explicit overrides remain
+- [x] Implement local handlers (dialogs, zoom, theme, titlebar, platform, installCA, first-launch) —
+      `src/ipc/handlers/clientHandlers.ts`, plus the three filesystem hooks (`pickSavePath`,
+      `writeArtifact`, `readArtifactFile`)
+- [x] Delete `eventBridge.ts` (step 3c) — the event half of the legacy path is gone; `registerIpcHandlers()`
+      still runs, and `src/ipc/importExportHandlers.ts` is dead but not yet deleted
+- [ ] Engine lifecycle: spawn + ready handshake + timeout — **deliberately deferred**; the engine is
+      in-process behind a proven seam, and the process split is a change of transport behind it
+- [ ] Supervision: backoff restart, give up after 3 failures / 60s — as above
+- [ ] Shutdown: SIGTERM → 5s → SIGKILL; no orphans — as above
+- [ ] Socket-close watchdog so a crashed shell does not orphan the engine — as above
+- [x] Preserve single-instance (one shell → one engine) — `app.requestSingleInstanceLock()` untouched
+- [ ] Add a "connecting to engine" UI state — never block window creation — **renderer work, forbidden
+      in P1–P6** (non-negotiable #1); needs a decision, since it is in the plan's own work item 3
+- [ ] Add the engine binary to `extraResources`; reuse `iconPath()` — work item 4, not started
+- [ ] **Rollback flag** `BIFURC_ENGINE_RPC=0` — **not implemented, and no longer expressible as
+      written.** The plan assumed the preload's old channel table would survive as the fallback branch;
+      step 3b-1 deleted it, so the flag now needs that table re-added as dead-by-default code, or the
+      rollback layer is `git revert` alone. A decision, not a task.
+- [ ] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir) — work item 5
+- [ ] Delete `registerIpcHandlers()` from the default path — **blocked on four keys**, not eight:
+      `checkUpdate` (SPLIT), `listAudit` (NARROWED), `saveRunnerConfig` / `loadRunnerConfig` (BLOCKED).
+      Each needs a protocol decision (`plan/07` §5b), so step 3 ends at 89 registered + 2 blocked +
+      1 narrowed + 1 split, not at 93 registered
+- [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**
-- [ ] 35 unit suites pass (same count as baseline)
-- [ ] 11 e2e specs pass, **unmodified**
-- [ ] `git diff --stat renderer/` shows only the P3 blob files
-- [ ] Key-diff still zero
-- [ ] No orphaned engine after a forced kill
+- [ ] 101 unit suites pass (same count as baseline) — **met on every step so far**, one documented flake
+- [ ] 11 e2e specs pass, **unmodified** — **not yet captured**; this is the real gate for 3b-1 and 3b-3,
+      because the unit suite tests handlers rather than the preload
+- [x] `git diff --stat renderer/` shows only the P3 blob files — **empty** as of step 3b-3
+- [x] Key-diff still zero — `packages/client/tests/surface.test.ts`, 144 keys both directions
+- [ ] No orphaned engine after a forced kill — needs the process split first
 - [ ] Packaged NSIS build contains the engine and runs
 - [ ] Rollback flag verified
 - [ ] **Ship it.** 🎉
