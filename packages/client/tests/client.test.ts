@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EngineError, ErrorCode } from "@bifurc/protocol";
 import type { Transport, EngineEvent } from "@bifurc/engine/transport/types";
 import { createClient } from "../src/index";
-import type { ClientLocal } from "../src/local";
+import type { ClientLocal, LocalFileContent, ReadFileOptions, SavePathOptions } from "../src/local";
 
 const captured = vi.hoisted(() => ({ api: undefined as Record<string, unknown> | undefined }));
 
@@ -627,5 +627,277 @@ describe("createClient — artifact egress", () => {
     const client = createClient(t, { local });
 
     await expect(client.exportAudit("json")).resolves.toEqual({ ok: false });
+  });
+});
+
+/**
+ * Step 3b-3 — the four methods that needed a **third** primitive.
+ *
+ * `writeArtifact` bundles "ask where" with "write there", which forces the dialog *after* the render.
+ * `File_Ops_Protocol.md` §3.2 requires the opposite, so `pickSavePath` splits the ask out; and the
+ * import pair needed `readArtifactFile` to accept a path and hand one back, because the renderer
+ * threads `res.filePath` from preflight into `importData` and the old hook returned no path at all.
+ *
+ * The assertions below are mostly about **ordering and count** rather than about values — "was the
+ * dialog opened before the command", "was it opened twice" — because that is what the old shape got
+ * wrong, and a value-only assertion passes either way.
+ */
+function fsLocal(opts: { savePath?: string | null; openPath?: string | null; file?: LocalFileContent } = {}) {
+  const seen: string[] = [];
+  const { local } = fakeLocal();
+  const resolved: ClientLocal = {
+    ...local,
+    pickSavePath: async (o: SavePathOptions) => {
+      seen.push(`pickSavePath:${o.defaultName ?? ""}`);
+      return opts.savePath === undefined ? "/tmp/chosen.json" : opts.savePath;
+    },
+    writeArtifact: async (contentBase64: string, suggestedName: string, mimeType: string, destPath?: string) => {
+      seen.push(`writeArtifact:${destPath ?? suggestedName}`);
+      return { ok: true, filePath: destPath ?? "/tmp/written" };
+    },
+    readArtifactFile: async (o?: ReadFileOptions) => {
+      seen.push(`readArtifactFile:${o?.path ?? "ask"}`);
+      if (opts.openPath === null) return null;
+      const file = opts.file ?? { name: "collection.json", size: 2, base64: "eA==", mimeType: "application/json" };
+      return { ...file, filePath: o?.path ?? opts.openPath ?? "/tmp/picked.json" };
+    },
+  };
+  return { local: resolved, seen };
+}
+
+const FORMATS = { workspace: [{ id: "workspace-zip", label: "Workspace ZIP", extensions: ["zip"] }] };
+
+/**
+ * A transport that answers by command and **keeps recording**.
+ *
+ * `fakeTransport()` records into `t.calls` inside its own `request`, so assigning `t.request`
+ * replaces the recorder along with the behaviour — which is how the first version of these tests
+ * passed the ordering assertion and then found nothing in `calls`.
+ */
+function respondingTransport(respond: (cmd: string, payload: unknown) => unknown) {
+  const calls: { cmd: string; payload: unknown }[] = [];
+  const t = fakeTransport();
+  t.request = (cmd, payload) => {
+    calls.push({ cmd, payload });
+    return Promise.resolve(respond(cmd, payload));
+  };
+  return { t, calls };
+}
+
+describe("createClient — dialog-first egress (step 3b-3)", () => {
+  it("exportData asks where BEFORE it asks the engine to render", async () => {
+    const order: string[] = [];
+    const { local } = fsLocal();
+    local.pickSavePath = async () => {
+      order.push("dialog");
+      return "/tmp/ws.zip";
+    };
+    const { t, calls } = respondingTransport((cmd) => {
+      order.push(cmd);
+      if (cmd === "export.formats") return FORMATS;
+      if (cmd === "export.create") return { ok: true, inline: "UEsDBA==", mimeType: "application/zip" };
+      return { ok: true };
+    });
+    const client = createClient(t, { local });
+
+    const res = await client.exportData({ kind: "workspace", format: "workspace-zip", wsId: "ws-1" });
+
+    /**
+     * `export.formats` is the exception and has to come first: the dialog's default name and its
+     * filter come from the engine's format table, so the chrome cannot be built without it. What
+     * matters is that `export.create` — the 200 MB render — is last, after the user has committed.
+     */
+    expect(order).toEqual(["export.formats", "dialog", "export.create"]);
+    /**
+     * Two things in one assertion, and both were live bugs waiting:
+     *
+     * - only the *name* crosses — the engine never learns a path it could not act on;
+     * - the renderer's `wsId` becomes the schema's `workspaceId`. The client's shim used to read
+     *   `req.workspaceId`, a field `ExportRequest` does not have, and nothing noticed because the
+     *   preload overrode the method. Routed as written, every export would have been a `BAD_REQUEST`.
+     */
+    expect(calls.find((c) => c.cmd === "export.create")?.payload).toMatchObject({
+      filename: "ws.zip",
+      workspaceId: "ws-1",
+    });
+    expect(res).toEqual({ ok: true, filePath: "/tmp/ws.zip" });
+  });
+
+  it("exportData writes to the path the user chose and does not open a second dialog", async () => {
+    const { local, seen } = fsLocal();
+    const { t } = respondingTransport((cmd) => (cmd === "export.formats" ? FORMATS : { ok: true, inline: "eA==" }));
+    const client = createClient(t, { local });
+
+    await client.exportData({ kind: "workspace", format: "workspace-zip", wsId: "ws-1" });
+
+    expect(seen).toEqual(["pickSavePath:workspace-export.zip", "writeArtifact:/tmp/chosen.json"]);
+  });
+
+  it("exportData reports a cancel and never runs the command", async () => {
+    const { local } = fsLocal({ savePath: null });
+    const { t, calls } = respondingTransport((cmd) => (cmd === "export.formats" ? FORMATS : { ok: true }));
+    const client = createClient(t, { local });
+
+    await expect(client.exportData({ kind: "workspace", format: "workspace-zip", wsId: "ws-1" }))
+      .resolves.toEqual({ ok: false, canceled: true });
+    // Fail fast: the whole point of dialog-first is that nothing was rendered.
+    expect(calls.some((c) => c.cmd === "export.create")).toBe(false);
+  });
+
+  /**
+   * The regression this replaced: the client hardcoded `format: "json"`, so routing
+   * `exportRunnerReport` silently deleted HTML export — which is the dialog's *default*. The chosen
+   * extension **is** the format, which is the starkest reason the dialog cannot run after the
+   * render.
+   */
+  it.each([
+    ["/tmp/report.json", "json"],
+    ["/tmp/report.html", "html"],
+    ["/tmp/report", "html"],
+  ])("exportRunnerReport derives the format from the chosen extension (%s → %s)", async (dest, format) => {
+    const { local } = fsLocal({ savePath: dest });
+    const { t, calls } = respondingTransport(() => ({ ok: true, inline: "eA==" }));
+    const client = createClient(t, { local });
+
+    await client.exportRunnerReport({ folderName: "Smoke", startedAt: 0 });
+
+    expect(calls.find((c) => c.cmd === "runner.exportReport")?.payload).toMatchObject({ format });
+  });
+
+  it("exportRunnerReport resolves a bare {ok:false} on cancel, as the declared type requires", async () => {
+    const { local } = fsLocal({ savePath: null });
+    const { t } = respondingTransport(() => ({ ok: true }));
+    const client = createClient(t, { local });
+
+    // No `canceled` key: `BifurcApi["exportRunnerReport"]` does not declare one, so the renderer
+    // cannot branch on it. `toEqual` would accept an undefined-valued key, hence the explicit check.
+    const res = await client.exportRunnerReport({});
+    expect(res).toEqual({ ok: false });
+    expect(Object.keys(res)).toEqual(["ok"]);
+  });
+});
+
+describe("createClient — single-dialog ingress (step 3b-3)", () => {
+  const IMPORT_FORMATS = { requests: [{ id: "json", label: "JSON", extensions: ["json"] }] };
+
+  it("preflightImport returns the path it chose, so the next step can reuse it", async () => {
+    const { local, seen } = fsLocal({ openPath: "/tmp/picked.json" });
+    const { t, calls } = respondingTransport((cmd) => {
+      if (cmd === "export.formats") return IMPORT_FORMATS;
+      if (cmd === "blob.put") return { blobId: "blob-7" };
+      if (cmd === "import.preflight") return { ok: true, itemCount: 3, collisionIds: [] };
+      return { ok: true };
+    });
+    const client = createClient(t, { local });
+
+    const res = await client.preflightImport({ kind: "requests", format: "json", wsId: "ws-1" });
+
+    expect(res).toEqual({ ok: true, filePath: "/tmp/picked.json", itemCount: 3, collisionIds: [] });
+    // Asked once, and only once — the blob is staged here and reused by `importData`.
+    expect(seen).toEqual(["readArtifactFile:ask"]);
+    expect(calls.find((c) => c.cmd === "import.preflight")?.payload).toMatchObject({
+      blobId: "blob-7",
+      workspaceId: "ws-1",
+    });
+  });
+
+  it("preflightImport reports a cancel without uploading", async () => {
+    const { local } = fsLocal({ openPath: null });
+    const { t, calls } = respondingTransport((cmd) => (cmd === "export.formats" ? IMPORT_FORMATS : { ok: true }));
+    const client = createClient(t, { local });
+
+    await expect(client.preflightImport({ kind: "requests", format: "json", wsId: "ws-1" }))
+      .resolves.toEqual({ ok: false, canceled: true });
+    expect(calls.some((c) => c.cmd === "blob.put")).toBe(false);
+  });
+
+  /**
+   * The bug this step exists to fix, asserted end to end through both halves: `importData` is given
+   * the path `preflightImport` returned, and it must (a) not ask again and (b) not re-upload bytes
+   * the engine already has. `File_Ops_Protocol.md` §5 calls the second one "uploaded ONCE".
+   *
+   * The strongest form of (a): the file is not even **read** a second time, because the remembered
+   * blob short-circuits before the read.
+   */
+  it("importData reuses the path and the blob — no second dialog, no second upload", async () => {
+    const { local, seen } = fsLocal({ openPath: "/tmp/picked.json" });
+    const { t, calls } = respondingTransport((cmd) => {
+      if (cmd === "export.formats") return IMPORT_FORMATS;
+      if (cmd === "blob.put") return { blobId: "blob-7" };
+      if (cmd === "import.preflight") return { ok: true, itemCount: 3, collisionIds: ["c1"] };
+      if (cmd === "import.commit") return { ok: true, imported: 3 };
+      return { ok: true };
+    });
+    const client = createClient(t, { local });
+
+    const pre = await client.preflightImport({ kind: "requests", format: "json", wsId: "ws-1" });
+    const res = await client.importData({
+      kind: "requests",
+      format: "json",
+      wsId: "ws-1",
+      filePath: pre.filePath!,
+      collisionStrategy: "keep",
+    });
+
+    expect(res).toEqual({ ok: true, imported: 3 });
+    expect(seen).toEqual(["readArtifactFile:ask"]);
+    expect(calls.filter((c) => c.cmd === "blob.put")).toHaveLength(1);
+    expect(calls.find((c) => c.cmd === "import.commit")?.payload).toMatchObject({
+      collisionStrategy: "keep",
+      workspaceId: "ws-1",
+    });
+    // Transform-and-discard: the source file never persists on the engine.
+    expect(calls.filter((c) => c.cmd === "blob.release")).toHaveLength(1);
+  });
+
+  /**
+   * The recovery path: the renderer sends a path but this process has no remembered blob for it —
+   * an app restart between the two steps, which is exactly why the shell had `uploadFor`'s fallback.
+   * The path is still reused, so the user is not asked again; only the read is repeated.
+   */
+  it("importData reads a path it was given when no blob is remembered", async () => {
+    const { local, seen } = fsLocal();
+    const { t, calls } = respondingTransport((cmd) => {
+      if (cmd === "blob.put") return { blobId: "blob-9" };
+      if (cmd === "import.commit") return { ok: true, imported: 1 };
+      return { ok: true };
+    });
+    const client = createClient(t, { local });
+
+    const res = await client.importData({
+      kind: "requests",
+      format: "json",
+      wsId: "ws-1",
+      filePath: "/tmp/from-preflight.json",
+      collisionStrategy: "keep",
+    });
+
+    expect(res).toEqual({ ok: true, imported: 1 });
+    expect(seen).toEqual(["readArtifactFile:/tmp/from-preflight.json"]);
+    expect(calls.filter((c) => c.cmd === "blob.put")).toHaveLength(1);
+  });
+
+  it("importData asks when the renderer sends no path, rather than reading undefined", async () => {
+    const { local, seen } = fsLocal({ openPath: "/tmp/picked.json" });
+    const { t } = respondingTransport((cmd) => {
+      if (cmd === "export.formats") return IMPORT_FORMATS;
+      if (cmd === "blob.put") return { blobId: "blob-7" };
+      if (cmd === "import.commit") return { ok: true, imported: 1 };
+      return { ok: true };
+    });
+    const client = createClient(t, { local });
+
+    // The renderer's `ImportRequest` declares `filePath` required, so this is the recovery path for a
+    // caller that skipped preflight. The old code read `undefined` and reported a confusing fs error.
+    const res = await client.importData({
+      kind: "requests",
+      format: "json",
+      wsId: "ws-1",
+      filePath: "",
+      collisionStrategy: "keep",
+    });
+
+    expect(res).toEqual({ ok: true, imported: 1 });
+    expect(seen).toEqual(["readArtifactFile:ask"]);
   });
 });

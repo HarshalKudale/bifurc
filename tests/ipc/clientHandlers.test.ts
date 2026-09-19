@@ -108,6 +108,7 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
       "shell:setTitleBarOverlay",
       "tls:installCA",
       "app:isFirstLaunch", "app:completeFirstLaunch",
+      "client:pickSavePath", "client:writeArtifact", "client:readArtifactFile",
     ];
 
     for (const channel of expectedChannels) {
@@ -213,8 +214,12 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
    * unwritable disk look like a dismissed dialog.
    */
   describe("client:writeArtifact handler", () => {
-    const writeArtifact = (contentBase64: string, suggestedName: string, mimeType = "application/json") =>
-      getHandler("client:writeArtifact")(EVENT, contentBase64, suggestedName, mimeType);
+    const writeArtifact = (
+      contentBase64: string,
+      suggestedName: string,
+      mimeType = "application/json",
+      destPath?: string,
+    ) => getHandler("client:writeArtifact")(EVENT, contentBase64, suggestedName, mimeType, destPath);
 
     // Set per test rather than inherited: `vi.clearAllMocks()` clears *calls* but not
     // *implementations*, so the "user cancels" case below would otherwise leak into every later case
@@ -265,6 +270,149 @@ describe("src/ipc/handlers/clientHandlers.ts", () => {
         throw new Error("EACCES");
       });
       expect(await writeArtifact("eA==", "x.txt")).toEqual({ ok: false, error: "EACCES" });
+    });
+
+    /**
+     * The dialog-first form. `pickSavePath` already asked, so this branch must write straight to the
+     * path it returned — showing a dialog here would be a **second** one for a destination the user
+     * has already chosen, which is exactly the bug the split exists to prevent.
+     *
+     * Asserted as `not.toHaveBeenCalled` rather than by checking the path alone: a handler that
+     * opened the dialog *and* ignored it would pass a weaker assertion.
+     */
+    it("writes straight to a path the caller already chose, with no dialog", async () => {
+      const result = await writeArtifact("eA==", "ignored.txt", "application/json", "/tmp/chosen.json");
+      expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).toHaveBeenCalledWith("/tmp/chosen.json", Buffer.from("x"));
+      expect(result).toEqual({ ok: true, filePath: "/tmp/chosen.json" });
+    });
+  });
+
+  /**
+   * `client:pickSavePath` — the ask on its own, split out of `client:writeArtifact`.
+   *
+   * `File_Ops_Protocol.md` §3.2 requires the dialog **before** the command that produces the bytes,
+   * and the bundled hook could not express that: it forced the dialog after the render, which for a
+   * workspace export means building a 200 MB archive the user then abandons. The split is the whole
+   * point of the channel, so the assertion that matters most is that it writes *nothing*.
+   */
+  describe("client:pickSavePath handler", () => {
+    beforeEach(() => {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: "/tmp/chosen.json" } as never);
+    });
+
+    it("returns the chosen path and writes nothing", async () => {
+      const result = await getHandler("client:pickSavePath")(EVENT, { defaultName: "export.json" });
+      expect(result).toBe("/tmp/chosen.json");
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("passes the title, the default name and the filters through to the dialog", async () => {
+      await getHandler("client:pickSavePath")(EVENT, {
+        title: "Export Workspace",
+        defaultName: "workspace-export.zip",
+        filters: [{ name: "Workspace ZIP", extensions: ["zip"] }],
+      });
+      expect(dialog.showSaveDialog).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          title: "Export Workspace",
+          defaultPath: "workspace-export.zip",
+          filters: [{ name: "Workspace ZIP", extensions: ["zip"] }],
+        }),
+      );
+    });
+
+    /**
+     * An empty filter list would leave the OS dialog with no filter row at all. "All Files" is what
+     * the bundled form effectively showed for an unknown extension, so the fallback keeps the two
+     * forms looking the same when a caller has nothing more specific to offer.
+     */
+    it("falls back to an All Files filter when the caller offers none", async () => {
+      await getHandler("client:pickSavePath")(EVENT, {});
+      expect(dialog.showSaveDialog).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ filters: [{ name: "All Files", extensions: ["*"] }] }),
+      );
+    });
+
+    it("returns null rather than a result object when the user cancels", async () => {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: true, filePath: undefined } as never);
+      expect(await getHandler("client:pickSavePath")(EVENT, {})).toBeNull();
+    });
+  });
+
+  /**
+   * `client:readArtifactFile` — the ingress mirror: ask (or reuse a path) and read.
+   *
+   * Two things here are load-bearing beyond "it reads a file":
+   *
+   * 1. **It returns `filePath`.** That is what lets `preflightImport` hand the renderer a handle
+   *    `importData` can reuse, and reusing it is what stops the import opening a **second** dialog
+   *    for a file the user already picked. `dialog:openFile` returns no path, which is precisely why
+   *    the preload used to point this hook at it and why that could never have worked.
+   * 2. **The cap is the protocol's ingress limit, not 1 MB.** The legacy
+   *    `importExport:preflight` accepted up to `BLOB_MAX_INGRESS_BYTES` (100 MB); the 1 MB cap on
+   *    `dialog:openFile` exists for binary request bodies. Reusing that channel would have silently
+   *    rejected every import between 1 MB and 100 MB.
+   */
+  describe("client:readArtifactFile handler", () => {
+    it("reads a path the caller already chose without asking", async () => {
+      const result = await getHandler("client:readArtifactFile")(EVENT, { path: "/tmp/import.json" });
+      expect(dialog.showOpenDialog).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        name: "import.json",
+        size: 10,
+        base64: Buffer.from("hello").toString("base64"),
+        mimeType: "application/json",
+        filePath: "/tmp/import.json",
+      });
+    });
+
+    it("asks, then reads the file it was given, and reports the path back", async () => {
+      vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ["/tmp/picked.yaml"] } as never);
+      const result = await getHandler("client:readArtifactFile")(EVENT, { title: "Import Requests" });
+      expect(dialog.showOpenDialog).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ title: "Import Requests", properties: ["openFile"] }),
+      );
+      expect(result).toMatchObject({ name: "picked.yaml", filePath: "/tmp/picked.yaml" });
+    });
+
+    /**
+     * `dialog:openFile` passes no `filters` at all, and the two TLS import methods reach this hook
+     * with none — so adding an "All Files" entry here would change a dialog the user already knows.
+     * The key must be absent, not empty.
+     */
+    it("omits the filters key entirely when the caller offers none", async () => {
+      vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: ["/tmp/cert.pem"] } as never);
+      await getHandler("client:readArtifactFile")(EVENT, {});
+      const opts = vi.mocked(dialog.showOpenDialog).mock.calls[0][1] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty("filters");
+    });
+
+    it("returns null when the user cancels the open dialog", async () => {
+      vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: true, filePaths: [] } as never);
+      expect(await getHandler("client:readArtifactFile")(EVENT, {})).toBeNull();
+    });
+
+    it("refuses a file over the protocol's ingress limit, naming the limit", async () => {
+      vi.mocked(fs.statSync).mockReturnValueOnce({ size: 200 * 1024 * 1024 } as never);
+      const result = (await getHandler("client:readArtifactFile")(EVENT, { path: "/tmp/huge.zip" })) as {
+        error: string;
+      };
+      expect(result.error).toContain("104857600");
+      expect(fs.readFileSync).not.toHaveBeenCalled();
+    });
+
+    it("reports an unreadable path as an error rather than throwing", async () => {
+      vi.mocked(fs.statSync).mockImplementationOnce(() => {
+        throw new Error("ENOENT");
+      });
+      const result = (await getHandler("client:readArtifactFile")(EVENT, { path: "/tmp/gone.json" })) as {
+        error: string;
+      };
+      expect(result.error).toContain("Could not read gone.json");
     });
   });
 });
