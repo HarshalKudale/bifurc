@@ -1,94 +1,37 @@
 /**
  * IPC handlers for application run configurations and process management.
  *
- * Save: generates the resolved command string and persists it with the config.
- * Start: reads config from disk by ID and spawns the pre-computed command.
+ * ## Channels only — the registry half now lives in the engine
+ *
+ * All ten `application.*` commands used to be registered at **module scope** in this file, which is
+ * the `plan/07` §5c defect: a containerised engine (P9) answered `UNKNOWN_COMMAND` for every one.
+ * Step 3e slice 5 (2026-09-19) moved them into
+ * `packages/engine/src/applications/applicationCommands.ts` behind `registerApplicationCommands()`,
+ * called from `src/ipc/handlers.ts`.
+ *
+ * Every channel below **delegates** through `commandRegistry.invoke()` rather than duplicating the
+ * body — unlike `runnerHandlers.ts`, where three of the five are self-contained copies. That
+ * distinction decides what breaks: a delegating channel is only ever as alive as the registry behind
+ * it, so a suite that registers this handler group by hand **must** also call
+ * `registerApplicationCommands(commandRegistry)`, or the channel exists with nothing behind it. The
+ * failure is `No handler registered` at *invocation* time, so nothing catches it at build time.
+ * `tests/integration/applications.integration.test.ts` is the one such suite.
+ *
+ * Nothing else changed here: the resolved-command generation at save time, the stop-before-delete
+ * ordering, and `application.save` mutating the object it was handed are all in the engine module now,
+ * documented there. `generateId` went with them — the private copy here was byte-identical to
+ * `store/config.ts`'s exported one.
  */
-
 import { ipcMain } from "electron";
-import type {
-    ApplicationListParams, ApplicationSaveParams, ApplicationDeleteParams, ApplicationStartParams,
-    ApplicationStopParams, ApplicationGetStateParams, ApplicationGetAllStatesParams,
-    ApplicationGetLogsParams, ApplicationCheckPortParams, ApplicationKillPortParams,
-} from "@bifurc/protocol";
-import {
-    readAllEntities, writeEntity, deleteEntityFile,
-} from "@bifurc/engine/store/workspaceFs";
-import { processSpawner } from "@bifurc/engine/applications/processSpawner";
-import { generateResolvedCommand } from "@bifurc/engine/applications/commandGenerator";
-import { checkPortInUse, killProcessOnPort } from "@bifurc/engine/applications/portUtils";
 import type { ApplicationConfig } from "@bifurc/engine/applications/types";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
 
-function generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
-
-// P2 work item 7 — application.* is not renderer-exposed today (no `preload.ts` entry at all;
-// only `tests/integration/applications.integration.test.ts` exercises it directly), and every
-// param matches the frozen schema exactly (`application.save`'s `application` field is an
-// opaque `z.record(...)`, so there's no fixed-shape gap like `runner.saveConfig`'s). All 10
-// channels convert.
+// P2 work item 7 — application.* is not renderer-exposed today (no `preload.ts` entry at all; only
+// `tests/integration/applications.integration.test.ts` exercises it directly), and every param matches
+// the frozen schema exactly (`application.save`'s `application` field is an opaque `z.record(...)`, so
+// there is no fixed-shape gap like `runner.saveConfig`'s). All 10 channels convert.
 const ctx = { bus };
-
-commandRegistry.register("application.list", ({ workspaceId }: ApplicationListParams) => {
-    return readAllEntities(workspaceId, "applications");
-});
-
-commandRegistry.register("application.save", ({ application }: ApplicationSaveParams) => {
-    const app = application as unknown as ApplicationConfig;
-    if (!app.id) {
-        app.id = generateId();
-        app.createdAt = Date.now();
-    }
-
-    // Generate the resolved command at save time
-    const resolved = generateResolvedCommand(app, process.platform);
-    const configToSave: ApplicationConfig = {
-        ...app,
-        ...resolved,
-    };
-
-    writeEntity(configToSave.workspaceId, "applications", configToSave.id, configToSave);
-    return configToSave;
-});
-
-commandRegistry.register("application.delete", ({ workspaceId, id }: ApplicationDeleteParams) => {
-    // Stop process if running
-    processSpawner.stop(id);
-    deleteEntityFile(workspaceId, "applications", id);
-    return { ok: true };
-});
-
-commandRegistry.register("application.start", ({ workspaceId, appId, mode }: ApplicationStartParams) => {
-    return processSpawner.start(workspaceId, appId, mode);
-});
-
-commandRegistry.register("application.stop", ({ appId }: ApplicationStopParams) => {
-    processSpawner.stop(appId);
-    return { ok: true };
-});
-
-commandRegistry.register("application.getState", ({ appId }: ApplicationGetStateParams) => {
-    return processSpawner.getState(appId);
-});
-
-commandRegistry.register("application.getAllStates", (_params: ApplicationGetAllStatesParams) => {
-    return processSpawner.getAllStates();
-});
-
-commandRegistry.register("application.getLogs", ({ appId }: ApplicationGetLogsParams) => {
-    return processSpawner.getLogs(appId);
-});
-
-commandRegistry.register("application.checkPort", ({ port }: ApplicationCheckPortParams) => {
-    return checkPortInUse(port);
-});
-
-commandRegistry.register("application.killPort", ({ port }: ApplicationKillPortParams) => {
-    return killProcessOnPort(port);
-});
 
 export function registerApplicationHandlers(): void {
     // ── CRUD ──────────────────────────────────────────────────────────────────
