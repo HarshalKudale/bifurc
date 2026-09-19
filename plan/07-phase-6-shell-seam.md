@@ -419,6 +419,11 @@ and the ratchet is what keeps that honest.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
+**Status: the pass is COMPLETE (2026-09-19).** It turned out to be **51** commands, not five, moved across
+seven slices (`§5c-i` … `§5c-vii`). **Zero module-scope `commandRegistry.register(` calls remain in
+`src/`.** The five below are the ones this section originally named; the count was the first thing the
+pass corrected.
+
 Found while writing `store/configCommands.ts`, and deliberately **not** fixed there.
 
 `packages/protocol/src/commands/config.ts` declares `config.get`, `env.setActive` and
@@ -787,6 +792,122 @@ measured rather than inferred.
 baseline (the documented environmental `soap.execute`). Verified after the move that `require(`
 appears **only in comments** across `packages/engine/src` — the `graphql.*` / `soap.*` conversions in
 slice 4 are the last real ones. **4 remain.**
+
+#### 5c-vii. Slice 7 — the four `entity.*` CRUD commands, and the pass is complete (2026-09-19, `b48c65e`)
+
+The last four — `entity.create` / `update` / `delete` / `list` — moved from module scope in
+`src/ipc/handlers/entityCrudFactory.ts` into `packages/engine/src/store/entityCrudCommands.ts` behind
+`registerEntityCrudCommands()`. **Zero module-scope `commandRegistry.register(` calls remain in
+`src/`**, so §5c's pass is structurally complete: all 51 commands it turned out to be are registered by
+an explicit `register*Commands()` call from `registerIpcHandlers()`.
+
+**Structurally unlike slices 1–6, and that is the whole of its difficulty.** Each earlier slice moved a
+*file of commands* — registrations on one side, channels on the other, separable by cutting between
+them. This file is a **factory split across the seam**. The four commands dispatch at invoke time
+through `entityCrudRegistry` / `simpleEntityKinds`, and those containers were populated by the six
+**shell** files calling `registerEntityCrudHandlers()` / `registerSimpleEntityHandlers()`. The
+dependency ran the wrong way, which makes this the one slice where the naive cut is *actively
+dangerous*: moving the four registrations without the containers leaves them consulting an **empty**
+map, so every one of them throws
+
+```
+entity.create: kind "rule" is not routed through the CommandRegistry yet
+```
+
+— the same message a genuinely unregistered kind throws. A plausible error, whose real cause is the
+move itself, pointing the reader at the wrong file. **When a slice's commands read state that the shell
+populates, the slice is not a move of commands; it is a move of the container plus an inversion of who
+writes to it.**
+
+The inversion: the containers went to the engine; the shell calls `registerCrudKind()` /
+`registerSimpleKind()` (the engine half) and keeps three `ipcMain.handle` channels per kind (the shell
+half). **Both factory signatures are byte-identical, so none of the six caller files needed an edit** —
+`coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`. That is the property
+to check first when what has to move is a factory rather than a command list: *can the exported
+signature survive unchanged?* If yes, the importer set stops mattering.
+
+`entityCrudRegistry`, `simpleEntityKinds`, `isGitTracked` and the six `*Core` helpers were `export`ed
+but had **no consumer outside the file** — verified by grep across `src/`, `tests/` and `packages/`,
+not assumed — so they are module-private in the engine behind the two registration functions. Worth
+flagging because it is the one thing in this slice that is **not** a pure relocation: an encapsulation
+change. It is unobservable, but "unobservable" is a claim that has to be checked rather than asserted,
+which is what the grep was for.
+
+**Behaviours preserved verbatim, several of which a clean-up would flatten:**
+
+- **`gateCreate()` ahead of `createEntityCore()`**, so a blocked create never touches config or disk.
+  Only `environments` sets `gateKind`, and it returns `{error: "limit_reached", ...gate}` exactly as
+  the pre-collapse `env:add` did. `EntityCreateResult`'s frozen `{id, entity}` has no room for that,
+  which is safe only because the registry validates **params** and not return values — the same
+  trade-off `entity.setEnabled`'s `invalid_kind` guard already made.
+- **`onAddConflict`'s sibling-disable is diffed and written through `syncEnabledSet`.** The lambda
+  mutates `cfg`, but `saveConfig()` cannot persist that: `writeEntity()` strips `enabled` on the way
+  out, because enabled state lives exclusively in `enabled.json`. Before the diff existed the mutation
+  was silently lost — the sibling stayed enabled on disk and switched itself back on the moment the new
+  entity was deleted. `entity.setEnabled`'s equivalent loop always wrote through `syncEnabledSet`,
+  which is why the two sites disagreed about the same rule. Only `mocks` and `rules` set
+  `onAddConflict`, so for every other kind the flag changes nothing.
+- **`mayResolveConflicts` is a required parameter, not a defaulted one**, so a new caller has to decide
+  rather than inherit the privileged path. It is `mayAffectUnnamedEntities(ctx)` at the one call site.
+- **`reloadConfig()` runs LAST in all three writers, for a different reason each time.** On create:
+  it snapshots the enabled-sets from `enabled.json`, so running it before `syncEnabledSet()` left the
+  proxy with a stale set, `workspaceCfg()` filtered the brand-new entity out of routing, and it only
+  started working after some unrelated action happened to reload. On delete: `saveConfig()` does not
+  unlink files for entities removed from the config, so reloading before the file was deleted (and
+  before the enabled-set was updated) kept the deleted entity live in the routing tables.
+- **`invalidateCache()` on delete only** — the status cache is keyed by workspace, and only a removal
+  can make a previously-reported entity stale.
+- **The tracked-vs-untracked name-entry branch.** A git-tracked entity with a name entry becomes an
+  `addPendingDeletion` (the deletion has to be *published*, so the name entry must survive until the
+  commit lands); an untracked one is `removeNameEntry` immediately. Getting this backwards makes a
+  published deletion either unreplayable or resurrectable.
+- **`entity.list` serves only simple kinds, and `entity.update` has no simple path at all** —
+  `graphqlSchemas` / `protoFiles` / `wsdls` are written straight to disk with nothing mirroring them
+  into an `AppConfig` array, and there is no "update" concept for any of them. Both asymmetries are the
+  shell's.
+
+**The importer set, and why the skill's prediction was wrong.** §5c-vii's scoping note predicted seven
+affected suites, deriving them from the six factory *callers*. The measured set is **five**:
+`entityConflictScope`, `foldersAndWorkspaces`, `settingsMutations`, `protocolPoc`, `protocolExecution`.
+The two predicted extras (`gitRemote`, `gitSync`) never imported anything reaching the factory — their
+`syncHandlers` import was a comment, not a dependency. The prediction came from a grep for the *file
+name* across the consumers; the truth came from asking which suites **register a handler group that
+reaches the factory**, which is one step further down the import graph. **Derive the affected set from
+the registration calls a suite makes, not from the files it mentions.**
+
+One placement detail with a bug behind it: in `settingsMutations` the call had to go in the existing
+`beforeAll`, **not** next to `registerCrudHandlers()` in the `beforeEach`. The channel layer is
+per-test and re-registering is harmless (the electron mock's map is keyed by channel), but the registry
+is a singleton with no `clear()` and `register()` throws on duplicates by design — which is exactly the
+bug slice 1 shipped, 29 of this file's 30 tests dead.
+
+**Measured:** `npm run typecheck` → EXIT=0. The six affected suites **285/286** — the single failure is
+the documented environmental `soap.execute`, and `settingsMutations` at **30/30** confirms the
+`beforeAll` placement. Full suite **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed**, the
+exact baseline, so **seven slices produced no test-count delta** — which is the evidence that seven
+slices of "move the body, keep the channel" were behaviour-preserving.
+
+**Mutation-checked, and the sharpest result of the whole pass.** Commenting out
+`registerEntityCrudCommands()` produced **52 failures, and every one of them was in
+`tests/ipc/handlers.test.ts`**:
+
+- the ratchet, with **exactly the four** `entity.*` names in its missing list; and
+- 51 more, because this file drives the per-kind channels — `mapping:update`, `mapping:delete`, … — and
+  each of those **delegates** into one of the four, so a channel test is a registry test. The failure
+  is `EngineError: No handler registered for command "entity.update"`, thrown from
+  `CommandRegistry.invoke` through the channel.
+
+Meanwhile `entityConflictScope` stayed **9/9 green**, because it registers the engine half itself.
+That is §5c-vi's finding confirmed a third time, and it now has the cleanest possible statement:
+**the mutation's blast radius is a map of which suites actually reach the registry, and the suites that
+stay green are exactly the ones that cannot tell you anything about the wiring.**
+
+**§5c closes here.** The pass moved 51 commands across seven slices and seven new engine modules
+(`store/coreCommands`, `runner/runnerCommands`, `store/folderCommands`, `protocols/{graphql,soap,grpc}Commands`,
+`applications/applicationCommands`, `sync/syncCommands`, `store/entityCrudCommands`). What it does
+**not** do is delete `registerIpcHandlers()`: `app.checkUpdate` (SPLIT → P12) still needs a channel, and
+`src/ipc/importExportHandlers.ts` is dead but dies with it. That is step 3, and it is now unblocked on
+the §5c side.
 
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
