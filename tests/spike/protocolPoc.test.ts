@@ -184,6 +184,10 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // registers handlers by hand has to wire both too, or the channel exists with nothing behind it.
     const { commandRegistry } = await import("@bifurc/engine/commands/registry");
     const { registerCertCommands } = await import("@bifurc/engine/proxy/certCommands");
+    // P6 §5c: `config.get` and `entity.setEnabled` moved out of `coreHandlers`' module scope into the
+    // engine, for the same reason `tls.generate` moved in P3 — a suite that registers handlers by hand
+    // has to wire the engine half too, or the channel exists with nothing behind it.
+    const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
 
     registerCoreHandlers();
     registerCrudHandlers();
@@ -192,6 +196,7 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerSoapHandlers();
     registerTlsHandlers();
     registerCertCommands(commandRegistry);
+    registerCoreCommands(commandRegistry);
 
     const transport = createInProcessTransport((channel) => registeredHandlers.get(channel));
     client = createProtocolClient(transport);

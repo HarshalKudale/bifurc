@@ -17,19 +17,22 @@
   extension release + an audit record, neither code here. A handler *resolving* `{ok:false}` is an
   envelope **success**; only a **throw** fails. **P5 done** — spec = `src/surface.ts` (144 keys);
   **`src/preload.ts` is the authority, not `renderer/types/window.ts`**; `close()` non-enumerable.
-- **P6: steps 1–2, finding 1, 3a, 3b-1, 3b-2, 3b-3, 3c + finding 6 done.** 3b-2 implemented 21 of 25
-  missing commands (ratchet 25→4; the 4 left aren't a backlog — `audit.list` NARROWED, the two
-  `runner.*Config` BLOCKED by a *passing* test, `app.checkUpdate` → P12). 3b-1 made the preload
-  `{ ...client }` + overrides; **3b-3 added the three filesystem hooks → 140 of 144** route. 3c deleted
-  `eventBridge.ts`; `registerIpcHandlers()` can't be deleted (4 unroutable keys need a channel) — it
-  shrinks until P12. `src/ipc/importExportHandlers.ts` is dead and dies with it.
+- **P6: steps 1–2, finding 1, 3a, 3b-1, 3b-2, 3b-3, 3c, 3d (keys 1–2) + finding 6 done.** 3b-2 implemented
+  21 of 25 missing commands (ratchet 25→4). 3b-1 made the preload `{ ...client }` + overrides; **3b-3
+  added the three filesystem hooks; 3d retired the remaining three non-SPLIT keys by widening their
+  schemas → 143 of 144** route. 3c deleted `eventBridge.ts`; `registerIpcHandlers()` can't be deleted
+  (1 unroutable key needs a channel) — it shrinks until P12. `src/ipc/importExportHandlers.ts` is dead
+  and dies with it.
 - **§5c unfixed:** `config.get`, `env.setActive`, `workspace.setActive`, `entity.load`,
   `entity.setEnabled` register **from the shell**, so a containerised engine answers
   `UNKNOWN_COMMAND`; the ratchet can't see it.
-- **The last 4 keys are protocol decisions, not moves:** `checkUpdate` SPLIT (its frozen result has no
-  `currentVersion`/`hasUpdate`, so the shell body can't just move), `listAudit` NARROWED, the two
-  `runner.*Config` BLOCKED by a *passing* test. **`BIFURC_ENGINE_RPC=0` does not exist anywhere** — 3b-1
-  deleted the preload table it was meant to fall back to, so the flag needs a decision.
+- **The last key is a protocol decision, not a move:** `checkUpdate` SPLIT (its frozen result has no
+  `currentVersion`/`hasUpdate`, so the shell body can't just move) → P12. **The other three were
+  *schema* problems, not routing problems**, and were retired by widening rather than moving:
+  `listAudit` (`AuditListParams` lacked `filePath`/`fromTs`/`toTs`) and the two `runner.*Config`
+  (`RunnerConfigSchema` required `requestOrder`). Step 3 ends at **92 registered + 1 split**, not
+  89+2+1+1. **`BIFURC_ENGINE_RPC=0` does not exist anywhere** — 3b-1 deleted the preload table it was
+  meant to fall back to; decided: **drop the flag, `git revert` is the only rollback layer**.
 
 ## Traps that cost real time
 
@@ -38,6 +41,14 @@
 - **`require()` in a handler body** is invisible to tsc and tests but **fatal in the engine's ESM
   output**; use static imports.
 - **"Schema accepts the payload" ≠ "it preserves it"** — plain `z.object()` **strips** unknown keys.
+- **Widening a schema invalidates its `invalid` fixture.** `COMMAND_FIXTURES[...].invalid` is asserted
+  *rejected* on all four transports; `z.record` turned `config: {}` from a near-miss into a valid record.
+  Re-derive the near-miss (a non-record), never trust it — this fails suites for no visible reason.
+- **A suite that drives a command by *channel* name cannot see its registry implementation.** The legacy
+  `ipcMain.handle` bodies are self-contained duplicates that never consult the registry, so
+  `runnerStorage.integration.test.ts` passed with the engine half wrong. The conformance matrix can't
+  cover it either — it registers `() => ({ reached: cmd })` over every command *on purpose*. **Zero tests
+  reference any engine `register*Commands`**, so ~24 moved commands have no registry-level coverage.
 - **"The command is registered" ≠ "the client's method is equivalent."** Audit before routing; 3 of
   the 4 held-back egress keys broke *after* the engine did its job correctly.
 - **Artifacts are bytes.** `writeArtifact` takes **base64**; the channel writes a Buffer. Any UTF-8
