@@ -19,9 +19,12 @@
 import { ipcMain, dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import * as path from "path";
+import type { ReadFileOptions, ReadFileResult, SavePathOptions } from "@bifurc/client";
+import { BLOB_MAX_INGRESS_BYTES } from "@bifurc/protocol";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import { getMainWindow } from "@/main";
 import { installEngineCa } from "@/ipc/certLifecycle";
+import { mimeFor } from "@/ipc/fileOpsClient";
 
 function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
   return themeId === "light"
@@ -158,25 +161,47 @@ export function registerClientHandlers(): void {
   // `certLifecycle.installEngineCa()` owns it.
   ipcMain.handle("tls:installCA", () => installEngineCa());
 
-  // ── Artifact egress — the client half of an engine-produced artifact ────────
+  // ── Artifact egress / ingress — the client half of an engine-produced artifact ──────────────
   //
   // `File_Ops_Protocol.md` §4: the engine produces the bytes, the **user** chooses where they go, and
-  // only the client can put them there. So this is a save dialog plus a write and nothing else.
+  // only the client can put them there. None of these are protocol commands. A remote engine must
+  // never choose a path on the user's machine, which is why `@bifurc/client` takes them as injected
+  // hooks instead of routing them: P7's browser downloads, P8's CLI writes to stdout or a flag, and
+  // only a desktop shell shows these dialogs.
   //
-  // It is deliberately **not** a protocol command. A remote engine must never choose a path on the
-  // user's machine, which is why `@bifurc/client` takes `writeArtifact` as an injected hook instead of
-  // routing it: P7's browser downloads, P8's CLI writes to stdout or a flag, and only a desktop shell
-  // shows this dialog.
+  // Three channels, because the ordering rule needs the ask to be separable from the write.
+  // `File_Ops_Protocol.md` §3.2 requires the dialog *before* the command — fail fast on cancel, so
+  // the engine never renders a 200 MB workspace archive the user then abandons — and that is only
+  // expressible if "ask where" is not bundled with "write there". `client:pickSavePath` is the ask;
+  // `client:writeArtifact` is the write, and it also still offers the bundled form for the egress
+  // methods whose artifact is cheap and whose dialog chrome comes from the engine's own suggestion.
   //
-  // `contentBase64` is **base64**, and the write goes down as raw bytes — that is
+  // `contentBase64` is **base64**, and every write goes down as raw bytes — that is
   // `ClientLocal.writeArtifact`'s contract. It was a decoded `string` written as `"utf-8"`, which is
   // only correct for artifacts that happen to be text: `workspace-zip` is a ZIP, and round-tripping
   // it through a UTF-8 string replaces every non-ASCII byte with `U+FFFD`, producing a file that
   // looks right and will not open. Taking base64 and writing a Buffer makes every artifact safe,
   // including the five that were already text.
+  ipcMain.handle("client:pickSavePath", async (_e, opts?: SavePathOptions) => {
+    const win = BrowserWindow.getFocusedWindow();
+    const { filePath, canceled } = await dialog.showSaveDialog(win!, {
+      ...(opts?.title ? { title: opts.title } : {}),
+      ...(opts?.defaultName ? { defaultPath: opts.defaultName } : {}),
+      // An empty list would leave the OS dialog with no filter row at all; "All Files" is what the
+      // bundled form effectively showed for an unknown extension.
+      filters: opts?.filters?.length ? opts.filters : [{ name: "All Files", extensions: ["*"] }],
+    });
+    return canceled || !filePath ? null : filePath;
+  });
+
   ipcMain.handle(
     "client:writeArtifact",
-    async (_e, contentBase64: string, suggestedName: string, mimeType: string) => {
+    async (_e, contentBase64: string, suggestedName: string, mimeType: string, destPath?: string) => {
+      // The dialog-first form: the user already chose through `client:pickSavePath`, so asking again
+      // would be the bug this parameter exists to prevent. `suggestedName`/`mimeType` describe the
+      // artifact and are unused on this branch.
+      if (destPath) return writeBytes(contentBase64, destPath);
+
       const win = BrowserWindow.getFocusedWindow();
       const ext = path.extname(suggestedName).replace(/^\./, "") || "txt";
       const { filePath, canceled } = await dialog.showSaveDialog(win!, {
@@ -184,14 +209,26 @@ export function registerClientHandlers(): void {
         filters: [{ name: mimeType || "File", extensions: [ext] }],
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
-      try {
-        fs.writeFileSync(filePath, Buffer.from(contentBase64, "base64"));
-        return { ok: true, filePath };
-      } catch (err) {
-        return { ok: false, error: (err as Error)?.message ?? "Could not write the file" };
-      }
+      return writeBytes(contentBase64, filePath);
     },
   );
+
+  ipcMain.handle("client:readArtifactFile", async (_e, opts?: ReadFileOptions) => {
+    let filePath = opts?.path;
+    if (!filePath) {
+      const win = BrowserWindow.getFocusedWindow();
+      const { filePaths, canceled } = await dialog.showOpenDialog(win!, {
+        ...(opts?.title ? { title: opts.title } : {}),
+        // Omitted entirely when absent: `dialog:openFile` passes no `filters` either, and adding an
+        // "All Files" entry here would change the dialog the two TLS import methods already show.
+        ...(opts?.filters?.length ? { filters: opts.filters } : {}),
+        properties: ["openFile"],
+      });
+      if (canceled || !filePaths[0]) return null;
+      filePath = filePaths[0];
+    }
+    return readLocalFile(filePath);
+  });
 
   // ── First-launch UX state — was inline in main.ts's app.whenReady() ───────
   ipcMain.handle("app:isFirstLaunch", () => {
@@ -203,4 +240,60 @@ export function registerClientHandlers(): void {
     saveSettings({ ...s, hasSeenWelcome: true });
     return { ok: true };
   });
+}
+
+/**
+ * Write base64-encoded artifact bytes to a path, reporting failure rather than throwing.
+ *
+ * A thrown `EACCES` would surface in the renderer as a rejected promise, and the export modal has no
+ * `try` around its call — it would sit on "working" forever. The whole point of returning a result is
+ * that "you said no" and "the write broke" stay distinguishable.
+ */
+function writeBytes(
+  contentBase64: string,
+  filePath: string,
+): { ok: true; filePath: string } | { ok: false; error: string } {
+  try {
+    fs.writeFileSync(filePath, Buffer.from(contentBase64, "base64"));
+    return { ok: true, filePath };
+  } catch (err) {
+    return { ok: false, error: (err as Error)?.message ?? "Could not write the file" };
+  }
+}
+
+/**
+ * Read a local file for an import, capped by the protocol's ingress limit.
+ *
+ * **The cap is the reason this is not a `dialog:openFile` pass-through**, which is what the preload
+ * used to point `readArtifactFile` at. That channel caps at 1 MB because it feeds binary request
+ * bodies, whereas the legacy `importExport:preflight` accepted up to `BLOB_MAX_INGRESS_BYTES`
+ * (100 MB) — so reusing it here would have silently rejected every import between 1 MB and 100 MB,
+ * which is most real collections. It also returns no `filePath`, and the path is exactly what the
+ * import pair needs to stop opening a second dialog.
+ */
+function readLocalFile(filePath: string): ReadFileResult | { error: string } {
+  let size: number;
+  try {
+    size = fs.statSync(filePath).size;
+  } catch (err) {
+    return { error: `Could not read ${path.basename(filePath)}: ${String(err)}` };
+  }
+  if (size > BLOB_MAX_INGRESS_BYTES) {
+    return {
+      error:
+        `"${path.basename(filePath)}" is ${size} bytes, over the ` +
+        `${BLOB_MAX_INGRESS_BYTES}-byte import limit.`,
+    };
+  }
+  try {
+    return {
+      name: path.basename(filePath),
+      size,
+      base64: fs.readFileSync(filePath).toString("base64"),
+      mimeType: mimeFor(filePath),
+      filePath,
+    };
+  } catch (err) {
+    return { error: `Could not read ${path.basename(filePath)}: ${String(err)}` };
+  }
 }
