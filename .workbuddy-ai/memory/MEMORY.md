@@ -17,19 +17,19 @@
   extension release + an audit record, neither code here. A handler *resolving* `{ok:false}` is an
   envelope **success**; only a **throw** fails. **P5 done** — spec = `src/surface.ts` (144 keys);
   **`src/preload.ts` is the authority, not `renderer/types/window.ts`**; `close()` non-enumerable.
-- **P6: steps 1–2, finding 1, 3a, 3b-1, 3b-2, 3c + finding 6 done.** 3b-2 implemented 21 of 25
+- **P6: steps 1–2, finding 1, 3a, 3b-1, 3b-2, 3b-3, 3c + finding 6 done.** 3b-2 implemented 21 of 25
   missing commands (ratchet 25→4; the 4 left aren't a backlog — `audit.list` NARROWED, the two
   `runner.*Config` BLOCKED by a *passing* test, `app.checkUpdate` → P12). 3b-1 made the preload
-  `{ ...client }` + overrides → **136 of 144** route. 3c deleted `eventBridge.ts`;
-  `registerIpcHandlers()` can't be deleted (4 unroutable keys need a channel) — it shrinks until P12.
+  `{ ...client }` + overrides; **3b-3 added the three filesystem hooks → 140 of 144** route. 3c deleted
+  `eventBridge.ts`; `registerIpcHandlers()` can't be deleted (4 unroutable keys need a channel) — it
+  shrinks until P12. `src/ipc/importExportHandlers.ts` is dead and dies with it.
 - **§5c unfixed:** `config.get`, `env.setActive`, `workspace.setActive`, `entity.load`,
   `entity.setEnabled` register **from the shell**, so a containerised engine answers
   `UNKNOWN_COMMAND`; the ratchet can't see it.
-- **The last 4 keys need one primitive: the dialog must run BEFORE the command** (`File_Ops_Protocol.md`
-  §3.2). `writeArtifact` bundles "ask where" + "write", forcing the dialog after the render → needs a
-  `pickSavePath` hook. The 2 imports also need `readArtifactFile(path?)`: the renderer round-trips
-  `res.filePath` from preflight into `importData`, but the client returns `import.preflight` verbatim
-  (engine only knew a `blobId` → `undefined`) and `importData` **ignores** `req.filePath` → 2nd dialog.
+- **The last 4 keys are protocol decisions, not moves:** `checkUpdate` SPLIT (its frozen result has no
+  `currentVersion`/`hasUpdate`, so the shell body can't just move), `listAudit` NARROWED, the two
+  `runner.*Config` BLOCKED by a *passing* test. **`BIFURC_ENGINE_RPC=0` does not exist anywhere** — 3b-1
+  deleted the preload table it was meant to fall back to, so the flag needs a decision.
 
 ## Traps that cost real time
 
