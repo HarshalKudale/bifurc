@@ -505,6 +505,41 @@ Node**, because `tsup` is configured `bundle: false` and emits extensionless rel
 so it is not a live defect — but any future child process that imports the ESM entry will hit
 `ERR_MODULE_NOT_FOUND`, which is worth checking before P9 builds one.
 
+#### 5c-ii. Slice 2 — the `runnerHandlers` pair (2026-09-19)
+
+`runner.getHistory` and `runner.listFolderIds` moved from module scope in
+`src/ipc/handlers/runnerHandlers.ts` into `packages/engine/src/runner/runnerCommands.ts`, which already
+held `runner.saveReport` / `saveConfig` / `loadConfig` — so `registerRunnerCommands()` now owns the whole
+`runner.*` namespace. **44 module-scope registrations remain.**
+
+**This slice was free, and the reason is the one worth carrying forward.** `runnerHandlers.ts`'s own
+comment called these two "the reason they cannot move into `packages/engine`", because §5c's trap is
+real: a module-scope registration takes effect on *import*, so relocating one behind an explicit
+`register*Commands()` call silently unregisters it for every suite that imports the handler group
+without running `registerIpcHandlers()` — and the failure is a `No handler registered` at *invocation*
+time, invisible to the compiler. Here the affected set was **empty**:
+`tests/integration/runnerStorage.integration.test.ts` is the only file that imports `runnerHandlers`,
+and it already called `registerRunnerCommands(commandRegistry)` — added in step 3d for the config pair.
+So slice 2 needed no suite edits at all, where slice 1 needed five. **Check the importer set before
+assuming a slice is mechanical; that check is what distinguishes the two.**
+
+Worth noting too that these two channels *delegate* (`commandRegistry.invoke(...)`) where
+`runner:saveReport` / `runner:saveConfig` / `runner:loadConfig` are self-contained duplicates. A
+delegating adapter is the one that breaks when the registry is empty — which is exactly why this slice
+carried a suite risk that the step-3d config move did not.
+
+**Verified** the same way as slice 1, and more strongly. `npm run typecheck` → EXIT=0, plus a standalone
+probe against the built engine that now drives the moved bodies against a **throwaway data root** via
+`setDataRoot()` — the documented P8/P9 entry hook — so nothing touched the real profile and the
+containerised-engine story was exercised end to end (set a data root → register → invoke). **14/14**,
+including the behaviour the shell bodies had: `listFolderIds` returns only folders carrying
+`runner.json` and ignores a stray file in `.runs`; `getHistory` sorts newest-first, **drops a corrupt
+`report.json` without failing the folder**, and maps `totalTests`/`passedTests`/`failedTests` into the
+summary; history is readable for a folder that has no `runner.json` (history ≠ configured); a missing
+folder or workspace resolves `[]` rather than throwing; `loadConfig` returns the object for a configured
+folder and `null` otherwise — the contract `listFolderIds` depends on. The suite still could not run
+(see §5c-i), so this remains **implemented, not suite-verified**.
+
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
 The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies

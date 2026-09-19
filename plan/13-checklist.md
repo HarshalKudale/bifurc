@@ -613,17 +613,20 @@ rather than a type.
       made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
       failed the conformance suite on all four transports
 - [ ] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
-      (`plan/07` §5c-i). **Slice 1 implemented but NOT verified** (2026-09-19): the five §5c named —
-      `config.get`, `env.setActive`, `workspace.setActive`, `entity.load`, `entity.setEnabled` — now
-      live in `store/coreCommands.ts` behind `registerCoreCommands()`, called from
-      `src/ipc/handlers.ts`; `syncEnabledSet`'s three copies are collapsed into
-      `store/enabledSet.ts`. **§5c's count was 5; the real number is 51** across nine shell files, so
-      **46 remain**: `syncHandlers` 17, `applicationHandlers` 10, `grpcHandlers` 5, `entityCrudFactory`
-      4, `folderHandlers` 4, `graphqlHandlers` 2, `soapHandlers` 2, `runnerHandlers` 2. Five suites had
-      to be given an explicit `registerCoreCommands(commandRegistry)` call — the §5a trap, now applying
-      to these five. Verified by `npm run typecheck` (EXIT=0) and a 7/7 standalone probe against the
-      built engine, **not** by the suite, which was down (`plan/07` §5c-i). **Re-run the suite before
-      ticking this.**
+      (`plan/07` §5c-i, §5c-ii). **Two slices implemented, NOT suite-verified** (2026-09-19):
+      **slice 1** — the five §5c named (`config.get`, `env.setActive`, `workspace.setActive`,
+      `entity.load`, `entity.setEnabled`) → `store/coreCommands.ts` behind `registerCoreCommands()`,
+      called from `src/ipc/handlers.ts`; `syncEnabledSet`'s three copies collapsed into
+      `store/enabledSet.ts`. **slice 2** — `runner.getHistory` / `runner.listFolderIds` →
+      `runner/runnerCommands.ts`, so `registerRunnerCommands()` now owns the whole `runner.*` namespace
+      (this slice needed **no** suite edits: `runnerStorage.integration.test.ts` already called it).
+      **§5c's count was 5; the real number is 51** across nine shell files, so **44 remain**:
+      `syncHandlers` 17, `applicationHandlers` 10, `grpcHandlers` 5, `entityCrudFactory` 4,
+      `folderHandlers` 4, `graphqlHandlers` 2, `soapHandlers` 2. Slice 1's five suites needed an
+      explicit `registerCoreCommands(commandRegistry)` call — the §5a trap, now applying to them.
+      Verified by `npm run typecheck` (EXIT=0) and a **14/14** standalone probe against the built
+      engine (behaviour included, against a throwaway `setDataRoot()`), **not** by the suite, which was
+      down (`plan/07` §5c-i). **Re-run the suite before ticking this.**
 - [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
       command registered *in this process*", and in this process the shell has registered all 51, so
       §5c was invisible to the mechanism built to catch exactly this class

@@ -1,11 +1,7 @@
 import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import type {
-  RunnerExportReportResult,
-  RunnerGetHistoryParams,
-  RunnerListFolderIdsParams,
-} from "@bifurc/protocol";
+import type { RunnerExportReportResult } from "@bifurc/protocol";
 import { wsDir as workspaceDir } from "@bifurc/engine/store/workspaceFs";
 import { renderRunnerHtml } from "@bifurc/engine/runner/reportHtml";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
@@ -14,18 +10,22 @@ import { call, writeArtifact } from "@/ipc/fileOpsClient";
 
 // ## What is left here, and why
 //
-// Two different things live in this file now.
+// **The registry has nothing in this file any more.** `runner.getHistory` and `runner.listFolderIds`
+// used to be registered here at *module scope* — the `plan/07` §5c defect, which meant a containerised
+// engine answered `UNKNOWN_COMMAND` for two commands the protocol declares and `@bifurc/client`
+// advertises. Step 3e slice 2 (2026-09-19) moved both into
+// `packages/engine/src/runner/runnerCommands.ts`, so this file is now channels only and
+// `registerRunnerCommands()` owns the whole `runner.*` namespace.
 //
-// **`runner.getHistory` / `runner.listFolderIds` are registered on the registry at *module scope***
-// (below, outside `registerRunnerHandlers()`). That is no longer a convenience — it is the reason they
-// cannot move into `packages/engine`. `plan/07` §5c records the trap: a module-scope registration takes
-// effect on *import*, so relocating one behind an explicit `registerRunnerCommands()` call silently
-// unregisters it for every suite that imports this handler group without running
-// `registerIpcHandlers()`. Moving them means updating those suites in the same pass, not a mechanical
-// cut-and-paste.
+// The move was free, and that is worth recording because §5c's other slices will not all be. The trap
+// §5c names is that a module-scope registration takes effect on *import*, so relocating one behind an
+// explicit `register*Commands()` call silently unregisters it for every suite that imports this handler
+// group without running `registerIpcHandlers()`. Here that set was empty:
+// `tests/integration/runnerStorage.integration.test.ts` is the only importer, and it already called
+// `registerRunnerCommands(commandRegistry)` for the step-3d config pair.
 //
-// **The `ipcMain.handle` channels are the legacy path.** P2 work item 7 converted only the two above;
-// the rest moved in P6 once the protocol allowed it:
+// **The `ipcMain.handle` channels are the legacy path**, and every one of them now has a registry
+// implementation behind it:
 //   - `runner:saveReport` → `runner.saveReport` in `packages/engine/src/runner/runnerCommands.ts`
 //     (step 3b-2). It writes into the *workspace* rather than to a path the user chose, so it is not
 //     one of `File_Ops_Protocol.md` §4's egress channels.
@@ -36,54 +36,17 @@ import { call, writeArtifact } from "@/ipc/fileOpsClient";
 //     (`plan/protocol-changes.md`). These two were tried and reverted in P2 for exactly that reason —
 //     the frozen schema required `{requestOrder, delayMs}` while real callers save
 //     `{delayMs, stopOnFailure, iterations}` — so the fix was to correct the schema, not the handler.
-//   - `runner:getHistory` / `runner:listFolderIds` channels are thin adapters over the two
-//     module-scope registrations above.
+//   - `runner:getHistory` / `runner:listFolderIds` are thin `commandRegistry.invoke()` adapters over the
+//     two commands moved in step 3e. Because they **delegate** rather than duplicating, they are the
+//     ones that break when the registry is empty — which is exactly why a suite registering this handler
+//     group must also call `registerRunnerCommands()`.
 //
-// The channel bodies stay until `registerIpcHandlers()` is deleted. Note that they are
-// **self-contained duplicates** rather than delegating to the registry, which is why an integration
-// suite driving channels by name keeps passing while the engine half is wrong. That is precisely what
-// the "through the registry" block in `tests/integration/runnerStorage.integration.test.ts` exists to
+// The channel bodies stay until `registerIpcHandlers()` is deleted. The ones above that are
+// **self-contained duplicates** rather than delegating to the registry are why an integration suite
+// driving channels by name keeps passing while the engine half is wrong. That is precisely what the
+// "through the registry" block in `tests/integration/runnerStorage.integration.test.ts` exists to
 // catch.
 const ctx = { bus };
-
-commandRegistry.register("runner.getHistory", ({ workspaceId, folderId }: RunnerGetHistoryParams) => {
-  try {
-    const runsDir = path.join(workspaceDir(workspaceId), "requests", ".runs", folderId);
-    if (!fs.existsSync(runsDir)) return [];
-    const entries = fs.readdirSync(runsDir).filter((d) => {
-      return fs.statSync(path.join(runsDir, d)).isDirectory();
-    });
-    return entries.map((ts) => {
-      const reportFile = path.join(runsDir, ts, "report.json");
-      if (!fs.existsSync(reportFile)) return null;
-      try {
-        const data = JSON.parse(fs.readFileSync(reportFile, "utf-8"));
-        return {
-          timestamp: Number(ts),
-          summary: {
-            total: data.totalTests ?? 0,
-            passed: data.passedTests ?? 0,
-            failed: data.failedTests ?? 0,
-          },
-        };
-      } catch { return null; }
-    }).filter(Boolean).sort((a: any, b: any) => b.timestamp - a.timestamp);
-  } catch {
-    return [];
-  }
-});
-
-commandRegistry.register("runner.listFolderIds", ({ workspaceId }: RunnerListFolderIdsParams) => {
-  try {
-    const runsDir = path.join(workspaceDir(workspaceId), "requests", ".runs");
-    if (!fs.existsSync(runsDir)) return [];
-    return fs.readdirSync(runsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && fs.existsSync(path.join(runsDir, e.name, "runner.json")))
-      .map((e) => e.name);
-  } catch {
-    return [];
-  }
-});
 
 export function registerRunnerHandlers() {
   ipcMain.handle("runner:saveReport", (_e, wsId: string, report: any) => {
