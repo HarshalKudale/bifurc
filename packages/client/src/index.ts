@@ -41,7 +41,7 @@ import type { BifurcApi } from "../../../renderer/types/window";
 import { SURFACE } from "./surface";
 import { createSubscriptionHub } from "./subscriptions";
 import { DEFAULT_RETRY_POLICY, withRetry, type RetryPolicy } from "./retry";
-import type { ArtifactWriteResult, ClientLocal, LocalFileContent } from "./local";
+import type { ArtifactWriteResult, ClientLocal, ReadFileOptions } from "./local";
 
 /**
  * The three keys `renderer/types/window.ts` marks **optional** (`?`) although `src/preload.ts`
@@ -264,6 +264,79 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     return bytesToBase64(whole);
   };
 
+  // ── artifact egress / ingress ─────────────────────────────────────────────
+  //
+  // `File_Ops_Protocol.md` §3.2's rule is "the client shows the dialog first", and the reason is not
+  // cosmetic: fail fast on cancel, so the engine never renders a 200 MB workspace archive the user
+  // then abandons. Whether that is *expressible* depends on where the write falls in the sequence —
+  // egress is dialog → command → write, so the ask must be separable from the write; ingress is
+  // dialog → read → upload → command, so the two can share one call. The hooks are shaped by that
+  // difference rather than by taste, which is why `pickSavePath` has no ingress twin.
+
+  /** A path's last segment, without assuming Node's `path` — this bundles for a browser too. */
+  const baseName = (p: string): string => p.split(/[\\/]/).pop() || p;
+
+  /**
+   * The dialog title's noun, per entity kind.
+   *
+   * A copy of the shell's `kindLabel` in `src/ipc/importExportHandlers.ts`. That file is now dead —
+   * once the preload routes these methods through the client, nothing calls the three
+   * `importExport:*` channels it serves — and it goes at step 3's final deletion, at which point
+   * this becomes the only copy. Copied rather than moved for one commit, because moving it would
+   * mean editing a file that is about to be deleted.
+   */
+  const KIND_LABEL: Record<string, string> = {
+    workspace: "Workspace",
+    requests: "Requests",
+    mocks: "Mocks",
+    environments: "Environments",
+    mappings: "Mappings",
+    proxyRules: "Proxy Rules",
+    websockets: "WebSockets",
+    webhooks: "Webhooks",
+  };
+
+  /** `proxyRules` → `proxy-rules`, the kebab-case the default export file name uses. */
+  const safeKind = (kind: string): string => kind.replace(/([A-Z])/g, "-$1").toLowerCase();
+
+  /**
+   * The engine's format table entry for one `kind`+`format` — a dialog's filters and default
+   * extension.
+   *
+   * Asked of the engine rather than hard-coded, because the 17 formats and their extensions are
+   * `packages/engine/src/importExport/registry.ts`'s to declare, and a second list here is how the
+   * two would drift. It is the same cheap `export.formats` the modal already reads when it opens.
+   * It is read *before* the dialog, which has one visible consequence worth stating plainly: with no
+   * engine there is no dialog — correct, because there is nothing to export either way.
+   */
+  const formatsFor = async (kind: string | undefined, formatId: string | undefined) => {
+    const all = (await call("getImportExportFormats", {})) as
+      | Record<string, { id: string; label: string; extensions: string[] }[]>
+      | undefined;
+    return (
+      all?.[kind ?? ""]?.find((f) => f.id === formatId) ?? {
+        id: formatId ?? "",
+        label: "Files",
+        extensions: ["json"],
+      }
+    );
+  };
+
+  /** The dialog chrome for an import, from the engine's own format table. */
+  const importDialogOpts = async (
+    kind: string | undefined,
+    formatId: string | undefined,
+  ): Promise<ReadFileOptions> => {
+    const f = await formatsFor(kind, formatId);
+    return {
+      title: `Import ${KIND_LABEL[kind ?? ""] ?? kind ?? ""}`,
+      filters: [
+        { name: f.label, extensions: f.extensions },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    };
+  };
+
   /**
    * Turn an `ArtifactResult` into a file on the client's disk.
    *
@@ -274,8 +347,17 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
    * Content stays base64 from the engine all the way to the `writeArtifact` hook. Nothing here
    * decodes it, because nothing here needs to: the hook writes bytes, and any decode-and-re-encode
    * in between is a chance to corrupt an artifact that is not valid UTF-8.
+   *
+   * `destPath` is the dialog-first case — a path the user already chose through `pickSavePath`, so
+   * the hook writes there without asking again. Omitted, the hook shows the dialog itself and uses
+   * the engine's own `suggestedName`/`mimeType` as its chrome, which is the right default for the
+   * methods whose artifact is cheap and already produced.
    */
-  const artifactToFile = async (result: unknown, fallbackName: string): Promise<ArtifactWriteResult> => {
+  const artifactToFile = async (
+    result: unknown,
+    fallbackName: string,
+    destPath?: string,
+  ): Promise<ArtifactWriteResult> => {
     const r = result as
       | { ok?: boolean; error?: string; canceled?: boolean; inline?: string; blobId?: string; suggestedName?: string; mimeType?: string }
       | undefined;
@@ -296,13 +378,25 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       return { ok: false, error: "artifact carried neither inline content nor a blobId" };
     }
 
-    return local.writeArtifact(contentBase64, r.suggestedName ?? fallbackName, r.mimeType ?? "application/octet-stream");
+    return local.writeArtifact(
+      contentBase64,
+      r.suggestedName ?? fallbackName,
+      r.mimeType ?? "application/octet-stream",
+      destPath,
+    );
   };
 
-  /** Ask for a file locally, upload it, and return the blob id the command needs. */
-  const uploadLocalFile = async (): Promise<{ blobId: string; file: LocalFileContent } | { error: string } | { canceled: true }> => {
+  /**
+   * Read a file locally, upload it, and return the blob id the command needs.
+   *
+   * `opts.path` is the reuse case — `importData` reading the file `preflightImport` already chose.
+   * With no path the hook shows the dialog, so one call expresses both.
+   */
+  const uploadLocalFile = async (
+    opts?: ReadFileOptions,
+  ): Promise<{ blobId: string; filePath: string } | { error: string } | { canceled: true }> => {
     if (!local.readArtifactFile) return { error: "this client cannot read files (no readArtifactFile hook)" };
-    const file = await local.readArtifactFile();
+    const file = await local.readArtifactFile(opts);
     if (!file) return { canceled: true };
     if ("error" in file) return { error: file.error };
     const put = (await request("blob.put", {
@@ -312,7 +406,45 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       data: file.base64,
     })) as { blobId?: string } | undefined;
     if (!put?.blobId) return { error: "blob.put did not return a blobId" };
-    return { blobId: put.blobId, file };
+    return { blobId: put.blobId, filePath: file.filePath };
+  };
+
+  /**
+   * The renderer identifies an upload by the local path it came from, so the client has to remember
+   * which blob that path produced.
+   *
+   * This is what makes `File_Ops_Protocol.md` §5's **uploaded ONCE** true across the two-step
+   * import: `preflightImport` stages the blob, `importData` reuses it, and the bytes cross the wire
+   * once. Bounded by construction — one entry per file picked since the last preflight, cleared on
+   * commit. The shell used to own this map (`importExportHandlers.ts`); it dies with that file.
+   */
+  const pendingUploads = new Map<string, string>();
+
+  const releaseQuietly = (blobId: string): void => {
+    void request("blob.release", { blobId }).catch(() => undefined);
+  };
+
+  const rememberUpload = (filePath: string, blobId: string): void => {
+    const previous = pendingUploads.get(filePath);
+    // Re-running preflight on the same file (the user changed the format and tried again) replaces
+    // the entry; release the one it displaces rather than leaving it for the sweep.
+    if (previous && previous !== blobId) releaseQuietly(previous);
+    pendingUploads.set(filePath, blobId);
+  };
+
+  const forgetUpload = (filePath: string): void => {
+    pendingUploads.delete(filePath);
+  };
+
+  /** The remembered blob for a path, or a fresh read plus upload. */
+  const uploadOnce = async (
+    opts: ReadFileOptions,
+  ): Promise<{ blobId: string; filePath: string } | { error: string } | { canceled: true }> => {
+    if (opts.path) {
+      const remembered = pendingUploads.get(opts.path);
+      if (remembered) return { blobId: remembered, filePath: opts.path };
+    }
+    return uploadLocalFile(opts);
   };
 
   /**
@@ -352,36 +484,103 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     // ── import / export ─────────────────────────────────────────────────────
     getImportExportFormats: () => call("getImportExportFormats", {}) as ReturnType<BifurcApi["getImportExportFormats"]>,
     exportData: async (req) => {
-      const result = await call("exportData", {
-        kind: (req as { kind?: string }).kind,
-        format: (req as { format?: string }).format,
-        workspaceId: (req as { workspaceId?: string }).workspaceId,
-        filename: (req as { filename?: string }).filename,
+      // `wsId` on the wire, `workspaceId` in the command — `window.api` is positional-ish and the
+      // frozen schema is not. Read through the declared type rather than a cast: the previous
+      // version of this method cast to `{ workspaceId?: string }`, which is a field the renderer
+      // never sends, and nothing noticed because the preload overrode the method entirely.
+      const { kind, format, wsId } = req;
+      if (!local.pickSavePath || !local.writeArtifact) {
+        return { ok: false, error: "this client cannot write files (no filesystem hooks)" };
+      }
+
+      // ── 1. Dialog FIRST ────────────────────────────────────────────────────
+      // `File_Ops_Protocol.md` §3.2: fail fast on cancel, so the engine never renders a 200 MB
+      // workspace archive the user then abandons. This is the ordering the bundled `writeArtifact`
+      // could not express, and it is why `pickSavePath` exists.
+      const f = await formatsFor(kind, format);
+      const dest = await local.pickSavePath({
+        title: `Export ${KIND_LABEL[kind] ?? kind}`,
+        defaultName: `${safeKind(kind)}-export.${f.extensions[0] ?? "json"}`,
+        filters: [
+          { name: f.label, extensions: f.extensions },
+          { name: "All Files", extensions: ["*"] },
+        ],
       });
-      return artifactToFile(result, "export");
+      if (!dest) return { ok: false, canceled: true };
+
+      // ── 2. The engine renders it ───────────────────────────────────────────
+      // Only the *name* crosses, never the path — the engine has no use for a path it cannot act on.
+      const created = await call("exportData", {
+        kind,
+        format,
+        workspaceId: wsId,
+        filename: baseName(dest),
+      });
+
+      // ── 3. The client writes the bytes ─────────────────────────────────────
+      try {
+        return await artifactToFile(created, baseName(dest), dest);
+      } catch (err) {
+        return { ok: false, error: `Could not write ${baseName(dest)}: ${String(err)}` };
+      }
     },
     preflightImport: async (req) => {
-      const uploaded = await uploadLocalFile();
+      const { kind, format, wsId } = req;
+      const uploaded = await uploadLocalFile(await importDialogOpts(kind, format));
       if ("canceled" in uploaded) return { ok: false, canceled: true };
       if ("error" in uploaded) return { ok: false, error: uploaded.error };
-      return call("preflightImport", {
-        kind: (req as { kind?: string }).kind,
-        format: (req as { format?: string }).format,
-        workspaceId: (req as { workspaceId?: string }).workspaceId,
+
+      const pf = (await call("preflightImport", {
+        kind,
+        format,
+        workspaceId: wsId,
         blobId: uploaded.blobId,
-      }) as ReturnType<BifurcApi["preflightImport"]>;
+      })) as
+        | { ok: true; itemCount: number; collisionIds: string[] }
+        | { ok: false; error: string }
+        | undefined;
+      if (!pf?.ok) {
+        releaseQuietly(uploaded.blobId);
+        return { ok: false, error: pf?.error ?? "the engine could not read the import" };
+      }
+
+      rememberUpload(uploaded.filePath, uploaded.blobId);
+
+      // `filePath` is echoed because the renderer threads it from here into `importData` — and it is
+      // now the path the **client** chose. That is the fix for the second dialog: the shell used to
+      // have to guess, because `dialog:openFile` returns no path at all, so `importData` re-asked.
+      return { ok: true, filePath: uploaded.filePath, itemCount: pf.itemCount, collisionIds: pf.collisionIds };
     },
     importData: async (req) => {
-      const uploaded = await uploadLocalFile();
+      const { kind, format, wsId, filePath, collisionStrategy } = req;
+
+      // `filePath` is what `preflightImport` returned. Reusing it is the whole point: asking again
+      // would be a second dialog for a file the user already picked, and re-reading it would
+      // re-upload bytes the engine already has. It is declared required on the renderer's
+      // `ImportRequest`, so an empty one means a caller that skipped preflight — ask rather than
+      // read `undefined`, which is what the old path did and why the collision branch could hand
+      // `undefined` to `applyImport`.
+      const uploaded = await uploadOnce(
+        filePath ? { path: filePath } : await importDialogOpts(kind, format),
+      );
       if ("canceled" in uploaded) return { ok: false, canceled: true };
       if ("error" in uploaded) return { ok: false, error: uploaded.error };
-      return call("importData", {
-        kind: (req as { kind?: string }).kind,
-        format: (req as { format?: string }).format,
-        workspaceId: (req as { workspaceId?: string }).workspaceId,
-        blobId: uploaded.blobId,
-        collisionStrategy: (req as { collisionStrategy?: string }).collisionStrategy,
-      }) as ReturnType<BifurcApi["importData"]>;
+
+      try {
+        return (await call("importData", {
+          kind,
+          format,
+          workspaceId: wsId,
+          blobId: uploaded.blobId,
+          collisionStrategy,
+        })) as ReturnType<BifurcApi["importData"]>;
+      } finally {
+        // Imports are transform-and-discard (`File_Ops_Protocol.md` §5): the source file never
+        // persists on the engine. Released on failure too — a failed commit is retried from the
+        // start (the renderer returns to its idle state), which re-runs preflight and re-uploads.
+        forgetUpload(uploaded.filePath);
+        releaseQuietly(uploaded.blobId);
+      }
     },
     discoverServices: () => call("discoverServices", {}) as ReturnType<BifurcApi["discoverServices"]>,
 
@@ -570,8 +769,42 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     saveRunnerReport: (wsId, report) => call("saveRunnerReport", { workspaceId: wsId, report }) as ReturnType<BifurcApi["saveRunnerReport"]>,
     getRunHistory: (wsId, folderId) => call("getRunHistory", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["getRunHistory"]>,
     exportRunnerReport: async (report) => {
-      const r = await artifactToFile(await call("exportRunnerReport", { report, format: "json" }), "runner-report.json");
-      return r.ok ? { ok: true, filePath: r.filePath } : { ok: false, canceled: r.canceled, error: r.error };
+      const r = report as { folderName?: string; startedAt?: number } | undefined;
+      if (!local.pickSavePath || !local.writeArtifact) {
+        return { ok: false, error: "this client cannot write files (no filesystem hooks)" };
+      }
+
+      // Dialog FIRST, then the engine renders — `File_Ops_Protocol.md` §3.2. The default path is
+      // built here from the report, because the renderer sends the report and the dialog has to be
+      // shown before the command runs. This is also the starkest case of the split: the chosen
+      // **extension decides the format**, so the dialog cannot run after the render — by then the
+      // format is already fixed. The client used to hardcode `json`, which silently removed HTML
+      // export; that is what this replaces.
+      const folderName = r?.folderName ?? "collection";
+      const ts = new Date(r?.startedAt ?? Date.now()).toISOString().replace(/[:.]/g, "-");
+      const dest = await local.pickSavePath({
+        title: "Export Runner Report",
+        defaultName: `${folderName}-report-${ts}.html`,
+        filters: [
+          { name: "HTML Report", extensions: ["html"] },
+          { name: "JSON Report", extensions: ["json"] },
+        ],
+      });
+      // A bare `{ok:false}` on cancel, not `{ok:false, canceled:true}`: the declared type carries no
+      // `canceled` for this key, so the renderer cannot branch on one. The shell's legacy body
+      // returned the same shape.
+      if (!dest) return { ok: false };
+
+      try {
+        const artifact = await call("exportRunnerReport", {
+          report,
+          format: dest.toLowerCase().endsWith(".json") ? "json" : "html",
+        });
+        const res = await artifactToFile(artifact, baseName(dest), dest);
+        return res.ok ? { ok: true, filePath: res.filePath } : { ok: false, error: res.error };
+      } catch (err) {
+        return { ok: false, error: (err as Error)?.message };
+      }
     },
     saveRunnerConfig: (wsId, folderId, config) =>
       call("saveRunnerConfig", { workspaceId: wsId, folderId, config }) as ReturnType<BifurcApi["saveRunnerConfig"]>,
@@ -637,3 +870,21 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
 
 /** Re-exported so a consumer can name the event shape without reaching into the engine. */
 export type { EngineEvent };
+
+/**
+ * The client-local vocabulary, re-exported.
+ *
+ * `src/preload.ts` and the shell's handler module both implement these hooks, so both need to name
+ * the option and result shapes. Without this they would reach for `@bifurc/client/dist/local`, i.e.
+ * depend on the package's internal file layout rather than on its API.
+ */
+export type {
+  ArtifactWriteResult,
+  ClientLocal,
+  FileFilterSpec,
+  LocalFileContent,
+  ReadFileOptions,
+  ReadFileResult,
+  RequiredClientLocal,
+  SavePathOptions,
+} from "./local";
