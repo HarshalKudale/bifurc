@@ -613,8 +613,8 @@ rather than a type.
       made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
       failed the conformance suite on all four transports
 - [ ] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
-      (`plan/07` §5c-i … §5c-v). **Five slices done, and slices 1–5 are now suite-verified** — the
-      vitest outage cleared, which is how slice 1's real defect was found (`plan/07` §5c-iii).
+      (`plan/07` §5c-i … §5c-vi). **Six slices done, and all six are suite-verified** — the vitest
+      outage cleared, which is how slice 1's real defect was found (`plan/07` §5c-iii).
       **slice 1** — the five §5c named (`config.get`, `env.setActive`, `workspace.setActive`,
       `entity.load`, `entity.setEnabled`) → `store/coreCommands.ts` behind `registerCoreCommands()`;
       `syncEnabledSet`'s three copies collapsed into `store/enabledSet.ts`. It had added its
@@ -636,23 +636,36 @@ rather than a type.
       because **nothing had to travel** (every dependency was already engine-side, so the shell file
       was a pure adapter), and its private `generateId()` was byte-identical to `store/config.ts`'s
       exported one. Mutation-checked: dropping `registerApplicationCommands()` fails 11 of 12 tests.
-      **§5c's count was 5; the real number is 51** across nine shell files, so **21 remain**, all in
-      `src/ipc/`: `syncHandlers` 17, `entityCrudFactory` 4. Verified after every slice from 3 onward:
-      `npm run typecheck` EXIT=0 and the full suite at **101 files / 2,508 tests — 2,467 passed, 40
-      skipped, 1 failed** (the documented environmental `soap.execute`), i.e. the recorded baseline
-      exactly, so five slices produced **no test-count delta**. `plan/07` §5c-vi is the next slice.
+      **slice 6** (`4c6d8ab`) — the largest by count, the 17 `sync.*` / `git.*` / `entity.publish` /
+      `folder.publish` / `entity.restore` / `audit.diff` / `history.*` → `sync/syncCommands.ts`; also
+      "nothing had to travel", but with a **local `sanitizeDirName` that must not be collapsed** into
+      `store/workspaceFs`'s same-named export (different pattern, different replacement, no fallback —
+      collapsing would silently change the published git path). Its mutation check is the most
+      informative of the pass: dropping `registerSyncCommands()` fails the ratchet with **exactly the
+      17** names and two `history:list` tests with `No handler registered`, while
+      `gitRemote.integration.test.ts` stays **24/24 green** — a suite that registers the engine half
+      itself is **structurally blind to the wiring**, so its green is not evidence about it.
+      **§5c's count was 5; the real number is 51** across nine shell files, so **4 remain**, all in
+      `src/ipc/handlers/entityCrudFactory.ts` (`entity.create` / `update` / `delete` / `list`) — the
+      awkward one, because that file's *exported* purpose is the CRUD collapse and six shell handler
+      files import it, so importing any of them currently registers `entity.*` as a side effect; the
+      affected suite set is the union over those consumers (**seven suites**, the widest importer set
+      of the pass). Verified after every slice from 3 onward: `npm run typecheck` EXIT=0 and the full
+      suite at **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented
+      environmental `soap.execute`), i.e. the recorded baseline exactly, so six slices produced **no
+      test-count delta**. `plan/07` §5c-vi is the last slice recorded; §5c-vii is next.
       **The heuristic that predicts a slice's difficulty is not the command count but how much of the
       body is the shell's own** — slice 5 (10 commands) was the easiest, slice 1 (5 commands) the
       costliest.
 - [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
       command registered *in this process*", and in this process the shell has registered all 51, so
       §5c was invisible to the mechanism built to catch exactly this class. **The §5c pass is the
-      manual substitute**; it is also blind to the next slice's count, which is why the remaining 21
+      manual substitute**; it is also blind to the next slice's count, which is why the remaining 4
       are tracked by grep (`grep -rn '^commandRegistry.register(' src/`) rather than by a test.
       **But the ratchet is sharp on the *move*, which §5c did not anticipate** (`plan/07` §5c-v): once
       a command's only registration is an explicit call, forgetting that call makes it unregistered
       and the ratchet fails — it caught exactly that in slice 5, listing all ten `application.*`
-      commands as missing
+      commands as missing, and again in slice 6 with exactly the 17 `sync.*`/`git.*`/`history.*`
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**
