@@ -1,150 +1,38 @@
 import { ipcMain, dialog } from "electron";
-import * as fs from "fs";
-import type {
-  SyncSetRemoteParams, SyncDisconnectParams, SyncPushParams, SyncPullParams,
-  SyncGetStateParams, SyncSetAutoSyncParams, SyncGetEntityStatusParams,
-  GitDiffParams, GitDiscardParams, GitSyncParams, GitHistoryParams,
-  EntityPublishParams, EntityRestoreParams, FolderPublishParams,
-  AuditDiffParams, HistoryListParams, HistoryDiffParams, AuditExportResult,
-} from "@bifurc/protocol";
-import {
-  setRemote, disconnect, syncPush, syncPull, getSyncState, setAutoSync,
-  getSyncConfig, getRemoteHead,
-} from "@bifurc/engine/sync/syncManager";
-import { startAutoSync, stopAutoSync, updateLastKnownHead } from "@bifurc/engine/sync/autoSync";
-import { getFileDiff, discardChanges, syncChanges, getFileHistory } from "@bifurc/engine/sync/gitOps";
-import { getWorkspaceSyncStatus, invalidateCache } from "@bifurc/engine/sync/statusTracker";
-import { loadConfig, saveConfig } from "@bifurc/engine/store/config";
-import { reloadConfig } from "@bifurc/engine/proxy/server";
-import {
-  queryLog, getEntityAtCommit, getCommitChangedFiles, QueryLogOptions, AuditEntity,
-} from "@bifurc/engine/store/gitStore";
-import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
+import type { AuditExportResult } from "@bifurc/protocol";
+import { loadConfig } from "@bifurc/engine/store/config";
+import { queryLog, QueryLogOptions, type AuditEntity } from "@bifurc/engine/store/gitStore";
+import { bus } from "@bifurc/engine/eventBus";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { call, writeArtifact } from "@/ipc/fileOpsClient";
 
-// P2 work item 7 — these are the second batch of commands wired through the CommandRegistry,
-// following coreHandlers.ts's proof of concept. Every command here is already a clean 1:1 with
-// its legacy channel (no entityCrudFactory involvement), which is exactly the "next slice"
-// `plan/03-phase-2-engine-extraction.md`'s work item 7 status note calls for. `audit:export` was
-// SPLIT (see `packages/protocol/src/commands/audit.ts`) and was **converted in P3 work item 3**:
-// the engine now renders `{format}` -> artifact and this file owns the Electron save dialog and the
-// file write, per `File_Ops_Protocol.md` §4.
+// ## Channels only — the registry half now lives in the engine
+//
+// The 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` / `entity.restore` / `audit.diff` /
+// `history.*` commands used to be registered at **module scope** in this file, which is the `plan/07`
+// §5c defect: a containerised engine (P9) answered `UNKNOWN_COMMAND` for all 17. Step 3e slice 6
+// (2026-09-19) moved them into `packages/engine/src/sync/syncCommands.ts` behind
+// `registerSyncCommands()`, called from `src/ipc/handlers.ts`.
+//
+// Every channel below **delegates** through `commandRegistry.invoke()` rather than duplicating the
+// body — unlike `runnerHandlers.ts`, where three of the five are self-contained copies. That
+// distinction decides what breaks: a delegating channel is only ever as alive as the registry behind
+// it, so a suite that registers this handler group by hand **must** also call
+// `registerSyncCommands(commandRegistry)`, or the channel exists with nothing behind it. The failure
+// is `No handler registered` at *invocation* time, so nothing catches it at build time.
+// `tests/integration/gitRemote.integration.test.ts` and `gitSync.integration.test.ts` both do this,
+// and both import `registerSyncHandlers` statically at module scope — so before the move the registry
+// was populated as an import side effect and neither needed an explicit call.
+//
+// The file's own P2 note is still accurate: every one of the 17 is a clean 1:1 with its legacy
+// channel, with no `entityCrudFactory` involvement.
+//
+// P2 work item 7 — the bodies themselves (the conditional `reloadConfig`s, the silent `catch {}`
+// around `updateLastKnownHead`, the pathspec prefix in `folder.publish` and its **local**
+// `sanitizeDirName` that is deliberately not the engine's function of the same name) are documented in
+// the engine module. Two dead imports went with the move: `fs` and `saveConfig` were already unused
+// here, and `getSyncConfig` was imported and never referenced.
 const ctx = { bus };
-
-commandRegistry.register("sync.setRemote", async ({ workspaceId, remote, branch }: SyncSetRemoteParams) => {
-  const result = await setRemote(workspaceId, remote, branch);
-  if (result.ok) reloadConfig();
-  return result;
-});
-
-commandRegistry.register("sync.disconnect", ({ workspaceId }: SyncDisconnectParams) => disconnect(workspaceId));
-
-commandRegistry.register("sync.push", ({ workspaceId }: SyncPushParams) => syncPush(workspaceId));
-
-commandRegistry.register("sync.pull", async ({ workspaceId }: SyncPullParams) => {
-  const result = await syncPull(workspaceId);
-  if (result.ok && result.updated) {
-    reloadConfig();
-    invalidateCache(workspaceId);
-    emitEntityStatus(workspaceId);
-  }
-  return result;
-});
-
-commandRegistry.register("sync.getState", ({ workspaceId }: SyncGetStateParams) => getSyncState(workspaceId));
-
-commandRegistry.register("sync.setAutoSync", async ({ workspaceId, enabled }: SyncSetAutoSyncParams) => {
-  const result = await setAutoSync(workspaceId, enabled);
-  if (enabled) startAutoSync(workspaceId);
-  else stopAutoSync(workspaceId);
-  return result;
-});
-
-commandRegistry.register("sync.getEntityStatus", ({ workspaceId }: SyncGetEntityStatusParams) => getWorkspaceSyncStatus(workspaceId));
-
-commandRegistry.register("git.diff", ({ workspaceId, relPath }: GitDiffParams) => getFileDiff(workspaceId, relPath));
-
-commandRegistry.register("git.discard", async ({ workspaceId, relPath }: GitDiscardParams) => {
-  const result = await discardChanges(workspaceId, relPath);
-  emitEntityStatus(workspaceId);
-  reloadConfig();
-  return result;
-});
-
-commandRegistry.register("git.sync", async ({ workspaceId, paths, message }: GitSyncParams) => {
-  const result = await syncChanges(workspaceId, paths, message);
-  emitEntityStatus(workspaceId);
-  try {
-    const sha = await getRemoteHead(workspaceId);
-    if (sha) updateLastKnownHead(workspaceId, sha);
-  } catch { }
-  return result;
-});
-
-commandRegistry.register("git.history", ({ workspaceId, relPath, limit, offset }: GitHistoryParams) =>
-  getFileHistory(workspaceId, relPath, { limit, offset }));
-
-commandRegistry.register("entity.publish", async ({ workspaceId, paths, message }: EntityPublishParams) => {
-  const result = await syncChanges(workspaceId, paths, message);
-  emitEntityStatus(workspaceId);
-  try {
-    const sha = await getRemoteHead(workspaceId);
-    if (sha) updateLastKnownHead(workspaceId, sha);
-  } catch { }
-  return result;
-});
-
-commandRegistry.register("folder.publish", async ({ workspaceId, kind, folderName }: FolderPublishParams) => {
-  const sanitizeDirName = (name: string) => name.replace(/[<>:"/\\|?*]+/g, "-");
-  const folderPath = folderName ? `${kind}/${sanitizeDirName(folderName)}/` : `${kind}/`;
-  const result = await syncChanges(workspaceId, [folderPath]);
-  emitEntityStatus(workspaceId);
-  try {
-    const sha = await getRemoteHead(workspaceId);
-    if (sha) updateLastKnownHead(workspaceId, sha);
-  } catch { }
-  return result;
-});
-
-commandRegistry.register("entity.restore", async ({ workspaceId, relPath }: EntityRestoreParams) => {
-  const result = await discardChanges(workspaceId, relPath);
-  emitEntityStatus(workspaceId);
-  reloadConfig();
-  return result;
-});
-
-// `audit.list` is deliberately NOT wired through the registry here: `AuditListParams` is
-// `.strict()` in the frozen `packages/protocol` package and does not declare `fromTs`/`toTs`,
-// but `AuditLogPanel.tsx` actively sends both when a date-range filter is set
-// (`renderer/types/ipc.ts`'s `AuditListOptions` has them; `queryLog`'s `QueryLogOptions` accepts
-// them). Routing this through `commandRegistry.invoke()` as written would make every
-// date-filtered audit-log query throw a validation error — a real regression, not a
-// registration-only change. This is a genuine gap in the frozen v1 protocol schema, worth a
-// `protocol-changes.md` entry before it is converted, not something to route around silently.
-
-commandRegistry.register("audit.diff", async ({ commitHash, entityId, workspaceId }: AuditDiffParams) => {
-  // Resolve the actual file path from the commit's changed files list
-  const changed = await getCommitChangedFiles(commitHash, workspaceId);
-  const relPath = changed.find((f) => f.includes(entityId)) ?? changed[0] ?? "";
-  if (!relPath) return { before: null, after: null };
-  const after = await getEntityAtCommit(commitHash, workspaceId, relPath);
-  const before = await getEntityAtCommit(`${commitHash}~1`, workspaceId, relPath);
-  return { before, after };
-});
-
-commandRegistry.register("history.list", async (opts: HistoryListParams) => {
-  const wsId = opts.workspaceId ?? loadConfig().activeWorkspaceId;
-  const normalized = opts.filePath.replace(/\\/g, "/");
-  return queryLog({ workspaceId: wsId, filePath: normalized, limit: opts.limit ?? 100, offset: opts.offset ?? 0 });
-});
-
-commandRegistry.register("history.diff", async ({ commitHash, filePath, workspaceId }: HistoryDiffParams) => {
-  const normalized = filePath.replace(/\\/g, "/");
-  const after = await getEntityAtCommit(commitHash, workspaceId, normalized);
-  const before = await getEntityAtCommit(`${commitHash}~1`, workspaceId, normalized);
-  return { before, after };
-});
 
 export function registerSyncHandlers() {
   // ── Sync ──────────────────────────────────────────────────────────────────
@@ -195,6 +83,19 @@ export function registerSyncHandlers() {
 
   // ── Audit Log ──────────────────────────────────────────────────────────────
 
+  // `audit:list` is the one channel in this file that does **not** go through the registry: it calls
+  // `queryLog` directly. `audit.list` *is* registered — step 3d widened `AuditListParams` with
+  // `filePath` / `fromTs` / `toTs` and moved the command into
+  // `packages/engine/src/store/auditCommands.ts` — but this body is deliberately **not** re-pointed at
+  // it. `plan/07` §5a: the `register*Commands()` modules run from `registerIpcHandlers()`, so a legacy
+  // body that delegates acquires a hidden ordering dependency, and two suites register handler groups
+  // without it. Re-pointing would break them at invocation time, invisible to the compiler.
+  //
+  // (The comment that used to sit here said `AuditListParams` was `.strict()` and lacked
+  // `fromTs`/`toTs`, so routing it would have broken every date-filtered query. That was true until
+  // 2026-09-19 and is now stale — the schema was widened precisely because
+  // `renderer/panels/AuditLogPanel.tsx:61–62` sends both. The body stays for the §5a reason above,
+  // not because the schema blocks it.)
   ipcMain.handle("audit:list", async (_e, opts: Omit<QueryLogOptions, "workspaceId"> & { workspaceId?: string } = {}) => {
     if (!opts.workspaceId) {
       const cfg = loadConfig();
@@ -235,4 +136,3 @@ export function registerSyncHandlers() {
     return { ok: true };
   });
 }
-
