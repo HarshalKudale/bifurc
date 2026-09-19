@@ -28,39 +28,35 @@ interface SavedProtoFile {
   createdAt: number; workspaceId: string;
 }
 
-// P2 work item 7 — grpc.execute/reflect/mockServerStatus/startMockServer/stopMockServer are pure
-// stubs (pinned by tests/integration/protocolExecution.integration.test.ts, Cleanup_plan.md
-// §1.5 D6 disposition: wontfix — see packages/protocol/src/commands/grpc.ts's own comment), and
-// their params match the frozen schema exactly, so all five convert. grpc:addRequest/
-// updateRequest/deleteRequest and grpc:addMock/updateMock/deleteMock already route through the
-// CommandRegistry too, via the `registerEntityCrudHandlers()` calls below (the CRUD collapse —
-// see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's tenth
-// batch). `grpc:addProto/deleteProto/listProtos` now route through the same registry too, via
-// `registerSimpleEntityHandlers()` — they don't track a `configKey` array the way every
-// `CrudFactoryOpts` kind does (protos are written straight to disk, nothing mirrors them into
-// `AppConfig`), and have no "update" concept, so they go through the smaller
-// `entity.create`/`entity.delete`/`entity.list` fallback path instead.
+// ## Channels only — the registry half now lives in the engine
+//
+// `grpc.execute` / `reflect` / `mockServerStatus` / `startMockServer` / `stopMockServer` used to be
+// registered at **module scope** in this file, which is the `plan/07` §5c defect: a containerised
+// engine (P9) answered `UNKNOWN_COMMAND` for all five. Step 3e slice 4 (2026-09-19) moved them into
+// `packages/engine/src/protocols/grpcCommands.ts` behind `registerGrpcCommands()`, called from
+// `src/ipc/handlers.ts`.
+//
+// Every channel below **delegates** through `commandRegistry.invoke()` rather than duplicating the
+// body — unlike `runnerHandlers.ts`, where three of the five are self-contained copies. That
+// distinction decides what breaks: a delegating channel is only ever as alive as the registry behind
+// it, so a suite that registers this handler group by hand **must** also call
+// `registerGrpcCommands(commandRegistry)`, or the channel exists with nothing behind it. The failure
+// is `No handler registered` at *invocation* time, so nothing catches it at build time.
+//
+// All five are deliberate stubs — `Cleanup_plan.md` §1.5 D6 disposition: **wontfix**, with the same
+// note in `packages/protocol/src/commands/grpc.ts`. See the engine module for what each resolves.
+//
+// The three CRUD groups are a different thing and stay: `grpc:addRequest/updateRequest/deleteRequest`,
+// `grpc:addMock/updateMock/deleteMock` and `grpc:addProto/deleteProto/listProtos` route through the
+// CRUD collapse — see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's
+// tenth batch. The last group goes through the smaller `registerSimpleEntityHandlers()` path because
+// protos don't track a `configKey` array the way every `CrudFactoryOpts` kind does (they are written
+// straight to disk, nothing mirrors them into `AppConfig`) and have no "update" concept.
+//
+// P2 work item 7 — the five convert directly: their params match the frozen schema exactly, so no cast
+// or translation is needed. That is not incidental — it is why a stub could be converted at all, since
+// the schema is the contract and the bodies carry no state.
 const ctx = { bus };
-
-commandRegistry.register("grpc.execute", async (_params: GrpcExecuteParams) => {
-  return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js and @grpc/proto-loader to enable gRPC calls." };
-});
-
-commandRegistry.register("grpc.reflect", async (_params: GrpcReflectParams) => {
-  return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js to enable server reflection." };
-});
-
-commandRegistry.register("grpc.mockServerStatus", async (_params: GrpcMockServerStatusParams) => {
-  return { running: false, port: 9102 };
-});
-
-commandRegistry.register("grpc.startMockServer", async (_params: GrpcStartMockServerParams) => {
-  return { ok: false, error: "gRPC mock server not yet implemented. Install @grpc/grpc-js to enable." };
-});
-
-commandRegistry.register("grpc.stopMockServer", async (_params: GrpcStopMockServerParams) => {
-  return { ok: true };
-});
 
 export function registerGrpcHandlers() {
   registerEntityCrudHandlers<SavedGrpcRequest>({

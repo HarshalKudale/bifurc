@@ -213,9 +213,19 @@ beforeAll(async () => {
   // wire the engine half too, or the channel exists with nothing behind it.
   const { commandRegistry } = await import("@bifurc/engine/commands/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  // P6 §5c slice 4: the nine protocol-client commands left the three handler files' module scope as
+  // well. Every channel in those files *delegates* through `commandRegistry.invoke()`, so without
+  // these calls the channels below exist with nothing behind them — a `No handler registered` at
+  // invocation time, which is why the suite is green-looking either way until it isn't.
+  const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
+  const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
+  const { registerGrpcCommands } = await import("@bifurc/engine/protocols/grpcCommands");
 
   registerCoreHandlers();
   registerCoreCommands(commandRegistry);
+  registerGraphqlCommands(commandRegistry);
+  registerSoapCommands(commandRegistry);
+  registerGrpcCommands(commandRegistry);
   registerGraphqlHandlers();
   registerSoapHandlers();
   registerGrpcHandlers();
