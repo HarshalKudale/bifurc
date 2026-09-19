@@ -86,10 +86,15 @@ beforeAll(async () => {
   // channel in that file *delegates* through `commandRegistry.invoke()`, so without this call the four
   // channels below exist with nothing behind them — a `No handler registered` at invocation time.
   const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
+  // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
+  // `registerCrudHandlers()` wires the *channels* and the per-kind options; the four commands those
+  // channels delegate to are the engine half and have to be registered explicitly.
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
 
   registerCoreHandlers();
   registerCoreCommands(commandRegistry);
   registerFolderCommands(commandRegistry);
+  registerEntityCrudCommands(commandRegistry);
   registerFolderHandlers();
   registerCrudHandlers();
 });
