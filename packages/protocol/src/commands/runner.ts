@@ -76,10 +76,31 @@ export interface RunnerHistoryEntry {
 }
 export type RunnerGetHistoryResult = RunnerHistoryEntry[];
 
-export const RunnerConfigSchema = z.object({
-  requestOrder: z.array(z.string()),
-  delayMs: z.number(),
-});
+/**
+ * A folder's saved runner configuration.
+ *
+ * **Widened 2026-09-19 from `{requestOrder: string[]; delayMs: number}`** — that frozen shape
+ * described a payload no caller sends, and it was wrong in two independent ways:
+ *
+ * 1. It **required** `requestOrder`. `tests/integration/runnerStorage.integration.test.ts:207`
+ *    round-trips `{delayMs: 250, stopOnFailure: true, iterations: 3}` and line 213 saves
+ *    `{delayMs: 0}`, so the schema rejected both — with a *passing test* as the evidence, which is
+ *    why the step-3b ratchet filed these two commands `BLOCKED` rather than unimplemented.
+ * 2. It **stripped** everything else. `z.object()` drops unknown keys, so even a payload that passed
+ *    would have lost `stopOnFailure` and `iterations` on the way to disk. That half is the more
+ *    dangerous one: a dropped field is a data-loss bug in saved run configuration, not a validation
+ *    error, and nothing would have reported it.
+ *
+ * The real shape is a free-form blob, because that is what the store actually persists — the shell's
+ * `runner:saveConfig` body is `JSON.stringify(config)` with `config: any` and no validation, and
+ * different callers send different subsets (`useCollectionRunner.ts:67` sends `{requestOrder,
+ * delayMs}`; the integration test sends neither `requestOrder` nor the same field set twice).
+ *
+ * So this follows the precedent `entity.ts` set for exactly this situation: a large, evolving,
+ * caller-owned shape stays `z.record` at the wire boundary and the domain layer owns validation.
+ * `AppConfig` (`config.ts`) and `ApplicationConfig` (`application.ts`) are the same call.
+ */
+export const RunnerConfigSchema = z.record(z.string(), z.unknown());
 
 export const RunnerSaveConfigParams = z.object({
   workspaceId: z.string(),
