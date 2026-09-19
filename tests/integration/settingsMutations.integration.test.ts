@@ -30,7 +30,7 @@
  * `fileParallelism: false`).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as net from "net";
@@ -177,16 +177,27 @@ beforeEach(async () => {
   const { registerSystemHandlers } = await import("@/ipc/handlers/systemHandlers");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
   const { registerCrudHandlers } = await import("@/ipc/handlers/crudHandlers");
-  // P6 §5c: `config.get` and `workspace.setActive` moved out of `coreHandlers`' module scope into the
-  // engine. `registerCoreHandlers()` wires the *channels*; a suite that registers handler groups by
-  // hand has to wire the engine half too, or the channel exists with nothing behind it.
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   registerCoreHandlers();
-  registerCoreCommands(commandRegistry);
   registerSystemHandlers();
   registerClientHandlers();
   registerCrudHandlers();
+});
+
+// P6 §5c: `config.get` and `workspace.setActive` moved out of `coreHandlers`' module scope into the
+// engine, so a suite that registers handler groups by hand has to wire the engine half too — otherwise
+// the channel exists with nothing behind it.
+//
+// **`beforeAll`, not `beforeEach`, and that is not a style choice.** The channel layer is per-test and
+// re-registering it is harmless (the electron mock's `handlers` map is keyed by channel, so a second
+// `ipcMain.handle` for the same channel just overwrites). The *registry* is the opposite: it is a
+// module-level singleton with no `clear()`, and `register()` deliberately throws on a duplicate to
+// catch double-registration. Called from `beforeEach` this passes the first test and fails every one
+// after it with `Command "config.get" is already registered.` — which is exactly how it was found:
+// 29 failures in this file, all from one throw inside the second test's `beforeEach`.
+beforeAll(async () => {
+  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  registerCoreCommands(commandRegistry);
 });
 
 afterEach(() => {
