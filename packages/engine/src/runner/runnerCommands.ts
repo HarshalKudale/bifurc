@@ -1,15 +1,28 @@
 /**
- * `runner.saveReport` — the one `runner.*` command in the step-3b inventory that can move as-is.
+ * The `runner.*` commands whose implementation is the engine's: `saveReport`, `saveConfig` and
+ * `loadConfig`. `runner.exportReport` had already moved (P2/P3), so this file completes the runner's
+ * request paths.
  *
- * ## Why this one moves and its two siblings do not
+ * (`runner.getHistory` and `runner.listFolderIds` are registered in the *shell* —
+ * `src/ipc/handlers/runnerHandlers.ts` — at module scope. They are not moved here for the reason
+ * `plan/07` §5c records: a module-scope registration takes effect on import, so relocating one behind
+ * an explicit `registerRunnerCommands()` call would silently unregister it for the suites that import
+ * the handler group without running `registerIpcHandlers()`.)
  *
- * `runner.saveConfig` / `runner.loadConfig` are `BLOCKED` by the frozen protocol: `RunnerConfigSchema`
- * requires `requestOrder`, while `tests/integration/runnerStorage.integration.test.ts` saves
- * `{delayMs, stopOnFailure, iterations}` and asserts an exact round-trip. That is a *passing test* as
- * evidence, and the ratchet in `tests/ipc/handlers.test.ts` asserts the block directly so widening the
- * schema later fails loudly instead of leaving these filed as "unimplemented" forever.
+ * ## The two config commands were `BLOCKED`; the widening is what unblocked them
  *
- * `runner.exportReport` had already moved (P2/P3), so this file completes the runner's request paths.
+ * The step-3b ratchet filed `runner.saveConfig` / `runner.loadConfig` as `BLOCKED` rather than
+ * unimplemented, with a **passing test** as the evidence: `RunnerConfigSchema` required
+ * `requestOrder`, while `tests/integration/runnerStorage.integration.test.ts:207` round-trips
+ * `{delayMs, stopOnFailure, iterations}`. The ratchet asserted that block *directly* — parsing the real
+ * config through the frozen schema had to fail — so that widening the schema would fail the test and
+ * say these had become movable, rather than leaving them filed as "unimplemented" forever.
+ *
+ * That is exactly what happened on 2026-09-19: the test failed, the schema was widened to the shape
+ * the store actually persists, and these two moved. The reasoning lives in
+ * `packages/protocol/src/commands/runner.ts`; the short version is that the frozen schema was wrong
+ * twice over — it **rejected** the payload a passing test saves, and would have **stripped** fields
+ * from any payload that did pass, because `z.object()` drops unknown keys.
  *
  * ## The move is safe, and the reason is worth recording
  *
@@ -55,7 +68,11 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import type { RunnerSaveReportParams } from "@bifurc/protocol";
+import type {
+    RunnerLoadConfigParams,
+    RunnerSaveConfigParams,
+    RunnerSaveReportParams,
+} from "@bifurc/protocol";
 import type { CommandRegistry } from "../commands/registry";
 import { wsDir } from "../store/workspaceFs";
 import { renderRunnerHtml } from "./reportHtml";
@@ -88,6 +105,57 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
             // Resolved, not thrown: the renderer branches on `{ok:false}`, and a throw would surface
             // as an `EngineError` with the message flattened — losing the `ok` flag entirely.
             return { ok: false, error: (err as Error)?.message ?? "Failed to save report" };
+        }
+    });
+
+    /**
+     * A folder's runner configuration, written verbatim.
+     *
+     * `JSON.stringify(config, null, 2)` and nothing else — no validation, no defaults, no field
+     * picking. That is deliberate and it is the whole point of the `z.record` widening: the config is
+     * the *caller's* shape, so anything that reads it back out and re-writes a subset of it would be
+     * the data-loss bug the old schema would have caused.
+     *
+     * `{ ok: false }` with no `error` on failure is preserved from the shell body rather than improved.
+     * Adding a message would be a contract change smuggled in under a move, and the renderer's
+     * declared result is `{ ok: boolean }`.
+     */
+    registry.register("runner.saveConfig", (params: RunnerSaveConfigParams) => {
+        try {
+            const runsDir = path.join(wsDir(params.workspaceId), "requests", ".runs", params.folderId);
+            fs.mkdirSync(runsDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(runsDir, "runner.json"),
+                JSON.stringify(params.config, null, 2),
+                "utf-8",
+            );
+            return { ok: true };
+        } catch {
+            return { ok: false };
+        }
+    });
+
+    /**
+     * Read it back, or `null` when the folder has no saved configuration.
+     *
+     * `null` and `{}` mean different things to the caller — `runner.listFolderIds` uses the file's
+     * *presence* to decide whether a folder has a configuration at all — so a missing or unparseable
+     * file must stay `null` rather than becoming an empty object. A corrupt `runner.json` reads as
+     * "not configured", which is the pre-existing behaviour.
+     */
+    registry.register("runner.loadConfig", (params: RunnerLoadConfigParams) => {
+        try {
+            const file = path.join(
+                wsDir(params.workspaceId),
+                "requests",
+                ".runs",
+                params.folderId,
+                "runner.json",
+            );
+            if (!fs.existsSync(file)) return null;
+            return JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
+        } catch {
+            return null;
         }
     });
 }

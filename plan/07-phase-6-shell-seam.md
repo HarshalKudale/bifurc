@@ -668,12 +668,15 @@ Delete the flag in the next release, once the seam has survived real usage.
      ✅ **done 2026-09-19: 140 of 144 keys route.** The client gained `pickSavePath` and a
      path-accepting `readArtifactFile`, and `writeArtifact` gained an optional destination. See
      *Step 3b-3* above.
-   - **then** delete `registerIpcHandlers()`. **This is now blocked on four keys, not eight** —
-     `checkUpdate` (SPLIT), `listAudit` (NARROWED), `saveRunnerConfig` / `loadRunnerConfig` (BLOCKED).
-     All four need a **protocol** decision rather than a move (§5b), so step 3 cannot end with all 93
-     registered; it ends with 89 registered + 2 blocked + 1 narrowed + 1 split. Deleting
-     `registerIpcHandlers()` earlier would break each of them on **both** paths at once, and the
-     surface test would still pass because the key stays exposed.
+   - **3d** — unblock the pinned keys. ✅ **keys 1–2 done 2026-09-19: 143 of 144 keys route.** Three of
+     the four were **schema** problems rather than routing problems and were resolved by widening the
+     schema they were pinned on (`listAudit`, then `saveRunnerConfig` / `loadRunnerConfig`), not by
+     moving them. See *Step 3d* above.
+   - **then** delete `registerIpcHandlers()`. **This is now blocked on one key, not eight** —
+     `checkUpdate` (SPLIT), which is a genuine split resolved by P12 (§5b). So step 3 ends at
+     **92 registered + 1 split**, not "89 registered + 2 blocked + 1 narrowed + 1 split". Deleting
+     `registerIpcHandlers()` earlier would break that key on **both** paths at once, and the surface test
+     would still pass because the key stays exposed.
 
 ---
 
@@ -1083,18 +1086,89 @@ and count** and a value-only assertion passes either way.
 `src/ipc/importExportHandlers.ts` is now **dead**: nothing in `src/`, `renderer/` or `e2e/` references
 any of its four channels. It is the `kindLabel` copy in the client that is now the only one. It dies
 with `registerIpcHandlers()`, which is the remaining work in step 3 — and that is now blocked on
-**four keys, not eight**.
+**one key, not eight** (see *Step 3d* below).
 
 **Still unproven, and unchanged by this step:** the real Electron IPC round trip. Both ends are mocked,
 so the wire *between* them remains the e2e suite's job, from a normal terminal.
 
 ---
 
+## Step 3d — unblocking the pinned keys (2026-09-19)
+
+**Three of the four pinned keys were not routing problems. They were schema problems**, and that is the
+finding worth carrying forward: "the command is not in the registry" was never the same claim as "the
+engine cannot serve it". §5b had already split the four by *why* they were unimplemented — `NARROWED`,
+`BLOCKED`, `BLOCKED`, `SPLIT` — and only the `SPLIT` turned out to need a split.
+
+| Key | Category | Resolution |
+|---|---|---|
+| `listAudit` | `NARROWED` | **done 2026-09-19** (`fcd6d0d`) — widen `AuditListParams`, then move. |
+| `saveRunnerConfig` / `loadRunnerConfig` | `BLOCKED` | **done 2026-09-19** — widen `RunnerConfigSchema`, then move. |
+| `checkUpdate` | `SPLIT` | **still open.** The one genuine split, resolved by P12. |
+
+### Why widening was the right response rather than moving
+
+Both widenings are recorded in `plan/protocol-changes.md` with their justifications, and both follow the
+precedent `entity.ts` set: a large, evolving, **caller-owned** shape stays `z.record` at the wire
+boundary and the domain layer owns validation. `AppConfig` and `ApplicationConfig` were already that
+call. `RunnerConfigSchema` was the outlier — a fixed `{requestOrder, delayMs}` object describing a
+payload no caller sends, in a store whose own shell body is `JSON.stringify(config)` with `config: any`.
+
+The `BLOCKED` category's value showed up here. It existed so that a schema mismatch would be *asserted*
+rather than left filed as "unimplemented", and its assertion checked the block **directly** — parsing the
+real config through the frozen schema had to fail. So widening the schema failed that test and announced
+the two commands had become movable. That is the ratchet working as designed, on the one category where
+the fix was a protocol change.
+
+### The two defects in a frozen schema, and why only one was visible
+
+`RunnerConfigSchema` was wrong twice: it **rejected** what real callers save (`stopOnFailure`,
+`iterations`, no `requestOrder`), and — because `z.object()` drops unknown keys — it would have
+**stripped** them from any payload that did pass. The second is the more dangerous and the one no
+`BLOCKED` entry could express, because a dropped field is silent data loss rather than a validation
+error. The replacement guard asserts `toEqual` on the whole config, which is the assertion the block
+never could make: it only ever proved rejection.
+
+### A widening invalidates fixtures, not just callers
+
+Found by running the suite rather than by reading it. `COMMAND_FIXTURES["runner.saveConfig"].invalid`
+was `config: {}` — a near-miss only because the old schema *required* `requestOrder`. An empty record is
+a valid record under `z.record`, so the every-command matrix in the conformance suite (which asserts each
+fixture's `invalid` is rejected, across **all four transports**) would have failed four suites for a
+reason with no visible connection to the change. Confirmed by mutation: restoring `config: {}` fails
+`run-in-process` with *"promise resolved `{reached: 'runner.saveConfig'}` instead of rejecting"*.
+
+The generalisation is worth stating because it will recur: **`z.record` widens a schema's acceptance, so
+every `invalid` fixture targeting that field must be re-derived rather than trusted.**
+
+### The integration suite could not see any of this
+
+`tests/integration/runnerStorage.integration.test.ts` drove `runner:saveConfig` / `runner:loadConfig` —
+the **shell channels** — and every assertion in it would have kept passing if the engine implementation
+were wrong, because those channels are served by self-contained `ipcMain.handle` bodies that never
+consult the registry. The conformance suite cannot cover it either: its every-command matrix registers
+`() => ({ reached: cmd })` over each command *deliberately*, so it tests the transport and the schema
+rather than any implementation.
+
+So the file gained a block that drives both commands **on the registry** — the path a containerised
+engine has — asserting the on-disk round-trip, that the raw file preserves every field (the data-loss
+half), that the registry and the channel address the *same bytes* in both directions, and the
+`null`-for-missing/corrupt and `{ok:false}`-rather-than-throw branches. This is the integration-suite
+twin of the "unit suite is weak evidence for the preload flip" trap recorded earlier in this phase.
+
+**Measured:** full suite **101 files / 2,508 tests — 2,467 passed**, 40 skipped, 1 failed (the same
+documented `soap.execute` flake). Delta from the step-3b-3 baseline of 2,503 is **+5**, decomposed as
+**+1** for key 1's `audit.list` widening guard and **+4** for this step's registry block. Typecheck
+clean across all three packages.
+
+---
+
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after **step 3b-3 (the last four artifact methods)**:
-      **101 files / 2,503 tests** — **2,462 passed**, 40 skipped, and the one documented `soap.execute`
-      flake (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After **finding 6 (egress
+- [ ] **Unit suites pass.** Baseline after **step 3d (keys 1–2 of the four pinned)**:
+      **101 files / 2,508 tests** — **2,467 passed**, 40 skipped, and the one documented `soap.execute`
+      flake (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After **step 3b-3 (the last
+      four artifact methods)**: 101 / 2,503 — 2,462. After **finding 6 (egress
       fix)**: 101 / 2,477 — 2,436. After step 3c: 101 / 2,471 — 2,430. After **step 3b-1 (the flip +
       the two hooks)**: 101 / 2,475 — 2,434. After step 3b-2: 101 / 2,471 — 2,430. After the step-3b
       inventory: 101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423. After finding 1: 100 / 2,445

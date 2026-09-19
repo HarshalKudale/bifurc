@@ -323,6 +323,83 @@ than defer them to P12.
 
 ---
 
+### 2026-09-19 — `RunnerConfigSchema` becomes a free-form record; the two `runner.*Config` commands unblock
+
+**Phase:** P6 (step 3d — unblocking the four pinned keys, key 2)
+**Type:** fix — the frozen schema described a payload no caller sends
+**Change:** one schema, in `packages/protocol/src/commands/runner.ts`.
+
+```ts
+-export const RunnerConfigSchema = z.object({
+-  requestOrder: z.array(z.string()),
+-  delayMs: z.number(),
+-});
++export const RunnerConfigSchema = z.record(z.string(), z.unknown());
+```
+
+This is the shape `entity.ts` already uses for the same situation, and the same call `AppConfig`
+(`config.ts`) and `ApplicationConfig` (`application.ts`) make: a large, evolving, **caller-owned** blob
+stays `z.record` at the wire boundary, and the domain layer owns validation. `RunnerLoadConfigResult`
+is `z.infer<typeof RunnerConfigSchema> | null`, so it widens with it.
+
+**Why it could not wait:** `runner.saveConfig` / `runner.loadConfig` were the two `BLOCKED` entries in
+the step-3b ratchet, and their block was asserted *directly* — parsing the real config through the
+frozen schema had to fail — precisely so that widening the schema would fail that test and announce
+they had become movable rather than leaving them filed as "unimplemented" forever. That is what
+happened. But the frozen schema was wrong **twice over**, and only one half was ever visible:
+
+1. It **required** `requestOrder`, so it rejected what real callers save.
+   `tests/integration/runnerStorage.integration.test.ts:207` round-trips
+   `{delayMs: 250, stopOnFailure: true, iterations: 3}` and line 218 saves `{delayMs: 0}` — neither has
+   a `requestOrder`. `renderer/lib/useCollectionRunner.ts:67` sends `{requestOrder, delayMs}`, a third
+   distinct subset. The shell's own `runner:saveConfig` body takes `config: any` and does
+   `JSON.stringify(config, null, 2)` with no validation at all, so there was never a fixed shape to
+   describe.
+2. It **stripped** everything else. `z.object()` drops unknown keys, so even a payload that *had*
+   passed would have reached disk without `stopOnFailure` or `iterations`. This half is the more
+   dangerous one and the one the ratchet could not express: a dropped field is silent data loss in
+   saved run configuration, not a validation error, and nothing reports it.
+
+**Why this is not a `PROTOCOL_VERSION` bump.** Same argument as the entry above, and for the same
+measurable reason: **neither `runner.saveConfig` nor `runner.loadConfig` has ever been registered in a
+`CommandRegistry`** — the ratchet in `tests/ipc/handlers.test.ts` asserted that directly until this
+entry retired it. Their only server has been the shell's `runner:saveConfig` / `runner:loadConfig`
+`ipcMain` bodies, whose renderer-facing shape is **unchanged** by this entry (`README.md`
+non-negotiable #3): they take `(wsId, folderId, config)` and return `{ok}` / the parsed config, and
+`JSON.stringify` has never filtered a key. A client cannot depend on a payload no server has ever
+accepted, and no server has ever *rejected* a config for shape reasons either.
+
+**Affected:** `runner.saveConfig` params and `RunnerLoadConfigResult` only. No command name, no error
+code, no event envelope. `runner.saveReport`, `runner.exportReport`, `runner.getHistory` and
+`runner.listFolderIds` are untouched.
+
+**Migration:** none required. The engine half lands in
+`packages/engine/src/runner/runnerCommands.ts` (`registerRunnerCommands`), registered from
+`src/ipc/handlers.ts` alongside the other `register*Commands` modules.
+
+**A consequence worth recording, because it was found rather than assumed:** widening the schema
+**silently invalidated a conformance fixture.** `COMMAND_FIXTURES["runner.saveConfig"].invalid` was
+`config: {}` — a near-miss only because the old schema *required* `requestOrder`, and an empty record is
+a valid record under `z.record`. The every-command matrix in
+`packages/engine/tests/conformance/protocol.conformance.ts:927` asserts each fixture's `invalid` payload
+is rejected with `BAD_REQUEST`, across all four transports, so this would have failed four suites for a
+reason with no obvious connection to the change. It is now `config: 42` — a **non-record**, which is the
+one thing the widening still rejects, and the payloads that also work (`[]`, `null`, `"str"`) were
+checked against the built schema rather than assumed. The lesson generalises: `z.record` widens a
+schema's *acceptance*, so every `invalid` fixture targeting that field must be re-derived, not trusted.
+
+**Regression guards.** The retired `BLOCKED` assertion is replaced in `tests/ipc/handlers.test.ts` by
+one asserting the widening is **accepted AND preserved** (`toEqual` on the whole config, which is the
+assertion the block could never make — it only ever proved rejection), plus
+`tests/integration/runnerStorage.integration.test.ts` now drives both commands **through the registry**
+rather than only through the shell channels, because the channels are self-contained `ipcMain.handle`
+bodies and would have kept passing if the engine implementation were wrong.
+
+**Approved by:** this session, on the user's explicit decision to unblock the four pinned keys rather
+than defer them to P12.
+
+---
+
 
 ## Guidance
 

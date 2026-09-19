@@ -108,9 +108,15 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
     invalid: { report: { folderId: "f1", startedAt: 1 }, format: "pdf" },
   },
   "runner.getHistory": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
+  // `RunnerConfigSchema` was widened to `z.record` on 2026-09-19 (`plan/protocol-changes.md`), which
+  // silently invalidated this entry's old `invalid`: `config: {}` was a near-miss only because the
+  // frozen schema *required* `requestOrder`, and an empty record is now a perfectly valid record. The
+  // near-miss is a **non-record** instead, which is the one thing the widening still rejects — it made
+  // `config` free-form, not "anything goes". `[]`, `null` and `"str"` would also be rejected (checked,
+  // not assumed), but `42` reads as unmistakably not-a-record to someone skimming the table.
   "runner.saveConfig": {
     valid: { workspaceId: "ws1", folderId: "f1", config: { requestOrder: [], delayMs: 0 } },
-    invalid: { workspaceId: "ws1", folderId: "f1", config: {} },
+    invalid: { workspaceId: "ws1", folderId: "f1", config: 42 },
   },
   "runner.loadConfig": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
   "runner.listFolderIds": { valid: { workspaceId: "ws1" }, invalid: {} },
