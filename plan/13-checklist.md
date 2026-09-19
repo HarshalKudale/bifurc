@@ -612,9 +612,10 @@ rather than a type.
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening
       made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
       failed the conformance suite on all four transports
-- [ ] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
-      (`plan/07` §5c-i … §5c-vi). **Six slices done, and all six are suite-verified** — the vitest
-      outage cleared, which is how slice 1's real defect was found (`plan/07` §5c-iii).
+- [x] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
+      (`plan/07` §5c-i … §5c-vii). **DONE — seven slices, all suite-verified, and
+      `grep -rn '^commandRegistry.register(' src/` now returns nothing.** The vitest outage cleared
+      before slice 3, which is how slice 1's real defect was found (`plan/07` §5c-iii).
       **slice 1** — the five §5c named (`config.get`, `env.setActive`, `workspace.setActive`,
       `entity.load`, `entity.setEnabled`) → `store/coreCommands.ts` behind `registerCoreCommands()`;
       `syncEnabledSet`'s three copies collapsed into `store/enabledSet.ts`. It had added its
@@ -645,27 +646,44 @@ rather than a type.
       17** names and two `history:list` tests with `No handler registered`, while
       `gitRemote.integration.test.ts` stays **24/24 green** — a suite that registers the engine half
       itself is **structurally blind to the wiring**, so its green is not evidence about it.
-      **§5c's count was 5; the real number is 51** across nine shell files, so **4 remain**, all in
-      `src/ipc/handlers/entityCrudFactory.ts` (`entity.create` / `update` / `delete` / `list`) — the
-      awkward one, because that file's *exported* purpose is the CRUD collapse and six shell handler
-      files import it, so importing any of them currently registers `entity.*` as a side effect; the
-      affected suite set is the union over those consumers (**seven suites**, the widest importer set
-      of the pass). Verified after every slice from 3 onward: `npm run typecheck` EXIT=0 and the full
+      **§5c's count was 5; the real number was 51** across nine shell files. **slice 7** (`b48c65e`) —
+      the last four, `entity.create`/`update`/`delete`/`list` → `store/entityCrudCommands.ts`. It is
+      **structurally unlike 1–6**: not a file of commands but a **factory split across the seam**, whose
+      four commands dispatch through per-kind options that the six *shell* files populate — so the
+      dependency ran the wrong way and moving the registrations alone would have left them consulting an
+      **empty** map, each throwing `"<kind>" is not routed through the CommandRegistry yet`, the same
+      message a genuinely unregistered kind throws. Fixed by inverting the population direction: the
+      containers went to the engine, the shell calls `registerCrudKind()`/`registerSimpleKind()` and
+      keeps the channels, and **both factory signatures are unchanged, so none of the six caller files
+      needed an edit**. Its mutation check is the sharpest of the pass — dropping the call gives **52
+      failures, all in `handlers.test.ts`** (the ratchet with exactly the four names, plus 51 from the
+      per-kind channels that delegate into them), while the hand-registering `entityConflictScope` stays
+      **9/9 green**. The predicted affected set was 7 suites, derived from the factory's callers; the
+      measured set is **5** (`entityConflictScope`, `foldersAndWorkspaces`, `settingsMutations`,
+      `protocolPoc`, `protocolExecution`) — `gitRemote`/`gitSync` never imported anything reaching the
+      factory. **Derive the affected set from the registration calls a suite makes, not from the files
+      it mentions.** Verified after every slice from 3 onward: `npm run typecheck` EXIT=0 and the full
       suite at **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented
-      environmental `soap.execute`), i.e. the recorded baseline exactly, so six slices produced **no
-      test-count delta**. `plan/07` §5c-vi is the last slice recorded; §5c-vii is next.
+      environmental `soap.execute`), i.e. the recorded baseline exactly, so **seven slices produced no
+      test-count delta**. **This unblocks step 3 on the §5c side**; `registerIpcHandlers()` still cannot
+      be deleted, because `app.checkUpdate` (SPLIT → P12) needs a channel and
+      `src/ipc/importExportHandlers.ts` is dead but dies with it.
       **The heuristic that predicts a slice's difficulty is not the command count but how much of the
       body is the shell's own** — slice 5 (10 commands) was the easiest, slice 1 (5 commands) the
-      costliest.
+      costliest, and slice 7 (4 commands) the most structurally awkward.
 - [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
-      command registered *in this process*", and in this process the shell has registered all 51, so
-      §5c was invisible to the mechanism built to catch exactly this class. **The §5c pass is the
-      manual substitute**; it is also blind to the next slice's count, which is why the remaining 4
-      are tracked by grep (`grep -rn '^commandRegistry.register(' src/`) rather than by a test.
+      command registered *in this process*", and in this process the shell had registered all 51, so
+      §5c was invisible to the mechanism built to catch exactly this class. **The §5c pass was the
+      manual substitute**, and it is now complete, so nothing is left uncounted.
       **But the ratchet is sharp on the *move*, which §5c did not anticipate** (`plan/07` §5c-v): once
       a command's only registration is an explicit call, forgetting that call makes it unregistered
-      and the ratchet fails — it caught exactly that in slice 5, listing all ten `application.*`
-      commands as missing, and again in slice 6 with exactly the 17 `sync.*`/`git.*`/`history.*`
+      and the ratchet fails — it caught exactly that in slice 5 (all ten `application.*`), in slice 6
+      (exactly the 17 `sync.*`/`git.*`/`history.*`) and in slice 7 (exactly the four `entity.*`).
+      **Corollary measured in slice 6 (`plan/07` §5c-vi): a suite that registers the engine half itself
+      is structurally blind to the wiring.** `gitRemote.integration.test.ts` stayed 24/24 green with the
+      call site commented out, and `entityConflictScope` stayed 9/9 in slice 7. Only the ratchet and the
+      delegating channels can fail loudly, so a hand-registering suite's green must never be quoted as
+      verification of a call site.
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**

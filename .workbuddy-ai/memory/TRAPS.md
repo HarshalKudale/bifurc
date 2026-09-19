@@ -17,11 +17,16 @@ what makes the mistake look safe.**
 
 ## A module-scope registration is invisible to the compiler and to the ratchet
 
+**Status: this class is extinct in `src/` as of 2026-09-19** — `grep -rn '^commandRegistry.register('
+src/` returns nothing. The §5c pass moved all 51 across seven slices. Keep the trap: the *shape* is what
+to watch for in new shell code.
+
 A module-scope `commandRegistry.register(...)` takes effect on *import*. Moving one behind an explicit
 `register*Commands()` call silently unregisters it for every suite that imports the handler group
 without running `registerIpcHandlers()`, and the failure is `No handler registered` at **invocation**
 time — nothing catches it at build time. **Read the importer set before calling a slice mechanical**:
-slice 1 needed 5 suite edits, slice 2 needed 0, slices 3–4 needed 2 each.
+slice 1 needed 5 suite edits, slice 2 needed 0, slices 3–4 and 6 needed 2 each, slice 5 needed 1, slice
+7 needed 5.
 
 The conformance matrix cannot cover this either — it registers `() => ({ reached: cmd })` over every
 command deliberately, testing the transport and the schema rather than any implementation. And the
@@ -30,9 +35,10 @@ all of them.
 
 **But the ratchet is sharp on the *move*, which is the half worth remembering.** Once a command's only
 registration is an explicit `register*Commands()` call, forgetting that call makes it unregistered and
-the ratchet says so immediately — it caught exactly that in slice 5, listing all ten `application.*`
-commands as missing (`cd7afad`). So the ratchet is blind to the §5c *defect* and a real guard on the
-§5c *fix*: an explicit call site is checkable, a module side effect is not.
+the ratchet says so immediately — it caught exactly that in slice 5 (all ten `application.*`, `cd7afad`),
+slice 6 (exactly the 17 `sync.*`/`git.*`/`history.*`) and slice 7 (exactly the four `entity.*`). So the
+ratchet is blind to the §5c *defect* and a real guard on the §5c *fix*: an explicit call site is
+checkable, a module side effect is not.
 
 ## A *delegating* channel is both the risk and the evidence
 
@@ -78,6 +84,25 @@ transport-level error. `graphql.introspect` / `soap.fetchWsdl` catch; `graphql.e
   non-record), never trust it.
 - `z.record` is the house call for a caller-owned evolving shape (`entity.ts`, `AppConfig`,
   `ApplicationConfig`, `RunnerConfigSchema`).
+
+## Commands that read state the *shell* populates
+
+`entity.*`'s four commands dispatch at invoke time through `entityCrudRegistry` / `simpleEntityKinds`,
+and those containers were filled by the six **shell** files calling `registerEntityCrudHandlers()` /
+`registerSimpleEntityHandlers()`. Moving the registrations without the containers leaves the commands
+consulting an **empty** map, so each throws `"<kind>" is not routed through the CommandRegistry yet` —
+**the same message a genuinely unregistered kind throws**. A plausible error whose real cause is the
+move, pointing the reader at the wrong file. **When a slice's commands read shell-populated state, it is
+not a move of commands: it is a move of the container plus an inversion of who writes to it.** Fix by
+moving the container into the engine and giving the shell a `register<Thing>Kind()` to call. If the
+factory's exported signature can stay byte-identical, the importer set stops mattering — slice 7's six
+caller files needed **zero** edits.
+
+**Derive the affected suite set from the registration calls a suite makes, not from the files it
+mentions.** Slice 7's set was predicted as 7 suites (from the factory's callers) and measured at **5**:
+`gitRemote` / `gitSync` matched a grep for the file name only because of a *comment*. One step further
+down the import graph: `grep -rn 'register.*Handlers()' tests/` and ask which of those reach the
+container.
 
 ## A same-named helper in the same package is not evidence of sameness
 
