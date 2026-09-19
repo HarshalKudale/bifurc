@@ -1,13 +1,26 @@
 /**
- * The `runner.*` commands whose implementation is the engine's: `saveReport`, `saveConfig` and
- * `loadConfig`. `runner.exportReport` had already moved (P2/P3), so this file completes the runner's
- * request paths.
+ * Every `runner.*` command whose implementation is the engine's: `saveReport`, `saveConfig`,
+ * `loadConfig`, `getHistory` and `listFolderIds`. `runner.exportReport` had already moved (P2/P3), so
+ * this file now owns the whole `runner.*` namespace.
  *
- * (`runner.getHistory` and `runner.listFolderIds` are registered in the *shell* —
- * `src/ipc/handlers/runnerHandlers.ts` — at module scope. They are not moved here for the reason
- * `plan/07` §5c records: a module-scope registration takes effect on import, so relocating one behind
- * an explicit `registerRunnerCommands()` call would silently unregister it for the suites that import
- * the handler group without running `registerIpcHandlers()`.)
+ * ## `getHistory` / `listFolderIds` were the §5c pair (moved 2026-09-19, step 3e slice 2)
+ *
+ * These two were registered at **module scope** in `src/ipc/handlers/runnerHandlers.ts` — the §5c
+ * defect — so a containerised engine answered `UNKNOWN_COMMAND` for two commands the protocol declares,
+ * `scopes.ts` scopes as `read`, and `@bifurc/client` advertises as `getRunHistory` /
+ * `listRunnerFolderIds`. `runnerHandlers.ts`'s own comment called them "the reason they cannot move into
+ * `packages/engine`", and named the cost: that file's channel adapters for these two are thin
+ * `commandRegistry.invoke()` delegations, so a suite importing the handler group without running
+ * `registerIpcHandlers()` would reach an empty registry.
+ *
+ * That cost turned out to be **zero**, and it is worth recording why, because §5c's other slices may not
+ * be as lucky: `tests/integration/runnerStorage.integration.test.ts` is the only file that imports
+ * `runnerHandlers`, and it already called `registerRunnerCommands(commandRegistry)` — added in step 3d
+ * for the `saveConfig` / `loadConfig` block. So no suite needed a new call site, and this slice is a
+ * pure move.
+ *
+ * Bodies are verbatim. The only edits are `workspaceDir` → `wsDir` (the same function, already imported
+ * here) and this file's `(params: X)` signature style.
  *
  * ## The two config commands were `BLOCKED`; the widening is what unblocked them
  *
@@ -69,6 +82,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import type {
+    RunnerGetHistoryParams,
+    RunnerListFolderIdsParams,
     RunnerLoadConfigParams,
     RunnerSaveConfigParams,
     RunnerSaveReportParams,
@@ -156,6 +171,65 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
             return JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
         } catch {
             return null;
+        }
+    });
+
+    /**
+     * A folder's run history, newest first.
+     *
+     * Read straight off the `.runs/<folderId>/<timestamp>/report.json` layout that
+     * `runner.saveReport` writes, so the two must agree on that path. Every failure mode resolves
+     * rather than throwing — a missing directory, a directory that is not a run, a `report.json` that
+     * does not parse — because the renderer's contract here is a list, and `[]` is what it renders for
+     * "no runs yet". The nested `try` is load-bearing: a single corrupt `report.json` must drop that
+     * one entry, not fail the whole folder.
+     *
+     * `Number(ts)` is not redundant with the directory name: the name is a string, and the sort below
+     * is numeric.
+     */
+    registry.register("runner.getHistory", (params: RunnerGetHistoryParams) => {
+        try {
+            const runsDir = path.join(wsDir(params.workspaceId), "requests", ".runs", params.folderId);
+            if (!fs.existsSync(runsDir)) return [];
+            const entries = fs.readdirSync(runsDir).filter((d) => {
+                return fs.statSync(path.join(runsDir, d)).isDirectory();
+            });
+            return entries.map((ts) => {
+                const reportFile = path.join(runsDir, ts, "report.json");
+                if (!fs.existsSync(reportFile)) return null;
+                try {
+                    const data = JSON.parse(fs.readFileSync(reportFile, "utf-8"));
+                    return {
+                        timestamp: Number(ts),
+                        summary: {
+                            total: data.totalTests ?? 0,
+                            passed: data.passedTests ?? 0,
+                            failed: data.failedTests ?? 0,
+                        },
+                    };
+                } catch { return null; }
+            }).filter(Boolean).sort((a: any, b: any) => b.timestamp - a.timestamp);
+        } catch {
+            return [];
+        }
+    });
+
+    /**
+     * The folders that have a runner configuration, i.e. those with a `.runs/<folderId>/runner.json`.
+     *
+     * This is why `runner.loadConfig` must return `null` rather than `{}` for a missing file: the
+     * *presence* of `runner.json` is what makes a folder a runner folder, so an empty-object answer
+     * would make every folder look configured.
+     */
+    registry.register("runner.listFolderIds", (params: RunnerListFolderIdsParams) => {
+        try {
+            const runsDir = path.join(wsDir(params.workspaceId), "requests", ".runs");
+            if (!fs.existsSync(runsDir)) return [];
+            return fs.readdirSync(runsDir, { withFileTypes: true })
+                .filter((e) => e.isDirectory() && fs.existsSync(path.join(runsDir, e.name, "runner.json")))
+                .map((e) => e.name);
+        } catch {
+            return [];
         }
     });
 }
