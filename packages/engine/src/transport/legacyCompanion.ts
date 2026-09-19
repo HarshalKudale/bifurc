@@ -69,9 +69,9 @@ import {
 } from "../store/config";
 import {
     writeEntity, upsertNameEntry, findEntityRelPath,
-    readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
     readIndex, writeIndex, sanitizeDirName, wsDir,
 } from "../store/workspaceFs";
+import { syncEnabledSet } from "../store/enabledSet";
 import { invalidateCache } from "../sync/statusTracker";
 import { reloadConfig } from "../proxy/server";
 import { bus, emitEntityStatus } from "../eventBus";
@@ -95,18 +95,6 @@ interface OutgoingMessage {
 
 let wss: WebSocketServer | null = null;
 let currentPort: number = 9271;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean): void {
-    const current = readEnabledSet(wsId, kind) ?? bootstrapEnabledSet(wsId, kind);
-    if (enabled) {
-        current.add(id);
-    } else {
-        current.delete(id);
-    }
-    writeEnabledSet(wsId, kind, current);
-}
 
 // ── Action handlers ───────────────────────────────────────────────────────────
 

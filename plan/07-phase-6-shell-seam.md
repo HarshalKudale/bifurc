@@ -437,6 +437,74 @@ registry cannot serve at all, and moving an already-registered command between p
 callers that currently work. It needs its own pass — and the ratchet will not catch it, so it should be
 written down rather than rediscovered.
 
+#### 5c-i. Slice 1 — the five §5c commands moved into the engine (2026-09-19)
+
+**§5c's count is wrong: the number is 51, not 5.** A grep for `^commandRegistry.register(` across
+`src/` finds **51** module-scope registrations in nine shell files — `syncHandlers.ts` 17,
+`applicationHandlers.ts` 10, `coreHandlers.ts` 5, `grpcHandlers.ts` 5, `entityCrudFactory.ts` 4,
+`folderHandlers.ts` 4, `graphqlHandlers.ts` 2, `soapHandlers.ts` 2, `runnerHandlers.ts` 2. §5c named
+the five in `coreHandlers.ts` because that is the file `configCommands.ts` was written next to; the
+other 46 are the same defect, and they are the remaining slices rather than a footnote.
+
+Slice 1 moves the five §5c named — `config.get`, `env.setActive`, `workspace.setActive`,
+`entity.load`, `entity.setEnabled` — into `packages/engine/src/store/coreCommands.ts` behind
+`registerCoreCommands(registry)`, called from `src/ipc/handlers.ts` beside the other
+`register*Commands` modules. Every body moved **verbatim**, and `coreHandlers.ts`'s channel adapters
+were already thin `commandRegistry.invoke()` delegations, so the wire behaviour is the same code
+reached through a different door. **46 module-scope registrations remain.**
+
+**One dependency had to travel, and it was triplicated.** `syncEnabledSet` existed three times —
+`handlers/utils.ts`, `entityCrudFactory.ts`, and a private copy in the engine's
+`transport/legacyCompanion.ts` — all semantically identical (the engine's `??` and the shell's
+`if (!set)` are the same thing, because `readEnabledSet()` returns `Set<string> | null` and an empty
+`Set` is truthy). It now lives in `packages/engine/src/store/enabledSet.ts`. This function decides
+whether a mock, mapping or rule is **served by the proxy**, and the enabled-set is written to
+`enabled.json` rather than held in memory — so two copies disagreeing by one branch would mean an
+entity behaving differently depending on which path toggled it, *persistently*. `handlers/utils.ts`
+became dead (zero importers) but is **deliberately still on disk**: `git rm` correlated 2-for-2 with
+the whole `src/` tree vanishing from the working tree (see `MEMORY.md`), and an unimported file is
+harmless.
+
+**§5a's trap now applies to these five.** §5a records that re-pointing legacy bodies broke
+`protocolPoc` and `settingsMutations` because they register handler *groups* without
+`registerIpcHandlers()`. Moving the five has the same shape: importing `coreHandlers.ts` no longer
+populates them, so **five suites now call `registerCoreCommands(commandRegistry)` themselves** —
+`entityConflictScope` (which had relied on a bare side-effect `import "@/ipc/handlers/coreHandlers"`),
+`foldersAndWorkspaces`, `protocolExecution`, `settingsMutations` and `protocolPoc`. That is the cost
+of an explicit call site, and it is the point: a module side effect cannot be seen by a ratchet, an
+explicit call can. None of the five calls `registerIpcHandlers()`, so none of them double-registers —
+checked, because `register()` throws on a duplicate.
+
+**Verification — and the honest gap.** The vitest suite **could not be run**. All 101 files failed at
+collection with the signature `TESTING.md` §8 already records — `TypeError: Cannot read properties of
+undefined (reading 'config')` / *"Vitest failed to find the runner"* — reproduced by an **untouched**
+file (`packages/protocol/src/commands/index.test.ts`), so nothing here is implicated. Re-ruled-out
+this time: a cold `node_modules/.vite`, `--pool=threads`, `--pool=forks`, `--no-isolate`,
+`NODE_OPTIONS` unset, and orphaned workers (there are none). `--pool=vmThreads` "passes" and is **not**
+evidence — §8 explains that it silently does not apply `vi.mock`. The mechanism is legible in
+`@vitest/runner`: `createDefaultSuite()` reads `runner.config.sequence` off a `runner` that was never
+installed, i.e. the test files are seeing a **second instance** of the runner's module state. What was
+verified instead:
+
+- `npm run typecheck` → **EXIT=0** (all three packages and the root shell).
+- A standalone probe against the **built** engine, no vitest, **7/7**: importing the engine registers
+  nothing (the §5c property); all five are `UNKNOWN_COMMAND` before registration and registered after;
+  an invalid payload yields `BAD_REQUEST` rather than `UNKNOWN_COMMAND` — which proves *registered and
+  schema-checked* while touching no filesystem; a valid `entity.load` resolves `{ok:false}`; a second
+  `registerCoreCommands()` throws `already registered`, so a future double call fails loudly; and
+  `env.setActive("__global__")` / `workspace.setActive(<unknown>)` keep their documented `{ok:false}`
+  returns.
+- Static: `coreHandlers.ts` has zero `commandRegistry.register(` calls, `handlers.ts:99` makes the
+  explicit call, and the remaining count is **46 = 51 − 5**.
+
+**Slice 1 is implemented, not verified.** The suite must be re-run before it is called done. No test
+count change is expected — the five suites were already reaching these commands — so any delta is a
+signal rather than noise. Also worth knowing: the engine's `.mjs` output is **not loadable by plain
+Node**, because `tsup` is configured `bundle: false` and emits extensionless relative specifiers
+(`import "./config"`); the probe had to use the CJS build. That is the path the Electron shell takes,
+so it is not a live defect — but any future child process that imports the ESM entry will hit
+`ERR_MODULE_NOT_FOUND`, which is worth checking before P9 builds one.
+
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
 The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies

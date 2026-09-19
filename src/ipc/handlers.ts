@@ -25,6 +25,7 @@ import { registerConfigCommands } from "@bifurc/engine/store/configCommands";
 import { registerMiscCommands } from "@bifurc/engine/miscCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
 import { registerAuditCommands } from "@bifurc/engine/store/auditCommands";
+import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -77,8 +78,9 @@ export function registerIpcHandlers(): void {
   // used `require("https")`, and `require` does not exist in the engine's ESM build output.
   registerMiscCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (fifth slice): `runner.saveReport`. Its two siblings
-  // (`runner.saveConfig` / `runner.loadConfig`) are `BLOCKED` by the frozen protocol and stay on their
-  // legacy channels; `runner.exportReport` had already moved.
+  // (`runner.saveConfig` / `runner.loadConfig`) were `BLOCKED` by the frozen protocol at the time and
+  // stayed on their legacy channels; step 3d widened `RunnerConfigSchema` and moved them here too.
+  // `runner.exportReport` had already moved.
   registerRunnerCommands(commandRegistry);
   // Step 3d, first of the four pinned keys: `audit.list`. Not a move but a **widening** — the frozen
   // `AuditListParams` was `.strict()` and lacked `filePath` / `fromTs` / `toTs`, which the real caller
@@ -87,6 +89,14 @@ export function registerIpcHandlers(): void {
   // by name — that check was a grep for the method name, so the conclusion was backwards. Widened
   // 2026-09-19; see `packages/engine/src/store/auditCommands.ts`.
   registerAuditCommands(commandRegistry);
+  // P6 §5c, first slice: `config.get`, `env.setActive`, `workspace.setActive`, `entity.load` and
+  // `entity.setEnabled` were registered at **module scope** in `handlers/coreHandlers.ts`, so their
+  // implementations lived in a file only the Electron shell has and a containerised engine (P9)
+  // answered `UNKNOWN_COMMAND` for commands the protocol declares and `@bifurc/client` advertises.
+  // The ratchet could not see it: in this process the shell had already registered them. §5c records
+  // **five** such commands; the real count is **51** across nine shell files, and this is the first
+  // slice — the one §5c named explicitly.
+  registerCoreCommands(commandRegistry);
 
   registerImportExportHandlers();
   registerApplicationHandlers();

@@ -208,8 +208,14 @@ beforeAll(async () => {
   const { registerGraphqlHandlers } = await import("@/ipc/handlers/graphqlHandlers");
   const { registerSoapHandlers } = await import("@/ipc/handlers/soapHandlers");
   const { registerGrpcHandlers } = await import("@/ipc/handlers/grpcHandlers");
+  // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine.
+  // `registerCoreHandlers()` wires the *channels*; a suite that registers handler groups by hand has to
+  // wire the engine half too, or the channel exists with nothing behind it.
+  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
 
   registerCoreHandlers();
+  registerCoreCommands(commandRegistry);
   registerGraphqlHandlers();
   registerSoapHandlers();
   registerGrpcHandlers();
