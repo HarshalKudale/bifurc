@@ -24,69 +24,30 @@ interface SavedWsdl {
   importedAt: number; createdAt: number; workspaceId: string;
 }
 
-// P2 work item 7 — soap.fetchWsdl/execute convert here directly; soap:addRequest/updateRequest/
-// deleteRequest and soap:addMock/updateMock/deleteMock already route through the CommandRegistry
-// too, via the `registerEntityCrudHandlers()` calls below (the CRUD collapse — see
-// `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's tenth batch).
-// `soap:addWsdl/deleteWsdl/listWsdls` now route through the same registry too, via
-// `registerSimpleEntityHandlers()` — they don't track a `configKey` array the way every
-// `CrudFactoryOpts` kind does (WSDLs are written straight to disk, nothing mirrors them into
-// `AppConfig`), and have no "update" concept, so they go through the smaller
-// `entity.create`/`entity.delete`/`entity.list` fallback path instead.
+// ## Channels only — the registry half now lives in the engine
+//
+// `soap.fetchWsdl` / `soap.execute` used to be registered at **module scope** in this file, which is
+// the `plan/07` §5c defect: a containerised engine (P9) answered `UNKNOWN_COMMAND` for both. Step 3e
+// slice 4 (2026-09-19) moved them into `packages/engine/src/protocols/soapCommands.ts` behind
+// `registerSoapCommands()`, called from `src/ipc/handlers.ts`.
+//
+// Every channel below **delegates** through `commandRegistry.invoke()` rather than duplicating the
+// body — unlike `runnerHandlers.ts`, where three of the five are self-contained copies. That
+// distinction decides what breaks: a delegating channel is only ever as alive as the registry behind
+// it, so a suite that registers this handler group by hand **must** also call
+// `registerSoapCommands(commandRegistry)`, or the channel exists with nothing behind it. The failure
+// is `No handler registered` at *invocation* time, so nothing catches it at build time.
+//
+// The three CRUD groups are a different thing and stay: `soap:addRequest/updateRequest/deleteRequest`,
+// `soap:addMock/updateMock/deleteMock` and `soap:addWsdl/deleteWsdl/listWsdls` route through the CRUD
+// collapse — see `entityCrudFactory.ts` and `plan/03-phase-2-engine-extraction.md` work item 7's
+// tenth batch. The last group goes through the smaller `registerSimpleEntityHandlers()` path because
+// WSDLs don't track a `configKey` array the way every `CrudFactoryOpts` kind does (they are written
+// straight to disk, nothing mirrors them into `AppConfig`) and have no "update" concept.
+//
+// P2 work item 7 — `soap.fetchWsdl`/`execute` convert directly: the params match the frozen schema
+// exactly, so no cast or translation is needed.
 const ctx = { bus };
-
-commandRegistry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {
-  const httpMod = url.startsWith("https") ? require("https") : require("http");
-  try {
-    const parsed = new URL(url);
-    const content = await new Promise<string>((resolve, reject) => {
-      const req = httpMod.request(
-        { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "GET", rejectUnauthorized: false },
-        (res: any) => {
-          let data = "";
-          res.on("data", (chunk: string) => { data += chunk; });
-          res.on("end", () => resolve(data));
-        },
-      );
-      req.on("error", reject);
-      req.end();
-    });
-    return { ok: true, content };
-  } catch (err: any) {
-    return { ok: false, error: err?.message ?? "Failed to fetch WSDL" };
-  }
-});
-
-commandRegistry.register("soap.execute", async ({ endpointUrl, soapAction, headers, body }: SoapExecuteParams) => {
-  const httpMod = endpointUrl.startsWith("https") ? require("https") : require("http");
-  const parsed = new URL(endpointUrl);
-  const xmlBody = Buffer.from(body, "utf-8");
-  const reqHeaders: Record<string, string> = {
-    "Content-Type": "text/xml; charset=utf-8",
-    "Content-Length": String(xmlBody.length),
-    ...headers,
-  };
-  if (soapAction) reqHeaders["SOAPAction"] = soapAction;
-  const start = Date.now();
-  const { status, resHeaders, resBody } = await new Promise<{ status: number; resHeaders: Record<string, string>; resBody: string }>((resolve, reject) => {
-    const req = httpMod.request(
-      { hostname: parsed.hostname, port: parsed.port, path: parsed.pathname + parsed.search, method: "POST", headers: reqHeaders, rejectUnauthorized: false },
-      (res: any) => {
-        let data = "";
-        res.on("data", (chunk: string) => { data += chunk; });
-        res.on("end", () => {
-          const h: Record<string, string> = {};
-          for (const [k, v] of Object.entries(res.headers)) { h[k] = Array.isArray(v) ? v.join(", ") : String(v); }
-          resolve({ status: res.statusCode ?? 0, resHeaders: h, resBody: data });
-        });
-      },
-    );
-    req.on("error", reject);
-    req.write(xmlBody);
-    req.end();
-  });
-  return { status, headers: resHeaders, body: resBody, durationMs: Date.now() - start };
-});
 
 export function registerSoapHandlers() {
   registerEntityCrudHandlers<SavedSoapRequest>({

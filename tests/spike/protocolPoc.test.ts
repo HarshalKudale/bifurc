@@ -191,6 +191,10 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // P6 §5c slice 3: `folder.*` moved out of `folderHandlers.ts`'s module scope as well, and that
     // file's channels delegate rather than duplicating, so the engine half has to be wired here too.
     const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
+    // P6 §5c slice 4: same again for `graphql.*` and `soap.*` — and this suite is the one that
+    // actually drives `soap.execute`, so without these two calls it fails as `No handler registered`.
+    const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
+    const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
 
     registerCoreHandlers();
     registerCrudHandlers();
@@ -201,6 +205,8 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerCertCommands(commandRegistry);
     registerCoreCommands(commandRegistry);
     registerFolderCommands(commandRegistry);
+    registerGraphqlCommands(commandRegistry);
+    registerSoapCommands(commandRegistry);
 
     const transport = createInProcessTransport((channel) => registeredHandlers.get(channel));
     client = createProtocolClient(transport);
