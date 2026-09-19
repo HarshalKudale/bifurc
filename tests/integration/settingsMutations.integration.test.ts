@@ -177,7 +177,13 @@ beforeEach(async () => {
   const { registerSystemHandlers } = await import("@/ipc/handlers/systemHandlers");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
   const { registerCrudHandlers } = await import("@/ipc/handlers/crudHandlers");
+  // P6 §5c: `config.get` and `workspace.setActive` moved out of `coreHandlers`' module scope into the
+  // engine. `registerCoreHandlers()` wires the *channels*; a suite that registers handler groups by
+  // hand has to wire the engine half too, or the channel exists with nothing behind it.
+  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   registerCoreHandlers();
+  registerCoreCommands(commandRegistry);
   registerSystemHandlers();
   registerClientHandlers();
   registerCrudHandlers();

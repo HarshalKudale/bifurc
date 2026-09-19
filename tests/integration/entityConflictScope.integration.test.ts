@@ -66,9 +66,7 @@ import { bus } from "@bifurc/engine/eventBus";
 import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine/commands/registry";
 import { COMPANION_SCOPES, SHELL_SCOPES } from "@bifurc/engine/transport/auth/scopes";
 import { registerCrudHandlers } from "@/ipc/handlers/crudHandlers";
-// Side-effect import: registering `entity.setEnabled` happens at this module's load, not inside
-// `registerCoreHandlers()`.
-import "@/ipc/handlers/coreHandlers";
+import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
 
 /** The conflict signature both sites compare on, for mocks. */
 const SIG = { method: "GET", urlPattern: "/api/conflict", capturedBody: "" };
@@ -101,6 +99,11 @@ const createMock = (ctx: CommandContext, name = "Incoming") =>
 let ws: WorkspaceFixture;
 
 beforeAll(() => {
+  // `entity.setEnabled` used to be registered as a *side effect* of importing `coreHandlers` — which is
+  // exactly P6 §5c's problem: a module side effect is invisible to the registry-coverage ratchet and
+  // absent from a containerised engine. It now lives in the engine behind an explicit call, so every
+  // suite that does not run `registerIpcHandlers()` has to make that call itself.
+  registerCoreCommands(commandRegistry);
   registerCrudHandlers();
 });
 
