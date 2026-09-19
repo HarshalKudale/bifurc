@@ -24,6 +24,7 @@ import { registerWebhookCommands } from "@bifurc/engine/proxy/webhookCommands";
 import { registerConfigCommands } from "@bifurc/engine/store/configCommands";
 import { registerMiscCommands } from "@bifurc/engine/miscCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
+import { registerAuditCommands } from "@bifurc/engine/store/auditCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -79,6 +80,13 @@ export function registerIpcHandlers(): void {
   // (`runner.saveConfig` / `runner.loadConfig`) are `BLOCKED` by the frozen protocol and stay on their
   // legacy channels; `runner.exportReport` had already moved.
   registerRunnerCommands(commandRegistry);
+  // Step 3d, first of the four pinned keys: `audit.list`. Not a move but a **widening** — the frozen
+  // `AuditListParams` was `.strict()` and lacked `filePath` / `fromTs` / `toTs`, which the real caller
+  // sends (`renderer/panels/AuditLogPanel.tsx:61–62`, its date filter). The ratchet filed this as
+  // `NARROWED` and called the narrowing "latent, not live" because no renderer code calls `listAudit`
+  // by name — that check was a grep for the method name, so the conclusion was backwards. Widened
+  // 2026-09-19; see `packages/engine/src/store/auditCommands.ts`.
+  registerAuditCommands(commandRegistry);
 
   registerImportExportHandlers();
   registerApplicationHandlers();
