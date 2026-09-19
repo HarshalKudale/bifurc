@@ -613,23 +613,35 @@ rather than a type.
       made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
       failed the conformance suite on all four transports
 - [ ] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
-      (`plan/07` §5c-i, §5c-ii). **Two slices implemented, NOT suite-verified** (2026-09-19):
+      (`plan/07` §5c-i … §5c-iv). **Four slices done, and slices 1–4 are now suite-verified** — the
+      vitest outage cleared, which is how slice 1's real defect was found (`plan/07` §5c-iii).
       **slice 1** — the five §5c named (`config.get`, `env.setActive`, `workspace.setActive`,
-      `entity.load`, `entity.setEnabled`) → `store/coreCommands.ts` behind `registerCoreCommands()`,
-      called from `src/ipc/handlers.ts`; `syncEnabledSet`'s three copies collapsed into
-      `store/enabledSet.ts`. **slice 2** — `runner.getHistory` / `runner.listFolderIds` →
-      `runner/runnerCommands.ts`, so `registerRunnerCommands()` now owns the whole `runner.*` namespace
-      (this slice needed **no** suite edits: `runnerStorage.integration.test.ts` already called it).
-      **§5c's count was 5; the real number is 51** across nine shell files, so **44 remain**:
-      `syncHandlers` 17, `applicationHandlers` 10, `grpcHandlers` 5, `entityCrudFactory` 4,
-      `folderHandlers` 4, `graphqlHandlers` 2, `soapHandlers` 2. Slice 1's five suites needed an
-      explicit `registerCoreCommands(commandRegistry)` call — the §5a trap, now applying to them.
-      Verified by `npm run typecheck` (EXIT=0) and a **14/14** standalone probe against the built
-      engine (behaviour included, against a throwaway `setDataRoot()`), **not** by the suite, which was
-      down (`plan/07` §5c-i). **Re-run the suite before ticking this.**
+      `entity.load`, `entity.setEnabled`) → `store/coreCommands.ts` behind `registerCoreCommands()`;
+      `syncEnabledSet`'s three copies collapsed into `store/enabledSet.ts`. It had added its
+      `registerCoreCommands()` call to `settingsMutations`' **`beforeEach`**, which throws
+      `Command "config.get" is already registered.` on the second test — 29 of 30 tests dead — because
+      the registry is a singleton with no `clear()` while `register()` throws on duplicates by design.
+      Fixed in `0160188` by moving it to `beforeAll`, where the other four suites already had it.
+      **slice 2** — `runner.getHistory` / `runner.listFolderIds` → `runner/runnerCommands.ts`, so
+      `registerRunnerCommands()` owns the whole `runner.*` namespace; needed **no** suite edits
+      (`runnerStorage.integration.test.ts` already called it). **slice 3** (`cfc727e`) — the four
+      `folder.*` → `store/folderCommands.ts`; the channels *delegate*, so the two hand-registering
+      suites (`foldersAndWorkspaces`, `protocolPoc`) needed the call. **slice 4** (`2e8174d`) — the
+      nine protocol-client commands → `protocols/{graphql,soap,grpc}Commands.ts`; `graphql.*`/`soap.*`
+      used `require("http")` *inside the body*, which does not exist in the engine's **ESM** output, so
+      they were converted to static builtin imports and checked at the artifact
+      (`grep -c 'require(' dist/protocols/*.mjs` → 0). Slice 4 is mutation-checked: dropping
+      `registerGrpcCommands()` fails 4 tests with `No handler registered`. **§5c's count was 5; the
+      real number is 51** across nine shell files, so **31 remain**, all in `src/ipc/`: `syncHandlers`
+      17, `applicationHandlers` 10, `entityCrudFactory` 4. Verified after slices 3 and 4: `npm run
+      typecheck` EXIT=0 and the full suite at **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1
+      failed** (the documented environmental `soap.execute`), i.e. the recorded baseline exactly, so
+      four slices produced **no test-count delta**. `plan/07` §5c-v is the next slice.
 - [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
       command registered *in this process*", and in this process the shell has registered all 51, so
-      §5c was invisible to the mechanism built to catch exactly this class
+      §5c was invisible to the mechanism built to catch exactly this class. **The §5c pass is the
+      manual substitute**; it is also blind to the next slice's count, which is why the remaining 31
+      are tracked by grep (`grep -rn '^commandRegistry.register(' src/`) rather than by a test
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**
