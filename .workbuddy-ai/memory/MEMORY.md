@@ -18,17 +18,17 @@ cost real time and are not discoverable from the code. Then: status → `plan/RE
 - **P0–P2 done, P3 items 1–6 done** (item 5 open as *UI* → P7). **P4 8/10** — the extension release and
   an audit record, neither code here. **P5 done** — spec = `src/surface.ts` (144 keys);
   **`src/preload.ts` is the authority, not `renderer/types/window.ts`**; `close()` non-enumerable.
-- **P6: steps 1–2, finding 1, 3a, 3b-1/2/3, 3c, 3d, 3e slices 1–6 done.** 143 of 144 keys route;
+- **P6: steps 1–2, finding 1, 3a, 3b-1/2/3, 3c, 3d, 3e slices 1–7 done.** 143 of 144 keys route;
   `checkUpdate` is SPLIT → P12. `registerIpcHandlers()` cannot be deleted yet.
-- **§5c pass: 4 module-scope `commandRegistry.register(` calls remain — all four in
-  `src/ipc/handlers/entityCrudFactory.ts`** (`entity.create`/`update`/`delete`/`list`). Moved so far:
+- **§5c pass COMPLETE (2026-09-19).** `grep -rn '^commandRegistry.register(' src/` returns **nothing** —
+  all **51** commands (not the 5 the section records) are registered by an explicit
+  `register*Commands()` call from `registerIpcHandlers()`, across seven engine modules:
   `store/coreCommands`, `runner/runnerCommands`, `store/folderCommands`,
-  `protocols/{graphql,soap,grpc}Commands`, `applications/applicationCommands`, `sync/syncCommands`.
-  **Count by grep, never by test** — the ratchet is blind to the defect (though sharp on the *move*:
-  forget the explicit call and it fails, `TRAPS.md`). The four remaining are the awkward ones: the
-  file's *exported* purpose is the CRUD collapse, six shell handler files import it, so importing any
-  of them registers `entity.*` as a side effect — **seven suites** are affected, the widest set of the
-  pass. Next slice = `plan/07` §5c-vii.
+  `protocols/{graphql,soap,grpc}Commands`, `applications/applicationCommands`, `sync/syncCommands`,
+  `store/entityCrudCommands`. **Count by grep, never by test** — the ratchet is blind to the defect
+  (though sharp on the *move*: forget the explicit call and it fails, `TRAPS.md`). Step 3 is now
+  unblocked on the §5c side; it still needs `checkUpdate` (P12) and the dead
+  `src/ipc/importExportHandlers.ts`.
 - **The last key is a protocol decision, not a move:** `checkUpdate` SPLIT (its frozen result has no
   `currentVersion`/`hasUpdate`) → P12. `listAudit` and the two `runner.*Config` were **schema** problems,
   retired by widening rather than moving. **`BIFURC_ENGINE_RPC=0` does not exist anywhere** — decided:
