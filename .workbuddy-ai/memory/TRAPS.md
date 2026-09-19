@@ -42,12 +42,24 @@ channel-driven test a registry-driven test. Self-contained duplicate bodies do t
 wrong. **Mutation-check every move**: drop the `register*` call and confirm the failure is
 `No handler registered`.
 
+**Corollary, measured in §5c slice 6: a suite that registers the engine half *itself* is structurally
+blind to the wiring, and its green is not evidence about it.** `gitRemote.integration.test.ts` calls
+`registerSyncCommands()` in its own `beforeAll`, so it stayed **24/24 green** with the call site in
+`handlers.ts` commented out. Slices 3–6 each *added* such a call to keep suites alive — necessary, but
+it means the suite can never catch a missing call site. **The call sites that can fail loudly are only
+the ratchet and the delegating channels**, so the mutation check must be run against *those*, and a
+hand-registering suite's green must never be quoted as verification of the wiring. Also: before the
+move, such a suite was populated by an *import side effect* (static `import { registerXHandlers }`), so
+adding the explicit call reproduces a property the suite never asserted.
+
 ## `require()` in a handler body
 
 Invisible to tsc and to every unit test, but **fatal in the engine's ESM build output** — `require` does
 not exist there, so a verbatim copy compiles, typechecks, passes the suite, then throws at *call* time
 in `dist/*.mjs`. Use static imports. **Check the artifact, not the source**:
-`grep -c 'require(' packages/engine/dist/**/*.mjs` — the source is what lies.
+`grep -c 'require(' packages/engine/dist/**/*.mjs` — the source is what lies. After §5c slice 4 the
+only remaining `require(` strings in `packages/engine/src` are in **comments**; re-grep before
+believing that.
 
 ## A resolved `{ok:false}` is an envelope success; only a throw fails
 
@@ -66,6 +78,20 @@ transport-level error. `graphql.introspect` / `soap.fetchWsdl` catch; `graphql.e
   non-record), never trust it.
 - `z.record` is the house call for a caller-owned evolving shape (`entity.ts`, `AppConfig`,
   `ApplicationConfig`, `RunnerConfigSchema`).
+
+## A same-named helper in the same package is not evidence of sameness
+
+**Grep the helper's *body*, not its name.** `folder.publish` declares a local `sanitizeDirName` while
+`store/workspaceFs` exports one of that exact name — different pattern
+(`[<>:"/\|?*]+` → `"-"` vs. `[<>:"/\|?*\x00-\x1f]` → stripped), and only the engine's has an
+`|| "unnamed"` fallback. Collapsing them would have silently changed the published git path for
+`"a:b"` (`"ab"` vs `"a-b"`). Two same-named functions in one package doing different things is normal;
+the danger is that the tidy-up *looks* like hygiene. Slice 6 kept it local and verbatim.
+
+The flip side is worth knowing too: collapse a duplicated helper **only** when it is byte-identical
+*and* already exported, and escalate to a correctness concern **only** when it holds or writes state
+that outlives the process (`syncEnabledSet` → `enabled.json` was a correctness fix; `generateId` is
+pure, so collapsing it was hygiene).
 
 ## Artifacts, blobs, dialogs
 
