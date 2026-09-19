@@ -126,6 +126,15 @@ beforeAll(async () => {
     initWorkspaceDir(TEST_WS, TEST_WS_NAME);
     await initWorkspaceRepo(TEST_WS);
 
+    // P6 §5c slice 6: the 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` /
+    // `entity.restore` / `audit.diff` / `history.*` commands left `syncHandlers.ts`'s module scope,
+    // and every channel in that file *delegates* through `commandRegistry.invoke()`. Without this
+    // call the channels exist with nothing behind them — a `No handler registered` at invocation
+    // time. Before the move this suite got the registry populated as an import side effect of
+    // `registerSyncHandlers()`.
+    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
+    registerSyncCommands(commandRegistry);
     registerSyncHandlers();
 });
 
