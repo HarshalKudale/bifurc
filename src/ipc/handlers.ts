@@ -30,6 +30,7 @@ import { registerFolderCommands } from "@bifurc/engine/store/folderCommands";
 import { registerGraphqlCommands } from "@bifurc/engine/protocols/graphqlCommands";
 import { registerSoapCommands } from "@bifurc/engine/protocols/soapCommands";
 import { registerGrpcCommands } from "@bifurc/engine/protocols/grpcCommands";
+import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -119,10 +120,17 @@ export function registerIpcHandlers(): void {
   registerGraphqlCommands(commandRegistry);
   registerSoapCommands(commandRegistry);
   registerGrpcCommands(commandRegistry);
-  // **31 module-scope registrations remain** (`syncHandlers` 17, `applicationHandlers` 10,
-  // `entityCrudFactory` 4), all in `src/ipc/`, all the same §5c defect. `plan/07` §5c is the ledger.
-  // The ratchet cannot see any of them, which is why they are counted by grep
-  // (`grep -rn '^commandRegistry.register(' src/`) rather than by a test.
+  // Step 3e slice 5: the ten `application.*` commands, out of `applicationHandlers.ts`'s module scope.
+  // The cleanest slice of the pass — **nothing had to travel**: every dependency (`workspaceFs`'s
+  // entity readers, `applications/processSpawner`, `commandGenerator`, `portUtils`) was already in
+  // this package, so the shell file was a pure adapter with no behaviour of its own to lose. The only
+  // shell-side thing in it was `electron`'s `ipcMain`, which stays behind in the channels. Its private
+  // `generateId()` was byte-identical to `store/config.ts`'s exported one and collapsed into it.
+  registerApplicationCommands(commandRegistry);
+  // **21 module-scope registrations remain** — `syncHandlers` 17 and `entityCrudFactory` 4, all in
+  // `src/ipc/`, all the same §5c defect. `plan/07` §5c is the ledger. The ratchet cannot see any of
+  // them, which is why they are counted by grep (`grep -rn '^commandRegistry.register(' src/`) rather
+  // than by a test.
 
   registerImportExportHandlers();
   registerApplicationHandlers();
