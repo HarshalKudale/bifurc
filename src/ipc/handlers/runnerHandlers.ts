@@ -12,23 +12,38 @@ import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { bus } from "@bifurc/engine/eventBus";
 import { call, writeArtifact } from "@/ipc/fileOpsClient";
 
-// P2 work item 7 — only runner:getHistory/listFolderIds convert here (their params are just
-// workspaceId/folderId, matching the frozen schema and the real preload.ts call sites exactly).
-// Three others in this file were checked and rejected, each for the same reason `audit.list`
-// was last commit — a real mismatch between the frozen, `.strict()` protocol schema and actual
-// handler behaviour, not a registration-only move:
-//   - runner:saveReport / runner:exportReport take the real `CollectionRunReport` object
-//     (`renderer/lib/collectionRunner.ts`), which carries `requestId`, `url`, `testLogs`,
-//     `preScriptError`, `postScriptError` per result. P3 **widened `RunReport` in
-//     `@bifurc/protocol` to include them** and converted `runner:exportReport`; `runner:saveReport`
-//     is still an inline handler because it writes into the *workspace* rather than to a path the
-//     user chose, so it is not one of `File_Ops_Protocol.md` §4's egress channels.
-//   - runner:saveConfig / runner:loadConfig were tried and reverted: the protocol's
-//     `RunnerConfigSchema` requires exactly `{requestOrder, delayMs}`, but
-//     `tests/integration/runnerStorage.integration.test.ts` (and, by extension, real callers)
-//     save configs like `{delayMs, stopOnFailure, iterations}` with no `requestOrder` at all —
-//     the on-disk config is genuinely free-form, not the schema's fixed shape. Converting these
-//     failed that integration suite immediately, which is exactly the check this pass is for.
+// ## What is left here, and why
+//
+// Two different things live in this file now.
+//
+// **`runner.getHistory` / `runner.listFolderIds` are registered on the registry at *module scope***
+// (below, outside `registerRunnerHandlers()`). That is no longer a convenience — it is the reason they
+// cannot move into `packages/engine`. `plan/07` §5c records the trap: a module-scope registration takes
+// effect on *import*, so relocating one behind an explicit `registerRunnerCommands()` call silently
+// unregisters it for every suite that imports this handler group without running
+// `registerIpcHandlers()`. Moving them means updating those suites in the same pass, not a mechanical
+// cut-and-paste.
+//
+// **The `ipcMain.handle` channels are the legacy path.** P2 work item 7 converted only the two above;
+// the rest moved in P6 once the protocol allowed it:
+//   - `runner:saveReport` → `runner.saveReport` in `packages/engine/src/runner/runnerCommands.ts`
+//     (step 3b-2). It writes into the *workspace* rather than to a path the user chose, so it is not
+//     one of `File_Ops_Protocol.md` §4's egress channels.
+//   - `runner:exportReport` is a thin client: it shows the dialog, then calls the engine's
+//     `runner.exportReport` and writes the artifact it gets back.
+//   - `runner:saveConfig` / `runner:loadConfig` → the engine's `runner.saveConfig` /
+//     `runner.loadConfig` in **step 3d**, after `RunnerConfigSchema` was widened to `z.record`
+//     (`plan/protocol-changes.md`). These two were tried and reverted in P2 for exactly that reason —
+//     the frozen schema required `{requestOrder, delayMs}` while real callers save
+//     `{delayMs, stopOnFailure, iterations}` — so the fix was to correct the schema, not the handler.
+//   - `runner:getHistory` / `runner:listFolderIds` channels are thin adapters over the two
+//     module-scope registrations above.
+//
+// The channel bodies stay until `registerIpcHandlers()` is deleted. Note that they are
+// **self-contained duplicates** rather than delegating to the registry, which is why an integration
+// suite driving channels by name keeps passing while the engine half is wrong. That is precisely what
+// the "through the registry" block in `tests/integration/runnerStorage.integration.test.ts` exists to
+// catch.
 const ctx = { bus };
 
 commandRegistry.register("runner.getHistory", ({ workspaceId, folderId }: RunnerGetHistoryParams) => {

@@ -16,18 +16,19 @@ import { createIpcTransport } from "./ipcTransport";
  * contract exactly, positional arguments included. So `{ ...client }` *is* the surface, and the
  * surface test in `packages/client/tests/surface.test.ts` asserts it against the real object.
  *
- * ## Why four keys are still `ipcRenderer.invoke`, and why that is not sloppiness
+ * ## Why one key is still `ipcRenderer.invoke`, and why that is not sloppiness
  *
  * Step 3b-1 routed everything that could safely be routed, 3b-2 gave the missing commands registry
  * implementations, and 3b-3 routed the last four artifact-egress methods once the client had the
- * filesystem hooks to carry them. **140 of 144 keys now route.** What is left is one category:
+ * filesystem hooks to carry them. Step 3d then unblocked the three keys that were pinned as
+ * `NARROWED` / `BLOCKED` by **widening the schemas they were blocked on** rather than by moving them —
+ * `audit.list` and the two `runner.*Config`. **143 of 144 keys now route.**
  *
- * **Four commands with no registry implementation at all** (`plan/07` §5b). `checkUpdate`,
- * `listAudit`, `saveRunnerConfig`, `loadRunnerConfig` are pinned in the ratchet as `SPLIT` /
- * `NARROWED` / `BLOCKED` / `BLOCKED` respectively. Routing them would turn a working method into an
- * `UNKNOWN_COMMAND`, so they stay on the channels that serve them until the protocol moves. Note
- * this is *not* a backlog: `app.checkUpdate` is resolved by P12, and the two `runner.*Config` are
- * blocked by a **passing test** that saves a config the frozen schema rejects.
+ * What is left is `app.checkUpdate`, the one `SPLIT`. The protocol declares an engine-half contract
+ * that deliberately differs from the shell implementation (`misc.ts`: the GitHub fetch is engine-safe
+ * outbound network, the version and platform comparison is client-local), and `plan/12` moves it fully
+ * client-side. Routing it as the shell body stands would turn a working method into an
+ * `UNKNOWN_COMMAND`, so it stays on the channel that serves it until the split is written.
  *
  * ## The two things that made routing safe, both checked rather than assumed
  *
@@ -94,13 +95,11 @@ const client = createClient(createIpcTransport(), {
 contextBridge.exposeInMainWorld("api", {
   ...client,
 
-  // ── Three commands with no registry implementation — see the header ───────
+  // ── The one key with no registry implementation — see the header ──────────
   //
-  // Each of these would answer `UNKNOWN_COMMAND` through the bridge. They are pinned in the
-  // "registry coverage" ratchet in `tests/ipc/handlers.test.ts`, which is what stops them from being
-  // quietly routed here later without the protocol changing first.
+  // `app.checkUpdate` is a `SPLIT`, and it is pinned in the "registry coverage" ratchet in
+  // `tests/ipc/handlers.test.ts`, which is what stops it from being quietly routed here later without
+  // the split being written first. `listAudit`, `saveRunnerConfig` and `loadRunnerConfig` used to sit
+  // beside it; step 3d unblocked all three by widening their schemas.
   checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
-  saveRunnerConfig: (wsId: string, folderId: string, config: unknown) =>
-    ipcRenderer.invoke("runner:saveConfig", wsId, folderId, config),
-  loadRunnerConfig: (wsId: string, folderId: string) => ipcRenderer.invoke("runner:loadConfig", wsId, folderId),
 });
