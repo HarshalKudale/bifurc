@@ -643,6 +643,63 @@ them.
 **Measured:** `npm run typecheck` → EXIT=0; full suite **101 files / 2,508 tests — 2,467 passed, 40
 skipped, 1 failed**, again the exact baseline. **31 remain.**
 
+#### 5c-v. Slice 5 — the ten `application.*` commands, and the ratchet turns out to guard the *move* (2026-09-19)
+
+All ten (`list`, `save`, `delete`, `start`, `stop`, `getState`, `getAllStates`, `getLogs`, `checkPort`,
+`killPort`) moved from module scope in `src/ipc/applicationHandlers.ts` into
+`packages/engine/src/applications/applicationCommands.ts` behind `registerApplicationCommands()`.
+**21 module-scope registrations remain** — `syncHandlers` 17 and `entityCrudFactory` 4.
+
+**The cleanest slice of the pass, because nothing had to travel.** Every dependency was already in
+`packages/engine`: `store/workspaceFs`'s `readAllEntities` / `writeEntity` / `deleteEntityFile`,
+`applications/processSpawner`, `commandGenerator`'s `generateResolvedCommand`, and `portUtils`'s
+`checkPortInUse` / `killProcessOnPort`. The shell file imported them all from `@bifurc/engine/...` and
+added nothing but an `ipcMain.handle` per command. **A file whose entire body is "import from the
+engine + register + delegate" is §5c in its purest form** — the shell never had a reason to own it, so
+the move is a relocation rather than a decision, and there is no shell behaviour to lose. That makes it
+the natural contrast with slices 3 and 4, where the *body* was fine but a dependency (a two-store
+invariant, a `require`) had to be dealt with first. **The heuristic that predicts a slice's difficulty
+is therefore not the command count but how much of the body is the shell's own.**
+
+One dependency is a **singleton**, and importing it is the point: `applications/processSpawner.ts`
+exports a single `ProcessSpawner` instance, so the process started through this module is the same one
+`stop()` reaches. That is exactly what `tsup`'s `bundle: false` protects — bundling would inline a
+private copy of the module into every entry point, and a spawned child would become unreachable, with
+no error to say so. `application.save`'s **mutation of the object it was handed** (assigning `id` and
+`createdAt` when absent) is also preserved and documented: an in-process `registry.invoke()` caller
+sees its own object mutated, which the integration suite does, even though an IPC caller only ever sees
+a structured clone. And `application.delete` stops the process **before** deleting the file, because on
+Windows a live child can hold it open.
+
+`generateId` collapsed on the way in — the file's private copy was **byte-identical** to the exported
+one in `store/config.ts`, which `store/folderCommands.ts` already imports. Worth noting *why* this is
+hygiene rather than a fix, in contrast with slice 1: `syncEnabledSet` mattered because a divergent copy
+would persist disagreement to `enabled.json`, whereas `generateId` is **pure** — a divergent copy could
+only produce a differently-shaped id. **Collapse a duplicated helper when it is byte-identical and
+already exported; escalate to a correctness concern only when it holds or writes state that outlives
+the process.** A further private copy survives in `store/appSettings.ts`; left alone, because
+collapsing it is not part of a §5c move.
+
+**The ratchet caught a mistake in this slice — which corrects how §5c describes it.** §5c and §5c-i
+both say the ratchet "cannot see" the shell-registered commands, and that is true of the *defect*: a
+command registered at module scope in the shell looks registered in this process, so the ratchet is
+silent. But the first attempt at this slice added the import to `src/ipc/handlers.ts` and lost the call
+site (a tooling race — two edits to the same file in one message, where the second write clobbers the
+first), and `tests/ipc/handlers.test.ts`'s *"implements every protocol command except the pinned list"*
+failed immediately with all ten `application.*` names in the **missing** list. So the ratchet is blind
+to the defect and **sharp on the move**: once a command's only registration is an explicit call,
+forgetting the call makes it unregistered, and the ratchet says so. That is the same asymmetry §5c-i
+noted from the other side — an explicit call site is checkable and a module side effect is not — and it
+means the pass has a safety net after all, just not the one §5c assumed.
+
+**Measured:** `npm run typecheck` → EXIT=0; `applications.integration.test.ts` **12/12**, including
+real child-process spawns with log streaming; `tests/ipc/handlers.test.ts` **166/166**; full suite
+**101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented environmental
+`soap.execute`), the exact baseline again. **Mutation-checked:** commenting out
+`registerApplicationCommands()` fails 11 of the 12 suite tests with `No handler registered for command
+"application.save"`; the twelfth only asserts the channel map, so it correctly still passes — which is
+also a reminder that a "registers every channel" test proves nothing about delivery. **21 remain.**
+
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
 The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies
