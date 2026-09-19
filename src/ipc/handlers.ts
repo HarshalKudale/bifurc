@@ -32,6 +32,7 @@ import { registerSoapCommands } from "@bifurc/engine/protocols/soapCommands";
 import { registerGrpcCommands } from "@bifurc/engine/protocols/grpcCommands";
 import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
 import { registerSyncCommands } from "@bifurc/engine/sync/syncCommands";
+import { registerEntityCrudCommands } from "@bifurc/engine/store/entityCrudCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -136,11 +137,24 @@ export function registerIpcHandlers(): void {
   // characters with `-` instead of stripping them, and has no `"unnamed"` fallback). It was kept local
   // verbatim rather than collapsed; the engine module's header has the comparison table.
   registerSyncCommands(commandRegistry);
-  // **4 module-scope registrations remain** — `entityCrudFactory`'s four `entity.*` CRUD commands, and
-  // it is the awkward one: that file's *exported* purpose is the CRUD collapse, which six shell handler
-  // files import and call, so importing any of them currently registers `entity.*` as a side effect.
-  // Moving the four strips that silently, and the affected suite set is the union over those six
-  // consumers — seven suites, the widest importer set of the pass. `plan/07` §5c is the ledger.
+  // Step 3e slice 7 — the last of the pass: the four collapsed `entity.*` CRUD commands
+  // (`create`/`update`/`delete`/`list`), out of `handlers/entityCrudFactory.ts`'s module scope.
+  //
+  // Structurally unlike slices 1–6, which each moved a *file of commands*. This one is a **factory
+  // split across the seam**: the four commands dispatch at invoke time through a registry of per-kind
+  // options, and that registry was populated by the six **shell** files calling
+  // `registerEntityCrudHandlers()` / `registerSimpleEntityHandlers()`. So the dependency ran the wrong
+  // way, and moving the four registrations alone would have left them consulting an empty map — each
+  // throwing `"<kind>" is not routed through the CommandRegistry yet`, the same message a genuinely
+  // unregistered kind throws. The containers moved to the engine and the population direction was
+  // inverted: the shell calls `registerCrudKind()` / `registerSimpleKind()` and keeps the channels.
+  // Both factory signatures are unchanged, so none of the six caller files needed an edit.
+  registerEntityCrudCommands(commandRegistry);
+  // **0 module-scope registrations remain** — §5c's pass is complete. The 51 commands it turned out to
+  // be are now all registered by an explicit `register*Commands()` call from this function.
+  // `registerIpcHandlers()` itself cannot be deleted yet: `app.checkUpdate` (SPLIT → P12) still needs a
+  // channel, and `src/ipc/importExportHandlers.ts` is dead but dies with it. `plan/07` §5c is the
+  // ledger; §5c-vii records this slice.
 
   registerImportExportHandlers();
   registerApplicationHandlers();
