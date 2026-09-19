@@ -613,7 +613,7 @@ rather than a type.
       made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
       failed the conformance suite on all four transports
 - [ ] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
-      (`plan/07` §5c-i … §5c-iv). **Four slices done, and slices 1–4 are now suite-verified** — the
+      (`plan/07` §5c-i … §5c-v). **Five slices done, and slices 1–5 are now suite-verified** — the
       vitest outage cleared, which is how slice 1's real defect was found (`plan/07` §5c-iii).
       **slice 1** — the five §5c named (`config.get`, `env.setActive`, `workspace.setActive`,
       `entity.load`, `entity.setEnabled`) → `store/coreCommands.ts` behind `registerCoreCommands()`;
@@ -631,17 +631,28 @@ rather than a type.
       used `require("http")` *inside the body*, which does not exist in the engine's **ESM** output, so
       they were converted to static builtin imports and checked at the artifact
       (`grep -c 'require(' dist/protocols/*.mjs` → 0). Slice 4 is mutation-checked: dropping
-      `registerGrpcCommands()` fails 4 tests with `No handler registered`. **§5c's count was 5; the
-      real number is 51** across nine shell files, so **31 remain**, all in `src/ipc/`: `syncHandlers`
-      17, `applicationHandlers` 10, `entityCrudFactory` 4. Verified after slices 3 and 4: `npm run
-      typecheck` EXIT=0 and the full suite at **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1
-      failed** (the documented environmental `soap.execute`), i.e. the recorded baseline exactly, so
-      four slices produced **no test-count delta**. `plan/07` §5c-v is the next slice.
+      `registerGrpcCommands()` fails 4 tests with `No handler registered`. **slice 5** (`cd7afad`) —
+      the ten `application.*` → `applications/applicationCommands.ts`; the cleanest slice of the pass
+      because **nothing had to travel** (every dependency was already engine-side, so the shell file
+      was a pure adapter), and its private `generateId()` was byte-identical to `store/config.ts`'s
+      exported one. Mutation-checked: dropping `registerApplicationCommands()` fails 11 of 12 tests.
+      **§5c's count was 5; the real number is 51** across nine shell files, so **21 remain**, all in
+      `src/ipc/`: `syncHandlers` 17, `entityCrudFactory` 4. Verified after every slice from 3 onward:
+      `npm run typecheck` EXIT=0 and the full suite at **101 files / 2,508 tests — 2,467 passed, 40
+      skipped, 1 failed** (the documented environmental `soap.execute`), i.e. the recorded baseline
+      exactly, so five slices produced **no test-count delta**. `plan/07` §5c-vi is the next slice.
+      **The heuristic that predicts a slice's difficulty is not the command count but how much of the
+      body is the shell's own** — slice 5 (10 commands) was the easiest, slice 1 (5 commands) the
+      costliest.
 - [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
       command registered *in this process*", and in this process the shell has registered all 51, so
       §5c was invisible to the mechanism built to catch exactly this class. **The §5c pass is the
-      manual substitute**; it is also blind to the next slice's count, which is why the remaining 31
-      are tracked by grep (`grep -rn '^commandRegistry.register(' src/`) rather than by a test
+      manual substitute**; it is also blind to the next slice's count, which is why the remaining 21
+      are tracked by grep (`grep -rn '^commandRegistry.register(' src/`) rather than by a test.
+      **But the ratchet is sharp on the *move*, which §5c did not anticipate** (`plan/07` §5c-v): once
+      a command's only registration is an explicit call, forgetting that call makes it unregistered
+      and the ratchet fails — it caught exactly that in slice 5, listing all ten `application.*`
+      commands as missing
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**
