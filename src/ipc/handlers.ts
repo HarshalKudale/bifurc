@@ -31,6 +31,7 @@ import { registerGraphqlCommands } from "@bifurc/engine/protocols/graphqlCommand
 import { registerSoapCommands } from "@bifurc/engine/protocols/soapCommands";
 import { registerGrpcCommands } from "@bifurc/engine/protocols/grpcCommands";
 import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
+import { registerSyncCommands } from "@bifurc/engine/sync/syncCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -127,10 +128,19 @@ export function registerIpcHandlers(): void {
   // shell-side thing in it was `electron`'s `ipcMain`, which stays behind in the channels. Its private
   // `generateId()` was byte-identical to `store/config.ts`'s exported one and collapsed into it.
   registerApplicationCommands(commandRegistry);
-  // **21 module-scope registrations remain** — `syncHandlers` 17 and `entityCrudFactory` 4, all in
-  // `src/ipc/`, all the same §5c defect. `plan/07` §5c is the ledger. The ratchet cannot see any of
-  // them, which is why they are counted by grep (`grep -rn '^commandRegistry.register(' src/`) rather
-  // than by a test.
+  // Step 3e slice 6: the 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` /
+  // `entity.restore` / `audit.diff` / `history.*` commands, out of `handlers/syncHandlers.ts`'s module
+  // scope. Another "nothing had to travel" slice — every dependency was already engine-side — with one
+  // exception worth knowing about: `folder.publish` declares a **local** `sanitizeDirName` that shares
+  // its name with `store/workspaceFs`'s exported one and does something different (replaces illegal
+  // characters with `-` instead of stripping them, and has no `"unnamed"` fallback). It was kept local
+  // verbatim rather than collapsed; the engine module's header has the comparison table.
+  registerSyncCommands(commandRegistry);
+  // **4 module-scope registrations remain** — `entityCrudFactory`'s four `entity.*` CRUD commands, and
+  // it is the awkward one: that file's *exported* purpose is the CRUD collapse, which six shell handler
+  // files import and call, so importing any of them currently registers `entity.*` as a side effect.
+  // Moving the four strips that silently, and the affected suite set is the union over those six
+  // consumers — seven suites, the widest importer set of the pass. `plan/07` §5c is the ledger.
 
   registerImportExportHandlers();
   registerApplicationHandlers();
