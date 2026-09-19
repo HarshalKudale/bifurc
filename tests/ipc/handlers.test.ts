@@ -298,31 +298,36 @@ describe("src/ipc/handlers.ts", () => {
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
      * the ratchet doing its job rather than a change to the assertion.
      *
-     * **What is left is not a backlog.** The remaining three are two `BLOCKED` and one `SPLIT` — each
-     * pinned below with the reason a mechanical move is the wrong response. `audit.list` used to be
-     * the fourth, filed `NARROWED`; it was **unblocked on 2026-09-19 by widening the schema** rather
-     * than by moving it, which is exactly the response that category existed to demand. So step 3 now
-     * ends at **90 registered + 2 blocked + 1 split**, and the remaining three are resolved by P12
-     * (`app.checkUpdate`) and by a protocol change (`runner.*Config`) rather than by more moving.
+     * **What is left is not a backlog.** The remaining one is the `SPLIT`, pinned below with the
+     * reason a mechanical move is the wrong response. The other three are all **retired by widening the
+     * schemas they were blocked on**, not by moving them: `audit.list` (`NARROWED`, 2026-09-19) and
+     * `runner.saveConfig` / `runner.loadConfig` (`BLOCKED`, 2026-09-19). So step 3 now ends at
+     * **92 registered + 1 split**, and the last one is resolved by P12 (`app.checkUpdate`) rather than
+     * by more moving.
      *
-     * ## Why the list is now two lists
+     * ## Why the list kept shrinking, and why every category is now gone
      *
      * The first version of this block said every remaining command was "engine work that has not been
      * moved yet". **Auditing the remaining 19 against their frozen schemas showed that is false**, and
      * `src/ipc/handlers/runnerHandlers.ts` had already recorded the reason for three of them: a
-     * `.strict()` protocol schema that contradicts what real callers actually send. So the entries are
-     * split by *why* they are unimplemented, because the reasons need different responses:
+     * protocol schema that contradicts what real callers actually send. So the entries were split by
+     * *why* they were unimplemented:
      *
-     * - `MOVABLE` — the schema accepts every payload the handler accepts. Move it.
-     * - `BLOCKED` — the schema rejects payloads that a **currently passing** test uses. These cannot
-     *   move until the frozen protocol changes.
+     * - `MOVABLE` — the schema accepts every payload the handler accepts. Move it. → **all 21 moved.**
+     * - `NARROWED` — the schema accepts a strict subset, and `.strict()` turns the difference into a
+     *   `BAD_REQUEST`. Needs a decision, not a move. → **widened.**
+     * - `BLOCKED` — the schema rejects payloads that a **currently passing** test uses. → **widened.**
      * - `SPLIT` — the protocol declares an engine-half contract that deliberately differs from the
-     *   shell's implementation. Not a move at all.
+     *   shell's implementation. Not a move at all. → **still here.**
      *
-     * `NARROWED` is **retired, not empty.** It held exactly one command (`audit.list`), and the
-     * category's own prescription was "a decision, not a move" — so the decision was taken: widen the
-     * schema. Leaving an empty array behind would invite the next reader to file the next
-     * schema-mismatch there instead of resolving it.
+     * Every retired category was deleted rather than left empty, and the reason is the same each time:
+     * an empty array invites the next reader to file the next command that *looks* like it belongs
+     * there, instead of asking which of the four questions actually applies.
+     *
+     * **The pattern worth carrying forward:** three of the four categories turned out to be *schema*
+     * problems rather than *routing* problems. "The command is not in the registry" was never the same
+     * claim as "the engine cannot serve it" — and in every case the fix was to correct the frozen
+     * schema to describe what the real caller sends, then move the command.
      *
      * This asserts *registration*, not behaviour. A command can be registered and still do the wrong
      * thing; that is what the conformance suite and each handler's own tests are for.
@@ -366,24 +371,22 @@ describe("src/ipc/handlers.ts", () => {
        */
 
       /**
-       * Blocked by the frozen protocol, each with a **currently passing test** as the evidence. These
-       * are not "not yet moved" — they cannot be moved without either widening the protocol or
-       * breaking a real caller, and the protocol is frozen for P1–P6.
+       * `BLOCKED` used to live here, holding `runner.saveConfig` and `runner.loadConfig` — and it is
+       * **retired rather than empty**, for the third time and the same reason: an empty array invites
+       * the next reader to file the next blocked command there instead of resolving it.
+       *
+       * Its entries were blocked by a **currently passing test** as the evidence — the strongest kind
+       * available — and the block was asserted *directly* rather than by membership, so that widening
+       * the schema would fail the test and say these had become movable. That is exactly what happened
+       * on 2026-09-19: the assertion below failed, `RunnerConfigSchema` was widened from
+       * `{requestOrder, delayMs}` to the `z.record` shape the store actually persists, and both
+       * commands moved into `packages/engine/src/runner/runnerCommands.ts`.
+       *
+       * The guard that replaced it is the test below, and it asserts the *other* half of the old bug —
+       * the half `BLOCKED` never caught. The frozen schema would have **stripped** unknown keys even
+       * from a payload it accepted, because `z.object()` drops them, which is a data-loss bug rather
+       * than a validation error.
        */
-      const BLOCKED = [
-        {
-          command: "runner.saveConfig",
-          reason:
-            "RunnerConfigSchema requires {requestOrder, delayMs}, but tests/integration/runnerStorage" +
-            ".integration.test.ts:207 saves {delayMs, stopOnFailure, iterations} — no requestOrder.",
-        },
-        {
-          command: "runner.loadConfig",
-          reason:
-            "The same schema, and RunnerLoadConfigResult *declares* it as the loaded shape — so a " +
-            "round-trip of the config that test actually saves cannot satisfy it.",
-        },
-      ];
 
       /**
        * Not a move: `misc.ts` marks `app.checkUpdate` SPLIT, with the schema as "the interim
@@ -398,7 +401,7 @@ describe("src/ipc/handlers.ts", () => {
        */
       const SPLIT = ["app.checkUpdate"];
 
-      const NOT_IN_REGISTRY = [...BLOCKED.map((b) => b.command), ...SPLIT];
+      const NOT_IN_REGISTRY = [...SPLIT];
 
       it("implements every protocol command except the pinned list", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
@@ -411,41 +414,43 @@ describe("src/ipc/handlers.ts", () => {
         expect(missing).toEqual([...NOT_IN_REGISTRY].sort());
       });
 
-      it("demonstrates why each BLOCKED command cannot move, using the frozen schema", async () => {
-        // The other direction of ratchet, and the reason these are separated from `MOVABLE`: this
-        // asserts the *block itself*, not just the membership. If someone later widens
-        // `RunnerConfigSchema`, this test fails and says so — at which point `runner.saveConfig` and
-        // `runner.loadConfig` become movable and should be moved, rather than sitting here forever
-        // looking unimplemented.
-        const { RunnerSaveConfigParams, RunnerLoadConfigParams } = await import("@bifurc/protocol");
+      it("keeps the runner config widening — accepted AND preserved", async () => {
+        // The old `BLOCKED` assertion checked the block, which meant asserting that the real config was
+        // *rejected*. Now that it is accepted, the assertion worth having is the one the block could
+        // never express: that parsing does not **lose** anything.
+        //
+        // Both halves were live bugs. The frozen schema required `requestOrder`, so it rejected the
+        // payload `tests/integration/runnerStorage.integration.test.ts:207` round-trips; and because
+        // `z.object()` drops unknown keys, a payload that *had* passed would have lost `stopOnFailure`
+        // and `iterations` on the way to disk. A dropped field in saved run configuration is silent —
+        // nothing reports it and the file looks fine — which is why `toEqual` on the whole config is
+        // the assertion, rather than a check that the two fields merely parse.
+        const { RunnerSaveConfigParams } = await import("@bifurc/protocol");
 
-        // Exactly the payload the passing integration test saves, and exactly the shape it expects
-        // back. Both must be rejected by the frozen schema for this categorisation to be honest.
         const realConfig = { delayMs: 250, stopOnFailure: true, iterations: 3 };
+        const parsed = RunnerSaveConfigParams.safeParse({
+          workspaceId: "ws",
+          folderId: "f",
+          config: realConfig,
+        });
 
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.config).toEqual(realConfig);
+
+        // And the renderer's own shape, which *does* send `requestOrder`
+        // (`useCollectionRunner.ts:67`) — the widening made it optional, not unsupported.
         expect(
-          RunnerSaveConfigParams.safeParse({ workspaceId: "ws", folderId: "f", config: realConfig })
+          RunnerSaveConfigParams.shape.config.safeParse({ requestOrder: ["r1", "r2"], delayMs: 0 })
             .success,
-        ).toBe(false);
-
-        // `runner.loadConfig` takes no config param at all, so its block is not about the request —
-        // it is that the *result* it declares is the same fixed shape. Parsing the real config
-        // through that shape is what would fail, which is the assertion below.
-        expect(RunnerLoadConfigParams.safeParse({ workspaceId: "ws", folderId: "f" }).success).toBe(true);
-        expect(
-          RunnerSaveConfigParams.shape.config.safeParse(realConfig).success,
-        ).toBe(false);
-
-        expect(BLOCKED.map((b) => b.command).sort()).toEqual(
-          ["runner.loadConfig", "runner.saveConfig"],
-        );
+        ).toBe(true);
       });
 
       it("keeps audit.list's widening — the date filter the panel actually sends", async () => {
-        // Nothing else pins this. The ratchet's other direction asserts that each `BLOCKED` command is
-        // *still* blocked, so a widening cannot go unnoticed there; but `audit.list` has left the list
-        // entirely, so without this test the three fields could be dropped again and the only symptom
-        // would be the audit panel's date filter silently returning everything.
+        // Nothing else pins this. The retired `NARROWED` and `BLOCKED` entries used to assert their own
+        // *block* in the opposite direction, which is what made a widening fail loudly rather than pass
+        // silently; `audit.list` has left the list entirely now, so without this test the three fields
+        // could be dropped again and the only symptom would be the audit panel's date filter quietly
+        // returning everything.
         //
         // The payload is exactly what `renderer/panels/AuditLogPanel.tsx:61–62` builds when a
         // date range is set — which is the whole reason the widening was necessary rather than

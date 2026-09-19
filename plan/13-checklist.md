@@ -578,8 +578,8 @@ rather than a type.
 - [x] Build the IPC transport (renderer → main) — `src/ipcTransport.ts` + `src/ipc/rpcContract.ts`
 - [x] Route **one** method (`config:get`) through RPC, keep `registerIpcHandlers()` for the rest —
       step 2, suite green
-- [x] Reimplement `preload.ts` as a client bridge — steps 3b-1 and 3b-3: **140 of the 144 keys** are
-      `{ ...client }`; four explicit overrides remain
+- [x] Reimplement `preload.ts` as a client bridge — steps 3b-1, 3b-3 and 3d: **143 of the 144 keys**
+      are `{ ...client }`; one explicit override remains (`app.checkUpdate`)
 - [x] Implement local handlers (dialogs, zoom, theme, titlebar, platform, installCA, first-launch) —
       `src/ipc/handlers/clientHandlers.ts`, plus the three filesystem hooks (`pickSavePath`,
       `writeArtifact`, `readArtifactFile`)
@@ -599,10 +599,16 @@ rather than a type.
       step 3b-1 deleted it, so the flag now needs that table re-added as dead-by-default code, or the
       rollback layer is `git revert` alone. A decision, not a task.
 - [ ] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir) — work item 5
-- [ ] Delete `registerIpcHandlers()` from the default path — **blocked on four keys**, not eight:
-      `checkUpdate` (SPLIT), `listAudit` (NARROWED), `saveRunnerConfig` / `loadRunnerConfig` (BLOCKED).
-      Each needs a protocol decision (`plan/07` §5b), so step 3 ends at 89 registered + 2 blocked +
-      1 narrowed + 1 split, not at 93 registered
+- [ ] Delete `registerIpcHandlers()` from the default path — **blocked on one key**, not eight:
+      `checkUpdate` (SPLIT), which is resolved by P12 (`plan/07` §5b). **Step 3d (2026-09-19) retired the
+      other three by widening the schemas they were pinned on, not by moving them** — `listAudit`
+      (`NARROWED`, `fcd6d0d`) and `saveRunnerConfig` / `loadRunnerConfig` (`BLOCKED`). So step 3 ends at
+      **92 registered + 1 split**, not at 93 registered
+- [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
+      the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
+      retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening
+      made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
+      failed the conformance suite on all four transports
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**
