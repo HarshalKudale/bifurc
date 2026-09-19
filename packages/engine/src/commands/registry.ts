@@ -23,6 +23,14 @@
  * `applicationHandlers.ts` now go through it. `environments` — the one kind with a create-gate
  * check (`CrudFactoryOpts.gateKind`) — is now routed too. Still outside its scope: the P3-bound
  * `importExport:*` SPLIT channels.
+ *
+ * **Update (P6 step 3e, 2026-09-19):** that list names the shell *files whose commands are reachable*
+ * through the registry, which is no longer the same as "the files that register them". `plan/07` §5c
+ * found 51 commands registered at module scope in `src/`, where a containerised engine (P9) could not
+ * see them at all. Two slices have moved so far — the five from `coreHandlers.ts` (now
+ * `store/coreCommands.ts`) and the two from `runnerHandlers.ts` (now `runner/runnerCommands.ts`) — so
+ * **44 module-scope registrations remain** in `src/`, and this file's own registry stays complete for
+ * them only because the shell happens to import them.
  */
 import { type CommandAction, getCommandParamsSchema, isKnownCommand, EngineError } from "@bifurc/protocol";
 import type { bus } from "../eventBus";
