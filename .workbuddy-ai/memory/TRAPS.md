@@ -28,6 +28,12 @@ command deliberately, testing the transport and the schema rather than any imple
 ratchet asks only "is this command registered *in this process*", which the shell has already done for
 all of them.
 
+**But the ratchet is sharp on the *move*, which is the half worth remembering.** Once a command's only
+registration is an explicit `register*Commands()` call, forgetting that call makes it unregistered and
+the ratchet says so immediately — it caught exactly that in slice 5, listing all ten `application.*`
+commands as missing (`cd7afad`). So the ratchet is blind to the §5c *defect* and a real guard on the
+§5c *fix*: an explicit call site is checkable, a module side effect is not.
+
 ## A *delegating* channel is both the risk and the evidence
 
 Channels that `commandRegistry.invoke()` break on an empty registry — but they also make a
@@ -109,6 +115,18 @@ the sandbox the test was written in answered `127.0.0.1:1` with a synthetic 404 
 succeeded and the body carried a numeric `status`, which is what `tests/spike/protocolPoc.test.ts`
 asserts. Recorded in `plan/baseline.md` "Environment caveats"; **not** "fixed", because changing which of
 the two shapes `soap.execute` uses is a contract change.
+
+## Tooling: two `Edit` calls to the same file in one message clobber each other
+
+Both report success; the **second write wins** and silently drops the first change. Hit while wiring
+slice 5: the import landed, the call site did not, and the file looked untouched where the first edit
+had been. Nothing warns you.
+
+**Edit one file at a time, in separate messages.** When a change spans two places in the same file,
+either chain the edits sequentially or put both changes in one `old_string`/`new_string` pair. Verify
+with a grep for the new call site before running anything — the failure mode is a *missing* line, so it
+is invisible in a diff you are skimming. `EBUSY: resource busy or locked` is a different, benign
+transient; just retry.
 
 ## Git / env
 

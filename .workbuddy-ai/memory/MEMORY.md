@@ -20,10 +20,12 @@ cost real time and are not discoverable from the code. Then: status → `plan/RE
   **`src/preload.ts` is the authority, not `renderer/types/window.ts`**; `close()` non-enumerable.
 - **P6: steps 1–2, finding 1, 3a, 3b-1/2/3, 3c, 3d, 3e slices 1–4 done.** 143 of 144 keys route;
   `checkUpdate` is SPLIT → P12. `registerIpcHandlers()` cannot be deleted yet.
-- **§5c pass: 31 module-scope `commandRegistry.register(` calls remain in `src/ipc/`** — `syncHandlers`
-  17, `applicationHandlers` 10, `entityCrudFactory` 4. Moved so far: `store/coreCommands`,
-  `runner/runnerCommands`, `store/folderCommands`, `protocols/{graphql,soap,grpc}Commands`. **Count by
-  grep, never by test** — the ratchet cannot see them. Next slice = `plan/07` §5c-v.
+- **§5c pass: 21 module-scope `commandRegistry.register(` calls remain in `src/ipc/`** — `syncHandlers`
+  17, `entityCrudFactory` 4. Moved so far: `store/coreCommands`, `runner/runnerCommands`,
+  `store/folderCommands`, `protocols/{graphql,soap,grpc}Commands`,
+  `applications/applicationCommands`. **Count by grep, never by test** — the ratchet is blind to the
+  defect (though sharp on the *move*: forget the explicit call and it fails, `TRAPS.md`). Next slice =
+  `plan/07` §5c-vi.
 - **The last key is a protocol decision, not a move:** `checkUpdate` SPLIT (its frozen result has no
   `currentVersion`/`hasUpdate`) → P12. `listAudit` and the two `runner.*Config` were **schema** problems,
   retired by widening rather than moving. **`BIFURC_ENGINE_RPC=0` does not exist anywhere** — decided:
