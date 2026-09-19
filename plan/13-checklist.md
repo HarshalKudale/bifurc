@@ -599,16 +599,34 @@ rather than a type.
       step 3b-1 deleted it, so the flag now needs that table re-added as dead-by-default code, or the
       rollback layer is `git revert` alone. A decision, not a task.
 - [ ] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir) — work item 5
-- [ ] Delete `registerIpcHandlers()` from the default path — **blocked on one key**, not eight:
-      `checkUpdate` (SPLIT), which is resolved by P12 (`plan/07` §5b). **Step 3d (2026-09-19) retired the
-      other three by widening the schemas they were pinned on, not by moving them** — `listAudit`
-      (`NARROWED`, `fcd6d0d`) and `saveRunnerConfig` / `loadRunnerConfig` (`BLOCKED`). So step 3 ends at
-      **92 registered + 1 split**, not at 93 registered
+- [ ] Delete `registerIpcHandlers()` from the default path — **blocked on two things, and only one of
+      them was known.** The tracked blocker is one key: `checkUpdate` (SPLIT), resolved by P12
+      (`plan/07` §5b). **Step 3d (2026-09-19) retired the other three by widening the schemas they were
+      pinned on, not by moving them** — `listAudit` (`NARROWED`, `fcd6d0d`) and `saveRunnerConfig` /
+      `loadRunnerConfig` (`BLOCKED`). So step 3 ends at **92 registered + 1 split**, not at 93
+      registered. **The untracked blocker is `plan/07` §5c: 51 engine commands are registered at module
+      scope in nine shell files**, so deleting the shell's handler layer answers `UNKNOWN_COMMAND` for
+      all of them on a containerised engine (P9) — and the ratchet cannot see any of them. See step 3e
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening
       made `COMMAND_FIXTURES["runner.saveConfig"].invalid` (`config: {}`) *valid*, which would have
       failed the conformance suite on all four transports
+- [ ] Step 3e — the §5c pass: move the **51** shell-registered engine commands into `packages/engine`
+      (`plan/07` §5c-i). **Slice 1 implemented but NOT verified** (2026-09-19): the five §5c named —
+      `config.get`, `env.setActive`, `workspace.setActive`, `entity.load`, `entity.setEnabled` — now
+      live in `store/coreCommands.ts` behind `registerCoreCommands()`, called from
+      `src/ipc/handlers.ts`; `syncEnabledSet`'s three copies are collapsed into
+      `store/enabledSet.ts`. **§5c's count was 5; the real number is 51** across nine shell files, so
+      **46 remain**: `syncHandlers` 17, `applicationHandlers` 10, `grpcHandlers` 5, `entityCrudFactory`
+      4, `folderHandlers` 4, `graphqlHandlers` 2, `soapHandlers` 2, `runnerHandlers` 2. Five suites had
+      to be given an explicit `registerCoreCommands(commandRegistry)` call — the §5a trap, now applying
+      to these five. Verified by `npm run typecheck` (EXIT=0) and a 7/7 standalone probe against the
+      built engine, **not** by the suite, which was down (`plan/07` §5c-i). **Re-run the suite before
+      ticking this.**
+- [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
+      command registered *in this process*", and in this process the shell has registered all 51, so
+      §5c was invisible to the mechanism built to catch exactly this class
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**

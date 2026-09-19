@@ -1,14 +1,13 @@
 import { ipcMain } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import type { ConfigGetParams, EnvSetActiveParams, WorkspaceSetActiveParams, EntityLoadParams, EntitySetEnabledParams } from "@bifurc/protocol";
 import { executeIpcScript, IpcScriptOpts } from "@bifurc/engine/proxy/scriptExecutor";
 import {
-  loadConfig, saveConfig, loadEntity, generateId, AppConfig,
+  loadConfig, saveConfig, generateId, AppConfig,
   Environment, Workspace,
 } from "@bifurc/engine/store/config";
 import {
-  initWorkspaceDir, wsDir as workspaceDir, readEnabledSet
+  initWorkspaceDir, wsDir as workspaceDir
 } from "@bifurc/engine/store/workspaceFs";
 import { initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
 import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
@@ -20,97 +19,28 @@ import { bus, emitEntityStatus } from "@bifurc/engine/eventBus";
 import { restartCompanionServer } from "@bifurc/engine/transport/legacyCompanion";
 import { generateRandomWorkspaceName } from "@bifurc/engine/lib/randomNames";
 import { gateCreate } from "@bifurc/engine/subscription/entityCount";
-import { syncEnabledSet } from "@/ipc/handlers/utils";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
-import { commandRegistry, mayAffectUnnamedEntities, type CommandContext } from "@bifurc/engine/commands/registry";
-import { toProtocolKind, toEngineKind } from "@bifurc/engine/commands/entityKindMap";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { toProtocolKind } from "@bifurc/engine/commands/entityKindMap";
 import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
 
-// P2 work item 7 (CommandRegistry) proof-of-concept — see `packages/engine/src/commands/registry.ts` for the
-// rationale and current scope. These three commands were picked because they cover both shapes
-// (`config.get` has no params; `env.setActive`/`workspace.setActive` have a simple named-param
-// object that already matches its legacy channel's single positional argument 1:1) without
-// touching the CRUD-factory channels, which need their own collapsing pass first.
+// ## The five commands that used to be registered here (P6 §5c, moved 2026-09-19)
+//
+// `config.get`, `env.setActive`, `workspace.setActive`, `entity.load` and `entity.setEnabled` were
+// registered **at module scope in this file**. That made them invisible to a containerised engine —
+// the implementation lived in a file only the Electron shell has, so a headless host answered
+// `UNKNOWN_COMMAND` for commands the protocol declares and `@bifurc/client` advertises — and it made
+// the registry-coverage ratchet blind, because in *this* process the shell had registered them.
+//
+// They now live in `packages/engine/src/store/coreCommands.ts` behind `registerCoreCommands()`, called
+// from `src/ipc/handlers.ts` alongside the other `register*Commands` modules. Every body moved
+// verbatim: the adapters below were already thin `commandRegistry.invoke()` delegations, so the wire
+// behaviour is the same code reached through a different door.
+//
+// The suites that register this handler group **without** running `registerIpcHandlers()` must now
+// call `registerCoreCommands(commandRegistry)` themselves — that is the cost of an explicit call site,
+// and it is the point: a module side effect cannot be seen by a ratchet, an explicit call can.
 const ctx = { bus };
-commandRegistry.register("config.get", (_params: ConfigGetParams) => loadConfig());
-
-commandRegistry.register("env.setActive", ({ id }: EnvSetActiveParams) => {
-  if (id === "__global__") return { ok: false, error: "cannot_activate_global" };
-  const cfg = loadConfig();
-  cfg.activeEnvironmentId = id;
-  const ws = (cfg.workspaces ?? []).find((w) => w.id === cfg.activeWorkspaceId);
-  if (ws) ws.activeEnvironmentId = id;
-  saveConfig(cfg);
-  reloadConfig();
-  return { ok: true };
-});
-
-commandRegistry.register("workspace.setActive", ({ id }: WorkspaceSetActiveParams) => {
-  const cfg = loadConfig();
-  const ws = (cfg.workspaces ?? []).find((w) => w.id === id);
-  if (!ws) return { ok: false };
-  cfg.activeWorkspaceId = id;
-  cfg.activeEnvironmentId = ws.activeEnvironmentId;
-  saveConfig(cfg);
-  reloadConfig();
-  return { ok: true, config: loadConfig() };
-});
-
-// The six kinds that carry an enabled/disabled flag, tracked in `enabled.json` rather than on
-// the entity itself. `EntitySetEnabledParams.kind` is already restricted to exactly these six
-// engine-internal strings (see `entityKindMap.ts`'s own note on why it needs no translation).
-const ENABLED_STATE_KINDS = new Set(["mocks", "mappings", "rules", "graphqlMocks", "soapMocks", "grpcMocks"]);
-
-commandRegistry.register("entity.load", ({ workspaceId, kind, id }: EntityLoadParams) => {
-  const engineKind = toEngineKind(kind);
-  const entity = loadEntity(workspaceId, engineKind, id);
-  if (!entity) return { ok: false };
-  if (ENABLED_STATE_KINDS.has(engineKind)) {
-    const set = readEnabledSet(workspaceId, engineKind);
-    return { ok: true, entity: { ...entity as object, enabled: set ? set.has(id) : false } };
-  }
-  return { ok: true, entity };
-});
-
-commandRegistry.register("entity.setEnabled", async ({ workspaceId, kind, id, enabled }: EntitySetEnabledParams, ctx: CommandContext) => {
-  // Enabling an entity resolves conflicts by *disabling* same-signature siblings, which reaches entities
-  // the caller never named — the same privilege `entity.create`'s `onAddConflict` exercises, so it takes
-  // the same gate and must agree with it. See `mayAffectUnnamedEntities()`. The toggle itself is
-  // unconditional: only the sibling-disabling half is narrowed.
-  const mayResolveConflicts = mayAffectUnnamedEntities(ctx);
-
-  if (enabled && mayResolveConflicts && kind === "mocks") {
-    const cfg = loadConfig();
-    const target = (cfg.mocks ?? []).find((m) => m.id === id);
-    if (target) {
-      const sig = `${target.method.toUpperCase()}|${target.urlPattern}|${target.capturedBody ?? ""}`;
-      for (const m of cfg.mocks) {
-        if (m.id !== id && m.enabled) {
-          const mSig = `${m.method.toUpperCase()}|${m.urlPattern}|${m.capturedBody ?? ""}`;
-          if (mSig === sig) syncEnabledSet(workspaceId, "mocks", m.id, false);
-        }
-      }
-    }
-  }
-  if (enabled && mayResolveConflicts && kind === "rules") {
-    const cfg = loadConfig();
-    const target = (cfg.proxyRules ?? []).find((r) => r.id === id);
-    if (target) {
-      const sig = `${target.useRegex ? "re" : "exact"}|${target.pattern}`;
-      for (const r of cfg.proxyRules) {
-        if (r.id !== id && r.enabled) {
-          const rSig = `${r.useRegex ? "re" : "exact"}|${r.pattern}`;
-          if (rSig === sig) syncEnabledSet(workspaceId, "rules", r.id, false);
-        }
-      }
-    }
-  }
-
-  syncEnabledSet(workspaceId, kind, id, enabled);
-  reloadConfig();
-  emitEntityStatus(workspaceId);
-  return { ok: true };
-});
 
 export function registerCoreHandlers() {
   ipcMain.handle("config:get", () => commandRegistry.invoke("config.get", {}, ctx));

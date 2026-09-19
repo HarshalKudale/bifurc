@@ -1,13 +1,13 @@
 import { ipcMain } from "electron";
 import type { EntityCreateParams, EntityUpdateParams, EntityDeleteParams, EntityListParams } from "@bifurc/protocol";
 import { loadConfig, saveConfig, generateId, AppConfig } from "@bifurc/engine/store/config";
-import { 
+import {
   writeEntity, deleteEntityFile, writeFlatEntity, deleteFlatEntityFile,
   upsertNameEntry, removeNameEntry, 
   addPendingDeletion, findEntityRelPath,
-  readEnabledSet, writeEnabledSet, bootstrapEnabledSet,
   readAllEntities,
 } from "@bifurc/engine/store/workspaceFs";
+import { syncEnabledSet } from "@bifurc/engine/store/enabledSet";
 import { getGit } from "@bifurc/engine/store/gitStore";
 import { reloadConfig } from "@bifurc/engine/proxy/server";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
@@ -46,12 +46,9 @@ export async function isGitTracked(wsId: string, relPath: string): Promise<boole
   }
 }
 
-export function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean): void {
-  let set = readEnabledSet(wsId, kind);
-  if (!set) set = bootstrapEnabledSet(wsId, kind);
-  if (enabled) set.add(id); else set.delete(id);
-  writeEnabledSet(wsId, kind, set);
-}
+// `syncEnabledSet` used to be defined here (and again in `handlers/utils.ts`, and a third time in the
+// engine's `transport/legacyCompanion.ts`). It now lives in `@bifurc/engine/store/enabledSet` — see
+// that module for why the triplication was worth collapsing rather than tolerating.
 
 export interface CrudFactoryOpts<T> {
   kind: string;
