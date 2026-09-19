@@ -260,6 +260,69 @@ drift and Firefox detection — with the renderer-facing acceptance criteria lef
 
 ---
 
+### 2026-09-19 — `AuditListParams` gains `filePath` / `fromTs` / `toTs`
+
+**Phase:** P6 (step 3d — unblocking the four pinned keys)
+**Type:** additive (three new optional fields on a `.strict()` object)
+**Change:** one schema, in `packages/protocol/src/commands/audit.ts`.
+
+```ts
+export const AuditListParams = z.object({
+  workspaceId: z.string().optional(),
+  entity:      z.string().optional(),
+  action:      z.string().optional(),
+  entityId:    z.string().optional(),
++ filePath:    z.string().optional(),   // workspace-relative, e.g. "mocks/root/mock_abc.json"
++ fromTs:      z.number().optional(),   // inclusive, epoch ms
++ toTs:        z.number().optional(),   // inclusive, epoch ms
+  search:      z.string().optional(),
+  limit:       z.number().int().optional(),
+  offset:      z.number().int().optional(),
+}).strict();
+```
+
+The three fields are exactly the members `QueryLogOptions` (`packages/engine/src/store/gitStore.ts`) has
+and this schema lacked.
+
+**Why it could not wait:** `audit.list` was the single `NARROWED` entry in the step-3b ratchet, and the
+category's own definition is *"a decision, not a move"* — so the decision was taken. But the stronger
+reason is that the narrowing turned out to be **live, not latent**: the ratchet's justification was
+"nothing currently passes those — `auditList` exists on `window.api` and no renderer code calls it",
+and that check was a grep for the *method name*. `renderer/panels/AuditLogPanel.tsx:61–62` reaches the
+same command through `window.api` and sets `fromTs`/`toTs` whenever its date filter is used. Because the
+schema is `.strict()`, that difference is a `BAD_REQUEST` rather than an ignored filter — so routing
+`audit.list` before this change would have broken the audit panel's date range, with every unit test in
+the repo still green (they drive the handler, not the panel).
+
+**Why this is not a `PROTOCOL_VERSION` bump.** Same argument as the three entries above, and it holds
+for the same measurable reason: **`audit.list` has never been registered in a `CommandRegistry`.**
+`tests/ipc/handlers.test.ts`'s ratchet asserts that directly, and `plan/07` §5b recorded it. Its only
+server has been the shell's `audit:list` `ipcMain` body, whose renderer-facing shape is **unchanged** by
+this entry (`README.md` non-negotiable #3) — it forwards the options object to `queryLog`, which has
+accepted all three fields all along. A client cannot depend on a payload no server has ever accepted.
+
+**Affected:** `audit.list` — params only. No command name, no result type, no error code, no event
+envelope changes. The four frozen companion-extension commands (`mock:add`, `request:add`,
+`folder:add`, `config:get`) are **untouched**. `audit.diff`, `audit.export` and `history.*` are
+untouched — `HistoryListParams` already declares `filePath`, and it is required there for a different
+reason (a history query is always *about* one file).
+
+**Migration:** none required. The engine half lands in
+`packages/engine/src/store/auditCommands.ts` (`registerAuditCommands`), registered from
+`src/ipc/handlers.ts` alongside the other `register*Commands` modules.
+
+**A regression guard rides along**, because this entry's own reasoning is why it is needed:
+`tests/ipc/handlers.test.ts` now parses the exact payload `AuditLogPanel.tsx` builds and asserts it
+succeeds, *and* that a misspelt `fromTS` still fails. The ratchet's other direction asserts that each
+`BLOCKED` command is *still* blocked, so a widening cannot go unnoticed there; but `audit.list` has left
+the list entirely, so without that test the three fields could be dropped again and the only symptom
+would be the date filter quietly returning everything.
+
+**Approved by:** this session, on the user's explicit decision to unblock the four pinned keys rather
+than defer them to P12.
+
+---
+
 
 ## Guidance
 
