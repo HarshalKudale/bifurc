@@ -663,10 +663,17 @@ Delete the flag in the next release, once the seam has survived real usage.
      re-point the shell bodies at the registry while doing it — see §5a; that trap applies to all five
      slices.
    - **3b-1 → 3c** — route the now-89 registered commands through the bridge, **then** delete
-     `registerIpcHandlers()` + `eventBridge.ts`. This is the remaining work in step 3.
-   - **then** delete `registerIpcHandlers()` and `eventBridge.ts`. Deleting them earlier would break
-     each of the 25 on **both** paths at once, and the surface test would still pass because the key
-     stays exposed.
+     `registerIpcHandlers()` + `eventBridge.ts`. ✅ **3c done 2026-09-18** — the event half only.
+   - **3b-3** — the four artifact-egress methods that needed the dialog to run *before* the command.
+     ✅ **done 2026-09-19: 140 of 144 keys route.** The client gained `pickSavePath` and a
+     path-accepting `readArtifactFile`, and `writeArtifact` gained an optional destination. See
+     *Step 3b-3* above.
+   - **then** delete `registerIpcHandlers()`. **This is now blocked on four keys, not eight** —
+     `checkUpdate` (SPLIT), `listAudit` (NARROWED), `saveRunnerConfig` / `loadRunnerConfig` (BLOCKED).
+     All four need a **protocol** decision rather than a move (§5b), so step 3 cannot end with all 93
+     registered; it ends with 89 registered + 2 blocked + 1 narrowed + 1 split. Deleting
+     `registerIpcHandlers()` earlier would break each of them on **both** paths at once, and the
+     surface test would still pass because the key stays exposed.
 
 ---
 
@@ -994,17 +1001,108 @@ non-vacuous by mutation.
 
 ---
 
+## Step 3b-3 — the last four artifact methods (2026-09-19, `d89ab79`)
+
+**140 of the 144 keys now route.** The four that needed a *third* primitive are off the shell's legacy
+channels, and the primitive they needed was the one `File_Ops_Protocol.md` §3.2 has been asking for
+since P3: **the dialog has to run before the command.**
+
+`ClientLocal.writeArtifact` bundled "ask where" with "write there", which forces the dialog *after* the
+render. That is fine for the five egress methods whose artifact the engine has already produced, and
+wrong for the two that make the engine render something expensive the user might abandon. So the ask
+was split out, and the ingress mirror was widened.
+
+| Hook | Shape | Why this shape |
+| --- | --- | --- |
+| `pickSavePath(opts)` | ask, return a path, write nothing | egress is *dialog → command → write*, so the ask must be separable |
+| `writeArtifact(…, destPath?)` | bundled when omitted, write-only when present | keeps the five already-routed methods on the form that shows the engine's own `suggestedName` |
+| `readArtifactFile(opts?)` | ask **or** reuse `opts.path`, return the path it read | ingress is *dialog → read → upload → command*, so ask and read can share a call |
+
+The dialog's chrome is built from the engine's own `export.formats` table rather than a second
+hard-coded list of the 17 formats and their extensions — the same reasoning `blob/publish.ts` uses for
+holding the inline-vs-blob decision once. One visible consequence, stated plainly because it is a
+behaviour change: **with no engine there is no dialog.** That is correct rather than regrettable —
+there is nothing to export either way — but it does mean `exportData` now fails before the user picks a
+destination instead of after.
+
+### Two client-side regressions, both of which routing would have exposed
+
+Neither is a shell problem. Both are gaps in the client that only became reachable when the preload
+stopped overriding the method — which is the same lesson 3b-1 recorded, in its second form.
+
+1. **`exportRunnerReport` hardcoded `format: "json"`.** The shell's dialog offers **HTML or JSON** and
+   derives the format from the extension the user picked. Choosing the extension *is* choosing the
+   format, so this could not be repaired after the fact: routing it as it stood would have silently
+   deleted HTML export, which is the dialog's **default**. The starkest case of why the dialog cannot
+   run after the render.
+2. **`importData` ignored `req.filePath` and re-opened a picker.** Confirmed, and worse than the
+   "may open a second dialog" 3b-1 recorded: `ImportExportModal.tsx` takes `res.filePath` from
+   preflight and feeds it back, and the old client returned `import.preflight`'s result verbatim —
+   which the engine built from a `blobId`, so `filePath` was `undefined` and the collision branch
+   handed `undefined` to `applyImport`. Now the path is reused, and the staged blob is reused with it
+   through a `pendingUploads` map, so the bytes cross the wire **once** (§5, "uploaded ONCE"). The map
+   is bounded by construction: one entry per file picked since the last preflight, cleared on commit,
+   and a re-run of preflight on the same file releases the entry it displaces rather than leaving it
+   for the sweep.
+
+**A third defect, in a hook rather than a method.** `readArtifactFile` was a pass-through to
+`dialog:openFile`, which caps at **1 MB** because it feeds binary request bodies — while the legacy
+`importExport:preflight` accepted `BLOB_MAX_INGRESS_BYTES` (100 MB). Reusing that channel would have
+silently rejected **every import between 1 MB and 100 MB**, which is most real collections. The new
+handler caps at the protocol constant and returns the path `dialog:openFile` never had. Two things
+follow from that cap being *ours* now: it is the protocol's number rather than a second one, and the
+handler is the only place that reads a file for import.
+
+**And a fourth, in `exportData`'s argument mapping.** It read `req.workspaceId`; `ExportRequest` has
+`wsId`. Nothing noticed because the preload overrode the method entirely — routed as written, **every
+export would have been a `BAD_REQUEST`.** Same shape as finding 5: the surface test cannot see it,
+because every key is exposed correctly and only the payload behind one is wrong.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | clean — protocol, engine, client |
+| full suite | **101 files / 2,503** — 2,462 passed, 40 skipped, **1 failed** (the `soap.execute` flake) |
+| delta against finding 6 (2,436) | **exactly +26** = 12 + 11 + 3, no other movement |
+| `git diff --stat renderer/` | **empty** |
+| surface test | 144 keys, both directions clean |
+| mutation: hardcode `format: "json"` | the two HTML rows of the `it.each` fail |
+| mutation: disable the remembered-blob lookup | "reuses the path and the blob" fails |
+
+The +26 is measured, not inferred, and it decomposes exactly: 12 in `packages/client/tests/client.test.ts`
+(9 plain + one `it.each` with 3 rows), 11 in `tests/ipc/clientHandlers.test.ts`, and 3 from the
+`for (const channel of expectedChannels)` loop that generates one test per registered channel — the
+three new `client:*` channels are the third term. The file count is unchanged.
+
+Both new claims were mutation-checked rather than trusted, because the assertions are about **ordering
+and count** and a value-only assertion passes either way.
+
+### What this unlocks, and what it does not
+
+`src/ipc/importExportHandlers.ts` is now **dead**: nothing in `src/`, `renderer/` or `e2e/` references
+any of its four channels. It is the `kindLabel` copy in the client that is now the only one. It dies
+with `registerIpcHandlers()`, which is the remaining work in step 3 — and that is now blocked on
+**four keys, not eight**.
+
+**Still unproven, and unchanged by this step:** the real Electron IPC round trip. Both ends are mocked,
+so the wire *between* them remains the e2e suite's job, from a normal terminal.
+
+---
+
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after **finding 6 (egress fix)**: **101 files / 2,477 tests** —
-      **2,436 passed**, 40 skipped, and the one documented `soap.execute` flake
-      (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After step 3c: 101 / 2,471 —
-      2,430. After **step 3b-1 (the flip + the two hooks)**: 101 / 2,475 — 2,434. After step 3b-2:
-      101 / 2,471 — 2,430. After the step-3b inventory: 101 / 2,467 — 2,426. After step 3a: 101 /
-      2,464 — 2,423. After finding 1: 100 / 2,445 — 2,404. After step 2: 99 / 2,436 — 2,395. Before
-      step 2: 97 / 2,418. The "35 unit suites" this criterion used to say predated P2–P5 entirely.
-      *(3c is **−4**: the deleted vacuous forwarding tests. Finding 6 is **+6**. Both measured, not
-      inferred.)*
+- [ ] **Unit suites pass.** Baseline after **step 3b-3 (the last four artifact methods)**:
+      **101 files / 2,503 tests** — **2,462 passed**, 40 skipped, and the one documented `soap.execute`
+      flake (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After **finding 6 (egress
+      fix)**: 101 / 2,477 — 2,436. After step 3c: 101 / 2,471 — 2,430. After **step 3b-1 (the flip +
+      the two hooks)**: 101 / 2,475 — 2,434. After step 3b-2: 101 / 2,471 — 2,430. After the step-3b
+      inventory: 101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423. After finding 1: 100 / 2,445
+      — 2,404. After step 2: 99 / 2,436 — 2,395. Before step 2: 97 / 2,418. The "35 unit suites" this
+      criterion used to say predated P2–P5 entirely.
+      *(3b-3 is **+26**: 12 in the client suite, 11 in the shell-handler suite, 3 from the
+      channel-registration loop. 3c is **−4**: the deleted vacuous forwarding tests. Finding 6 is
+      **+6**. All measured, not inferred.)*
       *(3b-1 added **exactly +4** — the `client:writeArtifact` cases, the only genuinely new code in
       the step. Everything else moved rather than being written, and the flip itself added none, so
       the flip's own delta is zero. Measured, not inferred.)*
