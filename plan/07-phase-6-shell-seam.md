@@ -540,6 +540,109 @@ folder or workspace resolves `[]` rather than throwing; `loadConfig` returns the
 folder and `null` otherwise — the contract `listFolderIds` depends on. The suite still could not run
 (see §5c-i), so this remains **implemented, not suite-verified**.
 
+#### 5c-iii. Slice 3 — the four `folder.*` commands, and the suite comes back (2026-09-19)
+
+`folder.add` / `rename` / `move` / `delete` moved from module scope in
+`src/ipc/handlers/folderHandlers.ts` into `packages/engine/src/store/folderCommands.ts` behind
+`registerFolderCommands()`. **40 module-scope registrations remain.** Bodies verbatim, and the
+now-redundant local `FolderKind` union went with them — `packages/protocol/src/commands/folder.ts`'s
+`FolderKindValue` is the same 11-value enum, so the channel parameter is typed as the protocol's
+directly and the `as FolderKindValue` casts disappear. That is what P2 work item 7 meant by a "clean
+1:1", and it is the only slice so far where a type could be *deleted* rather than moved.
+
+**The channels delegate, so this slice carried the risk slice 2 did not.** `folderHandlers.ts`'s four
+`ipcMain.handle` bodies are thin `commandRegistry.invoke()` delegations. A delegating channel is only
+ever as alive as the registry behind it, so a suite that registers this handler group by hand *must*
+also call `registerFolderCommands()` — otherwise the channel exists with nothing behind it and fails
+as `No handler registered` at **invocation** time, which no compiler can see. Two suites register it by
+hand, so two needed the call (`foldersAndWorkspaces`, `protocolPoc`); both already had the pattern from
+slice 1. This is the same check slice 2 was decided by — **read the importer set first** — and here it
+came back non-empty.
+
+**The file is a two-store invariant, and that is why it is documented rather than merely moved.** Every
+one of the four has to keep `AppConfig`'s folder array (`FOLDER_CONFIG[kind].configKey` — what the
+renderer draws the sidebar from) in step with `index.json` in the workspace
+(`readIndex`/`writeIndex` — folders *and* the manual drag `order`, what the on-disk tree is derived
+from). `fsKind` is not derivable from `kind` (`ws` → `sockets`, `rule` → `rules`), so the table is
+copied rather than computed. Two behaviours are preserved deliberately: `folder.rename` and
+`folder.move` resolve `{ok: true}` **even when the id matches no folder** (the `if (f)` guards skip the
+work without telling the caller; the renderer's declared result is `{ok: boolean}`, so reporting a
+failure would be a contract change smuggled in under a move), and `rename`'s `renameSync` → `cpSync` +
+`rmSync` fallback stays verbatim, because on Windows a rename can fail across a lock.
+
+**The suite came back, and it immediately found a real defect in slice 1.** Slice 1 was committed
+during the outage and had never been suite-verified; on the first green run, 29 of
+`settingsMutations.integration.test.ts`'s 30 tests died with `Command "config.get" is already
+registered.` Slice 1 had added `registerCoreCommands(commandRegistry)` to that suite's **`beforeEach`**
+— and the registry is a module-level singleton with no `clear()`, while `register()` throws on a
+duplicate *on purpose* to catch double-registration. So it passes the first test and fails every one
+after. The channel layer is the opposite (the electron mock's `handlers` map is keyed by channel, so a
+second `ipcMain.handle` just overwrites), which is what makes the mistake look harmless. Fixed in
+`0160188` by moving the call to `beforeAll`, which is what the other four suites slice 1 touched
+already did. **This is the concrete cost of shipping a slice unverified, and the reason the step-3e
+entries below say "verified" or "not" explicitly.**
+
+**Measured, and it is the cleanest verification in the phase:** `npm run typecheck` → EXIT=0; full
+suite **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented environmental
+`soap.execute`). That is the recorded step-3d baseline **exactly**, so slices 1, 2 and 3 together
+produce **no test-count delta** — which is the evidence that three slices of "move the body, keep the
+channel" were behaviour-preserving. A delta here would have been a signal, not noise.
+
+#### 5c-iv. Slice 4 — the nine protocol-client commands (2026-09-19)
+
+`graphql.introspect` / `graphql.execute`, `soap.fetchWsdl` / `soap.execute` and the five `grpc.*`
+stubs moved out of the three `src/ipc/handlers/{graphql,soap,grpc}Handlers.ts` module scopes into
+`packages/engine/src/protocols/` — three new files, one `register*Commands()` each, all called from
+`src/ipc/handlers.ts`. **31 module-scope registrations remain** (`syncHandlers` 17,
+`applicationHandlers` 10, `entityCrudFactory` 4).
+
+The three files were grouped into one slice because they are one theme — the protocol request editors'
+Send buttons — and because the importer set is nearly identical: `protocolExecution` imports all three,
+`protocolPoc` imports two. Two suites to edit, both already `beforeAll` + dynamic-import from slices
+1 and 3. The shell-side CRUD collapse stays where it is in all three files: `add*`/`update*`/`delete*`
+route through `registerEntityCrudHandlers()` and the `add*`/`delete*`/`list*` trio through
+`registerSimpleEntityHandlers()`, and §5c's `^commandRegistry.register(` grep never counted those.
+
+**Two of the nine needed more than a cut-and-paste, and the hazard is one the compiler cannot see.**
+`graphql.*` and `soap.*` reached for their transport with `require("https")` / `require("http")`
+*inside the handler body*. That is fine in the shell, which is CJS — but `require` **does not exist in
+this package's ESM build output**, so a verbatim copy would have compiled, typechecked and passed every
+unit test, then thrown at *call* time in `dist/*.mjs`. This is exactly the defect `healthbar.checkUrl`
+was fixed for in the 3b-2 misc slice, and the same fix applies: static builtin imports. **Checked at
+the artifact rather than the source** — `grep -c 'require(' packages/engine/dist/protocols/*.mjs` is
+**0**, which is a check the source cannot give you, because the source is what lies.
+
+**This slice is verifiable in a way slice 2's was not, and the reason is the delegating channel.**
+`runnerHandlers.ts`'s three self-contained duplicates meant `runnerStorage.integration.test.ts` would
+have passed with the engine half wrong. Here every channel is a thin `commandRegistry.invoke()`, so a
+channel-driven test **is** a registry-driven test. `protocolExecution.integration.test.ts` drives all
+nine by channel against real local HTTP servers (GraphQL, SOAP, a WSDL GET) — 44/44 — and
+**mutation-checked**: commenting out `registerGrpcCommands(commandRegistry)` fails 4 tests with
+`No handler registered for command "grpc.execute"`. So the green is not vacuous; the suite really is
+reaching the registry and not a legacy duplicate. The general rule, now with evidence on both sides:
+*a delegating channel makes a move riskier (it can silently unregister) and simultaneously makes it
+testable (the channel test reaches the implementation).*
+
+Behaviours preserved deliberately, each documented in its module. `graphql.introspect` and
+`soap.fetchWsdl` **catch** and resolve `{ok:false, error}`, while `graphql.execute` and `soap.execute`
+**throw** — and because the transport hands a handler's value back *uninspected*, a resolved
+`{ok:false}` is an envelope **success** carrying a failed result, while a throw becomes a
+transport-level error. That asymmetry is also the whole explanation for the phase's one standing
+failure: `soap.execute` against a dead endpoint rejects, surfacing as `[INTERNAL] connect
+ECONNREFUSED 127.0.0.1:1`, whereas the sandbox the test was written in answered `127.0.0.1:1` with a
+synthetic 404 — so the request *succeeded* and the body carried a numeric `status`, which is what
+`tests/spike/protocolPoc.test.ts` asserts. Recorded in `plan/baseline.md` "Environment caveats"; not
+"fixed", because changing which of the two shapes `soap.execute` uses is a contract change. In the
+gRPC module: `grpc.mockServerStatus` resolves `{running:false, port:9102}` with **no `ok` field at
+all** and `9102` a hardcoded placeholder, and `grpc.stopMockServer` reports success for a server that
+was never started while `grpc.startMockServer` reports failure — asymmetric, and kept, because the
+renderer's Stop button depends on not being told it failed. All five gRPC bodies are deliberate stubs
+(`Cleanup_plan.md` §1.5 D6 disposition: wontfix), so moving them is not an invitation to implement
+them.
+
+**Measured:** `npm run typecheck` → EXIT=0; full suite **101 files / 2,508 tests — 2,467 passed, 40
+skipped, 1 failed**, again the exact baseline. **31 remain.**
+
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
 The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies
