@@ -8,6 +8,9 @@
  * legacy `ipcRenderer.invoke` contract for all 10 representative commands —
  * including the error and network-failure paths.
  *
+ * Two of the ten channels (`graphql:introspect`, `soap:execute`) were deleted in P6 stage 3b;
+ * `beforeAll` re-attaches them to their commands, with the exact bodies they had. See there.
+ *
  * SPIKE CODE — throwaway, do not productionise. Findings recorded in
  * `plan/spike-results.md`.
  */
@@ -213,7 +216,21 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerSoapCommands(commandRegistry);
     registerEntityCrudCommands(commandRegistry);
 
-    const transport = createInProcessTransport((channel) => registeredHandlers.get(channel));
+    // P6 stage 3b deleted two of the ten legacy channels this spike drives —
+    // `graphql:introspect` and `soap:execute` — because each was a one-line
+    // `commandRegistry.invoke()` adapter with no behaviour of its own. This spike's subject is the
+    // **envelope**, not the routing, so those two are re-attached here with *the exact bodies the
+    // channels had*. That also doubles as the check that the deletion lost nothing: the ten commands
+    // still answer identically, only two of them arrive by a shorter path.
+    const { bus } = await import("@bifurc/engine/eventBus");
+    const deletedChannelBodies: Record<string, (...args: any[]) => unknown> = {
+      "graphql:introspect": (_e, params) => commandRegistry.invoke("graphql.introspect", params, { bus }),
+      "soap:execute": (_e, params) => commandRegistry.invoke("soap.execute", params, { bus }),
+    };
+
+    const transport = createInProcessTransport(
+      (channel) => registeredHandlers.get(channel) ?? deletedChannelBodies[channel],
+    );
     client = createProtocolClient(transport);
   });
 
