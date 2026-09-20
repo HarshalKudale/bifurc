@@ -1096,6 +1096,43 @@ rather than silently applied, because the older docs still say six and someone w
 because a rename moves no test.** That is the expected outcome for this slice and the reason it was worth
 isolating: a pure rename with a *changed* suite count would have meant the rename broke something.
 
+#### 5b-nonies. The reduction's inventory, measured — 93 literal channels, and the docs' figures do not survive contact (2026-09-20)
+
+**Stage 3b changed what a `grep` can see.** Before it, `grep ipcMain.handle("` missed all **48** channels that
+`entityCrudFactory` generated — the undercount §5b-bis records, and the same shape as §5c's "five, actually
+51". Those channels are now deleted, so for the CRUD surface the literal grep is finally **complete**, and
+this is the first honest reading of what the reduction still has to deal with.
+
+**Measured: 93 literal `ipcMain.handle(` channels across 10 files.**
+
+| File | Channels |
+| --- | --- |
+| `src/ipc/handlers/syncHandlers.ts` | 19 |
+| `src/ipc/handlers/coreHandlers.ts` | 17 |
+| `src/ipc/handlers/clientHandlers.ts` | 17 |
+| `src/ipc/applicationHandlers.ts` | 10 |
+| `src/ipc/handlers/tlsHandlers.ts` | 6 |
+| `src/ipc/handlers/runnerHandlers.ts` | 6 |
+| `src/ipc/handlers/systemHandlers.ts` | 5 |
+| `src/ipc/handlers/crudHandlers.ts` | 5 |
+| `src/ipc/importExportHandlers.ts` | 4 |
+| `src/ipc/handlers/folderHandlers.ts` | 4 |
+
+(`src/ipc/rpcBridge.ts` registers `RPC_CHANNEL` as well, but that is the bridge itself, not a legacy
+channel — the reduction's subject, not its target.)
+
+**This reconciles with no figure currently in the plan, and that is the finding.** §5b-bis records *"132
+legacy channels (84 literal + 48 generated)"*. The 48 is now zero, so the literal remainder should be 84; it
+is **93**. Nine channels are unaccounted for. Two candidate mechanisms, neither verified: the audit's
+"literal" grep may have excluded the two files that sit one level up (`src/ipc/applicationHandlers.ts`,
+`src/ipc/importExportHandlers.ts`), or the surface moved between the audit and now.
+
+**So the reduction must not start from the documented figures.** Re-derive the classification from this
+inventory, and treat every number quoted out of §5b-bis as a *reading with a date*, not an invariant — which
+is the rule `TRAPS.md` now carries after this plan produced its third instance of the class. The classes
+themselves (DEAD PASSTHROUGH / SUPERSEDED SHELL HALF / LOCAL ALREADY ELSEWHERE) are still the right
+decomposition; only their sizes are in question, and the sizes are what decides the slicing.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
