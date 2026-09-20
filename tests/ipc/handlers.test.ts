@@ -298,12 +298,13 @@ describe("src/ipc/handlers.ts", () => {
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
      * the ratchet doing its job rather than a change to the assertion.
      *
-     * **What is left is not a backlog.** The remaining one is the `SPLIT`, pinned below with the
-     * reason a mechanical move is the wrong response. The other three are all **retired by widening the
-     * schemas they were blocked on**, not by moving them: `audit.list` (`NARROWED`, 2026-09-19) and
+     * **What is left is nothing.** The last entry was the `SPLIT`, and it is resolved as of
+     * 2026-09-20 — but **not by moving it and not by widening a schema**: the command was *deleted
+     * from the protocol*, because there turned out to be no engine half to contract with. See the
+     * rewritten `SPLIT` test below. The other three were all **retired by widening the schemas they
+     * were blocked on**, not by moving them: `audit.list` (`NARROWED`, 2026-09-19) and
      * `runner.saveConfig` / `runner.loadConfig` (`BLOCKED`, 2026-09-19). So step 3 now ends at
-     * **92 registered + 1 split**, and the last one is resolved by P12 (`app.checkUpdate`) rather than
-     * by more moving.
+     * **every protocol command registered**, with no pinned list at all.
      *
      * ## Why the list kept shrinking, and why every category is now gone
      *
@@ -318,7 +319,8 @@ describe("src/ipc/handlers.ts", () => {
      *   `BAD_REQUEST`. Needs a decision, not a move. → **widened.**
      * - `BLOCKED` — the schema rejects payloads that a **currently passing** test uses. → **widened.**
      * - `SPLIT` — the protocol declares an engine-half contract that deliberately differs from the
-     *   shell's implementation. Not a move at all. → **still here.**
+     *   shell's implementation. Not a move at all. → **resolved 2026-09-20 by deleting the command:
+     *   the whole operation is client-local, so there was no engine half.**
      *
      * Every retired category was deleted rather than left empty, and the reason is the same each time:
      * an empty array invites the next reader to file the next command that *looks* like it belongs
@@ -389,23 +391,32 @@ describe("src/ipc/handlers.ts", () => {
        */
 
       /**
-       * Not a move: `misc.ts` marks `app.checkUpdate` SPLIT, with the schema as "the interim
-       * engine-half contract" and a note that **P12 moves it fully client-side**. The disagreement
-       * `plan/07` recorded is therefore resolved by the protocol's own comment, and neither side was
-       * simply wrong: the GitHub fetch is engine-safe outbound network, while `app.getVersion()` and
-       * the `process.platform` asset match are client-local.
+       * `SPLIT` is **empty as of 2026-09-20**, and it is empty because the entry was *deleted* rather
+       * than moved — which is why the array is kept and asserted instead of being removed with it.
        *
-       * The concrete consequence is that `AppCheckUpdateResult` has no `currentVersion` and no
-       * `hasUpdate` — the two fields the shell handler's success branch returns — so the engine half
-       * cannot be produced by moving that body. It needs the split written, which is P12's job.
+       * `app.checkUpdate` was the surface's only `SPLIT`: `misc.ts` declared an "interim engine-half
+       * contract" and `plan/12` said to move it fully client-side. Resolving it showed there was no
+       * engine half to contract with. `currentVersion` is the version of the thing the **user** runs,
+       * and `downloadUrl` must be the asset for the **user's** platform — an engine matching its own
+       * `process.platform` hands a Windows user the AppImage. So the command left the protocol
+       * entirely and the key became `local` in `@bifurc/client`.
+       *
+       * The array survives for one reason: it is what fails if someone re-adds `app.checkUpdate` to
+       * the protocol without implementing it. A deleted entry that still has a live assertion is a
+       * guard; a deleted entry with nothing left behind is a hole.
        */
-      const SPLIT = ["app.checkUpdate"];
+      const SPLIT: string[] = [];
 
       const NOT_IN_REGISTRY = [...SPLIT];
 
-      it("implements every protocol command except the pinned list", async () => {
+      it("implements every protocol command — the pinned list is empty", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
         const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+
+        // Non-vacuity. An empty or unreadable `COMMANDS` would make the assertion below pass while
+        // checking nothing, and this is the one test that is supposed to notice a missing
+        // implementation.
+        expect(Object.keys(COMMANDS).length).toBeGreaterThan(80);
 
         const missing = Object.keys(COMMANDS)
           .filter((c) => !commandRegistry.isRegistered(c as never))
@@ -467,67 +478,97 @@ describe("src/ipc/handlers.ts", () => {
         expect(AuditListParams.safeParse({ fromTS: 1 }).success).toBe(false);
       });
 
-      it("records that the SPLIT command is a split rather than an unimplemented move", async () => {
-        // `app.checkUpdate` takes no params in its engine half, so nothing about it is schema-blocked
-        // — which is precisely why it must not be filed under `BLOCKED` or `MOVABLE`. The assertion
-        // that matters is that its engine-half schema is empty: the engine half is the GitHub fetch
-        // and nothing else, so any implementation that also computes `hasUpdate` is doing the client's
-        // job and will disagree with P12.
-        const { AppCheckUpdateParams } = await import("@bifurc/protocol");
+      it("records that the SPLIT was resolved by deletion, and cannot return silently", async () => {
+        // The old assertion here checked that `AppCheckUpdateParams` existed and was empty — it
+        // asserted the *interim* state, so it had to be rewritten the moment the split was resolved.
+        // These are the assertions that should have been written: the protocol has **no**
+        // `app.checkUpdate`, and the surface classifies `checkUpdate` as `local`.
+        //
+        // Both halves matter and they fail for different reasons. Re-adding the command to `COMMANDS`
+        // breaks the first — the loop above would then demand a registry implementation for a command
+        // that has none and should not have one. Re-classifying the surface key back to `transport`
+        // breaks the second. Either way the ratchet goes red naming the mistake, rather than a
+        // downstream `UNKNOWN_COMMAND` or a silent "up to date" in a shipped build.
+        const { COMMANDS } = await import("@bifurc/protocol");
+        const { SURFACE } = await import("../../packages/client/src/surface");
 
-        expect(AppCheckUpdateParams.safeParse({}).success).toBe(true);
-        expect(Object.keys(AppCheckUpdateParams.shape)).toEqual([]);
-        expect(SPLIT).toEqual(["app.checkUpdate"]);
+        expect(Object.keys(COMMANDS)).not.toContain("app.checkUpdate");
+        expect(SPLIT).toEqual([]);
+        expect(SURFACE.checkUpdate).toMatchObject({ kind: "local" });
       });
 
-      it("still serves every unregistered command on a legacy channel", async () => {
-        // The other half of the claim, and the reason step 3 cannot simply delete
-        // `registerIpcHandlers()`: each of these commands is *reachable* today, just not through the
-        // registry. If one lost its channel without gaining a registry entry, that method would stop
-        // working on **both** paths at once — a silent regression the surface test could not see,
-        // because the key would still be exposed.
+      it("leaves no command both unregistered and unreachable", async () => {
+        // This test used to iterate the pinned list. With that list empty it would now iterate
+        // **nothing and pass while checking nothing** — the "a guard that can silently match nothing
+        // is worse than no guard" failure `TRAPS.md` records. So it is rewritten around the
+        // *invariant* rather than around the list, and stays sharp however the list changes.
+        //
+        // The invariant: every protocol command is either served by the registry, or still has a
+        // legacy channel. A command that is neither is unreachable on both paths at once — a silent
+        // regression the surface test cannot see, because the key stays exposed either way.
         const { COMMANDS } = await import("@bifurc/protocol");
+        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
 
-        for (const command of NOT_IN_REGISTRY) {
+        const all = Object.keys(COMMANDS);
+        expect(all.length).toBeGreaterThan(80);
+
+        const unreachable = all.filter((command) => {
+          if (commandRegistry.isRegistered(command as never)) return false;
           const channel = (COMMANDS as Record<string, { legacyChannel?: string }>)[command]
             ?.legacyChannel;
-          expect(channel, `${command} has no legacyChannel in the protocol table`).toBeTruthy();
-          expect(registeredHandlers.has(channel!), `${command}'s channel "${channel}" is not registered`)
-            .toBe(true);
-        }
+          return !channel || !registeredHandlers.has(channel);
+        });
+
+        expect(unreachable).toEqual([]);
+
+        // Non-vacuity for the branch that carries the weight: this assertion is only interesting
+        // because the *registry* covers everything. If the channels were doing the covering instead,
+        // the registry would be short and the filter above would be exercising its fallback.
+        const registered = all.filter((c) => commandRegistry.isRegistered(c as never));
+        expect(registered.length).toBe(all.length);
       });
 
-      it("confirms the client claims every pinned command is routable, which is why the list matters", async () => {
-        // The finding in one assertion: the client classifies **every one** of these as `transport`
-        // or `shim` — a 1:1 mapping onto a protocol command — so it would call `registry.invoke()`
-        // for each and get `UNKNOWN_COMMAND`. So the client does not merely lack these methods; it
-        // *advertises* them.
+      it("every routed surface entry names a command the registry implements", async () => {
+        // This replaces "confirms the client claims every pinned command is routable", which
+        // iterated the pinned list and would now iterate nothing. The finding that test encoded —
+        // *the client advertises methods the registry cannot serve* — is closed, so the assertion
+        // worth keeping is its contrapositive, over a set that is never empty:
         //
-        // Note this holds for all four categories, including `SPLIT`: the client calling
-        // `checkUpdate()` and reaching `registry.invoke("app.checkUpdate")` is exactly the mismatch
-        // the protocol's "engine half" note describes.
+        //   for every surface entry classified `transport` or `shim`, the command it names is
+        //   registered.
+        //
+        // That is the invariant the ratchet existed to protect, stated directly rather than via a
+        // list of known offenders. It fails the moment a routed key is added whose command nobody
+        // implemented — the actual bug class — and the old list-based form could only catch that for
+        // commands already on the list.
         //
         // Imported relatively because `SURFACE` is not re-exported from the package root (only
         // `surface.ts` has it) and the alias in `vitest.config.ts` covers `@bifurc/engine/*` only.
         // Read-only data, so the relative hop costs nothing but honesty about where the contract lives.
         const { SURFACE } = await import("../../packages/client/src/surface");
+        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
 
-        const claimed = NOT_IN_REGISTRY.filter((command) =>
-          Object.values(SURFACE).some(
-            (e) => (e.kind === "transport" || e.kind === "shim") && e.command === command,
-          ),
-        ).sort();
+        const routed = Object.entries(SURFACE)
+          .filter(([, e]) => e.kind === "transport" || e.kind === "shim")
+          .map(([key, e]) => [key, (e as { command: string }).command] as const);
 
-        expect(claimed).toEqual([...NOT_IN_REGISTRY].sort());
+        // Non-vacuity: this set is the entire subject of the test, and an empty one would pass.
+        // Measured 2026-09-20: **75** entries (72 `transport` + 3 `shim`). A floor rather than the
+        // exact figure, because `packages/client/tests/surface.test.ts` already pins the per-kind
+        // counts exactly and this guard only needs to prove the set is populated. It was written as
+        // `> 80` first and failed at 75 — which is the guard doing its job on its author.
+        expect(routed.length).toBeGreaterThan(60);
 
-        // The disagreement `plan/07` recorded about `app.checkUpdate` — "shell half" per the plan,
-        // `transport` per the client — is **resolved by the protocol's own comment**, and neither side
-        // was simply wrong: `misc.ts` marks it SPLIT, the GitHub fetch being engine-safe outbound
-        // network and the `app.getVersion()` / `process.platform` comparison being client-local. So
-        // the client's classification is right *for now* (the engine half is reachable over a
-        // transport) and P12 moves it fully client-side. Asserted rather than left in prose because
-        // "one of the two is wrong" was the previous state and is no longer true.
-        expect(SURFACE.checkUpdate).toMatchObject({ kind: "transport", command: "app.checkUpdate" });
+        const unserved = routed
+          .filter(([, command]) => !commandRegistry.isRegistered(command as never))
+          .map(([key, command]) => `${key} → ${command}`);
+
+        expect(unserved).toEqual([]);
+
+        // The entry this test used to single out, now in its resolved form. `checkUpdate` is `local`
+        // and therefore deliberately absent from `routed` above — which is the whole point of the
+        // reclassification, so it is asserted rather than left implied.
+        expect(SURFACE.checkUpdate).toMatchObject({ kind: "local" });
       });
 
       /**
