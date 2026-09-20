@@ -88,15 +88,16 @@ Every one of them takes an explicit `workspaceId`. Generalising that to the serv
 - The proxy server + its port.
 - The webhook receiver + its port.
 - Import/export for that workspace's entity kinds (already true).
-- Its git store, sync, blob staging (already per-workspace on disk: `<dataRoot>/<wsId>/…`,
-  `store/workspaceFs.ts:46-50,71-102`).
-  > ⚠ **Corrected 2026-09-20 — the parenthetical is true of the git store and sync, and FALSE of blob
-  > staging.** `blobRoot()` is `<dataDir>/blobs` (`packages/engine/src/blob/store.ts:140-142`) and the four
-  > `blob.*` commands carry no `workspaceId` (`packages/protocol/src/commands/blob.ts:106,140,159,181`) —
-  > a **host-wide** namespace, pinned by `tests/blob/store.test.ts:62` for the Docker-volume requirement.
-  > Blob staging is therefore a third app-level thing, and this document's §2.3 table has no row for it.
-  > See **§12.1** for the measurement, the three costs under N > 1, and the two fix shapes (this is a
-  > decision, not a fix).
+- Its git store, sync, blob staging — the first two are *already* per-workspace on disk
+  (`<dataRoot>/<wsId>/…`, `store/workspaceFs.ts:46-50,71-102`); **blob staging is not, and D17 makes it so**.
+  > ⚠ **Corrected 2026-09-20 — this bullet originally read as if all three were already per-workspace, and
+  > the blob half was FALSE.** `blobRoot()` was `<dataDir>/blobs`
+  > (`packages/engine/src/blob/store.ts:140-142`) and the four `blob.*` commands carried no `workspaceId`
+  > (`packages/protocol/src/commands/blob.ts:106,140,159,181`) — a **host-wide** namespace, pinned by
+  > `tests/blob/store.test.ts:62` for the Docker-volume requirement. **D17 settled it: blob staging is
+  > namespaced per workspace** (`blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, `workspaceId` on the four
+  > params, a per-runtime sweeper), landing with WI 1 / WI 8. The measurement, the three costs under N > 1
+  > and the rejected alternative are in **§12.1**.
 - Its own server error state.
 
 ### 2.3 The split, stated as a table
@@ -107,6 +108,7 @@ Every one of them takes an explicit `workspaceId`. Generalising that to the serv
 | Webhook receiver | app singleton, global port, keyed by `urlSuffix` | per workspace, per-workspace port, keyed by `(workspaceId, urlSuffix)` |
 | Companion server | engine singleton, global port | **unchanged — app level** |
 | Import/export | engine, already takes `workspaceId` | unchanged, now provably reachable without the app half |
+| Blob staging | engine, **host-wide** `<dataDir>/blobs`, no `workspaceId` | **per workspace (D17)** — `<dataDir>/blobs/<wsId>/`, `workspaceId` on the four `blob.*` params, per-runtime sweeper |
 | `activeWorkspaceId` | global setting, **read by the proxy** | client/session pointer; servers no longer read it |
 | `port` / `webhookPort` | `AppSettings` scalars | host-local, per-workspace |
 | `companionPort` | `AppSettings` scalar | **unchanged — app level** |
@@ -134,6 +136,7 @@ Recorded in `00-decisions.md`'s log; the full rationale lives here (D10–D16 ar
 | **D14** | **P6 work item 2 (process split) downgraded** — desktop stays in-process; supervision moves to the workspace host | Removes 4 carried criteria from P6's gate |
 | **D15** | **CLI deferred (P8 parked)** — two shapes recorded, decided after P14 | See §7 |
 | **D16** | **A workspace's proxy takes a per-environment base port — `80` on Windows, `8080` elsewhere — then counts up** | Per-workspace ports become representable; `plan/10` corrected |
+| **D17** | **Blob staging is namespaced per workspace** — `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, `workspaceId` on the four `blob.*` params, a per-runtime sweeper | Blobs stop being a host-wide namespace; rationale and the rejected alternative in §12.1 |
 
 ### D16 — DECIDED 2026-09-20: a per-environment base port, then count up
 
@@ -226,6 +229,11 @@ out in a day rather than in week three.**
   `const BASE = process.platform === "win32" ? 80 : 8080`. If per-platform logic appears anywhere else in
   the allocator, D16 has been mis-implemented — the whole point of the base-port rule is that the increment
   is identical everywhere.
+- **Namespace the blob root (D17).** `blobRoot()` becomes `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`,
+  `workspaceId` is added to `blob.put` / `blob.stat` / `blob.read` / `blob.release`, and the sweeper becomes
+  per-runtime so a `WorkspaceRuntime.stop()` can release its own staging. **The root must stay under
+  `dataDir()`** — that is the Docker-volume requirement, and it is pinned by a test
+  (`tests/blob/store.test.ts:62`), so the change is a *namespace*, not a move.
 - Add a **reserved-port set** the scan must skip: the companion port, the RPC port, the gRPC placeholder
   (`9102`), and every other runtime's resolved proxy and webhook ports. Without it the allocator will
   happily hand a workspace the port the companion server is about to want. Note the interaction: with a
@@ -345,7 +353,9 @@ all line up. This is why P9 moves *after* this phase.
 
 ### Work item 8 — protocol changes and the compatibility record
 
-- Every changed command name and shape into `plan/protocol-changes.md`.
+- Every changed command name and shape into `plan/protocol-changes.md`. **Four of them are the `blob.*`
+  params gaining a required `workspaceId` (D17)** — which also invalidates their `invalid` fixtures, so
+  re-derive those rather than trusting them (`TRAPS.md`).
 - **Verify the extension's four frozen commands are untouched** (`mock:add`, `request:add`, `folder:add`,
   `config:get` — `src/companion/allowedActions.ts`, and they are not in the changed namespaces). Assert it
   by name rather than by argument.
@@ -452,6 +462,12 @@ the engine — which is consistent with D10.
       workspaces.
 - [ ] The webhook receiver routes by `(workspaceId, urlSuffix)`: a suffix registered in workspace A is
       `404` in workspace B.
+- [ ] **Blob staging is per workspace (D17):** a blob `put` by workspace A is *not found* when `read` with
+      workspace B's `workspaceId` — asserted on identity (the blob exists under A and not under B), not on a
+      value both could share. And the blob root is still under `dataDir()`: `<dataDir>/blobs/<wsId>/`, so
+      `path.relative(dataDir(), blobRoot(wsId))` never starts with `..`.
+- [ ] **A `WorkspaceRuntime.stop()` releases its own staging** — the sweeper is per-runtime, so stopping A
+      does not stop B's, and A's in-flight blobs are not collected by B's sweep.
 - [ ] `server.status` reports the port and the error of the **requested** workspace, not of the last one
       started.
 - [ ] A workspace host starts with **no Electron and no companion server** — assert the companion port is
@@ -576,11 +592,12 @@ or a restart loses every in-flight transfer. That is what the pinning test is fo
 - **(b) Declare it app-level**, like the companion server: correct §2.2, leave the namespace and the sweep
   host-wide, and say so.
 
-**Recommendation: (a)** — import/export is the layer §1.2 cites as *already* workspace-scoped, and it is the
-blob layer's only real consumer, so the two should agree. But it is a breaking protocol change, so it belongs
-with WI 1 and WI 8 rather than being slipped in. **Until the owner decides, §2.2's parenthetical is wrong and
-is annotated as such** — a wrong premise in a plan regenerates the bug it hides, exactly as `TRAPS.md`
-records for a wrong docblock.
+**DECIDED 2026-09-20 — shape (a), recorded as D17.** The owner chose the namespace on the reasoning that
+import/export is the layer §1.2 cites as *already* workspace-scoped and is the blob layer's only real
+consumer, so the two should agree. It is a breaking protocol change, so it lands with WI 1 and WI 8 rather
+than being slipped in; **§2.2 and §2.3 are updated to the decided shape** rather than to a warning, because a
+plan that still reads as unresolved is the same hazard as one that reads as correct — the next author
+implements whichever they read first.
 
 ### 12.2 P2's `createEngine()` is the pre-pivot composition — the whole inventory, in one function
 
