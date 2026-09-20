@@ -542,3 +542,30 @@ Two rules: **check a row's pipe count against its siblings before trusting a cel
 rows with a script that cuts after the *n*-th pipe (preserving the first *n* cells byte-for-byte) rather than
 with a literal match — the earlier session's script got two rows wrong for exactly this reason, and a
 rendered table gives no signal.
+
+**Corrected 2026-09-20 (P6 stage 3b slice 2), because the `|` half of the entry above is overstated.** The
+pipes inside those Notes cells are **escaped** — `[<>:"/\|?*\x00-\x1f]`, `\|\| "unnamed"` — and `\|` renders
+as a literal pipe *without* ending the cell. So the escape is not the defect; the **unescaped** pipe is. P6's
+row carried exactly two (`graphql:introspect|execute`, `soap:fetchWsdl|execute`), which pushed its notes into
+extra columns; both are now `\|`. The corollary is a false-alarm source: a naive `row.count("|")` counts
+escaped pipes too, so P6 measured **12** when only **2** were wrong, and P3/P4 measured 10/17 with **zero**
+real defects. Count with `(?<!\\)\|` instead — a well-formed row is exactly the table's column count, 6 here.
+
+## One `it` per array entry makes a deletion look like lost coverage
+
+Found 2026-09-20 finishing P6 stage 3b. `tests/ipc/handlers.test.ts` builds `expectedChannels` and then
+`for (const channel of expectedChannels) it(\`registers a handler for "${channel}"\`, …)` — at `describe`
+level, so **each array entry is its own test**. Deleting 18 channel names therefore removed **18 tests**, and
+the suite delta read `−18 tests / −18 passed`, which looks exactly like a deletion pass that threw away
+coverage.
+
+It had not. Those channels no longer exist, so a test asserting a handler for them would assert the *absence*
+of the thing the list exists to check. **The rule: before reading a suite delta as lost coverage, find out
+whether the removed cases were *generated from a data list*.** The signature is a delta that is an exact
+multiple of the list you edited, with `failed` unchanged. Contrast the same pass's slice 1, where the delta
+was **0** because those 19 cases were *re-pointed* at the surviving path rather than deleted — a re-point
+preserves the count, a generated list shrinks with it.
+
+And pair it with the inverse check: the deletion *did* break two cases, in a different file, and the count
+went **up** (`1 failed` → `3 failed`). Both halves are needed — neither a delta of 0 nor one of −18 is
+evidence on its own; the mechanism is.
