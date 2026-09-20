@@ -1133,6 +1133,80 @@ is the rule `TRAPS.md` now carries after this plan produced its third instance o
 themselves (DEAD PASSTHROUGH / SUPERSEDED SHELL HALF / LOCAL ALREADY ELSEWHERE) are still the right
 decomposition; only their sizes are in question, and the sizes are what decides the slicing.
 
+#### 5b-decies. The reduction's classification, measured — 93 = 18 live + 75 dead, with a 7-channel risk subset (2026-09-20)
+
+**The method is the finding: this is decidable by construction, and §5b-bis did not need to read the
+channels to decide it.** `src/preload.ts:110` is `contextBridge.exposeInMainWorld("api", { ...client })`, so
+`window.api` **is** the client. And `packages/client/src` contains **no `:`-separated channel literal at
+all** — measured, zero — because the client reaches the engine through one transport channel, `engine:rpc`.
+So the only renderer-reachable path that can still *name* a legacy channel is the `local` block in
+`src/preload.ts`, and it names exactly 18:
+
+```
+zoom:get · zoom:set · theme:get · theme:set · shell:openExternal · shell:setTitleBarOverlay
+dialog:pickFilePath · dialog:pickFolderPath · dialog:openFile · app:isFirstLaunch · app:completeFirstLaunch
+tls:installCA · client:tlsCertStatus · client:tlsRemoveCert · client:pickSavePath · client:writeArtifact
+client:readArtifactFile · app:checkUpdate
+```
+
+**Therefore 93 literal channels = 18 live + 75 dead**, and the split is by file and clean — no file is
+mixed except one:
+
+| File | dead | live |
+| --- | --- | --- |
+| `src/ipc/handlers/syncHandlers.ts` | 19 | 0 |
+| `src/ipc/handlers/coreHandlers.ts` | 17 | 0 |
+| `src/ipc/handlers/clientHandlers.ts` | **0** | **17** |
+| `src/ipc/applicationHandlers.ts` | 10 | 0 |
+| `src/ipc/handlers/runnerHandlers.ts` | 6 | 0 |
+| `src/ipc/handlers/tlsHandlers.ts` | 6 | 0 |
+| `src/ipc/handlers/crudHandlers.ts` | 5 | 0 |
+| `src/ipc/handlers/systemHandlers.ts` | 4 | 1 (`app:checkUpdate`) |
+| `src/ipc/handlers/folderHandlers.ts` | 4 | 0 |
+| `src/ipc/importExportHandlers.ts` | 4 | 0 |
+
+`clientHandlers.ts` is **17 live / 0 dead** — it is the `local` surface itself, and it is the one file the
+reduction must not touch. There are also **no `ipcMain.on(` registrations anywhere in `src/`** (measured), so
+there is no event-based legacy surface hiding behind the 7 `subscribe` keys: those are all main→renderer
+`webContents.send`, which is not a channel. `src/ipc/rpcBridge.ts` registers exactly one channel,
+`RPC_CHANNEL` — the bridge, i.e. the reduction's *subject*, not its target.
+
+**This reconciles §5b-bis, and it is the first time those numbers have.** §5b-bis's classes were not
+disjoint as written — "DEAD PASSTHROUGH ~120 / SUPERSEDED SHELL HALF 9 / LOCAL ALREADY ELSEWHERE 15" sums to
+144 against a stated 132. The measured decomposition is disjoint and complete: **75 dead + 18 live = 93**,
+and stage 3b deleted the 48 generated channels, so 93 + 48 = 141 — within the same slack as "~120".
+
+**The risk subset is 7 channels, and reachability cannot decide them.** A dead channel is not automatically
+a *behaviour-free* channel. 7 of the 75 own a shell-side step that the client has to already provide — the
+lesson `tlsRemoveCert` taught, where deleting the channel deleted the engine's keypair and left the OS trust
+store trusting the CA. Found by mapping every `dialog.showSaveDialog` / `showOpenDialog` /
+`app.getVersion()` site to its enclosing handler:
+
+| Channel | Owns |
+| --- | --- |
+| `runner:exportReport` | `dialog.showSaveDialog` |
+| `audit:export` | `dialog.showSaveDialog` |
+| `capture:shareJson` | `dialog.showSaveDialog` |
+| `tls:exportCert` | `dialog.showSaveDialog` |
+| `tls:importKey` | `dialog.showOpenDialog` |
+| `importExport:export` | `dialog.showSaveDialog` |
+| `importExport:preflight` | `dialog.showOpenDialog` |
+
+**§5b-bis's "9 superseded shell halves" is exactly these 7 plus the 2 `tls` channels** — and the `tls` pair
+is now `local` (live), which is why that audit's class-2 count moved 9 → 11 while the *dead* subset is 7.
+That reconciliation is what makes this measurement usable where the earlier one was not.
+
+**So the reduction is three decidable steps, and the first is a check, not a deletion:**
+
+1. **Confirm the client twin for each of the 7** — that the surface key which replaced it really does the
+   dialog (`pickSavePath` / `readArtifactFile`) *and in the right order* (`File_Ops_Protocol.md` §3.2). One
+   of the seven has already been caught this way and fixed: `audit.export` had taken the artifact-first
+   default, undoing P3's dialog-first ordering for the one egress artifact with no size ceiling.
+2. **Delete the other 68 as pure passthroughs**, per file, re-pointing the suites that drive them — the
+   test-migration rule §5b-ter established, and the unit is the handler group.
+3. **Leave `clientHandlers.ts` alone.** It holds 17 of the 18 live channels; they are what `window.api`
+   actually invokes.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
