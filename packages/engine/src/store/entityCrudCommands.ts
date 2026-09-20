@@ -13,10 +13,12 @@
  * some channels, and the two halves could be separated by moving the registrations and leaving the
  * channels behind. This file is not that. It is a **factory split across the seam**:
  *
- *  - `registerEntityCrudHandlers(opts)` / `registerSimpleEntityHandlers(opts)` are called from **six
+ *  - `registerEntityCrudHandlers(opts)` / `registerSimpleEntityHandlers(opts)` were called from **six
  *    shell handler files** (`coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`,
- *    `soapHandlers`, and one more kind each way). They do two unrelated things: they insert the kind's
- *    options into a module-level container, **and** they install three `ipcMain.handle` channels.
+ *    `soapHandlers`, and one more kind each way). They did two unrelated things: they inserted the
+ *    kind's options into a module-level container, **and** they installed three `ipcMain.handle`
+ *    channels. **Stage 3b (2026-09-20) deleted the second half**, and the wrappers with it — the six
+ *    files now call `registerCrudKind()` / `registerSimpleKind()` directly.
  *  - The four commands read that container **at invoke time** and dispatch to whichever kind's options
  *    are in it.
  *
@@ -28,10 +30,15 @@
  *
  * The resolution is to invert the population direction: this module owns the containers, and the shell
  * files reach them through `registerCrudKind()` / `registerSimpleKind()` — the **engine half** of the
- * two factory functions. `registerEntityCrudHandlers` / `registerSimpleEntityHandlers` stay in the
- * shell (they own `ipcMain`), call into the engine, and keep their signatures **byte-identical**, so
- * **none of the six caller files needed an edit**. That is the property to check first when a factory
- * — rather than a command list — is what has to move.
+ * two factory functions. At that slice the wrappers stayed in the shell (they owned `ipcMain`), called
+ * into the engine, and kept their signatures **byte-identical**, so **none of the six caller files
+ * needed an edit**. That is the property to check first when a factory — rather than a command list —
+ * is what has to move.
+ *
+ * **Stage 3b then deleted the shell half**, so the six files import from here directly. The split could
+ * not be skipped: the wrappers did the container insert *as well as* the channels, so deleting them
+ * outright would have left all 16 kinds throwing `"<kind>" is not routed through the CommandRegistry
+ * yet` — the same message a genuinely unregistered kind throws (`plan/07` §5b-ter).
  *
  * ## The two containers are now private, and that is unobservable
  *
@@ -108,7 +115,7 @@ import { toEngineKind } from "../commands/entityKindMap";
 import { gateCreate } from "../subscription/entityCount";
 
 /** The shape every CRUD-factory entity satisfies — pulled out so the extracted `*Core`
- * functions below can share it with `registerEntityCrudHandlers`'s own generic constraint. */
+ * functions below can share it with `registerCrudKind`'s own generic constraint. */
 export type EntityBase = { id: string; workspaceId?: string; folderId?: string | null; enabled?: boolean; createdAt?: number };
 
 /** Every kind registered via `registerCrudKind()`, keyed by its engine-internal storage `kind` string
@@ -129,22 +136,20 @@ export interface CrudFactoryOpts<T> {
   kind: string;
   configKey: keyof AppConfig;
   folderConfigKey?: keyof AppConfig;
-  // ── Shell-only, and on their way out ────────────────────────────────────────────────────────────
+  // ── The five `ipc*` fields are gone (2026-09-20, P6 stage 3b) ───────────────────────────────────
   //
-  // These five are **IPC channel names**, which is shell vocabulary. Nothing in this module reads them
-  // any more: the three sites that used to branch on `ipcPrefix` now branch on `kind` (2026-09-20 —
-  // see the prepend in `createEntityCore`, the `entity.changed` ping, and the mapping cascade in
-  // `deleteEntityCore`). What still reads them is `src/ipc/handlers/entityCrudFactory.ts`, which builds
-  // its channel names from them. They die with those channels in P6 step 3's deletion pass.
+  // `ipcPrefix` / `ipcAdd` / `ipcUpdate` / `ipcDelete` were **IPC channel names** — shell vocabulary —
+  // and they died with the per-kind channels in `src/ipc/handlers/entityCrudFactory.ts`.
   //
-  // Worth recording why they were wrong to begin with: `ipcPrefix` was a *behavioural discriminator*
-  // living in the engine while being named for the shell. It worked only because the shell happened to
-  // name its channels after the kinds, which is exactly the kind of coupling a containerised engine
-  // (P9) cannot carry.
-  ipcPrefix?: string;
-  ipcAdd?: string;
-  ipcUpdate?: string;
-  ipcDelete?: string;
+  // Keep the history, because it is the trap this interface carried: `ipcPrefix` was **not**
+  // decorative. The engine branched on it as a *behavioural discriminator* — the prepend in
+  // `createEntityCore`, the `entity.changed` ping, and the mapping cascade in `deleteEntityCore`. It
+  // worked only because the shell happened to name its channels after the kinds, which is exactly the
+  // coupling a containerised engine (P9) cannot carry. Stage 3a (2026-09-20) translated those three
+  // reads to `opts.kind` — an exact equivalence, since `ipcPrefix` was `"rule"` / `"mock"` /
+  // `"request"` / `"mapping"` on exactly those registrations and no others — and stage 3b then deleted
+  // the fields. **Deleting them first would have silently killed all three behaviours**, and nothing
+  // in the suite was pinning two of them (`TRAPS.md`).
   isFlat?: boolean; // If true, uses writeFlatEntity/deleteFlatEntityFile instead of writeEntity/deleteEntityFile
   hasEnabledState?: boolean;
   validate?: (entity: Partial<T>) => void;
@@ -161,19 +166,18 @@ export interface CrudFactoryOpts<T> {
 export interface SimpleEntityOpts {
   /** Engine-internal storage kind, e.g. `"graphqlSchemas"`. */
   kind: string;
-  ipcAdd: string;
-  ipcDelete: string;
-  ipcList: string;
+  // The three channel-name fields went with `CrudFactoryOpts`' five — same commit, same reason.
 }
 
-/** The engine half of `registerEntityCrudHandlers()` — the shell keeps the three `ipcMain.handle`
- * channels and calls this for the container insert. Split deliberately: the container is engine state,
- * and letting the shell mutate it directly is what made this file's dependency direction wrong. */
+/** The container insert for a full-CRUD kind. Called directly by the six shell `*Handlers.ts` files
+ * since stage 3b deleted `registerEntityCrudHandlers()` — the wrapper that used to hold this call and
+ * the three `ipcMain.handle` channels. Split deliberately: the container is engine state, and letting
+ * the shell mutate it directly is what made this file's dependency direction wrong. */
 export function registerCrudKind<T extends EntityBase>(opts: CrudFactoryOpts<T>): void {
   entityCrudRegistry.set(opts.kind, opts);
 }
 
-/** The engine half of `registerSimpleEntityHandlers()` — see `registerCrudKind()`. */
+/** The container insert for a no-`AppConfig`-array kind — see `registerCrudKind()`. */
 export function registerSimpleKind(opts: SimpleEntityOpts): void {
   simpleEntityKinds.add(opts.kind);
 }
@@ -187,11 +191,12 @@ async function isGitTracked(wsId: string, relPath: string): Promise<boolean> {
   }
 }
 
-// ── Core logic, extracted so both the legacy per-kind `ipcMain.handle` channels and the
-// collapsed `entity.create`/`entity.update`/`entity.delete` commands below share one
-// implementation (P2 work item 7's "CRUD collapse" — see `registry.ts`'s own status note). Each
-// function's body is byte-for-byte what used to live directly inside the corresponding
-// `ipcMain.handle` callback; nothing here changes behaviour, only where the code lives.
+// ── Core logic, extracted so the legacy per-kind `ipcMain.handle` channels and the collapsed
+// `entity.create`/`entity.update`/`entity.delete` commands below could share one implementation
+// (P2 work item 7's "CRUD collapse" — see `registry.ts`'s own status note). Each function's body is
+// byte-for-byte what used to live directly inside the corresponding `ipcMain.handle` callback;
+// nothing here changes behaviour, only where the code lives. **The channels are gone as of stage 3b**,
+// so the four commands below are the only caller left — which is what the extraction was for.
 
 /**
  * `mayResolveConflicts` is **required** rather than defaulted, so a new caller has to decide instead of

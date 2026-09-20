@@ -22,7 +22,7 @@ import { gateCreate } from "@bifurc/engine/subscription/entityCount";
 import { invalidateCache } from "@bifurc/engine/sync/statusTracker";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
 import { toProtocolKind } from "@bifurc/engine/commands/entityKindMap";
-import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
+import { registerCrudKind } from "@bifurc/engine/store/entityCrudCommands";
 
 // ## The five commands that used to be registered here (P6 §5c, moved 2026-09-19)
 //
@@ -91,9 +91,8 @@ export function registerCoreHandlers() {
   // state) plus one thing none of the twelve original CRUD kinds needed: a create-gate check
   // (`gateKind`, consulted by `entity.create`'s registered handler) and two environment-only
   // delete-time quirks (the "__global__" guard and the active-environment reset), both now
-  // handled inside `entityCrudFactory.ts` itself, keyed off `opts.kind === "environments"`.
-  registerEntityCrudHandlers<Environment>({
-    ipcPrefix: "env",
+  // handled inside the engine's `entityCrudCommands.ts`, keyed off `opts.kind === "environments"`.
+  registerCrudKind<Environment>({
     kind: "environments",
     configKey: "environments",
     isFlat: true,
