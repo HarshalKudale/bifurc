@@ -78,6 +78,7 @@ function engineRegistry(): CommandRegistry {
 function stubLocal(): ClientLocal {
   const no = () => Promise.reject(new Error("not used in this file"));
   return {
+    checkUpdate: no as never,
     openExternal: no as never,
     setTitleBarOverlay: no as never,
     getTheme: no as never,

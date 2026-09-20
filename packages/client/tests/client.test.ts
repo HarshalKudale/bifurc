@@ -73,6 +73,19 @@ function fakeTransport(): FakeTransport {
 function fakeLocal() {
   const seen: string[] = [];
   const local: ClientLocal = {
+    // `checkUpdate` is `local` as of 2026-09-20 — the surface's only `SPLIT` resolved to the client
+    // rather than to an engine command, so it is a member here like the other thirteen.
+    checkUpdate: async () => {
+      seen.push("checkUpdate");
+      return {
+        ok: true,
+        hasUpdate: false,
+        currentVersion: "0.0.0",
+        latestVersion: "0.0.0",
+        downloadUrl: "https://example.invalid/releases",
+        releaseUrl: "https://example.invalid/releases",
+      };
+    },
     openExternal: async (url) => void seen.push(`openExternal:${url}`),
     setTitleBarOverlay: async () => {
       seen.push("setTitleBarOverlay");

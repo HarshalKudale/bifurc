@@ -94,11 +94,17 @@ describe("the window.api surface", () => {
     }
   });
 
-  it("keeps dialogs, zoom, theme and trust-store operations off the transport", () => {
+  it("keeps dialogs, zoom, theme, trust-store and the update check off the transport", () => {
     /**
      * The acceptance criterion "client-local methods are not routed over the transport". These
      * are operations on the *client's own machine*; on a remote engine they are meaningless at
      * best and a security hole at worst (`tlsInstallCA` mutates the OS trust store).
+     *
+     * `checkUpdate` joined this list on 2026-09-20, when it stopped being the surface's only `SPLIT`.
+     * It belongs here for a different reason than the rest — not "it would be a security hole" but
+     * "no engine can answer it correctly": `currentVersion` is the version of the thing the *user*
+     * runs, and `downloadUrl` must be the asset for the *user's* platform. An engine matching its own
+     * `process.platform` hands a Windows user the AppImage.
      */
     const mustBeLocal = [
       "openFileDialog",
@@ -114,6 +120,7 @@ describe("the window.api surface", () => {
       "platform",
       "isFirstLaunch",
       "completeFirstLaunch",
+      "checkUpdate",
     ];
     for (const key of mustBeLocal) {
       expect(SURFACE[key].kind, key).toBe("local");
@@ -124,11 +131,16 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 73 transport + 48 entity + 7 subscribe + 3 shim + 13 local = 144
-    expect(byKind("transport")).toBe(73);
+    // 72 transport + 48 entity + 7 subscribe + 3 shim + 14 local = 144
+    //
+    // `transport` 73 → 72 and `local` 13 → 14 on 2026-09-20: `checkUpdate` was the surface's only
+    // `SPLIT` and is now `local`. Both figures are asserted because the sum is what proves nothing
+    // was dropped in the move — a key that vanished would keep this test green only if some other
+    // count happened to absorb it, which the total below rules out.
+    expect(byKind("transport")).toBe(72);
     expect(byKind("entity")).toBe(48);
     expect(byKind("subscribe")).toBe(7);
     expect(byKind("shim")).toBe(3);
-    expect(byKind("local")).toBe(13);
+    expect(byKind("local")).toBe(14);
   });
 });
