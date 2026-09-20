@@ -18,9 +18,10 @@ ledger → `plan/07`; procedures → the `bifurc-*` skills.
 - **P0–P2 done, P3 items 1–6 done** (item 5 open as *UI* → P7). **P4 8/10** — the extension release and
   an audit record, neither code here. **P5 done** — spec = `src/surface.ts` (144 keys);
   **`src/preload.ts` is the authority, not `renderer/types/window.ts`**; `close()` non-enumerable.
-- **P6 CLOSED IN SCOPE 2026-09-20** (steps 1–2, findings 1/6, 3a, 3b-1/2/3, 3c, 3d, 3e slices 1–7, work
-  items 4–5). 143 of 144 keys route; `checkUpdate` SPLIT → P12, so `registerIpcHandlers()` can't be
-  deleted yet. The e2e fixture asserts its own data-dir isolation; on win32 `dataRoot()` ≠ `dataDir()`,
+- **P6 CLOSED IN SCOPE 2026-09-20** (steps 1–2, findings 1/6, 3a, 3b-1/2/3, 3c, 3d, 3e slices 1–7, 3f,
+  work items 4–5). **144 of 144 keys classified, zero `SPLIT`.** `registerIpcHandlers()` is **reduced,
+  not deleted** — the local entry point already exists *beside* it (`registerClientHandlers()`,
+  `main.ts:294`). The e2e fixture asserts its own data-dir isolation; on win32 `dataRoot()` ≠ `dataDir()`,
   both in temp (`TRAPS.md`). **Gate re-scoped by the owner's decision** (`plan/07` Acceptance criteria):
   criteria 5–8 **moved verbatim to work item 2**; 10 reworded ("contains the engine binary" is unmeetable
   in-process → "the packaged bundle resolves the engine from the asar"); 11 (`BIFURC_ENGINE_RPC=0`)
@@ -37,12 +38,23 @@ ledger → `plan/07`; procedures → the `bifurc-*` skills.
 - **§5c pass COMPLETE (2026-09-19), guarded (`plan/07` §5c-viii).** All **51** commands (not the 5 the
   section records) are registered by an explicit `register*Commands()` call from `registerIpcHandlers()`;
   a static test fails on any module-scope registration. **Count by grep, never by test** — the ratchet is
-  blind to the defect but sharp on the *move* (`TRAPS.md`). Step 3 needs `checkUpdate` (P12) + the dead
-  `src/ipc/importExportHandlers.ts`.
-- **`checkUpdate` is a protocol decision, not a move** (its frozen result lacks
-  `currentVersion`/`hasUpdate`) → P12; `listAudit` + the two `runner.*Config` were **schema** problems,
-  retired by widening. Dead on disk until the `src/` wipe: `src/ipc/importExportHandlers.ts`,
+  blind to the defect but sharp on the *move* (`TRAPS.md`). Step 3's remaining work is the reduction of
+  `registerIpcHandlers()` plus the dead `src/ipc/importExportHandlers.ts` — both unblocked, but see
+  §5b-bis before starting.
+- **All four pinned keys are resolved — nothing is outstanding.** `listAudit` + the two `runner.*Config`
+  were **schema** problems retired by widening (step 3d). `checkUpdate` was resolved 2026-09-20 (step 3f)
+  by **deleting `app.checkUpdate` from the protocol** and making the key client-local — so it was never
+  P12's, and its frozen result's missing `currentVersion`/`hasUpdate` is moot. Recorded in
+  `plan/protocol-changes.md`. Dead on disk until the `src/` wipe: `src/ipc/importExportHandlers.ts`,
   `handlers/utils.ts`.
+- **§5b-bis (2026-09-20) — the step-3 reduction is an audit, not a deletion pass.** The 12 legacy files
+  hold **132** channels: 84 literal + **48 generated** by `entityCrudFactory`, invisible to
+  `grep ipcMain.handle("` and exactly the surface's 48 `entity` keys. **9 are superseded shell halves**
+  owning a `dialog.*` / `app.getVersion()` step the client now does via `pickSavePath` /
+  `readArtifactFile` — each needs its client-side twin confirmed before deletion, and deleting
+  `tls:certStatus`'s channel today would delete the only producer of `trustState`. **`fileOpsClient.ts`
+  survives** (live via `mimeFor` + `certLifecycle`). Found a **second lying cast**: `tlsCertStatus` loses
+  `trustState`/`firefoxDetected` on the routed path — latent, P7 renders it (`TRAPS.md`).
 
 ## The baseline you measure against
 
