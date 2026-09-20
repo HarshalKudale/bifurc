@@ -310,6 +310,16 @@ with a grep for the new call site before running anything — the failure mode i
 is invisible in a diff you are skimming. `EBUSY: resource busy or locked` is a different, benign
 transient; just retry.
 
+**Refined 2026-09-20 — it is a race, not "last wins", so "put the important one last" is not a
+workaround.** Re-measured while correcting five stale claims across two plan docs: a two-edit message
+lost one of two; a three-edit message **lost one and kept two** — and the survivor was the *middle* edit,
+not the last. The number that land is nondeterministic and the tool reports success for every one,
+including the ones it dropped. Two consequences: (1) the only reliable check is a grep for **every**
+marker string you wrote, not just the last — a per-edit success report is worthless here; (2) after
+re-applying, re-verify the edits that *did* land, because a later batch can clobber them in turn. Hit
+again in this session despite this entry already existing, because `TRAPS.md` was not read before the
+first write — which is the actual lesson: read this file *first*, not when something looks wrong.
+
 ## Git / env
 
 - **NEVER `git stash`** (wiped the object store once). **`git fetch` doesn't persist remote-tracking
