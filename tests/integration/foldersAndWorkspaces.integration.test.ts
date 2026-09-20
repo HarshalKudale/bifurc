@@ -20,6 +20,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/eventBus";
 
 // ── Capture the handlers the features register ────────────────────────────────
 
@@ -70,6 +72,28 @@ function readIndex(kind: string): { folders: any[]; order: string[] } {
 function addFolder(kind: string, name: string, parentId: string | null = null, workspaceId = TEST_WS) {
   return invoke("folder:add", kind, { name, parentId, workspaceId });
 }
+
+/**
+ * The collapsed `entity.create`, driven directly — the per-kind `request:add` / `mock:add` channels are
+ * the step-3 reduction's target (`plan/07` §5b-ter) and were only one-line `commandRegistry.invoke()`
+ * adapters, so this is what the channel did minus the channel.
+ *
+ * Two details that are load-bearing, not incidental:
+ *  - `{id, entity}` is **unwrapped**, because the channel unwrapped it (`entityCrudFactory.ts:72`) and
+ *    the cases below read the created entity's `id` to find its file on disk.
+ *  - `workspaceId` is passed through **as-is** rather than defaulted to `TEST_WS`. The channel sent
+ *    `entity.workspaceId` (often `undefined`), and `entity.create` then falls back to the *active*
+ *    workspace. The scoped-workspace case below asserts exactly that — the entity must land in the
+ *    switched-to workspace, so defaulting here would make the assertion vacuous.
+ */
+const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
+  const r: any = await commandRegistry.invoke(
+    "entity.create",
+    { kind, entity, workspaceId: entity.workspaceId },
+    { bus },
+  );
+  return ("entity" in r ? r.entity : r) as T;
+};
 
 beforeAll(async () => {
   ws = createWorkspace();
@@ -178,7 +202,7 @@ describe("folder:rename", () => {
   it("keeps the entities that lived inside the renamed folder", async () => {
     const folder = await addFolder("request", "Keep Me");
 
-    await invoke("request:add", {
+    await createEntity("requests", {
       name: "R1", method: "GET", url: "http://example.test/a", folderId: folder.id, workspaceId: TEST_WS,
     });
     expect(exists(wsPath("requests", "Keep Me"))).toBe(true);
@@ -228,7 +252,7 @@ describe("folder:delete", () => {
   it("also removes the entities that lived in the folder", async () => {
     const folder = await addFolder("request", "Temp Requests");
 
-    const created = await invoke("request:add", {
+    const created = await createEntity("requests", {
       name: "Doomed Request", method: "GET", url: "http://example.test/doomed",
       folderId: folder.id, workspaceId: TEST_WS,
     });
@@ -246,7 +270,7 @@ describe("folder:delete", () => {
   it("drops the folder's entities from the index order too", async () => {
     const folder = await addFolder("mock", "Order Test");
 
-    await invoke("mock:add", {
+    await createEntity("mocks", {
       name: "Ordered Mock", method: "GET", urlPattern: "/ordered", folderId: folder.id, workspaceId: TEST_WS,
     });
 
@@ -325,7 +349,7 @@ describe("workspace:setActive", () => {
     const created = await invoke("workspace:add", "Scoped Workspace");
     await invoke("workspace:setActive", created.id);
 
-    const entity = await invoke("request:add", {
+    const entity = await createEntity("requests", {
       name: "Scoped Request", method: "GET", url: "http://example.test/scoped", folderId: null,
     });
 

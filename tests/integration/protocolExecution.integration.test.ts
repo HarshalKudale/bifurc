@@ -24,6 +24,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as http from "http";
 import * as zlib from "zlib";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/eventBus";
 
 // ── Capture the handlers the features register ────────────────────────────────
 // Same technique as tests/ipc/handlers.test.ts and applications.integration.test.ts:
@@ -57,6 +59,39 @@ function invoke<T = any>(channel: string, ...args: any[]): T {
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
 }
+
+/**
+ * The collapsed `entity.*` commands, driven directly — the per-kind channels below are the step-3
+ * reduction's target (`plan/07` §5b-ter) and each was only ever a one-line `commandRegistry.invoke()`
+ * adapter, so calling the command is what the channel did, minus the channel.
+ *
+ * **`create` unwraps `{id, entity}`, and that is not optional.** The channel unwrapped it
+ * (`entityCrudFactory.ts:72`) and every assertion below reads the created entity's own fields; without
+ * the unwrap they would compare against the envelope and pass on `id` alone. `list` unwraps `{entities}`
+ * for the same reason. `plan/07` §5b-quater is the same defect one layer up, on the client.
+ *
+ * Kinds are the **protocol** names, which is what the channel sent after `toProtocolKind()`. Only
+ * `rules`/`sockets` are renamed by that map, so the kinds used here pass through unchanged.
+ */
+const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
+  const r: any = await commandRegistry.invoke(
+    "entity.create",
+    // `workspaceId` is passed through as-is, not defaulted: the channel sent `entity.workspaceId`
+    // (usually `undefined`), and `entity.create` then falls back to the **active** workspace. Defaulting
+    // it here would pin these cases to `TEST_WS` and hide a workspace-resolution regression.
+    { kind, entity, workspaceId: entity.workspaceId },
+    { bus },
+  );
+  return ("entity" in r ? r.entity : r) as T;
+};
+const updateEntity = (kind: string, entity: any) =>
+  commandRegistry.invoke("entity.update", { kind, entity }, { bus });
+const deleteEntity = (kind: string, id: string) =>
+  commandRegistry.invoke("entity.delete", { kind, id }, { bus });
+const listEntities = async <T = any>(kind: string): Promise<T[]> => {
+  const r: any = await commandRegistry.invoke("entity.list", { kind, workspaceId: TEST_WS }, { bus });
+  return r.entities as T[];
+};
 
 const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
 const unb64 = (s: string) => Buffer.from(s, "base64").toString("utf-8");
@@ -613,8 +648,8 @@ describe("healthbar — service monitoring", () => {
 // ── Entity CRUD for the protocol panels (happy path, read back off disk) ──────
 
 describe("protocol entity CRUD", () => {
-  it("graphql:addRequest round-trips through entity:load", async () => {
-    const created = await invoke("graphql:addRequest", {
+  it("a graphql request round-trips through entity:load", async () => {
+    const created = await createEntity("graphqlRequests", {
       name: "GetUser", endpointUrl: `${gql.origin}/graphql`, headers: { "x-a": "1" },
       query: "query { me }", variables: "", operationName: "", workspaceId: TEST_WS,
     });
@@ -627,24 +662,24 @@ describe("protocol entity CRUD", () => {
     expect(loaded.entity.headers).toEqual({ "x-a": "1" });
   });
 
-  it("graphql:updateRequest persists the change, graphql:deleteRequest removes it", async () => {
-    const created = await invoke("graphql:addRequest", {
+  it("an edit persists the change and a delete removes it", async () => {
+    const created = await createEntity("graphqlRequests", {
       name: "Temp", endpointUrl: `${gql.origin}/graphql`, headers: {},
       query: "query { a }", variables: "", operationName: "", workspaceId: TEST_WS,
     });
 
-    await invoke("graphql:updateRequest", { ...created, name: "Renamed", query: "query { b }" });
+    await updateEntity("graphqlRequests", { ...created, name: "Renamed", query: "query { b }" });
     const updated = await invoke("entity:load", TEST_WS, "graphqlRequests", created.id);
     expect(updated.entity.name).toBe("Renamed");
     expect(updated.entity.query).toBe("query { b }");
 
-    await invoke("graphql:deleteRequest", created.id);
+    await deleteEntity("graphqlRequests", created.id);
     expect((await invoke("entity:load", TEST_WS, "graphqlRequests", created.id)).ok).toBe(false);
   });
 
-  it("graphql:addMock requires an endpointPattern", async () => {
+  it("a graphql mock requires an endpointPattern", async () => {
     await expect(
-      invoke("graphql:addMock", {
+      createEntity("graphqlMocks", {
         name: "m", endpointPattern: "  ", useRegex: false, operationType: "query", operationName: "",
         responseStatus: 200, responseHeaders: {}, responseBody: "{}", workspaceId: TEST_WS,
       }),
@@ -652,16 +687,16 @@ describe("protocol entity CRUD", () => {
   });
 
   it("graphql schemas round-trip through add → list → delete", async () => {
-    const schema = await invoke("graphql:addSchema", { name: "s1", content: "type Query { a: String }", workspaceId: TEST_WS });
+    const schema = await createEntity("graphqlSchemas", { name: "s1", content: "type Query { a: String }", workspaceId: TEST_WS });
 
-    expect((await invoke("graphql:listSchemas")).map((s: any) => s.id)).toContain(schema.id);
+    expect((await listEntities("graphqlSchemas")).map((s: any) => s.id)).toContain(schema.id);
 
-    await invoke("graphql:deleteSchema", schema.id);
-    expect((await invoke("graphql:listSchemas")).map((s: any) => s.id)).not.toContain(schema.id);
+    await deleteEntity("graphqlSchemas", schema.id);
+    expect((await listEntities("graphqlSchemas")).map((s: any) => s.id)).not.toContain(schema.id);
   });
 
   it("soap requests round-trip through add → entity:load", async () => {
-    const created = await invoke("soap:addRequest", {
+    const created = await createEntity("soapRequests", {
       name: "GetUser", endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser",
       headers: {}, body: "<x/>", workspaceId: TEST_WS,
     });
@@ -672,31 +707,31 @@ describe("protocol entity CRUD", () => {
   });
 
   it("soap WSDLs round-trip through add → list → delete", async () => {
-    const doc = await invoke("soap:addWsdl", { name: "svc", content: "<definitions/>", workspaceId: TEST_WS });
+    const doc = await createEntity("wsdls", { name: "svc", content: "<definitions/>", workspaceId: TEST_WS });
 
-    expect((await invoke("soap:listWsdls")).map((w: any) => w.id)).toContain(doc.id);
+    expect((await listEntities("wsdls")).map((w: any) => w.id)).toContain(doc.id);
 
-    await invoke("soap:deleteWsdl", doc.id);
-    expect((await invoke("soap:listWsdls")).map((w: any) => w.id)).not.toContain(doc.id);
+    await deleteEntity("wsdls", doc.id);
+    expect((await listEntities("wsdls")).map((w: any) => w.id)).not.toContain(doc.id);
   });
 
-  it("grpc:addRequest requires serviceName and methodName", async () => {
+  it("a grpc request requires serviceName and methodName", async () => {
     const base = {
       name: "r", serverAddress: "127.0.0.1:50051", requestBody: "{}", metadata: {},
       protoFileId: null, useReflection: false, streamingType: "unary", workspaceId: TEST_WS,
     };
-    await expect(invoke("grpc:addRequest", { ...base, serviceName: "", methodName: "M" })).rejects.toThrow(/serviceName/);
-    await expect(invoke("grpc:addRequest", { ...base, serviceName: "S", methodName: " " })).rejects.toThrow(/methodName/);
+    await expect(createEntity("grpcRequests", { ...base, serviceName: "", methodName: "M" })).rejects.toThrow(/serviceName/);
+    await expect(createEntity("grpcRequests", { ...base, serviceName: "S", methodName: " " })).rejects.toThrow(/methodName/);
   });
 
   it("grpc protos round-trip through add → list → delete", async () => {
-    const proto = await invoke("grpc:addProto", {
+    const proto = await createEntity("protoFiles", {
       name: "svc.proto", content: 'syntax = "proto3";', workspaceId: TEST_WS,
     });
 
-    expect((await invoke("grpc:listProtos")).map((p: any) => p.id)).toContain(proto.id);
+    expect((await listEntities("protoFiles")).map((p: any) => p.id)).toContain(proto.id);
 
-    await invoke("grpc:deleteProto", proto.id);
-    expect((await invoke("grpc:listProtos")).map((p: any) => p.id)).not.toContain(proto.id);
+    await deleteEntity("protoFiles", proto.id);
+    expect((await listEntities("protoFiles")).map((p: any) => p.id)).not.toContain(proto.id);
   });
 });
