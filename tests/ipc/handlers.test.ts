@@ -553,10 +553,11 @@ describe("src/ipc/handlers.ts", () => {
           .map(([key, e]) => [key, (e as { command: string }).command] as const);
 
         // Non-vacuity: this set is the entire subject of the test, and an empty one would pass.
-        // Measured 2026-09-20: **75** entries (72 `transport` + 3 `shim`). A floor rather than the
-        // exact figure, because `packages/client/tests/surface.test.ts` already pins the per-kind
-        // counts exactly and this guard only needs to prove the set is populated. It was written as
-        // `> 80` first and failed at 75 — which is the guard doing its job on its author.
+        // Measured 2026-09-20: **73** entries (70 `transport` + 3 `shim`) — 75 earlier the same day,
+        // before `tlsRemoveCert` and `tlsCertStatus` moved to `local` (`plan/07` §5b-bis). A floor
+        // rather than the exact figure, because `packages/client/tests/surface.test.ts` already pins
+        // the per-kind counts exactly and this guard only needs to prove the set is populated. It was
+        // written as `> 80` first and failed at 75 — which is the guard doing its job on its author.
         expect(routed.length).toBeGreaterThan(60);
 
         const unserved = routed

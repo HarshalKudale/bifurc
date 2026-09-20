@@ -40,7 +40,7 @@ import * as path from "path";
 import type { TlsCertStatusResult, TlsExportCertResult, TlsImportResult } from "@bifurc/protocol";
 import { caCertPath, caKeyPath } from "@bifurc/engine/proxy/certManager";
 import { call, releaseQuietly, uploadLocalFile, writeArtifact } from "@/ipc/fileOpsClient";
-import { readTrustSummary, uninstallEngineCa } from "@/ipc/certLifecycle";
+import { readCertStatus, uninstallEngineCa } from "@/ipc/certLifecycle";
 
 export function registerTlsHandlers() {
     /**
@@ -61,34 +61,35 @@ export function registerTlsHandlers() {
     });
 
     /**
-     * `generated` / `certPath` / `keyPath` are the declared renderer shape and are preserved
-     * verbatim — **even though no renderer code currently calls this** (`renderer/types/window.ts`
-     * declares it; nothing reads it). Non-negotiable #3 is about the surface, not about whether
-     * something happens to use it today, and P7 is where the drift fields become visible.
+     * **Superseded 2026-09-20 — kept until the step-3 channel reduction, not reachable today.**
+     * `window.api.tlsCertStatus` is `local` now (`plan/07` §5b-bis), so the renderer reaches
+     * `client:tlsCertStatus` in `clientHandlers.ts`; since `window.api` is `{ ...client }`, nothing
+     * calls this channel.
      *
-     * `trustState` is the field P7 needs and is the reason the fingerprint exists: `stale` means
-     * the engine's CA has changed since this machine trusted it, which is otherwise an
-     * unexplained TLS failure.
+     * The body is `readCertStatus()` rather than the inline composition it used to be, and that is the
+     * point of the reclassification: while the eight fields were assembled *here*, the routed client
+     * twin delivered the engine half alone and `trustState` / `firefoxDetected` / `firefoxProfiles`
+     * went `undefined` with nothing pointing at them. One implementation, two callers, no drift.
+     *
+     * `generated` / `certPath` / `keyPath` are the declared renderer shape and are preserved verbatim
+     * — non-negotiable #3 is about the surface, not about whether something happens to use it today,
+     * and P7 is where the drift fields become visible. `trustState` is the field P7 needs and the
+     * reason the fingerprint exists: `stale` means the engine's CA has changed since this machine
+     * trusted it, which is otherwise an unexplained TLS failure.
      */
-    ipcMain.handle("tls:certStatus", async () => {
-        const summary = await readTrustSummary();
-        return {
-            generated: summary.engineFingerprint !== null,
-            certPath: caCertPath(),
-            keyPath: caKeyPath(),
-            fingerprint: summary.engineFingerprint,
-            trustedFingerprint: summary.trustedFingerprint,
-            trustState: summary.trustState,
-            firefoxDetected: summary.firefoxDetected,
-            firefoxProfiles: summary.firefoxProfiles,
-        };
-    });
+    ipcMain.handle("tls:certStatus", () => readCertStatus());
 
     /**
      * Two-sided by design (`File_Ops_Protocol.md` §6.1). The engine deletes its keypair; the client
      * un-trusts the certificate it installed. Either half can succeed alone, and the pre-P3 fused
      * `{ok: true}` could not express the difference — which is how a user ends up believing they
      * removed a certificate their browser still trusts.
+     *
+     * **Superseded 2026-09-20 — kept until the step-3 channel reduction, not reachable today.**
+     * `window.api.tlsRemoveCert` is `local` now (`plan/07` §5b-bis) and reaches
+     * `client:tlsRemoveCert`. The paragraph above is the one the routed twin contradicted: routing the
+     * key produced precisely the failure it names — engine keypair deleted, OS store still trusting —
+     * and it was reachable, from the Settings panel's "remove certificate" button.
      */
     ipcMain.handle("tls:removeCert", () => uninstallEngineCa());
 

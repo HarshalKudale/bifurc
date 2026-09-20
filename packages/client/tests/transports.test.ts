@@ -84,6 +84,10 @@ function stubLocal(): ClientLocal {
     getTheme: no as never,
     setTheme: no as never,
     tlsInstallCA: no as never,
+    // `local` as of 2026-09-20 — see `surface.ts`. Present because the interface demands them, not
+    // because these cases reach them.
+    tlsRemoveCert: no as never,
+    tlsCertStatus: no as never,
     openFileDialog: no as never,
     pickFilePath: no as never,
     pickFolderPath: no as never,

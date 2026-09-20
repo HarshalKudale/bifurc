@@ -207,6 +207,23 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   setTitleBarOverlay: local("Electron BrowserWindow; read by renderer/hooks/useTheme.ts"),
   tlsInstallCA: local("mutates the client machine's OS trust store"),
 
+  // ── the trust-store pair, reclassified `transport` → `local` on 2026-09-20 ─
+  // Both were routed to the engine, and both thereby lost the client's half of a **two-sided**
+  // operation — the `checkUpdate` failure class again (`plan/07` §5b-bis). `tls.certStatus` returns
+  // the engine's fingerprint and paths; the *drift answer* — `trustState`, `firefoxDetected`,
+  // `firefoxProfiles` — comes from `certLifecycle.readTrustSummary()`, which reads the OS store and
+  // the `AppSettings.tlsTrustedCa` record this client wrote at install time. `tls.removeCert` is the
+  // worse half: it is two-sided by design (`File_Ops_Protocol.md` §6.1), and routing it deleted the
+  // engine's keypair while leaving the OS store trusting the CA — reachable from the Settings panel,
+  // so the UI reported success and the browser went on trusting a certificate that was gone.
+  //
+  // Local rather than routed-with-a-client-half because no engine can answer either one correctly:
+  // on a remote engine (P9) it cannot read the user's OS trust store at all. This follows the
+  // `tlsInstallCA` precedent — the whole trust-store surface uses one mechanism — and the engine
+  // halves (`tls.certStatus` / `tls.removeCert`) stay registered, invoked *by* the local hook.
+  tlsRemoveCert: local("composes the engine's removal with un-trusting the client's OS store"),
+  tlsCertStatus: local("composes the engine's fingerprint with the client's trust-store summary"),
+
   // ── audit / history ──────────────────────────────────────────────────────
   listAudit: t("audit.list"),
   auditDiff: t("audit.diff"),
@@ -260,10 +277,11 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   // ── TLS / certificates ───────────────────────────────────────────────────
   tlsImportCert: t("tls.importCert", "needs a blobId the signature never supplies: dialog + blob.put precede it"),
   tlsImportKey: t("tls.importKey", "needs a blobId the signature never supplies: dialog + blob.put precede it"),
-  tlsRemoveCert: t("tls.removeCert"),
   tlsGenerate: t("tls.generate"),
   tlsExportCert: t("tls.exportCert", "returns an artifact; the CLIENT writes the file, not the engine"),
-  tlsCertStatus: t("tls.certStatus"),
+  // `tlsRemoveCert` and `tlsCertStatus` are deliberately **not** here: both are client-local, because
+  // both compose the engine's half with the client's trust store. See the trust-store note in the
+  // client-local block below.
 
   // ── dialogs + client-local shell state ───────────────────────────────────
   openFileDialog: local("native file picker on the client's own machine"),
