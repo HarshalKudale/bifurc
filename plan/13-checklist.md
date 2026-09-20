@@ -671,10 +671,34 @@ rather than a type.
       **The heuristic that predicts a slice's difficulty is not the command count but how much of the
       body is the shell's own** — slice 5 (10 commands) was the easiest, slice 1 (5 commands) the
       costliest, and slice 7 (4 commands) the most structurally awkward.
-- [ ] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
+- [x] Extend the ratchet so it can see shell-registered engine commands — today it asks only "is this
       command registered *in this process*", and in this process the shell had registered all 51, so
-      §5c was invisible to the mechanism built to catch exactly this class. **The §5c pass was the
-      manual substitute**, and it is now complete, so nothing is left uncounted.
+      §5c was invisible to the mechanism built to catch exactly this class. **Done 2026-09-20: the
+      static guard is `tests/ipc/handlers.test.ts` → *"registers nothing at module scope — the §5c
+      guard"*.** It asserts the architectural rule rather than the historical bug: **registration goes
+      through `register*Commands(registry)`, so the `commandRegistry` singleton is never registered
+      directly** — which is what makes the engine containerisable, since a consumer supplying its own
+      registry can only see commands registered *explicitly* against it. It reads every `.ts` under
+      `src/` and `packages/engine/src/` via `import.meta.glob(..., { query: "?raw" })` and requires
+      `/^\s*commandRegistry\.register\(/m` to match nothing.
+      **Strictly stronger than the grep the pass itself used.** The guard matches a *statement* — a line
+      whose first non-whitespace content is the call — so it catches module scope at column 0 **and** a
+      module-scope call wrapped in a top-level `if`/`try` block. Verified by mutation that the column-0
+      `grep -rn '^commandRegistry.register(' src/` the §5c pass relied on **misses** the indented
+      variant, while this catches it. Two shapes it does not catch, stated in the test rather than
+      implied: a call preceded by other code on the same line, and an indirect alias
+      (`const r = commandRegistry; r.register(...)`).
+      **The anti-vacuity guards are the part worth keeping.** A wrong glob returns `{}`, so the
+      assertions would pass against an empty string — a guard that reads as coverage while covering
+      nothing. So the test asserts the reader found >20 files in each tree **and** a positive control:
+      `^\s*registry\.register\(` matches >30 times in the engine, proving the reader sees real
+      registration code and a zero for the singleton form means "not written that way" rather than
+      "content never loaded".
+      **Mutation-checked both ways**: a module-scope registration in a scratch `src/` file fails the
+      guard naming that file; the same call indented inside a top-level `if` also fails it; deleting the
+      file restores green. Full suite **101 files / 2,509 tests — 2,468 passed, 40 skipped, 1 failed**
+      (the documented environmental `soap.execute`) — **+1 over the baseline, which is this test and
+      nothing else**.
       **But the ratchet is sharp on the *move*, which §5c did not anticipate** (`plan/07` §5c-v): once
       a command's only registration is an explicit call, forgetting that call makes it unregistered
       and the ratchet fails — it caught exactly that in slice 5 (all ten `application.*`), in slice 6

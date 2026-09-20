@@ -419,10 +419,11 @@ and the ratchet is what keeps that honest.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
-**Status: the pass is COMPLETE (2026-09-19).** It turned out to be **51** commands, not five, moved across
-seven slices (`§5c-i` … `§5c-vii`). **Zero module-scope `commandRegistry.register(` calls remain in
-`src/`.** The five below are the ones this section originally named; the count was the first thing the
-pass corrected.
+**Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
+commands, not five, moved across seven slices (`§5c-i` … `§5c-vii`). **Zero module-scope
+`commandRegistry.register(` calls remain in `src/`** — and a static test now fails if one reappears
+(`§5c-viii`), so the class cannot come back silently. The five below are the ones this section
+originally named; the count was the first thing the pass corrected.
 
 Found while writing `store/configCommands.ts`, and deliberately **not** fixed there.
 
@@ -908,6 +909,52 @@ stay green are exactly the ones that cannot tell you anything about the wiring.*
 **not** do is delete `registerIpcHandlers()`: `app.checkUpdate` (SPLIT → P12) still needs a channel, and
 `src/ipc/importExportHandlers.ts` is dead but dies with it. That is step 3, and it is now unblocked on
 the §5c side.
+
+#### 5c-viii. The guard §5c needed, and did not have (2026-09-20)
+
+§5c's own complaint was that the class was invisible: *"they are invisible to the current ratchet
+because it only asks whether a command is registered in this process, and in this process the shell has
+registered them."* The pass was the manual substitute. This is the mechanism.
+
+`tests/ipc/handlers.test.ts` → *"registers nothing at module scope — the §5c guard"* asserts the
+**architectural rule** rather than the historical bug:
+
+> registration goes through `register*Commands(registry)`, so the `commandRegistry` singleton is never
+> registered directly.
+
+That is not a style preference. It is what makes the engine containerisable: a consumer that supplies
+its own registry — P9's Docker engine, a test's own registry, `createInProcessTransport(registry)` — can
+only ever see commands registered **explicitly against it**. `createEngine()` registering no commands by
+design is the same statement from the other side.
+
+It reads every `.ts` under `src/` and `packages/engine/src/` through
+`import.meta.glob(..., { query: "?raw", import: "default" })` and requires
+`/^\s*commandRegistry\.register\(/m` to match nothing.
+
+**It is strictly stronger than the grep the pass itself used, and that was measured rather than
+argued.** The pattern matches a *statement* — a line whose first non-whitespace content is the call —
+so it catches module scope at column 0 **and** a module-scope call wrapped in a top-level `if`/`try`
+block. Mutation-verified: the `grep -rn '^commandRegistry.register(' src/` that every slice's
+verification used **misses** the indented variant (`exit 1`, no match), while this guard fails on it and
+names the file. Two shapes it still does not catch, stated in the test rather than left implied: a call
+preceded by other code on the same line (`if (x) commandRegistry.register(...)`), and an indirect alias
+(`const r = commandRegistry; r.register(...)`).
+
+**The anti-vacuity guards are the part worth carrying forward.** A wrong glob returns `{}`, so
+`Object.values(...).join("\n")` is `""`, `"".match(...)` is `null`, and every assertion passes — a guard
+that reads as coverage while covering nothing, which is worse than no guard because it is trusted. So
+the test asserts three things before it asserts the real one:
+
+1. the reader found **>20 files** in each tree;
+2. a **positive control**: `/^\s*registry\.register\(/gm` matches **>30** times in the engine — the
+   parameterised form is plentiful, so the reader demonstrably sees real registration code;
+3. therefore a zero for the *singleton* form means "not written that way", not "content never loaded".
+
+**Mutation-checked both ways:** a module-scope registration in a scratch `src/` file fails the guard and
+names that file; the same call indented inside a top-level `if` also fails it; deleting the file
+restores green. Full suite **101 files / 2,509 tests — 2,468 passed, 40 skipped, 1 failed**, i.e. **+1
+over the baseline, and the +1 is this test and nothing else** — the same "measure the delta" discipline
+every slice of the pass used.
 
 ### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
 
