@@ -751,29 +751,52 @@ than a cost to be minimised: a suite that drives the channel is a channel test t
 engine, and `TRAPS.md` records that such a suite is structurally blind to the wiring it thinks it covers.
 Re-pointed, they become registry-driven, which is what P9 needs anyway.
 
-**Measured 2026-09-20, and this is the number the plan was missing: the factory's own channels are driven
-from 6 test files, 97 literal occurrences** — `tests/ipc/handlers.test.ts` **63**,
-`protocolExecution` 13, `companionServer` 10, `settingsMutations` 5, `foldersAndWorkspaces` 4,
-`companion/allowedActions` 2. By family: `mock:*` 33, `request:*` 17, `env:*` 14, `graphql:*` 12,
-`mapping:*` 11, `rule:*` 10, `ws:*` 10, `grpc:*` 8, `soap:*` 7, `webhook:*` 0. (The `invoke("` counts above
-measure *all* commands those suites drive; these measure only the channels this slice deletes, so they are
-the migration's actual size.)
+**Measured 2026-09-20, and corrected the same day: the slice's channels are driven from 4 test files, 85
+literal occurrences** — `tests/ipc/handlers.test.ts` **63**, `protocolExecution` 13, `settingsMutations`
+5, `foldersAndWorkspaces` 4. By family: `mock:*` 33, `request:*` 17, `env:*` 14, `graphql:*` 12,
+`mapping:*` 11, `rule:*` 10, `ws:*` 10, `grpc:*` 8, `soap:*` 7, `webhook:*` 0.
 
-**`handlers.test.ts` is the open question, not the work.** 63 of the 97 sit in the file whose entire
-subject *is* the IPC handler layer — and the handlers it tests are the ones being deleted. So the default
-disposition there is **delete, not re-point**: a case that drives `mock:add` to observe the engine's
-conflict behaviour is a channel test that happens to reach the engine, and `entityConflictScope` plus
-`entityCrudCommands`'s own suite already cover that behaviour. But that has to be established **per case**
-— a case with no engine-level twin has to be re-pointed instead, and the two look identical from the call
-site. That per-case judgement, not the 48 deletions, is the slice's real work, and it is why the slice
-wants a session of its own.
+> **The first version of this measurement said "6 files, 97 occurrences" and both numbers were wrong.**
+> `companionServer.integration.test.ts` (10) and `companion/allowedActions.test.ts` (2) matched the same
+> channel-name strings but drive the **companion server's v1 HTTP action surface** —
+> `ask(client, { id, action: "mock:add", payload })` — which is a *different* surface (P4 item 1) and is
+> untouched by this slice. A grep for channel-shaped strings cannot tell an IPC channel from an action
+> name, and it silently counted 12 of them. The lesson is the file's own: **scope a measurement to the
+> transport it belongs to, not to the string.**
+
+**The factory is indivisible, which is why there is no small slice here.** The 48 channels are generated
+from the 13 `CrudFactoryOpts` / 3 `SimpleEntityOpts` registrations by two loops; there is no way to drop
+one kind's three channels without dropping all 48 (or adding a per-kind flag, which is worse than the
+problem). So `crudHandlers` (6 kinds), `coreHandlers` (1), `soap` (2), `graphql` (2) and `grpc` (2) must
+be converted in the **same** change — and every one of them is gated on the test migration below.
+
+**`handlers.test.ts` is 75 of those cases, and they are not uniformly deletable.** The region that drives
+these adapters is **75 `it` blocks across 37 `describe` blocks** — 61% of the file's 123 tests. The
+`entityConflictScope` header records that this file's mocked-config suite stayed green while the real disk
+was wrong, which is the argument for **deleting** the cases whose subject is the adapter's plumbing. But
+that argument does not extend to the ones asserting **`validate` messages** and **not-found branches**:
+those live *only* here — `grep` for `"urlPattern is required"` / `"is required for mocks"` / `"endpointPattern
+is required"` finds no engine-level twin, and `companionServer`'s single `urlPattern is required` assertion
+goes through the v1 action path, not `entity.create`. So the disposition is **per case**: delete where
+`entityConflictScope` / `entityCrudCommands`'s suite already covers the behaviour, re-point the rest at
+`commandRegistry.invoke("entity.create", …)`. That judgement — not the 57 deletions — is the slice, and it
+is why the slice gets a session of its own rather than the tail of one.
+
+**One detail the re-points must not miss:** the channel **unwrapped** `entity.create`'s `{id, entity}`
+envelope, so a re-pointed case that reads the result needs `.entity` (or the same helper the client now
+uses — §5b-quater). A re-point that returns the envelope will assert against the wrong object and may still
+pass.
 
 **So the pass's unit is the handler group, and a slice is: delete the group's channels (splitting the
 factory where the group *is* a factory), re-point the suites that drove them, verify, commit.** The 12
 files are not 12 equal slices. `soapHandlers` / `graphqlHandlers` / `grpcHandlers` are each the factory
-(three kind groups) **plus** two pure `commandRegistry.invoke()` passthroughs, so they belong with the
-factory slice rather than alone — which is the opposite of how they first looked, and is the reason this
-section exists.
+(three kind groups) **plus** their own pure `commandRegistry.invoke()` passthroughs, so they belong with
+the factory slice rather than alone — which is the opposite of how they first looked, and is the reason
+this section exists. **Corrected 2026-09-20: that is 2 + 2 + 5 = 9 passthroughs, not "two each".**
+`grpcHandlers` has five (`execute`, `reflect`, `mockServerStatus`, `startMockServer`, `stopMockServer`);
+`soap` and `graphql` have two each. So the slice is **48 generated + 9 passthrough = 57 channels**, and the
+earlier "6 pure passthroughs" figure — which the owner's grouping decision was made against — understated
+it by a third.
 
 #### 5b-quater. The third lying cast — and the fixture that asserted it (2026-09-20)
 
