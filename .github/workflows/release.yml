@@ -87,6 +87,13 @@ jobs:
       - name: Build Windows installers
         run: npm run package -- --win --publish never
 
+      # Before the artifact is uploaded, not after a user finds it. A bundle whose engine
+      # cannot be resolved starts to a blank window and no error — the same silent class as
+      # the tray-icon regression (see plan/12). `npm run package` builds `dist/` from source,
+      # so this inspects what the installer will actually contain.
+      - name: Assert the packaged app resolves the engine
+        run: node scripts/assert-packaged.mjs release/win-unpacked
+
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v4
         with:
