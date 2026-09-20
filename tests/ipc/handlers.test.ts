@@ -205,6 +205,7 @@ import { replayRequest as replayRequestImpl } from "@bifurc/engine/proxy/serverR
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/eventBus";
 
 // ── Helper: get registered handler ───────────────────────────────────────────
 
@@ -216,6 +217,46 @@ function getHandler(channel: string) {
 
 // Fake ipcMain event arg (first arg to handlers is the IPC event, typically ignored)
 const EVENT = {} as any;
+
+/**
+ * The collapsed `entity.*` commands, driven directly — the replacement for the per-kind
+ * `mapping:*` / `rule:*` / `mock:*` / `request:*` / `ws:*` / `env:*` channels, which are the step-3
+ * reduction's target (`plan/07` §5b-ter).
+ *
+ * Each of those channels was a one-line `commandRegistry.invoke()` adapter, so calling the command is
+ * what the channel did — minus the channel, and minus the factory's `toProtocolKind()`. That map's only
+ * non-identity entries are `rules → proxyRules` and `sockets → wsConnections`, which is why the `rule:*`
+ * cases below pass `"proxyRules"` and the `ws:*` cases pass `"wsConnections"`: the engine's
+ * `toEngineKind()` still translates them back to the storage kind, and that is what the assertions on
+ * `writeEntity(…, "rules")` / `(…, "sockets")` pin.
+ *
+ * **`create` unwraps `{id, entity}`**, because the channel did (`entityCrudFactory.ts:72`) and the cases
+ * below read the created entity's own fields; without it they would assert against the envelope and pass
+ * on `id` alone — the defect `plan/07` §5b-quater records one layer up, on the client. The gate-blocked
+ * `environments` create returns `{error:"limit_reached", …}` with no `.entity`, so it passes through
+ * unchanged, exactly as before.
+ */
+const ENTITY_CTX = { bus };
+const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
+  const r: any = await commandRegistry.invoke(
+    "entity.create",
+    { kind, entity, workspaceId: entity.workspaceId },
+    ENTITY_CTX,
+  );
+  return ("entity" in r ? r.entity : r) as T;
+};
+const updateEntity = (kind: string, entity: any) =>
+  commandRegistry.invoke("entity.update", { kind, entity }, ENTITY_CTX);
+const deleteEntity = (kind: string, id: string) =>
+  commandRegistry.invoke("entity.delete", { kind, id }, ENTITY_CTX);
+const listEntities = async <T = any>(kind: string): Promise<T[]> => {
+  const r: any = await commandRegistry.invoke(
+    "entity.list",
+    { kind, workspaceId: loadConfig().activeWorkspaceId },
+    ENTITY_CTX,
+  );
+  return r.entities as T[];
+};
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -928,7 +969,7 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── mapping:add ───────────────────────────────────────────────────────
 
-  describe("mapping:add handler", () => {
+  describe("entity.create — mappings", () => {
     it("adds a mapping and returns it with a generated id", async () => {
       const input: Omit<LocalMapping, "id"> = {
         domain: "app.localhost",
@@ -936,7 +977,7 @@ describe("src/ipc/handlers.ts", () => {
         enabled: true,
       };
 
-      const result = await getHandler("mapping:add")(EVENT, input);
+      const result = await createEntity("mappings", input);
 
       expect(result.id).toBeTruthy();
       expect(result.domain).toBe("app.localhost");
@@ -944,47 +985,47 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("persists the mapping in config via saveConfig", async () => {
-      await getHandler("mapping:add")(EVENT, { domain: "x.localhost", target: "localhost:4000", enabled: true });
+      await createEntity("mappings", { domain: "x.localhost", target: "localhost:4000", enabled: true });
       expect(saveConfig).toHaveBeenCalled();
     });
   });
 
   // ── mapping:update ────────────────────────────────────────────────────
 
-  describe("mapping:update handler", () => {
+  describe("entity.update — mappings", () => {
     it("updates an existing mapping", () => {
       const mapping: LocalMapping = { id: "m1", domain: "old.localhost", target: "localhost:1", enabled: true };
       currentConfig.mappings = [{ ...mapping }];
 
-      getHandler("mapping:update")(EVENT, { ...mapping, target: "localhost:9999" });
+      updateEntity("mappings", { ...mapping, target: "localhost:9999" });
 
       expect(currentConfig.mappings[0].target).toBe("localhost:9999");
     });
 
     it("returns { ok: true } on success", async () => {
       currentConfig.mappings = [{ id: "m1", domain: "x.localhost", target: "localhost:1", enabled: true }];
-      const result = await getHandler("mapping:update")(EVENT, { id: "m1", domain: "x.localhost", target: "localhost:2", enabled: true });
+      const result = await updateEntity("mappings", { id: "m1", domain: "x.localhost", target: "localhost:2", enabled: true });
       expect(result).toEqual({ ok: true });
     });
 
     it("does nothing when the mapping id does not exist", () => {
       currentConfig.mappings = [];
       expect(() =>
-        getHandler("mapping:update")(EVENT, { id: "nonexistent", domain: "x.localhost", target: "localhost:1", enabled: true }),
+        updateEntity("mappings", { id: "nonexistent", domain: "x.localhost", target: "localhost:1", enabled: true }),
       ).not.toThrow();
     });
   });
 
   // ── mapping:delete ────────────────────────────────────────────────────
 
-  describe("mapping:delete handler", () => {
+  describe("entity.delete — mappings", () => {
     it("removes the mapping with the given id", () => {
       currentConfig.mappings = [
         { id: "m1", domain: "a.localhost", target: "localhost:1", enabled: true },
         { id: "m2", domain: "b.localhost", target: "localhost:2", enabled: true },
       ];
 
-      getHandler("mapping:delete")(EVENT, "m1");
+      deleteEntity("mappings", "m1");
 
       expect(currentConfig.mappings).toHaveLength(1);
       expect(currentConfig.mappings[0].id).toBe("m2");
@@ -997,7 +1038,7 @@ describe("src/ipc/handlers.ts", () => {
         { id: "r2", name: "rule2", pattern: ".*api.*", targetMappingId: "m2", enabled: true },
       ];
 
-      getHandler("mapping:delete")(EVENT, "m1");
+      deleteEntity("mappings", "m1");
 
       expect(currentConfig.proxyRules).toHaveLength(1);
       expect(currentConfig.proxyRules[0].id).toBe("r2");
@@ -1005,14 +1046,14 @@ describe("src/ipc/handlers.ts", () => {
 
     it("returns { ok: true }", async () => {
       currentConfig.mappings = [{ id: "m1", domain: "x.localhost", target: "localhost:1", enabled: true }];
-      const result = await getHandler("mapping:delete")(EVENT, "m1");
+      const result = await deleteEntity("mappings", "m1");
       expect(result).toEqual({ ok: true });
     });
   });
 
   // ── rule:add ──────────────────────────────────────────────────────────
 
-  describe("rule:add handler", () => {
+  describe("entity.create — proxyRules", () => {
     it("adds a proxy rule and returns it with a generated id", async () => {
       const input: Omit<ProxyRule, "id"> = {
         name: "API rule",
@@ -1021,7 +1062,7 @@ describe("src/ipc/handlers.ts", () => {
         enabled: true,
       };
 
-      const result = await getHandler("rule:add")(EVENT, input);
+      const result = await createEntity("proxyRules", input);
 
       expect(result.id).toBeTruthy();
       expect(result.name).toBe("API rule");
@@ -1031,26 +1072,26 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── rule:update ───────────────────────────────────────────────────────
 
-  describe("rule:update handler", () => {
+  describe("entity.update — proxyRules", () => {
     it("updates an existing proxy rule", () => {
       const rule: ProxyRule = { id: "r1", name: "old", pattern: ".*", targetMappingId: "m1", enabled: true };
       currentConfig.proxyRules = [{ ...rule }];
 
-      getHandler("rule:update")(EVENT, { ...rule, name: "new" });
+      updateEntity("proxyRules", { ...rule, name: "new" });
 
       expect(currentConfig.proxyRules[0].name).toBe("new");
     });
 
     it("returns { ok: true }", async () => {
       currentConfig.proxyRules = [{ id: "r1", name: "r", pattern: ".*", targetMappingId: "m1", enabled: true }];
-      const result = await getHandler("rule:update")(EVENT, { id: "r1", name: "r", pattern: ".*", targetMappingId: "m1", enabled: false });
+      const result = await updateEntity("proxyRules", { id: "r1", name: "r", pattern: ".*", targetMappingId: "m1", enabled: false });
       expect(result).toEqual({ ok: true });
     });
   });
 
   // ── rule:delete ───────────────────────────────────────────────────────
 
-  describe("rule:delete handler", () => {
+  describe("entity.delete — proxyRules", () => {
     it("deletes the entity file for the given id", async () => {
       const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
       currentConfig.proxyRules = [
@@ -1058,21 +1099,21 @@ describe("src/ipc/handlers.ts", () => {
         { id: "r2", name: "b", pattern: ".*b.*", targetMappingId: "m1", enabled: true, workspaceId: "default" },
       ];
 
-      await getHandler("rule:delete")(EVENT, "r1");
+      await deleteEntity("proxyRules", "r1");
 
       expect(deleteEntityFile).toHaveBeenCalledWith("default", "rules", "r1");
     });
 
     it("returns { ok: true }", async () => {
       currentConfig.proxyRules = [{ id: "r1", name: "r", pattern: ".*", targetMappingId: "m1", enabled: true, workspaceId: "default" }];
-      const result = await getHandler("rule:delete")(EVENT, "r1");
+      const result = await deleteEntity("proxyRules", "r1");
       expect(result).toEqual({ ok: true });
     });
   });
 
   // ── mock:add ──────────────────────────────────────────────────────────
 
-  describe("mock:add handler", () => {
+  describe("entity.create — mocks", () => {
     const baseMock: Omit<MockRule, "id" | "createdAt"> = {
       name: "Test Mock",
       method: "GET",
@@ -1088,7 +1129,7 @@ describe("src/ipc/handlers.ts", () => {
     };
 
     it("adds a mock and returns it with generated id and createdAt", async () => {
-      const result = await getHandler("mock:add")(EVENT, baseMock);
+      const result = await createEntity("mocks", baseMock);
       expect(result.id).toBeTruthy();
       expect(result.createdAt).toBeTypeOf("number");
       expect(result.name).toBe("Test Mock");
@@ -1096,7 +1137,7 @@ describe("src/ipc/handlers.ts", () => {
 
     it("prepends the new mock to the front of the list", async () => {
       currentConfig.mocks = [{ ...baseMock, id: "existing", createdAt: 1 }];
-      await getHandler("mock:add")(EVENT, baseMock);
+      await createEntity("mocks", baseMock);
       expect(currentConfig.mocks[0].name).toBe("Test Mock");
     });
 
@@ -1109,7 +1150,7 @@ describe("src/ipc/handlers.ts", () => {
       };
       currentConfig.mocks = [existing];
 
-      await getHandler("mock:add")(EVENT, { ...baseMock, enabled: true });
+      await createEntity("mocks", { ...baseMock, enabled: true });
 
       // The old mock should be disabled because it has the same signature
       expect(currentConfig.mocks.find((m) => m.id === "old")?.enabled).toBe(false);
@@ -1119,7 +1160,7 @@ describe("src/ipc/handlers.ts", () => {
       const existing: MockRule = { ...baseMock, id: "old", createdAt: 1, enabled: true };
       currentConfig.mocks = [existing];
 
-      await getHandler("mock:add")(EVENT, { ...baseMock, enabled: false });
+      await createEntity("mocks", { ...baseMock, enabled: false });
 
       expect(currentConfig.mocks.find((m) => m.id === "old")?.enabled).toBe(true);
     });
@@ -1127,7 +1168,7 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── mock:update ───────────────────────────────────────────────────────
 
-  describe("mock:update handler", () => {
+  describe("entity.update — mocks", () => {
     it("updates an existing mock", async () => {
       const mock: MockRule = {
         id: "m1", name: "old name", method: "GET", urlPattern: "http://x.com",
@@ -1136,7 +1177,7 @@ describe("src/ipc/handlers.ts", () => {
       };
       currentConfig.mocks = [{ ...mock }];
 
-      await getHandler("mock:update")(EVENT, { ...mock, name: "new name" });
+      await updateEntity("mocks", { ...mock, name: "new name" });
 
       expect(currentConfig.mocks[0].name).toBe("new name");
     });
@@ -1148,7 +1189,7 @@ describe("src/ipc/handlers.ts", () => {
         responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1,
       };
       currentConfig.mocks = [mock];
-      const result = await getHandler("mock:update")(EVENT, mock);
+      const result = await updateEntity("mocks", mock);
       expect(result).toEqual({ ok: true });
     });
 
@@ -1161,7 +1202,7 @@ describe("src/ipc/handlers.ts", () => {
         workspaceId: "default",
       };
       currentConfig.mocks = [{ ...mock }];
-      await getHandler("mock:update")(EVENT, mock);
+      await updateEntity("mocks", mock);
       expect(writeEntity).toHaveBeenCalledWith(
         "default", "mocks", "m1", expect.objectContaining({ id: "m1" }), null,
       );
@@ -1175,14 +1216,14 @@ describe("src/ipc/handlers.ts", () => {
         workspaceId: "default",
       };
       currentConfig.mocks = [{ ...mock }];
-      await getHandler("mock:update")(EVENT, { ...mock, responseStatus: 201 });
+      await updateEntity("mocks", { ...mock, responseStatus: 201 });
       expect(commitMutation).not.toHaveBeenCalled();
     });
   });
 
   // ── mock:delete ───────────────────────────────────────────────────────
 
-  describe("mock:delete handler", () => {
+  describe("entity.delete — mocks", () => {
     it("deletes the entity file for the given id", async () => {
       const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
       currentConfig.mocks = [
@@ -1190,7 +1231,7 @@ describe("src/ipc/handlers.ts", () => {
         { id: "m2", name: "b", method: "POST", urlPattern: "http://b.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 201, responseHeaders: {}, responseBody: "{}", createdAt: 2, workspaceId: "default" },
       ];
 
-      await getHandler("mock:delete")(EVENT, "m1");
+      await deleteEntity("mocks", "m1");
 
       expect(deleteEntityFile).toHaveBeenCalledWith("default", "mocks", "m1");
     });
@@ -1199,7 +1240,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.mocks = [
         { id: "m1", name: "m", method: "GET", urlPattern: "http://x.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1, workspaceId: "default" },
       ];
-      const result = await getHandler("mock:delete")(EVENT, "m1");
+      const result = await deleteEntity("mocks", "m1");
       expect(result).toEqual({ ok: true });
     });
 
@@ -1207,14 +1248,14 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.mocks = [
         { id: "m1", name: "My Mock", method: "GET", urlPattern: "http://x.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1, workspaceId: "default" },
       ];
-      await getHandler("mock:delete")(EVENT, "m1");
+      await deleteEntity("mocks", "m1");
       expect(commitMutation).not.toHaveBeenCalled();
     });
   });
 
   // ── request:add ───────────────────────────────────────────────────────
 
-  describe("request:add handler", () => {
+  describe("entity.create — requests", () => {
     const baseReq: Omit<SavedRequest, "id" | "createdAt"> = {
       name: "My Request",
       method: "POST",
@@ -1225,7 +1266,7 @@ describe("src/ipc/handlers.ts", () => {
     };
 
     it("adds a request and returns it with generated id and createdAt", async () => {
-      const result = await getHandler("request:add")(EVENT, baseReq);
+      const result = await createEntity("requests", baseReq);
       expect(result.id).toBeTruthy();
       expect(result.createdAt).toBeTypeOf("number");
       expect(result.name).toBe("My Request");
@@ -1233,38 +1274,38 @@ describe("src/ipc/handlers.ts", () => {
 
     it("writes the new request to disk via writeEntity", async () => {
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
-      await getHandler("request:add")(EVENT, baseReq);
+      await createEntity("requests", baseReq);
       expect(writeEntity).toHaveBeenCalled();
     });
   });
 
   // ── request:update ────────────────────────────────────────────────────
 
-  describe("request:update handler", () => {
+  describe("entity.update — requests", () => {
     it("writes the updated request to disk via writeEntity", async () => {
       const req: SavedRequest = { id: "r1", name: "old", method: "GET", url: "http://x.com", headers: {}, body: "", createdAt: 1 };
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
-      await getHandler("request:update")(EVENT, { ...req, name: "updated" });
+      await updateEntity("requests", { ...req, name: "updated" });
       expect(writeEntity).toHaveBeenCalled();
     });
 
     it("returns { ok: true }", async () => {
       const req: SavedRequest = { id: "r1", name: "r", method: "GET", url: "http://x.com", headers: {}, body: "", createdAt: 1 };
-      const result = await getHandler("request:update")(EVENT, req);
+      const result = await updateEntity("requests", req);
       expect(result).toEqual({ ok: true });
     });
   });
 
   // ── request:delete ────────────────────────────────────────────────────
 
-  describe("request:delete handler", () => {
+  describe("entity.delete — requests", () => {
     it("deletes the request file via deleteEntityFile", async () => {
       currentConfig.requests = [
         { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
       ];
       const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
 
-      await getHandler("request:delete")(EVENT, "r1");
+      await deleteEntity("requests", "r1");
 
       expect(deleteEntityFile).toHaveBeenCalledWith("default", "requests", "r1");
     });
@@ -1273,7 +1314,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.requests = [
         { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
       ];
-      const result = await getHandler("request:delete")(EVENT, "r1");
+      const result = await deleteEntity("requests", "r1");
       expect(result).toEqual({ ok: true });
     });
   });
@@ -1361,14 +1402,14 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── env:add ───────────────────────────────────────────────────────────
 
-  describe("env:add handler", () => {
+  describe("entity.create — environments", () => {
     it("adds an environment and returns it with generated id", async () => {
       const input: Omit<Environment, "id" | "createdAt"> = {
         name: "Development",
         variables: [{ id: "v1", key: "BASE_URL", value: "http://localhost:3000" }],
       };
 
-      const result = await getHandler("env:add")(EVENT, input);
+      const result = await createEntity("environments", input);
 
       expect(result.id).toBeTruthy();
       expect(result.name).toBe("Development");
@@ -1378,12 +1419,12 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── env:update ────────────────────────────────────────────────────────
 
-  describe("env:update handler", () => {
+  describe("entity.update — environments", () => {
     it("updates an existing environment", () => {
       const env: Environment = { id: "e1", name: "old", variables: [], createdAt: 1 };
       currentConfig.environments = [{ ...env }];
 
-      getHandler("env:update")(EVENT, { ...env, name: "updated" });
+      updateEntity("environments", { ...env, name: "updated" });
 
       expect(currentConfig.environments[0].name).toBe("updated");
     });
@@ -1391,21 +1432,21 @@ describe("src/ipc/handlers.ts", () => {
     it("returns { ok: true }", async () => {
       const env: Environment = { id: "e1", name: "env", variables: [], createdAt: 1 };
       currentConfig.environments = [env];
-      const result = await getHandler("env:update")(EVENT, env);
+      const result = await updateEntity("environments", env);
       expect(result).toEqual({ ok: true });
     });
   });
 
   // ── env:delete ────────────────────────────────────────────────────────
 
-  describe("env:delete handler", () => {
+  describe("entity.delete — environments", () => {
     it("removes the environment with the given id", () => {
       currentConfig.environments = [
         { id: "e1", name: "dev", variables: [], createdAt: 1 },
         { id: "e2", name: "prod", variables: [], createdAt: 2 },
       ];
 
-      getHandler("env:delete")(EVENT, "e1");
+      deleteEntity("environments", "e1");
 
       expect(currentConfig.environments).toHaveLength(1);
       expect(currentConfig.environments[0].id).toBe("e2");
@@ -1415,7 +1456,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.environments = [{ id: "e1", name: "dev", variables: [], createdAt: 1 }];
       currentConfig.activeEnvironmentId = "e1";
 
-      getHandler("env:delete")(EVENT, "e1");
+      deleteEntity("environments", "e1");
 
       expect(currentConfig.activeEnvironmentId).toBeNull();
     });
@@ -1427,14 +1468,14 @@ describe("src/ipc/handlers.ts", () => {
       ];
       currentConfig.activeEnvironmentId = "e2";
 
-      getHandler("env:delete")(EVENT, "e1");
+      deleteEntity("environments", "e1");
 
       expect(currentConfig.activeEnvironmentId).toBe("e2");
     });
 
     it("returns { ok: true }", async () => {
       currentConfig.environments = [{ id: "e1", name: "e", variables: [], createdAt: 1 }];
-      const result = await getHandler("env:delete")(EVENT, "e1");
+      const result = await deleteEntity("environments", "e1");
       expect(result).toEqual({ ok: true });
     });
   });
@@ -1548,22 +1589,22 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── rule:update — not-found branch ──────────────────────────────────
 
-  describe("rule:update handler — not-found branch", () => {
+  describe("entity.update — proxyRules, not-found branch", () => {
     it("does nothing when the rule id does not exist", () => {
       currentConfig.proxyRules = [];
       const rule: ProxyRule = { id: "nonexistent", name: "r", pattern: ".*", targetMappingId: "m1", enabled: true };
-      expect(() => getHandler("rule:update")(EVENT, rule)).not.toThrow();
+      expect(() => updateEntity("proxyRules", rule)).not.toThrow();
       expect(currentConfig.proxyRules).toHaveLength(0);
     });
   });
 
   // ── env:update — not-found branch ────────────────────────────────────
 
-  describe("env:update handler — not-found branch", () => {
+  describe("entity.update — environments, not-found branch", () => {
     it("does nothing when the env id does not exist", () => {
       currentConfig.environments = [];
       const env: Environment = { id: "nonexistent", name: "e", variables: [], createdAt: 1 };
-      expect(() => getHandler("env:update")(EVENT, env)).not.toThrow();
+      expect(() => updateEntity("environments", env)).not.toThrow();
       expect(currentConfig.environments).toHaveLength(0);
     });
   });
@@ -1598,7 +1639,7 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── mock:update — conflict disabling ─────────────────────────────────
 
-  describe("mock:update handler — disableConflicts", () => {
+  describe("entity.update — mocks, disableConflicts", () => {
     const baseMock: MockRule = {
       id: "m1", name: "Mock A", method: "GET", urlPattern: "http://api.example.com/data",
       useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "",
@@ -1609,7 +1650,7 @@ describe("src/ipc/handlers.ts", () => {
       const conflict: MockRule = { ...baseMock, id: "m2", name: "Mock B" };
       currentConfig.mocks = [{ ...baseMock }, conflict];
 
-      await getHandler("mock:update")(EVENT, { ...baseMock, enabled: true });
+      await updateEntity("mocks", { ...baseMock, enabled: true });
 
       // mock:update no longer handles conflict resolution — that's done by entity:setEnabled
       expect(currentConfig.mocks.find((m) => m.id === "m2")?.enabled).toBe(true);
@@ -1619,7 +1660,7 @@ describe("src/ipc/handlers.ts", () => {
       const other: MockRule = { ...baseMock, id: "m2", name: "Mock B" };
       currentConfig.mocks = [{ ...baseMock }, other];
 
-      await getHandler("mock:update")(EVENT, { ...baseMock, enabled: false });
+      await updateEntity("mocks", { ...baseMock, enabled: false });
 
       expect(currentConfig.mocks.find((m) => m.id === "m2")?.enabled).toBe(true);
     });
@@ -1627,7 +1668,7 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── mock:update — not-found branch ───────────────────────────────────
 
-  describe("mock:update handler — not-found branch", () => {
+  describe("entity.update — mocks, not-found branch", () => {
     it("does nothing when the mock id does not exist", async () => {
       currentConfig.mocks = [];
       const mock: MockRule = {
@@ -1635,25 +1676,25 @@ describe("src/ipc/handlers.ts", () => {
         useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "",
         responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1,
       };
-      await expect(getHandler("mock:update")(EVENT, mock)).resolves.not.toThrow();
+      await expect(updateEntity("mocks", mock)).resolves.not.toThrow();
       expect(currentConfig.mocks).toHaveLength(0);
     });
   });
 
   // ── request:update — not-found branch ────────────────────────────────
 
-  describe("request:update handler — not-found branch", () => {
+  describe("entity.update — requests, not-found branch", () => {
     it("does nothing when the request id does not exist", () => {
       currentConfig.requests = [];
       const req: SavedRequest = { id: "nonexistent", name: "r", method: "GET", url: "http://x.com", headers: {}, body: "", createdAt: 1 };
-      expect(() => getHandler("request:update")(EVENT, req)).not.toThrow();
+      expect(() => updateEntity("requests", req)).not.toThrow();
       expect(currentConfig.requests).toHaveLength(0);
     });
   });
 
   // ── ws:add / ws:update / ws:delete ───────────────────────────────────
 
-  describe("ws:add handler", () => {
+  describe("entity.create — wsConnections", () => {
     const baseConn: Omit<SavedWsConnection, "id" | "createdAt"> = {
       name: "Local WS",
       url: "ws://localhost:3000",
@@ -1663,40 +1704,40 @@ describe("src/ipc/handlers.ts", () => {
     };
 
     it("adds a ws connection and returns it with generated id", async () => {
-      const result = await getHandler("ws:add")(EVENT, baseConn);
+      const result = await createEntity("wsConnections", baseConn);
       expect(result.id).toBeTruthy();
       expect(result.url).toBe("ws://localhost:3000");
     });
 
     it("writes the new ws connection to disk via writeEntity", async () => {
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
-      await getHandler("ws:add")(EVENT, baseConn);
+      await createEntity("wsConnections", baseConn);
       expect(writeEntity).toHaveBeenCalled();
     });
   });
 
-  describe("ws:update handler", () => {
+  describe("entity.update — wsConnections", () => {
     it("writes the updated ws connection to disk via writeEntity", async () => {
       const conn: SavedWsConnection = { id: "c1", name: "old", url: "ws://localhost:1", headers: {}, createdAt: 1, workspaceId: "default" };
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
-      await getHandler("ws:update")(EVENT, { ...conn, name: "updated" });
+      await updateEntity("wsConnections", { ...conn, name: "updated" });
       expect(writeEntity).toHaveBeenCalled();
     });
 
     it("returns { ok: true }", async () => {
       const conn: SavedWsConnection = { id: "c1", name: "c", url: "ws://x", headers: {}, createdAt: 1, workspaceId: "default" };
-      const result = await getHandler("ws:update")(EVENT, conn);
+      const result = await updateEntity("wsConnections", conn);
       expect(result).toEqual({ ok: true });
     });
   });
 
-  describe("ws:delete handler", () => {
+  describe("entity.delete — wsConnections", () => {
     it("deletes the ws connection file via deleteEntityFile", async () => {
       currentConfig.wsConnections = [
         { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
       ];
       const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
-      await getHandler("ws:delete")(EVENT, "c1");
+      await deleteEntity("wsConnections", "c1");
       expect(deleteEntityFile).toHaveBeenCalledWith("default", "sockets", "c1");
     });
 
@@ -1704,7 +1745,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.wsConnections = [
         { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
       ];
-      const result = await getHandler("ws:delete")(EVENT, "c1");
+      const result = await deleteEntity("wsConnections", "c1");
       expect(result).toEqual({ ok: true });
     });
   });
@@ -2012,13 +2053,21 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── entity.* CommandRegistry collapse (P2 work item 7) ──────────────────
   //
-  // The legacy per-kind channels (`rule:add`, `ws:add`, …) now route through the collapsed
-  // `entity.create`/`entity.update`/`entity.delete` commands internally (see
-  // `entityCrudFactory.ts`). `EntityKind`'s wire vocabulary renames two of the twelve kinds —
-  // engine-internal "rules"/"sockets" become protocol "proxyRules"/"wsConnections" — so these
-  // tests exist specifically to pin that translation: without it, `commandRegistry.invoke()`
-  // would throw a schema-validation error the moment a rule or websocket connection was
-  // created, updated, deleted, or loaded.
+  // These cases call the collapsed `entity.create`/`entity.update`/`entity.delete`/`entity.list`
+  // commands directly. They used to reach them through the per-kind channels (`rule:add`, `ws:add`, …),
+  // which were one-line adapters; the channels are the step-3 reduction's target (`plan/07` §5b-ter) and
+  // these cases no longer depend on them.
+  //
+  // `EntityKind`'s wire vocabulary renames two of the twelve kinds — engine-internal "rules"/"sockets"
+  // become protocol "proxyRules"/"wsConnections" — so these tests exist specifically to pin that
+  // translation: without it, `commandRegistry.invoke()` would throw a schema-validation error the moment
+  // a rule or websocket connection was created, updated, deleted, or loaded.
+  //
+  // **What changed on 2026-09-20, and it is a narrowing worth knowing about.** The translation is
+  // two-sided: the channel applied `toProtocolKind()` on the way in, and the engine applies
+  // `toEngineKind()` on the way out. Re-pointing these cases at the commands directly removes the
+  // *first* half from the test's path, so what they pin now is `toEngineKind()` alone — which is the
+  // half that survives, since `toProtocolKind()` lives in the factory and dies with the channels.
 
   describe("entity.* CommandRegistry collapse", () => {
     it("registers entity.create, entity.update, entity.delete, entity.load, entity.list and entity.setEnabled", () => {
@@ -2039,31 +2088,31 @@ describe("src/ipc/handlers.ts", () => {
       expect(result).toEqual({ ok: false });
     });
 
-    it("rule:add routes through entity.create with kind \"proxyRules\" and still stores under \"rules\"", async () => {
+    it("a rule is created with kind \"proxyRules\" and still stores under \"rules\"", async () => {
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
       const input: Omit<ProxyRule, "id"> = {
         name: "API rule", pattern: ".*\\.api\\.com.*", targetMappingId: "m1", enabled: true,
       };
-      await getHandler("rule:add")(EVENT, input);
+      await createEntity("proxyRules", input);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("rules");
     });
 
-    it("ws:add routes through entity.create with kind \"wsConnections\" and still stores under \"sockets\"", async () => {
+    it("a websocket connection is created with kind \"wsConnections\" and still stores under \"sockets\"", async () => {
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
       const input: Omit<SavedWsConnection, "id"> = { name: "conn", url: "ws://localhost" } as any;
-      await getHandler("ws:add")(EVENT, input);
+      await createEntity("wsConnections", input);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("sockets");
     });
 
-    it("graphql:addSchema/deleteSchema/listSchemas route through entity.create/entity.delete/entity.list", async () => {
+    it("graphql schemas round-trip through entity.create / entity.delete / entity.list", async () => {
       const { writeEntity, deleteEntityFile, readAllEntities } = await import("@bifurc/engine/store/workspaceFs");
-      await getHandler("graphql:addSchema")(EVENT, { name: "s", content: "type Query {}" } as any);
+      await createEntity("graphqlSchemas", { name: "s", content: "type Query {}" } as any);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("graphqlSchemas");
 
-      await getHandler("graphql:deleteSchema")(EVENT, "s1");
+      await deleteEntity("graphqlSchemas", "s1");
       expect(vi.mocked(deleteEntityFile)).toHaveBeenCalledWith("default", "graphqlSchemas", "s1");
 
-      const list = await getHandler("graphql:listSchemas")(EVENT);
+      const list = await listEntities("graphqlSchemas");
       expect(vi.mocked(readAllEntities)).toHaveBeenCalledWith("default", "graphqlSchemas");
       expect(list).toEqual([]);
     });
@@ -2074,30 +2123,30 @@ describe("src/ipc/handlers.ts", () => {
     // pin that it now goes through `entity.create`/`entity.update`/`entity.delete` exactly
     // like every other kind, with those quirks preserved.
 
-    it("env:add routes through entity.create with kind \"environments\" and stores flat", async () => {
+    it("an environment is created with kind \"environments\" and stores flat", async () => {
       const { writeFlatEntity } = await import("@bifurc/engine/store/workspaceFs");
       const input = { name: "Dev", variables: [] };
-      const result = await getHandler("env:add")(EVENT, input);
+      const result = await createEntity("environments", input);
       expect(result.id).toBeTruthy();
       expect(result.name).toBe("Dev");
       expect(vi.mocked(writeFlatEntity).mock.calls[0][1]).toBe("environments");
     });
 
-    it("env:add returns { error: \"limit_reached\", ... } and creates nothing when gateCreate disallows it", async () => {
+    it("a gated create returns { error: \"limit_reached\", ... } and creates nothing", async () => {
       const { gateCreate } = await import("@bifurc/engine/subscription/entityCount");
       vi.mocked(gateCreate).mockReturnValueOnce({ allowed: false, current: 1, limit: 1 });
 
       currentConfig.environments = [];
-      const result = await getHandler("env:add")(EVENT, { name: "Dev", variables: [] });
+      const result = await createEntity("environments", { name: "Dev", variables: [] });
 
       expect(result).toEqual({ error: "limit_reached", allowed: false, current: 1, limit: 1 });
       expect(currentConfig.environments).toHaveLength(0);
       expect(gateCreate).toHaveBeenCalledWith(expect.any(String), "environment");
     });
 
-    it("env:delete refuses to delete \"__global__\"", async () => {
+    it("an environment delete refuses \"__global__\"", async () => {
       currentConfig.environments = [{ id: "__global__", name: "Global", variables: [], createdAt: 1 }];
-      const result = await getHandler("env:delete")(EVENT, "__global__");
+      const result = await deleteEntity("environments", "__global__");
       expect(result).toEqual({ ok: false, error: "cannot_delete_global" });
       expect(currentConfig.environments).toHaveLength(1);
     });
