@@ -11,24 +11,28 @@ import { createIpcTransport } from "./ipcTransport";
  * ## What this file is
  *
  * It was a hand-written table of 136 `ipcRenderer.invoke` calls. It is now a one-line spread of the
- * client, plus **four** explicit overrides. The table is gone because `renderer/types/window.ts` was
+ * client, with **no overrides left**. The table is gone because `renderer/types/window.ts` was
  * never the contract — `src/preload.ts` was — and `@bifurc/client` was built in P5 to satisfy that
  * contract exactly, positional arguments included. So `{ ...client }` *is* the surface, and the
  * surface test in `packages/client/tests/surface.test.ts` asserts it against the real object.
  *
- * ## Why one key is still `ipcRenderer.invoke`, and why that is not sloppiness
+ * ## Why there are no overrides left
  *
  * Step 3b-1 routed everything that could safely be routed, 3b-2 gave the missing commands registry
  * implementations, and 3b-3 routed the last four artifact-egress methods once the client had the
  * filesystem hooks to carry them. Step 3d then unblocked the three keys that were pinned as
  * `NARROWED` / `BLOCKED` by **widening the schemas they were blocked on** rather than by moving them —
- * `audit.list` and the two `runner.*Config`. **143 of 144 keys now route.**
+ * `audit.list` and the two `runner.*Config`.
  *
- * What is left is `app.checkUpdate`, the one `SPLIT`. The protocol declares an engine-half contract
- * that deliberately differs from the shell implementation (`misc.ts`: the GitHub fetch is engine-safe
- * outbound network, the version and platform comparison is client-local), and `plan/12` moves it fully
- * client-side. Routing it as the shell body stands would turn a working method into an
- * `UNKNOWN_COMMAND`, so it stays on the channel that serves it until the split is written.
+ * The last key, `app.checkUpdate`, was the surface's only `SPLIT`, and it is the one key that is **not
+ * a protocol command at all**. Resolved 2026-09-20 by reclassifying it `local`: `currentVersion` is
+ * the version of the thing the *user* is running and `downloadUrl` must be the asset for the *user's*
+ * platform, so no engine can answer it correctly — an engine's own version only coincides under D9
+ * lockstep, and matching its own `process.platform` would hand a Windows user the AppImage. The
+ * protocol no longer declares `app.checkUpdate`; it is a `local` member above, which the client
+ * delegates to. The shell's `app:checkUpdate` handler is unchanged and still does the work.
+ *
+ * **All 144 keys are classified, with zero `SPLIT` remaining.**
  *
  * ## The two things that made routing safe, both checked rather than assumed
  *
@@ -71,6 +75,11 @@ const client = createClient(createIpcTransport(), {
     getZoomLevel: () => ipcRenderer.invoke("zoom:get"),
     setZoomLevel: (level: number) => ipcRenderer.invoke("zoom:set", level),
 
+    // The update check, which is `local` rather than a routed command — see the header. It needs
+    // `app.getVersion()` from this process and the asset for *this* platform, so the shell's
+    // `app:checkUpdate` handler stays and the protocol no longer declares `app.checkUpdate`.
+    checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
+
     // ── The three filesystem hooks ──────────────────────────────────────────
     //
     // `writeArtifact` is the bundled form — show the save dialog, then write — and `pickSavePath` is
@@ -92,14 +101,4 @@ const client = createClient(createIpcTransport(), {
   },
 });
 
-contextBridge.exposeInMainWorld("api", {
-  ...client,
-
-  // ── The one key with no registry implementation — see the header ──────────
-  //
-  // `app.checkUpdate` is a `SPLIT`, and it is pinned in the "registry coverage" ratchet in
-  // `tests/ipc/handlers.test.ts`, which is what stops it from being quietly routed here later without
-  // the split being written first. `listAudit`, `saveRunnerConfig` and `loadRunnerConfig` used to sit
-  // beside it; step 3d unblocked all three by widening their schemas.
-  checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
-});
+contextBridge.exposeInMainWorld("api", { ...client });
