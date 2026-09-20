@@ -28,13 +28,19 @@ naming its mechanism**, never by waving at the number.
   statically guarded. `registerIpcHandlers()` is **reduced, not deleted** — `registerClientHandlers()`
   already sits beside it (`src/main.ts:294`). **Criterion 2 ("11 e2e specs pass, unmodified") is CARRIED**
   — owner's terminal only; re-measured 2026-09-20 = the documented 46 failed / 0 passed.
-- **P6 step 3 — stage 3b is 9 of 57 channels done** (`plan/07` §5b-sexies): the nine protocol-client
-  passthroughs deleted, 20 test call sites re-pointed at `commandRegistry.invoke()`. The **48 generated**
-  channels wait on **splitting `entityCrudFactory`** (`registerEntityCrudHandlers` also calls
-  `registerCrudKind`, which fills the map `entity.*` dispatches through) + judging `handlers.test.ts`'s 75
-  adapter cases per case.
+- **P6 step 3 — stage 3b is COMPLETE: 57 of 57 channels deleted** (`plan/07` §5b-sexies = slice 1,
+  §5b-septies = slice 2). **Slice 1 (9):** the protocol-client passthroughs, 20 test call sites re-pointed at
+  `commandRegistry.invoke()`. **Slice 2 (48):** `src/ipc/handlers/entityCrudFactory.ts` **deleted**; the five
+  callers now call the engine's `registerCrudKind()` / `registerSimpleKind()` directly; the five `ipc*` fields
+  gone from `CrudFactoryOpts` / `SimpleEntityOpts`. **The split-then-delete order was necessary, not
+  optional** — the wrapper also did the container insert, so deleting it outright breaks all 16 kinds with
+  the misleading *"is not routed through the CommandRegistry yet"*. Suite **2,496 / 2,455 / 40 / 1**: −18
+  tests from stage 3a's checkpoint, mechanism named — `handlers.test.ts` generates **one `it` per
+  `expectedChannels` entry**, so the 18 deleted names took their 18 generated tests. Correct, not lost
+  coverage. **Still open:** the three `*Handlers.ts` files now register *kinds, not handlers*, so their names
+  lie (rename = next slice); and `registerIpcHandlers()`'s own reduction.
 
-## The executor pivot — `plan/14` (D10–D16), planned 2026-09-20, no code written
+## The executor pivot — `plan/14` (D10–D17), planned 2026-09-20, no code written
 
 **The deployable unit is a WORKSPACE, not the engine.** `plan/14` is the authority; D10–D16 are in
 `plan/00-decisions.md`. Workspace = executor (D10) · N per host via `WorkspaceRuntime` (D11) · the desktop
