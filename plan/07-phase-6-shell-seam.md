@@ -787,6 +787,37 @@ envelope, so a re-pointed case that reads the result needs `.entity` (or the sam
 uses — §5b-quater). A re-point that returns the envelope will assert against the wrong object and may still
 pass.
 
+#### 5b-quinquies. Stage 1 — the three mechanical suites are registry-driven (2026-09-20)
+
+**Owner's call: full slice, staged commits.** Stage 1 is done and committed: the three suites outside
+`handlers.test.ts` no longer drive a single per-kind channel — `protocolExecution` (16 sites),
+`settingsMutations` (5), `foldersAndWorkspaces` (4). Each drives the collapsed `entity.*` commands through
+small local `createEntity` / `updateEntity` / `deleteEntity` / `listEntities` helpers, which is what the
+channel was: a one-line `commandRegistry.invoke()` adapter.
+
+Two details are load-bearing rather than incidental, and both are recorded in the helpers' docblocks:
+
+ - **`createEntity` unwraps `{id, entity}`**, because the channel did (`entityCrudFactory.ts:72`) and these
+   cases read the created entity's `id` to locate its file on disk. Without the unwrap they would assert
+   against the envelope and pass on `id` alone — §5b-quater's defect one layer up.
+ - **`workspaceId` is passed through as-is, never defaulted to `TEST_WS`.** The channel sent
+   `entity.workspaceId` (usually `undefined`), and `entity.create` then falls back to the *active*
+   workspace. `foldersAndWorkspaces`'s scoped-workspace case asserts exactly that, so a default here would
+   have made it vacuous — and it would still have passed. Found while writing the helper, not by a failure.
+
+The test **titles** that named the old channels were renamed too (`"graphql:addRequest round-trips…"` →
+`"a graphql request round-trips…"`, plus three in `settingsMutations`). A title naming a channel the case
+no longer drives is the same lying-name trap as a docblock that sanctions a bug.
+
+**Reconciliation: 101 files / 2,511 tests / 2,470 passed / 40 skipped / 1 failed — identical to the
+pre-Stage-1 baseline.** Behaviour-neutral by construction: no test added or removed, only the transport the
+assertions travel over changed. Typecheck clean (`typecheck:packages` + `tsc --noEmit`).
+
+**Stage 2 is `handlers.test.ts`** (63 occurrences, 75 `it` blocks across 37 `describe` blocks, per-case
+delete-vs-re-point), and **Stage 3 is the deletion** — 57 channels, `entityCrudFactory.ts` split, the
+vestigial `ipc*` fields removed, and the three protocol files reduced to kind registration (and renamed,
+since `registerSoapHandlers()` would then register no handlers).
+
 **So the pass's unit is the handler group, and a slice is: delete the group's channels (splitting the
 factory where the group *is* a factory), re-point the suites that drove them, verify, commit.** The 12
 files are not 12 equal slices. `soapHandlers` / `graphqlHandlers` / `grpcHandlers` are each the factory

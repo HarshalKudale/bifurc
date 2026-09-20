@@ -53,6 +53,8 @@ import { generateCA } from "@bifurc/engine/proxy/certManager";
 import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { stopCompanionServer, getCompanionPort } from "@bifurc/engine/transport/legacyCompanion";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/eventBus";
 
 // ── Capture the handlers the Settings screen drives ───────────────────────────
 
@@ -85,6 +87,28 @@ function invoke<T = any>(channel: string, ...args: any[]): T {
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
 }
+
+/**
+ * The collapsed `entity.*` commands, driven directly — the per-kind `mock:*` channels are the step-3
+ * reduction's target (`plan/07` §5b-ter) and were only ever one-line `commandRegistry.invoke()`
+ * adapters, so this is what the channel did minus the channel.
+ *
+ * `create` unwraps `{id, entity}` because the channel did (`entityCrudFactory.ts:72`) and the
+ * assertions below read the created mock's own fields; without it they would compare against the
+ * envelope and pass on `id` alone. Same defect as `plan/07` §5b-quater, one layer up.
+ */
+const createMock = async <T = any>(entity: any): Promise<T> => {
+  const r: any = await commandRegistry.invoke(
+    "entity.create",
+    { kind: "mocks", entity, workspaceId: entity.workspaceId },
+    { bus },
+  );
+  return ("entity" in r ? r.entity : r) as T;
+};
+const updateMock = (entity: any) =>
+  commandRegistry.invoke("entity.update", { kind: "mocks", entity }, { bus });
+const deleteMock = (id: string) =>
+  commandRegistry.invoke("entity.delete", { kind: "mocks", id }, { bus });
 
 // ── Socket helpers ────────────────────────────────────────────────────────────
 
@@ -511,7 +535,7 @@ describe("settings — zoom", () => {
 // ── 7. Live mutations reach the running proxy ─────────────────────────────────
 
 describe("settings — a config mutation reaches the running proxy with no restart", () => {
-  it("serves a mock added through mock:add immediately", async () => {
+  it("serves a mock added through entity.create immediately", async () => {
     await bootOnConfiguredPort();
 
     // The mapping forwards everything to the real upstream, so before the mock exists
@@ -520,7 +544,7 @@ describe("settings — a config mutation reaches the running proxy with no resta
     expect(JSON.parse(before.body)).toEqual({ upstream: true, path: "/api/added" });
     expect(upstream.requests).toHaveLength(1);
 
-    const added = await invoke("mock:add", {
+    const added = await createMock({
       name: "Added live",
       method: "GET",
       urlPattern: "http://app.localhost/api/added",
@@ -545,23 +569,23 @@ describe("settings — a config mutation reaches the running proxy with no resta
     expect(JSON.parse(after.body)).toEqual({ added: true });
   });
 
-  it("serves the edited body after mock:update, with no restart", async () => {
+  it("serves the edited body after an update, with no restart", async () => {
     await bootOnConfiguredPort();
     expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "mock" });
 
     const existing = invoke("config:get").mocks.find((m: any) => m.urlPattern === APP_JSON_MOCK_URL);
     expect(existing).toBeTruthy();
-    await invoke("mock:update", { ...existing, responseBody: JSON.stringify({ from: "edited" }) });
+    await updateMock({ ...existing, responseBody: JSON.stringify({ from: "edited" }) });
 
     expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "edited" });
   });
 
-  it("stops serving a mock deleted through mock:delete", async () => {
+  it("stops serving a mock after a delete", async () => {
     await bootOnConfiguredPort();
     expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "mock" });
 
     const existing = invoke("config:get").mocks.find((m: any) => m.urlPattern === APP_JSON_MOCK_URL);
-    await invoke("mock:delete", existing.id);
+    await deleteMock(existing.id);
 
     // With the mock gone the mapping takes over, so the real upstream answers.
     const after = await fetchHello(portA);
@@ -575,7 +599,7 @@ describe("settings — a config mutation reaches the running proxy with no resta
     // A second workspace, with its own mock on the same URL.
     const second = await invoke("workspace:add", "Second Workspace");
     expect(second.id).toBeTruthy();
-    await invoke("mock:add", {
+    await createMock({
       ...fullyMocked({ urlPattern: APP_JSON_MOCK_URL, responseBody: JSON.stringify({ from: "second" }) }),
       id: undefined,
       workspaceId: second.id,
@@ -591,7 +615,7 @@ describe("settings — a config mutation reaches the running proxy with no resta
   it("goes back to the first workspace's mock when the switch is reverted", async () => {
     await bootOnConfiguredPort();
     const second = await invoke("workspace:add", "Second Workspace");
-    await invoke("mock:add", {
+    await createMock({
       ...fullyMocked({ urlPattern: APP_JSON_MOCK_URL, responseBody: JSON.stringify({ from: "second" }) }),
       id: undefined,
       workspaceId: second.id,
