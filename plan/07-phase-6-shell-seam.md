@@ -751,6 +751,23 @@ than a cost to be minimised: a suite that drives the channel is a channel test t
 engine, and `TRAPS.md` records that such a suite is structurally blind to the wiring it thinks it covers.
 Re-pointed, they become registry-driven, which is what P9 needs anyway.
 
+**Measured 2026-09-20, and this is the number the plan was missing: the factory's own channels are driven
+from 6 test files, 97 literal occurrences** — `tests/ipc/handlers.test.ts` **63**,
+`protocolExecution` 13, `companionServer` 10, `settingsMutations` 5, `foldersAndWorkspaces` 4,
+`companion/allowedActions` 2. By family: `mock:*` 33, `request:*` 17, `env:*` 14, `graphql:*` 12,
+`mapping:*` 11, `rule:*` 10, `ws:*` 10, `grpc:*` 8, `soap:*` 7, `webhook:*` 0. (The `invoke("` counts above
+measure *all* commands those suites drive; these measure only the channels this slice deletes, so they are
+the migration's actual size.)
+
+**`handlers.test.ts` is the open question, not the work.** 63 of the 97 sit in the file whose entire
+subject *is* the IPC handler layer — and the handlers it tests are the ones being deleted. So the default
+disposition there is **delete, not re-point**: a case that drives `mock:add` to observe the engine's
+conflict behaviour is a channel test that happens to reach the engine, and `entityConflictScope` plus
+`entityCrudCommands`'s own suite already cover that behaviour. But that has to be established **per case**
+— a case with no engine-level twin has to be re-pointed instead, and the two look identical from the call
+site. That per-case judgement, not the 48 deletions, is the slice's real work, and it is why the slice
+wants a session of its own.
+
 **So the pass's unit is the handler group, and a slice is: delete the group's channels (splitting the
 factory where the group *is* a factory), re-point the suites that drove them, verify, commit.** The 12
 files are not 12 equal slices. `soapHandlers` / `graphqlHandlers` / `grpcHandlers` are each the factory
