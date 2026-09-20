@@ -682,6 +682,16 @@ rather than a type.
       suites register handler groups by hand and drive the channels directly (`foldersAndWorkspaces` 45
       invocations, `protocolExecution` 62). So the unit is the **handler group** — delete its channels,
       re-point the suites that drove them, verify, commit.
+      **Progress 2026-09-20 — stage 3b is 9 of its 57 channels done** (`plan/07` §5b-sexies): the nine
+      protocol-client passthroughs (`graphql:introspect|execute`, `soap:fetchWsdl|execute`, the five
+      `grpc:*`) are deleted from the three handler files, and `protocolExecution`'s 20 call sites are
+      re-pointed at `commandRegistry.invoke()` through an explicit `invokeCommand(command, params)`
+      helper. **Reconciliation: 101 files / 2,514 tests / 2,473 passed / 40 skipped / 1 failed — identical
+      to stage 3a's checkpoint**, i.e. deleting nine channels cost **zero** tests. The 48 generated channels
+      remain, still gated on the factory split + the `handlers.test.ts` per-case migration. Two collateral
+      repairs: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored — it is P0's
+      runtime evidence and the baseline's documented 1 failure), and the tree had been left mid-slice with
+      19 cases failing `No handler registered`.
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening
@@ -811,12 +821,86 @@ rather than a type.
       installer and a real packaged launch are still unverified** — carried to P12.
 - [x] Rollback flag — **resolved as a decision: dropped** (see the item above). Not a gate any more.
 - [x] No orphaned engine after a forced kill — **moved to the process split**, where it is criterion 7's
-      relocated home (`plan/07` work item 2). An in-process engine cannot be orphaned.
+      relocated home (`plan/07` work item 2). An in-process engine cannot be orphaned. **Re-scoped again
+      2026-09-20 by D14:** the process split is downgraded, so this criterion now belongs to the
+      **workspace host** (`plan/14` §7) rather than to P6.
 - [x] **Ship it.** 🎉 — **reached 2026-09-20: P6 closed in scope**, with the e2e run carried as an
       owner-run verification and NSIS + real packaged launch carried to P12. `plan/07`'s Acceptance
       criteria carries the re-scope, what moved, and why.
 
 > **At this point the project is reversible and the shell is disposable. Everything below is additive.**
+
+---
+
+## Section 7.5 — P14 Workspace runtime 🆕 2026-09-20 (3–4 weeks)
+
+**Full plan: [`14-workspace-runtime.md`](14-workspace-runtime.md). Read it before P7, P8 or P9.**
+
+The pivot: the deployable unit is a **workspace**, not the engine (D10). Servers become per-workspace;
+the companion server stays app-level.
+
+> **⚠ Read §12 of `plan/14` first — the reconciliation with the completed phases (measured 2026-09-20).**
+> P0–P6 are done, and they were done under the pre-pivot assumptions, so the pivot's target architecture is
+> a claim *about work already in the tree*. Six phases audited; **one turned out to be wrong**: §2.2's claim
+> that blob staging is "already per-workspace" is false — `blobRoot()` is `<dataDir>/blobs` and the four
+> `blob.*` commands carry no `workspaceId`, so blob staging is a **third app-level thing** this plan's split
+> table has no row for. §12.1 carries the measurement, the three costs under N > 1 and two fix shapes.
+
+- [ ] **DECISION (new, from §12.1) — is blob staging namespaced per workspace, or declared app-level?**
+      **(a) namespace it**: `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/` + `workspaceId` on the four
+      `blob.*` params + a per-runtime sweeper; **(b) declare it app-level** like the companion server and
+      correct §2.2. Recommended **(a)** — import/export is the layer §1.2 cites as already workspace-scoped
+      and it is the blob layer's only real consumer. **Either way the blob root must stay under `dataDir()`**
+      (the Docker-volume requirement, pinned by `tests/blob/store.test.ts:62`). Breaking protocol change →
+      lands with WI 1 and WI 8
+- [ ] **WI 0 — the measurement gate.** Inventory every reader of `AppConfig.port` / `.webhookPort` /
+      `.activeWorkspaceId` / `isRunning()` and every module-level mutable in `proxy/`. **Count it and
+      write the number down** — the phase's estimate rests on it being small.
+      *Partly pre-answered by §12.2: `packages/engine/src/index.ts:210-259` holds nearly every reader —
+      `preflight()` over three global ports, `startServer(settings.port)`, `startCompanionServer(...)`, the
+      global `waitUntilReady(isRunning, getServerError)`, and a `status()` returning one `proxyPort`.*
+- [ ] **WI 1 — port model + protocol shape (D16).** Host-local `runtime.json` at the data root mapping
+      `wsId → { preferredPort?, resolvedProxyPort?, resolvedWebhookPort? }` (**not** `workspace.json` — it
+      is git-tracked and a port would sync between machines). Allocator per D16: per-workspace override
+      (fails loudly if taken) → environment **base port** → contiguous scan upward. Base = `80` on win32,
+      `8080` elsewhere, overridable via `BIFURC_PROXY_BASE_PORT`. **Keep the platform branch to one
+      constant** — if per-platform logic appears anywhere else in the allocator, D16 is mis-implemented.
+      Driven by the real `listen()`, never by a probe. Skip a reserved-port set (companion, RPC, gRPC
+      `9102`, other runtimes' ports). `workspaceId` added to `server.*` and `webhookServer.*`;
+      `server.status` returns the **resolved** port
+- [ ] **WI 2 — de-singletonize the webhook receiver first, then the proxy.** Readiness must become
+      per-instance, not a global `isRunning()`. **Leave `store/paths.ts` and `processSpawner.ts` alone**
+- [ ] **WI 3 — `WorkspaceRuntime` + host entry point** inside `packages/engine` (`runtime/host.ts`), not
+      a new package — `bundle: false` makes a second package a module-state duplication hazard
+- [ ] **WI 4 — sever `activeWorkspaceId` from the servers.** `config.save` is **split, not deleted** —
+      the companion-restart half stays
+- [ ] **WI 5 — preflight + port allocation.** `preflight()`'s port check must become **non-fatal for the
+      base port** (a busy 80 is the normal second-workspace case) and stay fatal only for a per-workspace
+      override; `checkPortInUse` is for *reporting*, never for allocating. Reuse
+      `applications/portUtils.ts`; do not duplicate it. Log the resolved base port once at startup
+- [ ] **WI 6 — the deployable host artifact**: one container = one workspace, one volume = that workspace.
+      The image sets **`BIFURC_PROXY_BASE_PORT=8080`** — which is what Linux derives anyway, so it *states*
+      the published port rather than changing it
+- [ ] **WI 7 — the desktop adopts it**, with **zero user-visible change** and `window.api` byte-identical
+- [ ] **WI 8 — protocol + compat record** in `plan/protocol-changes.md`; fixtures **re-derived**; the
+      extension's four frozen commands asserted unchanged **by name**
+- [ ] Two workspaces serve their own rules simultaneously on different ports, with no cross-talk
+- [ ] **The D16 sequence holds per environment:** on `win32` 80 → 81 → 82; elsewhere 8080 → 8081 → 8082.
+      Assert the sequence, and assert it for **both** bases
+- [ ] **The platform branch is one constant** — assert base `80` under a simulated `win32` and `8080`
+      otherwise, and that nothing else in the allocation path branches on platform
+- [ ] **A per-workspace override fails loudly**, naming the next free port — never silently moves
+- [ ] **`EACCES` advances rather than killing the runtime** — an override below 1024 on a platform that
+      forbids it still comes up *(defensive: the default path never attempts a privileged port)*
+- [ ] **The resolved port survives a restart:** free the base port, restart the host, and the workspace that
+      incremented is **still** on its incremented port
+- [ ] **No reserved port is ever assigned** — assert 9271 (companion) and 9102 (gRPC) are never handed out;
+      the second workspace's webhook skips 9102 and lands on 9103
+- [ ] `preflight()` does **not** fail on a busy **base** port, and **does** fail on a busy per-workspace
+      override
+- [ ] A workspace host starts with **no Electron and no companion server** — assert the companion port is
+      *not* listening
+- [ ] `store/paths.ts` still has exactly **one** data root in the process
 
 ---
 
@@ -836,7 +920,13 @@ rather than a type.
 - [ ] Playwright e2e on Chromium, Firefox, WebKit
 - [ ] *Deferred (D8): full parity — close gaps only after real usage shows where they are*
 
-### P8 CLI — lifecycle + read-only (D7, ~3 weeks)
+### P8 CLI ⏸ **PARKED 2026-09-20 (D15)** — was: lifecycle + read-only (D7, ~3 weeks)
+
+> **Deferred, not deleted.** Two shapes are recorded in [`14-workspace-runtime.md`](14-workspace-runtime.md)
+> §7: (a) a CLI executable inside the Electron app talking to the app's engine over the socket transport,
+> or (b) an npm package speaking `@bifurc/client` against a local app, a local host or a remote host.
+> **The decision waits on P14 + P9**, because it depends on whether the workspace host becomes a common
+> deployment. The list below is kept as the v1 scope that was agreed, for whoever picks it up.
 
 **In scope for v1:**
 
@@ -860,7 +950,16 @@ rather than a type.
 - [ ] *`tls trust` and the Firefox warning*
 - [ ] *`config save`, collection runner, gRPC/GraphQL/SOAP execute*
 
-### P9 Docker
+### P9 Docker ⚠ **REWRITTEN 2026-09-20** — now "a workspace host in a container", not the engine
+
+> **Read [`14-workspace-runtime.md`](14-workspace-runtime.md) before starting this.** D10 changes what the
+> image contains: the host composes one `WorkspaceRuntime` per workspace and **does not start the companion
+> server**. Documented deployment becomes **one container = one workspace, one volume = that workspace's
+> `data/` + `blobs/`**. The port table in `plan/10` §4 needs N rows (one proxy port per hosted workspace),
+> not 2. Effort is roughly unchanged; the artifact and the volume layout are not. **Depends on P14.**
+>
+> The list below is still the right checklist for the *host* — read "the engine" as "the workspace host"
+> throughout.
 
 - [ ] Run the engine headlessly on the host first
 - [ ] Dockerfile: node:22-slim + git + ca-certificates, non-root

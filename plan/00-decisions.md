@@ -135,6 +135,17 @@ Append a row each time a decision is made or revisited.
 | 2026-09-14 | D7 | (a) CLI v1 = engine lifecycle + read-only inspection | Narrows P8 to ~3 w |
 | 2026-09-14 | D8 | (b) Web UI v1 = inspection + light editing | Sets P7 scope |
 | 2026-09-14 | D9 | (a) Lockstep versioning | See the extension exception below |
+| 2026-09-20 | D10 | **The executor unit is the workspace, not the engine** | Full rationale: [`14-workspace-runtime.md`](14-workspace-runtime.md) §3 |
+| 2026-09-20 | D11 | N workspaces per host; `WorkspaceRuntime` is the unit — one-per-container is the N=1 case | `14-workspace-runtime.md` §3 |
+| 2026-09-20 | D12 | The desktop adopts the same runtime, keeping `activeWorkspaceId` as a UI pointer | `14-workspace-runtime.md` §3 |
+| 2026-09-20 | D13 | One RPC endpoint per host; workspace-scoped commands carry `workspaceId` | `14-workspace-runtime.md` §3 |
+| 2026-09-20 | D14 | **P6 work item 2 (process split) downgraded** — the desktop stays in-process; supervision moves to the workspace host | `14-workspace-runtime.md` §7 |
+| 2026-09-20 | D15 | **CLI deferred — P8 parked.** Two shapes recorded (in-app executable / npm package), decided after P14 | `14-workspace-runtime.md` §7 |
+| 2026-09-20 | D16 | **A workspace's proxy takes a per-environment base port — `80` on Windows, `8080` on Linux/macOS/Docker — then counts up from it.** A per-workspace override fails loudly instead of moving; the webhook port follows the same shape from `9101` | `14-workspace-runtime.md` §3, D16 |
+
+> **D10–D16 are recorded in full in [`14-workspace-runtime.md`](14-workspace-runtime.md) §3**, not
+> duplicated here, so there is one authority for the reasoning and one place to correct it. This table is
+> the index. **Nothing from this pivot is still open.**
 
 ---
 
