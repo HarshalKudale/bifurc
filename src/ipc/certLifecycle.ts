@@ -44,7 +44,7 @@ import type {
     TlsExportCertResult,
     TlsRemoveCertResult,
 } from "@bifurc/protocol";
-import { identifyCert } from "@bifurc/engine/proxy/certManager";
+import { identifyCert, caCertPath, caKeyPath } from "@bifurc/engine/proxy/certManager";
 import { loadSettings, saveSettings, type TrustedCa } from "@bifurc/engine/store/appSettings";
 import { call, writeArtifact } from "@/ipc/fileOpsClient";
 import {
@@ -319,4 +319,43 @@ export async function readTrustSummary(): Promise<TrustSummary & { engineFingerp
     const status = await call<TlsCertStatusResult>("tls.certStatus", {});
     const summary = summariseTrust(loadSettings().tlsTrustedCa, status.fingerprint);
     return { ...summary, engineFingerprint: status.fingerprint };
+}
+
+/**
+ * The **full** renderer-facing `tlsCertStatus` shape — the engine's identity joined with the client's
+ * trust-store summary. Eight fields, and all eight are load-bearing.
+ *
+ * Extracted 2026-09-20 so the two channels that need it cannot drift apart. Before the extraction the
+ * composition lived only inside `tlsHandlers.ts`'s `tls:certStatus` channel, which is why the routed
+ * client twin could deliver the engine half alone and nothing pointed at the three missing fields:
+ * `trustState`, `firefoxDetected` and `firefoxProfiles` arrived `undefined`, and `undefined` is
+ * neither `"trusted"` nor `"stale"`, so the drift warning could not render — the one state this module
+ * exists to explain. `@bifurc/client` now calls this shape over `client:tlsCertStatus`
+ * (`plan/07` §5b-bis), and the legacy channel delegates here too, so there is one implementation.
+ *
+ * `certPath` / `keyPath` are computed here rather than returned by the engine — `tlsHandlers.ts`
+ * carries the full argument (category 3 in `plan/04` item 6; the engine deliberately reports no path
+ * since `plan/protocol-changes.md` 2026-09-17, and P7 is where it stops being a path).
+ */
+export async function readCertStatus(): Promise<{
+    generated: boolean;
+    certPath: string;
+    keyPath: string;
+    fingerprint: string | null;
+    trustedFingerprint: string | null;
+    trustState: TrustState;
+    firefoxDetected: boolean;
+    firefoxProfiles: number;
+}> {
+    const summary = await readTrustSummary();
+    return {
+        generated: summary.engineFingerprint !== null,
+        certPath: caCertPath(),
+        keyPath: caKeyPath(),
+        fingerprint: summary.engineFingerprint,
+        trustedFingerprint: summary.trustedFingerprint,
+        trustState: summary.trustState,
+        firefoxDetected: summary.firefoxDetected,
+        firefoxProfiles: summary.firefoxProfiles,
+    };
 }
