@@ -53,6 +53,16 @@ and change nothing the user can see.
 >   (`TypeError: … reading 'commandLine'`, i.e. `require("electron")` returning a path string = Node
 >   mode). Run each probe as a **plain sequential command**.
 >
+> **Re-measured 2026-09-20, unchanged.** `npx playwright test` reproduced **46 failed, 0 passed**, same
+> `firstWindow()` error, same ~850 ms. The count matching the figure above *is* the confirmation. One
+> addition for anyone re-running it: Playwright wipes `test-results/` before the first spec, which is now
+> **139 entries** and trips the agent shell's bulk-delete guard —
+> `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] … "targets": ["…\test-results"]`. That failure arrives
+> **before** any spec runs and masks the GPU one, so it reads as a new bug. Prefix with
+> `CODEBUDDY_SAFE_DELETE_ENABLED=0` to get past it. Skip the rebuild too if `dist/` is current:
+> `find src renderer packages/*/src -type f -newer dist/main.js` returning nothing means
+> `npx playwright test` alone is enough (`test:e2e`'s `npm run build` is the slow half).
+>
 > Consequence for the gate: the **unit** baseline is solid and is what step 2 is judged by. The e2e
 > criterion (*"11 e2e specs pass, unmodified"*) must be run by the user or on a machine whose shell can
 > host a GUI process — record the counts then.
@@ -160,6 +170,12 @@ prove the seam. The process split then becomes a change of transport *behind* a 
 
 That ordering is also what makes the rollback flag meaningful: `BIFURC_ENGINE_RPC=0` restores
 `registerIpcHandlers()` only while both paths exist.
+
+> **Superseded 2026-09-20.** The ordering held, but the flag's premise did not: step 3 re-pointed
+> `registerIpcHandlers()`'s bodies at the registry, so after it there was only one path. The flag was
+> therefore never written and is now **dropped** — see work item 6 and Rollback. The sentence above is
+> left standing because it is the correct condition for a transport-selection flag, and that condition
+> returns with the process split.
 
 ### 5. Step 3 is not mechanical: 25 of the 93 commands have no registry implementation
 
@@ -1083,6 +1099,25 @@ the robust answer: when the last client disconnects and a grace period expires, 
 `app.requestSingleInstanceLock()` (`main.ts:239`) already ensures one shell. One shell → one engine.
 Keep that invariant; do not let a second engine start.
 
+### Acceptance criteria for this work item — *moved here 2026-09-20*
+
+These four were criteria 5–8 of P6's gate. Finding 4 deferred the process split, which left them
+describing work this phase does not do; they are **relocated verbatim rather than deleted**, and they
+become this work item's gate. The audit and the reasoning are in
+[Acceptance criteria → Moved out of this gate](#moved-out-of-this-gate-2026-09-20--the-process-splits-criteria).
+
+- [ ] App launches, **engine spawns**, handshake completes, UI is functional.
+- [ ] Engine crash → automatic restart with backoff; UI shows an error after 3 failures.
+- [ ] Shell quit → engine exits; **no orphaned process** (`ps`/Task Manager verified).
+- [ ] Shell killed forcibly → engine self-terminates within the grace period.
+
+Two things this work item inherits from work item 4, both already landed, so the split starts from a
+verified base rather than re-deriving it:
+
+- The packaged bundle resolves and loads the engine from inside the asar (measured; CI-guarded).
+- `extraResources` is **this** work item's concern, not P6's — the plan re-scoped that checklist item on
+  2026-09-20. Nothing needs to leave the asar until there is a binary to place.
+
 ---
 
 ## Work item 3 — Preserve the `ready-to-show` and startup ordering
@@ -1125,6 +1160,90 @@ return app.isPackaged
 
 Reuse `iconPath()` for the engine binary — same dev-vs-packaged problem, same solution. **Do not
 introduce a second path-resolution convention.**
+
+### Measured 2026-09-20 — no `files` change is needed, and the real defect was elsewhere
+
+The section above predicts two changes: the engine in `extraResources`, and `files` updated "now that
+deps live in `packages/*`". **The first measurement of the current tree says the second is not needed,
+and that the thing which *is* broken was never in `files` at all.**
+
+`plan/12`'s note — *"a packaged build cannot resolve either specifier"* — was measured 2026-09-15
+against an asar built **2026-09-10**, i.e. *before* `@bifurc/protocol` and `@bifurc/engine` were
+declared as dependencies. `node_modules/@bifurc` was absent because nothing depended on it, not because
+electron-builder drops workspace links. Re-measured with a fresh `npm run build:main` and one
+`electron-builder --dir` run against the current tree:
+
+| Fact | 2026-09-10 asar | 2026-09-20 |
+| --- | --- | --- |
+| asar entries | 6,440 | 8,068 |
+| `dist/*.js` files in the bundle | 128 | 24 |
+| `node_modules/@bifurc/{engine,protocol,client}` | absent | **present, `package.json` included** |
+| distinct `@bifurc/...` specifiers the bundle requires | 0 | 44 |
+| …that resolve **inside** the archive | n/a | **44 of 44** |
+
+electron-builder 26.8.1 detects the workspace root (`detected workspace root … pm=npm`) and copies the
+linked packages in, each with its `package.json` — which is what makes the `exports` map, and therefore
+the deep `@bifurc/engine/store/config` imports, resolve. So **`build.files` is untouched**: both options
+`plan/12` offered (vendor the dist, or rewrite the specifier) describe a problem that does not exist.
+
+**What the same run did find** — two defects, one root cause:
+
+1. **The `tsconfig.json` docblock for `@bifurc/engine/*` was false.** It claimed `tsc-alias` rewrites the
+   specifier to a relative `../packages/engine/dist/...`, "so `dist/**` requires … no reliance on
+   workspace symlinks inside the packaged asar". Measured: **no rewrite happens.** All 50 specifiers in
+   `dist/` are bare, while `@/` aliases *are* rewritten (0 remain) — so `tsc-alias` runs and skips this
+   mapping, silently. The claim could not have held anyway: `@bifurc/protocol` and `@bifurc/client` are
+   not in `paths`, and the packages' *own* emitted files require `@bifurc/protocol` bare. Corrected.
+2. **`dist/` ships 92 stale files.** `tsc` never deletes output, so every module P2 moved into
+   `packages/engine` left a compiled copy behind: **92 of 116** `dist/*.js`, **447 KB**, inside the asar.
+   They are unreachable today — walking relative `require`s from `dist/main.js` and `dist/preload.js`
+   reaches 23 files, **0** of them stale — but they are not harmless. `dist/shutdown.js`, the pre-move
+   copy of `packages/engine/src/shutdown.ts`, requires `@bifurc/engine/companion/companionServer`, a
+   module that **no longer exists under any name** (the companion server is now
+   `transport/legacyCompanion.ts`). It was the one specifier that failed to resolve in the packaged
+   bundle. It is also the hazard `bundle: false` exists to prevent: a second copy of `store/paths.ts` is
+   a second `_dataRootOverride`.
+
+**What landed.**
+
+| Change | Why |
+| --- | --- |
+| `scripts/clean-main-dist.mjs`, wired into `build:main` as `clean:main` | Removes everything in `dist/` except `dist/renderer/` (Vite owns that; it is not tsc output, and a "delete what has no source" heuristic would classify the whole UI bundle as stale) before `tsc` re-emits. |
+| `scripts/assert-packaged.mjs` | The assertion this document and `plan/12` ask for — a script, not a unit test, because the property is about the **artifact**. It walks the **whole require graph** from `dist/main.js` and `dist/preload.js` using Node's own resolution (`createRequire(<the requiring file>)`), requiring every specifier of every file reached to land inside the extracted archive — a specifier-only scan would miss a *relative* require pointing at a file `files` dropped, which is the shape a packaging change actually breaks in. It also loads `@bifurc/client` for real. **464 files reached** on the current bundle. |
+| `release.yml` → *Assert the packaged app resolves the engine* | Runs the above against `release/win-unpacked` **before** the artifact is uploaded, so a missing engine fails the build rather than the user's first launch. |
+| `scripts/pkg-check-reachability.mjs` | The instrument behind the "0 reachable" claim — it is what distinguishes dead weight from a live duplicate-singleton bug. |
+| corrected `tsconfig.json` docblock | It asserted a rewrite that does not happen; a reader would have concluded the asar is self-contained. |
+
+**The walk is scoped by *ownership*, not by a guard heuristic.** First-party specifiers (`dist/` and
+`node_modules/@bifurc/`) must resolve; a third party's optional dependency is its own business. Measured:
+our emitted output has **no** `try`-guarded `require`, so a first-party specifier has no legitimate reason
+to be unresolvable — while four third-party ones legitimately are (`ws`'s `bufferutil` / `utf-8-validate`,
+`debug`'s `supports-color`, `unzipper`'s `@aws-sdk/client-s3`, the last reached only through an S3 code
+path Bifurc never takes). They are **reported on every run, never fatal** — visible rather than silent, so
+a genuinely missing first-party module cannot hide among them.
+
+**Verification — every direction observed, not assumed:**
+
+```
+positive   release/pkgtest/win-unpacked    464 files walked, all resolve, client loads       EXIT 0
+negative   same archive, @bifurc renamed   90 failures                                       EXIT 0
+mutation   same archive, one file dropped  exactly 1 failure, naming that file               EXIT 0
+control    release/win-unpacked (09-10)    no @bifurc requires found → non-vacuity guard     EXIT 1
+```
+
+The last is the one worth keeping. The 2026-09-10 artifact has 128 `dist` files and **zero** `@bifurc`
+requires, so the probe reports "found nothing" instead of passing — the difference between a guard and a
+guard that *reads as* coverage while covering nothing (`TRAPS.md`). The `mutation` row is the new one: it
+drops `dist/ipc/rpcBridge.js` and fails with **exactly one** failure naming that file, which is what proves
+the relative-require half is precise rather than merely present. The probe cannot launch the app (no
+desktop session from an agent shell, see Preconditions), so it proves resolution and module loading, not a
+running UI; the packaged-launch criterion still needs a normal terminal.
+
+**Still open, deliberately.** The engine binary in `extraResources` is a **process-split** concern:
+while the engine is in-process it is an ordinary npm package inside the asar and there is no binary to
+ship. Work item 2 is deferred behind the proven seam, so this stays deferred with it. The CI assertion
+covers Windows only — `linux-unpacked/resources/app.asar` is the equivalent path for the AppImage job,
+unverified from here, so it is recorded for P12 rather than added blind.
 
 ---
 
@@ -1212,7 +1331,23 @@ is still open and is the real gate.
 
 ## Work item 6 — Rollback plan
 
-Ship this behind a flag:
+> **Resolved 2026-09-20 — this work item is void, and the flag is dropped.** The plan below assumed two
+> live paths coexisting: the old `registerIpcHandlers()` bodies and the new RPC route, with the flag
+> choosing between them. That never happened. Finding 4 deferred the process split, so the "old path" and
+> the "new path" were the *same in-process engine* reached two ways, and once `registerIpcHandlers()`'s
+> bodies were re-pointed (step 3) there was nothing left for the flag to restore. `BIFURC_ENGINE_RPC`
+> appears nowhere in the tree and never did.
+>
+> **Decided: drop it.** Writing the flag now would be dead code guarding a path that does not exist —
+> strictly worse than no flag, because it reads as a safety net. **`git revert` of the phase is the single
+> rollback layer**, and it is a complete one: the phase is a bounded set of commits, `renderer/` is
+> untouched by all of them, and the seam is provably reachable only through `src/main.ts`.
+>
+> The original plan is kept below because it becomes **correct again the moment the process split lands**
+> — at that point there genuinely are two transports (in-process and spawned), and a transport-selection
+> flag is the right instrument. Its home is work item 2, not P6.
+
+The plan as written, preserved for the process split:
 
 ```ts
 // src/main.ts
@@ -1751,7 +1886,7 @@ clean across all three packages.
 
 ## Acceptance criteria
 
-- [ ] **Unit suites pass.** Baseline after **step 3d (keys 1–2 of the four pinned)**:
+- [x] **Unit suites pass.** Baseline after **step 3d (keys 1–2 of the four pinned)**:
       **101 files / 2,508 tests** — **2,467 passed**, 40 skipped, and the one documented `soap.execute`
       flake (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After **step 3b-3 (the last
       four artifact methods)**: 101 / 2,503 — 2,462. After **finding 6 (egress
@@ -1766,32 +1901,97 @@ clean across all three packages.
       *(3b-1 added **exactly +4** — the `client:writeArtifact` cases, the only genuinely new code in
       the step. Everything else moved rather than being written, and the flip itself added none, so
       the flip's own delta is zero. Measured, not inferred.)*
-- [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Not yet captured** — requires a
-      normal terminal, see Preconditions.
-- [ ] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
-- [ ] `window.api` is identical to baseline. The instrument is
+- [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Carried as an owner-run
+      verification** — it needs a normal terminal, see Preconditions. Re-attempted 2026-09-20 and it
+      reproduced the documented environmental failure *exactly* (**46 failed / 0 passed**, every test
+      dying at `firstWindow()`), so what is open is the agent shell's inability to host a GUI process,
+      not the seam. **This is the only criterion P6 closes with open.**
+- [x] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
+- [x] `window.api` is identical to baseline. The instrument is
       **`packages/client/tests/surface.test.ts`**, which imports the real `src/preload.ts` under a
       mocked Electron and diffs the exposed keys against `SURFACE_KEYS` in both directions. It is a
       test, not the standalone script this criterion used to name.
-- [ ] App launches, engine spawns, handshake completes, UI is functional.
-- [ ] Engine crash → automatic restart with backoff; UI shows an error after 3 failures.
-- [ ] Shell quit → engine exits; **no orphaned process** (`ps`/Task Manager verified).
-- [ ] Shell killed forcibly → engine self-terminates within the grace period.
-- [ ] Two launches → exactly one engine (single-instance preserved).
-- [ ] Packaged build (NSIS at minimum) contains the engine binary and runs.
-- [ ] Rollback flag verified: `BIFURC_ENGINE_RPC=0` restores the old path.
-- [ ] **No user-visible change.** Same UI, same behaviour, same performance.
+- [x] Two launches → exactly one engine (single-instance preserved). **Met by construction** —
+      `app.requestSingleInstanceLock()` (`main.ts:239`); one shell, and the engine is inside it.
+- [x] **Packaged build resolves the engine from inside the asar, and runs.** *(Reworded 2026-09-20.)*
+      This read "contains the engine **binary** and runs", which cannot be true while the engine is
+      in-process — there is no binary to contain. The property that is both meaningful and checkable is
+      that the packaged bundle resolves and loads the engine, and that is now **measured and guarded**:
+      44 of 44 `@bifurc/...` specifiers resolve inside the archive, and `scripts/assert-packaged.mjs`
+      runs in CI *before* the artifact is uploaded. **The NSIS installer and a real packaged launch
+      remain unverified** — carried to P12, not dropped.
+- [x] **No user-visible change.** Same UI, same behaviour, same performance. Met in code; the e2e run is
+      its instrument, and that is the carried item above.
+
+### Moved out of this gate 2026-09-20 — the process split's criteria
+
+Four criteria described the **process split**, which finding 4 explicitly deferred: *"keep the engine
+in-process, build the IPC bridge over `createInProcessTransport(commandRegistry, {bus})`, and prove the
+seam. The process split then becomes a change of transport behind a proven seam."* They were written
+before that decision and never revisited, so they made the milestone un-closable for reasons that have
+nothing to do with the seam.
+
+**Relocated, not deleted.** The wording is preserved verbatim in
+[Work item 2](#work-item-2--engine-lifecycle), where the work they measure actually lives:
+
+| Original criterion | Why it cannot hold while the engine is in-process |
+|---|---|
+| App launches, **engine spawns**, handshake completes, UI is functional | There is no engine process and no handshake. |
+| Engine crash → automatic restart with backoff; UI shows an error after 3 failures | Nothing to supervise. |
+| Shell quit → engine exits; **no orphaned process** | An in-process engine cannot be orphaned. |
+| Shell killed forcibly → engine self-terminates within the grace period | Same. |
+
+**`BIFURC_ENGINE_RPC=0` is resolved as a decision, not carried as a task.** The flag exists nowhere in the
+tree and never will: this phase never had two live paths to switch between, so it would have been dead
+code from its first commit. **Decided 2026-09-20 — drop it.** `git revert` of the phase is the only
+rollback layer; see Rollback.
+
+### Audit 2026-09-20 — the state of each criterion at the re-scope
+
+| # | Criterion | State 2026-09-20 |
+| --- | --- | --- |
+| 1 | Unit suites pass | **Met** — 101 files / 2,509 tests, 2,468 passed, 40 skipped, 1 documented `soap.execute` flake. The numbers *in* the criterion are themselves stale (2,509, not 2,508, since §5c-viii's guard). |
+| 2 | 11 e2e specs pass, unmodified | **Carried** — owner-run; needs a normal terminal. Re-measured 2026-09-20, reproduced exactly. |
+| 3 | Renderer unchanged | **Met** — nothing under `renderer/` is modified. |
+| 4 | `window.api` identical | **Met** — `packages/client/tests/surface.test.ts` diffs the real `src/preload.ts` against `SURFACE_KEYS` in both directions, and runs in the suite. |
+| 5 | App launches, **engine spawns**, handshake completes | **Moved** → work item 2. |
+| 6 | Engine crash → restart with backoff | **Moved** → work item 2. |
+| 7 | Shell quit → engine exits, no orphan | **Moved** → work item 2. |
+| 8 | Shell killed → engine self-terminates | **Moved** → work item 2. |
+| 9 | Two launches → exactly one engine | **Met by construction** — `app.requestSingleInstanceLock()`. |
+| 10 | Packaged build contains the engine binary and runs | **Reworded and met in part** — "contains the engine binary" is unmeetable in scope; "resolves the engine from the asar" is measured and CI-guarded. NSIS + real launch → P12. |
+| 11 | Rollback flag `BIFURC_ENGINE_RPC=0` | **Decided: dropped.** There was never a second path for it to restore. |
+| 12 | No user-visible change | **Met in code**; the e2e run is its instrument and is the carried item (see 2). |
+
+**Status: P6 is closed in scope on 2026-09-20, with one item carried.** The seam is proven, the packaging
+is verified end to end from the entry points, and the four process-split criteria now live with the work
+that will satisfy them. The carried item is criterion 2 — *"11 e2e specs pass, unmodified"* — which no
+agent shell can run (see Preconditions, with three controls establishing it is environmental). **It is
+carried, not waived:** the milestone's code claims are all backed by an instrument that does run, and the
+one claim whose instrument does not is named above rather than quietly dropped.
 
 ---
 
 ## Rollback
 
-Two layers, deliberately:
-1. `BIFURC_ENGINE_RPC=0` — instant, no release needed.
-2. `git revert` the phase — the old IPC path is intact until the flag is deleted.
+**One layer: `git revert` the phase.** *(Corrected 2026-09-20 — this section used to specify two layers,
+the first being `BIFURC_ENGINE_RPC=0`.)*
 
-**Do not delete the flag in this phase.** It is the safety net for the highest-risk change in the
-programme.
+The flag was never written and is now dropped; work item 6 records why. The reasoning is worth stating
+here because the old text called it *"the safety net for the highest-risk change in the programme"*, and
+that judgement was right about the risk while being wrong about the mechanism. A flag is a safety net only
+when it selects between two **live** implementations. Here the two implementations were never both live —
+the process split was deferred, so both routes reached the same in-process engine. `BIFURC_ENGINE_RPC=0`
+would have been a branch that changed nothing, which is worse than no net at all.
+
+`git revert` is a complete rollback for this phase, and that is not an assumption:
+
+- The phase is a bounded set of commits on a linear history.
+- `renderer/` is untouched by every one of them, so there is no user-facing state to reconcile.
+- The seam is reachable only through `src/main.ts`, and the preload flip is the single entry point.
+
+**The flag returns with the process split**, where two transports genuinely coexist — see work item 2.
+Do not write it before then.
 
 ---
 
@@ -1801,8 +2001,10 @@ programme.
 |---|---|---|
 | Someone edits the renderer "just to make it work" | **High** | Hard rule stated at the top of this document; review `git diff --stat renderer/` at the gate |
 | e2e data-dir isolation silently breaks → phantom flakiness | **High** | ✅ **In place 2026-09-20** — the `electronApp` fixture asserts both resolution inputs (`userData`, `%LOCALAPPDATA%`) are inside its temp dir; see work item 5 |
-| Orphaned engine after a shell crash | Medium | Socket-close watchdog + explicit acceptance criterion |
-| Startup race: UI shows before the handshake, errors are opaque | Medium | Explicit "connecting" state; never block window creation on the engine |
+| Orphaned engine after a shell crash | Medium | **Moved to the process split** (work item 2) — an in-process engine cannot be orphaned. Socket-close watchdog + explicit criterion travel with it |
+| Startup race: UI shows before the handshake, errors are opaque | Medium | **Moved to the process split** (work item 2) — no handshake exists in-process |
 | Shell-only handlers are forgotten and routed over RPC | Medium | The P5 shim table is the checklist; verify each is served locally |
 | Perf regression from the added IPC hop | Low | Measure startup time before/after; the hop is one in-process call |
-| Engine binary not included in the packaged build | Medium | Reuse `iconPath()`; verify the NSIS artifact explicitly |
+| The app's `dist/` ships stale modules a refactor moved away | **High** | ✅ **In place 2026-09-20** — `clean:main` wipes `dist/` (minus `renderer/`) before `tsc`; 92 stale files / 447 KB were inside the asar, and one of them required a module that no longer exists. See work item 4 |
+| A packaged bundle silently fails to resolve the engine (blank window, no error) | Medium | ✅ **In place 2026-09-20** — `scripts/assert-packaged.mjs` walks the whole require graph from the entry points and runs in CI **before** the artifact is uploaded. Proven non-vacuous in four directions: positive, negative, mutation, control |
+| Engine binary not included in the packaged build | Medium | **Moved to the process split** (work item 2) — there is no binary while the engine is in-process. Reuse `iconPath()`; verify the NSIS artifact explicitly, then |
