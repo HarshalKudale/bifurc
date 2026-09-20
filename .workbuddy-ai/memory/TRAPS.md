@@ -160,6 +160,49 @@ module-scope call at column 0 *and* one indented inside a top-level `if`/`try`; 
 misses the second (measured — it returned exit 1 on the indented probe while the guard failed on it).
 State in the test what it does *not* catch rather than implying completeness.
 
+## Assert containment of the inputs, not a re-derived copy
+
+Written while doing P6 work item 5 (the e2e data-dir isolation assertion). Two things to carry forward.
+
+**The engine's data dir has *two* inputs on the Electron path, and on Windows the second one wins.**
+`src/main.ts:256` calls `setDataRoot(app.getPath("userData"))`, so the plan's phrasing — the engine
+"derives its data dir from `app.getPath("userData")`, which that override already controls" — reads as if
+there were one input. There are two: `store/workspaceFs.ts#dataRoot()` and
+`store/appSettings.ts#settingsPath()` both **short-circuit on `%LOCALAPPDATA%` on win32 before consulting
+the data root.** Measured with the e2e fixture's env:
+
+| resolver | resolves to |
+|---|---|
+| `workspaceFs.dataRoot()` (entity data) | `<temp>\Bifurc\data` |
+| `paths.dataDir()` (settings / `app.json`) | `<temp>\electron-userdata` |
+
+Different directories. Both inside the temp dir, so isolation holds — but if you are reasoning about
+"where the app's data is", there is no single answer on Windows. This is the defect documented in
+`packages/engine/src/index.ts`'s `EngineOptions.dataDir` docblock and tracked as **`plan/03` work item 8**;
+do **not** "fix" it casually, because correcting the order moves existing Windows users' data. It also
+explains why the e2e fixture's seeded sample data is found at all: `writeSampleWorkspace(dataRoot)` writes
+`<dataRoot>/<wsId>/…` and puts `app.json` in the *parent*, i.e. it targets `dataRoot()` and
+`settingsPath()` respectively, not `dataDir()`.
+
+**When the thing you want to assert is a path the code derives, assert containment of its *inputs*, not a
+re-derivation of the formula.** Both consumers only ever `path.join` relative segments (`"Bifurc"`,
+`"data"`, `"app.json"`, `<wsId>`, `<kind>`) onto one of the two inputs — so if both inputs are inside the
+temp dir, every derived path is too. Re-deriving the formula in the fixture would have duplicated it, and a
+copy drifts from the original silently. Generalised: **a test that re-implements the code under test
+verifies the copy, not the code.**
+
+Two corollaries from the same job:
+
+- **An unset env var that the code falls back from is a failure, not a skip.** On win32 a missing
+  `%LOCALAPPDATA%` makes the engine read the *developer's real profile* — the exact contamination the guard
+  exists to catch — so the fixture pushes an explicit error rather than dropping the candidate from the list.
+- **When the suite cannot run (no desktop session), verify the property against the *real built* resolver
+  plus a negative case.** A throwaway script driving `packages/engine/dist/store/workspaceFs.js` and
+  `.../paths.js` under the fixture's env confirmed all four resolvers land in temp; the negative case —
+  override removed → `dataRoot()` escapes to `C:\Users\wrath\AppData\Local\Bifurc\data` and the predicate
+  rejects it — is what proves the guard is non-vacuous. A guard whose failure mode you have never observed
+  is a guard you are guessing about.
+
 ## The vitest suite goes down for hours at a time, and it is never your change
 
 Signature: *every* file fails at **collection** with `TypeError: Cannot read properties of undefined
