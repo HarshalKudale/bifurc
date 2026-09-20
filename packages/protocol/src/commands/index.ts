@@ -187,7 +187,6 @@ export const COMMANDS = {
   "healthbar.getServices": spec(MiscCmd.HealthbarGetServicesParams, "healthbar:getServices"),
   "healthbar.saveServices": spec(MiscCmd.HealthbarSaveServicesParams, "healthbar:saveServices"),
   "healthbar.checkUrl": spec(MiscCmd.HealthbarCheckUrlParams, "healthbar:checkUrl"),
-  "app.checkUpdate": spec(MiscCmd.AppCheckUpdateParams, "app:checkUpdate"),
   "capture.shareJson": spec(MiscCmd.CaptureShareJsonParams, "capture:shareJson"),
 } as const;
 

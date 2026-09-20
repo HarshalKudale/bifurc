@@ -1,7 +1,17 @@
 /**
- * The remaining ENGINE and SPLIT commands that do not fit a larger domain file:
- * `script.execute`, `request.replay`, `healthbar.*`, `app.checkUpdate` (SPLIT — engine half
- * only), `capture.shareJson` (SPLIT — engine half only).
+ * The remaining ENGINE commands that do not fit a larger domain file:
+ * `script.execute`, `request.replay`, `healthbar.*`, `capture.shareJson` (SPLIT — engine half only).
+ *
+ * `app.checkUpdate` was here until 2026-09-20, as the protocol's only other SPLIT, with an empty
+ * params schema documented as "the interim engine-half contract". **The split was resolved in favour
+ * of the client, and the command was deleted rather than implemented** — see
+ * `@bifurc/client`'s `local.ts#checkUpdate` for the argument. In short: `currentVersion` is the
+ * version of the thing the *user* runs, and `downloadUrl` must be the asset for the *user's*
+ * platform. An engine can produce neither correctly — its own version only coincides under D9
+ * lockstep, and matching its own `process.platform` would hand a Windows user the AppImage. So
+ * there was no engine half to contract with, and keeping a schema for one invited exactly the bug
+ * it would have caused: `AppCheckUpdateResult` had no `hasUpdate`, so routing it would have left
+ * the About panel reporting "up to date" forever, silently.
  */
 import { z } from "zod";
 import type { ArtifactResult } from "./blob";
@@ -71,24 +81,6 @@ export interface HealthbarCheckUrlResult {
   headers: Record<string, string> | null;
   error: string | null;
   durationMs: number;
-}
-
-/** SPLIT (work item 1): the GitHub API fetch is engine-safe outbound network; the
- * `process.platform`/`app.getVersion()` comparison is client-local. P12 moves this fully
- * client-side per the checklist ("`app:checkUpdate` moved client-side") — this schema is the
- * interim engine-half contract. */
-export const AppCheckUpdateParams = z.object({}).strict();
-export type AppCheckUpdateParams = z.infer<typeof AppCheckUpdateParams>;
-export interface AppCheckUpdateResult {
-  ok: boolean;
-  tagName?: string;
-  releaseName?: string;
-  releaseNotes?: string;
-  publishedAt?: string;
-  htmlUrl?: string;
-  downloadUrl?: string;
-  assetName?: string;
-  error?: string;
 }
 
 /** SPLIT — engine serializes the entries; client owns the save dialog (egress). */

@@ -172,6 +172,5 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "healthbar.getServices": { valid: { workspaceId: "ws1" }, invalid: {} },
   "healthbar.saveServices": { valid: { workspaceId: "ws1", services: [] }, invalid: { workspaceId: "ws1" } },
   "healthbar.checkUrl": { valid: { url: "http://x" }, invalid: {} },
-  "app.checkUpdate": { valid: {}, invalid: { extra: true } },
   "capture.shareJson": { valid: { entries: [] }, invalid: {} },
 };
