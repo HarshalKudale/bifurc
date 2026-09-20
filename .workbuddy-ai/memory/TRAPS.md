@@ -145,6 +145,45 @@ neither: it is **reading both implementations side by side**.
 fix is not to widen the command — it is to make the client compose the client-side half, the way it
 already does for the artifact flows via `pickSavePath` / `writeArtifact`.
 
+## The docblock that sanctions the bug
+
+Found 2026-09-20, in the same audit as the entry above, and it is the reason that audit found *two*
+defects where it expected one. `packages/client/src/index.ts`'s `exportAudit` took `artifactToFile`'s
+artifact-first default, which undid P3's deliberate dialog-first ordering for `audit:export` — and
+`packages/client/src/local.ts`'s `writeArtifact` docblock, the authority any reader consults before
+writing one of these callers, **named `exportAudit` in the cheap group**: *"the other egress methods
+(`exportAudit`, `tlsExportCert`, `shareCaptureJson`) hand over bytes the engine has already produced, so
+reordering them buys nothing."* False for `exportAudit` alone — its artifact is the one egress payload
+with no size ceiling, because `audit.export` runs `queryLog({ limit: 0 })`, the whole `git log`.
+
+**Three other places in the tree already said the opposite**, and they were not enough:
+
+| source | says |
+|---|---|
+| `src/ipc/handlers/syncHandlers.ts` | "Dialog FIRST. The pre-P3 handler queried the whole log and *then* asked for a path…" |
+| `packages/engine/src/fileOps/commands.ts` | "the one egress artifact with no natural size ceiling" |
+| `plan/07` §5b-bis | the audit's own conclusion |
+
+So the regression did not read as a mistake — it read as **the documented design**, and a reviewer
+checking the call against the nearest doc would have confirmed it. Two lessons:
+
+- **A wrong docblock is a defect with a wider blast radius than the bug it causes**, because it
+  regenerates the bug every time someone follows it. When a fix is a *reversal* of something a doc
+  asserts, fix the doc in the same pass or the next author reverts you. Both were corrected together.
+- **Agreement between a call site and its local doc proves nothing** — they were written from the same
+  wrong premise. The evidence that settles it is a third source: the *other* implementation, or the
+  engine's own cost note. In this case the shell channel's body and the engine's docblock both existed,
+  both said dialog-first, and neither was consulted, because the client-side doc was closer to hand.
+
+**Corollary — "latent" is a claim about the *caller*, not about the defect, so go and find the caller.**
+The audit first filed `tls:removeCert` as latent alongside `tls:certStatus`, on the reasoning that P7 is
+what renders the tls fields. That is true of `tls:certStatus` and false of `tls:removeCert`, which loses
+an *action* rather than a field: `renderer/panels/settings/TlsSettingsSection.tsx:57` calls it today, so
+the "remove certificate" button deletes the engine's keypair and leaves the OS trust store trusting the
+CA — exactly what `certLifecycle.ts`'s docblock says the two-sided design exists to prevent. One grep for
+the key in `renderer/` moved it from "P7's problem" to "live". **File severity only after following the
+key to its caller.**
+
 ## Artifacts, blobs, dialogs
 
 - **Artifacts are bytes.** `writeArtifact` takes **base64**; the channel writes a Buffer. Any UTF-8
