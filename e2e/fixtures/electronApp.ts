@@ -12,6 +12,34 @@ export interface ElectronFixtures {
 }
 
 /**
+ * True when `candidate` is `root` itself or lives underneath it. `path.relative` compares
+ * case-insensitively on win32, which is what we want for drive-letter paths.
+ */
+function isInside(root: string, candidate: string): boolean {
+    const rel = path.relative(path.resolve(root), path.resolve(candidate));
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * The directories the engine resolves its data dir *from*, read inside the running app.
+ *
+ * On the Electron path there are exactly two, and the shell supplies the first:
+ *
+ *   - `app.getPath("userData")` — handed to `setDataRoot()` at `src/main.ts:256`.
+ *   - `process.env.LOCALAPPDATA` — `store/workspaceFs.ts#dataRoot()` and
+ *     `store/appSettings.ts#settingsPath()` both short-circuit on it on win32, **before** consulting
+ *     the data root. That ordering is what makes the assertion below subtle.
+ *
+ * `main.ts` consults neither `--data-dir` nor `BIFURC_DATA_DIR` (`store/paths.ts#resolveDataDir` is
+ * for the CLI/Docker entrypoints, P8/P9), so those two are not on this path.
+ */
+interface EngineDataDirInputs {
+    userData: string;
+    localAppData: string | null;
+    platform: string;
+}
+
+/**
  * Custom Playwright fixture that launches the Electron app with an isolated userData dir.
  * Each test gets a fresh data directory to avoid state leakage.
  * The workspace is pre-populated with sample data for realistic screenshots and tests.
@@ -51,6 +79,53 @@ export const test = base.extend<ElectronFixtures>({
                 LP_E2E: "1",
             },
         });
+
+        // ── P6 work item 5: the engine's data dir must be inside this test's temp dir ─────────
+        //
+        // If it is not, every e2e test shares one data dir and overwrites the previous test's
+        // state — which surfaces as intermittent, order-dependent failures that read as flakiness.
+        //
+        // The check is *containment of the inputs*, deliberately not a re-derivation of the
+        // engine's formula. Both consumers above only ever `path.join` relative segments
+        // ("Bifurc", "data", "app.json", `<wsId>`, `<kind>`) onto one of the two inputs, so if both
+        // inputs are inside the temp dir then every path derived from them is too. Re-deriving the
+        // formula here would duplicate it, and a copy can drift from the original silently.
+        //
+        // Scope: this asserts the *shell wiring* — that the overrides reach the app process. The
+        // engine's own resolution order is covered by `tests/store/paths.test.ts` (all four
+        // `resolveDataDir` branches) and `tests/store/workspaceFs.test.ts`.
+        const inputs: EngineDataDirInputs = await app.evaluate(({ app: electronApp }) => ({
+            userData: electronApp.getPath("userData"),
+            localAppData: process.env.LOCALAPPDATA ?? null,
+            platform: process.platform,
+        }));
+
+        // Non-vacuity: an empty probe would make the assertion below pass for the wrong reason.
+        expect(inputs.userData, "the main-process probe returned no userData").toBeTruthy();
+
+        const candidates: Array<[string, string | null]> = [
+            [`app.getPath("userData")`, inputs.userData],
+            ["process.env.LOCALAPPDATA", inputs.localAppData],
+        ];
+        const escaped = candidates
+            .filter((entry): entry is [string, string] => !!entry[1])
+            .filter(([, value]) => !isInside(userData, value))
+            .map(([label, value]) => `${label} → ${value}`);
+
+        // On win32 an unset LOCALAPPDATA is a failure, not a skip: the engine would fall back to the
+        // developer's real profile, which is exactly the contamination this guards against.
+        if (inputs.platform === "win32" && !inputs.localAppData) {
+            escaped.push(
+                "win32 but process.env.LOCALAPPDATA is unset — the engine would read the developer's real profile",
+            );
+        }
+
+        expect(
+            escaped,
+            `the engine would resolve its data dir outside this test's temp dir (${userData}).\n` +
+                `Every e2e test would then share one data dir and contaminate the next:\n  ${escaped.join("\n  ")}`,
+        ).toEqual([]);
+
         await use(app);
         await app.close();
     },
