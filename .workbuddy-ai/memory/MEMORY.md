@@ -1,8 +1,8 @@
 # Bifurc — Project Memory
 
 **Read `TRAPS.md` in this directory before touching anything.** It holds the failure modes that have
-cost real time and are not discoverable from the code. Then: status → `plan/README.md`; env and suites →
-`TESTING.md`; P6 mechanics and the §5c ledger → `plan/07`; procedures → the `bifurc-*` skills.
+cost real time and are not discoverable from the code. Then: status → `plan/README.md`; suites →
+`TESTING.md`; P6 and the §5c ledger → `plan/07`; procedures → the `bifurc-*` skills.
 
 ## Layout
 
@@ -22,12 +22,12 @@ cost real time and are not discoverable from the code. Then: status → `plan/RE
   `checkUpdate` is SPLIT → P12. `registerIpcHandlers()` cannot be deleted yet.
 - **§5c pass COMPLETE (2026-09-19).** `grep -rn '^commandRegistry.register(' src/` returns **nothing** —
   all **51** commands (not the 5 the section records) are registered by an explicit
-  `register*Commands()` call from `registerIpcHandlers()`, across seven engine modules:
-  `store/coreCommands`, `runner/runnerCommands`, `store/folderCommands`,
-  `protocols/{graphql,soap,grpc}Commands`, `applications/applicationCommands`, `sync/syncCommands`,
-  `store/entityCrudCommands`. **Count by grep, never by test** — the ratchet is blind to the defect
-  (though sharp on the *move*: forget the explicit call and it fails, `TRAPS.md`). Step 3 is now
-  unblocked on the §5c side; it still needs `checkUpdate` (P12) and the dead
+  `register*Commands()` call from `registerIpcHandlers()`, across seven modules under `store/`,
+  `runner/`, `protocols/`, `applications/` and `sync/` (`plan/07` §5c). **Count by grep, never
+  by test** — the ratchet is blind to the defect (though sharp on the *move*: forget the explicit call
+  and it fails, `TRAPS.md`). **Now guarded** (`plan/07` §5c-viii): a static test fails if a module-scope
+  registration reappears — and it catches the *indented* variant the pass's own grep missed.
+  Step 3 is now unblocked on the §5c side; it still needs `checkUpdate` (P12) and the dead
   `src/ipc/importExportHandlers.ts`.
 - **The last key is a protocol decision, not a move:** `checkUpdate` SPLIT (its frozen result has no
   `currentVersion`/`hasUpdate`) → P12. `listAudit` and the two `runner.*Config` were **schema** problems,
@@ -38,5 +38,6 @@ cost real time and are not discoverable from the code. Then: status → `plan/RE
 
 ## The baseline you measure against
 
-**101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed.** The 1 is `soap.execute`, an
+**101 files / 2,509 tests — 2,468 passed, 40 skipped, 1 failed.** The 1 is `soap.execute`, an
 environmental failure (`TRAPS.md`). A *delta* against this number is the signal; the 1 is not.
+(2,508/2,467 was the pre-guard baseline.)

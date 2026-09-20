@@ -138,6 +138,28 @@ pure, so collapsing it was hygiene).
 - **"The command is registered" ≠ "the client's method is equivalent."** Audit before routing; three of
   the four held-back egress keys broke *after* the engine did its job correctly.
 
+## A guard that can silently match nothing is worse than no guard
+
+Written after building §5c-viii's static test. It reads every `.ts` under `src/` and
+`packages/engine/src/` via `import.meta.glob(..., { query: "?raw", import: "default" })` and asserts a
+forbidden pattern matches nothing. **A wrong glob returns `{}`**, so `Object.values(x).join("\n")` is
+`""`, `"".match(re)` is `null`, and the assertion passes — a guard that *reads as* coverage while
+covering nothing, which is worse than none because it is trusted and quoted.
+
+So a reader-based guard needs three things before it asserts the real property:
+
+1. **A non-vacuity assertion** that the reader found the tree (`Object.keys(...).length > 20`).
+2. **A positive control** — assert the same reader *does* match the benign form (>30 hits of
+   `registry.register(`), proving it sees real content. Without this, a zero is indistinguishable from
+   "content never loaded".
+3. **A mutation check in both directions** — the guard must fail on a deliberately offending file, and
+   the offending file must then be deleted and green restored.
+
+Also worth knowing: **a statement-form regex beats a column-0 grep.** `/^\s*pattern/m` catches a
+module-scope call at column 0 *and* one indented inside a top-level `if`/`try`; `grep -rn '^pattern'`
+misses the second (measured — it returned exit 1 on the indented probe while the guard failed on it).
+State in the test what it does *not* catch rather than implying completeness.
+
 ## The vitest suite goes down for hours at a time, and it is never your change
 
 Signature: *every* file fails at **collection** with `TypeError: Cannot read properties of undefined
