@@ -653,10 +653,22 @@ rather than a type.
       counts. See step 3e.
       **But "unblocked" is not "safe to start", and an audit on 2026-09-20 (`plan/07` §5b-bis) says why.**
       The 132 legacy channels are **not uniformly dead**: 9 of them are *superseded shell halves* that own
-      a `dialog.*` / `app.getVersion()` step the client now performs through a different channel, and two
-      of those (`tls:certStatus`, `tls:removeCert`) currently lose the client trust summary on the routed
-      path — a second lying cast of the `checkUpdate` class, latent because P7 is what renders it. So the
-      deletion needs the 9 client-side twins confirmed and that shape decision landed first, and
+      a `dialog.*` / `app.getVersion()` step the client now performs through a different channel. Those 9
+      twins are now **confirmed one by one** (`plan/07` §5b-bis, "The 9 twins, verified per key"): eight
+      equivalent or better, and one — `audit:export` — a **regression**, because `exportAudit` took
+      `artifactToFile`'s artifact-first default and so undid P3's dialog-first ordering for the one egress
+      artifact with no size ceiling. Fixed, and the `packages/client/src/local.ts` docblock that sanctioned
+      it corrected in the same pass.       **The `tls` shape decision landed on 2026-09-20 — both keys are `local`** (the `tlsInstallCA`
+      precedent, so the whole trust-store surface uses one mechanism). They had to move because each is
+      **two-sided** and the routed form delivered the engine half alone: `tls:certStatus` is **latent**
+      (P7 renders the drift warning and the Firefox note; nothing reads those fields yet), while
+      `tls:removeCert` was **live** — `TlsSettingsSection.tsx:57` calls it, so the "remove certificate"
+      button deleted the engine's keypair and left the OS trust store trusting the CA. `surface.ts` now
+      classifies both `local` (`transport` 72 → 70, `local` 14 → 16, total 144 unchanged), `ClientLocal`
+      gained the two members, and `certLifecycle.readCertStatus()` was extracted so the eight-field
+      composition has one implementation rather than living in a channel body the routed twin could
+      half-fill. **Consequence for this item: class 2 grows 9 → 11** — the two superseded `tlsHandlers.ts`
+      channels join the list, and both are unreachable today because `window.api` is `{ ...client }`.
       `src/ipc/fileOpsClient.ts` **survives** the reduction, being a live shared library on two live
       paths. The audit also corrects this item's own wording: `registerClientHandlers()` is *already* the
       local-handler entry point (`src/main.ts:294`), so `registerIpcHandlers()` reduces to the

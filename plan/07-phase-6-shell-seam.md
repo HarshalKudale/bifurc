@@ -499,9 +499,11 @@ whole surface is `{ ...client }` with no exceptions.
 
 - **The lying cast is gone.** `index.ts` no longer casts `AppCheckUpdateResult` to `UpdateCheckResult`, so
   the silent "always up to date" failure is no longer one refactor away from shipping.
-- **144 of 144 keys are classified, with zero `SPLIT`.** The split is 72 `transport` + 48 `entity` + 7
-  `subscribe` + 3 `shim` + 14 `local` — asserted by count in `surface.test.ts`, where the sum is what
-  proves no key was dropped in the move.
+- **144 of 144 keys are classified, with zero `SPLIT`.** At step 3f the split was 72 `transport` + 48
+  `entity` + 7 `subscribe` + 3 `shim` + 14 `local` — asserted by count in `surface.test.ts`, where the
+  sum is what proves no key was dropped in the move. **Two `transport` entries moved to `local` later the
+  same day** (`tlsRemoveCert`, `tlsCertStatus` — §5b-bis), so the current figures are **70 + 48 + 7 + 3 +
+  16**. The total is what this bullet is about, and it did not change.
 - **Behaviour is unchanged.** The shell's `app:checkUpdate` handler still does the fetch, the platform
   match and the version comparison. Nothing moved; only the classification did.
 
@@ -591,17 +593,50 @@ fingerprint with `certLifecycle.readTrustSummary()`, which reads the *client's* 
 only, and it carries `as ReturnType<BifurcApi["tlsCertStatus"]>` — the same cast shape step 3f removed
 from `checkUpdate`. So `trustState`, `firefoxDetected` and `firefoxProfiles` arrive as `undefined`:
 `undefined` is neither `"trusted"` nor `"stale"`, so the drift warning cannot render, and `undefined` is
-falsy, so the Firefox note cannot either — silently, with no error anywhere. `tls:removeCert` is the same
-pattern: the shell composes `clientUntrusted` + `clientUntrustNote` through
-`certLifecycle.uninstallEngineCa()`, while the client routes to `tls.removeCert` and gets only
-`engineRemoved`.
+falsy, so the Firefox note cannot either — silently, with no error anywhere.
 
-**Disposition of that finding: latent, not live — and it is not a P7 item.** Rendering the drift warning
-and the Firefox note is P7's by non-negotiable #3, so nothing reads those fields yet; that is the same
-disposition step 3d gave `audit:list`. But the *defect* is in the seam, not in the renderer — the shell
-channel produces the fields and the client's routed path does not. Recorded rather than fixed, because
-fixing it is a shape decision: `tls.certStatus` cannot carry the client trust summary (the trust store is
-the client's), so the client must compose it the way it already composes the artifact flows.
+**`tls:removeCert` is the same cast shape and *not* the same severity — it loses an action, not a display
+field, and it is live.** The shell's `tls:removeCert` is `certLifecycle.uninstallEngineCa()`, which is
+**two-sided by design** (`File_Ops_Protocol.md` §6.1): it deletes the engine's keypair *and* un-trusts the
+certificate in the host's OS store, reading back the record `AppSettings.tlsTrustedCa` exists to hold for
+exactly this purpose. Its own docblock names the failure the two-sided shape prevents — "which is how a
+user ends up believing they removed a certificate their browser still trusts". The client routes to
+`tls.removeCert` and gets `engineRemoved` alone, so the un-trust never happens. **It is reachable**:
+`renderer/panels/settings/TlsSettingsSection.tsx:57` calls `window.api.tlsRemoveCert()` from the "remove
+certificate" button and then clears the panel's `tlsEnabled` / `tlsCaCertPath` / `tlsCaKeyPath`, so the UI
+reports success while the OS store goes on trusting a CA whose keypair is gone. And since step 3f removed
+the last preload override, `window.api` **is** `{ ...client }` — so the shell channel that did this
+correctly is now unreachable, and the short path is the only path.
+
+**Disposition, and the two halves differed.** `tls:certStatus` is **latent**: rendering the drift warning
+and the Firefox note is P7's by non-negotiable #3, nothing reads those fields yet, and the engine half
+that *is* delivered (`generated`, `certPath`, `keyPath`, `fingerprint`) is correct — the same disposition
+step 3d gave `audit:list`. `tls:removeCert` is **live and user-visible in effect**, which is a different
+answer: it was not waiting on P7 for anything.
+
+**Decided and implemented 2026-09-20 — both keys are `local`.** Held for the owner because the fix needs
+the host's OS trust store, which the client cannot reach, so it is an interface decision rather than a
+call-site fix. Two mechanisms were on the table: *add the host half to `ClientLocal` and let the client
+keep routing and compose*, or *move the whole key to `local` and let the shell implement it as today's
+`certLifecycle` composition*. **The second was chosen**, on the `tlsInstallCA` precedent — that key is
+already `local` for exactly this reason, so the whole trust-store surface now uses one mechanism, and the
+client stops needing to know how to read a trust store at all. What changed:
+
+- `surface.ts` — `tlsRemoveCert` / `tlsCertStatus` are `transport` → `local`. Counts move
+  `transport` 72 → 70 and `local` 14 → 16, total **144 unchanged**, and `surface.test.ts` pins both
+  figures *and* lists both keys in `mustBeLocal`, so the reclassification cannot be quietly undone.
+- `local.ts` — `ClientLocal` gains the two members; `preload.ts` wires them to new
+  `client:tlsCertStatus` / `client:tlsRemoveCert` channels in `clientHandlers.ts`, beside `tls:installCA`.
+- **The engine halves are untouched and still cross the wire** — `certLifecycle.readTrustSummary()` calls
+  `tls.certStatus` and `uninstallEngineCa()` calls `tls.removeCert` through the registry — so what moved
+  is only *who composes*. That is what keeps this correct for a remote engine (P9): the client still
+  reaches the engine, and the host still owns the store.
+- `certLifecycle.readCertStatus()` is **new**: the eight-field composition was extracted out of
+  `tlsHandlers.ts`'s channel body. Leaving it inside the channel is what allowed the routed twin to
+  deliver half of it with nothing pointing at the other half, so both callers now share one function.
+- `tlsHandlers.ts`'s `tls:certStatus` / `tls:removeCert` are **superseded, not deleted** — class 2 of this
+  audit goes **9 → 11** superseded shell halves — and each now carries a note saying so. They are
+  unreachable, because `window.api` is `{ ...client }`, and they die in the step-3 reduction.
 
 **What this changes for the deletion.** Two preconditions, neither of which was in the plan:
 
@@ -614,12 +649,66 @@ the client's), so the client must compose it the way it already composes the art
    superseded halves, so it dies only with the last of those.
 
 **Verified, and not.** Verified: the counts; the three-way split; the 9 superseded halves by matching
-every `dialog.` / `shell.` / `app.` occurrence to its enclosing channel; and the `tls:certStatus`
-divergence by reading both implementations. **Not verified: that every one of the ~120 class-1 channels
+every `dialog.` / `shell.` / `app.` occurrence to its enclosing channel; and the `tls:certStatus` /
+`tls:removeCert` divergences by reading both implementations *and* following each key to its renderer
+caller — which is what turned the second one from a latent shape difference into a live one
+(`TlsSettingsSection.tsx:57`). **Not verified: that every one of the ~120 class-1 channels
 is *only* a passthrough.** The discriminator was a grep for four shell-side call patterns, which proves
 the 9 but does not individually clear the remainder — a channel doing shell-side work through a helper
 that matches none of them would be misclassified. So the deletion pass must re-derive the class per file
 as it goes rather than trust this table's remainder, which is why this is an audit and not a work list.
+
+#### The 9 twins, verified per key — 2026-09-20
+
+The audit above listed the 9 superseded halves as needing "their client-side twin confirmed". Done, by
+reading each key's implementation in `packages/client/src/index.ts` against the shell channel it
+replaces. **Eight are equivalent or better; one was a regression, and it was found and fixed in the same
+pass — along with the docblock that sanctioned it.**
+
+| Shell channel | Client twin | Ordering | Verdict |
+| --- | --- | --- | --- |
+| `importExport:export` | `exportData` — `pickSavePath` → `export.create` → `artifactToFile(…, dest)` | dialog first | equivalent |
+| `importExport:preflight` / `:import` | `preflightImport` / `importData` — `blob.put` → `import.preflight` / `import.commit` | three-step | equivalent |
+| `audit:export` | `exportAudit` — `pickSavePath` → `call("exportAudit")` → `artifactToFile(…, dest)` | dialog first | **regression — fixed 2026-09-20** |
+| `runner:exportReport` | `exportRunnerReport` — `pickSavePath` → `exportRunnerReport` → `artifactToFile(…, dest)` | dialog first | **better than the shell** |
+| `capture:shareJson` | `shareCaptureJson` — `artifactToFile(await call(…), …)` | artifact first | acceptable — cheap artifact |
+| `tls:exportCert` | `tlsExportCert` — `artifactToFile(await call(…), …)` | artifact first | **correct** — P3 chose this deliberately |
+| `tls:importCert` / `tls:importKey` | upload → `call(…, { blobId })` | — | equivalent |
+| `app:checkUpdate` | client-local (step 3f) | — | resolved |
+
+**The one regression, found live.** `audit:export` was made dialog-first by P3 **explicitly so that
+cancelling stops paying for the query**: the pre-P3 handler ran `queryLog({ limit: 0 })` — the whole
+`git log` — before asking where to put the result. The client's twin evaluated
+`await call("exportAudit", { format })` as an *argument* to `artifactToFile`, so the command ran first and
+the dialog second; `artifactToFile`'s dialog-first case is selected by passing its third argument
+(`destPath`), which that call omitted. It was reachable — `renderer/panels/AuditLogPanel.tsx:106` calls
+`window.api.exportAudit(format)` and the preload is `{ ...client }` — so the cost P3 removed was back.
+**Fixed** by giving the key the same three-step `pickSavePath` → command → `artifactToFile(…, dest)` shape
+`exportData` already had.
+
+**The finding is the docblock, not the call.** `packages/client/src/local.ts`'s `writeArtifact` docblock
+is the authority a reader consults before writing any of these callers, and it named `exportAudit` in the
+*cheap* group — "the other egress methods (`exportAudit`, `tlsExportCert`, `shareCaptureJson`) hand over
+bytes the engine has already produced, so reordering them buys nothing". That is false for `exportAudit`
+alone: its artifact is the one egress payload with no natural size ceiling, because `audit.export` runs
+`queryLog({ limit: 0 })` — the workspace's *entire* `git log`. So the regression did not look like a
+mistake; it looked like the documented design. **Three other places in the tree already said the
+opposite** — the shell channel's own comment, `packages/engine/src/fileOps/commands.ts`'s
+"the one egress artifact with no natural size ceiling", and §5b-bis itself — and the client took the
+default anyway, which is what a wrong docblock buys you. Corrected there, and the correction now names
+the three `destPath` callers and the two genuine artifact-first ones with the reason for each.
+
+**The mechanism is worth naming too**, because it is what makes this easy to miss: `artifactToFile`'s
+*default* is artifact-first — "the hook shows the dialog itself … the right default for the methods whose
+artifact is cheap and already produced" — so the ordering is chosen by **omitting an argument**. The one
+caller that must not take the default is therefore the one that looks most ordinary, and a reviewer
+reading the call sees nothing to object to.
+
+**The same read also shows the client is not uniformly a regression.** `exportRunnerReport`'s twin is
+*stronger* than the shell body: it derives the format from the chosen extension
+(`dest.toLowerCase().endsWith(".json")`), which the shell could not express — P3 recorded that the shell
+hardcoded `json` and so silently removed HTML export. So "the client replaced the shell" is not a claim
+about quality in either direction; each key has to be read, which is the audit's own conclusion.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
