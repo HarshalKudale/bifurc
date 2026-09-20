@@ -28,6 +28,22 @@ ledger → `plan/07`; procedures → the `bifurc-*` skills.
   **decided: dropped** — after step 3 there was one path, not two, so it would be dead code reading as a
   safety net. **One item CARRIED, not waived: criterion 2, "11 e2e specs pass, unmodified"** — owner's
   terminal only; re-measured 2026-09-20, reproduced the documented failure exactly (46 failed / 0 passed).
+- **§5b-bis — the step-3 audit (2026-09-20): the legacy channels are not uniformly dead.** **132** legacy
+  channels (84 literal + **48 generated** by `entityCrudFactory` — a literal `grep` misses all 48, the same
+  undercount shape as §5c's "five, actually 51"), split **DEAD PASSTHROUGH ~120 / SUPERSEDED SHELL HALF 9 /
+  LOCAL ALREADY ELSEWHERE 15** (`clientHandlers.ts`'s 15 are untouched). The 9 twins are **verified per
+  key**: 8 equivalent-or-better, 1 **regression** — `exportAudit` had taken `artifactToFile`'s
+  artifact-first default, undoing P3's dialog-first ordering for the one egress artifact with no size
+  ceiling (`audit.export` is `queryLog({ limit: 0 })`, the whole log). Fixed, **and the `local.ts`
+  docblock that sanctioned it corrected** — a wrong doc regenerates the bug, so fix both (`TRAPS.md`).
+  **The `tls` pair was the second find, and worse:** `tlsCertStatus` lost 3 drift fields (latent — P7
+  renders them), but `tlsRemoveCert` was **live** — `TlsSettingsSection.tsx:57` calls it, so "remove
+  certificate" deleted the engine's keypair and left the OS store trusting the CA. **Owner's decision
+  (2026-09-20): both keys are `local`** on the `tlsInstallCA` precedent. `surface.ts` is now
+  **70 transport + 48 entity + 7 subscribe + 3 shim + 16 local = 144**; `ClientLocal` gained the two
+  members; `certLifecycle.readCertStatus()` was extracted so the 8-field composition has one
+  implementation instead of living in a channel body a routed twin could half-fill. Class 2 is **9 → 11**.
+  `src/ipc/fileOpsClient.ts` **survives** the reduction (live shared library, two live paths).
 - **P6 work item 4 (packaging), measured 2026-09-20 — the plan's premise was stale.** "A packaged build
   cannot resolve `@bifurc/*`" came from an asar predating the deps; electron-builder copies the workspaces
   in with their `package.json` and **44 of 44** resolve, so **`build.files` is unchanged**. The real defect
