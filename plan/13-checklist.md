@@ -682,16 +682,28 @@ rather than a type.
       suites register handler groups by hand and drive the channels directly (`foldersAndWorkspaces` 45
       invocations, `protocolExecution` 62). So the unit is the **handler group** — delete its channels,
       re-point the suites that drove them, verify, commit.
-      **Progress 2026-09-20 — stage 3b is 9 of its 57 channels done** (`plan/07` §5b-sexies): the nine
-      protocol-client passthroughs (`graphql:introspect|execute`, `soap:fetchWsdl|execute`, the five
-      `grpc:*`) are deleted from the three handler files, and `protocolExecution`'s 20 call sites are
-      re-pointed at `commandRegistry.invoke()` through an explicit `invokeCommand(command, params)`
-      helper. **Reconciliation: 101 files / 2,514 tests / 2,473 passed / 40 skipped / 1 failed — identical
-      to stage 3a's checkpoint**, i.e. deleting nine channels cost **zero** tests. The 48 generated channels
-      remain, still gated on the factory split + the `handlers.test.ts` per-case migration. Two collateral
-      repairs: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored — it is P0's
-      runtime evidence and the baseline's documented 1 failure), and the tree had been left mid-slice with
-      19 cases failing `No handler registered`.
+      **Progress 2026-09-20 — stage 3b is COMPLETE: 57 of its 57 channels done** (`plan/07` §5b-sexies,
+      §5b-septies). **Slice 1 (9 channels):** the nine protocol-client passthroughs
+      (`graphql:introspect|execute`, `soap:fetchWsdl|execute`, the five `grpc:*`) are deleted from the three
+      handler files, and `protocolExecution`'s 20 call sites are re-pointed at `commandRegistry.invoke()`
+      through an explicit `invokeCommand(command, params)` helper. **Slice 2 (48 channels):**
+      `entityCrudFactory.ts` is **deleted**, its five callers now call the engine's `registerCrudKind()` /
+      `registerSimpleKind()` directly, and the five `ipc*` fields are gone from `CrudFactoryOpts` /
+      `SimpleEntityOpts`. The **split-then-delete ordering §5b-ter predicted was necessary, not optional** —
+      the wrapper also did the container insert, so deleting it outright would have broken all 16 kinds with
+      the same misleading *"is not routed through the CommandRegistry yet"* message.
+      **Reconciliation: 101 files / 2,496 tests / 2,455 passed / 40 skipped / 1 failed.** The delta from
+      stage 3a's checkpoint (2,514 / 2,473 / 40 / 1) is **exactly −18 tests, and the mechanism is named**:
+      `handlers.test.ts` generates **one `it` per `expectedChannels` entry**, so removing the 18 deleted
+      channel names removed their 18 generated tests — the correct outcome, since the channels no longer
+      exist and the list exists to assert their presence. Slice 1 cost **zero** tests (its 19 cases were
+      re-pointed); slice 2 costs 18 (its cases are generated).
+      **Still open after stage 3b:** the three files are named for something they no longer do
+      (`*Handlers.ts` now register *kinds*), and `registerIpcHandlers()`'s own reduction. Collateral repairs
+      across the two slices: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored —
+      it is P0's runtime evidence and the baseline's documented 1 failure, and its retired-channel fixture
+      now covers 4 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases
+      failing `No handler registered`.
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening
