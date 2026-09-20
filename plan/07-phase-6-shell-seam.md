@@ -595,6 +595,12 @@ from `checkUpdate`. So `trustState`, `firefoxDetected` and `firefoxProfiles` arr
 `undefined` is neither `"trusted"` nor `"stale"`, so the drift warning cannot render, and `undefined` is
 falsy, so the Firefox note cannot either — silently, with no error anywhere.
 
+> **A third instance of this class, and the widest, was found the same day — §5b-quater.** It is the same
+> cast shape across **all 16 `add*` keys** (`entity.create`'s `{id, entity}` envelope, never unwrapped on
+> the routed path), and its distinguishing feature is that a real integration test was passing *because
+> of* it. Read §5b-quater before touching any `add*` key: the class is now three instances, not two, and
+> the third was invisible to both audits that found the first two.
+
 **`tls:removeCert` is the same cast shape and *not* the same severity — it loses an action, not a display
 field, and it is live.** The shell's `tls:removeCert` is `certLifecycle.uninstallEngineCa()`, which is
 **two-sided by design** (`File_Ops_Protocol.md` §6.1): it deletes the engine's keypair *and* un-trusts the
@@ -751,6 +757,48 @@ files are not 12 equal slices. `soapHandlers` / `graphqlHandlers` / `grpcHandler
 (three kind groups) **plus** two pure `commandRegistry.invoke()` passthroughs, so they belong with the
 factory slice rather than alone — which is the opposite of how they first looked, and is the reason this
 section exists.
+
+#### 5b-quater. The third lying cast — and the fixture that asserted it (2026-09-20)
+
+Found by starting §5b-ter's factory split, and it is the **widest instance of the class §5b-bis named**.
+The engine's `entity.create` answers the frozen **`{id, entity}`** envelope
+(`entityCrudCommands.ts:413`); the surface declares the **raw** entity; and the shell channel unwrapped it
+by hand (`entityCrudFactory.ts:72`, `return "entity" in result ? result.entity : result`). The client
+never did. So on the routed path **all 16 `add*` keys** handed their caller `{id, entity}` where
+`renderer/types/window.ts` declares `Promise<LocalMapping>` — and the panels consume it directly:
+`MappingsPanel.tsx:120` pushes the result straight into `config.mappings`, `ProxyRulesPanel.tsx:155` files
+it as a loaded entity. Nothing failed, because the `as ReturnType<BifurcApi[…] >` cast made the compiler
+agree with the **declaration** rather than with the runtime. `checkUpdate` (step 3f) and `tlsCertStatus`
+(§5b-bis) were the same shape and both were caught by reading; this one is 16 keys at once, and it was
+caught only because the factory split made the unwrap visible.
+
+**The tell was already in the file.** `entity.list`'s `{entities}` envelope **is** unwrapped on the routed
+path, three lines away (`listWsdls`, `listProtoFiles`, `listGraphQLSchemas`). One envelope family, half
+handled — which is exactly why the asymmetry survived review.
+
+**Fixed** by an `unwrapCreated` helper in `packages/client/src/index.ts` and 16 converted keys. The
+`update*` / `delete*` / `list*` keys are untouched: `entity.update` and `entity.delete` return what their
+channels always did. Two results are deliberately **not** unwrapped, both verified against the engine
+rather than assumed: the gate-blocked create (`environments` is the only kind with a `gateKind`, and a
+blocked create returns `{error:"limit_reached", ...gate}` with no `.entity` — `entityCrudCommands.ts:410`),
+and `folder.add` / `workspace.add`, which return the entity itself with no envelope at all
+(`folderCommands.ts:89`, `configCommands.ts:84`).
+
+**The evidence that it was live, not theoretical: a test was asserting the bug.** `transports.test.ts` —
+the P5 acceptance case, "client works over `in-process`, `stdio` and `ws`" — failed in **all three**
+transports the moment the unwrap landed. Its registry modelled `entity.create` as
+`({ id: "created", ...params })`, which puts `entity` **and** `kind` at the top level, and its assertion
+was `toMatchObject({ id: "created" })` alone. So the envelope happened to carry the id the assertion
+looked for, and the case was green *because of* the defect it existed to catch. Fixed by modelling the
+engine's real shape (`{ id: "created", entity: { ...entity, id: "created" } }`) and asserting `name` as
+well as `id` — `name` is what goes `undefined` when the unwrap is missing, so the case can now fail. That
+is the sharpest form of §5b-bis's lesson: **a fixture is a claim about the thing it fakes, and a wrong
+claim is indistinguishable from a passing test.** Both new guards were confirmed non-vacuous by reverting
+the unwrap and watching them go red.
+
+**Reconciliation:** 101 files / 2,511 tests / **2,470 passed** / 40 skipped / 1 failed, against the
+2,509 / 2,468 / 40 / 1 baseline — **+2 tests, +2 passed**, the 2 being the new `client.test.ts` pair that
+pins the unwrap and the gate pass-through. The 1 failure is `soap.execute`, the environmental one.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
