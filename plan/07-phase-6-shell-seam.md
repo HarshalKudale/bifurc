@@ -943,6 +943,57 @@ the unwrap and watching them go red.
 2,509 / 2,468 / 40 / 1 baseline — **+2 tests, +2 passed**, the 2 being the new `client.test.ts` pair that
 pins the unwrap and the gate pass-through. The 1 failure is `soap.execute`, the environmental one.
 
+#### 5b-sexies. Stage 3b, first slice — the nine passthroughs are gone (2026-09-20)
+
+**What landed.** The nine protocol-client channels — `graphql:introspect`, `graphql:execute`,
+`soap:fetchWsdl`, `soap:execute`, `grpc:execute`, `grpc:reflect`, `grpc:mockServerStatus`,
+`grpc:startMockServer`, `grpc:stopMockServer` — are deleted from `graphqlHandlers.ts`, `soapHandlers.ts`
+and `grpcHandlers.ts`. What remains in those three files is the *other* half: the entity kinds they own,
+which `entityCrudFactory.ts` generates and which are still live. **This is 9 of stage 3b's 57 channels**;
+the 48 generated ones are untouched and still gated on the factory split (§5b-ter item 1) plus the
+`handlers.test.ts` migration.
+
+**The rule that makes the deletion safe, stated once** (in `soapHandlers.ts`, referenced from the other
+two): *a channel whose body is a single `commandRegistry.invoke()` carries no behaviour of its own.* Each
+of the nine was exactly that, so the channel was a second name for the same operation — able to drift from
+it and able to do nothing else. That is the test for the remaining 48: they are **not** this shape, which
+is why they need the split rather than the same treatment.
+
+**The one thing the deletion could have got wrong silently, and the test that now pins it.** A
+one-line adapter has no behaviour to lose *except its argument shape*, and the nine were not uniform:
+five were literal passthroughs, `soap:fetchWsdl` **wrapped** its bare `url` argument as `{ url }`, and the
+three argument-less gRPC channels passed `{}` while ignoring whatever they were called with. A re-point
+that forwarded a rest-args list would have been right for five and wrong for four, and three of the four
+would still have passed. So `protocolExecution.integration.test.ts` grew an explicit
+`invokeCommand(command, params)` helper whose docblock names the asymmetry, and each of the 20 call sites
+passes the command's real params object — which is what the channel produced. The shape is now visible at
+the call site instead of hidden inside a deleted adapter.
+
+**Reconciliation: 101 files / 2,514 tests / 2,473 passed / 40 skipped / 1 failed — identical to stage 3a's
+checkpoint, and the identity is the point.** Deleting nine channels cost **zero** tests, because the 19
+cases that drove them were re-pointed rather than deleted; a −19 would have meant the deletion removed
+coverage. The 1 failure is `soap.execute`, the environmental one.
+
+**Two collateral repairs this slice forced, both of which were unrecorded deviations:**
+
+1. **`tests/spike/protocolPoc.test.ts` had been deleted** (330 lines, 12 tests) in the same edit batch as
+   the channel deletion, with no note in this plan or in the memory. It is the **runtime half of P0 spike
+   4** and `plan/spike-results.md` records it explicitly as *"kept in version control as the record of this
+   de-risking work"*, so deleting it contradicts a written phase decision — and it would have silently
+   removed the baseline's documented 1 failure, changing the number every later reconciliation is measured
+   against. Restored, and two of its ten channels (`graphql:introspect`, `soap:execute`) re-attached in
+   `beforeAll` with **the exact bodies the channels had**. The spike's subject is the *envelope*, not the
+   routing, so that keeps all ten commands answering identically by a shorter path for two of them — which
+   doubles as the check that the deletion lost nothing. `spike/protocol/commands.ts`'s `LEGACY_CHANNEL` map
+   is left verbatim as the spike's own record of the legacy surface, with a note that two names are gone.
+   **Whether the spike's throwaway code should be retired now that P4's real conformance suite exists is a
+   separate decision, and it is not stage 3b's to make** — retiring it means `spike/protocol/` goes too,
+   plus five plan docs that cite it.
+2. **The tree was broken mid-slice.** The helper had been added but the 20 call sites not yet converted, so
+   19 cases died with `No handler registered`. Recorded because the failure mode is instructive: the
+   deletion and its migration are one atomic change, and a half-landed stage 3b is not a smaller stage 3b —
+   it is a red suite that reads as a code defect rather than as an unfinished edit.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
@@ -1598,6 +1649,21 @@ Per the P5 shim table, these are implemented in the shell and never cross the RP
 ---
 
 ## Work item 2 — Engine lifecycle
+
+> ### ⚠ DOWNGRADED 2026-09-20 by **D14** — read [`14-workspace-runtime.md`](14-workspace-runtime.md) §3, §7
+>
+> The four acceptance criteria at the end of this work item (spawn, restart-with-backoff, no orphan,
+> self-terminate) were already carried out of P6's gate on 2026-09-20. **D14 now downgrades the work
+> itself:** the desktop app keeps running the engine **in-process** — which is what it does today — and
+> supervision becomes a property of the **workspace host**, where Docker's `SIGTERM` plus a socket-close
+> watchdog satisfy the same four criteria.
+>
+> **This is not a waiver of the properties, it is a relocation of them.** "An in-process engine cannot be
+> orphaned" was already recorded as the reason they left P6's gate; D14 makes that the answer rather than
+> a deferral. The criteria are still worth reading — they are now the workspace host's gate.
+>
+> **P6's own status is unchanged:** *done in scope*, with criterion 2 ("11 e2e specs pass, unmodified")
+> still **carried, not waived**.
 
 ```ts
 // src/main.ts

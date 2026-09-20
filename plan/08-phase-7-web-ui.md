@@ -1,9 +1,21 @@
 # 08 — Phase 7: Web UI
 
-**Goal:** run the existing renderer in a browser, connected to a local or remote engine over the RPC
-transport.
+> **Updated 2026-09-20 by [`14-workspace-runtime.md`](14-workspace-runtime.md) (D10–D13).** Effort is
+> unchanged, but the thing the browser connects to is now a **workspace host**, and the workspace is a
+> *selected* resource rather than an implicit global. Two consequences for the items below:
+>
+> - **Work item 2's "multi-engine profiles" becomes "host + workspace selection"** — the same UI surface,
+>   one more level in it. `activeWorkspaceId` is a client/session pointer after P14, not a server setting,
+>   so the web UI owns it explicitly rather than inheriting it from `app.json`.
+> - **Work item 5's "have the engine serve the UI" becomes "have the host serve the UI"** — still
+>   same-origin, still no CORS, still the recommended option for Docker.
+>
+> Everything else in this phase is unaffected. **Depends on P14.**
 
-**Effort:** 3–4 weeks. **Depends on:** P6. **Parallel with:** P8, P9.
+**Goal:** run the existing renderer in a browser, connected to a local or remote **workspace host** over
+the RPC transport.
+
+**Effort:** 3–4 weeks. **Depends on:** **P14**. **Parallel with:** P9.
 
 > The renderer is already browser-clean — **zero** Node or Electron APIs, no `navigator.userAgent`
 > sniffing, and `window.api.platform` is declared but never read (verified). Most of this phase is
