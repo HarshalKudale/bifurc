@@ -473,7 +473,13 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
 
   const api: BifurcClient = {
     // ── app / config ────────────────────────────────────────────────────────
-    checkUpdate: () => call("checkUpdate", {}) as ReturnType<BifurcApi["checkUpdate"]>,
+    // `checkUpdate` used to be first in this block, as `call("checkUpdate", {})`. It is **not** here
+    // because it is not a transport method: it moved to the client-local group below on 2026-09-20,
+    // and `packages/protocol` no longer declares `app.checkUpdate`. The cast it used to carry —
+    // `as ReturnType<BifurcApi["checkUpdate"]>` — was a lie in the direction that fails silently:
+    // `AppCheckUpdateResult` had no `hasUpdate`, so routing it would have left the renderer's
+    // `updateResult.hasUpdate` undefined and made the About panel report "up to date" forever, with
+    // no error anywhere. See `local.ts`'s `checkUpdate` and `surface.ts`.
     getConfig: () => call("getConfig", {}) as ReturnType<BifurcApi["getConfig"]>,
     loadEntity: (wsId, kind, id) =>
       call("loadEntity", { workspaceId: wsId, kind, id }) as ReturnType<BifurcApi["loadEntity"]>,
@@ -751,6 +757,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     tlsCertStatus: () => call("tlsCertStatus", {}) as ReturnType<BifurcApi["tlsCertStatus"]>,
 
     // ── client-local: delegated, never routed ───────────────────────────────
+    checkUpdate: () => local.checkUpdate(),
     openExternal: (url) => local.openExternal(url),
     setTitleBarOverlay: (color, symbolColor) => local.setTitleBarOverlay(color, symbolColor),
     getTheme: () => local.getTheme(),

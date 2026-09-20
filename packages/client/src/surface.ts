@@ -55,9 +55,10 @@
  * - **`shim`** — a genuine multi-step or transformed mapping (`exportData` is
  *   `export.create` + a blob fetch; `preflightImport` is `blob.put` + `import.preflight`).
  * - **`local`** — **not a transport call at all.** Dialogs, zoom, theme, titlebar, `platform`,
- *   OS trust-store, first-launch. These must never be routed over the transport: they are
- *   operations on the *client's own machine*, and on a remote engine they would be either
- *   meaningless or a security hole.
+ *   OS trust-store, first-launch, and — since 2026-09-20 — the update check. These must never be
+ *   routed over the transport: they are operations on the *client's own machine*, and on a remote
+ *   engine they would be either meaningless or a security hole. `checkUpdate` is the one member
+ *   here that is not a protocol command at all, rather than a command served locally.
  * - **`subscribe`** — one of the 7 subscription methods.
  *
  * `assertSurfaceIsTotal()` is the guard. It is deliberately the same shape as the engine's
@@ -109,7 +110,12 @@ const local = (note: string): SurfaceEntry => ({ kind: "local", note });
  */
 export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   // ── app / config ──────────────────────────────────────────────────────────
-  checkUpdate: t("app.checkUpdate"),
+  // `checkUpdate` was `t("app.checkUpdate")` — the surface's only `SPLIT` — until 2026-09-20. It is
+  // `local` because no engine can answer it correctly: `currentVersion` is the version of the thing
+  // the *user* runs, and the download URL is the asset for the *user's* platform. An engine matching
+  // its own `process.platform` hands a Windows user the AppImage. `packages/protocol` no longer
+  // declares `app.checkUpdate`; this is the one key whose whole implementation is client-side.
+  checkUpdate: local("GitHub release check; needs this client's own version and platform"),
   getConfig: t("config.get"),
   loadEntity: t("entity.load"),
   setEntityEnabled: t("entity.setEnabled"),

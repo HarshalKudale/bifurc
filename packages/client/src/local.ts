@@ -3,11 +3,17 @@
  *
  * ## Why this is an injected interface rather than an implementation
  *
- * Thirteen of the 144 keys are not RPC at all. They act on **the machine the client is running on**:
+ * Fourteen of the 144 keys are not RPC at all. They act on **the machine the client is running on**:
  * native file pickers, the OS trust store, Electron's `BrowserWindow`/`nativeTheme`, shell launch
  * state. On a remote engine they are meaningless at best and a hole at worst — `tlsInstallCA` mutates
  * the *client's* OS trust store, and routing it would let a server install a root certificate on a
  * user's machine.
+ *
+ * `checkUpdate` joined this set on 2026-09-20 (the count was thirteen). It is the one member that is
+ * **not** a protocol command — the other thirteen are declared in the protocol and merely served
+ * locally, whereas `checkUpdate` needs the client's own version and the client's own platform, so no
+ * engine can answer it correctly on the client's behalf. `packages/protocol` no longer declares
+ * `app.checkUpdate`. See the member's own docblock for the argument.
  *
  * P6's Electron shell, P7's web UI and P8's CLI each answer these differently (a browser has no
  * native picker and no trust store), so `createClient()` takes them as a dependency rather than
@@ -92,7 +98,7 @@ export interface ReadFileOptions {
 }
 
 export interface ClientLocal {
-  // ── the nine declared in BifurcApi ───────────────────────────────────────
+  // ── the ten declared in BifurcApi ────────────────────────────────────────
   openExternal: BifurcApi["openExternal"];
   setTitleBarOverlay: NonNullable<BifurcApi["setTitleBarOverlay"]>;
   getTheme: NonNullable<BifurcApi["getTheme"]>;
@@ -102,6 +108,29 @@ export interface ClientLocal {
   pickFilePath: BifurcApi["pickFilePath"];
   pickFolderPath: BifurcApi["pickFolderPath"];
   platform: BifurcApi["platform"];
+
+  /**
+   * Check GitHub for a newer release.
+   *
+   * **Reclassified `transport` → `local` on 2026-09-20**, which is why it sits here rather than in
+   * `BifurcApiFull`'s routed set. It was the surface's only `SPLIT`, and the split resolves to
+   * "local", not to "engine command with a client half" — see `surface.ts` for the argument.
+   *
+   * The reason is that the answer is a property of **this client**, not of any engine. Two of the
+   * fields the renderer reads are impossible for an engine to produce correctly:
+   *
+   * - `currentVersion` — the version of the thing the user is running. An engine's own version is
+   *   only the same under D9 lockstep, and is simply wrong for a browser client (P7) or a remote
+   *   container (P9).
+   * - `downloadUrl` — the asset for the *user's* platform. An engine matching its own
+   *   `process.platform` would hand a Windows user the AppImage.
+   *
+   * So this is the one key where the whole operation is local, and `packages/protocol` no longer
+   * declares `app.checkUpdate` at all. That is the difference between this member and the nine
+   * above: those are declared in the protocol and merely *served* locally, while this one is not a
+   * protocol command and never was one it could be.
+   */
+  checkUpdate: BifurcApi["checkUpdate"];
 
   // ── the four BifurcApi under-declares ────────────────────────────────────
   /** `clientHandlers.ts`'s `app:isFirstLaunch` → `!settings.hasSeenWelcome`. */
