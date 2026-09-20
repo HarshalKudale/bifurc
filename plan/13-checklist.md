@@ -641,7 +641,7 @@ rather than a type.
       "Delete `registerIpcHandlers()` from the default path")*. **It is a reduction, not a deletion, and
       that is the correction that resolving `checkUpdate` produced.** The key blocker is gone:
       `checkUpdate` was the last `SPLIT` and was resolved on 2026-09-20 by **deleting `app.checkUpdate`
-      from the protocol** — the whole operation is client-local (`plan/07` §5b) — so all 93 protocol
+      from the protocol** — the whole operation is client-local (`plan/07` §5b) — so all 92 protocol
       commands are registered. **Step 3d (2026-09-19) had already retired the other three by widening the
       schemas they were pinned on, not by moving them** — `listAudit` (`NARROWED`, `fcd6d0d`) and
       `saveRunnerConfig` / `loadRunnerConfig` (`BLOCKED`). But `app:checkUpdate` remains a **local**
@@ -650,7 +650,18 @@ rather than a type.
       commands were registered at module scope in nine shell files, so deleting the shell's handler layer
       answered `UNKNOWN_COMMAND` for all of them on a containerised engine (P9) — and the ratchet could
       not see any of them. **§5c is complete and statically guarded**, so this item is unblocked on both
-      counts. See step 3e
+      counts. See step 3e.
+      **But "unblocked" is not "safe to start", and an audit on 2026-09-20 (`plan/07` §5b-bis) says why.**
+      The 132 legacy channels are **not uniformly dead**: 9 of them are *superseded shell halves* that own
+      a `dialog.*` / `app.getVersion()` step the client now performs through a different channel, and two
+      of those (`tls:certStatus`, `tls:removeCert`) currently lose the client trust summary on the routed
+      path — a second lying cast of the `checkUpdate` class, latent because P7 is what renders it. So the
+      deletion needs the 9 client-side twins confirmed and that shape decision landed first, and
+      `src/ipc/fileOpsClient.ts` **survives** the reduction, being a live shared library on two live
+      paths. The audit also corrects this item's own wording: `registerClientHandlers()` is *already* the
+      local-handler entry point (`src/main.ts:294`), so `registerIpcHandlers()` reduces to the
+      **engine-registration + event-wiring + bridge** entry point rather than "to the local-handler entry
+      point"
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening

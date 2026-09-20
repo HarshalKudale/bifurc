@@ -118,6 +118,33 @@ The flip side is worth knowing too: collapse a duplicated helper **only** when i
 that outlives the process (`syncEnabledSet` → `enabled.json` was a correctness fix; `generateId` is
 pure, so collapsing it was hygiene).
 
+## A routed key can deliver *less* than the shell channel it replaced — and the cast hides it
+
+**Compare the shell channel's return shape against what the routed command can actually produce, for
+every key that composes anything.** `@bifurc/client` bridged the two with
+`as ReturnType<BifurcApi["<key>"]>`, which is a cast in the direction that **fails silently**: the
+missing fields arrive as `undefined`, which is falsy and not an error. Twice now:
+
+- `checkUpdate` — `AppCheckUpdateResult` has `tagName`; the renderer reads `hasUpdate`. Routing it would
+  have left `hasUpdate: undefined` → the About panel reports "you're up to date" forever. Fixed by
+  deleting the command and making the key client-local (2026-09-20).
+- `tlsCertStatus` — the shell channel composes **eight** fields by joining the engine's fingerprint with
+  `certLifecycle.readTrustSummary()`, which reads the *client's* trust store. The client routes to
+  `tls.certStatus`, which returns the engine half only, so `trustState` / `firefoxDetected` /
+  `firefoxProfiles` are `undefined`: `undefined` is neither `"trusted"` nor `"stale"`, so the drift
+  warning cannot render, and it is falsy, so the Firefox note cannot either. `tlsRemoveCert` is the same
+  shape. Found 2026-09-20 by the §5b-bis audit; **latent**, because P7 is what renders those fields.
+
+**Why it hides:** `BifurcApi` is a *declared* type, and the cast makes the compiler agree with the
+declaration rather than with the runtime. Every unit test that drives the shell channel still passes,
+because the shell channel is correct — only the routed path is short. So the test that finds this is
+neither: it is **reading both implementations side by side**.
+
+**The tell:** a key whose shell body calls something the engine cannot (`app.getVersion()`,
+`dialog.*`, the client trust store). If the client routes it and casts, the composition is lost. The
+fix is not to widen the command — it is to make the client compose the client-side half, the way it
+already does for the artifact flows via `pickSavePath` / `writeArtifact`.
+
 ## Artifacts, blobs, dialogs
 
 - **Artifacts are bytes.** `writeArtifact` takes **base64**; the channel writes a Buffer. Any UTF-8
