@@ -709,7 +709,17 @@ rather than a type.
       **"six caller files" was never true — it is five** (`coreHandlers`, `crudHandlers`, `graphqlHandlers`,
       `grpcHandlers`, `soapHandlers`), verified with `git log -S` across the whole history; the sentence
       claiming six listed exactly those five names.
-      **Still open after stage 3b:** `registerIpcHandlers()`'s own reduction. Collateral repairs
+      **The reduction is now classified by measurement rather than by reading** (`plan/07` §5b-decies):
+      **93 literal channels = 18 live + 75 dead**, decidable by construction because `window.api` *is* the
+      client (`src/preload.ts:110`) and `packages/client/src` names **no** channel at all — so only the
+      `local` block's 18 can be reached. `clientHandlers.ts` is **17 live / 0 dead** and must not be touched;
+      every other file is all-dead except `systemHandlers.ts` (1 live: `app:checkUpdate`). No `ipcMain.on(`
+      registrations exist anywhere in `src/`, so nothing hides behind the 7 `subscribe` keys. Of the 75 dead,
+      **7 are a risk subset** owning a shell-side `dialog.*` step whose client twin must be confirmed first —
+      `runner:exportReport`, `audit:export`, `capture:shareJson`, `tls:exportCert`, `tls:importKey`,
+      `importExport:export`, `importExport:preflight` — which is the `tlsRemoveCert` lesson, and is exactly
+      §5b-bis's "9 superseded shell halves" minus the 2 `tls` channels that are now `local`. **Still open:**
+      the reduction itself, in those three steps. Collateral repairs
       across the two slices: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored —
       it is P0's runtime evidence and the baseline's documented 1 failure, and its retired-channel fixture
       now covers 4 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases
