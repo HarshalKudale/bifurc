@@ -287,13 +287,14 @@ describe("src/ipc/handlers.ts", () => {
     const expectedChannels = [
       "config:get", "config:save",
       "services:discover",
-      "mapping:add", "mapping:update", "mapping:delete",
-      "rule:add", "rule:update", "rule:delete",
-      "mock:add", "mock:update", "mock:delete",
-      "request:add", "request:update", "request:delete",
-      "ws:add", "ws:update", "ws:delete",
+      // ── The 18 per-kind CRUD channels are gone (P6 stage 3b) ──────────────────────────────────
+      // `mapping:*`, `rule:*`, `mock:*`, `request:*`, `ws:*` and `env:add/update/delete` were generated
+      // by `entityCrudFactory.ts` and deleted with it, so asserting a handler for them would now assert
+      // the absence of the thing this list exists to check. Their behaviour is covered at engine level
+      // by `entityCrudCommands`' suite and by `entityConflictScope`; the surviving `folder:*` and
+      // `env:setActive` entries below are their own implementations, not factory output.
       "folder:add", "folder:rename", "folder:delete",
-      "env:add", "env:update", "env:delete", "env:setActive",
+      "env:setActive",
       "workspace:add", "workspace:rename", "workspace:delete", "workspace:setActive",
       "importExport:formats", "importExport:export", "importExport:preflight", "importExport:import",
       "audit:list", "audit:diff", "audit:export",

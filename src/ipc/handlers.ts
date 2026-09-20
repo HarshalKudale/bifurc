@@ -138,7 +138,7 @@ export function registerIpcHandlers(): void {
   // verbatim rather than collapsed; the engine module's header has the comparison table.
   registerSyncCommands(commandRegistry);
   // Step 3e slice 7 — the last of the pass: the four collapsed `entity.*` CRUD commands
-  // (`create`/`update`/`delete`/`list`), out of `handlers/entityCrudFactory.ts`'s module scope.
+  // (`create`/`update`/`delete`/`list`), out of the shell's module scope.
   //
   // Structurally unlike slices 1–6, which each moved a *file of commands*. This one is a **factory
   // split across the seam**: the four commands dispatch at invoke time through a registry of per-kind
@@ -147,8 +147,12 @@ export function registerIpcHandlers(): void {
   // way, and moving the four registrations alone would have left them consulting an empty map — each
   // throwing `"<kind>" is not routed through the CommandRegistry yet`, the same message a genuinely
   // unregistered kind throws. The containers moved to the engine and the population direction was
-  // inverted: the shell calls `registerCrudKind()` / `registerSimpleKind()` and keeps the channels.
-  // Both factory signatures are unchanged, so none of the six caller files needed an edit.
+  // inverted: the shell calls `registerCrudKind()` / `registerSimpleKind()`.
+  //
+  // **Stage 3b (2026-09-20) finished that inversion by deleting the shell half.** The factory's six
+  // `ipcMain.handle` calls are gone, `handlers/entityCrudFactory.ts` is deleted, and the five callers
+  // now call the engine's `registerCrudKind()` / `registerSimpleKind()` directly — which is what the
+  // factory was doing anyway, one wrapper deeper. The 48 generated channels went with it.
   registerEntityCrudCommands(commandRegistry);
   // **0 module-scope registrations remain** — §5c's pass is complete. The 51 commands it turned out to
   // be are now all registered by an explicit `register*Commands()` call from this function.

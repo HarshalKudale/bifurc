@@ -36,8 +36,8 @@ export type EntityKindValue = z.infer<typeof EntityKind>;
 // finding "`z.custom<T>()` is a viable escape hatch for `any`-typed renderer payloads": the wire
 // envelope (kind, presence of an id, etc.) is validated; the entity's internal shape is not
 // re-validated by the protocol layer, because it is already validated by the domain-specific
-// `validate()` callbacks in `entityCrudFactory.ts` today. Do not let this become a habit for new
-// entity kinds — see the R3 risk note in `02-phase-1-protocol.md`.
+// `validate()` callbacks on the `CrudFactoryOpts` registrations in `src/ipc/handlers/*.ts` today. Do not
+// let this become a habit for new entity kinds — see the R3 risk note in `02-phase-1-protocol.md`.
 const EntityBody = z.record(z.string(), z.unknown());
 
 export const EntityCreateParams = z.object({
