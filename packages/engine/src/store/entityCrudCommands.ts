@@ -13,12 +13,14 @@
  * some channels, and the two halves could be separated by moving the registrations and leaving the
  * channels behind. This file is not that. It is a **factory split across the seam**:
  *
- *  - `registerEntityCrudHandlers(opts)` / `registerSimpleEntityHandlers(opts)` were called from **six
- *    shell handler files** (`coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`,
- *    `soapHandlers`, and one more kind each way). They did two unrelated things: they inserted the
- *    kind's options into a module-level container, **and** they installed three `ipcMain.handle`
- *    channels. **Stage 3b (2026-09-20) deleted the second half**, and the wrappers with it — the six
- *    files now call `registerCrudKind()` / `registerSimpleKind()` directly.
+ *  - `registerEntityCrudHandlers(opts)` / `registerSimpleEntityHandlers(opts)` were called from **five
+ *    shell handler files** — `coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers` and
+ *    `soapHandlers`. (Every P6 doc before 2026-09-20 says *six*, including one that then lists exactly
+ *    those five names; measured with `git log -S`, five is the number that has ever been true.) They did
+ *    two unrelated things: they inserted the kind's options into a module-level container, **and** they
+ *    installed three `ipcMain.handle` channels. **Stage 3b (2026-09-20) deleted the second half**, and
+ *    the wrappers with it — the five files now call `registerCrudKind()` / `registerSimpleKind()`
+ *    directly.
  *  - The four commands read that container **at invoke time** and dispatch to whichever kind's options
  *    are in it.
  *
@@ -31,11 +33,11 @@
  * The resolution is to invert the population direction: this module owns the containers, and the shell
  * files reach them through `registerCrudKind()` / `registerSimpleKind()` — the **engine half** of the
  * two factory functions. At that slice the wrappers stayed in the shell (they owned `ipcMain`), called
- * into the engine, and kept their signatures **byte-identical**, so **none of the six caller files
+ * into the engine, and kept their signatures **byte-identical**, so **none of the five caller files
  * needed an edit**. That is the property to check first when a factory — rather than a command list —
  * is what has to move.
  *
- * **Stage 3b then deleted the shell half**, so the six files import from here directly. The split could
+ * **Stage 3b then deleted the shell half**, so the five files import from here directly. The split could
  * not be skipped: the wrappers did the container insert *as well as* the channels, so deleting them
  * outright would have left all 16 kinds throwing `"<kind>" is not routed through the CommandRegistry
  * yet` — the same message a genuinely unregistered kind throws (`plan/07` §5b-ter).
@@ -169,7 +171,7 @@ export interface SimpleEntityOpts {
   // The three channel-name fields went with `CrudFactoryOpts`' five — same commit, same reason.
 }
 
-/** The container insert for a full-CRUD kind. Called directly by the six shell `*Handlers.ts` files
+/** The container insert for a full-CRUD kind. Called directly by the five shell `*Handlers.ts` files
  * since stage 3b deleted `registerEntityCrudHandlers()` — the wrapper that used to hold this call and
  * the three `ipcMain.handle` channels. Split deliberately: the container is engine state, and letting
  * the shell mutate it directly is what made this file's dependency direction wrong. */

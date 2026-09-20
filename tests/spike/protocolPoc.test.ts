@@ -180,8 +180,8 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     const { registerCoreHandlers } = await import("../../src/ipc/handlers/coreHandlers");
     const { registerCrudHandlers } = await import("../../src/ipc/handlers/crudHandlers");
     const { registerFolderHandlers } = await import("../../src/ipc/handlers/folderHandlers");
-    const { registerGraphqlHandlers } = await import("../../src/ipc/handlers/graphqlHandlers");
-    const { registerSoapHandlers } = await import("../../src/ipc/handlers/soapHandlers");
+    const { registerGraphqlKinds } = await import("../../src/ipc/handlers/graphqlKinds");
+    const { registerSoapKinds } = await import("../../src/ipc/handlers/soapKinds");
     const { registerTlsHandlers } = await import("../../src/ipc/handlers/tlsHandlers");
     // P3 work item 5: `tls:generate` is now a thin client of the `tls.generate` **command**, which
     // moved from this file's `registerTlsHandlers()` into the engine
@@ -208,8 +208,8 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerCoreHandlers();
     registerCrudHandlers();
     registerFolderHandlers();
-    registerGraphqlHandlers();
-    registerSoapHandlers();
+    registerGraphqlKinds();
+    registerSoapKinds();
     registerTlsHandlers();
     registerCertCommands(commandRegistry);
     registerCoreCommands(commandRegistry);
