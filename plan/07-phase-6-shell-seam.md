@@ -1141,6 +1141,73 @@ flakiness. Assert in the fixture that the engine's data dir is inside the temp d
 The 11 specs must pass **unmodified**. If a spec needs changing to pass, that is a finding — investigate
 before editing.
 
+### ✅ Done 2026-09-20 — and the premise above is only half true
+
+**The paragraph above names one input. There are two, and on Windows the second one wins.** The plan says
+the engine "derives its data dir from `app.getPath("userData")`". `src/main.ts:256` does hand that path to
+`setDataRoot()` — but `store/workspaceFs.ts#dataRoot()` and `store/appSettings.ts#settingsPath()` both
+short-circuit on `%LOCALAPPDATA%` on win32 **before** consulting the data root:
+
+```ts
+export function dataRoot(): string {
+  if (_dataRootOverride) return _dataRootOverride;
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    return path.join(process.env.LOCALAPPDATA, "Bifurc", "data");
+  }
+  return path.join(dataDir(), "data");
+}
+```
+
+So the Electron path has exactly two inputs — Electron's `userData` and `%LOCALAPPDATA%` — and they resolve
+to **different directories**, measured on this machine with the fixture's env:
+
+| resolver | resolves to |
+| --- | --- |
+| `workspaceFs.dataRoot()` (entity data) | `<temp>\Bifurc\data` |
+| `paths.dataDir()` (settings, `app.json`) | `<temp>\electron-userdata` |
+
+Both are inside the temp dir, so isolation holds — but they are not the same directory. That divergence is
+the documented Windows defect in `packages/engine/src/index.ts`'s `EngineOptions.dataDir` docblock and
+**`plan/03` work item 8**; it is deliberately left alone here, because changing the resolution order would
+move existing Windows users' data. It is worth knowing because it means the fixture's seeded sample data
+(`<temp>/Bifurc/data/<wsId>/…` plus `<temp>/Bifurc/app.json`) is written to `dataRoot()`'s and
+`settingsPath()`'s locations respectively — which is why the sample data is found at all.
+
+**What landed.** A containment assertion in the `electronApp` fixture — in the fixture *setup*, not a
+separate opt-in fixture, so it cannot be forgotten by a new spec. It probes the app process once with
+`app.evaluate(({ app }) => …)` for `app.getPath("userData")`, `process.env.LOCALAPPDATA` and
+`process.platform`, and requires every one of them to be inside the temp dir.
+
+**Why containment of the *inputs* rather than a re-derived path.** Both consumers only ever `path.join`
+relative segments (`"Bifurc"`, `"data"`, `"app.json"`, `<wsId>`, `<kind>`) onto one of the two inputs, so
+if both inputs are inside the temp dir then every path derived from them is too. Re-deriving the formula in
+the fixture would duplicate it, and a copy can drift from the original silently. `main.ts` consults neither
+`--data-dir` nor `BIFURC_DATA_DIR` (`resolveDataDir` is for the CLI/Docker entrypoints, P8/P9), so those
+two branches are not on this path and are not probed.
+
+**Scope, stated because the guard is narrower than "the engine's data dir is correct".** This asserts the
+**shell wiring** — that the overrides reach the app process. The engine's own resolution order is covered
+by `tests/store/paths.test.ts` (all four `resolveDataDir` branches, `platformDefaultDataDir`,
+`setDataRoot`/`dataDir`) and `tests/store/workspaceFs.test.ts`. e2e proves the wiring; the unit suites prove
+the order.
+
+**Verification, since the e2e suite cannot run in this sandbox.** `npm run typecheck:e2e` → **EXIT=0**. The
+property was then checked against the engine's **real built resolvers** by a throwaway script (not
+committed) driving `packages/engine/dist/store/workspaceFs.js` and `.../paths.js` under the fixture's env:
+`dataRoot()` → `<temp>\Bifurc\data`, `dataDir()` → `<temp>\electron-userdata`, `wsDir("default")` →
+`<temp>\Bifurc\data\default`, `platformDefaultDataDir()` → `<temp>\Bifurc` — all inside. The **negative
+case** is what proves the guard is not vacuous: with the override removed, `dataRoot()` resolves to
+`C:\Users\wrath\AppData\Local\Bifurc\data`, i.e. the developer's real profile, and the predicate rejects it.
+Five boundary cases on the predicate (root, descendant, sibling, parent, real profile) also pass.
+
+**One unset-`LOCALAPPDATA` case is a failure rather than a skip:** on win32, a missing `%LOCALAPPDATA%`
+makes the engine fall back to the real profile, which is exactly the contamination this guards against — so
+the fixture pushes an explicit error instead of silently dropping the candidate.
+
+**The 11 specs are untouched** (`git status` shows only `e2e/fixtures/electronApp.ts` modified), as the plan
+requires. The e2e *run* remains uncaptured — see the checklist's "11 e2e specs pass, unmodified" item, which
+is still open and is the real gate.
+
 ---
 
 ## Work item 6 — Rollback plan
@@ -1733,7 +1800,7 @@ programme.
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Someone edits the renderer "just to make it work" | **High** | Hard rule stated at the top of this document; review `git diff --stat renderer/` at the gate |
-| e2e data-dir isolation silently breaks → phantom flakiness | **High** | Assert the engine's data dir is inside the fixture's temp dir |
+| e2e data-dir isolation silently breaks → phantom flakiness | **High** | ✅ **In place 2026-09-20** — the `electronApp` fixture asserts both resolution inputs (`userData`, `%LOCALAPPDATA%`) are inside its temp dir; see work item 5 |
 | Orphaned engine after a shell crash | Medium | Socket-close watchdog + explicit acceptance criterion |
 | Startup race: UI shows before the handshake, errors are opaque | Medium | Explicit "connecting" state; never block window creation on the engine |
 | Shell-only handlers are forgotten and routed over RPC | Medium | The P5 shim table is the checklist; verify each is served locally |

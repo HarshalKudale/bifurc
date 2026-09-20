@@ -598,7 +598,25 @@ rather than a type.
       written.** The plan assumed the preload's old channel table would survive as the fallback branch;
       step 3b-1 deleted it, so the flag now needs that table re-added as dead-by-default code, or the
       rollback layer is `git revert` alone. A decision, not a task.
-- [ ] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir) — work item 5
+- [x] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir) — work item 5.
+      **Done 2026-09-20, assertion installed; the e2e run itself is still uncaptured (next item).** The
+      plan's premise named one input; there are **two**, and on Windows `%LOCALAPPDATA%` wins —
+      `workspaceFs.dataRoot()` and `appSettings.settingsPath()` short-circuit on it *before* consulting the
+      `setDataRoot(app.getPath("userData"))` that `src/main.ts:256` supplies. So the `electronApp` fixture
+      now probes the app process for `userData`, `%LOCALAPPDATA%` and `platform`, and requires each to be
+      inside its temp dir. It asserts **containment of the inputs**, not a re-derived path: both consumers
+      only `path.join` relative segments onto one of the two, so input containment implies path
+      containment, and a re-derivation would be a copy that can drift. Placed in the fixture *setup* so a
+      new spec cannot forget it. Scope: this is the **shell wiring**; the engine's resolution order is
+      covered by `tests/store/paths.test.ts` + `tests/store/workspaceFs.test.ts`. **Unset `%LOCALAPPDATA%`
+      on win32 is an error, not a skip** — the engine would read the developer's real profile. Verified:
+      `npm run typecheck:e2e` EXIT=0, plus a throwaway script against the engine's real built resolvers —
+      under the fixture env `dataRoot()`/`dataDir()`/`wsDir()`/`platformDefaultDataDir()` all land in temp,
+      and with the override removed `dataRoot()` escapes to `C:\Users\wrath\AppData\Local\Bifurc\data` and
+      is rejected, which is what makes the guard non-vacuous. The 11 specs are **untouched** (`git status`:
+      only `e2e/fixtures/electronApp.ts`). Also measured: `dataRoot()` and `dataDir()` resolve to *different*
+      directories (`<temp>\Bifurc\data` vs `<temp>\electron-userdata`) — the `plan/03` work item 8 defect,
+      deliberately untouched.
 - [ ] Delete `registerIpcHandlers()` from the default path — **blocked on two things, and only one of
       them was known.** The tracked blocker is one key: `checkUpdate` (SPLIT), resolved by P12
       (`plan/07` §5b). **Step 3d (2026-09-19) retired the other three by widening the schemas they were
