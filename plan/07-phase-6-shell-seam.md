@@ -288,6 +288,13 @@ what P5's `shape.test-d.ts` proves and what makes the flip mechanical rather tha
 `UNKNOWN_COMMAND`, so they stay on their channels until the protocol moves. Not a backlog —
 `app.checkUpdate` is P12's, and the two `runner.*Config` are blocked by a **passing test**.
 
+> **All four resolved — nothing here is outstanding.** The three non-`checkUpdate` keys were **schema**
+> problems rather than routing problems and were retired by widening, not by moving (step 3d,
+> `plan/protocol-changes.md`). The fourth was resolved by **deleting `app.checkUpdate` from the
+> protocol** and making the key client-local (step 3f, §5b) — so it was never P12's, and the routing
+> hazard described above no longer applies to any key. Left standing as the step-3b record of what the
+> four were.
+
 #### The two `ClientLocal` hooks, and the five they unlocked
 
 `clientHandlers.ts` gained `client:writeArtifact` (a save dialog plus a write) and the preload now
@@ -1025,6 +1032,12 @@ stay green are exactly the ones that cannot tell you anything about the wiring.*
 `src/ipc/importExportHandlers.ts` is dead but dies with it. That is step 3, and it is now unblocked on
 the §5c side.
 
+> **Superseded 2026-09-20 (step 3f).** "`app.checkUpdate` (SPLIT → P12) still needs a channel" was right
+> about the blocker and wrong about the fix. The command is gone from the protocol, but `app:checkUpdate`
+> remains a **local** channel — the shell owns `app.getVersion()` and the platform match — so step 3
+> **reduces** `registerIpcHandlers()` to the local-handler entry point rather than deleting it. The
+> "unblocked on the §5c side" half of the sentence above stands, and the key half is now closed too.
+
 #### 5c-viii. The guard §5c needed, and did not have (2026-09-20)
 
 §5c's own complaint was that the class was invisible: *"they are invisible to the current ratchet
@@ -1092,9 +1105,16 @@ build time and the shell's own handler file looks untouched; the failure is
 `No handler registered` at *invocation* time.
 
 So the duplication is deliberate and bounded: six one-line bodies, behaviourally identical to the
-handlers in `serverCommands.ts`. It is removed by **step 3**, which deletes `registerIpcHandlers()`
-and the shell's handler groups together — one implementation, no second entry point to keep in sync.
-Re-pointing early trades a temporary, visible duplication for a permanent, invisible coupling.
+handlers in `serverCommands.ts`. It is removed by **step 3**, which deletes the shell's handler groups
+— one implementation, no second entry point to keep in sync. Re-pointing early trades a temporary,
+visible duplication for a permanent, invisible coupling.
+
+> **Corrected 2026-09-20 (step 3f).** This paragraph read "deletes `registerIpcHandlers()` and the
+> shell's handler groups together". Step 3 **reduces** `registerIpcHandlers()` to the local-handler
+> entry point rather than deleting it: `app:checkUpdate` remains a local channel, because the shell owns
+> `app.getVersion()` and the platform match. The six bodies here still go; the entry point does not. See
+> §5b for the three-design audit that forced the correction, and work item 4 for the local-handlers
+> table it applies to.
 
 ---
 
@@ -1680,10 +1700,15 @@ step 3, when `eventBridge.ts` is deleted and the transport becomes the only path
 `ipcRenderer.on(EVENT_CHANNEL)` and dispatches by `envelope.event`, and the main half keeps one engine
 subscription per wire name and broadcasts each envelope to every live window.
 
-This is the piece **step 3 cannot be done without**. `registerIpcHandlers()` and `wireEventBridge()` are
-deleted together, so the moment the legacy handlers go, all nine event channels go with them. An event
+This is the piece **step 3 cannot be done without**. `registerIpcHandlers()` and `wireEventBridge()` go
+together, so the moment the legacy handlers stop serving, all nine event channels stop with them. An event
 path that has never carried a frame is not something to discover a problem in on the day the fallback
 disappears.
+
+> **Corrected 2026-09-20.** This read "are deleted together". `wireEventBridge()` was indeed deleted
+> (step 3c); `registerIpcHandlers()` is **reduced** to the local-handler entry point, not deleted, so the
+> two do not share a fate — see §5b. The paragraph's point is unaffected: the event path had to carry
+> real frames *before* the legacy handlers stopped serving them, and it does.
 
 | File | Role |
 |---|---|
@@ -2069,7 +2094,7 @@ rollback layer; see Rollback.
 
 | # | Criterion | State 2026-09-20 |
 | --- | --- | --- |
-| 1 | Unit suites pass | **Met** — 101 files / 2,509 tests, 2,468 passed, 40 skipped, 1 documented `soap.execute` flake. The numbers *in* the criterion are themselves stale (2,509, not 2,508, since §5c-viii's guard). |
+| 1 | Unit suites pass | **Met** — 101 files / **2,507** tests, **2,466** passed, 40 skipped, 1 documented `soap.execute` flake, re-measured on the committed state after step 3f. The numbers *in* the criterion are stale twice over: 2,508 at step 3d, 2,509 after §5c-viii's guard, 2,507 after step 3f — the −2 being the two per-command schema tests `packages/protocol/src/commands/index.test.ts` generates for the deleted `app.checkUpdate`. |
 | 2 | 11 e2e specs pass, unmodified | **Carried** — owner-run; needs a normal terminal. Re-measured 2026-09-20, reproduced exactly. |
 | 3 | Renderer unchanged | **Met** — nothing under `renderer/` is modified. |
 | 4 | `window.api` identical | **Met** — `packages/client/tests/surface.test.ts` diffs the real `src/preload.ts` against `SURFACE_KEYS` in both directions, and runs in the suite. |

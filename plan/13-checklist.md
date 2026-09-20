@@ -581,13 +581,17 @@ rather than a type.
 ## Section 7 — P6 Shell seam ✅ SHIP (2–3 weeks) 🟡 IN PROGRESS
 
 - [x] **Baseline re-captured** — unit: 97 files / 2,418 before step 2; **101 / 2,503 — 2,462 passed**
-      after step 3b-3. e2e: 11 specs / 46 tests is the figure to compare against, **not yet captured**
-      (needs a normal terminal — see `plan/07` Preconditions)
+      after step 3b-3. **Current, after step 3f: 101 / 2,507 — 2,466 passed.** e2e: 11 specs / 46 tests is
+      the figure to compare against, **not yet captured** (needs a normal terminal — see `plan/07`
+      Preconditions)
 - [x] Build the IPC transport (renderer → main) — `src/ipcTransport.ts` + `src/ipc/rpcContract.ts`
 - [x] Route **one** method (`config:get`) through RPC, keep `registerIpcHandlers()` for the rest —
       step 2, suite green
-- [x] Reimplement `preload.ts` as a client bridge — steps 3b-1, 3b-3 and 3d: **143 of the 144 keys**
-      are `{ ...client }`; one explicit override remains (`app.checkUpdate`)
+- [x] Reimplement `preload.ts` as a client bridge — steps 3b-1, 3b-3, 3d and 3f: **all 144 keys** are
+      `{ ...client }`, with **no overrides left**. The last one, `app.checkUpdate`, was removed
+      2026-09-20, when step 3f resolved the surface's final `SPLIT` by deleting the protocol command and
+      reclassifying the key as client-local (`plan/07` §5b; `plan/protocol-changes.md`). The channel
+      survives as a local one — see the `registerIpcHandlers()` item below
 - [x] Implement local handlers (dialogs, zoom, theme, titlebar, platform, installCA, first-launch) —
       `src/ipc/handlers/clientHandlers.ts`, plus the three filesystem hooks (`pickSavePath`,
       `writeArtifact`, `readArtifactFile`)
@@ -705,9 +709,14 @@ rather than a type.
       it mentions.** Verified after every slice from 3 onward: `npm run typecheck` EXIT=0 and the full
       suite at **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented
       environmental `soap.execute`), i.e. the recorded baseline exactly, so **seven slices produced no
-      test-count delta**. **This unblocks step 3 on the §5c side**; `registerIpcHandlers()` still cannot
-      be deleted, because `app.checkUpdate` (SPLIT → P12) needs a channel and
-      `src/ipc/importExportHandlers.ts` is dead but dies with it.
+      test-count delta**.
+      **This unblocked step 3 on the §5c side.** *(Superseded 2026-09-20 by step 3f: the sentence that
+      stood here — "`registerIpcHandlers()` still cannot be deleted, because `app.checkUpdate`
+      (SPLIT → P12) needs a channel" — was right about the blocker and wrong about the fix.
+      `app.checkUpdate` is gone from the protocol, but `app:checkUpdate` remains a **local** channel
+      because the shell owns `app.getVersion()` and the platform match, so the function is **reduced**
+      to the local-handler entry point rather than deleted. `src/ipc/importExportHandlers.ts` is still
+      dead and still dies with it.)*
       **The heuristic that predicts a slice's difficulty is not the command count but how much of the
       body is the shell's own** — slice 5 (10 commands) was the easiest, slice 1 (5 commands) the
       costliest, and slice 7 (4 commands) the most structurally awkward.
@@ -752,8 +761,11 @@ rather than a type.
 
 **Gate:**
 - [x] 101 unit suites pass (same count as baseline) — **met on every step**; the current figure is **101
-      files / 2,509 tests — 2,468 passed, 40 skipped, 1 documented `soap.execute` flake**, which is the
-      baseline plus §5c-viii's static guard
+      files / 2,507 tests — 2,466 passed, 40 skipped, 1 documented `soap.execute` flake**, re-measured on
+      the committed state after step 3f. That is the baseline plus §5c-viii's static guard, minus the
+      **two** tests `packages/protocol/src/commands/index.test.ts` generates per command for the deleted
+      `app.checkUpdate` (`accepts a valid payload` / `rejects an invalid payload`) — a delta accounted
+      for by mechanism, not by count
 - [ ] 11 e2e specs pass, **unmodified** — **carried as an owner-run verification.** Still the real gate
       for 3b-1 and 3b-3, because the unit suite tests handlers rather than the preload. Re-attempted
       2026-09-20 from the agent shell and it reproduced the documented environmental failure **exactly**
@@ -893,7 +905,11 @@ rather than a type.
       before upload. Still to do: the engine-*binary* assertion (needs the process split) and the Linux
       path (`linux-unpacked/resources/app.asar`).
 - [ ] NSIS / APPX / AppImage / Docker all publish from CI
-- [ ] `app:checkUpdate` moved client-side
+- [x] `app:checkUpdate` moved client-side — **done 2026-09-20, ahead of P12** (step 3f). The whole
+      operation is client-local, so the protocol no longer declares `app.checkUpdate` at all and the key
+      is the fourteenth `ClientLocal` member — see `plan/07` §5b and `plan/protocol-changes.md`. Note
+      what this item got wrong as a P12 concern: there was never an engine half to move, and the shell
+      channel survives deliberately as a *local* one, so nothing about it was packaging-shaped
 - [ ] All artifacts share one version (D9)
 - [ ] Store identity (`build.appx`) unchanged by the flattening
 - [ ] Grep the workflows for stale `bifurc/` path prefixes
