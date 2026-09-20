@@ -81,7 +81,6 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "import.preflight",
   "blob.stat",
   "blob.read",
-  "app.checkUpdate",
   "healthbar.getServices",
   "healthbar.checkUrl",
 

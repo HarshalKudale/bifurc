@@ -152,9 +152,15 @@ export function registerIpcHandlers(): void {
   registerEntityCrudCommands(commandRegistry);
   // **0 module-scope registrations remain** — §5c's pass is complete. The 51 commands it turned out to
   // be are now all registered by an explicit `register*Commands()` call from this function.
-  // `registerIpcHandlers()` itself cannot be deleted yet: `app.checkUpdate` (SPLIT → P12) still needs a
-  // channel, and `src/ipc/importExportHandlers.ts` is dead but dies with it. `plan/07` §5c is the
-  // ledger; §5c-vii records this slice.
+  // `registerIpcHandlers()` cannot be *deleted*, and as of 2026-09-20 that is a corrected claim rather
+  // than a pending one. `app:checkUpdate` was the tracked blocker and it is resolved — but the
+  // resolution reclassified the key as **client-local** rather than routing it, so the channel stays:
+  // the shell owns `app.getVersion()` and the platform match, and always will. Local channels are not
+  // legacy, and no amount of routing removes them. So step 3 ends by **reducing** this function to the
+  // local-handler entry point, with the legacy command bodies gone — see `plan/07` §5b, the "Local
+  // handlers stay local" table, and step 3f in "How to start".
+  // `src/ipc/importExportHandlers.ts` is still dead and dies with that reduction. `plan/07` §5c is the
+  // ledger; §5c-vii records the last slice.
 
   registerImportExportHandlers();
   registerApplicationHandlers();
