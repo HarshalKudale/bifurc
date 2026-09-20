@@ -70,7 +70,19 @@ function engineRegistry(): CommandRegistry {
   registry.register("config.get", () => ({ activeWorkspaceId: "ws-1", theme: "dark" }));
   registry.register("server.status", () => ({ running: true, port: 8080, error: null }));
   registry.register("entity.list", () => ({ entities: [{ id: "wsdl-1" }] }));
-  registry.register("entity.create", (params) => ({ id: "created", ...(params as object) }));
+  /**
+   * The frozen `{id, entity}` envelope, with the **created** entity inside it — `entityCrudCommands.ts:413`
+   * returns `{ id: created.id, entity: created }`, not the params it was handed.
+   *
+   * This fixture used to be `({ id: "created", ...params })`, which put `entity` *and* `kind` at the top
+   * level — so the client's missing unwrap was invisible here: the envelope happened to carry the id the
+   * assertion looked for. Modelling the real shape is what makes the assertion below a test of the
+   * client rather than of the fixture.
+   */
+  registry.register("entity.create", (params) => {
+    const { entity } = params as { entity: Record<string, unknown> };
+    return { id: "created", entity: { ...entity, id: "created" } };
+  });
   return registry;
 }
 
@@ -122,8 +134,19 @@ async function assertTheClientWorks(transport: Transport): Promise<void> {
    */
   await expect(client.listWsdls()).resolves.toEqual([{ id: "wsdl-1" }]);
 
-  // A mutation, to prove the write path is not special-cased anywhere.
-  await expect(client.addMock({ name: "m" } as never)).resolves.toMatchObject({ id: "created" });
+  /**
+   * A mutation, to prove the write path is not special-cased anywhere.
+   *
+   * `id` proves the round trip reached the engine and came back with the server's id; `name` proves the
+   * client **unwrapped** `entity.create`'s `{id, entity}` envelope. Both are needed: the old assertion was
+   * `toMatchObject({ id: "created" })` alone, against a fixture that leaked the envelope, so it was green
+   * *because of* the defect it existed to catch. Drop the unwrap in `src/index.ts` and `name` goes
+   * `undefined` — which is how this case was found (2026-09-20).
+   */
+  await expect(client.addMock({ name: "m" } as never)).resolves.toMatchObject({
+    id: "created",
+    name: "m",
+  });
 
   await client.close();
 }
