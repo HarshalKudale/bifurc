@@ -852,6 +852,55 @@ this section exists. **Corrected 2026-09-20: that is 2 + 2 + 5 = 9 passthroughs,
 earlier "6 pure passthroughs" figure — which the owner's grouping decision was made against — understated
 it by a third.
 
+**Stage 3a — the engine stopped reading shell vocabulary (2026-09-20).** Starting Stage 3 turned up
+something the earlier measurement had wrong, and it changes what "the vestigial `ipc*` fields removed"
+means. `ipcAdd` / `ipcUpdate` / `ipcDelete` / `ipcList` **are** vestigial — only the factory's channel
+bodies read them. `ipcPrefix` is **not**: the **engine** read it at three sites as a behavioural
+discriminator, and had done since the CRUD collapse.
+
+| site | predicate as written | effect |
+| --- | --- | --- |
+| `createEntityCore` | `opts.ipcPrefix === "rule" \|\| opts.ipcPrefix === "mock"` | `unshift` instead of `push` |
+| `createEntityCore` | `["mock","request"].includes(opts.ipcPrefix ?? "")` | emit `entity.changed` |
+| `deleteEntityCore` | `opts.ipcPrefix === "mapping"` | cascade-delete the targeting `proxyRules` |
+
+So an engine-side decision was keyed off a **shell IPC channel prefix** — a name that only means anything
+inside Electron. It worked because the shell happened to name its channels after the kinds, which is
+exactly the coupling a containerised engine (P9) cannot carry. Deleting the field outright would have
+silently killed all three behaviours. The earlier note "nothing else reads them — verified" was a grep of
+`src/`, and these three reads are in `packages/engine/`.
+
+**The fix is a translation, not a deletion**, and the equivalence is exact rather than approximate:
+`ipcPrefix` was `"rule"` / `"mock"` / `"request"` / `"mapping"` on exactly the `rules` / `mocks` /
+`requests` / `mappings` registrations and on no others (`crudHandlers.ts`), so the three predicates select
+the same kinds when spelled with `opts.kind`. `kind` is also what the rest of the file already branches on
+(`opts.kind === "environments"`, twice).
+
+**Proving it needed tests that were actually load-bearing, and one of the three did not exist.** Site 3
+was already pinned non-vacuously (`entity.delete — mappings > "also removes proxy rules that target the
+deleted mapping"`). Site 2's positive side is pinned end-to-end by `companionServer` (`refreshes` length 1
+after a `mock:add`). But:
+
+ - the **ordering** pin was **vacuous**. `"prepends the new mock to the front of the list"` seeded
+   `{...baseMock}` — *also* named `"Test Mock"` — so `mocks[0].name` read `"Test Mock"` whether the new
+   mock was prepended or appended. **It passed on a `push`.** Rewritten to assert by `id` and to check
+   index 1. Same class of defect as the `transports.test.ts` fixture in §5b-quater, and the second one
+   found this way in two days.
+ - site 2 had **no boundary pin**: nothing asserted that a kind *outside* `{mocks, requests}` stays quiet,
+   so a translation that widened the set — or that fired for everything — would have been invisible.
+
+Three pins were added: `rules` prepends (the branch's extent), `requests` appends (the branch's other
+side, so "prepends" cannot be satisfied by a rule that prepends everything), and the `entity.changed`
+boundary with `proxyRules` as the control. **Non-vacuity proved by mutation**: mis-translating site 1 to
+`opts.kind === "mocks"` and site 2 to `if (true)` fails exactly those two new cases and nothing else.
+
+**Reconciliation: 101 files / 2,514 tests / 2,473 passed / 40 skipped / 1 failed** — baseline **+3 tests,
++3 passed**, exactly the three new pins. The 1 is `soap.execute`. Typecheck clean.
+
+`ipcPrefix` **stays in the type for one more commit, deliberately**: the factory still builds its channel
+names from it, so removing it here would not compile. Stage 3b removes all five together with the channels
+that read them.
+
 #### 5b-quater. The third lying cast — and the fixture that asserted it (2026-09-20)
 
 Found by starting §5b-ter's factory split, and it is the **widest instance of the class §5b-bis named**.

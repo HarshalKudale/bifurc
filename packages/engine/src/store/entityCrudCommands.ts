@@ -129,6 +129,18 @@ export interface CrudFactoryOpts<T> {
   kind: string;
   configKey: keyof AppConfig;
   folderConfigKey?: keyof AppConfig;
+  // ── Shell-only, and on their way out ────────────────────────────────────────────────────────────
+  //
+  // These five are **IPC channel names**, which is shell vocabulary. Nothing in this module reads them
+  // any more: the three sites that used to branch on `ipcPrefix` now branch on `kind` (2026-09-20 —
+  // see the prepend in `createEntityCore`, the `entity.changed` ping, and the mapping cascade in
+  // `deleteEntityCore`). What still reads them is `src/ipc/handlers/entityCrudFactory.ts`, which builds
+  // its channel names from them. They die with those channels in P6 step 3's deletion pass.
+  //
+  // Worth recording why they were wrong to begin with: `ipcPrefix` was a *behavioural discriminator*
+  // living in the engine while being named for the shell. It worked only because the shell happened to
+  // name its channels after the kinds, which is exactly the kind of coupling a containerised engine
+  // (P9) cannot carry.
   ipcPrefix?: string;
   ipcAdd?: string;
   ipcUpdate?: string;
@@ -224,7 +236,14 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
     }
   }
 
-  if (opts.ipcPrefix === "rule" || opts.ipcPrefix === "mock") {
+  // Prepend for `rules` / `mocks` only. This used to read `opts.ipcPrefix === "rule" || "mock"` —
+  // the **shell's IPC channel prefix** standing in for the kind, which was the last place engine
+  // behaviour was keyed off a naming convention only the Electron shell has (P6 step 3, 2026-09-20).
+  // The equivalence is exact rather than approximate: `ipcPrefix` was set to `"rule"` / `"mock"` on
+  // exactly the `rules` / `mocks` registrations and on no others (`crudHandlers.ts`), so the two
+  // spellings select the same two kinds. `kind` is the engine's own vocabulary, which is what the
+  // rest of this file already branches on (`opts.kind === "environments"` in `deleteEntityCore`).
+  if (opts.kind === "rules" || opts.kind === "mocks") {
     cfg[opts.configKey].unshift(newEntity);
   } else {
     cfg[opts.configKey].push(newEntity);
@@ -259,7 +278,10 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
 
   emitEntityStatus(wsId);
 
-  if (["mock", "request"].includes(opts.ipcPrefix ?? "")) {
+  // Only `mocks` / `requests` ping `entity.changed` on create; every other kind's refresh travels on
+  // `sync.entityStatus` alone. Was `["mock", "request"].includes(opts.ipcPrefix ?? "")` — same
+  // shell-vocabulary substitution as the prepend above, with the same exact equivalence.
+  if (opts.kind === "mocks" || opts.kind === "requests") {
     bus.emitTyped("entity.changed", { wsId, kind: opts.kind, id: newEntity.id, action: "created" });
   }
 
@@ -316,7 +338,11 @@ async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
   if (entity) {
     cfg[opts.configKey] = arr.filter((e: any) => e.id !== id);
 
-    if (opts.ipcPrefix === "mapping") {
+    // Deleting a `mappings` entity cascades to the proxy rules that target it. Was
+    // `opts.ipcPrefix === "mapping"` — the third and last shell-vocabulary substitution, removed
+    // with the other two (2026-09-20); `ipcPrefix` was `"mapping"` on the `mappings` registration
+    // alone, so `kind` selects the same set.
+    if (opts.kind === "mappings") {
       cfg.proxyRules = (cfg.proxyRules ?? []).filter((r: any) => (r.targetType ?? "mapping") !== "mapping" || r.targetMappingId !== id);
     }
 
