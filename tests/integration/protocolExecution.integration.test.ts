@@ -16,6 +16,13 @@
  * are Electron itself (there is no Electron in a Vitest process) and `@/main`
  * (`coreHandlers` imports `updateTrayMenu` from it).
  *
+ * **The nine protocol-client cases now drive the registry, not a channel.** P6 stage 3b
+ * deleted `graphql:introspect` / `graphql:execute` / `soap:execute` / `soap:fetchWsdl` and
+ * the five `grpc:*` channels — each was a one-line `commandRegistry.invoke()` adapter with
+ * no behaviour of its own — so those cases call `invokeCommand("<command>", params)`
+ * instead. See that helper's docblock for the one thing the deletion could have got wrong
+ * silently (the argument shape). Every other case here still drives a live channel.
+ *
  * Runs in the integration project: it binds real sockets and the workspace fixture
  * swaps a process-global data-root override, hence `fileParallelism: false`.
  */
@@ -59,6 +66,24 @@ function invoke<T = any>(channel: string, ...args: any[]): T {
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
 }
+
+/**
+ * Invoke a registered **command** directly — the replacement for `invoke("<channel>", …)` on the nine
+ * protocol-client channels, which were deleted in P6 step 3 (`plan/07` §5b-ter).
+ *
+ * They were **not all the same shape**, and that is why `params` is explicit here rather than forwarded
+ * from a rest-args list: five were literal passthroughs (`graphql.introspect`, `graphql.execute`,
+ * `soap.execute`, `grpc.execute`, `grpc.reflect`), `soap:fetchWsdl` **wrapped** its bare `url` argument
+ * as `{ url }`, and the three argument-less gRPC channels passed `{}` while ignoring whatever they were
+ * called with. So each call site below passes the command's real params object — which is precisely what
+ * the channel produced — and the default covers the three that dropped their arguments.
+ *
+ * This is the one thing the deletion could have got wrong silently: a channel whose body is a single
+ * `commandRegistry.invoke()` has no behaviour of its own to lose, *except* the argument shape, and that
+ * shape is now visible at the call site instead of hidden inside a deleted adapter.
+ */
+const invokeCommand = <T = any>(command: string, params: unknown = {}) =>
+  commandRegistry.invoke(command, params, { bus }) as Promise<T>;
 
 /**
  * The collapsed `entity.*` commands, driven directly — the per-kind channels below are the step-3
@@ -375,9 +400,9 @@ describe("request:replay — REST Send", () => {
 
 // ── GraphQL ───────────────────────────────────────────────────────────────────
 
-describe("graphql:execute — GraphQL Send", () => {
+describe("graphql.execute — GraphQL Send", () => {
   it("POSTs a JSON body and returns status, headers, body and durationMs", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "", operationName: "",
     });
 
@@ -389,7 +414,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("sets content-type: application/json and a byte-accurate content-length", async () => {
-    await invoke("graphql:execute", {
+    await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "", operationName: "",
     });
 
@@ -400,7 +425,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("parses the variables JSON string into an object and forwards operationName", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`,
       headers: {},
       query: "query ($id: ID!) { user(id: $id) { name } }",
@@ -414,7 +439,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("omits variables and operationName when they are blank", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "   ", operationName: "",
     });
 
@@ -424,7 +449,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("ignores malformed variables JSON instead of failing the request", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "{not json", operationName: "",
     });
 
@@ -433,7 +458,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("forwards custom headers such as an auth token", async () => {
-    await invoke("graphql:execute", {
+    await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: { authorization: "Bearer t" },
       query: "query { me }", variables: "", operationName: "",
     });
@@ -442,9 +467,9 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 });
 
-describe("graphql:introspect", () => {
+describe("graphql.introspect", () => {
   it("POSTs the introspection query and returns the raw response", async () => {
-    const res = await invoke("graphql:introspect", { url: `${gql.origin}/graphql`, headers: {} });
+    const res = await invokeCommand("graphql.introspect", { url: `${gql.origin}/graphql`, headers: {} });
 
     expect(res.ok).toBe(true);
     expect(res.sdl).toContain("__schema");
@@ -455,7 +480,7 @@ describe("graphql:introspect", () => {
 
   it("returns { ok:false, error } instead of throwing when the server is down", async () => {
     const port = await deadPort();
-    const res = await invoke("graphql:introspect", { url: `http://127.0.0.1:${port}/graphql`, headers: {} });
+    const res = await invokeCommand("graphql.introspect", { url: `http://127.0.0.1:${port}/graphql`, headers: {} });
 
     expect(res.ok).toBe(false);
     expect(typeof res.error).toBe("string");
@@ -464,11 +489,11 @@ describe("graphql:introspect", () => {
 
 // ── SOAP ──────────────────────────────────────────────────────────────────────
 
-describe("soap:execute — SOAP Send", () => {
+describe("soap.execute — SOAP Send", () => {
   const envelope = "<soap:Envelope><soap:Body><GetUser><id>1</id></GetUser></soap:Body></soap:Envelope>";
 
   it("POSTs the envelope with text/xml and the SOAPAction header", async () => {
-    const res = await invoke("soap:execute", {
+    const res = await invokeCommand("soap.execute", {
       endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser", headers: {}, body: envelope,
     });
 
@@ -485,7 +510,7 @@ describe("soap:execute — SOAP Send", () => {
 
   it("uses the UTF-8 byte length for content-length, not the string length", async () => {
     const unicode = "<soap:Envelope><soap:Body>✓ Ünïcode — ☕</soap:Body></soap:Envelope>";
-    await invoke("soap:execute", { endpointUrl: `${soap.origin}/ws`, soapAction: "", headers: {}, body: unicode });
+    await invokeCommand("soap.execute", { endpointUrl: `${soap.origin}/ws`, soapAction: "", headers: {}, body: unicode });
 
     const seen = soap.requests.at(-1)!;
     // Guard the premise: the fixture must actually be multi-byte.
@@ -495,7 +520,7 @@ describe("soap:execute — SOAP Send", () => {
   });
 
   it("omits SOAPAction when blank and merges custom headers", async () => {
-    await invoke("soap:execute", {
+    await invokeCommand("soap.execute", {
       endpointUrl: `${soap.origin}/ws`, soapAction: "", headers: { "x-tenant": "acme" }, body: envelope,
     });
 
@@ -505,7 +530,7 @@ describe("soap:execute — SOAP Send", () => {
   });
 
   it("reports durationMs", async () => {
-    const res = await invoke("soap:execute", {
+    const res = await invokeCommand("soap.execute", {
       endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser", headers: {}, body: envelope,
     });
 
@@ -516,14 +541,14 @@ describe("soap:execute — SOAP Send", () => {
   it("rejects when the endpoint is unreachable", async () => {
     const port = await deadPort();
     await expect(
-      invoke("soap:execute", { endpointUrl: `http://127.0.0.1:${port}/ws`, soapAction: "", headers: {}, body: envelope }),
+      invokeCommand("soap.execute", { endpointUrl: `http://127.0.0.1:${port}/ws`, soapAction: "", headers: {}, body: envelope }),
     ).rejects.toThrow();
   });
 });
 
-describe("soap:fetchWsdl", () => {
+describe("soap.fetchWsdl", () => {
   it("GETs the WSDL and returns its content", async () => {
-    const res = await invoke("soap:fetchWsdl", `${wsdl.origin}/svc?wsdl`);
+    const res = await invokeCommand("soap.fetchWsdl", { url: `${wsdl.origin}/svc?wsdl` });
 
     expect(res.ok).toBe(true);
     expect(res.content).toContain("definitions");
@@ -533,7 +558,7 @@ describe("soap:fetchWsdl", () => {
   });
 
   it("returns { ok:false, error } when the WSDL cannot be fetched", async () => {
-    const res = await invoke("soap:fetchWsdl", "http://127.0.0.1:1/svc?wsdl");
+    const res = await invokeCommand("soap.fetchWsdl", { url: "http://127.0.0.1:1/svc?wsdl" });
 
     expect(res.ok).toBe(false);
     expect(typeof res.error).toBe("string");
@@ -545,8 +570,8 @@ describe("soap:fetchWsdl", () => {
 // change to a test rather than a silent behaviour swap.
 
 describe("grpc — current (unimplemented) contract", () => {
-  it("grpc:execute reports the runtime is not configured instead of throwing", async () => {
-    const res = await invoke("grpc:execute", {
+  it("grpc.execute reports the runtime is not configured instead of throwing", async () => {
+    const res = await invokeCommand("grpc.execute", {
       serverAddress: "127.0.0.1:50051", serviceName: "S", methodName: "M",
       requestBody: "{}", metadata: {}, protoFileId: null, useReflection: false,
     });
@@ -555,20 +580,20 @@ describe("grpc — current (unimplemented) contract", () => {
     expect(res.error).toMatch(/not yet configured/i);
   });
 
-  it("grpc:reflect reports that reflection is unavailable", async () => {
-    const res = await invoke("grpc:reflect", { serverAddress: "127.0.0.1:50051" });
+  it("grpc.reflect reports that reflection is unavailable", async () => {
+    const res = await invokeCommand("grpc.reflect", { serverAddress: "127.0.0.1:50051" });
 
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/not yet configured/i);
   });
 
-  it("grpc:mockServerStatus defaults to stopped on port 9102", async () => {
-    expect(await invoke("grpc:mockServerStatus")).toEqual({ running: false, port: 9102 });
+  it("grpc.mockServerStatus defaults to stopped on port 9102", async () => {
+    expect(await invokeCommand("grpc.mockServerStatus")).toEqual({ running: false, port: 9102 });
   });
 
-  it("grpc:startMockServer is unimplemented while stopMockServer is a no-op success", async () => {
-    expect((await invoke("grpc:startMockServer")).ok).toBe(false);
-    expect(await invoke("grpc:stopMockServer")).toEqual({ ok: true });
+  it("grpc.startMockServer is unimplemented while grpc.stopMockServer is a no-op success", async () => {
+    expect((await invokeCommand("grpc.startMockServer")).ok).toBe(false);
+    expect(await invokeCommand("grpc.stopMockServer")).toEqual({ ok: true });
   });
 });
 
