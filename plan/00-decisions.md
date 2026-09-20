@@ -142,10 +142,12 @@ Append a row each time a decision is made or revisited.
 | 2026-09-20 | D14 | **P6 work item 2 (process split) downgraded** — the desktop stays in-process; supervision moves to the workspace host | `14-workspace-runtime.md` §7 |
 | 2026-09-20 | D15 | **CLI deferred — P8 parked.** Two shapes recorded (in-app executable / npm package), decided after P14 | `14-workspace-runtime.md` §7 |
 | 2026-09-20 | D16 | **A workspace's proxy takes a per-environment base port — `80` on Windows, `8080` on Linux/macOS/Docker — then counts up from it.** A per-workspace override fails loudly instead of moving; the webhook port follows the same shape from `9101` | `14-workspace-runtime.md` §3, D16 |
+| 2026-09-20 | D17 | **Blob staging is namespaced per workspace** — `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, `workspaceId` added to the four `blob.*` params, the sweeper becomes per-runtime | `14-workspace-runtime.md` §12.1. Owner's call, made after the reconciliation found §2.2's "already per-workspace" claim false. Lands with WI 1 / WI 8 |
 
-> **D10–D16 are recorded in full in [`14-workspace-runtime.md`](14-workspace-runtime.md) §3**, not
-> duplicated here, so there is one authority for the reasoning and one place to correct it. This table is
-> the index. **Nothing from this pivot is still open.**
+> **D10–D17 are recorded in full in [`14-workspace-runtime.md`](14-workspace-runtime.md) §3 and §12.1**,
+> not duplicated here, so there is one authority for the reasoning and one place to correct it. This table
+> is the index. **Nothing from this pivot is still open** — D17 was the last, opened by the §12
+> reconciliation the same day and closed by the owner's decision.
 
 ---
 

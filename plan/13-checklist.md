@@ -846,13 +846,13 @@ the companion server stays app-level.
 > `blob.*` commands carry no `workspaceId`, so blob staging is a **third app-level thing** this plan's split
 > table has no row for. §12.1 carries the measurement, the three costs under N > 1 and two fix shapes.
 
-- [ ] **DECISION (new, from §12.1) — is blob staging namespaced per workspace, or declared app-level?**
-      **(a) namespace it**: `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/` + `workspaceId` on the four
-      `blob.*` params + a per-runtime sweeper; **(b) declare it app-level** like the companion server and
-      correct §2.2. Recommended **(a)** — import/export is the layer §1.2 cites as already workspace-scoped
-      and it is the blob layer's only real consumer. **Either way the blob root must stay under `dataDir()`**
-      (the Docker-volume requirement, pinned by `tests/blob/store.test.ts:62`). Breaking protocol change →
-      lands with WI 1 and WI 8
+- [x] **DECIDED 2026-09-20 (D17) — blob staging is namespaced per workspace.** `blobRoot(wsId)` =
+      `<dataDir>/blobs/<wsId>/`, `workspaceId` added to the four `blob.*` params, sweeper becomes
+      per-runtime. Owner's call, made after §12.1 measured §2.2's "already per-workspace" claim false. The
+      rejected shape — declare it app-level like the companion server — is recorded in §12.1, not deleted.
+      **The root stays under `dataDir()`** (the Docker-volume requirement, pinned by
+      `tests/blob/store.test.ts:62`), so it is a *namespace*, not a move. Breaking protocol change → lands
+      with WI 1 and WI 8, and the `blob.*` `invalid` fixtures must be **re-derived**, not trusted
 - [ ] **WI 0 — the measurement gate.** Inventory every reader of `AppConfig.port` / `.webhookPort` /
       `.activeWorkspaceId` / `isRunning()` and every module-level mutable in `proxy/`. **Count it and
       write the number down** — the phase's estimate rests on it being small.
