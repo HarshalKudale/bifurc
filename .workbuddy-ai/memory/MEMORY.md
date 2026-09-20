@@ -44,6 +44,15 @@ ledger → `plan/07`; procedures → the `bifurc-*` skills.
   members; `certLifecycle.readCertStatus()` was extracted so the 8-field composition has one
   implementation instead of living in a channel body a routed twin could half-fill. Class 2 is **9 → 11**.
   `src/ipc/fileOpsClient.ts` **survives** the reduction (live shared library, two live paths).
+- **§5b-ter — the pass's shape, found by starting it (2026-09-20).** Two corrections, both of which the
+  audit's own "Not verified" paragraph predicted. (1) **The 48 generated channels need a factory *split*
+  first**: `registerEntityCrudHandlers(opts)` also calls `registerCrudKind(opts)`, which populates the map
+  the four `entity.*` commands dispatch through — delete it and 16 kinds throw the misleading *"is not
+  routed through the CommandRegistry yet"*. (2) **The pass is a test migration, not a deletion**: eight
+  integration suites register handler groups by hand and drive the channels (`foldersAndWorkspaces` 45
+  invocations, `protocolExecution` 62), so each slice must re-point them at `commandRegistry.invoke()`.
+  **The unit is the handler group**, not the file — and `soap`/`graphql`/`grpcHandlers` are each the
+  factory *plus* two pure passthroughs, so they belong with the factory slice.
 - **P6 work item 4 (packaging), measured 2026-09-20 — the plan's premise was stale.** "A packaged build
   cannot resolve `@bifurc/*`" came from an asar predating the deps; electron-builder copies the workspaces
   in with their `package.json` and **44 of 44** resolve, so **`build.files` is unchanged**. The real defect

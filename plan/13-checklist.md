@@ -673,7 +673,15 @@ rather than a type.
       paths. The audit also corrects this item's own wording: `registerClientHandlers()` is *already* the
       local-handler entry point (`src/main.ts:294`), so `registerIpcHandlers()` reduces to the
       **engine-registration + event-wiring + bridge** entry point rather than "to the local-handler entry
-      point"
+      point".
+      **Starting the pass found two things that change its shape (`plan/07` §5b-ter):** the 48 generated
+      channels cannot go without **splitting `entityCrudFactory.ts` first** — `registerEntityCrudHandlers`
+      also calls `registerCrudKind()`, which populates the map the four `entity.*` commands dispatch
+      through, so deleting it breaks 16 kinds with the misleading *"is not routed through the
+      CommandRegistry yet"* — and the pass is a **test migration**, not a deletion: **eight** integration
+      suites register handler groups by hand and drive the channels directly (`foldersAndWorkspaces` 45
+      invocations, `protocolExecution` 62). So the unit is the **handler group** — delete its channels,
+      re-point the suites that drove them, verify, commit.
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening

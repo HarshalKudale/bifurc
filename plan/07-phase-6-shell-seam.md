@@ -710,6 +710,48 @@ reading the call sees nothing to object to.
 hardcoded `json` and so silently removed HTML export. So "the client replaced the shell" is not a claim
 about quality in either direction; each key has to be read, which is the audit's own conclusion.
 
+#### 5b-ter. The deletion pass's real shape — found by starting it (2026-09-20)
+
+Opening the pass on the three protocol-client files found two things this audit could not have. Neither
+is a defect in the audit; both are what the **"Not verified"** paragraph above predicted — that the
+deletion pass would have to re-derive the class per file rather than trust the class-1 remainder. It took
+one file to falsify the remainder's model twice.
+
+**1. The 48 generated channels cannot be deleted without splitting the factory first, and the failure
+mode is silent.** `registerEntityCrudHandlers(opts)` does **two** jobs: `registerCrudKind(opts)`, which
+populates the container the engine's four `entity.*` commands dispatch through at invoke time, and three
+`ipcMain.handle` calls. **Only the second half is dead.** Deleting the function leaves those commands
+consulting an **empty map** — each throwing `"<kind>" is not routed through the CommandRegistry yet`,
+which is *the same message a genuinely unregistered kind throws* (`TRAPS.md`). So for these 48 the slice
+is a **split**, not a deletion: keep the `register*Kind()` call, drop the channels.
+`registerSimpleEntityHandlers` is identical. These two functions are also the only place the population
+direction is inverted — §5c slice 7 inverted it *into* the shell deliberately, and the reduction has to
+invert it back. Callers: `coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`,
+`soapHandlers`. The wrappers' `toProtocolKind` translation and `entity.create` unwrapping exist **only**
+to keep the channels' wire shape, so they die with the channels and the callers end up calling
+`registerCrudKind` / `registerSimpleKind` directly — after which `CrudFactoryOpts`'s `ipcAdd` /
+`ipcUpdate` / `ipcDelete` / `ipcPrefix` fields are vestigial and want removing from the engine type.
+
+**2. The pass is a test migration, not a deletion — and that is the honest cost.** **Eight** integration
+suites register the legacy handler *groups* by hand and drive the channels directly: `applications`
+(`registerApplicationHandlers`), `capture` (`registerSystemHandlers`), `entityConflictScope` and
+`foldersAndWorkspaces` (`registerCrudHandlers`, plus `registerCoreHandlers` / `registerFolderHandlers`),
+`gitRemote` and `gitSync` (`registerSyncHandlers`), `protocolExecution` (`registerCoreHandlers`,
+`registerGraphqlHandlers`, `registerSoapHandlers`, `registerGrpcHandlers`), `runnerStorage`
+(`registerRunnerHandlers`). Measured by `invoke("` count: `foldersAndWorkspaces` **45**,
+`protocolExecution` **62**. So deleting a group removes the entry point those suites use, and each has to
+be re-pointed at `commandRegistry.invoke()` **in the same slice**. That is also an improvement rather
+than a cost to be minimised: a suite that drives the channel is a channel test that happens to reach the
+engine, and `TRAPS.md` records that such a suite is structurally blind to the wiring it thinks it covers.
+Re-pointed, they become registry-driven, which is what P9 needs anyway.
+
+**So the pass's unit is the handler group, and a slice is: delete the group's channels (splitting the
+factory where the group *is* a factory), re-point the suites that drove them, verify, commit.** The 12
+files are not 12 equal slices. `soapHandlers` / `graphqlHandlers` / `grpcHandlers` are each the factory
+(three kind groups) **plus** two pure `commandRegistry.invoke()` passthroughs, so they belong with the
+factory slice rather than alone — which is the opposite of how they first looked, and is the reason this
+section exists.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
@@ -1711,8 +1753,10 @@ Delete the flag in the next release, once the seam has survived real usage.
      **Then read §5b-bis before starting, because it corrects this paragraph twice**: the local-handler
      entry point already exists (`registerClientHandlers()`, `src/main.ts:294`), so the reduction target is
      the **engine-registration + event-wiring + bridge** entry point; and the 132 legacy channels are not
-     uniformly dead — 9 are superseded shell halves, two of which currently lose the client trust summary
-     on the routed path.
+     uniformly dead — **11** are superseded shell halves (the 9, plus `tls:certStatus` / `tls:removeCert`
+     once both became `local` on 2026-09-20). **None of the 11 loses anything on the routed path any more**:
+     that was true of the tls pair when §5b-bis was written and was fixed the same day (§5b-bis, "Decided
+     and implemented").
 
 ---
 
