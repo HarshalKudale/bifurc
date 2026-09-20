@@ -698,8 +698,18 @@ rather than a type.
       channel names removed their 18 generated tests — the correct outcome, since the channels no longer
       exist and the list exists to assert their presence. Slice 1 cost **zero** tests (its 19 cases were
       re-pointed); slice 2 costs 18 (its cases are generated).
-      **Still open after stage 3b:** the three files are named for something they no longer do
-      (`*Handlers.ts` now register *kinds*), and `registerIpcHandlers()`'s own reduction. Collateral repairs
+      **The rename slice followed the same day** (`plan/07` §5b-octies): `{soap,graphql,grpc}Handlers.ts` →
+      `{soap,graphql,grpc}Kinds.ts` with matching `register*Kinds()` entry points, because those three files
+      have registered **kinds, not handlers** since their channels were deleted. It came to **24 references
+      across three files** — `src/ipc/handlers.ts`, `protocolExecution.integration.test.ts`,
+      `protocolPoc.test.ts` — not the "eight integration suites" this item predicted; the other suites
+      hand-register *different* groups. `crudHandlers.ts` keeps its name (six kinds *and* five live
+      `webhook*` channels). Suite **unchanged at 2,496 / 2,455 / 40 / 1**, which is exactly what a pure
+      rename should do and the reason the slice was worth isolating. Also corrected in the same pass:
+      **"six caller files" was never true — it is five** (`coreHandlers`, `crudHandlers`, `graphqlHandlers`,
+      `grpcHandlers`, `soapHandlers`), verified with `git log -S` across the whole history; the sentence
+      claiming six listed exactly those five names.
+      **Still open after stage 3b:** `registerIpcHandlers()`'s own reduction. Collateral repairs
       across the two slices: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored —
       it is P0's runtime evidence and the baseline's documented 1 failure, and its retired-channel fixture
       now covers 4 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases
@@ -751,7 +761,7 @@ rather than a type.
       **empty** map, each throwing `"<kind>" is not routed through the CommandRegistry yet`, the same
       message a genuinely unregistered kind throws. Fixed by inverting the population direction: the
       containers went to the engine, the shell calls `registerCrudKind()`/`registerSimpleKind()` and
-      keeps the channels, and **both factory signatures are unchanged, so none of the six caller files
+      keeps the channels, and **both factory signatures are unchanged, so none of the five caller files
       needed an edit**. Its mutation check is the sharpest of the pass — dropping the call gives **52
       failures, all in `handlers.test.ts`** (the ratchet with exactly the four names, plus 51 from the
       per-kind channels that delegate into them), while the hand-registering `entityConflictScope` stays
