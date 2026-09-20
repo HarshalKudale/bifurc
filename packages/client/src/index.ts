@@ -277,6 +277,35 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
   const baseName = (p: string): string => p.split(/[\\/]/).pop() || p;
 
   /**
+   * `entity.create` resolves the frozen **`{id, entity}`** envelope; the surface declares the *raw*
+   * entity, and every create key has to hand the raw one back.
+   *
+   * **This is the unwrapping the shell channels used to do, and the reason all 16 create keys were
+   * wrong on the routed path.** `addMapping` / `addRule` / `addRequest` / … returned `{id, entity}`
+   * while `renderer/types/window.ts` declares `Promise<LocalMapping>` and the panels consume it
+   * directly — `MappingsPanel.tsx:120` pushes the result straight into `config.mappings`, and
+   * `ProxyRulesPanel.tsx:155` files it as a loaded entity. The `as ReturnType<BifurcApi[…] >` cast made
+   * the compiler agree with the **declaration** rather than with the runtime, so nothing failed: the
+   * panels rendered objects carrying `id` and no other field. Same class as `checkUpdate` and
+   * `tlsCertStatus`, and the widest instance of it. Found 2026-09-20 while splitting
+   * `entityCrudFactory` (`plan/07` §5b-ter).
+   *
+   * The tell was already in this file: `entity.list`'s `{entities}` envelope **is** unwrapped, three
+   * lines away (`listWsdls`, `listProtoFiles`, `listGraphQLSchemas`). One envelope family, half
+   * handled — which is why the asymmetry survived review.
+   *
+   * The gate-blocked create is the one result that is not an envelope: `environments` returns
+   * `{error: "limit_reached", ...gate}` with no `.entity`, and the shell passed that through
+   * unchanged — so it passes through unchanged here.
+   */
+  const unwrapCreated = (result: unknown): unknown => {
+    if (result !== null && typeof result === "object" && "entity" in result) {
+      return (result as { entity: unknown }).entity;
+    }
+    return result;
+  };
+
+  /**
    * The dialog title's noun, per entity kind.
    *
    * A copy of the shell's `kindLabel` in `src/ipc/importExportHandlers.ts`. That file is now dead —
@@ -591,55 +620,61 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     discoverServices: () => call("discoverServices", {}) as ReturnType<BifurcApi["discoverServices"]>,
 
     // ── the CRUD collapse ───────────────────────────────────────────────────
-    addMapping: (m) => call("addMapping", { kind: "mappings", entity: m }) as ReturnType<BifurcApi["addMapping"]>,
+    //
+    // Every `create` here goes through `unwrapCreated`, because `entity.create` answers the frozen
+    // `{id, entity}` envelope and the surface declares the raw entity — see the helper's note. The
+    // `update` / `delete` / `list` keys need no unwrap: `entity.update` and `entity.delete` return
+    // what their channels always did, and `entity.list`'s `{entities}` envelope is unwrapped inline
+    // below, as it always has been.
+    addMapping: async (m) => unwrapCreated(await call("addMapping", { kind: "mappings", entity: m })) as Awaited<ReturnType<BifurcApi["addMapping"]>>,
     updateMapping: (m) => call("updateMapping", { kind: "mappings", entity: m }) as ReturnType<BifurcApi["updateMapping"]>,
     deleteMapping: (id) => call("deleteMapping", { kind: "mappings", id }) as ReturnType<BifurcApi["deleteMapping"]>,
-    addRule: (r) => call("addRule", { kind: "proxyRules", entity: r }) as ReturnType<BifurcApi["addRule"]>,
+    addRule: async (r) => unwrapCreated(await call("addRule", { kind: "proxyRules", entity: r })) as Awaited<ReturnType<BifurcApi["addRule"]>>,
     updateRule: (r) => call("updateRule", { kind: "proxyRules", entity: r }) as ReturnType<BifurcApi["updateRule"]>,
     deleteRule: (id) => call("deleteRule", { kind: "proxyRules", id }) as ReturnType<BifurcApi["deleteRule"]>,
-    addMock: (m) => call("addMock", { kind: "mocks", entity: m }) as ReturnType<BifurcApi["addMock"]>,
+    addMock: async (m) => unwrapCreated(await call("addMock", { kind: "mocks", entity: m })) as Awaited<ReturnType<BifurcApi["addMock"]>>,
     updateMock: (m) => call("updateMock", { kind: "mocks", entity: m }) as ReturnType<BifurcApi["updateMock"]>,
     deleteMock: (id) => call("deleteMock", { kind: "mocks", id }) as ReturnType<BifurcApi["deleteMock"]>,
-    addRequest: (r) => call("addRequest", { kind: "requests", entity: r }) as ReturnType<BifurcApi["addRequest"]>,
+    addRequest: async (r) => unwrapCreated(await call("addRequest", { kind: "requests", entity: r })) as Awaited<ReturnType<BifurcApi["addRequest"]>>,
     updateRequest: (r) => call("updateRequest", { kind: "requests", entity: r }) as ReturnType<BifurcApi["updateRequest"]>,
     deleteRequest: (id) => call("deleteRequest", { kind: "requests", id }) as ReturnType<BifurcApi["deleteRequest"]>,
-    addWsConnection: (c) => call("addWsConnection", { kind: "wsConnections", entity: c }) as ReturnType<BifurcApi["addWsConnection"]>,
+    addWsConnection: async (c) => unwrapCreated(await call("addWsConnection", { kind: "wsConnections", entity: c })) as Awaited<ReturnType<BifurcApi["addWsConnection"]>>,
     updateWsConnection: (c) => call("updateWsConnection", { kind: "wsConnections", entity: c }) as ReturnType<BifurcApi["updateWsConnection"]>,
     deleteWsConnection: (id) => call("deleteWsConnection", { kind: "wsConnections", id }) as ReturnType<BifurcApi["deleteWsConnection"]>,
-    addWebhook: (h) => call("addWebhook", { kind: "webhooks", entity: h }) as ReturnType<BifurcApi["addWebhook"]>,
+    addWebhook: async (h) => unwrapCreated(await call("addWebhook", { kind: "webhooks", entity: h })) as Awaited<ReturnType<BifurcApi["addWebhook"]>>,
     updateWebhook: (h) => call("updateWebhook", { kind: "webhooks", entity: h }) as ReturnType<BifurcApi["updateWebhook"]>,
     deleteWebhook: (id) => call("deleteWebhook", { kind: "webhooks", id }) as ReturnType<BifurcApi["deleteWebhook"]>,
-    addGraphQLRequest: (r) => call("addGraphQLRequest", { kind: "graphqlRequests", entity: r }) as ReturnType<BifurcApi["addGraphQLRequest"]>,
+    addGraphQLRequest: async (r) => unwrapCreated(await call("addGraphQLRequest", { kind: "graphqlRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addGraphQLRequest"]>>,
     updateGraphQLRequest: (r) => call("updateGraphQLRequest", { kind: "graphqlRequests", entity: r }) as ReturnType<BifurcApi["updateGraphQLRequest"]>,
     deleteGraphQLRequest: (id) => call("deleteGraphQLRequest", { kind: "graphqlRequests", id }) as ReturnType<BifurcApi["deleteGraphQLRequest"]>,
-    addGraphQLMock: (m) => call("addGraphQLMock", { kind: "graphqlMocks", entity: m }) as ReturnType<BifurcApi["addGraphQLMock"]>,
+    addGraphQLMock: async (m) => unwrapCreated(await call("addGraphQLMock", { kind: "graphqlMocks", entity: m })) as Awaited<ReturnType<BifurcApi["addGraphQLMock"]>>,
     updateGraphQLMock: (m) => call("updateGraphQLMock", { kind: "graphqlMocks", entity: m }) as ReturnType<BifurcApi["updateGraphQLMock"]>,
     deleteGraphQLMock: (id) => call("deleteGraphQLMock", { kind: "graphqlMocks", id }) as ReturnType<BifurcApi["deleteGraphQLMock"]>,
-    addGraphQLSchema: (s) => call("addGraphQLSchema", { kind: "graphqlSchemas", entity: s }) as ReturnType<BifurcApi["addGraphQLSchema"]>,
+    addGraphQLSchema: async (s) => unwrapCreated(await call("addGraphQLSchema", { kind: "graphqlSchemas", entity: s })) as Awaited<ReturnType<BifurcApi["addGraphQLSchema"]>>,
     deleteGraphQLSchema: (id) => call("deleteGraphQLSchema", { kind: "graphqlSchemas", id }) as ReturnType<BifurcApi["deleteGraphQLSchema"]>,
     listGraphQLSchemas: async () =>
       ((await call("listGraphQLSchemas", { kind: "graphqlSchemas", workspaceId: await resolveWorkspaceId() })) as { entities: unknown[] }).entities as Awaited<ReturnType<BifurcApi["listGraphQLSchemas"]>>,
-    addGrpcRequest: (r) => call("addGrpcRequest", { kind: "grpcRequests", entity: r }) as ReturnType<BifurcApi["addGrpcRequest"]>,
+    addGrpcRequest: async (r) => unwrapCreated(await call("addGrpcRequest", { kind: "grpcRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addGrpcRequest"]>>,
     updateGrpcRequest: (r) => call("updateGrpcRequest", { kind: "grpcRequests", entity: r }) as ReturnType<BifurcApi["updateGrpcRequest"]>,
     deleteGrpcRequest: (id) => call("deleteGrpcRequest", { kind: "grpcRequests", id }) as ReturnType<BifurcApi["deleteGrpcRequest"]>,
-    addGrpcMock: (m) => call("addGrpcMock", { kind: "grpcMocks", entity: m }) as ReturnType<BifurcApi["addGrpcMock"]>,
+    addGrpcMock: async (m) => unwrapCreated(await call("addGrpcMock", { kind: "grpcMocks", entity: m })) as Awaited<ReturnType<BifurcApi["addGrpcMock"]>>,
     updateGrpcMock: (m) => call("updateGrpcMock", { kind: "grpcMocks", entity: m }) as ReturnType<BifurcApi["updateGrpcMock"]>,
     deleteGrpcMock: (id) => call("deleteGrpcMock", { kind: "grpcMocks", id }) as ReturnType<BifurcApi["deleteGrpcMock"]>,
-    addProtoFile: (p) => call("addProtoFile", { kind: "protoFiles", entity: p }) as ReturnType<BifurcApi["addProtoFile"]>,
+    addProtoFile: async (p) => unwrapCreated(await call("addProtoFile", { kind: "protoFiles", entity: p })) as Awaited<ReturnType<BifurcApi["addProtoFile"]>>,
     deleteProtoFile: (id) => call("deleteProtoFile", { kind: "protoFiles", id }) as ReturnType<BifurcApi["deleteProtoFile"]>,
     listProtoFiles: async () =>
       ((await call("listProtoFiles", { kind: "protoFiles", workspaceId: await resolveWorkspaceId() })) as { entities: unknown[] }).entities as Awaited<ReturnType<BifurcApi["listProtoFiles"]>>,
-    addSoapRequest: (r) => call("addSoapRequest", { kind: "soapRequests", entity: r }) as ReturnType<BifurcApi["addSoapRequest"]>,
+    addSoapRequest: async (r) => unwrapCreated(await call("addSoapRequest", { kind: "soapRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addSoapRequest"]>>,
     updateSoapRequest: (r) => call("updateSoapRequest", { kind: "soapRequests", entity: r }) as ReturnType<BifurcApi["updateSoapRequest"]>,
     deleteSoapRequest: (id) => call("deleteSoapRequest", { kind: "soapRequests", id }) as ReturnType<BifurcApi["deleteSoapRequest"]>,
-    addSoapMock: (m) => call("addSoapMock", { kind: "soapMocks", entity: m }) as ReturnType<BifurcApi["addSoapMock"]>,
+    addSoapMock: async (m) => unwrapCreated(await call("addSoapMock", { kind: "soapMocks", entity: m })) as Awaited<ReturnType<BifurcApi["addSoapMock"]>>,
     updateSoapMock: (m) => call("updateSoapMock", { kind: "soapMocks", entity: m }) as ReturnType<BifurcApi["updateSoapMock"]>,
     deleteSoapMock: (id) => call("deleteSoapMock", { kind: "soapMocks", id }) as ReturnType<BifurcApi["deleteSoapMock"]>,
-    addWsdl: (w) => call("addWsdl", { kind: "wsdls", entity: w }) as ReturnType<BifurcApi["addWsdl"]>,
+    addWsdl: async (w) => unwrapCreated(await call("addWsdl", { kind: "wsdls", entity: w })) as Awaited<ReturnType<BifurcApi["addWsdl"]>>,
     deleteWsdl: (id) => call("deleteWsdl", { kind: "wsdls", id }) as ReturnType<BifurcApi["deleteWsdl"]>,
     listWsdls: async () =>
       ((await call("listWsdls", { kind: "wsdls", workspaceId: await resolveWorkspaceId() })) as { entities: unknown[] }).entities as Awaited<ReturnType<BifurcApi["listWsdls"]>>,
-    addEnvironment: (e) => call("addEnvironment", { kind: "environments", entity: e }) as ReturnType<BifurcApi["addEnvironment"]>,
+    addEnvironment: async (e) => unwrapCreated(await call("addEnvironment", { kind: "environments", entity: e })) as Awaited<ReturnType<BifurcApi["addEnvironment"]>>,
     updateEnvironment: (e) => call("updateEnvironment", { kind: "environments", entity: e }) as ReturnType<BifurcApi["updateEnvironment"]>,
     deleteEnvironment: (id) => call("deleteEnvironment", { kind: "environments", id }) as ReturnType<BifurcApi["deleteEnvironment"]>,
 
