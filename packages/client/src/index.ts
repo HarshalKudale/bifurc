@@ -675,7 +675,26 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     auditDiff: (commitHash, entity, entityId, wsId) =>
       call("auditDiff", { commitHash, entity, entityId, workspaceId: wsId }) as ReturnType<BifurcApi["auditDiff"]>,
     exportAudit: async (format) => {
-      const r = await artifactToFile(await call("exportAudit", { format }), `audit.${format}`);
+      // Dialog FIRST, then the engine queries — `File_Ops_Protocol.md` §3.2, and the whole reason P3
+      // changed this channel: `audit.export` runs `queryLog({ limit: 0 })`, the entire `git log`, so an
+      // artifact-first ordering makes cancelling pay for the full query. That is precisely the cost P3
+      // removed, and the shell body this replaces is dialog-first.
+      //
+      // This call used to be `artifactToFile(await call("exportAudit", { format }), …)` with no
+      // `destPath`, which silently took `artifactToFile`'s artifact-first default. Found 2026-09-20 by
+      // the §5b-bis twin audit in `plan/07`; the ordering is chosen by *omitting an argument*, which is
+      // why it read as ordinary.
+      if (!local.pickSavePath || !local.writeArtifact) {
+        return { ok: false };
+      }
+      const dest = await local.pickSavePath({
+        title: "Export Audit Log",
+        defaultName: `audit-log.${format}`,
+        filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      });
+      // A bare `{ok:false}` on cancel, matching the shell body and the declared `{ok: boolean}`.
+      if (!dest) return { ok: false };
+      const r = await artifactToFile(await call("exportAudit", { format }), baseName(dest), dest);
       return r.ok ? { ok: true } : { ok: false };
     },
     listHistory: (o) => call("listHistory", o ?? {}) as ReturnType<BifurcApi["listHistory"]>,
@@ -748,13 +767,11 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       if ("error" in up) return { ok: false };
       return call("tlsImportKey", { blobId: up.blobId }) as ReturnType<BifurcApi["tlsImportKey"]>;
     },
-    tlsRemoveCert: () => call("tlsRemoveCert", {}) as ReturnType<BifurcApi["tlsRemoveCert"]>,
     tlsGenerate: () => call("tlsGenerate", {}) as ReturnType<BifurcApi["tlsGenerate"]>,
     tlsExportCert: async () => {
       const r = await artifactToFile(await call("tlsExportCert", {}), "bifurc-ca.crt");
       return r.ok ? { ok: true, filePath: r.filePath } : { ok: false, canceled: r.canceled, error: r.error };
     },
-    tlsCertStatus: () => call("tlsCertStatus", {}) as ReturnType<BifurcApi["tlsCertStatus"]>,
 
     // ── client-local: delegated, never routed ───────────────────────────────
     checkUpdate: () => local.checkUpdate(),
@@ -763,6 +780,12 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     getTheme: () => local.getTheme(),
     setTheme: (themeId) => local.setTheme(themeId),
     tlsInstallCA: () => local.tlsInstallCA(),
+    // Reclassified `transport` → `local` on 2026-09-20 (`plan/07` §5b-bis). Both are two-sided —
+    // engine half plus the client's own OS trust store — so neither can be answered by routing, and
+    // the routed forms delivered the engine half while silently dropping the other. `tlsRemoveCert`
+    // was the live one: it left the OS store trusting a CA whose keypair it had just deleted.
+    tlsRemoveCert: () => local.tlsRemoveCert(),
+    tlsCertStatus: () => local.tlsCertStatus(),
     openFileDialog: () => local.openFileDialog(),
     pickFilePath: (title, filters) => local.pickFilePath(title, filters),
     pickFolderPath: (title) => local.pickFolderPath(title),

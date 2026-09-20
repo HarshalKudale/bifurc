@@ -23,7 +23,7 @@ import type { ReadFileOptions, ReadFileResult, SavePathOptions } from "@bifurc/c
 import { BLOB_MAX_INGRESS_BYTES } from "@bifurc/protocol";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
 import { getMainWindow } from "@/main";
-import { installEngineCa } from "@/ipc/certLifecycle";
+import { installEngineCa, readCertStatus, uninstallEngineCa } from "@/ipc/certLifecycle";
 import { mimeFor } from "@/ipc/fileOpsClient";
 
 function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
@@ -160,6 +160,24 @@ export function registerClientHandlers(): void {
   // a container (P9). The "no CA yet" message is the same string the renderer was written against;
   // `certLifecycle.installEngineCa()` owns it.
   ipcMain.handle("tls:installCA", () => installEngineCa());
+
+  /**
+   * The other two halves of the same two-sided operation, **reclassified `transport` → `local` on
+   * 2026-09-20** (`plan/07` §5b-bis). They belong in this file for the reason `tls:installCA` does —
+   * the OS trust store is the host's, so the composition cannot travel — but they differ from it in
+   * one way worth keeping straight: each still calls its engine half (`tls.certStatus` /
+   * `tls.removeCert`) through the command registry, so the engine's part of the answer keeps crossing
+   * the wire. Only the *composition* moved.
+   *
+   * What went wrong while they were routed, in one line each: `tlsCertStatus` delivered the engine's
+   * fingerprint and paths and dropped the three trust-store fields, so the drift warning could never
+   * render; `tlsRemoveCert` deleted the engine's keypair and left the OS store trusting the CA, from
+   * the Settings panel's "remove certificate" button. `tlsHandlers.ts`'s `tls:certStatus` /
+   * `tls:removeCert` channels are the superseded twins — same bodies, unreachable now that
+   * `window.api` is `{ ...client }`.
+   */
+  ipcMain.handle("client:tlsCertStatus", () => readCertStatus());
+  ipcMain.handle("client:tlsRemoveCert", () => uninstallEngineCa());
 
   // ── Artifact egress / ingress — the client half of an engine-produced artifact ──────────────
   //

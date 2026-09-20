@@ -105,6 +105,13 @@ describe("the window.api surface", () => {
      * "no engine can answer it correctly": `currentVersion` is the version of the thing the *user*
      * runs, and `downloadUrl` must be the asset for the *user's* platform. An engine matching its own
      * `process.platform` hands a Windows user the AppImage.
+     *
+     * `tlsRemoveCert` and `tlsCertStatus` joined on the same day, for a third reason again: each is
+     * **two-sided** — an engine half plus an operation on the host's OS trust store — so routing either
+     * one delivers half the answer and silently drops the other. `tlsRemoveCert` was the live defect
+     * (`renderer/panels/settings/TlsSettingsSection.tsx` calls it, and the OS store kept trusting the
+     * CA); `tlsCertStatus` lost the three drift fields. They are listed here so the reclassification
+     * cannot be quietly undone — this is the assertion that would have caught the original routing.
      */
     const mustBeLocal = [
       "openFileDialog",
@@ -116,6 +123,8 @@ describe("the window.api surface", () => {
       "getTheme",
       "setTheme",
       "tlsInstallCA",
+      "tlsRemoveCert",
+      "tlsCertStatus",
       "openExternal",
       "platform",
       "isFirstLaunch",
@@ -131,16 +140,18 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 72 transport + 48 entity + 7 subscribe + 3 shim + 14 local = 144
+    // 70 transport + 48 entity + 7 subscribe + 3 shim + 16 local = 144
     //
-    // `transport` 73 → 72 and `local` 13 → 14 on 2026-09-20: `checkUpdate` was the surface's only
-    // `SPLIT` and is now `local`. Both figures are asserted because the sum is what proves nothing
-    // was dropped in the move — a key that vanished would keep this test green only if some other
-    // count happened to absorb it, which the total below rules out.
-    expect(byKind("transport")).toBe(72);
+    // Two moves on 2026-09-20, both `transport` → `local`, and both asserted because the sum is what
+    // proves nothing was dropped in the move — a key that vanished would keep this test green only if
+    // some other count happened to absorb it, which the total rules out.
+    //
+    //   `transport` 73 → 72, `local` 13 → 14    `checkUpdate` — the surface's only `SPLIT`
+    //   `transport` 72 → 70, `local` 14 → 16    `tlsRemoveCert` + `tlsCertStatus` — both two-sided
+    expect(byKind("transport")).toBe(70);
     expect(byKind("entity")).toBe(48);
     expect(byKind("subscribe")).toBe(7);
     expect(byKind("shim")).toBe(3);
-    expect(byKind("local")).toBe(14);
+    expect(byKind("local")).toBe(16);
   });
 });
