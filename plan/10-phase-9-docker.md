@@ -1,10 +1,32 @@
-# 10 — Phase 9: Docker
+# 10 — Phase 9: Docker ⚠ **REWRITTEN 2026-09-20 — see [`14-workspace-runtime.md`](14-workspace-runtime.md)**
 
-**Goal:** a container image that runs the engine headlessly, survives restarts, authenticates clients,
-and can be attached to from the web UI or CLI.
+> ## ⚠ This phase no longer ships "the engine"
+>
+> Per **D10** (`plan/14` §3), the deployable unit is a **workspace**, not the engine. What this image
+> contains and runs is a **workspace host**: a process that composes one `WorkspaceRuntime` per workspace
+> and **deliberately does not start the companion server**, which is app-level and stays in the desktop
+> app.
+>
+> Three concrete changes to everything below:
+>
+> 1. **The entry point is the host, not `engine/index.js`.** The host takes `--data-dir`,
+>    `--rpc-socket`, `--token-file` and runs N workspaces.
+> 2. **The documented deployment is one container = one workspace**, one volume = that workspace's
+>    `data/` + `blobs/`. N is supported (D11) but not recommended: one workspace per volume makes the
+>    volume, the ports and the lifecycle line up.
+> 3. **§4's exposure table needs N rows, not 2** — a host running N workspaces publishes N proxy ports.
+>    The RPC port stays loopback/socket; that part is unchanged and still non-negotiable.
+>
+> **Depends on P14** as well as P3 and P4. The `mkcert` / `simple-git` / `ws` / `@bifurc/protocol`
+> dependency note at §Work item 2 is still exactly right for the host.
+>
+> Read "the engine" below as "the workspace host" throughout.
 
-**Effort:** 1–2 weeks. **Depends on:** P2 (headless engine), P3 (blob store on the volume), P4 (transport
-+ auth). **Parallel with:** P7, P8.
+**Goal:** a container image that runs a **workspace host** headlessly, survives restarts, authenticates
+clients, and can be attached to from the web UI or CLI.
+
+**Effort:** 1–2 weeks. **Depends on:** **P14 (workspace runtime)**, P3 (blob store on the volume),
+P4 (transport + auth). **Parallel with:** P7.
 
 ---
 
@@ -71,7 +93,8 @@ USER bifurc
 
 ENV BIFURC_DATA_DIR=/data \
     BIFURC_RPC_HOST=0.0.0.0 \
-    BIFURC_RPC_PORT=9271
+    BIFURC_RPC_PORT=9271 \
+    BIFURC_PROXY_BASE_PORT=8080
 
 VOLUME ["/data"]
 EXPOSE 8080 9271
@@ -79,7 +102,8 @@ EXPOSE 8080 9271
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD node -e "fetch('http://127.0.0.1:9271/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["node", "engine/index.js"]
+# P14 (D10): the entry point is the workspace HOST, not the engine.
+ENTRYPOINT ["node", "engine/runtime/host.js"]
 ```
 
 > **⚠️ This Dockerfile cannot boot as written — it has no `node_modules`.** Measured during P2 item 8:
@@ -117,6 +141,13 @@ ENTRYPOINT ["node", "engine/index.js"]
 
 
 Notes:
+- **The base port is stated, not inferred (D16).** A workspace's proxy takes a **per-environment base port**
+  and counts up from it: `80` on Windows, `8080` on Linux, macOS and in the container. This image runs as
+  **non-root** (`USER bifurc`) — which is precisely why the Linux base is 8080 rather than 80: an
+  unprivileged process cannot bind below 1024, so the default path here never attempts a privileged port.
+  `BIFURC_PROXY_BASE_PORT=8080` therefore changes nothing about the default; it exists so the published port
+  is **stated** rather than left to `process.platform`, and so an operator can move it without editing the
+  image. Note it sets the *base*, not one workspace's port, so the increment keeps working after it.
 - **`mkcert` is pure JS** (`node-forge`) — no extra binary needed for cert generation. Verified.
 - **Non-root by default.** The engine no longer installs CAs (that moved to the client in P3), so it does
   not need root. That is a direct benefit of the P3 decision.
@@ -155,8 +186,20 @@ docker run -d --name bifurc \
 
 | Port | Purpose | Default exposure |
 |---|---|---|
-| `8080` | The proxy itself — the reason the tool exists | **Publish this** |
-| `9271` | RPC control channel | **Do not publish by default** |
+| `8080` | The proxy of the **first** hosted workspace — the Linux/Docker base (D16) | **Publish this** |
+| `8081`, `8082`, … | The proxy of each **further** workspace; the base counts up | Publish only what you mean to expose |
+| `9101`, `9103`, … | Webhook receivers, one per workspace (D16 by analogy — `9102` is the reserved gRPC placeholder, so the second workspace's webhook skips it) | **Do not publish by default** |
+| `9271` | RPC control channel — **one per host**, not per workspace (D13) | **Do not publish by default** |
+
+> **P14 changes this table's shape.** A host running N workspaces has N proxy ports and N webhook ports,
+> so "publish 8080" is no longer a complete answer. The recommended deployment is **one container = one
+> workspace** (`plan/14` §4, WI 6), which keeps this table at one proxy row per container; the extra rows
+> are for the multi-workspace host — supported, but not recommended. The RPC port remains a single
+> host-level surface (D13), and it remains loopback or a unix socket.
+>
+> **The base port is environment-dependent (D16), so the first row differs by platform:** `8080` on Linux,
+> macOS and in this container; **`80` on Windows**, where no privileges are needed to bind it. The image
+> states `8080` via `BIFURC_PROXY_BASE_PORT` rather than relying on that derivation.
 
 The RPC port is an admin surface. Publishing it exposes script execution and process spawning.
 
