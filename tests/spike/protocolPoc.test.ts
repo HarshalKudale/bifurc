@@ -8,8 +8,10 @@
  * legacy `ipcRenderer.invoke` contract for all 10 representative commands —
  * including the error and network-failure paths.
  *
- * Two of the ten channels (`graphql:introspect`, `soap:execute`) were deleted in P6 stage 3b;
- * `beforeAll` re-attaches them to their commands, with the exact bodies they had. See there.
+ * Four of the ten channels have been deleted by P6 stage 3b so far — `graphql:introspect` and
+ * `soap:execute` (slice 1: the nine one-line passthroughs), then `mock:add` and `mock:delete`
+ * (slice 2: the 48 factory-generated channels). `beforeAll` re-attaches each to the command it
+ * delegated to, with the exact body it had. See the fixture there.
  *
  * SPIKE CODE — throwaway, do not productionise. Findings recorded in
  * `plan/spike-results.md`.
@@ -216,16 +218,40 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerSoapCommands(commandRegistry);
     registerEntityCrudCommands(commandRegistry);
 
-    // P6 stage 3b deleted two of the ten legacy channels this spike drives —
-    // `graphql:introspect` and `soap:execute` — because each was a one-line
-    // `commandRegistry.invoke()` adapter with no behaviour of its own. This spike's subject is the
-    // **envelope**, not the routing, so those two are re-attached here with *the exact bodies the
-    // channels had*. That also doubles as the check that the deletion lost nothing: the ten commands
-    // still answer identically, only two of them arrive by a shorter path.
+    // ── The retired-channel fixture ──────────────────────────────────────────────────────────────
+    //
+    // P6 stage 3b deletes the shell's legacy channels, and this spike drives **ten** of them, so this
+    // table grows with each slice: `graphql:introspect` / `soap:execute` went in slice 1 (the nine
+    // one-line passthroughs), and `mock:add` / `mock:delete` in slice 2 (the 48 factory-generated
+    // channels).
+    //
+    // This spike's subject is the **envelope**, not the routing, so each retired channel is re-attached
+    // with *the exact body it had*. That is not a weakening: every one of those bodies was itself a
+    // `commandRegistry.invoke()` adapter, so the real command still runs and every assertion below still
+    // reads real output. It also doubles as the check that the deletion lost nothing — the ten commands
+    // answer identically, only some of them now arrive by a shorter path.
+    //
+    // Treat the table as a **measure of the pass**: it covers 4 of the 10 channels this spike drives
+    // today, and it reaches 10 of 10 exactly when the legacy surface is gone. At that point this file
+    // stops being evidence about the shell and becomes a pure envelope test — which is the open
+    // question recorded in `plan/07` §5b-ter.
     const { bus } = await import("@bifurc/engine/eventBus");
     const deletedChannelBodies: Record<string, (...args: any[]) => unknown> = {
       "graphql:introspect": (_e, params) => commandRegistry.invoke("graphql.introspect", params, { bus }),
       "soap:execute": (_e, params) => commandRegistry.invoke("soap.execute", params, { bus }),
+      // `mocks` is one of the ten kinds whose protocol name equals its engine kind, so the adapter's
+      // `toProtocolKind("mocks")` was the identity and the command it called was `kind: "mocks"`. The
+      // `"entity" in result ? … : …` unwrap is the frozen protocol shape, not a convenience: a
+      // gate-blocked create answers `{error, …}` and has no `.entity` to unwrap.
+      "mock:add": async (_e, entity: any) => {
+        const result = await commandRegistry.invoke(
+          "entity.create",
+          { kind: "mocks", entity, workspaceId: entity?.workspaceId },
+          { bus },
+        ) as { id: string; entity: Record<string, unknown> } | { error: string };
+        return "entity" in result ? result.entity : result;
+      },
+      "mock:delete": (_e, id: string) => commandRegistry.invoke("entity.delete", { kind: "mocks", id }, { bus }),
     };
 
     const transport = createInProcessTransport(

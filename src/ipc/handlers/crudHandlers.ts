@@ -1,13 +1,12 @@
 import { ipcMain } from "electron";
-import { registerEntityCrudHandlers } from "@/ipc/handlers/entityCrudFactory";
+import { registerCrudKind } from "@bifurc/engine/store/entityCrudCommands";
 import { loadConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "@bifurc/engine/store/config";
 import { registerActiveWebhook, unregisterActiveWebhook, startWebhookServer, stopWebhookServer, isWebhookServerRunning, getWebhookPort, getWebhookServerError } from "@bifurc/engine/proxy/webhookServer";
 
 export function registerCrudHandlers() {
   // ── Mappings ───────────────────────────────────────────────────────────────
 
-  registerEntityCrudHandlers<LocalMapping>({
-    ipcPrefix: "mapping",
+  registerCrudKind<LocalMapping>({
     kind: "mappings",
     configKey: "mappings",
     isFlat: true,
@@ -16,8 +15,7 @@ export function registerCrudHandlers() {
 
   // ── Proxy Rules ────────────────────────────────────────────────────────────
 
-  registerEntityCrudHandlers<ProxyRule>({
-    ipcPrefix: "rule",
+  registerCrudKind<ProxyRule>({
     kind: "rules",
     configKey: "proxyRules",
     folderConfigKey: "ruleFolders",
@@ -36,8 +34,7 @@ export function registerCrudHandlers() {
 
   // ── Mocks ──────────────────────────────────────────────────────────────────
 
-  registerEntityCrudHandlers<MockRule>({
-    ipcPrefix: "mock",
+  registerCrudKind<MockRule>({
     kind: "mocks",
     configKey: "mocks",
     folderConfigKey: "mockFolders",
@@ -60,8 +57,7 @@ export function registerCrudHandlers() {
 
   // ── Saved Requests ─────────────────────────────────────────────────────────
 
-  registerEntityCrudHandlers<SavedRequest>({
-    ipcPrefix: "request",
+  registerCrudKind<SavedRequest>({
     kind: "requests",
     configKey: "requests",
     folderConfigKey: "requestFolders",
@@ -74,8 +70,7 @@ export function registerCrudHandlers() {
 
   // ── WebSocket Connections ──────────────────────────────────────────────────
 
-  registerEntityCrudHandlers<SavedWsConnection>({
-    ipcPrefix: "ws",
+  registerCrudKind<SavedWsConnection>({
     kind: "sockets",
     configKey: "wsConnections",
     folderConfigKey: "wsFolders",
@@ -84,8 +79,7 @@ export function registerCrudHandlers() {
 
   // ── Webhooks ───────────────────────────────────────────────────────────────
 
-  registerEntityCrudHandlers<SavedWebhook>({
-    ipcPrefix: "webhook",
+  registerCrudKind<SavedWebhook>({
     kind: "webhooks",
     configKey: "webhooks",
     folderConfigKey: "webhookFolders",
