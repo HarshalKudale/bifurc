@@ -265,9 +265,9 @@ beforeAll(async () => {
   });
 
   const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
-  const { registerGraphqlHandlers } = await import("@/ipc/handlers/graphqlHandlers");
-  const { registerSoapHandlers } = await import("@/ipc/handlers/soapHandlers");
-  const { registerGrpcHandlers } = await import("@/ipc/handlers/grpcHandlers");
+  const { registerGraphqlKinds } = await import("@/ipc/handlers/graphqlKinds");
+  const { registerSoapKinds } = await import("@/ipc/handlers/soapKinds");
+  const { registerGrpcKinds } = await import("@/ipc/handlers/grpcKinds");
   // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine.
   // `registerCoreHandlers()` wires the *channels*; a suite that registers handler groups by hand has to
   // wire the engine half too, or the channel exists with nothing behind it.
@@ -291,9 +291,9 @@ beforeAll(async () => {
   registerSoapCommands(commandRegistry);
   registerGrpcCommands(commandRegistry);
   registerEntityCrudCommands(commandRegistry);
-  registerGraphqlHandlers();
-  registerSoapHandlers();
-  registerGrpcHandlers();
+  registerGraphqlKinds();
+  registerSoapKinds();
+  registerGrpcKinds();
 });
 
 afterAll(async () => {
