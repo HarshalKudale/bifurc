@@ -37,8 +37,17 @@ naming its mechanism**, never by waving at the number.
   the misleading *"is not routed through the CommandRegistry yet"*. Suite **2,496 / 2,455 / 40 / 1**: −18
   tests from stage 3a's checkpoint, mechanism named — `handlers.test.ts` generates **one `it` per
   `expectedChannels` entry**, so the 18 deleted names took their 18 generated tests. Correct, not lost
-  coverage. **Still open:** the three `*Handlers.ts` files now register *kinds, not handlers*, so their names
-  lie (rename = next slice); and `registerIpcHandlers()`'s own reduction.
+  coverage. **The rename slice landed** (`*Handlers.ts` → `*Kinds.ts` for soap/graphql/grpc; `crudHandlers`
+  keeps its name — 6 kinds *and* 5 live `webhook*` channels) and **"six caller files" was corrected to five**
+  everywhere (`git log -S` proves five, always).
+- **The reduction (`registerIpcHandlers()`) is classified — `plan/07` §5b-decies.** **93 literal channels =
+  18 live + 75 dead**, decidable because `window.api` *is* the client (`src/preload.ts:110`) and
+  `packages/client/src` names no channel at all; only preload's `local` block's 18 are reachable.
+  `clientHandlers.ts` is **17 live / 0 dead → untouchable**; every other file is all-dead except
+  `systemHandlers.ts` (`app:checkUpdate`). No `ipcMain.on(` in `src/`. Of the 75 dead, **7 are a risk
+  subset** owning a shell-side `dialog.*` step needing a client-twin check (`runner:exportReport`,
+  `audit:export`, `capture:shareJson`, `tls:exportCert`, `tls:importKey`, `importExport:export`,
+  `importExport:preflight`) — §5b-bis's "9 superseded" minus the 2 `tls` now `local`.
 
 ## The executor pivot — `plan/14` (D10–D17), planned 2026-09-20, no code written
 
