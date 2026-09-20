@@ -1,9 +1,27 @@
-# 09 — Phase 8: CLI
+# 09 — Phase 8: CLI ⏸ **PARKED 2026-09-20 (D15)**
 
-**Goal:** a command-line client that can start, stop and inspect engines, and (scope permitting) drive
-the full engine surface — including against a remote Docker engine.
+> ## ⏸ Deferred — do not start this phase
+>
+> Per **D15**, the CLI is deferred rather than cancelled. The decision waits on **P14 + P9**, because it
+> depends on whether the workspace host becomes a common deployment. Two shapes are recorded in
+> [`14-workspace-runtime.md`](14-workspace-runtime.md) §7:
+>
+> - **(a) in-app CLI executable** — ships with the Electron app and talks to the app's own engine over the
+>   socket transport (`transport/socket.ts`, `defaultSocketPath(pid)`). Zero new deployment; fails when
+>   the app is not running.
+> - **(b) npm package** — `@bifurc/cli` speaking the same `@bifurc/client` over `ws`/`socket`, attaching
+>   to a local app, a local host, or a remote host. Works without the app, and exercises D9's version
+>   policy for real. **Recommended.**
+>
+> Note that under D10 the CLI is a consumer of the **host**, not of the engine. The document below is
+> kept as written: its command tree, transport selection, `--json` contract and exit codes all remain
+> correct, and it is the agreed v1 scope for whoever picks this up. Read "engine" as "host" in work
+> item 2's cases 3–4 and in work item 7's distribution notes.
 
-**Effort:** **~3 weeks.** **Depends on:** P5. **Parallel with:** P7, P9.
+**Goal:** a command-line client that can start, stop and inspect **workspace hosts**, and (scope
+permitting) drive the full engine surface — including against a remote Docker host.
+
+**Effort:** **~3 weeks.** **Depends on:** P5 ✅, and (when unparked) P14 + P9. **Parallel with:** P7.
 
 > ## Scope set by D7 — v1 is lifecycle + read-only
 >
