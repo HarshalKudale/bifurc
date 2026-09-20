@@ -19,10 +19,22 @@
        * shell consumes as *built* output, exactly like `@bifurc/protocol`. Mapping the subpath
        * here does two things:
        *   - `tsc --noEmit` resolves engine types from its emitted `.d.ts` (build the package first
-       *     — `npm run build:packages`, also wired to `prepare` so `npm ci` does it automatically);
-       *   - `tsc-alias` rewrites the specifier in the emitted JS to a *relative* path, so
-       *     `dist/**` requires `../packages/engine/dist/...` at runtime with no node_modules
-       *     resolution and no reliance on workspace symlinks inside the packaged asar.
+       *     — `npm run build:packages`, also wired to `prepare` so `npm ci` does it automatically).
+       *
+       * It does **not** rewrite the specifier in the emitted JS. This comment used to claim that
+       * `tsc-alias` rewrote it to a relative `../packages/engine/dist/...`, "so `dist/**` requires
+       * no node_modules resolution and no reliance on workspace symlinks inside the packaged
+       * asar". **Measured false on 2026-09-20:** all 50 distinct `@bifurc/*` specifiers in `dist/`
+       * are still bare. `@/` aliases *are* rewritten (0 remain), so `tsc-alias` runs — it skips
+       * this mapping, silently. The claim could not have held anyway: `@bifurc/protocol` and
+       * `@bifurc/client` are not in `paths` at all, and the *packages' own* emitted files require
+       * `@bifurc/protocol` bare too, so no app-side rewrite could make the asar self-contained.
+       *
+       * Packaging therefore depends on `node_modules/@bifurc/*` existing inside the asar — and
+       * that is what actually happens: electron-builder 26.8.1 resolves the npm workspaces and
+       * copies `packages/{engine,protocol,client}` in, `package.json` included (so each package's
+       * `exports` map survives). Verified by resolving every specifier from inside an extracted
+       * `app.asar`; the assertion is `scripts/assert-packaged.mjs`, run after packaging in CI.
        */
       "@bifurc/engine/*": ["../packages/engine/dist/*"]
     }
