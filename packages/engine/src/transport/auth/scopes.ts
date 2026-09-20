@@ -152,7 +152,6 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "healthbar.getServices": "read",
   "healthbar.saveServices": "write",
   "healthbar.checkUrl": "read",
-  "app.checkUpdate": "read",
   "capture.shareJson": "write",
 };
 
