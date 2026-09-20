@@ -493,3 +493,52 @@ first write — which is the actual lesson: read this file *first*, not when som
   never identified). Commit early when touching `src/`. Recovery is
   `git restore --source=HEAD --staged --worktree src/` — plain `git restore <path>` keeps the file
   deleted when the deletion was staged.
+
+## A deletion pass is atomic with its test migration
+
+Hit 2026-09-20 resuming P6 stage 3b. The nine protocol-client channels had been deleted and the
+`invokeCommand` helper added to `protocolExecution.integration.test.ts` — but the 20 call sites still drove
+the deleted channels, so **19 cases died with `No handler registered`**. Nothing in that output says
+"unfinished edit"; it reads as a code defect, and the first instinct is to look for a broken registration
+rather than at `git status`. **A half-landed deletion pass is not a smaller deletion pass.** The deletion
+and its migration are one change; if you cannot finish it, revert it rather than leaving it staged.
+
+**The half that is easy to get wrong silently is the argument shape**, because a one-line adapter has no
+behaviour of its own to lose *except* how it calls the command. The nine were **not** uniform: five were
+literal passthroughs, `soap:fetchWsdl` **wrapped** its bare `url` as `{ url }`, and three gRPC channels
+passed `{}` while ignoring whatever they were called with. So a re-point written as a rest-args forwarder
+(`invokeCommand(cmd, ...args)`) is right for five and wrong for four — and **three of the four would still
+pass**. Pass the command's real params object explicitly, and say in the helper's docblock *why* it is not
+generic.
+
+## Deleting a phase's evidence artifact is a phase decision, not a pass decision
+
+Found 2026-09-20: `tests/spike/protocolPoc.test.ts` (330 lines, 12 tests) had been deleted in the same edit
+batch as the channel deletion, with **no note in `plan/` and none in the memory**. It is the runtime half of
+P0 spike 4, and `plan/spike-results.md:192` records it as *"kept in version control as the record of this
+de-risking work"* — so the deletion contradicted a written decision, silently.
+
+**The cost that is easy to miss is the baseline.** It is where the documented 1 standing failure lives
+(`soap.execute`), so deleting it would have turned the suite's "1 failed" into "0 failed" and quietly moved
+the number every later reconciliation is measured against. A test file that is *the* known-failing one is
+load-bearing in a way that is invisible from its size.
+
+**The fix that keeps both halves:** re-attach the deleted channels in `beforeAll` with the exact bodies they
+had. That is honest when the suite's subject is the *envelope* rather than the routing — the commands still
+answer identically, two of them by a shorter path — and it doubles as the check that the deletion lost
+nothing. Retiring throwaway spike code is a legitimate later decision, but it takes the `spike/` tree with it
+plus every plan doc that cites it, so it belongs to a phase.
+
+## A padded markdown table row mis-attributes its own cells
+
+The `plan/README.md` status rows are single ~6k-char lines padded with spaces, and the Notes cell contains
+`|` characters inside code spans — so `line.split("|")` does **not** return the table's columns, and
+`cells[4]`/`cells[5]` land in the middle of the notes. Worse, the row's *shape* is the only way to notice a
+missing cell: measured 2026-09-20, **P7's and P14's rows had 5 pipes where the table's other rows have 6**,
+so each row's note sat in the **Gate** column with no Notes cell — the programme's source of truth
+misattributing which phase a note described, for two phases, invisibly in a rendered table.
+
+Two rules: **check a row's pipe count against its siblings before trusting a cell index**, and edit these
+rows with a script that cuts after the *n*-th pipe (preserving the first *n* cells byte-for-byte) rather than
+with a literal match — the earlier session's script got two rows wrong for exactly this reason, and a
+rendered table gives no signal.
