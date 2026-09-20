@@ -569,3 +569,23 @@ preserves the count, a generated list shrinks with it.
 And pair it with the inverse check: the deletion *did* break two cases, in a different file, and the count
 went **up** (`1 failed` → `3 failed`). Both halves are needed — neither a delta of 0 nor one of −18 is
 evidence on its own; the mechanism is.
+
+## A count written into prose is never re-derived — and it propagates
+
+Three separate instances in this plan, all the same shape. `plan/07` said **five** engine commands were
+registered from the shell; the §5c pass measured **51**. `handler-classification.md` said **112** legacy
+channels; the §5b-bis audit measured **132**, because the 48 that `entityCrudFactory` generated are
+invisible to `grep ipcMain.handle("`. And **"six caller files"** — repeated four times across `plan/07`,
+`plan/13` and the engine's docblock — was never true: it is **five**, and the sentence claiming six then
+listed exactly those five names, so it disproved itself on its own line.
+
+The mechanism is always the same: the number is written once when it is measured, then *quoted* by later
+sections, and quoting is cheaper than re-measuring. A doc that quotes a count inherits its staleness
+silently, because nothing renders an error.
+
+Two rules. **When a section needs a count, re-measure it — or write "measured 2026-09-XX: N" so the reader
+knows it is a reading and not an invariant.** And when a count turns out wrong, **correct it at the site and
+say it was wrong**: the older docs still say six, so a silent fix leaves the next reader able to "restore"
+it from a source that looks authoritative. Verify with history rather than arithmetic — `git log -S <symbol>`
+settled this one in a single command and showed that six was never true, not even before some file was
+merged away.
