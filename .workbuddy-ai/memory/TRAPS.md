@@ -204,6 +204,52 @@ key to its caller.**
 - **"The command is registered" ≠ "the client's method is equivalent."** Audit before routing; three of
   the four held-back egress keys broke *after* the engine did its job correctly.
 
+## "Nothing else reads it" needs a grep of `packages/`, not just `src/`
+
+The shell is `src/`, the engine is `packages/engine/`, the surface is `packages/{protocol,client}/`. A
+claim of the form *"nothing else reads this field — verified"* is only true if the grep covered **all
+three**, and the instinct is to grep the file you are looking at, which lives in `src/`.
+
+Measured 2026-09-20, on `CrudFactoryOpts`: `ipcPrefix` was recorded as vestigial alongside `ipcAdd` /
+`ipcUpdate` / `ipcDelete` / `ipcList`. Four of the five are. `ipcPrefix` is read **three times inside
+`packages/engine/src/store/entityCrudCommands.ts`** — as a behavioural discriminator (prepend vs append,
+emit `entity.changed`, cascade-delete the targeting `proxyRules`) — because it had been standing in for
+the *kind*. The grep that "verified" it had run over `src/` only, where the sole reader is the factory's
+channel-name builder.
+
+So **a field named for the shell can still be load-bearing in the engine.** Before deleting one, grep
+`packages/` for it, and prefer grepping for the *behaviour* (what branches on it) over the bare name. When
+the answer is "the engine branches on a shell name", the fix is usually a **translation into the engine's
+own vocabulary** (`opts.kind`) rather than a deletion: deleting it compiles cleanly and silently kills the
+behaviour, and no test may notice.
+
+## A test whose two inputs are indistinguishable passes on either branch
+
+Found 2026-09-20 in `handlers.test.ts`, on the pin for the prepend branch:
+
+```
+currentConfig.mocks = [{ ...baseMock, id: "existing", createdAt: 1 }];  // name: "Test Mock"
+await createEntity("mocks", baseMock);                                  // name: "Test Mock"
+expect(currentConfig.mocks[0].name).toBe("Test Mock");                  // ← true under unshift OR push
+```
+
+The seeded entity was spread from the same object the test then created, so both carried the same `name`
+and index 0 read `"Test Mock"` either way. **The case passed on a `push`** — i.e. it pinned nothing, while
+reading as the pin for that exact branch. The fix is to make the two distinguishable (`id`, or a different
+name) and to assert **both** indices.
+
+Two rules that generalise:
+
+- **Assert on identity, not on a value both candidates share.** When seeding a "before" state to test an
+  ordering or a filter, give the seed a value the new entity cannot have.
+- **Pin the boundary, not just the positive.** `mocks` prepends and `requests` appends is one test each;
+  only the pair proves the predicate has an extent. A rewrite that prepends *everything* satisfies the
+  positive half alone.
+
+This is the same failure as the `transports.test.ts` fixture that asserted the very bug it existed to
+catch (`plan/07` §5b-quater) — two instances in two days, both found by asking "would this still pass if
+the behaviour were wrong?" rather than by a red test.
+
 ## A guard that can silently match nothing is worse than no guard
 
 Written after building §5c-viii's static test. It reads every `.ts` under `src/` and

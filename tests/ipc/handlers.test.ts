@@ -1068,6 +1068,20 @@ describe("src/ipc/handlers.ts", () => {
       expect(result.name).toBe("API rule");
       expect(currentConfig.proxyRules).toHaveLength(1);
     });
+
+    it("prepends the new rule, the way `mocks` does — the two share one branch", async () => {
+      // `rules` and `mocks` are the only two kinds that prepend, and they are the two the engine now
+      // selects by `opts.kind`. Pinning `rules` as well as `mocks` is what makes the branch's *extent*
+      // observable rather than its mere existence.
+      currentConfig.proxyRules = [
+        { id: "existing", name: "Existing", pattern: ".*", targetMappingId: "m1", enabled: true },
+      ];
+      const created = await createEntity("proxyRules", {
+        name: "API rule", pattern: ".*\\.api\\.com.*", targetMappingId: "m1", enabled: true,
+      });
+      expect(currentConfig.proxyRules[0].id).toBe(created.id);
+      expect(currentConfig.proxyRules[1].id).toBe("existing");
+    });
   });
 
   // ── rule:update ───────────────────────────────────────────────────────
@@ -1136,9 +1150,15 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("prepends the new mock to the front of the list", async () => {
-      currentConfig.mocks = [{ ...baseMock, id: "existing", createdAt: 1 }];
-      await createEntity("mocks", baseMock);
-      expect(currentConfig.mocks[0].name).toBe("Test Mock");
+      // The pre-existing mock is given a **distinct name on purpose.** It used to be `{...baseMock}`,
+      // i.e. also called "Test Mock", so `mocks[0].name` read "Test Mock" whether the new mock was
+      // prepended *or* appended — the assertion passed on a `push`. Asserting by `id` (and checking
+      // index 1) is what makes it a real pin on the prepend branch, which is the branch the engine
+      // now selects by `opts.kind` rather than by `opts.ipcPrefix` (P6 step 3, 2026-09-20).
+      currentConfig.mocks = [{ ...baseMock, id: "existing", name: "Existing", createdAt: 1 }];
+      const created = await createEntity("mocks", baseMock);
+      expect(currentConfig.mocks[0].id).toBe(created.id);
+      expect(currentConfig.mocks[1].id).toBe("existing");
     });
 
     it("disables existing mocks with the same signature when new mock is enabled", async () => {
@@ -1276,6 +1296,15 @@ describe("src/ipc/handlers.ts", () => {
       const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
       await createEntity("requests", baseReq);
       expect(writeEntity).toHaveBeenCalled();
+    });
+
+    it("appends the new request — `requests` is deliberately not on the prepend branch", async () => {
+      // The other half of the branch. Without this, "prepends" could be satisfied by a rule that
+      // prepends everything, and the `kind` predicate would be untestable from the passing side.
+      currentConfig.requests = [{ ...baseReq, id: "existing", name: "Existing", createdAt: 1 }];
+      const created = await createEntity("requests", baseReq);
+      expect(currentConfig.requests[0].id).toBe("existing");
+      expect(currentConfig.requests[1].id).toBe(created.id);
     });
   });
 
@@ -2068,6 +2097,41 @@ describe("src/ipc/handlers.ts", () => {
   // `toEngineKind()` on the way out. Re-pointing these cases at the commands directly removes the
   // *first* half from the test's path, so what they pin now is `toEngineKind()` alone — which is the
   // half that survives, since `toProtocolKind()` lives in the factory and dies with the channels.
+
+  // ── entity.changed: which kinds ping the bus ──────────────────────────
+
+  describe("entity.create — the `entity.changed` ping", () => {
+    it("fires for `mocks` and `requests` only, and never for another kind", async () => {
+      // Site 2 of the three the engine used to select by `opts.ipcPrefix` (`["mock","request"]`).
+      // The companion server's suite pins the `mocks` side end-to-end; what is pinned **here** is the
+      // boundary, because a translation that widened the set — or that fired for everything — would
+      // still satisfy that one. `proxyRules` is the control: it is the kind that would most plausibly
+      // be swept in by a careless rewrite, since it shares the *other* branch (the prepend).
+      const fired: { kind: string; action: string }[] = [];
+      const onChange = (p: any) => fired.push(p);
+      bus.onTyped("entity.changed", onChange);
+      try {
+        await createEntity("mocks", {
+          name: "m", method: "GET", urlPattern: "http://x.com", useRegex: false, enabled: true,
+          capturedHeaders: {}, capturedBody: "", responseStatus: 200, responseHeaders: {},
+          responseBody: "{}", folderId: null,
+        });
+        await createEntity("requests", {
+          name: "r", method: "GET", url: "http://x.com", headers: {}, body: "", folderId: null,
+        });
+        await createEntity("proxyRules", {
+          name: "rule", pattern: ".*", targetMappingId: "m1", enabled: true,
+        });
+
+        expect(fired.map((e) => e.kind)).toEqual(["mocks", "requests"]);
+        expect(fired.every((e) => e.action === "created")).toBe(true);
+      } finally {
+        // `bus` is the process-wide singleton and vitest shares a module registry across files in a
+        // worker — a leaked listener would fire into whatever runs next.
+        bus.offTyped("entity.changed", onChange);
+      }
+    });
+  });
 
   describe("entity.* CommandRegistry collapse", () => {
     it("registers entity.create, entity.update, entity.delete, entity.load, entity.list and entity.setEnabled", () => {
