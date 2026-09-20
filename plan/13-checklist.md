@@ -633,14 +633,20 @@ rather than a type.
       only `e2e/fixtures/electronApp.ts`). Also measured: `dataRoot()` and `dataDir()` resolve to *different*
       directories (`<temp>\Bifurc\data` vs `<temp>\electron-userdata`) — the `plan/03` work item 8 defect,
       deliberately untouched.
-- [ ] Delete `registerIpcHandlers()` from the default path — **blocked on two things, and only one of
-      them was known.** The tracked blocker is one key: `checkUpdate` (SPLIT), resolved by P12
-      (`plan/07` §5b). **Step 3d (2026-09-19) retired the other three by widening the schemas they were
-      pinned on, not by moving them** — `listAudit` (`NARROWED`, `fcd6d0d`) and `saveRunnerConfig` /
-      `loadRunnerConfig` (`BLOCKED`). So step 3 ends at **92 registered + 1 split**, not at 93
-      registered. **The untracked blocker is `plan/07` §5c: 51 engine commands are registered at module
-      scope in nine shell files**, so deleting the shell's handler layer answers `UNKNOWN_COMMAND` for
-      all of them on a containerised engine (P9) — and the ratchet cannot see any of them. See step 3e
+- [ ] **Reduce** `registerIpcHandlers()` to the local-handler entry point — *(reworded 2026-09-20; it read
+      "Delete `registerIpcHandlers()` from the default path")*. **It is a reduction, not a deletion, and
+      that is the correction that resolving `checkUpdate` produced.** The key blocker is gone:
+      `checkUpdate` was the last `SPLIT` and was resolved on 2026-09-20 by **deleting `app.checkUpdate`
+      from the protocol** — the whole operation is client-local (`plan/07` §5b) — so all 93 protocol
+      commands are registered. **Step 3d (2026-09-19) had already retired the other three by widening the
+      schemas they were pinned on, not by moving them** — `listAudit` (`NARROWED`, `fcd6d0d`) and
+      `saveRunnerConfig` / `loadRunnerConfig` (`BLOCKED`). But `app:checkUpdate` remains a **local**
+      channel — the shell owns `app.getVersion()` and the platform match — and local channels are not
+      legacy, so something must still register them. The second blocker was `plan/07` §5c: 51 engine
+      commands were registered at module scope in nine shell files, so deleting the shell's handler layer
+      answered `UNKNOWN_COMMAND` for all of them on a containerised engine (P9) — and the ratchet could
+      not see any of them. **§5c is complete and statically guarded**, so this item is unblocked on both
+      counts. See step 3e
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening

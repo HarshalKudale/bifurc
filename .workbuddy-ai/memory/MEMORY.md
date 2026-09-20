@@ -46,5 +46,9 @@ ledger → `plan/07`; procedures → the `bifurc-*` skills.
 
 ## The baseline you measure against
 
-**101 files / 2,509 tests — 2,468 passed, 40 skipped, 1 failed.** The 1 is `soap.execute`, an
-environmental failure (`TRAPS.md`). A *delta* against this number is the signal; the 1 is not.
+**101 files / 2,507 tests — 2,466 passed, 40 skipped, 1 failed.** *(Was 2,509 / 2,468 until 2026-09-20:
+step 3f deleted `app.checkUpdate` from the protocol, and `packages/protocol/src/commands/index.test.ts`
+generates **two** tests per command — `accepts a valid payload` / `rejects an invalid payload` — so the
+delta is exactly −2. **Always account for a delta by naming its mechanism**, not by waving at it.)* The 1
+is `soap.execute`, an environmental failure (`TRAPS.md`). A *delta* against this number is the signal;
+the 1 is not.

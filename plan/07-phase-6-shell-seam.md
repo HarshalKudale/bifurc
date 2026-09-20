@@ -428,10 +428,109 @@ that `AppCheckUpdateResult` has **no `currentVersion` and no `hasUpdate`** — t
 handler's success branch returns — so the engine half cannot be produced by moving that body. It needs
 the split written.
 
+> **Resolved 2026-09-20 — the split was written by deleting the command.** `app.checkUpdate` is gone from
+> the protocol and `checkUpdate` is a `ClientLocal` member. The audit immediately below records the
+> three designs that satisfied this paragraph, why B was chosen, and the step-3 consequence none of them
+> had recorded.
+
+#### Audited 2026-09-20 — the split is a three-way choice, and it decides `registerIpcHandlers()`
+
+Above is settled. What was *not* recorded is that three different designs satisfy it, that they are not
+equally cheap, and that **one of them silently controls whether step 3 can ever finish**. This section
+exists so the choice is made deliberately rather than by whoever edits the file first.
+
+**First, a latent defect worth naming, because it is what the ratchet is protecting.** `index.ts:476` is
+`checkUpdate: () => call("checkUpdate", {}) as ReturnType<BifurcApi["checkUpdate"]>`. The cast is a lie:
+`AppCheckUpdateResult` carries `tagName`, while the renderer's `UpdateCheckResult` reads `hasUpdate`,
+`currentVersion`, `latestVersion` and `releaseUrl`. Route it as-is and the renderer receives
+`hasUpdate: undefined` — falsy — so it renders the **"you're up to date"** branch with
+`latestVersion` undefined. A silent wrong answer, not an error, which is precisely the failure class this
+phase keeps finding. The pin is load-bearing; it is not bookkeeping.
+
+| # | Design | Where the fetch runs | Engine command | `registerIpcHandlers()` |
+| --- | --- | --- | --- | --- |
+| **A** | Local channel delegating to an engine command | engine | **added** — `app.checkUpdate` | **still needs the channel** |
+| **B** | Local channel, shell fetches (status quo, reclassified) | shell | deleted from the protocol | **still needs the channel** |
+| **C** | Pure preload function, no IPC at all | preload | deleted from the protocol | **unblocked** — the channel disappears |
+
+**The consequence nobody recorded:** `src/ipc/handlers.ts:155` says `registerIpcHandlers()` "cannot be
+deleted yet: `app.checkUpdate` (SPLIT → P12) still needs a channel". That is true for A and B and **false
+for C** — because A and B keep a local `ipcMain.handle` channel, and a local channel needs a registration
+point for as long as it exists. So under A or B, resolving this split does **not** unblock step 3, and the
+honest statement becomes *"`registerIpcHandlers()` is not deleted but **reduced** — it becomes the
+local-handler entry point, and only the legacy command bodies go."* Under C the original claim survives.
+
+**Cost, measured by inspection rather than guessed:**
+
+- **B is the smallest.** The shell body already does fetch + platform + version and already returns the
+  renderer's shape. Nothing moves; the key is *reclassified* `transport` → `local`. Touches `surface.ts`,
+  `BifurcApi`/`BifurcClient`/`ClientLocal`, `index.ts`, `retry.ts`, `preload.ts`, the protocol command +
+  `scopes.ts` + fixtures, and the ratchet. No behaviour change.
+- **A is the largest and the only one that adds engine surface** — a new engine module, plus the params
+  widening the client needs to declare its platform. It buys the fetch moving behind engine auth, audit
+  and egress policy, which is what a containerised (P9) or browser (P7) client would want. It does not
+  buy step 3.
+- **C is the only one that unblocks step 3**, and it is the literal reading of "moved fully client-side".
+  Its risk is real and specific: the fetch leaves the main process, so it is subject to the renderer's
+  origin (CORS) and to per-user GitHub rate limits with no `User-Agent` control — and a regression there
+  is invisible in the unit suite.
+
+**Recommendation: B now, C considered separately.** B resolves the contradiction, removes the lying cast,
+completes the classification at 144/144 keys with zero `SPLIT`, and changes no behaviour — all verifiable.
+C's benefit is a step-3 unblock that is *already* available by the cheaper route of reducing
+`registerIpcHandlers()` to the local-handler entry point, which step 3 needs regardless of this decision.
+Choosing C to get that unblock would take on a network-behaviour risk to buy something a refactor gives
+away for free.
+
+**Decided 2026-09-20: B — reclassify as local.** Put to the owner with the three designs above, and B
+chosen. Implemented the same day: `checkUpdate` is a `ClientLocal` member; `packages/protocol` no longer
+declares `app.checkUpdate` (nor `scopes.ts`, nor the fixtures table); `@bifurc/client` delegates to
+`local.checkUpdate()` instead of `call("checkUpdate")`; and `src/preload.ts`'s override is gone, so the
+whole surface is `{ ...client }` with no exceptions.
+
+**What it bought, verified rather than asserted:**
+
+- **The lying cast is gone.** `index.ts` no longer casts `AppCheckUpdateResult` to `UpdateCheckResult`, so
+  the silent "always up to date" failure is no longer one refactor away from shipping.
+- **144 of 144 keys are classified, with zero `SPLIT`.** The split is 72 `transport` + 48 `entity` + 7
+  `subscribe` + 3 `shim` + 14 `local` — asserted by count in `surface.test.ts`, where the sum is what
+  proves no key was dropped in the move.
+- **Behaviour is unchanged.** The shell's `app:checkUpdate` handler still does the fetch, the platform
+  match and the version comparison. Nothing moved; only the classification did.
+
+**What it did not buy, and why that is the right answer anyway:** step 3's deletion of
+`registerIpcHandlers()`. The local channel remains, so what step 3 actually needs is a *reduction* —
+`registerIpcHandlers()` becomes the local-handler entry point. Recorded on the local-handlers table
+above, because the original claim was wrong and would otherwise be rediscovered as a surprise at the
+gate.
+
+**The tests were the hard half, and the reason is worth keeping.** Two of the four assertions guarding
+this were built around the pinned list, so with the list empty they would have **iterated nothing and
+passed** — the "a guard that can silently match nothing is worse than no guard" failure `TRAPS.md`
+records. Both were rewritten around the *invariant* rather than the list, with explicit non-vacuity
+floors:
+
+- *no command is both unregistered and unreachable* — replaces "still serves every unregistered command
+  on a legacy channel".
+- *every `transport`/`shim` surface entry names a registered command* — replaces "confirms the client
+  claims every pinned command is routable". This is the **stronger** form: it now catches a
+  newly-added routed key whose command nobody implemented, which the list-based version structurally
+  could not.
+
+The non-vacuity floors were first written as `> 80` and failed immediately at the real figure, **75** —
+the guard doing its job on its author before it ever guarded the code.
+
 **The corollary worth carrying forward:** "unimplemented in the registry" is not a synonym for "engine
 work outstanding". Three of the 25 were blocked by the frozen protocol and one was a split, so step 3
 cannot end with all 93 registered — it ends with **89 registered + 2 blocked + 1 narrowed + 1 split**,
 and the ratchet is what keeps that honest.
+
+> **Superseded 2026-09-20 — the prediction was wrong in the direction that matters, and all four landed
+> as *fewer* commands rather than more implementations.** The three blocked/narrowed ones were retired by
+> **widening their schemas**, and the split by **deleting the command**. So step 3 ends with **92
+> registered**, not 89 + 4 pinned, and the count is 92 rather than 93 because `app.checkUpdate` is no
+> longer a protocol command at all. The ratchet did keep it honest — every one of those four movements
+> failed the ratchet first and required it to be updated deliberately, which is the whole design.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
@@ -1052,12 +1151,25 @@ Per the P5 shim table, these are implemented in the shell and never cross the RP
 | Launch state | `app:isFirstLaunch`, `app:completeFirstLaunch` |
 | Platform | `window.api.platform` |
 | CA install | `tls:installCA` (per `File_Ops_Protocol.md` §6.2) |
-| Update check | `app:checkUpdate` — shell half |
+| Update check | `app:checkUpdate` — shell half. **Resolved 2026-09-20: the *whole* operation is client-local and the protocol no longer declares `app.checkUpdate`.** It is now the fourteenth `ClientLocal` member, so this table finally does match that interface exactly — see §5b and the audit below |
 
-> **This table is the smaller half of step 3.** It lists the keys that must *never* be routed — and it
-> matches `ClientLocal` exactly. What it does not say is that **25 of the 93 protocol commands have no
-> registry implementation at all**, so they cannot be routed yet even though the client classifies them
-> as routable. See finding 5 above for the list and the consequences.
+> **This table is the smaller half of step 3.** It lists the keys that must *never* be routed — and as
+> of 2026-09-20 it **does** match `ClientLocal` exactly, at fourteen members. It did not before: the
+> table listed fourteen rows while `ClientLocal` had thirteen, and the odd row out was `app:checkUpdate`,
+> which was the surface's only `SPLIT`. Resolving it (below) is what made the two agree.
+>
+> What the table still does not say is the larger half of step 3: **25 of the 93 protocol commands had
+> no registry implementation at all**, so they could not be routed even though the client classified
+> them as routable. That backlog is now **closed** — every protocol command is registered — and finding
+> 5 above is the record of how.
+>
+> **And one correction this resolution forced on step 3's own framing.** `src/ipc/handlers.ts` says
+> `registerIpcHandlers()` "cannot be deleted yet" because `app.checkUpdate` still needs a channel.
+> That is now half true in a way worth stating: `app:checkUpdate` remains a **local channel** — it has
+> to, since the shell owns `app.getVersion()` and the platform match — so deleting the split does *not*
+> remove the need for a registration point. Step 3 therefore does not end by deleting
+> `registerIpcHandlers()`; it ends by **reducing** it to the local-handler entry point, with the legacy
+> command bodies gone. The local channels are not legacy, and no amount of routing removes them.
 
 ---
 
@@ -1389,15 +1501,22 @@ Delete the flag in the next release, once the seam has survived real usage.
      ✅ **done 2026-09-19: 140 of 144 keys route.** The client gained `pickSavePath` and a
      path-accepting `readArtifactFile`, and `writeArtifact` gained an optional destination. See
      *Step 3b-3* above.
-   - **3d** — unblock the pinned keys. ✅ **keys 1–2 done 2026-09-19: 143 of 144 keys route.** Three of
-     the four were **schema** problems rather than routing problems and were resolved by widening the
-     schema they were pinned on (`listAudit`, then `saveRunnerConfig` / `loadRunnerConfig`), not by
-     moving them. See *Step 3d* above.
-   - **then** delete `registerIpcHandlers()`. **This is now blocked on one key, not eight** —
-     `checkUpdate` (SPLIT), which is a genuine split resolved by P12 (§5b). So step 3 ends at
-     **92 registered + 1 split**, not "89 registered + 2 blocked + 1 narrowed + 1 split". Deleting
-     `registerIpcHandlers()` earlier would break that key on **both** paths at once, and the surface test
-     would still pass because the key stays exposed.
+   - **3d** — unblock the pinned keys. ✅ **keys 1–2 done 2026-09-19.** Three of the four were **schema**
+     problems rather than routing problems and were resolved by widening the schema they were pinned on
+     (`listAudit`, then `saveRunnerConfig` / `loadRunnerConfig`), not by moving them. See *Step 3d* above.
+   - **3f** — the last key. ✅ **done 2026-09-20: 144 of 144 keys are classified, zero `SPLIT`.** The
+     fourth pinned key was `checkUpdate`, and it was resolved by **deleting `app.checkUpdate` from the
+     protocol** — not by moving it and not by widening a schema. The whole operation is client-local, so
+     there was no engine half to contract with (§5b). It is now the surface's only key that is not a
+     protocol command at all.
+   - **then** reduce `registerIpcHandlers()`. **This is no longer blocked on a key** — but it is also
+     **not a deletion**, and that correction came out of resolving 3f. `app:checkUpdate` remains a
+     *local* channel, because the shell owns `app.getVersion()` and the platform match; local channels
+     are not legacy and no amount of routing removes them. So step 3 ends by **reducing**
+     `registerIpcHandlers()` to the local-handler entry point, with the legacy command bodies gone. The
+     original claim — "cannot be deleted yet, `checkUpdate` still needs a channel" — was right about the
+     blocker and wrong about the fix. Deleting it *early* would still have broken that key on **both**
+     paths at once, with the surface test green because the key stays exposed.
 
 ---
 

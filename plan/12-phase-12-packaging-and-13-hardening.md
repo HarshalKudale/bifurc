@@ -154,7 +154,7 @@ The full Tauri packaging problem, preserved for later:
 
 ---
 
-## Work item — the `app:checkUpdate` split
+## Work item — the `app:checkUpdate` split ✅ **resolved 2026-09-20, ahead of P12**
 
 `systemHandlers.ts:85` fetches GitHub Releases and selects an asset by `process.platform`. With split
 artifacts this becomes ambiguous — is it updating the shell or the engine?
@@ -163,6 +163,28 @@ Under D9 (lockstep), keep them one version and let the shell own the update:
 - Shell update → shell's own mechanism (Electron updater / Tauri updater).
 - Engine → updated as part of the shell payload, or via the container tag.
 - **`process.platform` will not exist in a browser**, so this handler must be client-side, not engine-side.
+
+> **Done early, because P6 could not close without it.** This was the last unrouted key (143 → 144), and
+> the plan's own §5b had left the design open. Resolved as: **the whole operation is client-local**, so
+> `app.checkUpdate` was **deleted from the protocol** rather than implemented engine-side, and
+> `checkUpdate` became the fourteenth `ClientLocal` member. `@bifurc/client` delegates to
+> `local.checkUpdate()`; `src/preload.ts` has no overrides left at all.
+>
+> The reason the engine could not own it is the third bullet above, made concrete: `currentVersion` is
+> the version of the thing the **user** runs, and `downloadUrl` must be the asset for the **user's**
+> platform. An engine matching its own `process.platform` hands a Windows user the AppImage, and its own
+> version only coincides under D9 lockstep. So there was no engine half to contract with.
+>
+> Two consequences for **this** phase:
+>
+> - The acceptance criterion *"`app:checkUpdate` moved client-side; no `process.platform` in the engine"*
+>   is **met** — and it was already true, since the handler was always shell-side. What changed is the
+>   classification, not the code.
+> - **Nothing in this phase is blocked on it any more.** The remaining `checkUpdate`-adjacent item is
+>   P12's own: an engine-side update mechanism for a containerised engine, which D9 lockstep says is the
+>   container tag rather than an API call.
+>
+> Full argument, the three designs considered and the test surgery: `plan/07` §5b.
 
 ---
 

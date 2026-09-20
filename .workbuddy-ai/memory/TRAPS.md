@@ -160,6 +160,28 @@ module-scope call at column 0 *and* one indented inside a top-level `if`/`try`; 
 misses the second (measured — it returned exit 1 on the indented probe while the guard failed on it).
 State in the test what it does *not* catch rather than implying completeness.
 
+## A guard built around a *pinned list* empties along with the list
+
+Found 2026-09-20, while deleting the last entry of a pinned list. Two ratchet tests in
+`tests/ipc/handlers.test.ts` were written as *"for each command in `NOT_IN_REGISTRY`, assert X"*. That is
+a correct guard while the list is non-empty and a **silent no-op** the moment it empties — `[].filter()`
+is `[]`, and `[]` equals `[]`, so it is green. Removing `app.checkUpdate` (the last pin) would have
+turned both green while checking nothing.
+
+**The rule: a guard over a *shrinking* list must be rewritten around its invariant, not its list.** Both
+were, and both came out **stronger**:
+
+- *"still serves every unregistered command on a legacy channel"* → **"no command is both unregistered
+  and unreachable"**, derived from `Object.keys(COMMANDS)` — a set that cannot shrink to zero.
+- *"confirms the client claims every pinned command is routable"* → **"every `transport`/`shim` surface
+  entry names a registered command"**. The list form could only catch a command *already on the list*;
+  the invariant form catches a newly-added routed key whose command nobody implemented — the actual bug
+  class.
+
+Pair it with a non-vacuity floor, and expect the floor to be wrong the first time: written as `> 80`, it
+failed immediately at the real figure **75**. That is the guard working on its author, before it ever
+guarded the code.
+
 ## Assert containment of the inputs, not a re-derived copy
 
 Written while doing P6 work item 5 (the e2e data-dir isolation assertion). Two things to carry forward.
@@ -305,6 +327,13 @@ transient; just retry.
   every test dying in ~850 ms at `firstWindow()` with `Target page, context or browser has been closed` —
   the exact numbers `plan/07` Preconditions already records. **A matching count is the confirmation, not a
   regression**; the three controls there still hold.
+- **A repo-wide grep drowns in `coverage*/`.** Eleven generated coverage trees (`coverage/`,
+  `coverage-baseline/`, `coverage-run3/` … `coverage-run17/`) hold ~600 HTML files each, and each is a
+  **rendered copy of a source file** — so grepping for a renderer symbol returns 120 hits from coverage
+  before the one real hit. Measured 2026-09-20 on `__APP_VERSION__`: 12 useful hits buried under ~110.
+  **Scope every search to `src/ renderer/ packages/*/src tests/ e2e/`, or pass
+  `glob: "!**/coverage*/**"`.** The same applies to `dist/` (compiled copies) and `release/` (extracted
+  asars) — all three are generated, all three are large, none is a source of truth.
 - **`npx playwright test` from the agent shell dies *before* any spec runs**, and the error is the
   safe-delete guard, not Playwright: Playwright wipes `test-results/` at startup, which is **139 entries**
   (past the 50/turn threshold) → `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] … "targets":
