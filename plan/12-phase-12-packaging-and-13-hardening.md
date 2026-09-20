@@ -82,6 +82,29 @@ two options: add `packages/{engine,protocol}/dist/**/*` to `files` **and** make 
 resolvable, or have `tsc-alias` rewrite `@bifurc/*` to a relative path into a vendored directory.
 The CI assertion at the end of this section should be extended to cover whichever is chosen.
 
+### Re-measured 2026-09-20 — **superseded**: it already resolves, and the defect was stale output
+
+The note above has an answer, and its prediction was wrong in a useful way. `npm run build:main` followed
+by one `electron-builder --dir` run against the current tree shows electron-builder 26.8.1 **does**
+dereference the workspace: `node_modules/@bifurc/{engine,protocol,client}` are in the asar, each with its
+`package.json`, and **44 of 44** of the `@bifurc/...` specifiers the bundle requires resolve *inside* the
+archive. So `build.files` needs no change, and neither of the two options above is required.
+
+The 2026-09-10 asar could not show the failure for a second reason the note half-anticipated: it predates
+the dependencies, so "`node_modules/@bifurc` absent" meant "nothing depended on it", not "electron-builder
+drops workspace links".
+
+The real defect was elsewhere. `tsc` never deletes its output, so **92 of 116** `dist/*.js` files were
+compiled copies of modules P2 had moved into `packages/engine` — **447 KB of a second, frozen engine
+inside the asar**, one file of which (`dist/shutdown.js`) requires a module that no longer exists under
+any name. Fixed by `scripts/clean-main-dist.mjs` on every `build:main`, and guarded by
+`scripts/assert-packaged.mjs`, which `release.yml` now runs against the Windows artifact before upload.
+
+**Full detail, evidence and the three-way verification: `plan/07` → work item 4, "Measured 2026-09-20".**
+The `assert-artifacts` job this section asks for is therefore **partly landed** — the resolution half, on
+Windows. The engine-binary half still waits on the process split, and the Linux equivalent
+(`linux-unpacked/resources/app.asar`) is recorded but not wired.
+
 ### There is a precedent for this exact failure
 
 `src/main.ts` previously broke because icons moved to `build/` and were dropped from `build.files`, while
