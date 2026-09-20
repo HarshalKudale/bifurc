@@ -103,6 +103,28 @@ function fakeLocal() {
       seen.push("tlsInstallCA");
       return { ok: true };
     },
+    // `local` as of 2026-09-20, alongside `tlsInstallCA` — both compose the engine's half with the
+    // host's OS trust store, so neither can be answered by routing (`plan/07` §5b-bis). Returning the
+    // full eight-field shape here rather than a stub is deliberate: the routed form's whole defect was
+    // that three of these arrived `undefined`, and a fixture that omitted them would reproduce the bug
+    // while looking satisfied.
+    tlsRemoveCert: async () => {
+      seen.push("tlsRemoveCert");
+      return { ok: true, engineRemoved: true, clientUntrusted: true };
+    },
+    tlsCertStatus: async () => {
+      seen.push("tlsCertStatus");
+      return {
+        generated: false,
+        certPath: null,
+        keyPath: null,
+        fingerprint: null,
+        trustedFingerprint: null,
+        trustState: "none",
+        firefoxDetected: false,
+        firefoxProfiles: 0,
+      };
+    },
     openFileDialog: async () => {
       seen.push("openFileDialog");
       return null;
@@ -528,13 +550,23 @@ function slicingTransport(whole: Uint8Array, chunkBytes: number) {
   return { t, calls };
 }
 
-/** A `ClientLocal` whose `writeArtifact` records the base64 it was handed. */
+/**
+ * A `ClientLocal` whose `writeArtifact` records the base64 it was handed.
+ *
+ * `pickSavePath` is here because `exportAudit` is **dialog-first** as of 2026-09-20: the key used to
+ * take `artifactToFile`'s artifact-first default, which meant these four tests reached the artifact
+ * machinery without a dialog ever existing in the fixture. With the ordering corrected the dialog runs
+ * first, so a fixture without `pickSavePath` short-circuits to `{ok:false}` and tests nothing — which
+ * is exactly how the four below announced the fix. The ordering itself is asserted in
+ * "createClient — dialog-first egress" below, not here.
+ */
 function writingLocal() {
   const writes: { contentBase64: string; suggestedName: string; mimeType: string }[] = [];
   const { local } = fakeLocal();
   return {
     local: {
       ...local,
+      pickSavePath: async () => "/tmp/audit-log.json",
       writeArtifact: async (contentBase64: string, suggestedName: string, mimeType: string) => {
         writes.push({ contentBase64, suggestedName, mimeType });
         return { ok: true, filePath: "/tmp/out" };
@@ -755,6 +787,48 @@ describe("createClient — dialog-first egress (step 3b-3)", () => {
       .resolves.toEqual({ ok: false, canceled: true });
     // Fail fast: the whole point of dialog-first is that nothing was rendered.
     expect(calls.some((c) => c.cmd === "export.create")).toBe(false);
+  });
+
+  it("exportAudit asks where BEFORE it asks the engine to render", async () => {
+    /**
+     * The regression this pins, found 2026-09-20 by the §5b-bis twin audit in `plan/07`. `exportAudit`
+     * called `artifactToFile(await call("exportAudit", …))` with no `destPath`, so the engine ran
+     * first and the dialog second — and `audit.export` is `queryLog({ limit: 0 })`, the workspace's
+     * **entire** `git log`. Cancelling therefore still paid for the full query, which is precisely the
+     * cost `src/ipc/handlers/syncHandlers.ts` records P3 removing when it made this channel
+     * dialog-first.
+     *
+     * Ordering is asserted rather than values because that is the whole defect, and because the
+     * default that produced it is invisible in the call: `artifactToFile` is artifact-first unless its
+     * third argument is passed. `exportAudit`'s own tests all passed while the order was wrong.
+     */
+    const order: string[] = [];
+    const { local } = fsLocal();
+    local.pickSavePath = async () => {
+      order.push("dialog");
+      return "/tmp/audit-log.json";
+    };
+    const { t } = respondingTransport((cmd) => {
+      order.push(cmd);
+      return { ok: true, inline: "eA==" };
+    });
+    const client = createClient(t, { local });
+
+    await client.exportAudit("json");
+
+    // No format-table call here, unlike `exportData`: `audit.export` takes `{format}` alone, so the
+    // dialog's chrome needs nothing from the engine and the command has no reason to precede it.
+    expect(order).toEqual(["dialog", "audit.export"]);
+  });
+
+  it("exportAudit reports a cancel and never runs the command", async () => {
+    const { local } = fsLocal({ savePath: null });
+    const { t, calls } = respondingTransport(() => ({ ok: true, inline: "eA==" }));
+    const client = createClient(t, { local });
+
+    await expect(client.exportAudit("json")).resolves.toEqual({ ok: false });
+    // Fail fast: nothing was rendered, so the whole-log query never ran.
+    expect(calls.some((c) => c.cmd === "audit.export")).toBe(false);
   });
 
   /**

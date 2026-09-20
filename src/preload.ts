@@ -66,6 +66,12 @@ const client = createClient(createIpcTransport(), {
     getTheme: () => ipcRenderer.invoke("theme:get"),
     setTheme: (themeId: string) => ipcRenderer.invoke("theme:set", themeId),
     tlsInstallCA: () => ipcRenderer.invoke("tls:installCA"),
+    // Two-sided, so both are `local` as of 2026-09-20: the engine half still travels the transport
+    // (the client's own `commandFor` reaches `tls.certStatus` / `tls.removeCert`), and the OS
+    // trust-store half runs in this process — see `clientHandlers.ts`. Routing them was the bug: each
+    // delivered the engine half and dropped the client's, and `tlsRemoveCert` did it on a live path.
+    tlsRemoveCert: () => ipcRenderer.invoke("client:tlsRemoveCert"),
+    tlsCertStatus: () => ipcRenderer.invoke("client:tlsCertStatus"),
     openFileDialog: () => ipcRenderer.invoke("dialog:openFile"),
     pickFilePath: (title: string, filters?: unknown) => ipcRenderer.invoke("dialog:pickFilePath", title, filters),
     pickFolderPath: (title: string) => ipcRenderer.invoke("dialog:pickFolderPath", title),

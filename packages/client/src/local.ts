@@ -98,12 +98,43 @@ export interface ReadFileOptions {
 }
 
 export interface ClientLocal {
-  // ── the ten declared in BifurcApi ────────────────────────────────────────
+  // ── the twelve declared in BifurcApi ─────────────────────────────────────
   openExternal: BifurcApi["openExternal"];
   setTitleBarOverlay: NonNullable<BifurcApi["setTitleBarOverlay"]>;
   getTheme: NonNullable<BifurcApi["getTheme"]>;
   setTheme: NonNullable<BifurcApi["setTheme"]>;
   tlsInstallCA: BifurcApi["tlsInstallCA"];
+
+  /**
+   * Un-trust the engine's CA — **two-sided**, and that is the whole reason it is local.
+   *
+   * **Reclassified `transport` → `local` on 2026-09-20** (`plan/07` §5b-bis). The key used to route
+   * to `tls.removeCert`, which is the engine's half alone: the engine deletes its keypair, and the
+   * *client* is supposed to un-trust the certificate it installed, using the
+   * `AppSettings.tlsTrustedCa` record written at install time. Routing it therefore left the OS store
+   * trusting a CA whose keypair was gone — and `renderer/panels/settings/TlsSettingsSection.tsx`
+   * calls this from the "remove certificate" button, so the UI reported success while the browser
+   * went on trusting it. `certLifecycle.uninstallEngineCa()` names that exact failure in its own
+   * docblock, and it is the failure routing this key reintroduced.
+   *
+   * The implementation still calls `tls.removeCert` **through** the transport and then un-trusts
+   * locally, so the engine half keeps travelling the wire; what changed is who composes the two.
+   */
+  tlsRemoveCert: BifurcApi["tlsRemoveCert"];
+
+  /**
+   * The engine's certificate identity **joined with** the client's trust-store summary.
+   *
+   * **Reclassified `transport` → `local` on 2026-09-20**, for the same reason as `tlsRemoveCert`.
+   * Routed to `tls.certStatus` it delivered the engine's half — `generated`, `certPath`, `keyPath`,
+   * `fingerprint` — and dropped the three fields that answer the question the panel actually asks:
+   * `trustState` (`none` / `trusted` / `stale`), `firefoxDetected` and `firefoxProfiles`, all from
+   * `certLifecycle.readTrustSummary()`. They arrived `undefined`, and `undefined` is neither
+   * `"trusted"` nor `"stale"`, so the drift warning could not render — the one state
+   * `certLifecycle` exists to explain, and the one whose absence produces an unexplained TLS error.
+   */
+  tlsCertStatus: BifurcApi["tlsCertStatus"];
+
   openFileDialog: BifurcApi["openFileDialog"];
   pickFilePath: BifurcApi["pickFilePath"];
   pickFolderPath: BifurcApi["pickFolderPath"];
@@ -126,7 +157,7 @@ export interface ClientLocal {
    *   `process.platform` would hand a Windows user the AppImage.
    *
    * So this is the one key where the whole operation is local, and `packages/protocol` no longer
-   * declares `app.checkUpdate` at all. That is the difference between this member and the nine
+   * declares `app.checkUpdate` at all. That is the difference between this member and the eleven
    * above: those are declared in the protocol and merely *served* locally, while this one is not a
    * protocol command and never was one it could be.
    */
@@ -159,11 +190,23 @@ export interface ClientLocal {
    *
    * Why both forms rather than one dialog-first path for everything: `File_Ops_Protocol.md` §3.2
    * requires the dialog before the command *because the command renders something expensive the user
-   * might abandon* — a 200 MB workspace archive, a runner report. That applies to `exportData` and
-   * `exportRunnerReport`, which is why those two pass `destPath`. The other egress methods
-   * (`exportAudit`, `tlsExportCert`, `shareCaptureJson`) hand over bytes the engine has already
-   * produced, so reordering them buys nothing and would cost the engine's own suggestion as the
-   * dialog's default name — a change the user can see.
+   * might abandon* — a 200 MB workspace archive, a runner report. That applies to `exportData`,
+   * `exportRunnerReport` and `exportAudit`, which is why those three pass `destPath`. The remaining
+   * two (`tlsExportCert`, `shareCaptureJson`) hand over bytes the engine has already produced at no
+   * real cost — a CA certificate read off disk, a `JSON.stringify` of entries the renderer already
+   * held — so reordering them buys nothing and would cost the engine's own suggestion as the dialog's
+   * default name, a change the user can see.
+   *
+   * **`exportAudit` sat in that second list until 2026-09-20, and it does not belong there.** Its
+   * artifact is the one egress payload with **no natural size ceiling**: `audit.export` runs
+   * `queryLog({ limit: 0 })`, which is the workspace's *entire* `git log`, so cancelling after the
+   * command still pays for the whole query — exactly the cost `src/ipc/handlers/syncHandlers.ts` says
+   * P3 removed by making this channel dialog-first, and exactly what
+   * `packages/engine/src/fileOps/commands.ts` means by "the one egress artifact with no natural size
+   * ceiling". This docblock named the method as cheap, `exportAudit` then took `artifactToFile`'s
+   * artifact-first default on that basis, and the regression and the rationale sanctioning it arrived
+   * together — which is why reading the call looked like reading the design. Corrected in the same
+   * pass that fixed the call.
    *
    * **`contentBase64` is base64, not a decoded string.** The engine's artifacts are bytes —
    * `workspace-zip` is a ZIP, and a `.pem` is only accidentally text — and base64 is the one
