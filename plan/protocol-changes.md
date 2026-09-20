@@ -400,6 +400,78 @@ than defer them to P12.
 
 ---
 
+### 2026-09-20 — `app.checkUpdate` deleted; the update check is client-local
+
+**Phase:** P6 (step 3f)
+**Type:** breaking (empty in practice — see "Why this is not a `PROTOCOL_VERSION` bump")
+**Change:** `app.checkUpdate` removed from `COMMANDS` in `packages/protocol/src/commands/index.ts`
+(**93 → 92**). `AppCheckUpdateParams` / `AppCheckUpdateResult` are deleted from `commands/misc.ts`, the
+row is deleted from `commands/fixtures.ts`, and `"app.checkUpdate": "read"` is deleted from
+`packages/engine/src/transport/auth/scopes.ts`. Three consumers move with it, and none of them changes
+behaviour:
+
+- `@bifurc/client`'s `surface.ts` reclassifies the `checkUpdate` key `t("app.checkUpdate")` →
+  `local(...)` — the classification counts move **transport 73 → 72, local 13 → 14**, and this is the
+  surface's last `SPLIT`, so the inventory is now 144 of 144 with none remaining.
+- `@bifurc/client`'s `index.ts` delegates to `local.checkUpdate()` instead of `call("checkUpdate", {})`.
+- `src/preload.ts` loses its **last** override. `contextBridge.exposeInMainWorld("api", { ...client })`
+  now has no exceptions for the first time.
+
+**Why it could not wait:** the command was **declared but never served**, and the gap between those two
+facts was already producing a wrong answer. No engine module ever registered `app.checkUpdate` —
+`packages/engine/src/proxy/serverCommands.ts` carries a section titled "What is deliberately absent:
+`app.checkUpdate`". But `@bifurc/client` classified the key `{kind: "transport"}`, and `commandFor()`
+resolves that through `SURFACE`, so `client.checkUpdate()` sent `app.checkUpdate` over the transport and
+would have been answered `UNKNOWN_COMMAND`. The Electron shell never hit that path only because
+`src/preload.ts` **overrode** the key with a local channel (`app:checkUpdate`,
+`src/ipc/handlers/systemHandlers.ts:27`), which does the fetch in the shell. The command was therefore
+dead on the wire and shadowed in the shell — and the pin that kept it visible was load-bearing.
+
+**The silent failure the pin was protecting against.** `AppCheckUpdateResult` carries `tagName`; the
+renderer's `UpdateCheckResult` reads `hasUpdate` / `currentVersion` / `latestVersion` / `releaseUrl`.
+`@bifurc/client` bridged the two with `as ReturnType<BifurcApi["checkUpdate"]>` — a cast in the
+direction that fails **silently**. Routing it as-is would have left `hasUpdate: undefined`, which is
+falsy, so the About panel would have rendered "you're up to date" forever and nothing anywhere would
+have raised an error. Resolving the split removes the cast rather than honouring it.
+
+**Why the split resolves to the client, not the engine.** `currentVersion` is the version of the thing
+the *user* is running, and `downloadUrl` must be the asset for the *user's* platform. An engine can
+produce neither correctly: its own version only coincides under D9 lockstep, and matching its own
+`process.platform` would hand a Windows user the AppImage. Both are properties of the client. There was
+no engine half to contract with, so the honest resolution was deletion rather than implementation.
+
+**Why this is not a `PROTOCOL_VERSION` bump.** The same argument as the 2026-09-17 entry: the schema
+described a command **no implementation has ever registered**, so no deployed client could depend on
+it. `PROTOCOL_VERSION` stays `"1.0.0"`. Note the shape of the exception, though, because it is narrower
+than it looks. This is the second time the freeze rule has been discharged by "nothing was ever
+served", and the first time the command in question was one a **client did route**. The distinguishing
+question is not "was it implemented" but "could any deployed client have observed it on the wire", and
+here the answer is no only because the shell's preload override shadowed the routed path. Had the
+override not existed, this would have been a real breaking change and owed a major bump.
+
+**Affected:** `app.checkUpdate` (removed). The surface key `checkUpdate` **survives** — it is
+reclassified, not deleted — so `window.api` stays byte-identical and non-negotiable #3 is untouched.
+`@bifurc/client` gains `checkUpdate` as the fourteenth `ClientLocal` member. No events, no other
+commands. `plan/handler-classification.md`'s row 92 records this channel as `SPLIT`; that file is the
+frozen P1 measurement and is deliberately **not** retro-edited — this entry is the delta.
+
+**Migration:** none. `@bifurc/client`'s `checkUpdate` is unchanged for callers — same key, same result
+shape, now served by `local.checkUpdate()` from the runtime the client is actually running on. The
+shell's `app:checkUpdate` channel is unchanged, so the packaged app behaves identically.
+
+**Recorded after the fact, and that is itself the finding.** The rule at the top of this file says
+"write the entry first, then make the change". This one was written the same session but **after** the
+commits (`3c984fe`, `7387f33`), because the deletion was made under the same decision and the log
+obligation was missed at commit time. The change was correct; the bookkeeping was not. It is recorded
+here rather than silently backfilled so that the next post-freeze change is not the third one caught
+late.
+
+**Approved by:** this session, on the user's explicit decision among the three designs audited in
+`plan/07` §5b — **B, reclassify as local** — chosen over A (add an engine command) and C (a pure
+preload function with no IPC).
+
+---
+
 
 ## Guidance
 
