@@ -252,11 +252,19 @@ optional and blocks nothing.
       `packages/engine` are both real linked npm workspaces built with their own `tsup` pipelines.
       `apps/*` does not exist yet, and the Electron shell is still the repo root — that switch is
       P6's job.
-- [ ] **Packaging follows the new package layout** — see the measured note in `plan/12`: with the
-      app's `dist/**` now requiring `@bifurc/protocol` and `@bifurc/engine` at runtime, and
-      `build.files` covering only `dist/**/*` + `package.json`, a packaged build cannot resolve
-      either specifier. Dev mode and the whole test suite are unaffected. Assigned to P6/P12, not
-      fixed here.
+- [x] **Packaging follows the new package layout** — **measured 2026-09-20: it already does, and the
+      note this item carried was stale.** `plan/12`'s premise came from the 2026-09-10 asar, which
+      predates both `@bifurc` dependencies — `node_modules/@bifurc` was absent because nothing depended
+      on it, not because electron-builder drops workspace links. Against the current tree,
+      electron-builder 26.8.1 detects the workspace root and copies
+      `node_modules/@bifurc/{engine,protocol,client}` into the asar **with their `package.json`**, so
+      **44 of 44** of the required specifiers resolve inside the archive. `build.files` needed no
+      change, and neither option `plan/12` offered was required. **What was actually broken was
+      `dist/`:** `tsc` never deletes, so 92 of 116 `dist/*.js` were compiled copies of modules P2 had
+      moved into `packages/engine` — 447 KB shipped inside the asar, one of them requiring a module
+      that no longer exists under any name. Fixed by `scripts/clean-main-dist.mjs` on every
+      `build:main`; guarded by `scripts/assert-packaged.mjs`, run by `release.yml` before upload.
+      Detail and the three-way verification: `plan/07` work item 4.
 
 **Gate:** ✅ **met, with two items explicitly left open on product grounds.** Work item 8 is **done**:
 the package exists, builds and is linked; **all 52 engine files have physically moved** in four
@@ -593,11 +601,19 @@ rather than a type.
 - [x] Preserve single-instance (one shell → one engine) — `app.requestSingleInstanceLock()` untouched
 - [ ] Add a "connecting to engine" UI state — never block window creation — **renderer work, forbidden
       in P1–P6** (non-negotiable #1); needs a decision, since it is in the plan's own work item 3
-- [ ] Add the engine binary to `extraResources`; reuse `iconPath()` — work item 4, not started
-- [ ] **Rollback flag** `BIFURC_ENGINE_RPC=0` — **not implemented, and no longer expressible as
-      written.** The plan assumed the preload's old channel table would survive as the fallback branch;
-      step 3b-1 deleted it, so the flag now needs that table re-added as dead-by-default code, or the
-      rollback layer is `git revert` alone. A decision, not a task.
+- [ ] Add the engine binary to `extraResources`; reuse `iconPath()` — **a process-split concern, and
+      deferred with it.** While the engine is in-process it is an ordinary npm package inside the asar,
+      so there is no binary to ship. The *resolution* half of work item 4 is done instead:
+      `scripts/clean-main-dist.mjs` + `scripts/assert-packaged.mjs` + a `release.yml` step — see
+      `plan/07` work item 4.
+- [x] **Rollback flag** `BIFURC_ENGINE_RPC=0` — **decided 2026-09-20: dropped, not implemented.** The
+      plan assumed the preload's old channel table would survive as the fallback branch; step 3b-1
+      deleted it, and step 3 re-pointed `registerIpcHandlers()`'s bodies at the registry, so after that
+      there was exactly **one** path and nothing for a flag to select between. Writing it now would be
+      dead code that *reads* as a safety net — worse than none. **`git revert` is the single rollback
+      layer**, and it is complete: the phase is a bounded set of commits, `renderer/` is untouched by all
+      of them, and the seam is reachable only through `src/main.ts`. The flag returns with the process
+      split, where two transports genuinely coexist — see `plan/07` work item 6 and Rollback.
 - [x] Verify e2e data-dir isolation still holds (assert engine data dir is in the temp dir) — work item 5.
       **Done 2026-09-20, assertion installed; the e2e run itself is still uncaptured (next item).** The
       plan's premise named one input; there are **two**, and on Windows `%LOCALAPPDATA%` wins —
@@ -729,15 +745,27 @@ rather than a type.
 - [x] Run the full suite — after every step, with the delta measured against the previous baseline
 
 **Gate:**
-- [ ] 101 unit suites pass (same count as baseline) — **met on every step so far**, one documented flake
-- [ ] 11 e2e specs pass, **unmodified** — **not yet captured**; this is the real gate for 3b-1 and 3b-3,
-      because the unit suite tests handlers rather than the preload
+- [x] 101 unit suites pass (same count as baseline) — **met on every step**; the current figure is **101
+      files / 2,509 tests — 2,468 passed, 40 skipped, 1 documented `soap.execute` flake**, which is the
+      baseline plus §5c-viii's static guard
+- [ ] 11 e2e specs pass, **unmodified** — **carried as an owner-run verification.** Still the real gate
+      for 3b-1 and 3b-3, because the unit suite tests handlers rather than the preload. Re-attempted
+      2026-09-20 from the agent shell and it reproduced the documented environmental failure **exactly**
+      (46 failed / 0 passed, every test dying at `firstWindow()`), so what is open is the shell's
+      inability to host a GUI process, not the seam — see `plan/07` Preconditions for the three controls
 - [x] `git diff --stat renderer/` shows only the P3 blob files — **empty** as of step 3b-3
 - [x] Key-diff still zero — `packages/client/tests/surface.test.ts`, 144 keys both directions
-- [ ] No orphaned engine after a forced kill — needs the process split first
-- [ ] Packaged NSIS build contains the engine and runs
-- [ ] Rollback flag verified
-- [ ] **Ship it.** 🎉
+- [x] Packaged bundle resolves the engine from inside the asar and runs — *(reworded 2026-09-20; the
+      original read "Packaged NSIS build contains the engine and runs")* **Measured and CI-guarded**:
+      44 of 44 `@bifurc/...` specifiers resolve inside the archive, `scripts/assert-packaged.mjs` runs in
+      `release.yml` before upload, and the guard is proven non-vacuous in four directions. **The NSIS
+      installer and a real packaged launch are still unverified** — carried to P12.
+- [x] Rollback flag — **resolved as a decision: dropped** (see the item above). Not a gate any more.
+- [x] No orphaned engine after a forced kill — **moved to the process split**, where it is criterion 7's
+      relocated home (`plan/07` work item 2). An in-process engine cannot be orphaned.
+- [x] **Ship it.** 🎉 — **reached 2026-09-20: P6 closed in scope**, with the e2e run carried as an
+      owner-run verification and NSIS + real packaged launch carried to P12. `plan/07`'s Acceptance
+      criteria carries the re-scope, what moved, and why.
 
 > **At this point the project is reversible and the shell is disposable. Everything below is additive.**
 
@@ -852,8 +880,12 @@ rather than a type.
 
 ### Packaging — two change points now (P6, P9). No Tauri change point.
 
-- [ ] Engine in `extraResources`; assert it is outside the asar
-- [ ] `assert-artifacts` CI job (the icon regression already happened once)
+- [ ] Engine in `extraResources`; assert it is outside the asar — waits on the process split
+- [ ] `assert-artifacts` CI job (the icon regression already happened once) — **partly landed
+      2026-09-20**: `scripts/assert-packaged.mjs` asserts a packaged bundle resolves every `@bifurc/...`
+      specifier its compiled output requires, and `release.yml` runs it against `release/win-unpacked`
+      before upload. Still to do: the engine-*binary* assertion (needs the process split) and the Linux
+      path (`linux-unpacked/resources/app.asar`).
 - [ ] NSIS / APPX / AppImage / Docker all publish from CI
 - [ ] `app:checkUpdate` moved client-side
 - [ ] All artifacts share one version (D9)

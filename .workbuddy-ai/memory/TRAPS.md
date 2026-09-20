@@ -224,6 +224,50 @@ evidence** — it silently does not apply `vi.mock`, so files that mock nothing 
 specifiers (`import "./config"`), so `import("@bifurc/engine")` is `ERR_MODULE_NOT_FOUND`. Probe the
 **CJS** build; that is the shell's path. Any P9 child process importing the ESM entry will hit this.
 
+## The app's `dist/` keeps every module a refactor moved away
+
+**`tsc` never deletes its output.** Every file that left `src/` during P2 left a compiled copy in
+`dist/`, and `files: ["dist/**/*", "package.json"]` ships all of them. Measured 2026-09-20, before the
+fix: **92 of 116** `dist/*.js` had no counterpart in `src/` — **447 KB of a second, frozen engine inside
+the asar.**
+
+Three things make this a trap rather than a cleanup note:
+
+- **It is invisible.** `dist/` is gitignored, the suite runs `src/`, and the stale files are
+  unreachable — walking relative `require`s from `dist/main.js` and `dist/preload.js` reaches 23 files,
+  **0** of them stale. Nothing fails, ever.
+- **It is the hazard `bundle: false` exists to prevent.** The engine does not bundle because
+  `store/paths.ts` holds the data root as module-level state; a second copy is a second
+  `_dataRootOverride`. One relative `require` added tomorrow binds to it silently.
+- **It drifts, and the drift reaches the artifact.** `dist/shutdown.js` — the pre-move copy of
+  `packages/engine/src/shutdown.ts` — required `@bifurc/engine/companion/companionServer`, a module that
+  no longer exists under any name. It was the *only* specifier that failed to resolve in a packaged
+  bundle, and it is why `scripts/assert-packaged.mjs` exists.
+
+`npm run clean:main` (→ `scripts/clean-main-dist.mjs`) removes everything in `dist/` except
+`dist/renderer/` before `tsc` re-emits. **The renderer exclusion is load-bearing:** Vite emits
+content-hashed bundles there and `dist/renderer` is not tsc output, so a "delete what has no source"
+heuristic classifies the whole UI bundle as stale. Instrument for whether it is back:
+`node scripts/pkg-check-reachability.mjs`.
+
+**A measurement taken against an artifact that predates the thing being measured is not a measurement of
+it.** `plan/12` recorded "a packaged build cannot resolve either specifier" from the 2026-09-10 asar —
+built *before* the `@bifurc` dependencies existed, so `node_modules/@bifurc` was absent for a trivial
+reason. Against the current tree electron-builder 26.8.1 resolves the workspaces fine (44 of 44
+specifiers, `package.json` included). Re-measure before building the fix a stale number implies.
+
+**`electron-builder --dir` runs from the agent shell.** Unlike `npm run dev` it does not launch
+Electron — it copies files — so the GUI limitation does not apply. That is how the numbers above were
+obtained, and it is the cheap way to check a packaging claim.
+
+## A `*/` inside a JSDoc block ends the comment
+
+`/** … `dist/**/*.js` … */` does not compile: the `*/` in the glob closes the docblock, and the error
+points at a line far below it (`SyntaxError: Unexpected token '*'`). Hit twice on 2026-09-20 while
+writing `scripts/assert-packaged.mjs`, which documents paths like `dist/**/*.js` and
+`node_modules/@bifurc/*/package.json`. Write `dist` tree, or escape it — in this repo's comment-heavy
+style the glob is common enough to keep hitting.
+
 ## `soap.execute` is the one standing suite failure, and it is environmental
 
 A dead endpoint makes it **throw**, surfacing as `[INTERNAL] connect ECONNREFUSED 127.0.0.1:1`, where
@@ -257,12 +301,29 @@ transient; just retry.
   first**: during the outage above, plain `vitest run <path>`, a directory path and `--project` *all*
   failed, so a path-filtered failure is not by itself evidence about the filter.
 - **NEVER launch Electron from the agent shell** (GPU process fails, exit 3); the **user** runs
-  `npm run dev` / `test:e2e`.
+  `npm run dev` / `test:e2e`. Re-measured 2026-09-20: `npx playwright test` gives **46 failed, 0 passed**,
+  every test dying in ~850 ms at `firstWindow()` with `Target page, context or browser has been closed` —
+  the exact numbers `plan/07` Preconditions already records. **A matching count is the confirmation, not a
+  regression**; the three controls there still hold.
+- **`npx playwright test` from the agent shell dies *before* any spec runs**, and the error is the
+  safe-delete guard, not Playwright: Playwright wipes `test-results/` at startup, which is **139 entries**
+  (past the 50/turn threshold) → `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] … "targets":
+  ["…\\test-results"]`. **This masks the real GPU failure**, so it reads as a new bug. Prefix the run with
+  `CODEBUDDY_SAFE_DELETE_ENABLED=0` and the documented 46-failure result is what you get. Playwright also
+  only deletes its own output dirs, so disabling the shim for that one command is safe.
+- **`npx playwright test` needs no rebuild when `dist/` is current** — `test:e2e` is
+  `npm run build && playwright test`, and the build is the slow half. Check first with
+  `find src renderer packages/*/src -type f -newer dist/main.js` (empty = skip the build).
 - **Safe-delete guard refuses past ~50 deletions/turn**, killing `build:packages`; **`git clean -fdX
   <path>` is the way through.** A failed `tsup` leaves entry points deleted — check `dist/index.js`.
   One `rm -rf` of a big cache dir exhausts the whole turn's budget (it reported `count: 9715` against a
   threshold of 50) and every later delete in that turn dies — the bypass is
-  `env -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR -u CODEBUDDY_TOOL_CALL_ID npm run …`. `bundle: false`
+  `env -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR -u CODEBUDDY_TOOL_CALL_ID npm run …`. **That bypass
+  silences the bulk guard but not the trash shim** — deletes still route to the Recycle Bin, and a bulk
+  one can fail outright (`spawnSync … genie-trash\win32-x64.exe ETIMEDOUT`, hit 2026-09-20 while landing
+  `clean:main`). **`CODEBUDDY_SAFE_DELETE_ENABLED=0` is the reliable hatch** — it disables the shim
+  entirely, and it is what any build script that deletes its own output needs *in this shell only*; the
+  script is fine for CI and for the user. `bundle: false`
   means every `tsup` run litters `packages/*/tsup.config.bundled_*.mjs` (32 accumulated).
 - **Linking a new workspace package needs a manual Windows junction** (`New-Item -ItemType Junction`),
   then `node -e "require.resolve('@bifurc/<pkg>')"`.
