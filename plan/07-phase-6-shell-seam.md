@@ -1196,16 +1196,31 @@ store trusting the CA. Found by mapping every `dialog.showSaveDialog` / `showOpe
 is now `local` (live), which is why that audit's class-2 count moved 9 → 11 while the *dead* subset is 7.
 That reconciliation is what makes this measurement usable where the earlier one was not.
 
-**So the reduction is three decidable steps, and the first is a check, not a deletion:**
+**So the reduction is three decidable steps — and step 1 is already done, because it was the last read-only
+part.**
 
-1. **Confirm the client twin for each of the 7** — that the surface key which replaced it really does the
-   dialog (`pickSavePath` / `readArtifactFile`) *and in the right order* (`File_Ops_Protocol.md` §3.2). One
-   of the seven has already been caught this way and fixed: `audit.export` had taken the artifact-first
-   default, undoing P3's dialog-first ordering for the one egress artifact with no size ceiling.
-2. **Delete the other 68 as pure passthroughs**, per file, re-pointing the suites that drive them — the
-   test-migration rule §5b-ter established, and the unit is the handler group.
-3. **Leave `clientHandlers.ts` alone.** It holds 17 of the 18 live channels; they are what `window.api`
+1. **All 7 twins exist, and the ordering is deliberate.** `surface.ts` declares a counterpart for each
+   (`exportAudit: t("audit.export", "returns an artifact; the CLIENT writes the file, not the engine")`), and
+   `packages/client/src/local.ts` documents *why there are two forms*: **three are dialog-first** —
+   `exportData`, `exportRunnerReport`, `exportAudit` — because the command renders something expensive the user
+   might abandon (`File_Ops_Protocol.md` §3.2: a 200 MB workspace archive, the runner's report, the workspace's
+   *entire* `git log`), and **two are artifact-first** — `tlsExportCert`, `shareCaptureJson` — because they hand
+   over bytes already produced at no real cost, so reordering would buy nothing and would cost the engine's own
+   suggestion as the dialog's default name, which the user can see. `tlsImportKey` and `preflightImport` are
+   ingress: dialog → `blob.put` → command. **Checked against the call sites, not the prose** — `pickSavePath`
+   precedes `call(…)` in `exportData` (`index.ts:536` → `548`), `exportAudit` (`725` → `732`) and
+   `exportRunnerReport` (`850` → `864`), and the two artifact-first methods genuinely pass no `destPath`. Doc
+   and code agree *now*; they did not before, which is exactly how `audit.export` was found.
+   `local.ts:236-240` even records the intent: splitting the ask out "is what lets `exportData` and
+   `exportRunnerReport` move off the shell's legacy channels."
+2. **68 pure passthroughs remain to be deleted**, per file, re-pointing the suites that drive them — §5b-ter's
+   test-migration rule, the unit being the handler group.
+3. **`clientHandlers.ts` is not touched.** It holds 17 of the 18 live channels; they are what `window.api`
    actually invokes.
+
+**So no question is open before the reduction starts** — which is the point of having measured rather than
+read it. What remains is mechanical but not small: 68 deletions across 9 files, each with its suite to
+re-point, which is why it is the next slice rather than a footnote to this one.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
