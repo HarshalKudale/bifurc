@@ -247,6 +247,49 @@ describe("createClient — command routing and payloads", () => {
     expect(t.calls[1]).toEqual({ cmd: "entity.delete", payload: { kind: "proxyRules", id: "r-1" } });
   });
 
+  it("unwraps entity.create's {id, entity} envelope, which the surface does not declare", async () => {
+    /**
+     * `entity.create` answers `{ id, entity }` (`entityCrudCommands.ts:413`); the surface declares the
+     * *raw* entity, and the shell channels used to unwrap it. On the routed path nothing did, so all 16
+     * `add*` keys handed the panel the envelope — an object with an `id` and no other field, pushed
+     * straight into `config.mappings` / `config.proxyRules` / … by the panels. The
+     * `as ReturnType<BifurcApi[…] >` cast made the compiler agree with the **declaration** rather than
+     * the runtime, so nothing ever failed. The default transport in this file echoes `{ok:true}`, which
+     * has no `.entity` to unwrap — which is exactly why the tests above never caught it. This one drives
+     * the real shape.
+     */
+    const t = fakeTransport();
+    const { local } = fakeLocal();
+    const client = createClient(t, { local });
+
+    t.request = (cmd, payload) => {
+      t.calls.push({ cmd, payload });
+      return Promise.resolve({ id: "m-1", entity: { id: "m-1", name: "m" } });
+    };
+
+    await expect(client.addMock({ name: "m" } as never)).resolves.toEqual({ id: "m-1", name: "m" });
+  });
+
+  it("passes the gate-blocked create through unwrapped, because it is not an envelope", async () => {
+    /**
+     * The one `entity.create` result that is **not** `{id, entity}`: `environments` is the sole kind
+     * with a `gateKind`, and a blocked create returns `{error: "limit_reached", ...gate}` with no
+     * `.entity` (`entityCrudCommands.ts:410`). The shell passed that through unchanged, and the surface
+     * declares it — so the unwrap must leave it alone rather than reduce it to `undefined`.
+     */
+    const t = fakeTransport();
+    const { local } = fakeLocal();
+    const client = createClient(t, { local });
+
+    const gate = { error: "limit_reached", allowed: false, limit: 3, current: 3 };
+    t.request = (cmd, payload) => {
+      t.calls.push({ cmd, payload });
+      return Promise.resolve(gate);
+    };
+
+    await expect(client.addEnvironment({ name: "prod" } as never)).resolves.toEqual(gate);
+  });
+
   it("renames wsId to workspaceId and passes no workspaceId where the command omits it", async () => {
     const t = fakeTransport();
     const { local } = fakeLocal();
