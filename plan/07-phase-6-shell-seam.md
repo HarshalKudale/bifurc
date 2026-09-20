@@ -994,6 +994,76 @@ coverage. The 1 failure is `soap.execute`, the environmental one.
    deletion and its migration are one atomic change, and a half-landed stage 3b is not a smaller stage 3b —
    it is a red suite that reads as a code defect rather than as an unfinished edit.
 
+#### 5b-septies. Stage 3b, second slice — the 48 generated channels are gone, and stage 3b is complete (2026-09-20)
+
+**What landed.** `src/ipc/handlers/entityCrudFactory.ts` is **deleted** (115 lines). It generated the 48
+per-kind channels — 16 kinds × 3 ops, from 13 `registerEntityCrudHandlers` registrations plus 3
+`registerSimpleEntityHandlers` ones — and those channels died with it. The five callers (`crudHandlers`,
+`coreHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`) now call the engine's
+`registerCrudKind()` / `registerSimpleKind()` directly, which is what the factory was doing anyway, one
+wrapper deeper. **Stage 3b is complete: 57 of 57 channels deleted — 9 passthroughs (§5b-sexies) + 48
+generated.**
+
+**The split §5b-ter predicted was needed, and it was a *split*, not a deletion.** The factory did two
+unrelated things: `registerCrudKind(opts)` — the container insert, without which all 16 kinds throw
+`"<kind>" is not routed through the CommandRegistry yet` — and three `ipcMain.handle` calls. Only the
+second half is the dead half, so deleting the function outright would have been a plausible-looking edit
+that silently broke 16 kinds. The wrapper's channel half is what went; its container insert stayed, one
+call deeper, and the callers were re-pointed to it.
+
+**The five `ipc*` fields are gone from `CrudFactoryOpts`** (`ipcPrefix` / `ipcAdd` / `ipcUpdate` /
+`ipcDelete`, and `SimpleEntityOpts`' three), together with their only reader. Their docblock now keeps the
+history, because it is the trap the interface carried: `ipcPrefix` was a *behavioural discriminator* the
+engine branched on, and **deleting it before stage 3a translated those three reads to `opts.kind` would
+have silently killed the prepend, the `entity.changed` ping and the mapping cascade.**
+
+**Reconciliation: 101 files / 2,496 tests / 2,455 passed / 40 skipped / 1 failed.** The delta from stage
+3a's checkpoint (101 / 2,514 / 2,473 / 40 / 1) is **exactly −18 tests and −18 passed, with the failure
+count unchanged** — and the mechanism is nameable rather than inferred:
+
+> `tests/ipc/handlers.test.ts`'s `describe("registerIpcHandlers()")` builds `expectedChannels` and then
+> generates **one `it` per entry** (`for (const channel of expectedChannels) it(\`registers a handler for
+> "${channel}"\`, …)`). The 18 factory-generated names were removed from that list, so their 18 generated
+> tests went with them. This is the correct outcome, not lost coverage: the channels do not exist, so a
+> test asserting a handler for them would assert the *absence* of the thing the list exists to check. The
+> behaviour those channels fronted is covered at engine level by `entityCrudCommands`' suite and
+> `entityConflictScope`.
+
+**A mid-slice red suite, and why it was informative.** After the factory deletion the suite showed
+**3 failures**, not 1: `mock.add` and `mock.delete` in `tests/spike/protocolPoc.test.ts` answered `no
+legacy handler`. Those are the two channels of the ten that spike drives which the *factory* generated
+(the other eight are hand-written), so this is §5b-sexies' fixture growing exactly as designed — it now
+re-attaches **4 of 10** with the bodies they had, and reaches 10 of 10 precisely when the legacy surface is
+gone. Recorded because the count is a *measure of the pass*: 4/10 today is the honest figure, and the file
+becomes a pure envelope test at 10/10 — which is where the spike-retirement question (§5b-sexies item 1)
+lands.
+
+**Two corrections this slice forced, both of the same kind — a doc that had become false:**
+
+1. **`registerSimpleKind<T>` did not exist.** The three `registerSimpleEntityHandlers<SavedWsdl>`-style
+   calls became `registerSimpleKind<SavedWsdl>(…)`, which does not compile: `SimpleEntityOpts` is
+   `{ kind: string }`, so the function declares **no** type parameter. `registerCrudKind<T>` *is* generic,
+   because `CrudFactoryOpts<T>` genuinely consumes `T` (`validate`, `getNameEntry`, `onAddConflict`) —
+   while the simple path stores a kind *name* and never a shape. That asymmetry is real, so the three
+   type arguments and the three now-orphaned local interfaces (`SavedWsdl`, `SavedGraphQLSchema`,
+   `SavedProtoFile`) were deleted rather than the interface widened to keep the call compiling. Nothing
+   reads them: `noUnusedLocals` is off and there is no ESLint config, so an orphan would have been
+   **silent** — which is the reason to remove it rather than leave it.
+2. **`entityCrudCommands.ts`'s header described a world where the wrappers still existed.** Its own text
+   said `registerEntityCrudHandlers` / `registerSimpleEntityHandlers` "stay in the shell (they own
+   `ipcMain`)", and `registerCrudKind`'s docblock said "the shell keeps the three `ipcMain.handle`
+   channels". Both were true when written and false after this slice. Corrected in place, past-tense, with
+   the reason the split had to precede the delete. `scripts/p6-stage3b-slice2-docs.py` holds the exact
+   before/after for all six sentences, and asserts exactly one match each so a silent no-op is impossible.
+
+**What stage 3b left behind, deliberately.** The three files are now **named for something they no longer
+do**: `soapHandlers.ts` / `graphqlHandlers.ts` / `grpcHandlers.ts` register *kinds, not handlers*, and
+their entry points are still `registerSoapHandlers()` / `registerGraphqlHandlers()` /
+`registerGrpcHandlers()`. The names are now a lie and each file's docblock says so. Renaming them is a
+mechanical follow-up slice — it touches `src/ipc/handlers.ts`'s call sites and the by-hand registration
+lists in eight integration suites — and it was kept separate so that the *deletion* and the *rename* do
+not land in one commit, where a rename would bury a deletion in diff noise.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
