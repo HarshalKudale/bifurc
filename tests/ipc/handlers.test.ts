@@ -760,6 +760,65 @@ describe("src/ipc/handlers.ts", () => {
         expect(() => commandRegistry.invoke("server.status", { unexpected: 1 }, { bus }))
           .toThrow(/Invalid payload for command "server\.status"/);
       });
+
+      it("registers nothing at module scope — the §5c guard", async () => {
+        /**
+         * **The mechanism §5c needed and did not have.**
+         *
+         * The test above asks "is this command registered *in this process*" — and in this process the
+         * shell had registered all 51 of them at module scope, so a containerised engine (P9) answered
+         * `UNKNOWN_COMMAND` for commands that test called present. The ratchet was not wrong; it was
+         * answering a different question, and the difference is invisible from inside one process.
+         *
+         * The question that would have caught it is **static**, and it is this: registration must go
+         * through `register*Commands(registry)`, so the `commandRegistry` singleton is never registered
+         * directly. That is not a style preference — it is what makes the engine containerisable,
+         * because a consumer that supplies its own registry can only ever see commands registered
+         * *explicitly* against it. `createEngine()` registers no commands by design for the same
+         * reason.
+         *
+         * Checked as a **statement**, not a substring: `/^\s*commandRegistry\.register\(/` matches a
+         * line whose first non-whitespace content is the call. That catches module scope at column 0
+         * **and** a module-scope call wrapped in a top-level `if`/`try` block, while ignoring the two
+         * engine comments that quote the §5c grep pattern mid-line.
+         *
+         * Two shapes it does **not** catch, stated rather than implied: a call preceded by other code
+         * on the same line (`if (x) commandRegistry.register(...)`), and an indirect alias
+         * (`const r = commandRegistry; r.register(...)`). Both are pathological, and the natural shape
+         * is the one above — it is the shape all 51 took.
+         */
+        const read = async (glob: Record<string, () => Promise<unknown>>): Promise<Record<string, string>> =>
+          Object.fromEntries(
+            await Promise.all(Object.entries(glob).map(async ([file, load]) => [file, String(await load())])),
+          );
+
+        const shell = await read(import.meta.glob("../../src/**/*.ts", { query: "?raw", import: "default" }));
+        const engine = await read(
+          import.meta.glob("../../packages/engine/src/**/*.ts", { query: "?raw", import: "default" }),
+        );
+
+        /**
+         * **Anti-vacuity, and it is load-bearing.** A wrong glob returns `{}`, and every assertion
+         * below would then pass against an empty string — a guard that reads as coverage while
+         * covering nothing, which is worse than no guard. Assert the reader found the tree first.
+         */
+        expect(Object.keys(shell).length).toBeGreaterThan(20);
+        expect(Object.keys(engine).length).toBeGreaterThan(20);
+
+        /**
+         * The positive control: the same reader **does** see real registration code, so a zero for the
+         * singleton form means "not written that way" rather than "content never loaded". Without this
+         * the test is indistinguishable from one whose reader silently returned nothing.
+         */
+        const parameterised = Object.values(engine).join("\n").match(/^\s*registry\.register\(/gm) ?? [];
+        expect(parameterised.length).toBeGreaterThan(30);
+
+        const offenders = [...Object.entries(shell), ...Object.entries(engine)]
+          .filter(([, source]) => /^\s*commandRegistry\.register\(/m.test(source))
+          .map(([file]) => file.replace(/\\/g, "/"));
+
+        expect(offenders).toEqual([]);
+      });
     });
   });
 
