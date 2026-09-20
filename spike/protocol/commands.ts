@@ -102,7 +102,15 @@ export const commands = {
 
 export type CommandAction = keyof typeof commands;
 
-/** The legacy IPC channel each action dispatches to. */
+/**
+ * The legacy IPC channel each action dispatched to when this spike was written.
+ *
+ * **Two of these names no longer exist.** P6 stage 3b (2026-09-20) deleted `graphql:introspect`
+ * and `soap:execute` along with the other seven protocol-client passthroughs — each was a one-line
+ * `commandRegistry.invoke()` adapter. The map is left verbatim because it is the spike's own record
+ * of what the legacy surface was; `tests/spike/protocolPoc.test.ts` re-attaches the two deleted
+ * names to their commands so the ten-command envelope proof stays whole.
+ */
 export const LEGACY_CHANNEL: Record<CommandAction, string> = {
   "config.get": "config:get",
   "server.status": "server:status",
