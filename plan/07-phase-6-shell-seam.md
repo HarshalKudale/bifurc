@@ -1064,6 +1064,38 @@ mechanical follow-up slice — it touches `src/ipc/handlers.ts`'s call sites and
 lists in eight integration suites — and it was kept separate so that the *deletion* and the *rename* do
 not land in one commit, where a rename would bury a deletion in diff noise.
 
+#### 5b-octies. The rename slice — the three files stop lying, and "six" becomes five (2026-09-20)
+
+**What landed.** `src/ipc/handlers/{soap,graphql,grpc}Handlers.ts` → `{soap,graphql,grpc}Kinds.ts`, and their
+entry points `register{Soap,Graphql,Grpc}Handlers()` → `register{Soap,Graphql,Grpc}Kinds()`. They have
+registered **kinds, not handlers** since stage 3b deleted their channels: each has exactly three
+`registerCrudKind` / `registerSimpleKind` calls and **zero** `ipcMain.handle` calls (the only `ipcMain`
+mentions left in them are comments about the wrappers they used to have). `git mv` preserved history.
+
+**The blast radius was 24 references across three files**, not the eight suites §5b-septies predicted:
+`src/ipc/handlers.ts` (3 imports + 3 calls), `tests/integration/protocolExecution.integration.test.ts`
+(3 + 3), `tests/spike/protocolPoc.test.ts` (2 + 2). Measured, only those two test files touch these modules;
+the other suites that hand-register handler groups wire *different* groups. The earlier estimate came from
+"the suites that register handlers by hand" without checking which handlers — the same shape of error as the
+"132 legacy channels" undercount, in the other direction.
+
+**`crudHandlers.ts` deliberately keeps its name.** It registers six kinds **and** five live `webhook*`
+channels (`webhook:registerActive`, `webhook:unregisterActive`, `webhookServer:start|stop|status`), so
+"handlers" is still half-true there. Renaming it would have been the same mistake in reverse.
+
+**The "six caller files" claim was wrong, and P6 had repeated it four times.** It is **five** —
+`coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`. The sentence disproved
+itself: `plan/07` said *"none of the **six** caller files needed an edit"* and then listed exactly those
+five names. Verified rather than re-counted — `git log -S registerEntityCrudHandlers` and
+`git log -S registerSimpleEntityHandlers` return those five files and no others across the entire history,
+so six was never true, not even before some file was merged away. Corrected in five places (three in
+`entityCrudCommands.ts`, one each in `plan/07` and `plan/13`), and the correction is *recorded at the site*
+rather than silently applied, because the older docs still say six and someone will otherwise "restore" it.
+
+**Reconciliation: 101 files / 2,496 tests / 2,455 passed / 40 skipped / 1 failed — identical to §5b-septies,
+because a rename moves no test.** That is the expected outcome for this slice and the reason it was worth
+isolating: a pure rename with a *changed* suite count would have meant the rename broke something.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
@@ -1469,7 +1501,7 @@ writes to it.**
 
 The inversion: the containers went to the engine; the shell calls `registerCrudKind()` /
 `registerSimpleKind()` (the engine half) and keeps three `ipcMain.handle` channels per kind (the shell
-half). **Both factory signatures are byte-identical, so none of the six caller files needed an edit** —
+half). **Both factory signatures are byte-identical, so none of the five caller files needed an edit** —
 `coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`. That is the property
 to check first when what has to move is a factory rather than a command list: *can the exported
 signature survive unchanged?* If yes, the importer set stops mattering.
