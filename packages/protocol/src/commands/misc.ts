@@ -15,6 +15,7 @@
  */
 import { z } from "zod";
 import type { ArtifactResult } from "./blob";
+import { WorkspaceScope } from "./scope";
 
 const HeaderMap = z.record(z.string(), z.string());
 
@@ -83,10 +84,18 @@ export interface HealthbarCheckUrlResult {
   durationMs: number;
 }
 
-/** SPLIT — engine serializes the entries; client owns the save dialog (egress). */
+/**
+ * SPLIT — engine serializes the entries; client owns the save dialog (egress).
+ *
+ * `workspaceId` (P14 WI 8) is needed for the **blob half**, not for the serialization: above
+ * `BLOB_INLINE_THRESHOLD_BYTES` this stages a blob, and the client then reads it with `blob.read`
+ * scoped to its own workspace. Without the field the engine staged host-wide and the client's scoped
+ * read found nothing — the engine's own export unreadable by the client that requested it, which is
+ * the failure `export.create` already hit and fixed (`blob/publish.ts`).
+ */
 export const CaptureShareJsonParams = z.object({
   entries: z.array(z.unknown()),
   suggestedName: z.string().optional(),
-}).strict();
+}).merge(WorkspaceScope).strict();
 export type CaptureShareJsonParams = z.infer<typeof CaptureShareJsonParams>;
 export type CaptureShareJsonResult = ArtifactResult;

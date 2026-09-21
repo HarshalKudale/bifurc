@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import type { ArtifactResult } from "./blob";
+import { WorkspaceScope } from "./scope";
 
 export const AuditEntrySchema = z.object({
   commitHash: z.string(),
@@ -86,14 +87,32 @@ export const HistoryDiffParams = z.object({
 }).strict();
 export type HistoryDiffParams = z.infer<typeof HistoryDiffParams>;
 
-/** SPLIT — engine renders the content; client owns the save dialog. */
+/**
+ * SPLIT — engine renders the content; client owns the save dialog.
+ *
+ * ## `workspaceId` (P14 WI 8) fixes **two** things here, and the second is a correctness bug
+ *
+ * 1. **The blob half.** Above `BLOB_INLINE_THRESHOLD_BYTES` the export stages a blob, and the client
+ *    reads it with `blob.read` scoped to its own workspace — so without the field a *large* audit
+ *    export was unreadable by the client that requested it. This is the channel most likely to hit
+ *    that, because it is the one egress artifact with no natural size ceiling (below).
+ * 2. **Which log is exported at all.** The handler used to resolve the workspace itself as
+ *    `loadConfig().activeWorkspaceId`, with the reasoning that "widening the wire contract to carry an
+ *    id the engine can already look up would be a change with no beneficiary". **That reasoning is
+ *    desktop-only.** `activeWorkspaceId` is the *desktop's UI pointer* — §2.3 demotes it to exactly
+ *    that — so on a host serving N workspaces, an `audit.export` from workspace B returned the **active**
+ *    workspace's log. A caller could not ask for the log it meant. The parameter is what makes the
+ *    question expressible; the engine still falls back to the active workspace when it is omitted, so
+ *    the desktop's behaviour is unchanged.
+ */
 export const AuditExportParams = z.object({
   format: z.enum(["json", "csv"]),
-}).strict();
+}).merge(WorkspaceScope).strict();
 export type AuditExportParams = z.infer<typeof AuditExportParams>;
 /**
  * The one egress artifact with no natural size ceiling: the handler queries with `limit: 0`, i.e.
- * *every* entry the active workspace has ever recorded. That is precisely the payload the
- * inline/blob threshold exists for, so this is the channel where `BlobRef` earns its keep.
+ * *every* entry the requested workspace has ever recorded. That is precisely the payload the
+ * inline/blob threshold exists for, so this is the channel where `BlobRef` earns its keep — and the
+ * reason `workspaceId` above is load-bearing rather than ceremonial.
  */
 export type AuditExportResult = ArtifactResult;

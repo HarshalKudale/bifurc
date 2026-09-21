@@ -635,6 +635,78 @@ false. This entry records the landing, not a new decision.
 
 ---
 
+### 2026-09-21 — three of the five egress commands gain an optional `workspaceId` (P14 WI 8)
+
+**Phase:** P14 (work item 8, the egress half of D17)
+**Type:** **additive** (minor bump; no `PROTOCOL_VERSION` major)
+**Change:** `workspaceId?: string` is added to the params of `runner.exportReport`, `capture.shareJson` and
+`audit.export`. All three are `.strict()` and now merge the shared `WorkspaceScope` in the correct order
+(`Base.merge(WorkspaceScope).strict()` — see the D17 entry's measured `.merge()` trap).
+
+**Why: the blob half.** These commands return an `ArtifactResult`, and above
+`BLOB_INLINE_THRESHOLD_BYTES` (1 MiB) that is a **staged blob** which the client then reads with
+`blob.read` **scoped to its own workspace**. D17 gave the four `blob.*` params the namespace and
+`export.create` passed its id to `publishArtifact`; these three did not, so the engine staged host-wide
+while a scoped client read elsewhere — **the engine's own export unreadable by the client that requested
+it**, which is the exact failure `importExportBlob.integration.test.ts` caught for `export.create`. WI 8
+is that fix applied to the rest of the set, and `blob/publish.ts` now carries the whole table.
+
+**Why: `audit.export` had a second, worse problem.** Its handler resolved the workspace itself as
+`loadConfig().activeWorkspaceId`, reasoning that "the engine can already look up" the id. **That reasoning
+was desktop-only.** `plan/14` §2.3 demotes `activeWorkspaceId` to the *desktop's UI pointer*, so on a host
+serving N workspaces an `audit.export` from workspace B returned the **active** workspace's log — the
+caller could not ask for the log it meant. Same class as WI 1's `server.start { workspaceId }` being
+accepted and ignored. The handler is now `params.workspaceId ?? cfg.activeWorkspaceId`, so the desktop's
+behaviour is unchanged.
+
+**`tls.exportCert` is deliberately NOT scoped, and it is a decision rather than an omission.** The CA is
+one per **machine**, not per workspace — `caCertPath()` resolves under `appDataDir()`, and
+`proxy/server.ts`'s `ownsCA` exists because N workspaces share that one mkcert root — so a `workspaceId`
+there would be a field that means nothing, which is *worse* than an absent one because it would read as
+though the export were workspace-scoped. **And it cannot reach the blob branch anyway, measured rather
+than assumed:** a `ca-cert.pem` is **1,240 bytes** against a **1,048,576-byte** threshold, ~845× short, and
+a PEM will not grow three orders of magnitude. The same reasoning already kept `tls.importCert` /
+`tls.importKey` unscoped; all three now say so in `fileOps/commands.ts`.
+
+**This is a contract-consistency fix, not a live bug fix — and the distinction governs how it is
+verified.** Today's only client (`packages/client/src/index.ts`) sends **no** `workspaceId` on
+`blob.put` / `blob.read` / `blob.release` (lines 284, 298, 474, 496); it relies on the host-wide default,
+which is what the unscoped egress commands produced — so the two matched and nothing failed. The
+inconsistency bites the **first client that scopes its blob reads** — P7's web UI, or D15's CLI — which
+would find `export.create`'s output and not the other three's. That is why the fix lands before that
+client exists, and why the test below is written as an **identity** assertion rather than as "a blobId
+came back".
+
+**Fixtures re-derived, per the D17 precedent.** All three `valid` rows now supply `workspaceId`, so the
+new field is exercised on the happy path. Each `invalid` row was checked individually to fail on a
+**required-or-typed** field and never on scope: `runner.exportReport` → the `format` enum (`"pdf"`),
+`audit.export` → the enum (`"xml"`), `capture.shareJson` → `{}`, invalid because `entries` is required.
+The hazard is a fixture whose invalid payload *is* the newly allowed key; none was written that way here.
+
+**One assertion was strengthened rather than merely extended.** The `it.each(SCOPED)` case
+`"%s rejects a non-string workspaceId"` used to parse `{ workspaceId: 42 }` **alone** — which a command
+with any required field rejects for *those fields being missing*, so `expect(success).toBe(false)` passed
+whatever happened to the `workspaceId`'s type. It is now `{ ...valid, workspaceId: 42 }`, leaving the type
+as the only possible error, plus an assertion that the failure's `path` includes `workspaceId`.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **228 → 237** (**+9** = the three new scoped
+commands × the three `it.each` cases each). `tests/integration/workspaceCommandScope.integration.test.ts`
+**8 → 9**: a new case forces the blob branch with a `capture.shareJson` payload just over the threshold —
+chosen because its `entries` come from the client, so the size is the test's to set — and asserts the
+artifact is readable **scoped to B** and **throws under A**. It guards its own premise (`blobId` defined,
+`inline` undefined) so it cannot pass without crossing the threshold.
+
+**Mutation-checked, and both mutations were fully identified rather than waved at.** (1) Widening
+`WorkspaceScope.workspaceId` to accept a number → **24 failures**, which resolve exactly as **17** × the
+type case (the scoped set) plus **7** × `"— rejects an invalid payload"` for the D13 commands whose
+`invalid` fixture *is* `{ workspaceId: 42 }` — two independent mechanisms catching it. (2) Dropping
+`params.workspaceId` from `captureShareJson` → **exactly 1** failure, the new integration case.
+
+**Approved by:** `plan/14` D17 (which named the egress set as a follow-on change with its own fixtures and
+its own entry) and WI 8. This entry records the landing, not a new decision.
+
+---
+
 
 ## Guidance
 
