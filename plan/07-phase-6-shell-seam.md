@@ -1433,6 +1433,75 @@ shrinks 7 → 6** — `audit:export` was one of §5b-decies' seven, and its dial
 client's `exportAudit`, which `client.test.ts` asserts *by order* (`"exportAudit asks where BEFORE it asks the
 engine to render"`) rather than by intent.
 
+#### 5b-quaterdecies. The reduction, third group — `folderHandlers.ts` is deleted, and the §5c guard fails for working (2026-09-21)
+
+**`src/ipc/handlers/folderHandlers.ts` is gone: 4 channels, all dead, every one a one-line
+`commandRegistry.invoke()` delegate** (`folder.add` / `folder.rename` / `folder.move` / `folder.delete`). The
+criterion found no step the engine does not perform in any of them — no dialog, no path — so this group
+needed no fix first. It is the smallest all-dead file, and the first one taken in the plain order the
+criterion suggests.
+
+**The one difference that looked like a regression and is not.** The channel's `folder:add` body was
+`{ kind, ...folder }` — a **spread** — while the client's `addFolder` picks `name` and `parentId`
+explicitly. A spread that carries a field the twin drops is exactly the `tlsGenerate` shape (§5b-undecies),
+so it was checked rather than waved through. It is inert because the **contract** excludes the field:
+`renderer/types/window.ts:63` types the argument `Omit<Folder, "id" | "createdAt" | "workspaceId">`, and
+every renderer call site passes only `{ name, parentId }`. `FolderAddParams` is not `.strict()`, so the
+schema does not care either way.
+
+**But the equivalence is contract-specific, and the suite that drives it is the counter-example.**
+`tests/integration/foldersAndWorkspaces.integration.test.ts`'s `addFolder()` helper deliberately passes
+`workspaceId: TEST_WS`, which the spread carried and the client would drop. Its translation therefore keeps
+the spread, and its docblock says what the alternative would have cost: the folder would land in the
+*active* workspace — which in that suite happens to be `TEST_WS`, so **the suite would have gone on passing
+while testing something else.** That is the generalisable point, and it is the same one §5b-undecies made
+from the other direction: when a re-point looks "obviously equivalent", find the caller that makes it not
+so — or write down which contract makes it so.
+
+**The delta is −3, and the mechanism is a *different* mix from the last two groups.** `expectedChannels`
+listed three of the four (`folder:add`, `folder:rename`, `folder:delete` — `folder:move` was never in it), so
+removing them is −3. The file's **fourteen** `getHandler("folder:…")` call sites were re-pointed at the
+commands through new helpers, following the `entity.*` / `history.*` idiom — a *re-point*, so they
+contribute 0. So this group is a generated-list shrink (−3) *and* a re-point (0) at once, which is why the
+signature has to be read per-file rather than per-group.
+
+**Reconciliation: 101 files / 2,492 tests / 2,451 passed / 40 skipped / 1 failed.** Baseline
+2,495 / 2,454 / 40 / 1 → **−3 tests, −3 passed**, the one failure unchanged (`soap.execute`).
+
+**And the §5c guard failed — because the reduction worked.** `tests/ipc/handlers.test.ts`'s static guard
+(§5c-viii) opens with an anti-vacuity check so a broken glob cannot make the whole guard pass against
+nothing. It asserted `Object.keys(shell).length > 20`, which held while `src/` had 22 `.ts` files. Deleting
+`syncHandlers.ts` took it to 21; deleting `folderHandlers.ts` took it to **20 — and the assertion is
+`> 20`**. Six more handler files are still to be deleted, leaving 14, so the floor was going to fail six more
+times.
+
+> **A guard whose floor is a file count fails as the tree shrinks — and the tree shrinking is the work.**
+
+Fixed by expressing anti-vacuity as **presence, not a count**: assert the reader found `src/preload.ts`,
+`src/ipc/handlers.ts` and `src/ipc/rpcBridge.ts`, normalised because Vite's glob keys are
+platform-dependent. That tests the actual claim ("the reader resolved `src/`") and cannot drift. The
+engine's floor stays, because the engine tree is not eroding — the reduction moves *into* it — and the
+positive control below it independently proves content loaded.
+
+**The fixture grew this time, and that is the rule cutting the other way.** `tests/spike/protocolPoc.test.ts`
+drives `folder:add` and `folder:move` through the client, so both were re-attached: the retired-channel
+fixture goes **5 of 10 → 7 of 10**. This is the counterpart to §5b-terdecies' correction — the second group
+added nothing because the spike drives none of its channels, and the third adds two because it drives half
+of them. The rule is "grows with each **driven** channel", and it is worth having seen it do both.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 68 (8 files) | **64 (7 files)** |
+| live | 18 | 18 |
+| dead | 50 | **46** |
+
+**46 dead channels remain in 6 files**, one handler group per commit: `coreHandlers.ts` (17),
+`applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
+`app:checkUpdate`) and `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The
+dialog-owner risk subset is unchanged at 6, since this group owned no dialog.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**

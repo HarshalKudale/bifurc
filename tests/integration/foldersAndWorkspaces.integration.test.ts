@@ -8,9 +8,11 @@
  * tree is derived from the **filesystem index**, not from `app.json`. A folder that is
  * created in config but not on disk (or vice versa) silently breaks the panel.
  *
- * Everything here drives the REAL registered IPC handlers against a REAL workspace on
- * disk and then asserts the on-disk result: directories, `index.json`, and the entity
- * files inside the folder. Only Electron itself and `@/main` are mocked.
+ * Everything here drives the REAL machinery behind those features — the surviving registered IPC
+ * handlers, and the `folder.*` / `entity.*` commands that replaced the deleted folder and per-kind
+ * channels (`DELETED_FOLDER_CHANNELS` / `createEntity` below) — against a REAL workspace on disk, then
+ * asserts the on-disk result: directories, `index.json`, and the entity files inside the folder. Only
+ * Electron itself and `@/main` are mocked.
  *
  * Runs in the integration project (shared process-global data-root override ⇒
  * `fileParallelism: false`).
@@ -44,7 +46,36 @@ vi.mock("electron", () => ({
 
 vi.mock("@/main", () => ({ updateTrayMenu: vi.fn() }));
 
+/**
+ * The four deleted folder channels, reproduced as commands — the P6 reduction's third group
+ * (`plan/07` §5b-quaterdecies).
+ *
+ * `folder:add` / `folder:rename` / `folder:move` / `folder:delete` were deleted with
+ * `src/ipc/handlers/folderHandlers.ts` on 2026-09-21. All four were one-line `commandRegistry.invoke()`
+ * adapters, so this table is what the channel did minus the channel — and the mapping is written out
+ * rather than derived because **`folder:add` is the one place the two shapes differ**.
+ *
+ * The channel spread the whole argument (`{ kind, ...folder }`); the client picks `name` and `parentId`
+ * only. That difference is inert *for the renderer*, whose contract excludes `workspaceId`
+ * (`renderer/types/window.ts:63`: `Omit<Folder, "id" | "createdAt" | "workspaceId">`) — but this suite's
+ * `addFolder()` helper deliberately passes `workspaceId: TEST_WS`, which the spread carried and the
+ * client's field-picking would drop. So the translation keeps the spread. Getting this wrong would not
+ * fail loudly: it would move the folder into the *active* workspace, which happens to be `TEST_WS` here,
+ * so the suite would still pass while testing something else.
+ */
+const DELETED_FOLDER_CHANNELS: Record<string, (args: any[]) => { command: string; payload: any }> = {
+  "folder:add": ([kind, folder]) => ({ command: "folder.add", payload: { kind, ...folder } }),
+  "folder:rename": ([kind, id, name]) => ({ command: "folder.rename", payload: { kind, id, name } }),
+  "folder:move": ([kind, id, parentId]) => ({ command: "folder.move", payload: { kind, id, parentId } }),
+  "folder:delete": ([kind, id]) => ({ command: "folder.delete", payload: { kind, id } }),
+};
+
 function invoke<T = any>(channel: string, ...args: any[]): T {
+  const deleted = DELETED_FOLDER_CHANNELS[channel];
+  if (deleted) {
+    const { command, payload } = deleted(args);
+    return commandRegistry.invoke(command as never, payload, { bus }) as T;
+  }
   const fn = handlers.get(channel);
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
@@ -99,16 +130,17 @@ beforeAll(async () => {
   ws = createWorkspace();
 
   const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
-  const { registerFolderHandlers } = await import("@/ipc/handlers/folderHandlers");
   const { registerCrudHandlers } = await import("@/ipc/handlers/crudHandlers");
   // P6 §5c: `config.get`, `entity.load` and `workspace.setActive` moved out of `coreHandlers`' module
   // scope into the engine. `registerCoreHandlers()` wires the *channels*; a suite that registers handler
   // groups by hand has to wire the engine half too, or the channel exists with nothing behind it.
   const { commandRegistry } = await import("@bifurc/engine/commands/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
-  // P6 §5c slice 3: the four `folder.*` commands left `folderHandlers.ts`'s module scope too. Every
-  // channel in that file *delegates* through `commandRegistry.invoke()`, so without this call the four
-  // channels below exist with nothing behind them — a `No handler registered` at invocation time.
+  // P6 §5c slice 3: the four `folder.*` commands left `folderHandlers.ts`'s module scope. Every channel
+  // in that file *delegated* through `commandRegistry.invoke()`, so the channel was only ever as alive as
+  // this registry. **The channels are now deleted** (P6 reduction, third group, 2026-09-21), so
+  // `DELETED_FOLDER_CHANNELS` invokes this registry directly and `registerFolderCommands()` is the only
+  // registration the four need.
   const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
   // `registerCrudHandlers()` wires the *channels* and the per-kind options; the four commands those
@@ -119,7 +151,6 @@ beforeAll(async () => {
   registerCoreCommands(commandRegistry);
   registerFolderCommands(commandRegistry);
   registerEntityCrudCommands(commandRegistry);
-  registerFolderHandlers();
   registerCrudHandlers();
 });
 

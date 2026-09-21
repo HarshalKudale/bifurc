@@ -179,7 +179,6 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
   beforeAll(async () => {
     const { registerCoreHandlers } = await import("../../src/ipc/handlers/coreHandlers");
     const { registerCrudHandlers } = await import("../../src/ipc/handlers/crudHandlers");
-    const { registerFolderHandlers } = await import("../../src/ipc/handlers/folderHandlers");
     const { registerGraphqlKinds } = await import("../../src/ipc/handlers/graphqlKinds");
     const { registerSoapKinds } = await import("../../src/ipc/handlers/soapKinds");
     // P3 work item 5: `tls:generate` became a thin client of the `tls.generate` **command**, which
@@ -193,7 +192,9 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // has to wire the engine half too, or the channel exists with nothing behind it.
     const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
     // P6 §5c slice 3: `folder.*` moved out of `folderHandlers.ts`'s module scope as well, and that
-    // file's channels delegate rather than duplicating, so the engine half has to be wired here too.
+    // file's channels delegated rather than duplicating, so the engine half has to be wired here too.
+    // **The channels are now deleted** (P6 reduction, third group, 2026-09-21) — and `folder:add` /
+    // `folder:move` are two of the ten this spike drives, so both are re-attached in the fixture below.
     const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
     // P6 §5c slice 4: same again for `graphql.*` and `soap.*` — and this suite is the one that
     // actually drives `soap.execute`, so without these two calls it fails as `No handler registered`.
@@ -206,7 +207,6 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
 
     registerCoreHandlers();
     registerCrudHandlers();
-    registerFolderHandlers();
     registerGraphqlKinds();
     registerSoapKinds();
     registerCertCommands(commandRegistry);
@@ -219,9 +219,13 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // ── The retired-channel fixture ──────────────────────────────────────────────────────────────
     //
     // P6 stage 3b deletes the shell's legacy channels, and this spike drives **ten** of them, so this
-    // table grows with each slice: `graphql:introspect` / `soap:execute` went in slice 1 (the nine
-    // one-line passthroughs), `mock:add` / `mock:delete` in slice 2 (the 48 factory-generated
-    // channels), and `tls:generate` in the reduction's first group (the six `tls:*` channels).
+    // table grows with each **driven** channel — not with each slice, which is the correction the
+    // reduction's second group produced: `graphql:introspect` / `soap:execute` went in slice 1 (the nine
+    // one-line passthroughs), `mock:add` / `mock:delete` in slice 2 (the 48 factory-generated channels),
+    // `tls:generate` in the reduction's first group (the six `tls:*` channels), and `folder:add` /
+    // `folder:move` in its third (the four `folder:*` channels). The second group — `syncHandlers.ts`,
+    // 19 channels — added none, because this spike drives no `sync.*` / `git.*` / `audit.*` / `history.*`
+    // channel at all.
     //
     // This spike's subject is the **envelope**, not the routing, so each retired channel is re-attached
     // with *the exact body it had*. That is not a weakening: every one of those bodies was itself a
@@ -229,7 +233,7 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // reads real output. It also doubles as the check that the deletion lost nothing — the ten commands
     // answer identically, only some of them now arrive by a shorter path.
     //
-    // Treat the table as a **measure of the pass**: it covers 5 of the 10 channels this spike drives
+    // Treat the table as a **measure of the pass**: it covers 7 of the 10 channels this spike drives
     // today, and it reaches 10 of 10 exactly when the legacy surface is gone. At that point this file
     // stops being evidence about the shell and becomes a pure envelope test — which is the open
     // question recorded in `plan/07` §5b-ter.
@@ -252,6 +256,15 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
         return "entity" in result ? result.entity : result;
       },
       "mock:delete": (_e, id: string) => commandRegistry.invoke("entity.delete", { kind: "mocks", id }, { bus }),
+      // The two `folder:*` channels this spike drives (reduction's third group). `folder:add` is the one
+      // whose body **spread its argument** (`{ kind, ...folder }`) — reproduced rather than replaced with
+      // the client's field-picking, because the spread is what the deletion removed and this fixture's
+      // job is to show the command answers identically either way. The spike's own `toArgs` supplies
+      // `[kind, folder]` / `[kind, id, parentId]`, matching the channels' positional signatures.
+      "folder:add": (_e, kind: string, folder: any) =>
+        commandRegistry.invoke("folder.add", { kind, ...folder }, { bus }),
+      "folder:move": (_e, kind: string, id: string, parentId: string | null) =>
+        commandRegistry.invoke("folder.move", { kind, id, parentId }, { bus }),
       // **The one entry whose body is not a bare `invoke()` adapter**, and that is exactly why the
       // reduction could not delete this channel with the rest of its group: the shell appended the two
       // paths the engine deliberately refuses to report (`File_Ops_Protocol.md` §8) and the client twin
