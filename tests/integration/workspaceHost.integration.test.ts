@@ -38,7 +38,7 @@ import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { createWorkspaceHost } from "@bifurc/engine/runtime/host";
 import { loadRuntimeRegistry } from "@bifurc/engine/runtime/hostRegistry";
 import { createSocketTransport } from "@bifurc/engine/transport/socket";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, commandRegistry } from "@bifurc/engine/commands/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
 
@@ -330,6 +330,59 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
       // `stop()` is idempotent, and a stopped host refuses to restart rather than half-working.
       await expect(host.stop()).resolves.toBeUndefined();
       await expect(host.start()).rejects.toThrow(/already been stopped/i);
+    }
+  }, 60000);
+
+  /**
+   * P14 WI 6 — a requested workspace that does not exist is **named**, not silently dropped.
+   *
+   * ## The failure this pins, measured while verifying the CLI artifact
+   *
+   * `--workspace X` where `X` is absent from the settings filtered the list to **empty**: the host came up
+   * serving nothing and exited 0. The only symptom was `serving 0 workspace(s)`, which reads as an empty
+   * data root rather than as "the settings file was read from somewhere else". The cause in that run was
+   * exactly that — on Windows `settingsPath()` prefers `%LOCALAPPDATA%` regardless of `setDataRoot()`
+   * (recorded in `proxy/certManager.ts`), so a `--data-dir` run read the user's real settings and the
+   * requested id was absent from a list nobody could see.
+   *
+   * **Why the notice names the directory.** That is the whole diagnostic: without it, an operator has no
+   * way to tell "no such workspace" from "wrong settings file". This is the same "accepted and ignored"
+   * class as WI 1's `server.start { workspaceId }` — the failure succeeds, so nothing else reports it.
+   *
+   * A second host rather than a case in the one above, because `register()` throws on a duplicate and the
+   * host above populates the shared singleton. An explicit registry is the same shape this file already
+   * uses for the drift guard below.
+   */
+  it("names a requested workspace that is not in the settings, instead of serving nothing silently", async () => {
+    const notices: string[] = [];
+    const registry = new CommandRegistry();
+    registerAllEngineCommands(registry);
+
+    const host = createWorkspaceHost({
+      dataDir: dataRoot,
+      registry,
+      transport: { kind: "socket", path: `${socketPath}-selection` },
+      token: HOST_TOKEN,
+      // `WS_A` is in this file's `app.json`; `ghost-ws` is not. A mixed list is deliberate: it proves the
+      // notice does not replace serving, and that a partial request still comes up.
+      workspaceIds: ["ghost-ws", WS_A],
+      onNotice: (m) => notices.push(m),
+    });
+
+    try {
+      const status = await host.start();
+      // The real workspace is served...
+      expect(status.runtimes.map((r) => r.workspaceId)).toEqual([WS_A]);
+      // ...and the missing one is reported rather than skipped in silence.
+      const joined = notices.join("\n");
+      expect(joined).toMatch(/requested workspace "ghost-ws" is not in the settings/);
+      // The directory is the diagnostic — see the comment above.
+      expect(joined).toMatch(/looked in /);
+      // And the host did not refuse to start over it: the same "skip loudly, do not refuse" rule D16
+      // applies to a taken port override.
+      expect(status.skipped).toHaveLength(0);
+    } finally {
+      await host.stop();
     }
   }, 60000);
 });
