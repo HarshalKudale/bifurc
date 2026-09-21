@@ -33,15 +33,23 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   `expectedChannels` entry**. `*Handlers.ts` → `*Kinds.ts` for soap/graphql/grpc; **"six caller files"
   corrected to five**.
 - **The reduction — `plan/07` §5b-decies (inventory) / §5b-undecies (criterion) / §5b-duodecies (group 1) /
-  §5b-terdecies (group 2) / §5b-quaterdecies (group 3) / §5b-quindecies (group 4).** Measured 2026-09-21
-  (`ipcMain.handle(` **call sites**): **59 literal channels in the 6 handler files = 18 live + 41 dead → 41
-  to go across 5 files**, one handler group per commit. Decidable by construction: `window.api` *is* the
-  client (`src/preload.ts:110`) and `packages/client/src` names no channel, so only preload's `local` block's
-  18 are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**; every other file all-dead except
-  `systemHandlers.ts` (`app:checkUpdate`). §5b-decies' "68" is a **different partition** from its 75 dead
-  (it excludes the dialog-owners) — do not reconcile them. **Read the inventory in the *latest* §5b-* section,
-  not the nearest one** — each section's table is a dated reading, and §5b-quaterdecies' "46 remain" is
-  superseded.
+  §5b-terdecies (group 2) / §5b-quaterdecies (group 3) / §5b-quindecies (group 4) / §5b-sedecies (group 5).**
+  Measured 2026-09-21 (`ipcMain.handle(` **call sites**): **55 literal channels in the 6 handler files = 18
+  live + 37 dead → 37 to go across 4 files**, one handler group per commit. Decidable by construction:
+  `window.api` *is* the client (`src/preload.ts:110`) and `packages/client/src` names no channel, so only
+  preload's `local` block's 18 are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**;
+  `systemHandlers.ts` is now **1 live / 0 dead and out of scope** (`app:checkUpdate` is client-local, not
+  legacy), so **all four remaining files are all-dead** and the rest are whole-file deletions:
+  `coreHandlers.ts` (17, next), `applicationHandlers.ts` (10), `runnerHandlers.ts` (6),
+  `importExportHandlers.ts` (4). §5b-decies' "68" is a **different partition** from its 75 dead (it excludes
+  the dialog-owners) — do not reconcile them. **Read the inventory in the *latest* §5b-* section, not the
+  nearest one** — each section's table is a dated reading.
+- **The dialog-owner risk subset is 3, not 6** — three sections carried "6" forward without re-deriving it.
+  The real sequence is **8 → 5 → 4 → 4 → 4 → 3** (§5b-undecies widened §5b-decies' 7 by adding
+  `tls:generate`; group 1 took 8 → 5, group 2 → 4, group 5 → 3). What remains: `runner:exportReport`,
+  `importExport:export`, `importExport:preflight`. **Re-derive subset counts with `grep -n "dialog\."` over the
+  remaining files, never from the previous paragraph** — the four ledger sections agreed with each other and
+  were all wrong (TRAPS.md, "A count written into prose is never re-derived").
 - **The criterion is `owns a step the engine does not perform`** — §5b-decies said `dialog.*` and was one
   channel short. `tls:generate` owns a *path*, and that mattered: `tlsGenerate` / `tlsImportCert` /
   `tlsImportKey` were routed as 1:1 `transport` calls in step 3b-1 and had been **silently dropping
