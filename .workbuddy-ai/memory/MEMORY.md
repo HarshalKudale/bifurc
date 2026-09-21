@@ -66,11 +66,13 @@ flakiness) — **but that has not been re-measured.** Details: `TRAPS.md`, two e
   that mention X** — both directions were wrong on the first pass (one false-negative, one false-positive).
   See `spike/README.md`.
 
-**Current: 2577 tests — 2536 passed, 40 skipped, 1 failed** (the load-induced pair, at a count of 1 this run),
-**106 files**. *(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) →
-2,552 (spike retired: −12 = exactly the spike file's case count) → 2,560 (WI 7 command layer: +8 = the new
-`workspaceCommandScope` file) → **2,577** (WI 6: +17 = `hostArgs.test.ts`'s 16 + 1 host integration case).
-**Name every delta's mechanism.**)*
+**Current: 2587 tests — 2544 passed, 40 skipped, 3 failed** (all three in the documented environmental set:
+`certTrust` certutil — **34/34 isolated** — plus the load-induced `gitStore`/`gitOps` pair), **106 files**.
+*(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) → 2,552 (spike
+retired: −12 = exactly the spike file's case count) → 2,560 (WI 7 command layer: +8 = the new
+`workspaceCommandScope` file) → 2,577 (WI 6: +17 = `hostArgs.test.ts`'s 16 + 1 host integration case) →
+**2,587** (WI 8: +10 = the protocol suite's +9 (3 new scoped commands × 3 `it.each` cases) + 1 integration
+case; files unchanged, both existing files edited). **Name every delta's mechanism.**)*
 
 ## Phase state — the plans are the authority
 
@@ -113,19 +115,43 @@ switched the **pointer only**) · WI 5 (allocator + `advisory` preflight) · WI 
    failures). **Scope the caller, never relax the store**; audit by asking *"which calls pass NO id?"*.
 4. **A path a header calls temporary is still the live implementation** (`proxy/server.ts`, "removed in WI 7").
 
-**Still owed:** WI 1's `runtime.json` preferred-port plumbing from the UI/settings (allocator + registry honour
-`preferred*`; only the *editor* is missing) · **WI 6 DONE 2026-09-21** (`runtime/hostArgs.ts` + `runtime/hostCli.ts`
-— `node dist/runtime/hostCli.js --data-dir … --workspace …`; verified against the built artifact) · **WI 7's
-desktop half** — the command layer is DONE (below); what remains is `src/main.ts:309-310` building runtimes,
-which needs `createEngine()`'s own proxy lifecycle (`index.ts:255`) **and ~17 `reloadConfig()` importer callers**
-to move with it, or config changes stop reaching the running proxy · WI 8 (five egress commands gain `workspaceId`).
+**Still owed — ONE item, and it needs an owner decision before it is touched.** WI 1's `runtime.json`
+preferred-port plumbing from the UI/settings (allocator + registry honour `preferred*`; only the *editor* is
+missing — and it may be a renderer edit, so P7 by non-negotiable #3). **WI 6 DONE 2026-09-21**
+(`runtime/hostArgs.ts` + `runtime/hostCli.ts` — `node dist/runtime/hostCli.js --data-dir … --workspace …`;
+verified against the built artifact). **WI 8 DONE 2026-09-21** (below). **The only substantial item left is
+WI 7's desktop half, and it is a DESIGN QUESTION, not a refactor:**
+
+> `src/main.ts:309-310` must build a `WorkspaceRuntime` for the active workspace instead of calling
+> `startServer()`. **The blocker is not that line — it is that ~17 importer callers of `reloadConfig()`
+> reach the module facade.** If the desktop stops creating the facade instance, `reloadConfig()` would
+> lazily create a *phantom* one whose config is updated while the running runtime's proxy never sees it —
+> so config changes would silently stop reaching the running proxy (rules, mocks, enabled sets).
+> **Two candidate shapes, and picking one is an owner call:** (a) make the facade **delegate** to the
+> registered runtime for the active workspace, so the 17 importers are untouched and the module functions
+> keep meaning "the active workspace's server, wherever it lives"; or (b) change the 17 callers to target a
+> runtime explicitly. §9 flags WI 7 as **the only step that can change what a user sees**, gated on P6's
+> zero-user-visible-change rule — and §8's criterion is "**one proxy port**, one visible workspace", so the
+> desktop must NOT start N runtimes at boot.
 
 **WI 6's measured caveat — `--data-dir` does NOT redirect the settings file on Windows.** `settingsPath()`
 prefers `%LOCALAPPDATA%/Bifurc/app.json` regardless of `setDataRoot()`, so a `--data-dir` run reads the *user's*
 settings; the first artifact run served 0 workspaces and exited 0 for exactly that reason. **Linux-invisible**
-(on Linux/macOS it falls through to `dataDir()/app.json`), so it is a **P9 deployment caveat**, not a defect —
-recorded rather than patched, since a patch is a *third* answer to "where is the settings file". What WI 6 fixed
-is the **silence**: the host now names each requested workspace it cannot find *and the directory it looked in*.
+(on Linux/macOS it falls through to `dataDir()/app.json`, so the documented container deployment works), which
+is why it is a **P9 deployment caveat** rather than a defect — recorded not patched, since a patch would be a
+*third* answer to "where is the settings file". What WI 6 fixed is the **silence**: the host now names each
+requested workspace it cannot find *and the directory it looked in*.
+
+**WI 8 — the egress half of D17, DONE 2026-09-21.** `runner.exportReport`, `capture.shareJson`,
+`audit.export` gained an optional `workspaceId` (the blob half: above 1 MiB the artifact is staged and the
+client reads it **scoped**). `audit.export` had a **second** bug of the WI 1 class — it resolved the
+workspace as `activeWorkspaceId`, which §2.3 demotes to the desktop's UI pointer, so on a host an export
+from B returned the **active** workspace's log. **`tls.exportCert` deliberately did NOT get the field**: the
+CA is one per *machine*, and `ca-cert.pem` is **1,240 bytes** against a **1 MiB** threshold, so it cannot
+reach the blob branch — a decision, recorded in `fileOps/commands.ts` and named as deliberately absent in
+`index.test.ts`. **⚠ It is a contract-consistency fix, not a live bug fix:** today's only client sends **no**
+`workspaceId` on `blob.*` (`packages/client/src/index.ts:284,298,474,496`), so the two matched and nothing
+failed; it bites the first client that *scopes* its blob reads (P7, D15). Details → `plan/protocol-changes.md`.
 
 **WI 7's command layer — DONE 2026-09-21.** `runtime/runtimeRegistry.ts` (the lookup the commands were missing)
 + `runtime/runtimeServerOps.ts` (how a resolved runtime's servers are driven). Resolution has **three**

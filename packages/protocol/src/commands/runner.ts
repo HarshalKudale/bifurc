@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import type { ArtifactResult } from "./blob";
+import { WorkspaceScope } from "./scope";
 
 const RunResult = z.object({
   /**
@@ -57,11 +58,15 @@ export interface RunnerSaveReportResult {
 }
 
 /** SPLIT — engine renders HTML/JSON; the client owns the save dialog and the file write, per
- * `File_Ops_Protocol.md` §4. Returns the artifact, never a path. */
+ * `File_Ops_Protocol.md` §4. Returns the artifact, never a path.
+ *
+ * `workspaceId` (P14 WI 8) is for the blob half: above `BLOB_INLINE_THRESHOLD_BYTES` a run report
+ * stages a blob, and the client reads it scoped to its own workspace. A large report — which is the
+ * case the threshold exists for — was therefore unreadable by the client that asked for it. */
 export const RunnerExportReportParams = z.object({
   report: RunReport,
   format: z.enum(["html", "json"]),
-}).strict();
+}).merge(WorkspaceScope).strict();
 export type RunnerExportReportParams = z.infer<typeof RunnerExportReportParams>;
 export type RunnerExportReportResult = ArtifactResult;
 

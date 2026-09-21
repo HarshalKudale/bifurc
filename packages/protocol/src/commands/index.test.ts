@@ -67,6 +67,14 @@ describe("@bifurc/protocol command schemas", () => {
       "blob.stat",
       "blob.read",
       "blob.release",
+      // WI 8 — the egress set's blob half: above `BLOB_INLINE_THRESHOLD_BYTES` these stage an artifact
+      // that the client reads scoped to its own workspace.
+      "runner.exportReport",
+      "capture.shareJson",
+      "audit.export",
+      // `tls.exportCert` is deliberately absent — the CA is one per *machine*, and a `ca-cert.pem` is
+      // ~1.2 KB against a 1 MiB threshold, so it cannot reach the blob branch. Recorded in
+      // `fileOps/commands.ts`; absent here so a later reader cannot read it as an oversight.
     ] as const;
 
     it.each(SCOPED)("%s accepts a workspaceId", (action) => {
@@ -88,8 +96,21 @@ describe("@bifurc/protocol command schemas", () => {
 
     it.each(SCOPED)("%s rejects a non-string workspaceId", (action) => {
       const { params } = COMMANDS[action];
-      const result = params.safeParse({ workspaceId: 42 });
+      const fixture = COMMAND_FIXTURES[action];
+      /**
+       * **`{...valid, workspaceId: 42}`, not `{workspaceId: 42}` alone.** The bare form was the original
+       * and it is a test that cannot fail for the reason it names: a command with any required field
+       * (e.g. `blob.read`'s `blobId`, `audit.export`'s `format`) rejects `{workspaceId: 42}` because
+       * those fields are *missing*, so `expect(success).toBe(false)` passed whatever happened to the
+       * workspaceId's type. Spreading the valid fixture leaves the type as the only possible error —
+       * which is what makes this an assertion about `workspaceId` rather than about required fields.
+       */
+      const result = params.safeParse({ ...(fixture.valid as object), workspaceId: 42 });
       expect(result.success).toBe(false);
+      // And it fails on the *type*, not on something else the spread happened to disturb.
+      if (!result.success) {
+        expect(result.error.issues.some((i) => i.path.includes("workspaceId"))).toBe(true);
+      }
     });
 
     it("services.discover is deliberately NOT scoped — it reports host-wide services", () => {

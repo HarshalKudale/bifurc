@@ -86,9 +86,12 @@ import { renderRunnerHtml } from "../runner/reportHtml";
  */
 
 export function registerFileOpsCommands(registry: CommandRegistry): void {
+  // The `tls.*` trio takes no `workspaceId`, and that is a decision rather than an omission — the CA
+  // is one per **machine**, not per workspace. See `tlsExportCert` / `tlsImport`'s own notes.
   registry.register("tls.exportCert", (_p: TlsExportCertParams) => tlsExportCert());
   registry.register("tls.importCert", (p: TlsImportCertParams) => tlsImport(p.blobId, caCertPath()));
   registry.register("tls.importKey", (p: TlsImportKeyParams) => tlsImport(p.blobId, caKeyPath()));
+  // These three DO carry one (P14 WI 8) — for their blob half. See `blob/publish.ts`.
   registry.register("runner.exportReport", (p: RunnerExportReportParams) => runnerExportReport(p));
   registry.register("audit.export", (p: AuditExportParams) => auditExport(p));
   registry.register("capture.shareJson", (p: CaptureShareJsonParams) => captureShareJson(p));
@@ -104,6 +107,22 @@ export function registerFileOpsCommands(registry: CommandRegistry): void {
  * A missing file is reported as an error rather than as an empty artifact, and with the same
  * message the pre-P3 handler used — "no CA generated yet" is an ordinary state the UI already knows
  * how to present.
+ *
+ * ## This is the one egress command with NO `workspaceId`, and that is a decision
+ *
+ * P14 WI 8 gave the other three egress commands the field so their blob half lands in the caller's
+ * namespace. This one deliberately did not, for the same reason `tlsImport` below is unscoped:
+ * **the CA is one per *machine*, not per workspace** (`caCertPath()` resolves under `appDataDir()`,
+ * and `proxy/server.ts`'s `ownsCA` exists precisely because N workspaces share that one mkcert root).
+ * A workspace is not a participant in a CA export, so a `workspaceId` here would be a field that
+ * means nothing — worse than an absent one, because it would read as though the export were
+ * workspace-scoped.
+ *
+ * **And it cannot reach the blob branch anyway, measured rather than assumed:** a `ca-cert.pem` is
+ * **1,240 bytes** on this machine against a `BLOB_INLINE_THRESHOLD_BYTES` of **1,048,576** — about
+ * 845× short, and a PEM is not going to grow three orders of magnitude. So there is no namespace for
+ * it to land in. If a per-workspace CA ever arrives (it has not been proposed), the change is to the
+ * CA's *location* in `certManager.ts` — one place — and this follows without knowing.
  */
 function tlsExportCert(): TlsExportCertResult {
   let content: string;
@@ -200,7 +219,11 @@ function runnerExportReport(params: RunnerExportReportParams): RunnerExportRepor
   const content = format === "json" ? JSON.stringify(report, null, 2) : renderRunnerHtml(report);
   const mimeType = format === "json" ? "application/json" : "text/html";
 
-  return publishArtifact(content, `${folderName}-report-${ts}.${format}`, mimeType);
+  // `params.workspaceId` (P14 WI 8) is for the blob half only: above `BLOB_INLINE_THRESHOLD_BYTES` a
+  // report stages a blob, and the client reads it scoped to its own workspace. A *large* report is
+  // exactly the case the threshold exists for, so omitting it made the engine's own export unreadable
+  // by the client that requested it — see `blob/publish.ts`.
+  return publishArtifact(content, `${folderName}-report-${ts}.${format}`, mimeType, params.workspaceId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,19 +231,35 @@ function runnerExportReport(params: RunnerExportReportParams): RunnerExportRepor
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Render the active workspace's audit log as JSON or CSV.
+ * Render the requested workspace's audit log as JSON or CSV.
  *
  * `limit: 0` means "no limit" to `queryLog`, i.e. the **whole** log. That is why this is the one
  * egress artifact with no natural size ceiling, and therefore the channel where the inline/blob
  * threshold earns its keep rather than being ceremony.
  *
- * The workspace is resolved here rather than passed in, because `AuditExportParams` is `{format}`
- * only — the renderer's `exportAudit(format)` passes nothing else, and widening the wire contract to
- * carry an id the engine can already look up would be a change with no beneficiary.
+ * ## The workspace is now a parameter, and the old reasoning for not having one was desktop-only
+ *
+ * This used to read: *"The workspace is resolved here rather than passed in, because
+ * `AuditExportParams` is `{format}` only — the renderer's `exportAudit(format)` passes nothing else,
+ * and widening the wire contract to carry an id the engine can already look up would be a change with
+ * no beneficiary."* Every clause of that is true **of the desktop** and false of a host:
+ *
+ * - "the engine can already look up" the workspace — via `loadConfig().activeWorkspaceId`, which
+ *   `plan/14` §2.3 demotes to **the desktop's UI pointer**. On a host serving N workspaces there is no
+ *   single "active" one, so an `audit.export` from workspace B returned the **active** workspace's log.
+ *   The caller could not ask for the log it meant — the same class as WI 1's `server.start
+ *   { workspaceId }` being accepted and ignored.
+ * - "a change with no beneficiary" — the beneficiary is a multiplexed client, which is P7's web UI and
+ *   D15's CLI. The cost of adding it later is discovering the wrong-workspace export in P7.
+ *
+ * **The fallback keeps the desktop identical**: `params.workspaceId ?? cfg.activeWorkspaceId`, so an
+ * id-less caller gets exactly what it got before. And `workspaceId` also reaches `publishArtifact`,
+ * which is the half that matters above `BLOB_INLINE_THRESHOLD_BYTES` — see the note there.
  */
 async function auditExport(params: AuditExportParams): Promise<AuditExportResult> {
   const cfg = loadConfig();
-  const { entries } = await queryLog({ workspaceId: cfg.activeWorkspaceId, limit: 0 });
+  const workspaceId = params.workspaceId ?? cfg.activeWorkspaceId;
+  const { entries } = await queryLog({ workspaceId, limit: 0 });
 
   const content = params.format === "json"
     ? JSON.stringify(entries, null, 2)
@@ -230,6 +269,7 @@ async function auditExport(params: AuditExportParams): Promise<AuditExportResult
     content,
     `audit-log.${params.format}`,
     params.format === "json" ? "application/json" : "text/csv",
+    workspaceId,
   );
 }
 
@@ -271,5 +311,8 @@ function captureShareJson(params: CaptureShareJsonParams): CaptureShareJsonResul
     JSON.stringify(params.entries, null, 2),
     params.suggestedName || "captured-requests.json",
     "application/json",
+    // P14 WI 8 — the blob half only. Captures are the second-most likely artifact to exceed the
+    // threshold, since the entries come from the renderer's own store and are not bounded here.
+    params.workspaceId,
   );
 }
