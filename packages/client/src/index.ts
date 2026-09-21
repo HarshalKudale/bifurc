@@ -38,6 +38,9 @@
 
 import type { Transport, EngineEvent } from "@bifurc/engine/transport/types";
 import type { BifurcApi } from "../../../renderer/types/window";
+// A **runtime** import, unlike everything else this file takes from the protocol: the enum is the
+// single source for the `invalid_kind` guard below, so the client does not restate the six kinds.
+import { EntitySetEnabledParams } from "@bifurc/protocol";
 import { SURFACE } from "./surface";
 import { createSubscriptionHub } from "./subscriptions";
 import { DEFAULT_RETRY_POLICY, withRetry, type RetryPolicy } from "./retry";
@@ -166,6 +169,46 @@ function bytesToBase64(bytes: Uint8Array): string {
     return g.btoa(binary);
   }
   throw new Error("@bifurc/client: no base64 encoder available in this environment");
+}
+
+/**
+ * The two `window.api` kinds whose name the **renderer** spells the engine's way.
+ *
+ * `EntityKind` — the wire vocabulary — renames two of the twelve CRUD kinds: the engine stores a
+ * proxy rule under `"rules"` and a websocket connection under `"sockets"`, while the protocol calls
+ * them `"proxyRules"` and `"wsConnections"`. Every panel passes the protocol name (`"mocks"`,
+ * `"requests"`, `"webhooks"`, …) **except** two, which pass the engine's:
+ *
+ * ```
+ * renderer/panels/ProxyRulesPanel.tsx:74,132,165   loadEntity(ws, "rules",   id)
+ * renderer/panels/WebSocketsPanel.tsx:146,159,250  loadEntity(ws, "sockets", id)
+ * ```
+ *
+ * This is the **`window.api`-fidelity half** of a translation that has two halves. The engine owns
+ * the other one — `toEngineKind()` in `packages/engine/src/commands/entityKindMap.ts` — and that is
+ * the one that has always been on the live path, because the client used to forward the caller's
+ * `kind` verbatim and `EntityLoadParams.kind` is the strict `EntityKind` enum. So the wire rejected
+ * `"rules"` with a `BAD_REQUEST`, the two panels' `.catch(() => {})` swallowed it, and their entity
+ * loads silently returned nothing. The deleted `entity:load` channel was the only implementation of
+ * this half — `plan/07` §5b-septies (sixth group) has the full accounting, and it is the same shape
+ * as the TLS path loss in §5b-undecies.
+ *
+ * **Why the table is duplicated rather than imported.** `@bifurc/engine` is a *dev*Dependency of this
+ * package — the client's only runtime dependency is `@bifurc/protocol`, because a client is supposed
+ * to drive any engine over a transport and must not link one. So `toProtocolKind()` cannot be
+ * imported here. Two entries is a cheaper cost than a runtime engine dependency, and
+ * `packages/client/tests/client.test.ts` pins both directions so the two copies cannot drift
+ * silently. It belongs in the client rather than the protocol for the reason above: this is a
+ * statement about what `window.api`'s callers pass, not about the wire.
+ */
+const ENGINE_TO_PROTOCOL_KIND: Record<string, string> = {
+  rules: "proxyRules",
+  sockets: "wsConnections",
+};
+
+/** Identity for the other fourteen kinds — see `ENGINE_TO_PROTOCOL_KIND`. */
+function toProtocolKind(engineKind: string): string {
+  return ENGINE_TO_PROTOCOL_KIND[engineKind] ?? engineKind;
 }
 
 export function createClient(transport: Transport, opts: CreateClientOptions): BifurcClient {
@@ -510,10 +553,31 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     // `updateResult.hasUpdate` undefined and made the About panel report "up to date" forever, with
     // no error anywhere. See `local.ts`'s `checkUpdate` and `surface.ts`.
     getConfig: () => call("getConfig", {}) as ReturnType<BifurcApi["getConfig"]>,
+    // Reclassified `transport` → `shim` on 2026-09-21, when the P6 reduction's sixth group deleted the
+    // `entity:load` channel. That channel applied `toProtocolKind()` before invoking the command; the
+    // client forwarded the caller's `kind` verbatim, so the two panels that name an engine kind got a
+    // `BAD_REQUEST` they swallowed. See `ENGINE_TO_PROTOCOL_KIND` above.
     loadEntity: (wsId, kind, id) =>
-      call("loadEntity", { workspaceId: wsId, kind, id }) as ReturnType<BifurcApi["loadEntity"]>,
-    setEntityEnabled: (wsId, kind, id, enabled) =>
-      call("setEntityEnabled", { workspaceId: wsId, kind, id, enabled }) as ReturnType<BifurcApi["setEntityEnabled"]>,
+      call("loadEntity", { workspaceId: wsId, kind: toProtocolKind(kind), id }) as ReturnType<BifurcApi["loadEntity"]>,
+    // Reclassified `transport` → `shim` in the same group, for the other half of the same channel pair.
+    // `entity:setEnabled`'s channel kept an explicit guard *ahead* of `commandRegistry.invoke()`, because
+    // `EntitySetEnabledParams.kind` is a strict six-value enum: an out-of-enum kind would otherwise throw
+    // `BAD_REQUEST` instead of resolving the `{ok: false, error: "invalid_kind"}` the method has always
+    // returned. The guard is checked against the protocol's **own** schema rather than a second copy of
+    // the six names, so a widening there cannot leave this behind.
+    //
+    // Unlike the `loadEntity` case this one is latent, not live — every caller passes a kind the enum
+    // accepts (the mocks panel's `resolveEntityKind` yields only `mocks` / `graphqlMocks` / `grpcMocks` /
+    // `soapMocks` in mock mode, and the two panels that toggle pass the literals `"mappings"` and
+    // `"rules"`). It is carried over anyway because it is a *documented* client-facing behaviour of the
+    // surface being reconstructed, and `renderer/types/window.ts`'s `Promise<{ok: boolean; error?:
+    // string}>` is the contract that says so.
+    setEntityEnabled: (wsId, kind, id, enabled) => {
+      if (!EntitySetEnabledParams.shape.kind.safeParse(kind).success) {
+        return Promise.resolve({ ok: false, error: "invalid_kind" }) as ReturnType<BifurcApi["setEntityEnabled"]>;
+      }
+      return call("setEntityEnabled", { workspaceId: wsId, kind, id, enabled }) as ReturnType<BifurcApi["setEntityEnabled"]>;
+    },
     saveConfig: (config) => call("saveConfig", { config }) as ReturnType<BifurcApi["saveConfig"]>,
 
     // ── import / export ─────────────────────────────────────────────────────
