@@ -907,15 +907,71 @@ all line up. This is why P9 moves *after* this phase.
 
 ### Work item 8 — protocol changes and the compatibility record
 
+> **THE EGRESS HALF IS DONE 2026-09-21; the compat record is `plan/protocol-changes.md`.** Three of the five
+> egress commands gained an optional `workspaceId`: `runner.exportReport`, `capture.shareJson`,
+> `audit.export`. `tls.exportCert` **deliberately did not** — see below.
+>
+> **Why it mattered: the blob half.** Above `BLOB_INLINE_THRESHOLD_BYTES` (1 MiB) an `ArtifactResult` is a
+> **staged blob** the client reads with `blob.read` **scoped to its own workspace**. D17 namespaced the four
+> `blob.*` params and `export.create` passed its id through; these three did not, so the engine staged
+> host-wide while a scoped client read elsewhere — **the engine's own export unreadable by the client that
+> requested it**, which is exactly the failure `importExportBlob.integration.test.ts` caught for
+> `export.create`. `blob/publish.ts` now carries the whole table.
+>
+> **`audit.export` had a second, worse problem, and it is the same class as WI 1.** Its handler resolved the
+> workspace itself as `loadConfig().activeWorkspaceId`, reasoning that "the engine can already look up" the
+> id — **which is desktop-only reasoning**: §2.3 demotes `activeWorkspaceId` to the *desktop's UI pointer*,
+> so on a host serving N workspaces an `audit.export` from workspace B returned the **active** workspace's
+> log. The caller could not ask for the log it meant. Now `params.workspaceId ?? cfg.activeWorkspaceId`, so
+> the desktop is unchanged.
+>
+> **`tls.exportCert` stays unscoped, and it is a decision rather than an omission.** The CA is one per
+> **machine** (`caCertPath()` under `appDataDir()`; `ownsCA` exists because N workspaces share one mkcert
+> root), so a `workspaceId` there would be a field that means nothing — worse than an absent one, because it
+> would read as though the export were workspace-scoped. **And it cannot reach the blob branch, measured:**
+> `ca-cert.pem` is **1,240 bytes** against a **1,048,576-byte** threshold, ~845× short. The same reasoning
+> already kept `tls.importCert` / `tls.importKey` unscoped, and all three now say so in
+> `fileOps/commands.ts`.
+>
+> **It is a contract-consistency fix, not a live bug fix — and that governs the verification.** Today's only
+> client sends **no** `workspaceId` on `blob.put` / `blob.read` / `blob.release` (it relies on the host-wide
+> default, which is what the unscoped egress commands produced), so the two matched and nothing failed. The
+> inconsistency bites the first client that *scopes* its blob reads — P7's web UI, D15's CLI — which would
+> find `export.create`'s output and not the other three's. Hence the test is an **identity** assertion, not
+> "a blobId came back": `tests/integration/workspaceCommandScope.integration.test.ts` **8 → 9** forces the
+> blob branch with a `capture.shareJson` payload just over the threshold (its `entries` come from the client,
+> so the size is the test's to set), asserts it is readable **scoped to B** and **throws under A**, and
+> guards its own premise so it cannot pass without crossing the threshold.
+>
+> **One assertion was strengthened rather than extended.** `"%s rejects a non-string workspaceId"` used to
+> parse `{ workspaceId: 42 }` **alone** — which a command with any required field rejects for *those fields
+> being missing*, so it passed whatever happened to the type. Now `{ ...valid, workspaceId: 42 }`, leaving
+> the type as the only possible error, plus a check that the failing issue's `path` includes `workspaceId`.
+>
+> **Mutation-checked, both fully identified.** Widening `WorkspaceScope.workspaceId` to accept a number →
+> **24** failures, resolving exactly as **17** × the type case (the scoped set) + **7** × `"— rejects an
+> invalid payload"` for the D13 commands whose `invalid` fixture *is* `{ workspaceId: 42 }` — two independent
+> mechanisms. Dropping `params.workspaceId` from `captureShareJson` → **exactly 1** failure, the new case.
+>
+> **Verified:** `index.test.ts` **228 → 237** (**+9** = three new scoped commands × the three `it.each`
+> cases each). The extension's four frozen commands are asserted by name in
+> `tests/companion/allowedActions.test.ts`, which pins the set exactly — run green alongside.
+
 - Every changed command name and shape into `plan/protocol-changes.md`. **Four of them are the `blob.*`
-  params gaining a required `workspaceId` (D17)** — which also invalidates their `invalid` fixtures, so
-  re-derive those rather than trusting them (`TRAPS.md`).
+  params gaining a ~~required~~ **optional** `workspaceId` (D17)** — which also invalidates their `invalid`
+  fixtures, so re-derive those rather than trusting them (`TRAPS.md`). *(Corrected 2026-09-21: D17 made the
+  field optional, not required — the optionality **is** the compatibility story, since the desktop sends
+  none. The same applies to WI 8's three.)*
 - **Verify the extension's four frozen commands are untouched** (`mock:add`, `request:add`, `folder:add`,
   `config:get` — `src/companion/allowedActions.ts`, and they are not in the changed namespaces). Assert it
   by name rather than by argument.
 - `packages/protocol/src/commands/index.test.ts` generates **two** tests per command, so any command count
   change moves the baseline by exactly 2× — name the mechanism, do not wave at the delta.
-- **Widening a schema invalidates its `invalid` fixture.** Adding a required `workspaceId` changes the
+  *(Precise as far as it goes, and it is not the only generator: each command in the `SCOPED` list also
+  contributes **three** `it.each` cases — accepts-with, accepts-without, rejects-non-string. So a
+  **command-count** change moves the total by 2×, while a **scoped-set** change moves it by 3× per command.
+  WI 8's +9 is 3 × 3; D17's +12 was 4 × 3. Two multipliers, one file.)*
+- **Widening a schema invalidates its `invalid` fixture.** Adding a ~~required~~ `workspaceId` changes the
   near-miss; re-derive it, never trust the old one (`TRAPS.md`).
 - Any ratchet guard over a shrinking list must be rewritten around its invariant (`TRAPS.md`).
 

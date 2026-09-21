@@ -41,6 +41,7 @@ import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { createWorkspaceHost, type WorkspaceHost } from "@bifurc/engine/runtime/host";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
+import { BLOB_INLINE_THRESHOLD_BYTES } from "@bifurc/protocol";
 
 const WS_A = "scope-ws-a";
 const WS_B = "scope-ws-b";
@@ -320,6 +321,47 @@ describe("workspace-scoped commands resolve the named workspace (P14 WI 7)", () 
         .ok,
     ).toBe(true);
     expect(rtB.webhook.activeCount()).toBe(beforeB);
+  });
+
+  it("an egress artifact above the inline threshold is readable by the workspace that asked for it", () => {
+    /**
+     * P14 WI 8. The egress commands' `workspaceId` exists for the **blob half**: above
+     * `BLOB_INLINE_THRESHOLD_BYTES` the engine stages an artifact and the client reads it with
+     * `blob.read` scoped to its own workspace. Without the field the engine staged host-wide, so a
+     * scoped read found nothing — the engine's own export unreadable by the client that requested it.
+     *
+     * **`capture.shareJson` because its payload size is ours to set.** The `entries` come from the
+     * client, so this can cross the threshold without a large fixture on disk or a slow render. The
+     * other two (`runner.exportReport`, `audit.export`) are wired identically and asserted at the
+     * schema level in `packages/protocol/src/commands/index.test.ts`.
+     */
+    const big = "x".repeat(BLOB_INLINE_THRESHOLD_BYTES + 1024);
+
+    const res = registry.invoke(
+      "capture.shareJson",
+      { workspaceId: WS_B, entries: [big] },
+      ctx,
+    ) as { blobId?: string; inline?: string };
+
+    // **Guard the premise.** If the artifact came back inline, the blob branch was never taken and the
+    // two assertions below would pass while testing nothing about namespaces.
+    expect(res.blobId).toBeDefined();
+    expect(res.inline).toBeUndefined();
+
+    // Readable under B, the workspace that asked.
+    const read = registry.invoke("blob.read", { blobId: res.blobId!, offset: 0, workspaceId: WS_B }, ctx) as {
+      data: string;
+    };
+    expect(Buffer.from(read.data, "base64").length).toBeGreaterThan(0);
+
+    // **And NOT under A — the identity assertion.** This is the one that fails if the engine staged
+    // host-wide, and it is why the case asserts on a namespace rather than on "a blobId came back".
+    expect(() =>
+      registry.invoke("blob.read", { blobId: res.blobId!, offset: 0, workspaceId: WS_A }, ctx),
+    ).toThrow(/no such blob/i);
+
+    // Release so the case leaves nothing staged behind it.
+    registry.invoke("blob.release", { blobId: res.blobId!, workspaceId: WS_B }, ctx);
   });
 
   it("stopping one workspace leaves its sibling serving — the D10 behaviour", () => {
