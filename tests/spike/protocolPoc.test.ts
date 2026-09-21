@@ -182,11 +182,10 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     const { registerFolderHandlers } = await import("../../src/ipc/handlers/folderHandlers");
     const { registerGraphqlKinds } = await import("../../src/ipc/handlers/graphqlKinds");
     const { registerSoapKinds } = await import("../../src/ipc/handlers/soapKinds");
-    const { registerTlsHandlers } = await import("../../src/ipc/handlers/tlsHandlers");
-    // P3 work item 5: `tls:generate` is now a thin client of the `tls.generate` **command**, which
-    // moved from this file's `registerTlsHandlers()` into the engine
-    // (`@bifurc/engine/proxy/certCommands`). `src/ipc/handlers.ts` wires both; a suite that
-    // registers handlers by hand has to wire both too, or the channel exists with nothing behind it.
+    // P3 work item 5: `tls:generate` became a thin client of the `tls.generate` **command**, which
+    // moved out of the shell into the engine (`@bifurc/engine/proxy/certCommands`). `src/ipc/handlers.ts`
+    // wires both; a suite that registers handlers by hand has to wire both too, or the channel exists
+    // with nothing behind it.
     const { commandRegistry } = await import("@bifurc/engine/commands/registry");
     const { registerCertCommands } = await import("@bifurc/engine/proxy/certCommands");
     // P6 §5c: `config.get` and `entity.setEnabled` moved out of `coreHandlers`' module scope into the
@@ -210,7 +209,6 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     registerFolderHandlers();
     registerGraphqlKinds();
     registerSoapKinds();
-    registerTlsHandlers();
     registerCertCommands(commandRegistry);
     registerCoreCommands(commandRegistry);
     registerFolderCommands(commandRegistry);
@@ -222,8 +220,8 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     //
     // P6 stage 3b deletes the shell's legacy channels, and this spike drives **ten** of them, so this
     // table grows with each slice: `graphql:introspect` / `soap:execute` went in slice 1 (the nine
-    // one-line passthroughs), and `mock:add` / `mock:delete` in slice 2 (the 48 factory-generated
-    // channels).
+    // one-line passthroughs), `mock:add` / `mock:delete` in slice 2 (the 48 factory-generated
+    // channels), and `tls:generate` in the reduction's first group (the six `tls:*` channels).
     //
     // This spike's subject is the **envelope**, not the routing, so each retired channel is re-attached
     // with *the exact body it had*. That is not a weakening: every one of those bodies was itself a
@@ -231,11 +229,13 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // reads real output. It also doubles as the check that the deletion lost nothing — the ten commands
     // answer identically, only some of them now arrive by a shorter path.
     //
-    // Treat the table as a **measure of the pass**: it covers 4 of the 10 channels this spike drives
+    // Treat the table as a **measure of the pass**: it covers 5 of the 10 channels this spike drives
     // today, and it reaches 10 of 10 exactly when the legacy surface is gone. At that point this file
     // stops being evidence about the shell and becomes a pure envelope test — which is the open
     // question recorded in `plan/07` §5b-ter.
     const { bus } = await import("@bifurc/engine/eventBus");
+    // The deleted `tls:generate` body called both of these; the fixture that reproduces it must too.
+    const { caCertPath, caKeyPath } = await import("@bifurc/engine/proxy/certManager");
     const deletedChannelBodies: Record<string, (...args: any[]) => unknown> = {
       "graphql:introspect": (_e, params) => commandRegistry.invoke("graphql.introspect", params, { bus }),
       "soap:execute": (_e, params) => commandRegistry.invoke("soap.execute", params, { bus }),
@@ -252,6 +252,25 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
         return "entity" in result ? result.entity : result;
       },
       "mock:delete": (_e, id: string) => commandRegistry.invoke("entity.delete", { kind: "mocks", id }, { bus }),
+      // **The one entry whose body is not a bare `invoke()` adapter**, and that is exactly why the
+      // reduction could not delete this channel with the rest of its group: the shell appended the two
+      // paths the engine deliberately refuses to report (`File_Ops_Protocol.md` §8) and the client twin
+      // had silently dropped them (`plan/07` §5b-undecies). Reproduced verbatim — paths included — so
+      // the assertion below still checks the shape the renderer actually consumes.
+      "tls:generate": async () => {
+        const result = await commandRegistry.invoke("tls.generate", {}, { bus }) as {
+          ok: boolean;
+          fingerprint?: string;
+          error?: string;
+        };
+        if (!result.ok) return { ok: false, error: result.error };
+        return {
+          ok: true,
+          certPath: caCertPath(),
+          keyPath: caKeyPath(),
+          fingerprint: result.fingerprint,
+        };
+      },
     };
 
     const transport = createInProcessTransport(
