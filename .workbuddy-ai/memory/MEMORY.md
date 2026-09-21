@@ -32,23 +32,22 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   the CommandRegistry yet"*. −18 tests vs stage 3a: `handlers.test.ts` generates **one `it` per
   `expectedChannels` entry**. `*Handlers.ts` → `*Kinds.ts` for soap/graphql/grpc; **"six caller files"
   corrected to five**.
-- **The reduction is classified — `plan/07` §5b-decies. 93 literal channels = 18 live + 75 dead**, decidable
-  because `window.api` *is* the client (`src/preload.ts:110`) and `packages/client/src` names no channel;
-  only preload's `local` block's 18 are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**;
-  every other file all-dead except `systemHandlers.ts` (`app:checkUpdate`). No `ipcMain.on(` in `src/`.
-- **The risk criterion is `owns a step the engine does not perform`** — §5b-decies said `dialog.*`, which was
-  **one channel short** (§5b-undecies). `tls:generate` owns a *path*. That mattered: `tlsGenerate` /
-  `tlsImportCert` / `tlsImportKey` were routed as 1:1 `transport` calls in step 3b-1 and had been **silently
-  dropping `certPath` / `keyPath` / `path` ever since**, so the Settings panel's Generate and Import buttons
-  were no-ops while the CA sat on disk. Fixed 2026-09-21 by reclassifying them `shim` (`transport` 70 → 67,
-  `shim` 3 → 6) and reading the paths from the `tlsCertStatus` local hook.
-- **The reduction's first group is done: `tlsHandlers.ts` deleted** (§5b-duodecies). Suite delta **0** — a
-  *re-point*, because `expectedChannels` never listed these six. **Inventory re-measured 2026-09-21
-  (`ipcMain.handle(` call sites): 87 literal channels in the 9 handler files = 18 live + 69 dead → 69 to go
-  across 8 files**, one handler group per commit. §5b-decies' "68" is a *different partition* from its 75
-  dead (it excludes the 7 dialog-owners), so don't reconcile them. In this repo **never `git rm`** — it
-  deletes all of `src/`; use `rm` + `git add` (TRAPS.md). Procedure → the `bifurc-dead-channel-reduction`
-  skill.
+- **The reduction — `plan/07` §5b-decies (inventory) / §5b-undecies (criterion) / §5b-duodecies (group 1).**
+  Measured 2026-09-21 (`ipcMain.handle(` **call sites**): **87 literal channels in the 9 handler files = 18
+  live + 69 dead → 69 to go across 8 files**, one handler group per commit. Decidable by construction:
+  `window.api` *is* the client (`src/preload.ts:110`) and `packages/client/src` names no channel, so only
+  preload's `local` block's 18 are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**; every
+  other file all-dead except `systemHandlers.ts` (`app:checkUpdate`). §5b-decies' "68" is a **different
+  partition** from its 75 dead (it excludes the 7 dialog-owners) — do not reconcile them.
+- **The criterion is `owns a step the engine does not perform`** — §5b-decies said `dialog.*` and was one
+  channel short. `tls:generate` owns a *path*, and that mattered: `tlsGenerate` / `tlsImportCert` /
+  `tlsImportKey` were routed as 1:1 `transport` calls in step 3b-1 and had been **silently dropping
+  `certPath` / `keyPath` / `path` ever since** — the Settings panel's Generate and Import buttons were no-ops
+  while the CA sat on disk. Fixed by reclassifying them `shim` (now `transport` 67 / `shim` 6) and reading the
+  paths from the `tlsCertStatus` local hook. **Never cast the object you build** — cast only the boundary
+  `unknown`. Group 1 (`tlsHandlers.ts`) is deleted; suite delta 0 (a *re-point*). In this repo **never
+  `git rm`** — it deletes all of `src/`; use `rm` + `git add` (TRAPS.md). Procedure →
+  `bifurc-dead-channel-reduction`.
 
 ## The executor pivot — `plan/14` (D10–D17), planned, no code written
 
