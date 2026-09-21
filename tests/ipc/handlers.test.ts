@@ -121,16 +121,6 @@ vi.mock("../../src/main", () => ({
   updateTrayMenu: vi.fn(),
 }));
 
-// Mock the importExport sub-system — its handlers register via the captured mockIpcMain,
-// so we let registerImportExportHandlers run but stub out every importer/exporter.
-vi.mock("@bifurc/engine/importExport/registry", () => ({
-  getAllFormats: vi.fn(() => ({})),
-  getFormats: vi.fn(() => []),
-  getExporter: vi.fn(() => null),
-  getImporter: vi.fn(() => null),
-  registerFormat: vi.fn(),
-}));
-
 // Override the global electron mock with our capturing ipcMain
 vi.mock("electron", () => ({
   app: {
@@ -296,6 +286,34 @@ const folderDelete = (kind: string, id: string): any =>
 // four that `expectedChannels` never listed either. Its behaviour is driven for real — against a real
 // workspace on disk — by `tests/integration/foldersAndWorkspaces.integration.test.ts`.
 
+/**
+ * The `coreHandlers.ts` commands, driven directly — the same substitution once more, for the
+ * reduction's **sixth** group (`plan/07` §5b-septendecies).
+ *
+ * All seventeen of that file's channels were deleted on 2026-09-21. Unlike groups 1–4 they were not
+ * all one-line `invoke()` adapters, so the criterion (*owns a step the engine does not perform*) had to
+ * be re-applied per channel by reading the command — and it found exactly one, `entity:load`, whose
+ * `toProtocolKind()` half the client twin had dropped. That is why this group opened with a fix-first
+ * commit (`174a01d`) instead of a deletion.
+ *
+ * **Helpers only where a command has more than one case**, and the single-use ones are written inline
+ * below. A helper for a lone call site is indirection that hides the payload mapping it exists to
+ * expose; these four earn theirs by being the mapping written once instead of repeatedly.
+ *
+ * `env.setActive` and `workspace.setActive` are two of §5c's five, moved by a different slice — they
+ * are here for the same reason as the rest: the channel that carried them is gone and the cases that
+ * pinned their behaviour had nowhere else to live. The other three (`config.get`, `entity.load`,
+ * `entity.setEnabled`) are reachable at the command level through `getConfig` / `entityLoad` and the
+ * registration block respectively.
+ */
+const getConfig = (): AppConfig => commandRegistry.invoke("config.get", {}, ENTITY_CTX) as AppConfig;
+const envSetActive = (id: string | null): any =>
+  commandRegistry.invoke("env.setActive", { id }, ENTITY_CTX);
+const workspaceSetActive = (id: string): any =>
+  commandRegistry.invoke("workspace.setActive", { id }, ENTITY_CTX);
+const entityLoad = (wsId: string, kind: string, id: string): any =>
+  commandRegistry.invoke("entity.load", { workspaceId: wsId, kind, id }, ENTITY_CTX);
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("src/ipc/handlers.ts", () => {
@@ -323,29 +341,78 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("registerIpcHandlers()", () => {
     const expectedChannels = [
-      "config:get", "config:save",
-      "services:discover",
+      // ── The seventeen `coreHandlers.ts` channels are gone (P6 reduction, sixth group, 2026-09-21) ──
+      // `config:get`, `config:save`, `services:discover`, `entity:load`, `entity:setEnabled`,
+      // `env:setActive`, `script:execute`, the four `workspace:*`, `request:replay`, `server:status`,
+      // `proxy:status` and the three `healthbar:*` were deleted with the file's reduction to
+      // `coreKinds.ts` (`plan/07` §5b-septendecies). Each was reachable only through the client, which
+      // routes to the commands directly, so asserting a handler for one would now assert the absence
+      // of the thing this list exists to check.
+      //
+      // **`entity:load` is the one that was not a passthrough**, and it is why this group opened with a
+      // fix-first commit rather than a deletion: its body applied `toProtocolKind()` and the client twin
+      // had dropped it, so the translation moved into `packages/client/src/index.ts` *before* the
+      // channel went (`174a01d`). `entity:setEnabled`'s `invalid_kind` guard travelled with it.
       // ── The 18 per-kind CRUD channels are gone (P6 stage 3b) ──────────────────────────────────
       // `mapping:*`, `rule:*`, `mock:*`, `request:*`, `ws:*` and `env:add/update/delete` were generated
       // by `entityCrudFactory.ts` and deleted with it, so asserting a handler for them would now assert
       // the absence of the thing this list exists to check. Their behaviour is covered at engine level
-      // by `entityCrudCommands`' suite and by `entityConflictScope`; the surviving `folder:*` and
-      // `env:setActive` entries below are their own implementations, not factory output.
+      // by `entityCrudCommands`' suite and by `entityConflictScope`.
       // ── The three folder channels are gone (P6 reduction, third group, 2026-09-21) ──────────
       // `folder:add` / `folder:rename` / `folder:delete` were deleted with `folderHandlers.ts`
       // (`plan/07` §5b-quaterdecies). Each was a one-line `commandRegistry.invoke()` delegate
       // reachable only through the client, which routes to the `folder.*` commands directly —
       // the cases below now drive those commands. `folder:move` was never in this list.
-      "env:setActive",
-      "workspace:add", "workspace:rename", "workspace:delete", "workspace:setActive",
-      "importExport:formats", "importExport:export", "importExport:preflight", "importExport:import",
+      // ── The ten `application.*` channels are gone (P6 reduction, seventh group, 2026-09-21) ──
+      // `applications:list` / `:save` / `:delete` / `:start` / `:stop` / `:getState` /
+      // `:getAllStates` / `:getLogs` / `:checkPort` / `:killPort` were deleted with
+      // `src/ipc/applicationHandlers.ts` (`plan/07` §5b-octodecies). Each was a one-line
+      // `commandRegistry.invoke()` delegate reachable only through the client, which routes to the
+      // `application.*` commands directly — so asserting a handler for one would now assert the
+      // absence of the thing this list exists to check. No case here drove them by name either:
+      // `tests/integration/applications.integration.test.ts` is their only suite and it now drives the
+      // commands, which is where the behaviour always lived.
+      // ── The six `runner.*` channels are gone (P6 reduction, eighth group, 2026-09-21) ────────
+      // `runner:saveReport` / `runner:exportReport` / `runner:getHistory` / `runner:saveConfig` /
+      // `runner:loadConfig` / `runner:listFolderIds` were deleted with
+      // `src/ipc/handlers/runnerHandlers.ts` (`plan/07` §5b-novendecies), so asserting a handler for
+      // one would now assert the absence of the thing this list exists to check. No case here ever
+      // drove one by name: `tests/integration/runnerStorage.integration.test.ts` is their only suite
+      // and it now drives the commands, which is where the behaviour always lived.
+      //
+      // **Two of these were the group's whole reason for care.** `runner:saveReport` and the
+      // `runner:saveConfig` / `runner:loadConfig` pair were **self-contained duplicates** rather than
+      // `commandRegistry.invoke()` delegates — `runnerCommands.ts`'s header records that the obvious
+      // DRY fix was tried in `serverCommands.ts` and reverted, because a channel that delegates to a
+      // module registered only inside `registerIpcHandlers()` acquires a hidden ordering dependency.
+      // Here the duplication was a *coverage* hazard instead: this suite's `expectedChannels` never
+      // listed them (so delta 0 was not evidence), while the integration suite drove the shell copies
+      // and would have stayed green with the engine halves rotted. `runner:exportReport` was the
+      // third shape — not a duplicate at all, but the P3 client composition (dialog → format from the
+      // chosen extension → engine render → artifact write), which lives in `packages/client/src`.
+      // ── The four `importExport:*` channels are gone (P6 reduction, ninth and last group, ─────
+      // 2026-09-21) ─────────────────────────────────────────────────────────────────────────────
+      // `importExport:formats` / `:export` / `:preflight` / `:import` were deleted with
+      // `src/ipc/importExportHandlers.ts` (`plan/07` §5b-vicendecies). **These four are the only
+      // group in the whole reduction that DID have generated cases here**, so this is the only place
+      // the ratchet's list actually shrank (4 → 0) — every earlier group's delta came from a suite
+      // re-point or from nothing at all.
+      //
+      // They are also the only group whose bodies were **not delegates**: they were the P3 *client
+      // half* — `dialog.*` + bytes + the `pendingUploads` map — so "dead" here means reachable only
+      // through the client, which composes the same steps in `packages/client/src/index.ts`:
+      // `getImportExportFormats` (`:584`), `exportData` (`:585`), `preflightImport` (`:626`) and
+      // `importData` (`:653`). That file's `KIND_LABEL` docblock (`:354`) named this deletion as the
+      // trigger for its copy becoming the only one, so the equivalence was recorded before the
+      // deletion rather than argued after it. The three multi-step twins carry two `describe` blocks
+      // and 22 references in `packages/client/tests/client.test.ts`, including the ordering
+      // assertions ("asks where BEFORE it asks the engine to render") that this file could not make.
       // ── The five audit/history channels are gone (P6 reduction, second group, 2026-09-21) ──────
       // `audit:list`, `audit:diff`, `audit:export`, `history:list` and `history:diff` were deleted
       // with `syncHandlers.ts` (`plan/07` §5b-terdecies). Each was reachable only through the client,
       // which routes to the `audit.*` / `history.*` **commands** directly, so asserting a handler here
       // would now assert the absence of the thing this list exists to check. Their behaviour is
       // covered at engine level — `store/auditCommands.ts` and `sync/syncCommands.ts`.
-      "request:replay", "server:status", "proxy:status",
       // ── The three server-lifecycle channels are gone (P6 reduction, fifth group, 2026-09-21) ──
       // `server:restart` / `server:stop` / `server:start` were deleted with the four dead channels in
       // `src/ipc/handlers/systemHandlers.ts` (`plan/07` §5b-sedecies). They were the first group whose
@@ -721,7 +788,12 @@ describe("src/ipc/handlers.ts", () => {
           .toBeLessThan(vi.mocked(startServer).mock.invocationCallOrder[0]);
         expect(startServer).toHaveBeenCalledWith(currentConfig.port);
 
-        expect(commandRegistry.invoke("services.discover", {}, ctx)).toEqual([]);
+        // Folded from the deleted `services:discover` case. The mock in `beforeEach` returns `[]`, and
+        // `toEqual([])` cannot tell "passed through" from "replaced with an empty array" — the deleted
+        // channel case used a non-empty list, so this one does too.
+        const discovered = [{ port: 3000, address: "127.0.0.1", pid: 100, processName: "node" }];
+        vi.mocked(discoverServices).mockReturnValue(discovered);
+        expect(commandRegistry.invoke("services.discover", {}, ctx)).toEqual(discovered);
         expect(discoverServices).toHaveBeenCalled();
 
         // ── slice 2: config.save and the three workspace.* commands ──────────
@@ -729,6 +801,12 @@ describe("src/ipc/handlers.ts", () => {
         // `config.save` — the settings path, and the restart is the part worth asserting. An
         // implementation that only called `saveConfig` would persist the new port while the live
         // server kept answering on the old one, which is the bug this branch exists to prevent.
+        //
+        // The bus emission is **folded from the deleted `config:save` case** — it was the one assertion
+        // that case made which this block did not. `settings.changed` is the shell's tray-update hook
+        // (P2), so losing it would stop the tray following a settings change with every test still green.
+        const settingsChanged = vi.fn();
+        bus.onTyped("settings.changed", settingsChanged);
         vi.mocked(startServer).mockClear();
         vi.mocked(stopServer).mockClear();
         expect(
@@ -737,6 +815,8 @@ describe("src/ipc/handlers.ts", () => {
         expect(saveConfig).toHaveBeenCalled();
         expect(stopServer).toHaveBeenCalled();
         expect(startServer).toHaveBeenCalledWith(9876);
+        expect(settingsChanged).toHaveBeenCalled();
+        bus.offTyped("settings.changed", settingsChanged);
 
         // `workspace.add` — the gate is mocked to allow, so this is the success path. The trim is the
         // assertion that matters: `name` comes off the wire as an arbitrary string, and a workspace
@@ -845,11 +925,17 @@ describe("src/ipc/handlers.ts", () => {
 
         // `request.replay` — four positional args in the shell body, four named fields on the wire.
         // The assertion is that they land in the right **slots**; a spread would silently swap them.
-        await commandRegistry.invoke(
-          "request.replay",
-          { method: "GET", url: "http://x", headers: { a: "b" }, body: "Ym9keQ==" },
-          ctx,
-        );
+        // The returned value is asserted too, folded from the deleted `request:replay` case: asserting
+        // only the call would pass for a handler that called the engine and discarded the answer.
+        const replayResult = { status: 200, headers: {}, body: "cmVzcA==" };
+        vi.mocked(replayRequestImpl).mockResolvedValue(replayResult);
+        expect(
+          await commandRegistry.invoke(
+            "request.replay",
+            { method: "GET", url: "http://x", headers: { a: "b" }, body: "Ym9keQ==" },
+            ctx,
+          ),
+        ).toEqual(replayResult);
         expect(replayRequestImpl).toHaveBeenCalledWith("GET", "http://x", { a: "b" }, "Ym9keQ==");
 
         // `script.execute` — a real `vm` run, not a mock, so this proves the sandbox is reachable
@@ -983,65 +1069,38 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── config:get ────────────────────────────────────────────────────────
 
-  describe("config:get handler", () => {
+  describe("config.get command (the deleted `config:get` channel)", () => {
     it("returns the current config", () => {
       currentConfig.port = 9090;
-      const result = getHandler("config:get")(EVENT);
+      const result = getConfig();
       expect(result.port).toBe(9090);
     });
   });
 
-  // ── config:save ───────────────────────────────────────────────────────
+  // ── config:save — cases deleted ──────────────────────────────────────
+  //
+  // Four `describe`-level cases stood here. The reduction's sixth group deleted the channel
+  // (`plan/07` §5b-septendecies) and **three of the four were already asserted** by the "delivers the
+  // 21 moved commands through the registry" block, against the same mocks:
+  //
+  //  - "saves the incoming config and returns { ok: true }" — the block asserts both the `{ok:true}`
+  //    return and `saveConfig` having been called;
+  //  - "calls reloadConfig after saving" — it asserted `loadConfig` was called, which is true of every
+  //    path in this file and is not a property of this command;
+  //  - "restarts the server when the port changes" — the block asserts `stopServer` then
+  //    `startServer(9876)`, which is the same contract with a sharper payload.
+  //
+  // The fourth — "emits `settings.changed` on the bus" — was **not** covered anywhere, so it was
+  // folded into that block rather than dropped. That fold is `plan/07` §5b-septies' rule cutting in the
+  // delete direction: re-point the cases whose assertions live only in the channel, delete the ones a
+  // suite already makes, and *move* the residue rather than discarding it with the case.
 
-  describe("config:save handler", () => {
-    it("saves the incoming config and returns { ok: true }", () => {
-      const incoming: AppConfig = { ...makeDefaultConfig(), port: 8888 };
-      const result = getHandler("config:save")(EVENT, incoming);
-      expect(result).toEqual({ ok: true });
-    });
-
-    it("calls reloadConfig after saving", () => {
-      const incoming: AppConfig = { ...makeDefaultConfig() };
-      getHandler("config:save")(EVENT, incoming);
-      // reloadConfig is from the mocked server module
-      // We can verify saveConfig was called (reloadConfig itself is mocked)
-      expect(loadConfig).toHaveBeenCalled();
-    });
-
-    it("restarts the server when the port changes", () => {
-      vi.mocked(isRunning).mockReturnValue(true);
-      vi.mocked(getPort).mockReturnValue(80);
-
-      const incoming: AppConfig = { ...makeDefaultConfig(), port: 9999 };
-      getHandler("config:save")(EVENT, incoming);
-
-      expect(stopServer).toHaveBeenCalled();
-      expect(startServer).toHaveBeenCalledWith(9999);
-    });
-
-    it("emits settings.changed on the bus after saving (P2: tray update is the shell's job now)", async () => {
-      const { bus } = await import("@bifurc/engine/eventBus");
-      const listener = vi.fn();
-      bus.onTyped("settings.changed", listener);
-      const incoming: AppConfig = { ...makeDefaultConfig() };
-      getHandler("config:save")(EVENT, incoming);
-      expect(listener).toHaveBeenCalled();
-      bus.offTyped("settings.changed", listener);
-    });
-  });
-
-  // ── services:discover ─────────────────────────────────────────────────
-
-  describe("services:discover handler", () => {
-    it("returns the list from discoverServices()", () => {
-      const services = [{ port: 3000, address: "127.0.0.1", pid: 100, processName: "node" }];
-      vi.mocked(discoverServices).mockReturnValue(services);
-
-      const result = getHandler("services:discover")(EVENT);
-
-      expect(result).toEqual(services);
-    });
-  });
+  // ── services:discover — case deleted ─────────────────────────────────
+  //
+  // One case stood here asserting `discoverServices()`'s list is returned rather than dropped. The
+  // "21 moved commands" block asserted `services.discover` against a mock returning `[]`, which cannot
+  // distinguish "passed through" from "replaced with an empty array" — so the block now uses a
+  // **non-empty** list and the case's assertion lives there. Same fold, same reason as `config:save`.
 
   // ── mapping:add ───────────────────────────────────────────────────────
 
@@ -1587,62 +1646,39 @@ describe("src/ipc/handlers.ts", () => {
 
   // ── env:setActive ─────────────────────────────────────────────────────
 
-  describe("env:setActive handler", () => {
+  describe("env.setActive command (the deleted `env:setActive` channel)", () => {
     it("sets activeEnvironmentId to the given id", () => {
-      getHandler("env:setActive")(EVENT, "env-123");
+      envSetActive("env-123");
       expect(currentConfig.activeEnvironmentId).toBe("env-123");
     });
 
     it("clears activeEnvironmentId when null is passed", () => {
       currentConfig.activeEnvironmentId = "env-123";
-      getHandler("env:setActive")(EVENT, null);
+      envSetActive(null);
       expect(currentConfig.activeEnvironmentId).toBeNull();
     });
 
     it("returns { ok: true }", () => {
-      const result = getHandler("env:setActive")(EVENT, "env-1");
+      const result = envSetActive("env-1");
       expect(result).toEqual({ ok: true });
     });
   });
 
-  // ── server:status ─────────────────────────────────────────────────────
-
-  describe("server:status handler", () => {
-    it("returns running, port, and error from the server module", () => {
-      vi.mocked(isRunning).mockReturnValue(true);
-      vi.mocked(getPort).mockReturnValue(8080);
-
-      const result = getHandler("server:status")(EVENT);
-
-      expect(result.running).toBe(true);
-      expect(result.port).toBe(8080);
-      expect(result.error).toBeNull();
-    });
-  });
-
-  // ── proxy:status ──────────────────────────────────────────────────────
-
-  describe("proxy:status handler", () => {
-    it("returns running status from the server module", () => {
-      vi.mocked(isRunning).mockReturnValue(false);
-      const result = getHandler("proxy:status")(EVENT);
-      expect(result.running).toBe(false);
-    });
-  });
-
-  // ── request:replay ────────────────────────────────────────────────────
-
-  describe("request:replay handler", () => {
-    it("delegates to replayRequest and returns its result", async () => {
-      const mockResult = { status: 200, headers: {}, body: "cmVzcA==" };
-      vi.mocked(replayRequest).mockResolvedValue(mockResult);
-
-      const result = await getHandler("request:replay")(EVENT, "GET", "http://example.com/", {}, "");
-
-      expect(replayRequest).toHaveBeenCalledWith("GET", "http://example.com/", {}, "");
-      expect(result).toEqual(mockResult);
-    });
-  });
+  // ── server:status / proxy:status / request:replay — cases deleted ─────
+  //
+  // Three `describe`s stood here, one case each. All three were already asserted by the "delivers the
+  // 21 moved commands through the registry" block, against the same mocks, which is why none was
+  // re-pointed:
+  //
+  //  - `server:status` — the block asserts `{running, port, error}` exactly, with the same
+  //    `isRunning`/`getPort`/`getServerError` mocks. (The block also pins the *pair*: `proxy.status` is
+  //    the same `isRunning()` with a different payload, and collapsing the two would silently change
+  //    one of them.)
+  //  - `proxy:status` — `toEqual({ running: true })`, the same assertion.
+  //  - `request:replay` — the channel case asserted `replayRequest` was called with the four positional
+  //    slots *and* that its result was returned. The block asserted the slots; the result assertion was
+  //    the residue, so it was **folded into the block** rather than dropped — the same fold as
+  //    `config:save`'s bus emission and `services:discover`'s pass-through.
 
   // ── server:restart / server:stop / server:start — cases deleted ──────
   //
@@ -1857,48 +1893,40 @@ describe("src/ipc/handlers.ts", () => {
     });
   });
 
-  // ── workspace:add ─────────────────────────────────────────────────────
+  // ── workspace.add — the two cases the "21 moved commands" block does not make ────────────────
 
-  describe("workspace:add handler", () => {
-    it("adds a workspace and returns it with a generated id", async () => {
-      const result = await getHandler("workspace:add")(EVENT, "Project Alpha");
-      expect(result.id).toBeTruthy();
-      expect(result.name).toBe("Project Alpha");
-      expect(currentConfig.workspaces).toHaveLength(2);
-    });
-
-    it("trims the workspace name", async () => {
-      const result = await getHandler("workspace:add")(EVENT, "  Trimmed  ");
-      expect(result.name).toBe("Trimmed");
-    });
-
+  describe("workspace.add command (the deleted `workspace:add` channel)", () => {
+    // "adds a workspace and returns it with a generated id" and "trims the workspace name" stood here
+    // too, and both were deleted: the block asserts the trim, the id, `activeEnvironmentId` being
+    // `null`, and the count growing by one — against the same mocks. What it does **not** make is the
+    // empty-name branch, so that case was re-pointed rather than dropped.
     it("generates a random name when name is empty", async () => {
-      const result = await getHandler("workspace:add")(EVENT, "");
+      const result = (await commandRegistry.invoke("workspace.add", { name: "" }, ENTITY_CTX)) as {
+        name: string;
+      };
       expect(result.name).toMatch(/^[a-z]+-[a-z]+$/);
     });
   });
 
-  // ── workspace:rename ──────────────────────────────────────────────────
+  // ── workspace.rename — the case the block does not make ──────────────────
 
-  describe("workspace:rename handler", () => {
-    it("renames the workspace", () => {
-      getHandler("workspace:rename")(EVENT, "default", "My Space");
-      expect(currentConfig.workspaces[0].name).toBe("My Space");
-    });
-
-    it("returns { ok: true }", async () => {
-      const result = await getHandler("workspace:rename")(EVENT, "default", "Renamed");
-      expect(result).toEqual({ ok: true });
-    });
-
-    it("does nothing when workspace id is not found", () => {
-      expect(() => getHandler("workspace:rename")(EVENT, "nonexistent", "X")).not.toThrow();
+  describe("workspace.rename command (the deleted `workspace:rename` channel)", () => {
+    // "renames the workspace" and "returns { ok: true }" were deleted — the block asserts both, plus
+    // the whitespace-only fallback, which is the sharper form of the same contract.
+    it("does nothing when workspace id is not found", async () => {
+      // Strengthened while re-pointing: the channel case was
+      // `expect(() => getHandler("workspace:rename")(…)).not.toThrow()`, which an `async` handler
+      // satisfies vacuously — it can only reject, never throw synchronously. Asserting the config is
+      // unchanged is what the case was trying to say.
+      const before = currentConfig.workspaces.map((w) => w.name);
+      await commandRegistry.invoke("workspace.rename", { id: "nonexistent", name: "X" }, ENTITY_CTX);
+      expect(currentConfig.workspaces.map((w) => w.name)).toEqual(before);
     });
   });
 
-  // ── workspace:delete ──────────────────────────────────────────────────
+  // ── workspace.delete — the active-workspace fallback ─────────────────────
 
-  describe("workspace:delete handler", () => {
+  describe("workspace.delete command (the deleted `workspace:delete` channel)", () => {
     beforeEach(() => {
       currentConfig.workspaces = [
         { id: "ws1", name: "One", createdAt: 0, activeEnvironmentId: null },
@@ -1907,26 +1935,17 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.activeWorkspaceId = "ws1";
     });
 
-    it("removes the workspace", () => {
-      getHandler("workspace:delete")(EVENT, "ws2");
-      expect(currentConfig.workspaces).toHaveLength(1);
-      expect(currentConfig.workspaces[0].id).toBe("ws1");
-    });
-
-    it("falls back to first remaining workspace when active workspace is deleted", () => {
-      getHandler("workspace:delete")(EVENT, "ws1");
+    // "removes the workspace" and "returns { ok: true }" were deleted — the block asserts both, and
+    // deliberately against the *inactive* workspace so that this branch is what stays under test.
+    it("falls back to first remaining workspace when active workspace is deleted", async () => {
+      await commandRegistry.invoke("workspace.delete", { id: "ws1" }, ENTITY_CTX);
       expect(currentConfig.activeWorkspaceId).toBe("ws2");
-    });
-
-    it("returns { ok: true }", async () => {
-      const result = await getHandler("workspace:delete")(EVENT, "ws2");
-      expect(result).toEqual({ ok: true });
     });
   });
 
-  // ── workspace:setActive ───────────────────────────────────────────────
+  // ── workspace.setActive ───────────────────────────────────────────────
 
-  describe("workspace:setActive handler", () => {
+  describe("workspace.setActive command (the deleted `workspace:setActive` channel)", () => {
     beforeEach(() => {
       currentConfig.workspaces = [
         { id: "ws1", name: "One", createdAt: 0, activeEnvironmentId: "env-1" },
@@ -1936,51 +1955,86 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("sets the active workspace and loads its environment", () => {
-      const result = getHandler("workspace:setActive")(EVENT, "ws2");
+      const result = workspaceSetActive("ws2");
       expect(result.ok).toBe(true);
       expect(currentConfig.activeWorkspaceId).toBe("ws2");
       expect(currentConfig.activeEnvironmentId).toBeNull();
     });
 
     it("restores activeEnvironmentId from the workspace", () => {
-      getHandler("workspace:setActive")(EVENT, "ws1");
+      workspaceSetActive("ws1");
       expect(currentConfig.activeEnvironmentId).toBe("env-1");
     });
 
     it("returns { ok: false } when workspace id is not found", () => {
-      const result = getHandler("workspace:setActive")(EVENT, "nonexistent");
+      const result = workspaceSetActive("nonexistent");
       expect(result.ok).toBe(false);
     });
 
     it("returns the full config on success", () => {
-      const result = getHandler("workspace:setActive")(EVENT, "ws2");
+      const result = workspaceSetActive("ws2");
       expect(result.config).toBeDefined();
       expect(result.config.activeWorkspaceId).toBe("ws2");
     });
+
+    /**
+     * P14 WI 4, decided 2026-09-21: switching the active workspace must **not** re-point the proxy.
+     *
+     * This is the half that would otherwise be invisible — every other case in this block passes with the
+     * `reloadConfig()` call present, because they only look at the pointer. The assertion is therefore on the
+     * *absence* of the call, which is exactly the shape `plan/14` §8 asks for ("asserted on identity, not on
+     * a value both could share").
+     *
+     * If someone restores `reloadConfig()` here, this fails — and that is the point. It was load-bearing
+     * before P14 (one proxy, re-pointed at the selection) and is wrong under D10–D12 (N proxies, each owning
+     * its own workspace).
+     */
+    it("does NOT reload the proxy — the pointer and the proxies are independent (P14 WI 4)", () => {
+      vi.mocked(reloadConfig).mockClear();
+
+      const result = workspaceSetActive("ws2");
+
+      expect(result.ok).toBe(true);
+      expect(currentConfig.activeWorkspaceId).toBe("ws2");
+      expect(reloadConfig).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The contrast that makes the rule above legible: `env.setActive` **does** reload, and must keep doing so.
+     * An environment is proxy state (which rules and enabled sets are live), so changing it genuinely has to
+     * re-point the proxy serving that workspace. The two commands look symmetric and are not.
+     */
+    it("env.setActive DOES reload the proxy — environments are proxy state", () => {
+      vi.mocked(reloadConfig).mockClear();
+
+      commandRegistry.invoke("env.setActive", { id: "env-1" }, ENTITY_CTX);
+
+      expect(reloadConfig).toHaveBeenCalled();
+    });
   });
 
-  // ── env:setActive — workspace activeEnvironmentId sync ───────────────
+  // ── env.setActive — workspace activeEnvironmentId sync ───────────────
 
-  describe("env:setActive — workspace sync", () => {
+  describe("env.setActive — workspace activeEnvironmentId sync", () => {
     it("updates activeEnvironmentId on the active workspace", () => {
-      getHandler("env:setActive")(EVENT, "env-abc");
+      envSetActive("env-abc");
       const ws = currentConfig.workspaces.find((w) => w.id === "default");
       expect(ws?.activeEnvironmentId).toBe("env-abc");
     });
 
     it("sets workspace activeEnvironmentId to null when clearing", () => {
       currentConfig.activeEnvironmentId = "env-abc";
-      getHandler("env:setActive")(EVENT, null);
+      envSetActive(null);
       const ws = currentConfig.workspaces.find((w) => w.id === "default");
       expect(ws?.activeEnvironmentId).toBeNull();
     });
   });
 
-  // ── config:get — returns config as-is ────────────────────────────────
+  // ── config.get — returns config as-is ────────────────────────────────
 
-  describe("config:get handler", () => {
+  describe("config.get command — the loaded config is returned as-is", () => {
     it("returns the loaded config directly", () => {
-      const result = getHandler("config:get")(EVENT);
+      const result = getConfig();
       expect(result).toBe(currentConfig);
     });
   });
@@ -2141,11 +2195,16 @@ describe("src/ipc/handlers.ts", () => {
   // translation: without it, `commandRegistry.invoke()` would throw a schema-validation error the moment
   // a rule or websocket connection was created, updated, deleted, or loaded.
   //
-  // **What changed on 2026-09-20, and it is a narrowing worth knowing about.** The translation is
-  // two-sided: the channel applied `toProtocolKind()` on the way in, and the engine applies
-  // `toEngineKind()` on the way out. Re-pointing these cases at the commands directly removes the
-  // *first* half from the test's path, so what they pin now is `toEngineKind()` alone — which is the
-  // half that survives, since `toProtocolKind()` lives in the factory and dies with the channels.
+  // **What changed on 2026-09-20, and then again on 2026-09-21.** The translation is two-sided: the
+  // channel applied `toProtocolKind()` on the way in, and the engine applies `toEngineKind()` on the way
+  // out. Re-pointing these cases at the commands directly removes the *first* half from the test's path,
+  // so what they pin now is `toEngineKind()` alone. That was correct in 2026-09-20's words — "the half
+  // that survives, since `toProtocolKind()` lives in the factory and dies with the channels" — **and it
+  // was wrong about what dying would cost.** `toProtocolKind()` was not dead weight: two renderer panels
+  // pass the engine-internal `"rules"` / `"sockets"` names and the client twin never applied the map, so
+  // the reduction's sixth group had to move that half into `packages/client/src/index.ts` **before** it
+  // deleted the channel (`174a01d`). The prediction "dies with the channels" is the shape of bug this
+  // reduction exists to catch, and it was written in this comment.
 
   // ── entity.changed: which kinds ping the bus ──────────────────────────
 
@@ -2189,15 +2248,20 @@ describe("src/ipc/handlers.ts", () => {
       }
     });
 
-    it("entity:load translates the engine-internal \"rules\" kind to the protocol's \"proxyRules\" without throwing", async () => {
-      const result = await getHandler("entity:load")(EVENT, "default", "rules", "r1");
-      // `loadEntity` is mocked to always return null in this file — the meaningful assertion
-      // is that this resolves at all instead of rejecting on Zod schema validation.
+    it("entity.load accepts the protocol's \"proxyRules\" kind — the name the client sends after translating \"rules\"", async () => {
+      // `loadEntity` is mocked to always return null in this file — the meaningful assertion is that
+      // this resolves at all instead of rejecting on Zod schema validation, which is what the deleted
+      // channel case was checking. The *translation* half now lives in the client, where it belongs and
+      // where the caller's `"rules"` actually arrives:
+      // `packages/client/tests/client.test.ts`'s "loadEntity translates the two engine-internal kinds
+      // its callers pass — the live bug, 2026-09-21" asserts the payload. Pinning it here too would be
+      // pinning it in the one place the bug cannot occur.
+      const result = await entityLoad("default", "proxyRules", "r1");
       expect(result).toEqual({ ok: false });
     });
 
-    it("entity:load translates the engine-internal \"sockets\" kind to the protocol's \"wsConnections\" without throwing", async () => {
-      const result = await getHandler("entity:load")(EVENT, "default", "sockets", "ws1");
+    it("entity.load accepts the protocol's \"wsConnections\" kind — the name the client sends after translating \"sockets\"", async () => {
+      const result = await entityLoad("default", "wsConnections", "ws1");
       expect(result).toEqual({ ok: false });
     });
 

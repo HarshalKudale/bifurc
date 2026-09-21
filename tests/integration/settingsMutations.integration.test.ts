@@ -102,11 +102,60 @@ const DELETED_SERVER_CHANNELS: Record<string, (...args: any[]) => unknown> = {
   "server:restart": () => commandRegistry.invoke("server.restart", {}, { bus }),
   "server:stop": () => commandRegistry.invoke("server.stop", {}, { bus }),
   "server:start": () => commandRegistry.invoke("server.start", {}, { bus }),
+  // `server:status` joined this table in the reduction's **sixth** group (`plan/07`
+  // §5b-septendecies, 2026-09-21). It was deliberately *not* here after the fifth group, because that
+  // group left it live — and that is the whole point of the entry: the two groups took three channels
+  // and then a fourth, and a table that had been written as "the three server channels" would have had
+  // to be re-derived rather than extended. It takes no payload, so unlike `server.*`'s siblings the
+  // positional signature is empty.
+  "server:status": () => commandRegistry.invoke("server.status", {}, { bus }),
+};
+
+/**
+ * The three `coreHandlers.ts` channels this suite drives — the P6 reduction's **sixth** group
+ * (`plan/07` §5b-septendecies, 2026-09-21).
+ *
+ * The mapping is forced by the call style rather than chosen: every call site uses the shell's
+ * positional signature (`invoke("workspace:setActive", id)`, `invoke("workspace:add", id, name)`), so
+ * this table translates positionals into the commands' **named** payloads. Written out one entry at a
+ * time rather than spread generically, because a spread is silently wrong for `workspace:add`:
+ * `(id, name)` cannot become `{0: id, 1: name}` and the command would reject it.
+ *
+ * **Two entries this table deliberately does *not* have, both of which a first draft added wrongly:**
+ *
+ *   - `config:save` — eleven call sites read `invoke("config:save", …)`, but that channel has not
+ *     existed since §5c moved its body into `configCommands.ts`; the call sites resolve through the
+ *     `handlers.get()` fallback below because `config.save` is a plain command. Nothing to translate.
+ *   - `zoom:*` / `theme:*` — five and three call sites respectively, and they are **live channels**,
+ *     registered by `registerClientHandlers()` in this suite's `beforeEach`
+ *     (`src/ipc/handlers/clientHandlers.ts:37-71`). They are shell-local behaviour (they touch
+ *     `webContents` and the title-bar overlay), not commands, so the reduction has no claim on them —
+ *     `plan/07` §5b-decies records `clientHandlers.ts` as **17 live / 0 dead → untouchable**. Mapping
+ *     them to invented `theme.get` / `zoom.set` commands fails as `No handler registered for command
+ *     "theme.set"`, which is the signal that the entry is wrong: **a routed-surface error naming a
+ *     command you just wrote is the registry telling you the command was your idea, not the code's.**
+ */
+const DELETED_CORE_CHANNELS: Record<string, (args: any[]) => { command: string; payload: any }> = {
+  "config:get": () => ({ command: "config.get", payload: {} }),
+  "workspace:add": ([name]) => ({ command: "workspace.add", payload: { name } }),
+  "workspace:setActive": ([id]) => ({ command: "workspace.setActive", payload: { id } }),
+  // `config:save` reaches this table even though its channel died in §5c rather than in the reduction,
+  // and the reason is a **shape** mismatch that outlived the name: the call sites pass the config object
+  // itself (`invoke("config:save", { ...invoke("config:get"), port: portB })`), while `config.save`
+  // takes `{ config }` (`ConfigSaveParams`). So it is the case where a name that predates the reduction
+  // still needs a translation line added *by* it. Without one the call falls through to
+  // `handlers.get()` and reports `No handler registered for "config:save"`.
+  "config:save": ([config]) => ({ command: "config.save", payload: { config } }),
 };
 
 function invoke<T = any>(channel: string, ...args: any[]): T {
   const deleted = DELETED_SERVER_CHANNELS[channel];
   if (deleted) return deleted(...args) as T;
+  const core = DELETED_CORE_CHANNELS[channel];
+  if (core) {
+    const { command, payload } = core(args);
+    return commandRegistry.invoke(command as never, payload, { bus }) as T;
+  }
   const fn = handlers.get(channel);
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
@@ -221,15 +270,20 @@ beforeEach(async () => {
   });
   setDataDirOverride(ws.dataRoot);
 
-  const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
+  const { registerCoreKinds } = await import("@/ipc/handlers/coreKinds");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
   const { registerCrudKinds } = await import("@/ipc/handlers/crudKinds");
-  registerCoreHandlers();
+  registerCoreKinds();
   registerClientHandlers();
   registerCrudKinds();
   // `registerSystemHandlers()` used to be called here, for the three `server:*` channels. They are
   // gone (P6 reduction, fifth group) and the one channel it still registers — `app:checkUpdate` — is
   // not driven by this suite, so the call was removed with them.
+  //
+  // `registerCoreHandlers()` became `registerCoreKinds()` on 2026-09-21: the reduction's sixth group
+  // deleted its seventeen channels and the file now registers the `environments` kind alone
+  // (`plan/07` §5b-septendecies). The call stays because that kind registration is still needed by any
+  // suite that drives `entity.*` by hand.
 });
 
 // P6 §5c: `config.get` and `workspace.setActive` moved out of `coreHandlers`' module scope into the
@@ -258,6 +312,15 @@ beforeAll(async () => {
   // `registerFolderCommands()` call the third group added.
   const { registerServerCommands } = await import("@bifurc/engine/proxy/serverCommands");
   registerServerCommands(commandRegistry);
+  // P6 reduction, sixth group: **the largest registration repair any group has forced on a suite.**
+  // Eight `config.save` call sites read `invoke("config:save", …)`, and that channel has not existed
+  // since §5c moved its body into `configCommands.ts` — so they resolve through the `handlers.get()`
+  // fallback to a plain command that this suite had never registered. The failure is
+  // `No handler registered for "config:save"`: the message names the *old* surface and points the reader
+  // at a file that no longer contains it, which is why the rule is to compare this suite's
+  // `register*Commands()` set against `src/ipc/handlers.ts` rather than against its own history.
+  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
+  registerConfigCommands(commandRegistry);
 });
 
 afterEach(() => {
@@ -622,7 +685,21 @@ describe("settings — a config mutation reaches the running proxy with no resta
     expect(JSON.parse(after.body)).toEqual({ upstream: true, path: "/api/hello" });
   });
 
-  it("re-routes the running proxy when the active workspace is switched", async () => {
+  /**
+   * P14 WI 4 (decided 2026-09-21) — this pair used to assert the *opposite*.
+   *
+   * The original cases were "re-routes the running proxy when the active workspace is switched" and "goes
+   * back to the first workspace's mock when the switch is reverted": switching workspace re-pointed the
+   * process's single proxy, so the same port started answering from the other workspace. Under D10–D12 the
+   * pointer and the proxies are independent — a workspace's rules keep serving while you edit another one —
+   * so the same port must now **keep** serving the workspace it was started for.
+   *
+   * Rewritten rather than deleted, because the interesting assertion was always the *identity* of the
+   * responder on the same port and URL. The failure mode this guards is now the reverse of the old one: a
+   * regression that restored `reloadConfig()` in `workspace.setActive` would make the first assertion below
+   * fail (`{from: "second"}` where it expects `{from: "mock"}`), which is exactly how this was found.
+   */
+  it("keeps the running proxy on its own workspace when the active workspace is switched (P14 WI 4)", async () => {
     await bootOnConfiguredPort();
     expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "mock" });
 
@@ -637,12 +714,16 @@ describe("settings — a config mutation reaches the running proxy with no resta
 
     expect(invoke("workspace:setActive", second.id)).toMatchObject({ ok: true });
 
-    // The same port, the same URL — but now the other workspace answers.
-    expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "second" });
+    // The pointer moved…
     expect(readAppJson().activeWorkspaceId).toBe(second.id);
+
+    // …and the proxy did NOT. It is still serving the workspace it was started for, on its own port. The
+    // second workspace's mock is *not* reachable here, because that workspace has no running runtime in the
+    // desktop today — which is precisely what P14 exists to change (WI 7).
+    expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "mock" });
   });
 
-  it("goes back to the first workspace's mock when the switch is reverted", async () => {
+  it("does not disturb the proxy when the pointer is switched and switched back (P14 WI 4)", async () => {
     await bootOnConfiguredPort();
     const second = await invoke("workspace:add", "Second Workspace");
     await createMock({
@@ -652,10 +733,12 @@ describe("settings — a config mutation reaches the running proxy with no resta
     });
 
     invoke("workspace:setActive", second.id);
-    expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "second" });
+    // The whole point: switching is inert with respect to the proxy, so it answers the same either way.
+    expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "mock" });
 
     invoke("workspace:setActive", TEST_WS);
 
     expect(JSON.parse((await fetchHello(portA)).body)).toEqual({ from: "mock" });
+    expect(readAppJson().activeWorkspaceId).toBe(TEST_WS);
   });
 });

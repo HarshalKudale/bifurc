@@ -176,7 +176,9 @@ function newRegistry(): CommandRegistry {
 
 const ctx: CommandContext = { bus: {} as CommandContext["bus"] };
 
-// ── Client-side primitives, written the way `src/ipc/importExportHandlers.ts` writes them ──
+// ── Client-side primitives, written the way `packages/client/src/index.ts` writes them ──
+// (`src/ipc/importExportHandlers.ts` held the shell's copy and was deleted with the P6
+// reduction's ninth group, 2026-09-21 — `plan/07` §5b-vicendecies.)
 
 /** `export.create`, typed. */
 async function exportCreate(

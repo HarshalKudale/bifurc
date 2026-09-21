@@ -70,10 +70,51 @@ const DELETED_FOLDER_CHANNELS: Record<string, (args: any[]) => { command: string
   "folder:delete": ([kind, id]) => ({ command: "folder.delete", payload: { kind, id } }),
 };
 
+/**
+ * The five `coreHandlers.ts` channels this suite drives — the P6 reduction's **sixth** group
+ * (`plan/07` §5b-septendecies, 2026-09-21).
+ *
+ * Every entry is a *positional* adapter, unlike the folder table's single-object shape, and that is
+ * forced by the call sites rather than chosen: this suite invokes the shell's own signature
+ * (`invoke("config:get")`, `invoke("workspace:setActive", id)`), so the translation has to turn
+ * positionals into each command's **named** payload. Written out one at a time because the argument
+ * lists are not what the parameter names suggest, and two of them were got wrong on the first pass:
+ *
+ *   - **`workspace:add` takes one argument — the name.** Not `(id, name)`: the command generates the id
+ *     (`WorkspaceAddParams.id` is optional). Mapping `([id, name])` shifts the name into the `id` slot
+ *     and fails as `Invalid payload for command "workspace.add": expected string, received undefined`
+ *     on `name`.
+ *   - `workspace:rename` / `workspace:delete` / `workspace:setActive` take `(id[, name])`, as the
+ *     parameter names do suggest.
+ *   - `entity:load` takes `(workspaceId, kind, id)` and is the one case where the names line up — and
+ *     also the one where **`kind` is a protocol name** (`"proxyRules"`, `"wsConnections"`) that the
+ *     command translates via `toEngineKind`, so it is passed straight through rather than pre-translated.
+ *
+ * `config:get` is the only entry with no payload at all; `ConfigGetParams` is an empty strict object, so
+ * `{}` is the contract rather than a convention.
+ *
+ * **This table is not a second contract.** `src/preload.ts` is the authority for what the renderer
+ * sends; this is a test-local translation standing in for channels that no longer exist. Re-derive it
+ * from the call sites — never from this comment — if another group reaches this suite.
+ */
+const DELETED_CORE_CHANNELS: Record<string, (args: any[]) => { command: string; payload: any }> = {
+  "config:get": () => ({ command: "config.get", payload: {} }),
+  "workspace:add": ([name]) => ({ command: "workspace.add", payload: { name } }),
+  "workspace:rename": ([id, name]) => ({ command: "workspace.rename", payload: { id, name } }),
+  "workspace:delete": ([id]) => ({ command: "workspace.delete", payload: { id } }),
+  "workspace:setActive": ([id]) => ({ command: "workspace.setActive", payload: { id } }),
+  "entity:load": ([workspaceId, kind, id]) => ({ command: "entity.load", payload: { workspaceId, kind, id } }),
+};
+
 function invoke<T = any>(channel: string, ...args: any[]): T {
-  const deleted = DELETED_FOLDER_CHANNELS[channel];
-  if (deleted) {
-    const { command, payload } = deleted(args);
+  const folder = DELETED_FOLDER_CHANNELS[channel];
+  if (folder) {
+    const { command, payload } = folder(args);
+    return commandRegistry.invoke(command as never, payload, { bus }) as T;
+  }
+  const core = DELETED_CORE_CHANNELS[channel];
+  if (core) {
+    const { command, payload } = core(args);
     return commandRegistry.invoke(command as never, payload, { bus }) as T;
   }
   const fn = handlers.get(channel);
@@ -129,11 +170,13 @@ const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
 beforeAll(async () => {
   ws = createWorkspace();
 
-  const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
+  const { registerCoreKinds } = await import("@/ipc/handlers/coreKinds");
   const { registerCrudKinds } = await import("@/ipc/handlers/crudKinds");
   // P6 §5c: `config.get`, `entity.load` and `workspace.setActive` moved out of `coreHandlers`' module
-  // scope into the engine. `registerCoreHandlers()` wires the *channels*; a suite that registers handler
-  // groups by hand has to wire the engine half too, or the channel exists with nothing behind it.
+  // scope into the engine. The reduction's sixth group then deleted that file's channels and renamed it
+  // to `coreKinds.ts` (`plan/07` §5b-septendecies), so `registerCoreKinds()` is the shell's
+  // `environments` kind alone — a suite that registers handler groups by hand still has to wire the
+  // commands, which is the `registerCoreCommands()` call below.
   const { commandRegistry } = await import("@bifurc/engine/commands/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   // P6 §5c slice 3: the four `folder.*` commands left `folderHandlers.ts`'s module scope. Every channel
@@ -146,10 +189,23 @@ beforeAll(async () => {
   // `registerCrudKinds()` wires the per-kind options those four commands dispatch through. It registers
   // no channels — the reduction's fourth group took the file's last five on 2026-09-21.
   const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  // The `workspace.*` commands this suite drives nine times come from `configCommands`, and until the
+  // sixth group this suite never had to wire it: `coreHandlers.ts`'s `workspace:add` channel registered
+  // them as a side effect of existing. Deleting the channel took the registration with it, and the
+  // failure is `No handler registered for command "workspace.add"` — a *routed-surface* error, i.e. the
+  // envelope reached the registry and the registry had nothing to dispatch to.
+  //
+  // The general rule, now seen four times in one group (spike → `registerServerCommands`; protocolExecution
+  // → `registerMiscCommands` + `registerConfigCommands`; settingsMutations → `registerConfigCommands`):
+  // **a command whose only registration came from a handler file the reduction deleted must be wired
+  // explicitly by every suite that drives it.** Compare against `src/ipc/handlers.ts`'s `register*Commands()`
+  // list rather than against the suite's own history.
+  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
 
-  registerCoreHandlers();
+  registerCoreKinds();
   registerCoreCommands(commandRegistry);
   registerFolderCommands(commandRegistry);
+  registerConfigCommands(commandRegistry);
   registerEntityCrudCommands(commandRegistry);
   registerCrudKinds();
 });

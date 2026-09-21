@@ -61,14 +61,16 @@
  * artifact and `runner.exportReport` — already routed through the registry — needs the same renderer.
  * Writing `report.html` next to `report.json` is what the shell body did, and it stays.
  *
- * ## The trap: do NOT re-point the legacy channel at this module yet
+ * ## The trap that still applies to `runner.saveReport`
  *
  * The obvious "DRY" follow-up is to replace the shell's `runner:saveReport` body with
  * `commandRegistry.invoke("runner.saveReport", params, ctx)`. **That was tried in `serverCommands.ts`
  * and reverted, and it is a real regression rather than a style question.**
  *
  * The reason is how this module gets registered. `config.get` / `env.setActive` / `workspace.setActive`
- * are registered at **module scope** in `coreHandlers.ts`, so importing that file populates them. This
+ * *were* registered at **module scope** in `coreHandlers.ts`, so importing that file populated them —
+ * **that file is now `coreKinds.ts` and registers no channels at all** (P6 reduction, sixth group,
+ * 2026-09-21; `plan/07` §5b-septendecies), so the contrast this paragraph drew is historical. This
  * module is registered by an **explicit call inside `registerIpcHandlers()`**, so a legacy body that
  * delegates here acquires a hidden ordering dependency on a function callers are not obliged to run —
  * and two suites already register handler *groups* without it. The failure is a `No handler registered`
@@ -77,7 +79,9 @@
  *
  * So the duplication is deliberate and bounded. **Step 3** removes it by deleting
  * `registerIpcHandlers()` and the shell's handler groups together — one implementation, no second
- * entry point to keep in sync.
+ * entry point to keep in sync. Note the trap is still **live** for this file specifically: unlike the
+ * four groups already deleted, `runnerHandlers.ts` has not been reduced yet, so `runner:saveReport`
+ * still has a shell body and the warning still binds.
  */
 import * as fs from "fs";
 import * as path from "path";

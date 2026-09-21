@@ -54,12 +54,17 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "workspace.setActive": { valid: { id: "w1" }, invalid: {} },
   "env.setActive": { valid: { id: null }, invalid: {} },
 
-  "server.status": { valid: {}, invalid: { extra: true } },
-  "server.start": { valid: {}, invalid: { extra: true } },
-  "server.stop": { valid: {}, invalid: { extra: true } },
-  "server.restart": { valid: {}, invalid: { extra: true } },
-  "proxy.status": { valid: {}, invalid: { extra: true } },
-  "services.discover": { valid: {}, invalid: { extra: true } },
+  // P14 WI 1 (D13): these six carry an optional `workspaceId` so a host can address one of N workspaces
+  // behind a single RPC endpoint. The `valid` fixture supplies it, because "omitted" is already covered by
+  // every pre-P14 caller and the new capability is the thing at risk of being untested. The `invalid` fixture
+  // stays `{ extra: true }` — re-derived, not assumed: `.strict()` still rejects an unknown key, so the
+  // rejection path is still exercised. The near-miss for the *new* field is a wrong-typed `workspaceId`,
+  // which is a better test than a missing one (a missing optional field is valid by construction).
+  "server.status": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
+  "server.start": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
+  "server.stop": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
+  "server.restart": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
+  "proxy.status": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },  "services.discover": { valid: {}, invalid: { extra: true } },
 
   "graphql.introspect": { valid: { url: "http://x", headers: {} }, invalid: { url: "http://x" } },
   "graphql.execute": {
@@ -93,11 +98,18 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "application.checkPort": { valid: { port: 3000 }, invalid: { port: "3000" } },
   "application.killPort": { valid: { port: 3000 }, invalid: { port: "3000" } },
 
-  "webhook.registerActive": { valid: { webhookId: "w1", urlSuffix: "/x" }, invalid: { webhookId: "w1" } },
-  "webhook.unregisterActive": { valid: { webhookId: "w1" }, invalid: {} },
-  "webhookServer.start": { valid: {}, invalid: { port: "abc" } },
-  "webhookServer.stop": { valid: {}, invalid: { extra: true } },
-  "webhookServer.status": { valid: {}, invalid: { extra: true } },
+  // P14 WI 1 (D13): same `workspaceId` treatment as `server.*` above — supplied in `valid` (the new
+  // capability is what needs covering, not the status quo), and the near-miss on the new field replaces the
+  // generic extra-key case. `webhookServer.start` keeps its `port: "abc"` rejection, which is a better
+  // near-miss than `workspaceId` here since `port` is the field that command is actually about.
+  "webhook.registerActive": {
+    valid: { webhookId: "w1", urlSuffix: "/x", workspaceId: "ws1" },
+    invalid: { webhookId: "w1", workspaceId: "ws1" },
+  },
+  "webhook.unregisterActive": { valid: { webhookId: "w1", workspaceId: "ws1" }, invalid: {} },
+  "webhookServer.start": { valid: { workspaceId: "ws1" }, invalid: { port: "abc" } },
+  "webhookServer.stop": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
+  "webhookServer.status": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
 
   "runner.saveReport": {
     valid: { workspaceId: "ws1", report: { folderId: "f1", startedAt: 1 } },

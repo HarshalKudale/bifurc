@@ -1,13 +1,9 @@
-import { registerImportExportHandlers } from "@/ipc/importExportHandlers";
-import { registerApplicationHandlers } from "@/ipc/applicationHandlers";
-
 import { registerSoapKinds } from "@/ipc/handlers/soapKinds";
 import { registerGraphqlKinds } from "@/ipc/handlers/graphqlKinds";
 import { registerGrpcKinds } from "@/ipc/handlers/grpcKinds";
 import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
 import { registerCrudKinds } from "@/ipc/handlers/crudKinds";
-import { registerRunnerHandlers } from "@/ipc/handlers/runnerHandlers";
-import { registerCoreHandlers } from "@/ipc/handlers/coreHandlers";
+import { registerCoreKinds } from "@/ipc/handlers/coreKinds";
 
 import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
 import { bus, wireLogEventsToBus } from "@bifurc/engine/eventBus";
@@ -56,10 +52,11 @@ export function registerIpcHandlers(): void {
   registerCertCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (first slice): `server.status` / `server.start` / `server.stop` /
   // `server.restart` / `proxy.status` / `services.discover`. These six were served **only** by
-  // `ipcMain.handle` bodies in `systemHandlers.ts` and `coreHandlers.ts`, so `registry.invoke()`
-  // answered `UNKNOWN_COMMAND` for all of them — which is why `@bifurc/client` advertised six
-  // methods it could not deliver against the real engine. The proxy server and its port/error state
-  // are engine state, not shell state.
+  // `ipcMain.handle` bodies in `systemHandlers.ts` and `coreHandlers.ts` (the latter is now
+  // `coreKinds.ts` — the reduction's sixth group took its channels on 2026-09-21), so
+  // `registry.invoke()` answered `UNKNOWN_COMMAND` for all of them — which is why `@bifurc/client`
+  // advertised six methods it could not deliver against the real engine. The proxy server and its
+  // port/error state are engine state, not shell state.
   //
   // Those shell bodies **stayed as they were** rather than being re-pointed, which was deliberate
   // rather than an oversight: re-pointing them at the registry would have made them depend on this
@@ -96,6 +93,10 @@ export function registerIpcHandlers(): void {
   // were `ipcMain.handle` bodies in `coreHandlers.ts`; every function they call already lives in the
   // engine. `healthbar.checkUrl` is the one body that could not be copied literally: its shell version
   // used `require("https")`, and `require` does not exist in the engine's ESM build output.
+  //
+  // **The channels are now deleted** — the reduction's sixth group removed all seventeen of
+  // `coreHandlers.ts`'s on 2026-09-21 (`plan/07` §5b-septendecies), and the file became `coreKinds.ts`
+  // with the one kind it registers. This call is the five commands' only registration.
   registerMiscCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (fifth slice): `runner.saveReport`. Its two siblings
   // (`runner.saveConfig` / `runner.loadConfig`) were `BLOCKED` by the frozen protocol at the time and
@@ -110,12 +111,12 @@ export function registerIpcHandlers(): void {
   // 2026-09-19; see `packages/engine/src/store/auditCommands.ts`.
   registerAuditCommands(commandRegistry);
   // P6 §5c, first slice: `config.get`, `env.setActive`, `workspace.setActive`, `entity.load` and
-  // `entity.setEnabled` were registered at **module scope** in `handlers/coreHandlers.ts`, so their
-  // implementations lived in a file only the Electron shell has and a containerised engine (P9)
-  // answered `UNKNOWN_COMMAND` for commands the protocol declares and `@bifurc/client` advertises.
-  // The ratchet could not see it: in this process the shell had already registered them. §5c records
-  // **five** such commands; the real count is **51** across nine shell files, and this is the first
-  // slice — the one §5c named explicitly.
+  // `entity.setEnabled` were registered at **module scope** in `handlers/coreHandlers.ts` (now
+  // `coreKinds.ts`), so their implementations lived in a file only the Electron shell has and a
+  // containerised engine (P9) answered `UNKNOWN_COMMAND` for commands the protocol declares and
+  // `@bifurc/client` advertises. The ratchet could not see it: in this process the shell had already
+  // registered them. §5c records **five** such commands; the real count is **51** across nine shell
+  // files, and this is the first slice — the one §5c named explicitly.
   registerCoreCommands(commandRegistry);
   // Step 3e slice 3: the four `folder.*` commands, out of `handlers/folderHandlers.ts`'s module scope.
   // Every one of that file's channels **delegates** through `commandRegistry.invoke()`, so the four
@@ -141,8 +142,12 @@ export function registerIpcHandlers(): void {
   // The cleanest slice of the pass — **nothing had to travel**: every dependency (`workspaceFs`'s
   // entity readers, `applications/processSpawner`, `commandGenerator`, `portUtils`) was already in
   // this package, so the shell file was a pure adapter with no behaviour of its own to lose. The only
-  // shell-side thing in it was `electron`'s `ipcMain`, which stays behind in the channels. Its private
-  // `generateId()` was byte-identical to `store/config.ts`'s exported one and collapsed into it.
+  // shell-side thing in it was `electron`'s `ipcMain`, which stayed behind in the channels — and those
+  // went too. **That file is now gone** — the reduction's seventh group deleted its ten channels on
+  // 2026-09-21 (`plan/07` §5b-octodecies), so this call is the commands' only registration. Nothing was
+  // lost by the deletion because every channel was a one-line `commandRegistry.invoke()` delegate with
+  // no step of its own; its private `generateId()` was byte-identical to `store/config.ts`'s exported
+  // one and collapsed into it during §5c.
   registerApplicationCommands(commandRegistry);
   // Step 3e slice 6: the 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` /
   // `entity.restore` / `audit.diff` / `history.*` commands, out of `handlers/syncHandlers.ts`'s module
@@ -180,11 +185,14 @@ export function registerIpcHandlers(): void {
   // legacy, and no amount of routing removes them. So step 3 ends by **reducing** this function to the
   // local-handler entry point, with the legacy command bodies gone — see `plan/07` §5b, the "Local
   // handlers stay local" table, and step 3f in "How to start".
-  // `src/ipc/importExportHandlers.ts` is still dead and dies with that reduction. `plan/07` §5c is the
-  // ledger; §5c-vii records the last slice.
-
-  registerImportExportHandlers();
-  registerApplicationHandlers();
+  // `registerImportExportHandlers()` used to sit here, and `importExportHandlers.ts` is now
+  // **deleted** — the reduction's ninth and last group removed its four channels on 2026-09-21
+  // (`plan/07` §5b-vicendecies). Unlike every earlier group these bodies were **not** delegates: they
+  // were the P3 *client half* (dialog + bytes + the `pendingUploads` map), which is why they needed
+  // the most care. All four twins are in `packages/client/src/index.ts` — `exportData` (`:585`),
+  // `preflightImport` (`:626`), `importData` (`:653`) and `getImportExportFormats` (`:584`) — and that
+  // file's own `KIND_LABEL` docblock (`:354`) named this deletion as the trigger for its copy becoming
+  // the only one. So that file is gone, and the client is the single implementation.
 
   // Forward sync status changes onto the bus (P2 work item 2, site #1). `log:entry` /
   // `log:chunk` / `server:error` need no forwarder *here* — `logEmitter` is already
@@ -217,8 +225,19 @@ export function registerIpcHandlers(): void {
   // file's last five channels (`webhook:*`, `webhookServer:*`), so it now registers kinds and nothing
   // else. See `crudKinds.ts`'s header and `plan/07` §5b-quindecies.
   registerCrudKinds();
-  registerRunnerHandlers();
-  registerCoreHandlers();
+  // `registerRunnerHandlers()` used to sit here, and `runnerHandlers.ts` is now **deleted** — the
+  // reduction's eighth group removed its six channels on 2026-09-21 (`plan/07` §5b-novendecies). The
+  // whole `runner.*` namespace is registered by `registerRunnerCommands(commandRegistry)` at the top of
+  // this function, which is where it has been since step 3e slice 2 moved the last two commands out of
+  // that file's module scope (the §5c defect). Nothing was lost by the deletion: four of the six
+  // channels were one-line `commandRegistry.invoke()` delegates, and the other two —
+  // `runner:saveReport` and the `runner:saveConfig` / `runner:loadConfig` pair — were self-contained
+  // duplicates of engine commands that already existed, which is why the ratchet could never test them.
+  //
+  // Renamed from `registerCoreHandlers()` on 2026-09-21: the reduction's sixth group deleted the file's
+  // seventeen channels, so like `crudKinds.ts` it now registers kinds and nothing else. See
+  // `coreKinds.ts`'s header and `plan/07` §5b-septendecies.
+  registerCoreKinds();
 
   // P6 work item 1, step 2: the RPC bridge, over `createInProcessTransport(commandRegistry)`.
   //
