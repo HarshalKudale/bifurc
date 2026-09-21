@@ -36,7 +36,8 @@
  * The obvious migration is to map `mock:add` → `entity.create`, `folder:add` → `folder.add`,
  * `config:get` → `config.get` and delete the hand-written bodies. **That would break the frozen
  * contract in four ways**, and it would break the additive-only property this allowlist exists to
- * guarantee. Verified against `src/ipc/handlers/crudHandlers.ts`, `entityCrudFactory.ts` and
+ * guarantee. Verified against `src/ipc/handlers/crudHandlers.ts` (now `crudKinds.ts` — its channels
+ * went in the reduction's fourth group, 2026-09-21), `entityCrudFactory.ts` and
  * `folderHandlers.ts` on 2026-09-18 — the last two are since deleted (`entityCrudFactory.ts` in P6
  * stage 3b, `folderHandlers.ts` in the reduction's third group), so the "registry equivalent" column is
  * now checkable against `store/entityCrudCommands.ts` and `store/folderCommands.ts`:
