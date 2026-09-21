@@ -275,9 +275,20 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   grpcStopMockServer: t("grpc.stopMockServer"),
 
   // ── TLS / certificates ───────────────────────────────────────────────────
-  tlsImportCert: t("tls.importCert", "needs a blobId the signature never supplies: dialog + blob.put precede it"),
-  tlsImportKey: t("tls.importKey", "needs a blobId the signature never supplies: dialog + blob.put precede it"),
-  tlsGenerate: t("tls.generate"),
+  //
+  // The first three are **shims, not transport**, and the distinction is the whole point. The engine
+  // deliberately reports no filesystem path (`File_Ops_Protocol.md` §8 keeps its directory layout out
+  // of the protocol) — `tls.generate` answers `{ok, fingerprint}` and the two imports answer `{ok}`.
+  // The renderer needs one anyway: `TlsSettingsSection.tsx` records `tlsCaCertPath` / `tlsCaKeyPath`
+  // from what these return, and reads a missing field as "not configured". So each of the three
+  // appends the path the **shell** computes, which the `tlsCertStatus` local hook already reports.
+  //
+  // Classified `transport` until 2026-09-20, and that misclassification *was* the bug: a 1:1 mapping
+  // cannot express a step the engine does not perform, so routing them dropped the field on a live
+  // path — the CA was generated on disk and the settings never learned it. See `plan/07` §5b-undecies.
+  tlsImportCert: s("tls.importCert", "needs a blobId the signature never supplies: dialog + blob.put precede it, then the engine's `{ok}` gains the shell's cert path"),
+  tlsImportKey: s("tls.importKey", "needs a blobId the signature never supplies: dialog + blob.put precede it, then the engine's `{ok}` gains the shell's key path"),
+  tlsGenerate: s("tls.generate", "the engine answers `{ok, fingerprint}` with no path by design; the shell's certPath / keyPath are appended"),
   tlsExportCert: t("tls.exportCert", "returns an artifact; the CLIENT writes the file, not the engine"),
   // `tlsRemoveCert` and `tlsCertStatus` are deliberately **not** here: both are client-local, because
   // both compose the engine's half with the client's trust store. See the trust-store note in the
