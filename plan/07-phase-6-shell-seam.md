@@ -989,6 +989,15 @@ coverage. The 1 failure is `soap.execute`, the environmental one.
    **Whether the spike's throwaway code should be retired now that P4's real conformance suite exists is a
    separate decision, and it is not stage 3b's to make** — retiring it means `spike/protocol/` goes too,
    plus five plan docs that cite it.
+   > **→ That decision was taken 2026-09-21: the spike was RETIRED** (`spike/README.md`, `plan/14` §12.6).
+   > Worth noting how this reads in hindsight, because it is the argument *for* the discipline recorded
+   > here: stage 3b's deletion was **unrecorded**, and the reason it was a defect rather than a judgement
+   > call is that it contradicted a written phase decision and would have silently changed the baseline
+   > number every later reconciliation is measured against. Restoring it, and *recording* that the
+   > retirement was owed to a later phase, is what made the eventual retirement a decision instead of an
+   > accident. The "five plan docs" estimate above was re-derived at retirement time: **nine** documents
+   > cite the spike's code (sixteen mention the word, but seven of those name other spikes). Same failure
+   > mode as the count in `plan/14` §12.6 — a plausible number that was never re-measured.
 2. **The tree was broken mid-slice.** The helper had been added but the 20 call sites not yet converted, so
    19 cases died with `No handler registered`. Recorded because the failure mode is instructive: the
    deletion and its migration are one atomic change, and a half-landed stage 3b is not a smaller stage 3b —
