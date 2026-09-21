@@ -1288,6 +1288,12 @@ assertion that would catch it is the opposite shape** — `dist/preload.js` must
 bundler. Worth generalising: when a guard walks a graph, check *which* resolver the guard uses against
 *which* resolver the runtime will use. Two entry points in one walk can need two different properties.
 
+> **FIXED 2026-09-21 (`e8e535f`).** See *"A sandboxed preload has NO module resolver"* below — that is the
+> canonical entry for this defect and carries the fix, the build-time guard, and the two findings that came
+> out of verifying it. This entry is kept for the archaeology (`git log -S` chain to `1268bfd`) and for the
+> packaging-guard blind spot, neither of which the other one covers. **Two entries for one defect is one too
+> many; if you are reading this to fix something, read that one first.**
+
 
 ## Deleting a test is a coverage claim — and "is X tested elsewhere?" cannot be answered by counting files
 
@@ -1489,7 +1495,69 @@ pre-P6 state that P5/P6 exist to remove.
    so the 93-entry fixture table ships inside the preload bundle. Harmless but wrong; noted, not fixed, since
    changing the protocol's export surface is its own change with its own compatibility question.
 
+**A third finding, from verifying the fix a session later (2026-09-21): the build script's own dependency was
+undeclared.** `scripts/build-preload.mjs` does `require("esbuild")`, and `esbuild` was **not** in
+`package.json` — it was present only *transitively*, via `tsup` (`^0.27.0`) and `vite` (`^0.27.0 || ^0.28.0`).
+So the build worked by **hoisting**, not by declaration: correct today, and it would have broken confusingly if
+either package dropped or changed its esbuild range — with the failure appearing in a *build script* that
+`package.json` did not say needed esbuild. Now a declared devDependency pinned to the already-resolved
+`^0.27.0` rather than introducing a second copy.
+
+**The generalisation, which is the same shape as the preload defect one layer up:** a script that resolves
+something at runtime must *declare* what it resolves. `require` succeeds or fails against `node_modules` as it
+happens to be laid out, and hoisting makes an undeclared dependency work exactly long enough to be forgotten.
+The check is one line — for every `require`/`import` in `scripts/`, is the name in `package.json`?
+
 **And the `*/`-in-JSDoc trap bit again while writing the fix** — the header line
 "`@bifurc/*` … `packages/*/src`" closed the comment early and produced `SyntaxError: Unexpected identifier`.
 The existing `TRAPS.md` entry on this is accurate; the specific sting is that the offending token was a
 **glob**, which is exactly the thing you write without noticing in a path-heavy document.
+
+## `setDataRoot()` redirects *some* roots and not others — and only on Windows
+
+`store/paths.ts#setDataRoot()` looks like the one switch that moves a run's files somewhere else. It is not.
+Two path resolvers consult a **different** answer:
+
+| Resolver | Windows | Linux / macOS |
+|---|---|---|
+| `dataDir()` (`store/paths.ts`) | honours `setDataRoot()` | honours `setDataRoot()` |
+| `settingsPath()` → `appDataDir()` (`store/appSettings.ts`) | **`%LOCALAPPDATA%/Bifurc/app.json`**, ignoring `setDataRoot()` | falls through to `dataDir()/app.json` |
+
+So on Windows a `--data-dir` run keeps its **workspaces and blobs** at the given root and reads its
+**settings** from the user's real profile. `proxy/certManager.ts` has recorded this for the CA since P3
+("that divergence is pre-existing … fixing it is a product decision for P8/P9"); what is new is that it now has
+a second, independent victim.
+
+**Second victim, found 2026-09-21 while verifying the P14 WI 6 host artifact.** `node dist/runtime/hostCli.js
+--data-dir <temp> --workspace ws-e2e` came up:
+
+```
+[host] serving 0 workspace(s); rpc \\.\pipe\bifurc-<pid>       ← and exit code 0
+```
+
+The cause was not the CLI and not the data root: `loadSettings()` read `%LOCALAPPDATA%\Bifurc\app.json`, whose
+only workspace is `mtsamun7rer3p`, so `--workspace ws-e2e` filtered that list to empty. Confirmed by reading
+the real file rather than reasoning about it.
+
+**Why this is a trap and not just a quirk.** Three properties compound:
+
+1. **It is Windows-only**, so a Linux CI — the environment the container deployment actually targets — is
+   green, and the divergence is invisible to every suite here.
+2. **The symptom is silence, not an error.** "Serving 0 workspaces" reads as an empty data root. Nothing
+   throws, and the exit code is 0.
+3. **The fix is not local.** The obvious patch — have `settingsPath()` fall through to `dataDir()` always —
+   changes where the *desktop* keeps its settings, which is a product decision with a migration. Hence
+   `certManager.ts`'s "introducing a *third* answer here would not be [the fix]".
+
+**What to do instead: make the divergence say itself.** WI 6 added the notice that names the directory, and it
+is the shape worth copying for any "you asked for X and got nothing" case:
+
+```
+[host] requested workspace "ws-e2e" is not in the settings (looked in C:/Users/…/AppData/Local/Bifurc)
+       — it will not be served
+```
+
+**And the general rule: when a flag claims to redirect "the data", enumerate the resolvers before believing
+it.** `grep` for every function that builds a path from an env var or a root override and check each one
+consults the override. A redirect that covers 3 of 4 resolvers is worse than none, because the failure is
+partial and looks like data loss.

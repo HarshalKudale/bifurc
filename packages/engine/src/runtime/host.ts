@@ -55,7 +55,7 @@ import { commandRegistry, type CommandRegistry } from "../commands/registry";
 import { registerAllEngineCommands } from "../registerAll";
 import { bus as defaultBus, type EngineEventBus } from "../eventBus";
 import { ensureEngineToken } from "../transport/auth/token";
-import { loadSettings, type AppSettings } from "../store/appSettings";
+import { loadSettings, appDataDir, type AppSettings } from "../store/appSettings";
 import { bootstrapWorkspaces } from "../startup";
 import { setDataRoot, dataDir } from "../store/paths";
 import { EventLog } from "../transport/eventLog";
@@ -177,6 +177,31 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     // how the desktop and the container end up with different on-disk states.
     let settings: AppSettings = loadSettings();
     if (opts.workspaceIds !== undefined) {
+      /**
+       * **A requested workspace that is not in the settings file is named, not silently dropped.**
+       *
+       * This is the "accepted and ignored" failure again, one layer out: `--workspace X` where `X` does not
+       * exist filtered the list to *empty*, the host came up serving nothing, and it exited 0. Measured on
+       * 2026-09-21 while verifying the CLI artifact — the cause was that `--data-dir` had **not** redirected
+       * the settings file, so the requested id was absent from a list the operator never saw. Without this
+       * notice, the only symptom is `serving 0 workspace(s)`, which looks like an empty data root rather than
+       * a settings file read from somewhere else.
+       *
+       * The directory is included because **that is the diagnostic**: on Windows `settingsPath()` prefers
+       * `%LOCALAPPDATA%` regardless of `setDataRoot()` (recorded in `proxy/certManager.ts`), so a
+       * `--data-dir` run reads the user's real settings. Naming the location turns that into one readable
+       * line. Not fatal — the other requested workspaces may still be serveable, which is the same
+       * "skip loudly, do not refuse to start" rule D16 applies to a taken port override.
+       */
+      const known = new Set(settings.workspaces.map((w) => w.id));
+      for (const id of opts.workspaceIds) {
+        if (!known.has(id)) {
+          notice(
+            `requested workspace "${id}" is not in the settings (looked in ${appDataDir()}) — ` +
+              `it will not be served`,
+          );
+        }
+      }
       settings = { ...settings, workspaces: settings.workspaces.filter((w) => opts.workspaceIds!.includes(w.id)) };
     }
     const boot = await bootstrapWorkspaces(settings);
