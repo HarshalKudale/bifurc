@@ -775,6 +775,25 @@ rather than a type.
       which cannot drift. The spike's retired-channel fixture **grew 5 → 7 of 10** (`folder:add` /
       `folder:move` are driven), the counterpart to the second group's non-growth. **Inventory: 64 literal
       channels in 7 files = 18 live + 46 dead**, so **46 dead across 6 files** remain.
+      **Progress 2026-09-21, fourth group — `crudHandlers.ts` becomes `crudKinds.ts`, and the first group
+      that cost nothing** (`plan/07` §5b-quindecies). Five channels, all dead
+      (`webhook:registerActive` / `unregisterActive`, `webhookServer:start|stop|status`) — and the **first
+      group whose bodies are not `invoke()` delegates**: each calls its engine function directly, the shape
+      §5a left them in, so the criterion had to be re-applied rather than inherited. It cleared them: the
+      engine half is exact, and `webhookServer.start` is strictly *more* capable (it honours an optional
+      `port` the shell body ignored). **Delta 0 — the third distinct signature in four groups**, and not the
+      `tls` one: the five were never in `expectedChannels` *and* no suite drives them by name, so nothing was
+      lost and nothing needed re-pointing. Their behaviour is already asserted at the **command** level
+      (`handlers.test.ts` "slice 3": the port chain `port` → `cfg.webhookPort` → `9101`, and the three-field
+      status shape). **Suite: 101 / 2,492 / 2,451 / 40 / 1** — unchanged, as predicted. The **rename** is the
+      other half of the group: §5b-octies' decision to keep the `*Handlers` name rested on "six kinds **and**
+      five live `webhook*` channels", and deleting the five expired the premise — so it is `crudKinds.ts` /
+      `registerCrudKinds()` now, matching its three siblings. Five call sites, each of which also carried a
+      comment saying the call "wires the *channels* and the per-kind options" — **false in its first half now,
+      and a stale comment on a *renamed* function is worse than on a deleted one, because it reads as
+      current**. The spike's fixture **did not grow** (it drives none of the five; the file contains no
+      occurrence of "webhook"), the same non-growth as the second group. **Inventory: 59 literal channels in
+      6 files = 18 live + 41 dead**, so **41 dead across 5 files** remain.
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening

@@ -65,7 +65,7 @@ import { loadConfig } from "@bifurc/engine/store/config";
 import { bus } from "@bifurc/engine/eventBus";
 import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine/commands/registry";
 import { COMPANION_SCOPES, SHELL_SCOPES } from "@bifurc/engine/transport/auth/scopes";
-import { registerCrudHandlers } from "@/ipc/handlers/crudHandlers";
+import { registerCrudKinds } from "@/ipc/handlers/crudKinds";
 import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
 import { registerEntityCrudCommands } from "@bifurc/engine/store/entityCrudCommands";
 
@@ -105,11 +105,11 @@ beforeAll(() => {
   // absent from a containerised engine. It now lives in the engine behind an explicit call, so every
   // suite that does not run `registerIpcHandlers()` has to make that call itself.
   registerCoreCommands(commandRegistry);
-  registerCrudHandlers();
+  registerCrudKinds();
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
-  // `registerCrudHandlers()` wires the *channels* and the per-kind options; the four commands those
-  // channels delegate to are the engine half and have to be registered explicitly. Without this the
-  // channels exist with nothing behind them — `No handler registered` at invocation time.
+  // `registerCrudKinds()` wires the per-kind options those four commands dispatch through — and now
+  // nothing else, since the reduction's fourth group took the file's last five channels (2026-09-21).
+  // Without this call the four commands throw `"<kind>" is not routed through the CommandRegistry yet`.
   registerEntityCrudCommands(commandRegistry);
 });
 

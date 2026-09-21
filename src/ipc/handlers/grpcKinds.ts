@@ -42,8 +42,9 @@ interface SavedGrpcMock {
 // `registerCrudKind()` / `registerSimpleKind()` directly. **The name now says what the file does**
 // — the rename slice (2026-09-20) took `grpcHandlers.ts` → `grpcKinds.ts` and `registerGrpcHandlers()` →
 // `registerGrpcKinds()`, because a file called `*Handlers.ts` that registers no handler invites someone to
-// add one. `crudHandlers.ts` kept its name on purpose: it registers six kinds *and* five live
-// `webhook*` channels, so "handlers" is still half-true there.
+// add one. `crudHandlers.ts` was the one exception, on the grounds that it registered six kinds *and*
+// five live `webhook*` channels; the reduction's fourth group deleted those five on 2026-09-21, so the
+// exception expired and the file became `crudKinds.ts` / `registerCrudKinds()` like the rest.
 //
 // The two CRUD groups route through the collapse — see `plan/03-phase-2-engine-extraction.md` work item
 // 7's tenth batch. The last group goes through the smaller `registerSimpleKind()` path because
