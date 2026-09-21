@@ -8,10 +8,10 @@
  * `registerIpcHandlers()` (`@/ipc/handlers`) does not call this file, and it must stay that way
  * once `packages/engine` exists: this file simply never moves there.
  *
- * `tls:installCA` is the one exception worth calling out: it lives here (not in
+ * `tls:installCA` is the one exception worth calling out: it lives here (not in the since-deleted
  * `tlsHandlers.ts`) because it mutates the *host's* trust store — a host-scoped, client-local
- * mutation per `File_Ops_Protocol.md` §6, unlike the rest of `tlsHandlers.ts` which reads/writes
- * the engine's own CA files. P3 work item 5 made that split explicit: this handler now delegates to
+ * mutation per `File_Ops_Protocol.md` §6, unlike the rest of that file, which read and wrote the
+ * engine's own CA files. P3 work item 5 made that split explicit: this handler now delegates to
  * `@/ipc/certLifecycle`, which fetches the certificate over the command registry and drives
  * `@/ipc/certTrust` — the per-platform install/un-trust. The engine's `certManager` no longer
  * shells out to anything.
@@ -172,9 +172,9 @@ export function registerClientHandlers(): void {
    * What went wrong while they were routed, in one line each: `tlsCertStatus` delivered the engine's
    * fingerprint and paths and dropped the three trust-store fields, so the drift warning could never
    * render; `tlsRemoveCert` deleted the engine's keypair and left the OS store trusting the CA, from
-   * the Settings panel's "remove certificate" button. `tlsHandlers.ts`'s `tls:certStatus` /
-   * `tls:removeCert` channels are the superseded twins — same bodies, unreachable now that
-   * `window.api` is `{ ...client }`.
+   * the Settings panel's "remove certificate" button. The superseded twins — `tls:certStatus` and
+   * `tls:removeCert` in `tlsHandlers.ts` — were unreachable once `window.api` became
+   * `{ ...client }`, and were deleted with that file on 2026-09-21.
    */
   ipcMain.handle("client:tlsCertStatus", () => readCertStatus());
   ipcMain.handle("client:tlsRemoveCert", () => uninstallEngineCa());

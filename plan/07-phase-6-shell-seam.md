@@ -1304,6 +1304,37 @@ declares and the pre-P6 build delivered.
    `transport` 70 → 67 and `shim` 3 → 6, while the 73 routed entries are unchanged, so
    `tests/ipc/handlers.test.ts`'s guard did not move.
 
+#### 5b-duodecies. The reduction, first group — `tlsHandlers.ts` is deleted, and the criterion widens (2026-09-21)
+
+**The first handler group is gone: all six `tls:*` channels, and `src/ipc/handlers/tlsHandlers.ts` with them.**
+It is the group §5b-decies' table lists as 6 dead / 0 live, so it looked like the easy place to start — and it
+turned out to be the one group that needed a fix *first* (§5b-undecies). Worth stating plainly, because the
+next eight groups will be chosen on the same basis: **"all dead" is a statement about reachability, and the
+question that decides deletability is what the body does.**
+
+`registerIpcHandlers()` loses one import and one call. Three comments that named the file as a *live*
+implementation are corrected in the same pass, because a comment pointing at a deleted file is the same
+defect class as a doc quoting a stale count:
+
+- `src/ipc/certLifecycle.ts` — now says outright that `readCertStatus()` is the **only** source of
+  `certPath` / `keyPath`, which is the fact the three client shims depend on.
+- `src/ipc/handlers/clientHandlers.ts` — past tense for the `tls:certStatus` / `tls:removeCert` twins.
+- `tests/integration/fileOps.integration.test.ts`'s item-6 assertion — it pointed at the deleted file as its
+  counter-example and now names the client's shim instead, which is *sharper*: the shim's `path` is the
+  client's fact and never crosses the wire, which is precisely what that assertion protects.
+
+**Reconciliation: 101 files / 2,500 tests / 2,459 passed / 40 skipped / 1 failed — unchanged, delta 0.** That
+is the **re-point** signature from §5b-septies' trap, not the generated-list one, and the mechanism is named
+rather than inferred: `tests/ipc/handlers.test.ts`'s `expectedChannels` never listed these six — they were
+hand-written `ipcMain.handle` literals, not generated from that array — so nothing generated a per-channel
+test for them. The one channel this spike drives, `tls:generate`, is re-pointed in the retired-channel
+fixture, which now covers **5 of the 10**.
+
+That fixture entry is the table's **only body that is not a bare `invoke()` adapter**, and reproducing it
+verbatim — paths included — is what keeps the spike's `certPath` / `keyPath` assertions meaningful. It is the
+same discovery as §5b-undecies reached from the test side: the channel was not a passthrough, so neither the
+deletion order nor the fixture could treat it as one.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**

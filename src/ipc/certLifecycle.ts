@@ -326,16 +326,19 @@ export async function readTrustSummary(): Promise<TrustSummary & { engineFingerp
  * trust-store summary. Eight fields, and all eight are load-bearing.
  *
  * Extracted 2026-09-20 so the two channels that need it cannot drift apart. Before the extraction the
- * composition lived only inside `tlsHandlers.ts`'s `tls:certStatus` channel, which is why the routed
+ * composition lived only inside the `tls:certStatus` channel (`tlsHandlers.ts`, deleted 2026-09-21 with
+ * the rest of the reduction's first group), which is why the routed
  * client twin could deliver the engine half alone and nothing pointed at the three missing fields:
  * `trustState`, `firefoxDetected` and `firefoxProfiles` arrived `undefined`, and `undefined` is
  * neither `"trusted"` nor `"stale"`, so the drift warning could not render — the one state this module
  * exists to explain. `@bifurc/client` now calls this shape over `client:tlsCertStatus`
- * (`plan/07` §5b-bis), and the legacy channel delegates here too, so there is one implementation.
+ * (`plan/07` §5b-bis), and the legacy channel delegated here too, so there is one implementation.
  *
- * `certPath` / `keyPath` are computed here rather than returned by the engine — `tlsHandlers.ts`
- * carries the full argument (category 3 in `plan/04` item 6; the engine deliberately reports no path
- * since `plan/protocol-changes.md` 2026-09-17, and P7 is where it stops being a path).
+ * `certPath` / `keyPath` are computed here rather than returned by the engine (category 3 in `plan/04`
+ * item 6; the engine deliberately reports no path since `plan/protocol-changes.md` 2026-09-17, and P7
+ * is where it stops being a path). **This hook is now the only source of those two paths**, and the
+ * client's `tlsGenerate` / `tlsImportCert` / `tlsImportKey` shims read them from here — the same
+ * role the deleted `tlsHandlers.ts` played, which is why §5b-undecies' criterion had to widen.
  */
 export async function readCertStatus(): Promise<{
     generated: boolean;

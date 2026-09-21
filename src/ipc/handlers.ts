@@ -1,7 +1,6 @@
 import { registerImportExportHandlers } from "@/ipc/importExportHandlers";
 import { registerApplicationHandlers } from "@/ipc/applicationHandlers";
 
-import { registerTlsHandlers } from "@/ipc/handlers/tlsHandlers";
 import { registerSyncHandlers } from "@/ipc/handlers/syncHandlers";
 import { registerFolderHandlers } from "@/ipc/handlers/folderHandlers";
 import { registerSoapKinds } from "@/ipc/handlers/soapKinds";
@@ -50,6 +49,12 @@ export function registerIpcHandlers(): void {
   // `handlers/tlsHandlers.ts`, which was serving engine commands from the client half — it works
   // only while the two are the same process. `tls:installCA` did **not** come with them: the host
   // trust store is CLIENT-classified and stays in `clientHandlers.ts`.
+  //
+  // P6 reduction, first group (2026-09-21): the six `tls:*` channels are deleted, so the file is
+  // gone. It went last of its class rather than first because three of its bodies were **not**
+  // passthroughs — they appended the CA paths the engine refuses to report, and the client twins
+  // had dropped them (`plan/07` §5b-undecies). Deleting the channels before fixing the twins
+  // would have destroyed the only correct implementation of a live behaviour.
   registerCertCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (first slice): `server.status` / `server.start` / `server.stop` /
   // `server.restart` / `proxy.status` / `services.discover`. These six were served **only** by
@@ -192,7 +197,6 @@ export function registerIpcHandlers(): void {
   wireLogEventsToBus();
 
   // Register all categorized handlers
-  registerTlsHandlers();
   registerSyncHandlers();
   registerFolderHandlers();
   registerSoapKinds();
