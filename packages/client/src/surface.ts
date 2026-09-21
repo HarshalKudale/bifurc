@@ -117,8 +117,21 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   // declares `app.checkUpdate`; this is the one key whose whole implementation is client-side.
   checkUpdate: local("GitHub release check; needs this client's own version and platform"),
   getConfig: t("config.get"),
-  loadEntity: t("entity.load"),
-  setEntityEnabled: t("entity.setEnabled"),
+  // ── the two caller-supplied-kind entries, reclassified `transport` → `shim` (2026-09-21) ──────
+  // Both forward a `kind` the *caller* chose, which makes them the only two surface entries whose
+  // payload the client cannot derive from the key. Each one's shell channel owned a step the engine
+  // does not perform, and both steps are now here. `plan/07` §5b-septies (sixth group) has the
+  // accounting; the short version is that a `transport` filing *is* the claim that nothing happens
+  // beyond the call, and for these two that claim was false — which is exactly the mis-filing that
+  // cost the TLS paths (§5b-undecies).
+  loadEntity: s(
+    "entity.load",
+    "the caller may name an engine-internal kind (`rules`, `sockets`); the wire wants the protocol's `proxyRules` / `wsConnections`",
+  ),
+  setEntityEnabled: s(
+    "entity.setEnabled",
+    "an out-of-enum kind resolves `{ok:false, error:'invalid_kind'}` rather than throwing",
+  ),
   saveConfig: t("config.save"),
 
   // ── import / export (all three are multi-step over the transport) ─────────
