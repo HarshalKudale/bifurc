@@ -42,10 +42,13 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   dropping `certPath` / `keyPath` / `path` ever since**, so the Settings panel's Generate and Import buttons
   were no-ops while the CA sat on disk. Fixed 2026-09-21 by reclassifying them `shim` (`transport` 70 → 67,
   `shim` 3 → 6) and reading the paths from the `tlsCertStatus` local hook.
-- **The reduction's first group is done: `tlsHandlers.ts` deleted, 6 of 68 passthroughs** (§5b-duodecies).
-  Suite delta **0** — a *re-point*, because `expectedChannels` never listed these six. **Next: 62 channels
-  across 8 files, one handler group per commit.** In this repo **never `git rm`** — it deletes all of `src/`;
-  use `rm` + `git add` (TRAPS.md).
+- **The reduction's first group is done: `tlsHandlers.ts` deleted** (§5b-duodecies). Suite delta **0** — a
+  *re-point*, because `expectedChannels` never listed these six. **Inventory re-measured 2026-09-21
+  (`ipcMain.handle(` call sites): 87 literal channels in the 9 handler files = 18 live + 69 dead → 69 to go
+  across 8 files**, one handler group per commit. §5b-decies' "68" is a *different partition* from its 75
+  dead (it excludes the 7 dialog-owners), so don't reconcile them. In this repo **never `git rm`** — it
+  deletes all of `src/`; use `rm` + `git add` (TRAPS.md). Procedure → the `bifurc-dead-channel-reduction`
+  skill.
 
 ## The executor pivot — `plan/14` (D10–D17), planned, no code written
 

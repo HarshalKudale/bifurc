@@ -1335,6 +1335,27 @@ verbatim — paths included — is what keeps the spike's `certPath` / `keyPath`
 same discovery as §5b-undecies reached from the test side: the channel was not a passthrough, so neither the
 deletion order nor the fixture could treat it as one.
 
+**The inventory, re-measured 2026-09-21** (`ipcMain.handle(` *call sites*, not lines — a line count misses a
+registration whose channel name sits on the next line, and misses nothing else):
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the 9 handler files | 93 | **87** |
+| live | 18 | 18 |
+| dead | 75 | **69** |
+
+`src/ipc/rpcBridge.ts` holds 2 more and is excluded, as §5b-decies excluded it — it is the reduction's
+*subject*, not its target. **So 69 dead channels remain, in 8 files**, and the next group's file is chosen
+from §5b-decies' table with §5b-undecies' criterion applied.
+
+**And a correction to §5b-decies' own arithmetic, because it is the trap this plan keeps recording.** That
+section's "**68 pure passthroughs remain to be deleted**" and its "75 dead" are **two different partitions**,
+not two views of one number: 68 counts only the channels whose body is literally a one-line
+`commandRegistry.invoke()` adapter, and excludes the 7 dialog-owners, which is why 68 + 7 = 75. The six `tls`
+channels were in **neither** subset — two delegated to a helper, four owned a step — so "6 of the 68" would
+have been wrong in the same way the plan's other stale counts were. 68 + 7 = 75 dead, and 75 − 6 = the 69
+above. Stated because the next reader will otherwise try to reconcile 68 with 87.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
