@@ -61,12 +61,56 @@ vi.mock("electron", () => ({
     },
 }));
 
-// `systemHandlers` imports `getMainWindow` from `@/main`, which must not be loaded for real.
+/**
+ * `@/main` (the tray) must not be loaded for real. Nothing this suite imports pulls it in any more —
+ * `registerSystemHandlers` used to, and this suite no longer registers it — but the mock stays as the
+ * guard for a transitive import that would otherwise reach Electron's window machinery.
+ */
 vi.mock("@/main", () => ({ getMainWindow: () => null, updateTrayMenu: () => { } }));
 
-import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
+import type { CaptureShareJsonResult } from "@bifurc/protocol";
+import { call, writeArtifact } from "@/ipc/fileOpsClient";
+
+/**
+ * `capture:shareJson`, reproduced — the P6 reduction's **fifth** group deleted it on 2026-09-21.
+ *
+ * Reproduced rather than dropped, because the two cases below are about things the channel did *not*
+ * own: the engine's `capture.shareJson` serialising a real captured entry, and the cancel shape. What
+ * the channel did own — the save dialog and the write — is the one thing a shell channel may
+ * legitimately own, and its **production successor is the client's** `shareCaptureJson`, which reaches
+ * the same two steps through `local.writeArtifact`.
+ *
+ * The ordering differs and that is deliberate, not an oversight this fixture papers over: the shell
+ * body asked first, the client renders first (`packages/client/src/local.ts`'s egress note argues the
+ * artifact is a `JSON.stringify` the renderer already holds, so the command is cheap and asking first
+ * would discard the engine's own suggested filename). `packages/client/tests/client.test.ts` pins the
+ * client's order. This table keeps the *shell's* order because it is reproducing the deleted body, and
+ * neither case below depends on the order — one sets a real path, the other cancels.
+ */
+const DELETED_CAPTURE_CHANNELS: Record<string, (...args: any[]) => unknown> = {
+    // No leading event parameter: the tables in this suite take the caller's positional arguments
+    // directly, exactly as `deletedChannelHarness.ts` and the folder table do. The `_e` the deleted
+    // body declared was injected by `invoke`'s `fn({}, ...args)` call, and this branch is what
+    // replaced that call — so reproducing the signature *with* the event would shift every argument
+    // by one (it did, and the suite caught it: `entries` arrived as the suggested filename).
+    "capture:shareJson": async (entries: unknown[], suggestedName?: string) => {
+        // Dialog FIRST — `File_Ops_Protocol.md` §3.2, as the deleted body had it. The mocked
+        // `dialog.showSaveDialog` returns `dialogState.result`, so reading it directly is the same
+        // value without an import of the mock.
+        const { filePath, canceled } = dialogState.result;
+        if (canceled || !filePath) return { ok: false, canceled: true };
+
+        const artifact = await call<CaptureShareJsonResult>("capture.shareJson", { entries, suggestedName });
+        if (!artifact.ok) return { ok: false, error: artifact.error };
+
+        writeArtifact(artifact, filePath);
+        return { ok: true, filePath };
+    },
+};
 
 async function invoke<T = any>(channel: string, ...args: any[]): Promise<T> {
+    const deleted = DELETED_CAPTURE_CHANNELS[channel];
+    if (deleted) return (await deleted(...args)) as T;
     const fn = handlers.get(channel);
     if (!fn) throw new Error(`No handler registered for "${channel}"`);
     return await fn({}, ...args);
@@ -146,11 +190,6 @@ beforeAll(async () => {
     logEmitter.on("request", onRequest);
     proxy = await startProxy();
 
-    // P3 made `capture:shareJson` a thin client: it shows the dialog, calls the engine's
-    // `capture.shareJson` and writes the artifact that comes back. The renderer-facing contract is
-    // unchanged, so every assertion below still holds — but the engine half has to be registered,
-    // exactly as `src/ipc/handlers.ts` registers it in production.
-    //
     // `setDataRoot()` is supplied as well as the fixture's own override, because `blobRoot()`
     // resolves through `dataDir()` while the workspace store resolves through `setDataRootOverride`.
     // `createWorkspace()` only sets the latter, so without this a capture large enough to cross
@@ -159,7 +198,12 @@ beforeAll(async () => {
     setDataRoot(ws.root);
     registerBlobCommands(commandRegistry);
     registerFileOpsCommands(commandRegistry);
-    registerSystemHandlers();
+    // `registerSystemHandlers()` used to be called here, for `capture:shareJson`. The channel is gone
+    // (P6 reduction, fifth group, 2026-09-21) and the one channel that function still registers —
+    // `app:checkUpdate` — is not driven by this suite, so the call went with it. The two shareJson
+    // cases below drive the command through `DELETED_CAPTURE_CHANNELS` instead, which is also why the
+    // `handlers` map is now empty: `invoke`'s fallthrough is a safety net that makes a future
+    // un-translated channel fail loudly rather than silently resolve `undefined`.
 });
 
 afterAll(() => {
@@ -382,7 +426,7 @@ describe("capture — the 512 KB response-body cap", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("capture:shareJson — exporting selected captures", () => {
+describe("capture.shareJson — exporting selected captures (the deleted `capture:shareJson` channel)", () => {
     it("writes the selected entries to the chosen file", async () => {
         const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "bifurc-share-"));
         const outFile = path.join(outDir, "captured-requests.json");

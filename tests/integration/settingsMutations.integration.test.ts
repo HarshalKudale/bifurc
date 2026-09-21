@@ -18,7 +18,8 @@
  *   - changing the proxy port in Settings moves the running server,
  *   - the old port stops answering and the new one serves the same mock,
  *   - an unchanged port does not take the server down,
- *   - `server:restart` / `server:stop` / `server:start` lifecycle,
+ *   - `server.restart` / `server.stop` / `server.start` lifecycle (the channels were deleted by the
+ *     P6 reduction's fifth group; this suite's `invoke` re-points them at the commands),
  *   - `config:save` while the server is stopped brings it back on the saved port,
  *   - toggling TLS in Settings reloads the CA (and unloads it again),
  *   - changing the companion port moves the WebSocket server,
@@ -82,7 +83,30 @@ vi.mock("@/main", () => ({
   getMainWindow: vi.fn(() => null),
 }));
 
+/**
+ * The three `server.*` lifecycle channels, driven directly — the reduction's **fifth** group
+ * (`plan/07` §5b-sedecies).
+ *
+ * `server:restart` / `server:stop` / `server:start` were deleted with the four dead channels in
+ * `src/ipc/handlers/systemHandlers.ts` on 2026-09-21. Unlike the earlier groups these bodies were
+ * **not** `commandRegistry.invoke()` delegates — they called `startServer` / `stopServer` directly —
+ * so the criterion was re-applied per channel against `proxy/serverCommands.ts` rather than
+ * inherited. It found exact equivalents, and the commands take no payload, so the translation is
+ * positional-argument-free: what the channel did was call the command.
+ *
+ * A local table rather than the shared `deletedChannelHarness`: this suite drives eleven channels and
+ * only these three died, so a harness would have had to model channels the reduction has not reached.
+ * Same reasoning as `foldersAndWorkspaces.integration.test.ts`'s folder table.
+ */
+const DELETED_SERVER_CHANNELS: Record<string, (...args: any[]) => unknown> = {
+  "server:restart": () => commandRegistry.invoke("server.restart", {}, { bus }),
+  "server:stop": () => commandRegistry.invoke("server.stop", {}, { bus }),
+  "server:start": () => commandRegistry.invoke("server.start", {}, { bus }),
+};
+
 function invoke<T = any>(channel: string, ...args: any[]): T {
+  const deleted = DELETED_SERVER_CHANNELS[channel];
+  if (deleted) return deleted(...args) as T;
   const fn = handlers.get(channel);
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
@@ -198,13 +222,14 @@ beforeEach(async () => {
   setDataDirOverride(ws.dataRoot);
 
   const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
-  const { registerSystemHandlers } = await import("@/ipc/handlers/systemHandlers");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
   const { registerCrudKinds } = await import("@/ipc/handlers/crudKinds");
   registerCoreHandlers();
-  registerSystemHandlers();
   registerClientHandlers();
   registerCrudKinds();
+  // `registerSystemHandlers()` used to be called here, for the three `server:*` channels. They are
+  // gone (P6 reduction, fifth group) and the one channel it still registers — `app:checkUpdate` — is
+  // not driven by this suite, so the call was removed with them.
 });
 
 // P6 §5c: `config.get` and `workspace.setActive` moved out of `coreHandlers`' module scope into the
@@ -228,6 +253,11 @@ beforeAll(async () => {
   // first. The channels below are the ones `beforeEach` re-registers harmlessly.
   const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
   registerEntityCrudCommands(commandRegistry);
+  // P6 reduction, fifth group: the three `server:*` channels are gone, so `DELETED_SERVER_CHANNELS`
+  // invokes the commands directly and this is the only registration they need. Same shape as the
+  // `registerFolderCommands()` call the third group added.
+  const { registerServerCommands } = await import("@bifurc/engine/proxy/serverCommands");
+  registerServerCommands(commandRegistry);
 });
 
 afterEach(() => {
@@ -316,7 +346,7 @@ describe("settings — changing the proxy port moves the live server", () => {
 
 // ── 2. Explicit server lifecycle controls ─────────────────────────────────────
 
-describe("settings — server:restart / server:stop / server:start", () => {
+describe("settings — server.restart / server.stop / server.start (deleted channels)", () => {
   it("server:restart leaves the proxy answering on the configured port", async () => {
     await bootOnConfiguredPort();
 
