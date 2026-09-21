@@ -115,8 +115,14 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
     valid: { workspaceId: "ws1", report: { folderId: "f1", startedAt: 1 } },
     invalid: { workspaceId: "ws1", report: {} },
   },
+  // P14 WI 8 re-derived these three: each `valid` row now supplies `workspaceId`, so the new field is
+  // exercised on the happy path rather than merely tolerated. Each `invalid` row was checked
+  // individually to fail on a **required-or-typed** field and never on scope — the hazard is a fixture
+  // whose invalid payload *is* the newly allowed key, which would silently stop testing rejection.
+  //   `runner.exportReport` → the `format` enum ("pdf"); `audit.export` → the enum ("xml");
+  //   `capture.shareJson` → `{}`, invalid because `entries` is required (for a reason unrelated to scope).
   "runner.exportReport": {
-    valid: { report: { folderId: "f1", startedAt: 1 }, format: "html" },
+    valid: { report: { folderId: "f1", startedAt: 1 }, format: "html", workspaceId: "ws1" },
     invalid: { report: { folderId: "f1", startedAt: 1 }, format: "pdf" },
   },
   "runner.getHistory": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
@@ -149,7 +155,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
 
   "audit.list": { valid: {}, invalid: { limit: "10" } },
   "audit.diff": { valid: { commitHash: "c1", entity: "mock", entityId: "m1", workspaceId: "ws1" }, invalid: { commitHash: "c1" } },
-  "audit.export": { valid: { format: "json" }, invalid: { format: "xml" } },
+  "audit.export": { valid: { format: "json", workspaceId: "ws1" }, invalid: { format: "xml" } },
   "history.list": { valid: { filePath: "a/b" }, invalid: {} },
   "history.diff": { valid: { commitHash: "c1", filePath: "a/b", workspaceId: "ws1" }, invalid: { commitHash: "c1" } },
 
@@ -194,5 +200,5 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "healthbar.getServices": { valid: { workspaceId: "ws1" }, invalid: {} },
   "healthbar.saveServices": { valid: { workspaceId: "ws1", services: [] }, invalid: { workspaceId: "ws1" } },
   "healthbar.checkUrl": { valid: { url: "http://x" }, invalid: {} },
-  "capture.shareJson": { valid: { entries: [] }, invalid: {} },
+  "capture.shareJson": { valid: { entries: [], workspaceId: "ws1" }, invalid: {} },
 };
