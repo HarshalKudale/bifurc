@@ -274,6 +274,28 @@ const historyList = <T = any>(opts: any): Promise<T> =>
 const historyDiff = <T = any>(commitHash: string, filePath: string, workspaceId: string): Promise<T> =>
   commandRegistry.invoke("history.diff", { commitHash, filePath, workspaceId }, ENTITY_CTX);
 
+/**
+ * The `folder.*` commands, driven directly — the same substitution again, for the reduction's
+ * **third** group (`plan/07` §5b-quaterdecies).
+ *
+ * `folder:add` / `folder:rename` / `folder:move` / `folder:delete` were deleted with
+ * `src/ipc/handlers/folderHandlers.ts` on 2026-09-21; all four were one-line
+ * `commandRegistry.invoke()` adapters, so calling the command is what the channel did minus the
+ * channel. **`folderAdd` keeps the channel's spread** (`{ kind, ...folder }`) rather than the
+ * client's field-picking, because the cases below pass a folder object and the spread is the
+ * behaviour being reproduced — see the note in `foldersAndWorkspaces.integration.test.ts` for why
+ * the two shapes are equivalent for the renderer but not for that suite.
+ */
+const folderAdd = (kind: string, folder: any): any =>
+  commandRegistry.invoke("folder.add", { kind, ...folder }, ENTITY_CTX);
+const folderRename = (kind: string, id: string, name: string): any =>
+  commandRegistry.invoke("folder.rename", { kind, id, name }, ENTITY_CTX);
+const folderDelete = (kind: string, id: string): any =>
+  commandRegistry.invoke("folder.delete", { kind, id }, ENTITY_CTX);
+// No `folderMove` helper: this file has no `folder:move` case, because `folder:move` was the one of the
+// four that `expectedChannels` never listed either. Its behaviour is driven for real — against a real
+// workspace on disk — by `tests/integration/foldersAndWorkspaces.integration.test.ts`.
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("src/ipc/handlers.ts", () => {
@@ -309,7 +331,11 @@ describe("src/ipc/handlers.ts", () => {
       // the absence of the thing this list exists to check. Their behaviour is covered at engine level
       // by `entityCrudCommands`' suite and by `entityConflictScope`; the surviving `folder:*` and
       // `env:setActive` entries below are their own implementations, not factory output.
-      "folder:add", "folder:rename", "folder:delete",
+      // ── The three folder channels are gone (P6 reduction, third group, 2026-09-21) ──────────
+      // `folder:add` / `folder:rename` / `folder:delete` were deleted with `folderHandlers.ts`
+      // (`plan/07` §5b-quaterdecies). Each was a one-line `commandRegistry.invoke()` delegate
+      // reachable only through the client, which routes to the `folder.*` commands directly —
+      // the cases below now drive those commands. `folder:move` was never in this list.
       "env:setActive",
       "workspace:add", "workspace:rename", "workspace:delete", "workspace:setActive",
       "importExport:formats", "importExport:export", "importExport:preflight", "importExport:import",
@@ -907,8 +933,22 @@ describe("src/ipc/handlers.ts", () => {
          * **Anti-vacuity, and it is load-bearing.** A wrong glob returns `{}`, and every assertion
          * below would then pass against an empty string — a guard that reads as coverage while
          * covering nothing, which is worse than no guard. Assert the reader found the tree first.
+         *
+         * **Expressed as presence, not a count** — and this is a correction the reduction forced.
+         * It used to be `Object.keys(shell).length > 20`, which held while `src/` had 22 files.
+         * `syncHandlers.ts` and `folderHandlers.ts` are now deleted (20 files), and six more handler
+         * files are still to go (14 would remain), so a magic number coupled to the tree's size fails
+         * as the tree gets *smaller for the right reason* — the one direction this guard must never
+         * misreport, given that its entire subject is deletions. Naming files tests the actual claim
+         * ("the reader resolved `src/`") and cannot drift as the reduction proceeds. Keys are
+         * normalised because Vite's glob keys are platform-dependent.
          */
-        expect(Object.keys(shell).length).toBeGreaterThan(20);
+        const shellKeys = Object.keys(shell).map((k) => k.replace(/\\/g, "/"));
+        expect(shellKeys).toContain("../../src/preload.ts");
+        expect(shellKeys).toContain("../../src/ipc/handlers.ts");
+        expect(shellKeys).toContain("../../src/ipc/rpcBridge.ts");
+        // The engine tree is not eroding (the reduction moves *into* it), so a floor is still the right
+        // shape here — and the positive control below independently proves the reader loaded content.
         expect(Object.keys(engine).length).toBeGreaterThan(20);
 
         /**
@@ -1380,14 +1420,14 @@ describe("src/ipc/handlers.ts", () => {
     };
 
     it("adds a mock folder and returns it with generated id", async () => {
-      const result = await getHandler("folder:add")(EVENT, "mock", baseFolder);
+      const result = await folderAdd("mock", baseFolder);
       expect(result.id).toBeTruthy();
       expect(result.name).toBe("My Folder");
       expect(currentConfig.mockFolders).toHaveLength(1);
     });
 
     it("adds a request folder to requestFolders", async () => {
-      await getHandler("folder:add")(EVENT, "request", baseFolder);
+      await folderAdd("request", baseFolder);
       expect(currentConfig.requestFolders).toHaveLength(1);
     });
   });
@@ -1398,7 +1438,7 @@ describe("src/ipc/handlers.ts", () => {
     it("renames a mock folder", () => {
       currentConfig.mockFolders = [{ id: "f1", name: "Old Name", parentId: null, createdAt: 1 }];
 
-      getHandler("folder:rename")(EVENT, "mock", "f1", "New Name");
+      folderRename("mock", "f1", "New Name");
 
       expect(currentConfig.mockFolders[0].name).toBe("New Name");
     });
@@ -1406,14 +1446,14 @@ describe("src/ipc/handlers.ts", () => {
     it("renames a request folder", () => {
       currentConfig.requestFolders = [{ id: "f2", name: "Old", parentId: null, createdAt: 1 }];
 
-      getHandler("folder:rename")(EVENT, "request", "f2", "New");
+      folderRename("request", "f2", "New");
 
       expect(currentConfig.requestFolders[0].name).toBe("New");
     });
 
     it("returns { ok: true }", async () => {
       currentConfig.mockFolders = [{ id: "f1", name: "X", parentId: null, createdAt: 1 }];
-      const result = await getHandler("folder:rename")(EVENT, "mock", "f1", "Y");
+      const result = await folderRename("mock", "f1", "Y");
       expect(result).toEqual({ ok: true });
     });
   });
@@ -1427,7 +1467,7 @@ describe("src/ipc/handlers.ts", () => {
         { id: "m1", name: "mock", method: "GET", urlPattern: "http://x.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1, folderId: "f1" },
       ];
 
-      getHandler("folder:delete")(EVENT, "mock", "f1");
+      folderDelete("mock", "f1");
 
       expect(currentConfig.mockFolders).toHaveLength(0);
       expect(currentConfig.mocks).toHaveLength(0);
@@ -1439,7 +1479,7 @@ describe("src/ipc/handlers.ts", () => {
         { id: "r1", name: "req", method: "GET", url: "http://x.com", headers: {}, body: "", createdAt: 1, folderId: "f2" },
       ];
 
-      getHandler("folder:delete")(EVENT, "request", "f2");
+      folderDelete("request", "f2");
 
       expect(currentConfig.requestFolders).toHaveLength(0);
       expect(currentConfig.requests).toHaveLength(0);
@@ -1447,7 +1487,7 @@ describe("src/ipc/handlers.ts", () => {
 
     it("returns { ok: true }", async () => {
       currentConfig.mockFolders = [{ id: "f1", name: "F", parentId: null, createdAt: 1 }];
-      const result = await getHandler("folder:delete")(EVENT, "mock", "f1");
+      const result = await folderDelete("mock", "f1");
       expect(result).toEqual({ ok: true });
     });
   });
@@ -1666,7 +1706,7 @@ describe("src/ipc/handlers.ts", () => {
   describe("folder:rename handler — not-found branch", () => {
     it("does nothing when the folder id does not exist", () => {
       currentConfig.mockFolders = [];
-      expect(() => getHandler("folder:rename")(EVENT, "mock", "nonexistent", "New Name")).not.toThrow();
+      expect(() => folderRename("mock", "nonexistent", "New Name")).not.toThrow();
       expect(currentConfig.mockFolders).toHaveLength(0);
     });
   });
@@ -1676,14 +1716,14 @@ describe("src/ipc/handlers.ts", () => {
   describe("folder:add handler — null array initialization", () => {
     it("initializes mockFolders when it is null before adding", async () => {
       currentConfig.mockFolders = null as any;
-      const result = await getHandler("folder:add")(EVENT, "mock", { name: "F", parentId: null });
+      const result = await folderAdd("mock", { name: "F", parentId: null });
       expect(result.name).toBe("F");
       expect(Array.isArray(currentConfig.mockFolders)).toBe(true);
     });
 
     it("initializes requestFolders when it is null before adding", async () => {
       currentConfig.requestFolders = null as any;
-      const result = await getHandler("folder:add")(EVENT, "request", { name: "F", parentId: null });
+      const result = await folderAdd("request", { name: "F", parentId: null });
       expect(result.name).toBe("F");
       expect(Array.isArray(currentConfig.requestFolders)).toBe(true);
     });
@@ -1806,7 +1846,7 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("folder:add handler — ws kind", () => {
     it("adds a ws folder and returns it with generated id", async () => {
-      const result = await getHandler("folder:add")(EVENT, "ws", { name: "WS Folder", parentId: null });
+      const result = await folderAdd("ws", { name: "WS Folder", parentId: null });
       expect(result.id).toBeTruthy();
       expect(result.name).toBe("WS Folder");
       expect(currentConfig.wsFolders).toHaveLength(1);
@@ -1816,7 +1856,7 @@ describe("src/ipc/handlers.ts", () => {
   describe("folder:rename handler — ws kind", () => {
     it("renames a ws folder", () => {
       currentConfig.wsFolders = [{ id: "f1", name: "Old", parentId: null, createdAt: 1, workspaceId: "default" }];
-      getHandler("folder:rename")(EVENT, "ws", "f1", "New");
+      folderRename("ws", "f1", "New");
       expect(currentConfig.wsFolders[0].name).toBe("New");
     });
   });
@@ -1825,7 +1865,7 @@ describe("src/ipc/handlers.ts", () => {
     it("removes ws folder and deletes all contained ws connections (cascade delete)", () => {
       currentConfig.wsFolders = [{ id: "f1", name: "F", parentId: null, createdAt: 1, workspaceId: "default" }];
       currentConfig.wsConnections = [{ id: "c1", name: "c", url: "ws://x", headers: {}, createdAt: 1, folderId: "f1", workspaceId: "default" }];
-      getHandler("folder:delete")(EVENT, "ws", "f1");
+      folderDelete("ws", "f1");
       expect(currentConfig.wsFolders).toHaveLength(0);
       expect(currentConfig.wsConnections).toHaveLength(0);
     });

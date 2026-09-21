@@ -758,6 +758,23 @@ rather than a type.
       not a second contract — rather than having 62 assertions about git rewritten. **Inventory: 68 literal
       channels remain in 8 files = 18 live + 50 dead**, so **50 dead across 7 files** remain; the
       dialog-owner risk subset shrinks 7 → 6 (`audit:export` gone).
+      **Progress 2026-09-21, third group — `folderHandlers.ts` is gone, and the §5c guard failed for
+      working** (`plan/07` §5b-quaterdecies). Four channels, all dead, all one-line delegates — the smallest
+      all-dead file, and the first group the widened criterion cleared without a fix. **Delta −3, and the
+      signature is mixed:** `expectedChannels` listed three of the four (`folder:move` never was), while the
+      file's fourteen `getHandler("folder:…")` call sites were re-pointed at the commands (a re-point,
+      contributing 0) — so the delta must be read per-file, not per-group. **Suite: 101 / 2,492 / 2,451 / 40
+      / 1.** The one apparent regression that is not: the channel's `folder:add` **spread** its argument
+      (`{ kind, ...folder }`) where the client picks two fields — inert only because
+      `renderer/types/window.ts:63` excludes `workspaceId` from the contract. The integration suite's helper
+      *does* pass `workspaceId`, so its translation keeps the spread; getting it wrong would not have failed
+      loudly, because the active workspace is `TEST_WS` there anyway. **The §5c static guard's anti-vacuity
+      floor was `src/` > 20 `.ts` files** and the reduction shrank the tree to exactly 20 — a count coupled to
+      tree size fails as the tree gets smaller *for the right reason*, and six more handler files are still to
+      go (14 would remain). Re-expressed as **presence** (`preload.ts`, `ipc/handlers.ts`, `ipc/rpcBridge.ts`),
+      which cannot drift. The spike's retired-channel fixture **grew 5 → 7 of 10** (`folder:add` /
+      `folder:move` are driven), the counterpart to the second group's non-growth. **Inventory: 64 literal
+      channels in 7 files = 18 live + 46 dead**, so **46 dead across 6 files** remain.
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening

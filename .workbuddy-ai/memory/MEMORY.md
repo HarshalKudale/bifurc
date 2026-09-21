@@ -11,7 +11,7 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   The vitest alias covers `@bifurc/engine/*` **only**; `@bifurc/protocol`/`@bifurc/client` resolve to built
   `dist/`, so an un-rebuilt edit is **silently untested** — `npm test` doesn't build.
 - **No renderer edits P1–P6**; `window.api` byte-identical.
-- **Baseline: 101 files / 2,495 tests — 2,454 passed, 40 skipped, 1 failed** (`soap.execute`,
+- **Baseline: 101 files / 2,492 tests — 2,451 passed, 40 skipped, 1 failed** (`soap.execute`,
   environmental, `tests/spike/protocolPoc.test.ts`). A *delta* is the signal, the 1 is not — **name the
   mechanism** for any delta, never wave at the number.
 
@@ -33,28 +33,37 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   `expectedChannels` entry**. `*Handlers.ts` → `*Kinds.ts` for soap/graphql/grpc; **"six caller files"
   corrected to five**.
 - **The reduction — `plan/07` §5b-decies (inventory) / §5b-undecies (criterion) / §5b-duodecies (group 1) /
-  §5b-terdecies (group 2).** Measured 2026-09-21 (`ipcMain.handle(` **call sites**): **68 literal channels in
-  the 8 handler files = 18 live + 50 dead → 50 to go across 7 files**, one handler group per commit.
-  Decidable by construction: `window.api` *is* the client (`src/preload.ts:110`) and `packages/client/src`
-  names no channel, so only preload's `local` block's 18 are reachable. `clientHandlers.ts` **17 live / 0 dead
-  → untouchable**; every other file all-dead except `systemHandlers.ts` (`app:checkUpdate`). §5b-decies' "68"
-  is a **different partition** from its 75 dead (it excludes the dialog-owners) — do not reconcile them.
+  §5b-terdecies (group 2) / §5b-quaterdecies (group 3).** Measured 2026-09-21 (`ipcMain.handle(` **call
+  sites**): **64 literal channels in the 7 handler files = 18 live + 46 dead → 46 to go across 6 files**,
+  one handler group per commit. Decidable by construction: `window.api` *is* the client
+  (`src/preload.ts:110`) and `packages/client/src` names no channel, so only preload's `local` block's 18
+  are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**; every other file all-dead except
+  `systemHandlers.ts` (`app:checkUpdate`). §5b-decies' "68" is a **different partition** from its 75 dead
+  (it excludes the dialog-owners) — do not reconcile them.
 - **The criterion is `owns a step the engine does not perform`** — §5b-decies said `dialog.*` and was one
   channel short. `tls:generate` owns a *path*, and that mattered: `tlsGenerate` / `tlsImportCert` /
   `tlsImportKey` were routed as 1:1 `transport` calls in step 3b-1 and had been **silently dropping
   `certPath` / `keyPath` / `path` ever since** — the Settings panel's Generate and Import buttons were no-ops
   while the CA sat on disk. Fixed by reclassifying them `shim` (now `transport` 67 / `shim` 6) and reading the
   paths from the `tlsCertStatus` local hook. **Never cast the object you build** — cast only the boundary
-  `unknown`.
-- **Two groups deleted: `tlsHandlers.ts` (6, delta 0 — a *re-point*) and `syncHandlers.ts` (19, delta −5 — a
-  *generated list*).** The delta signature names the mechanism: `expectedChannels` in `handlers.test.ts` is
-  the only thing that turns a channel name into a test (one `it` per entry), so removing N of its entries is
-  exactly −N, and channels it never listed cost 0. **A suite that drives a channel *by name* fails loudly
-  (`No handler registered`) — "failures up" means RE-POINT it (drive the command), not delete the test**;
-  `handlers.test.ts`'s `entity.*` / `history.*` helpers are the idiom, and a many-call-site suite gets a
-  shared test harness (`tests/integration/deletedChannelHarness.ts`) rather than N rewrites — but that
-  harness is **not a second contract**. In this repo **never `git rm`** — it deletes all of `src/`; use
-  `rm` + `git add` (TRAPS.md). Procedure → `bifurc-dead-channel-reduction`.
+  `unknown`. A *payload-shape* difference counts too: `folder:add`'s channel **spread** its argument where the
+  client picks two fields — inert only because the renderer contract excludes `workspaceId`, so check the
+  contract, not the intuition.
+- **Three groups deleted:** `tlsHandlers.ts` (6, delta 0 — *re-point*), `syncHandlers.ts` (19, delta −5 —
+  *generated list*), `folderHandlers.ts` (4, delta −3 — **both at once**, read per-file). `expectedChannels`
+  in `handlers.test.ts` is the only thing that turns a channel name into a test (one `it` per entry).
+  **A suite that drives a channel *by name* fails loudly (`No handler registered`) — "failures up" means
+  RE-POINT it (drive the command), not delete the test**; `handlers.test.ts`'s `entity.*` / `history.*` /
+  `folder.*` helpers are the idiom, and a many-call-site suite gets a shared test harness
+  (`tests/integration/deletedChannelHarness.ts`) rather than N rewrites — but that harness is **not a second
+  contract**. The spike's retired-channel fixture grows only with a **driven** channel (7 of 10 now).
+- **A guard whose floor is a file count fails as the tree shrinks — and the tree shrinking is the work.**
+  `handlers.test.ts`'s §5c anti-vacuity check was `src/` > 20 `.ts` files; the reduction hit exactly 20.
+  Now expressed as **presence** (`preload.ts`, `ipc/handlers.ts`, `ipc/rpcBridge.ts`). **`V1_COMPANION_ACTIONS`
+  / `EXTENSION_FROZEN_COMMANDS` are NOT channel lists** — same `kind:verb` strings, separate surface with its
+  own dispatch (`legacyCompanion.ts`), so a grep for a channel name will wrongly suggest it is live.
+- In this repo **never `git rm`** — it deletes all of `src/`; use `rm` + `git add` (TRAPS.md). Procedure →
+  `bifurc-dead-channel-reduction`.
 
 ## The executor pivot — `plan/14` (D10–D17), planned, no code written
 
