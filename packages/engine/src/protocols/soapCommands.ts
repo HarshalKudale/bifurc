@@ -29,13 +29,18 @@
  * back *uninspected*: a resolved `{ok:false}` is an envelope **success** carrying a failed result,
  * while a throw becomes an envelope `{ok:false}` with a transport-level error code. `soap.execute`
  * against a dead endpoint therefore surfaces as `[INTERNAL] connect ECONNREFUSED …` rather than as a
- * result object — which is exactly what `tests/spike/protocolPoc.test.ts` pins, and why that one test
- * is environment-sensitive: the sandbox it was written in answered `127.0.0.1:1` with a synthetic 404
- * instead of refusing, so the request *succeeded* and the body carried a numeric `status`. On a host
- * that actually refuses, the same assertion fails on a `ProtocolClientError`. Recorded in
- * `plan/baseline.md` "Environment caveats" and left as-is: changing which of the two shapes
- * `soap.execute` uses would be a contract change, and the point the test exists to make — the
- * envelope never throws — holds either way.
+ * result object.
+ *
+ * **What pins it, and a correction worth keeping.** This used to cite `tests/spike/protocolPoc.test.ts`,
+ * which asserted the same asymmetry against `127.0.0.1:1` and was environment-sensitive: the sandbox it
+ * was written in answered that address with a synthetic 404 instead of refusing, so the request
+ * *succeeded* and the assertion depended on which answer the host gave — which is why it was the suite's
+ * one standing failure. **The spike was retired 2026-09-21** (`spike/README.md`), and the contract moved
+ * to `tests/integration/protocolExecution.integration.test.ts`, which asserts the same two shapes using
+ * `deadPort()` — a real dead port, hermetic on every host. **Same contract, firmer fixture.** Recorded in
+ * `plan/baseline.md` "Environment caveats": changing which of the two shapes `soap.execute` uses would be
+ * a contract change, and the point the test exists to make — the envelope never throws — holds either way.
+ * The sandbox's synthetic 404 remains true *of that sandbox*, which is what the baseline note records.
  *
  * ## `startsWith("https")`, kept rather than "corrected"
  *

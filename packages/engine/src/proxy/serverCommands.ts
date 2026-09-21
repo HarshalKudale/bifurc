@@ -51,9 +51,12 @@
  * hidden ordering dependency on a function in a different file — and, worse, on a function that
  * callers were not obliged to run.
  *
- * They were not obliged to run it, and two suites didn't. `tests/spike/protocolPoc.test.ts` and
- * `tests/integration/settingsMutations.integration.test.ts` deliberately register handler *groups*
+ * They were not obliged to run it, and two suites didn't. `tests/integration/settingsMutations.integration.test.ts`
+ * and `tests/spike/protocolPoc.test.ts` deliberately registered handler *groups*
  * (`registerCoreHandlers()` / `registerSystemHandlers()`) without calling `registerIpcHandlers()`.
+ * The spike half of that pair was **retired 2026-09-21** (`spike/README.md`), which does not change the
+ * lesson: the coupling was real while it existed, and the lesson is about the shape of the dependency
+ * rather than about the suites that happened to expose it.
  * Re-pointing broke six of their tests with `UNKNOWN_COMMAND` — `server.status` among them — because
  * the registry they reached was empty. The failure was a `No handler registered` at *invocation*
  * time, so nothing caught it at build time and the shell's own handler file looked untouched.

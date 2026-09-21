@@ -287,6 +287,12 @@ All of the following must be true before P1 begins:
       not `main`/`master`; `spike/protocol/` is retained there, clearly marked throwaway, as the record
       of this de-risking work. It is superseded by `packages/protocol` in P1 and is not imported by any
       production code.)*
+      **→ 2026-09-21: the retention was reversed. The spike's runnable code is now gone**
+      (`spike/protocol/`, `spike/tsconfig.json`, `tests/spike/protocolPoc.test.ts`, `package.json`'s
+      `spike:typecheck`) — see `spike/README.md` for what was removed and the per-case check that
+      established removal was safe, and `plan/14` §12.6 for the phase decision that authorised it. **The
+      evidence record is this document's sibling `plan/spike-results.md`, which is untouched**: retiring
+      runnable code is not retiring the finding.
 - [x] `00-decisions.md` decision log updated — ✅ done 2026-09-14.
 
 Optional, blocking nothing:

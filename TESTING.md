@@ -271,14 +271,27 @@ members:
 
 | Test | What the sandbox does to it |
 |---|---|
-| `tests/spike/protocolPoc.test.ts` → `soap.execute — a dead/unreachable endpoint never throws…` | the envelope reports success where failure was expected |
-| `tests/spike/protocolPoc.test.ts` → `graphql.introspect — a dead/unreachable endpoint never throws…` | same shape; has not been observed tripping yet |
 | `tests/integration/protocolExecution.integration.test.ts` → `returns { ok:false, error } when the WSDL cannot be fetched` | `http://127.0.0.1:1/…` returns `ok: true` |
 | `tests/integration/protocolExecution.integration.test.ts` → `rejects when the upstream is unreachable` | the synthetic 404 is treated as a real response |
 | `tests/integration/protocolExecution.integration.test.ts` → `rejects when the endpoint is unreachable` | same shape |
 | `tests/integration/upstreamFetch.integration.test.ts` → `rejects when the upstream is unreachable` | resolves `{ status: 404, headers: { "content-length": "0" } }` instead of rejecting |
 
-**Deselect these six by their precise names — do not match on the shared word `unreachable`.**
+> **The family lost its most environment-sensitive member on 2026-09-21, when the P0 spike was retired.**
+> Two rows left this table with it — both in `tests/spike/protocolPoc.test.ts` (`soap.execute` and
+> `graphql.introspect`, "a dead/unreachable endpoint never throws…"). That is why the count above is
+> **four**, not six.
+>
+> **The distinction that matters, and it is not merely arithmetic.** The spike's version asserted against
+> **`127.0.0.1:1`**, the address this sandbox intercepts — so its result depended on which answer the host
+> gave, which is why it was the suite's one standing failure. The surviving members use `deadPort()`
+> (`protocolExecution.integration.test.ts:232`), which starts a real server, takes its **OS-assigned**
+> port, closes it, and returns that port — a genuine dead port, and **not port 1**. On the 2026-09-21
+> full-suite run, **none of the four tripped.** So the family is now a *contingent* risk (a host that
+> intercepts those connections) rather than a *standing* one, and this table is a warning about a
+> possible environment rather than a roster of observed failures. Deselect them by name when a run needs
+> to be comparable to a clean-machine baseline; do not expect them in every run.
+
+**Deselect these four by their precise names — do not match on the shared word `unreachable`.**
 `tests/integration/gitRemote.integration.test.ts` → `reports an error for an unreachable remote` is a
 git test that has nothing to do with the interceptor, and it is the test that **assigns the `rootC`
 fixture** its neighbour reads two tests later (`:421` assigns, `:433` calls `rootC.activate()`).
@@ -290,8 +303,9 @@ Observed rosters: `soap.execute` + `upstreamFetch` (the blob-layer session), the
 `protocolExecution`'s WSDL + `upstreamFetch` (the layer-5 move) — with `soap.execute` passing cleanly
 the second time, then **`soap.execute` alone** (the item-5 session), undeselected and failing 3/3 in
 isolation. **Never attribute one of these to your own change without first checking that the failure
-touches the code you moved.** This is why the coverage command in §8 deselects all three by name
-rather than just `soap.execute`.
+touches the code you moved.** This is why the coverage command in §8 deselects by name rather than just
+`soap.execute`. *(The rosters above predate the retirement and name the spike's case, which no longer
+exists; they are kept because the lesson is about the *variability*, not about which file tripped.)*
 
 **The direction of the trip is not always the one the table predicts**, which is worth knowing before
 the message misleads you. The roster describes `soap.execute` as "the envelope reports success where
@@ -394,11 +408,15 @@ the sandbox disabled.
 > `certTrust.test.ts` that need no mocking at all. A file-count delta is not a completeness signal on
 > its own, here as in items 3–4.
 >
-> **The single failure is a documented flaky-family member, not this change.** It is
+> **The single failure is a documented flaky-family member, not this change.** It was
 > `tests/spike/protocolPoc.test.ts > soap.execute — a dead/unreachable endpoint never throws through
 > the envelope` — named by exact string in the deselect pattern in §8, and listed in the roster above.
-> Three checks before attributing it, per the standing rule ("never attribute one of these to your own
-> change without first checking that the failure touches the code you moved"): the failing assertion is
+> **That case no longer exists: the spike was retired 2026-09-21** (`spike/README.md`), and the same
+> contract now lives in `tests/integration/protocolExecution.integration.test.ts` on a real dead port.
+> The reasoning below is kept verbatim because it is the *method*, which is what a reader needs when the
+> next environment-sensitive failure appears: three checks before attributing it, per the standing rule
+> ("never attribute one of these to your own change without first checking that the failure touches the
+> code you moved"): the failing assertion is
 > in `soap.execute`; `git diff HEAD -- src/ipc/handlers/soapHandlers.ts packages/engine/src/soap` is
 > **empty**; and it fails identically with the sandbox disabled, so it is not the interceptor behaving
 > differently. Undeselected, the family is expected to trip — §8 records "expect
@@ -892,12 +910,20 @@ shapes are asserted instead, and the loop is recorded as unchecked **P9/P12** ro
 macOS (`delete-certificate -Z … -t` clearing the trust settings, not just the keychain).
 
 **A registration bug, in the same shape as items 3–4 and in a third suite.**
-`tests/spike/protocolPoc.test.ts` registers handlers by hand rather than calling `registerIpcHandlers()`,
+`tests/spike/protocolPoc.test.ts` registered handlers by hand rather than calling `registerIpcHandlers()`,
 so when `tls.generate` moved from the shell into the engine the channel still existed with nothing
 behind it — failing with `No handler registered for command "tls.generate"`. Same lesson: **a client
-that delegates needs its delegate registered in the test process.** That suite's own assertion is worth
-keeping for the opposite reason — it pins the *renderer-facing* channel shape (`certPath`, `keyPath`)
-that `TlsSettingsSection.tsx` depends on, which is exactly what the protocol change had to preserve.
+that delegates needs its delegate registered in the test process.** *(That suite was retired with the P0
+spike on 2026-09-21 — `spike/README.md`. The lesson is kept because it generalises to any hand-registering
+consumer, and `tests/integration/settingsMutations.integration.test.ts` is still such a consumer.)*
+
+That suite's `tls.generate` case also pinned the **renderer-facing** shape (`certPath`, `keyPath`) that
+`TlsSettingsSection.tsx` depends on, so the retirement had to establish that the pin survived. **It did,
+at a better layer.** `packages/client/tests/client.test.ts:1176` asserts the whole object —
+`expect(res).toEqual({ ok: true, fingerprint: "sha256:abc", certPath: CERT, keyPath: KEY })` — which is
+the shim that actually appends those two fields, and a `toEqual` on the full shape rather than the
+spike's three `toContain` calls. `tests/proxy/certManager.test.ts:117` covers `generateCA()`'s own
+`certPath` below it. **The spike was asserting the shape two layers away from where it is produced.**
 
 ---
 
@@ -1448,20 +1474,34 @@ is why neither could be found by reading the code, only by asserting on the data
 #    'activate')`. That is a test-ordering dependency in the file, not a product bug, but it makes
 #    a loose deselect pattern actively harmful.
 npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local \
-  --testNamePattern='^(?!.*(WSDL cannot be fetched|never throws through the envelope|rejects when the (upstream|endpoint) is unreachable))'
+  --testNamePattern='^(?!.*(WSDL cannot be fetched|rejects when the (upstream|endpoint) is unreachable))'
 #    → Test Files 73 passed (73) · Tests 1708 passed | 6 skipped (1714)
 #    → Statements 49.07% · Branches 32.66% · Functions 37.26% · Lines 51.52%
 #    Undeselected, two of the family trip: expect "2 failed | 1712 passed (1714)". Both reproduce
 #    on the pre-change tree — see plan/baseline.md "Environment caveats".
+#
+#    NOTE (2026-09-21): the numbers above are from the 2026-09-17 run and the suite has grown since
+#    (now 2552 cases / 104 files). They are kept as an illustration of the *shape* of the output
+#    rather than as a baseline to compare against — see plan/baseline.md for the current figure.
+#    The `never throws through the envelope` clause was removed from the pattern when the P0 spike
+#    was retired; those two cases no longer exist. The clause was harmless (a lookahead matching
+#    nothing), but a pattern naming a deleted test is how a deselect slowly stops matching what it
+#    was written for.
 
 # 2. Per project
 npm run test:unit
-#    → Test Files 1 failed | 54 passed (55) · Tests 1 failed | 1380 passed (1381)
-#      (the failure is the spike's soap.execute; on a run where it does not trip, 1381 pass)
+#    → Test Files 2 failed | 78 passed (80) · Tests 2 failed | 2077 passed | 40 skipped (2119)
+#      (both failures are the load-induced gitStore/gitOps pair; isolated they are 28/28)
 npm run test:integration
-#    → Test Files 1 failed | 17 passed (18) · Tests 1 failed | 332 passed (333)
-#      (upstreamFetch's dead-endpoint case — the other member of the same family; expect
-#       333 passed on a clean run)
+#    → the four flaky-family members live here; expect them on a host that intercepts refused
+#      connections and expect them absent otherwise. §4.1 has the roster.
+#
+#    NOTE (2026-09-21): the unit figures above are current. The numbers this block used to carry
+#    (55 files / 1381 tests) were from 2026-09-17 and had gone stale by ~700 cases; they were also
+#    the block that said "the failure is the spike's soap.execute", which stopped being true when the
+#    P0 spike was retired. **The unit project now has no standing failure at all** — so a failure here
+#    is always a flake to isolate, never the known one, and `--reporter=json --outputFile` is how you
+#    name it rather than assuming. See plan/baseline.md for the full-suite figure.
 
 # 3. Confirm the engine really is tested from source, not from a stale build.
 #    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).

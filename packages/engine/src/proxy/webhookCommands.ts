@@ -45,10 +45,11 @@
  * were registered at **module scope** in `coreHandlers.ts`, so importing that file populated them. This
  * module is registered by an **explicit call inside `registerIpcHandlers()`**, so a legacy body that
  * delegated here acquired a hidden ordering dependency on a function callers are not obliged to run —
- * and two suites (`tests/spike/protocolPoc.test.ts`,
- * `tests/integration/settingsMutations.integration.test.ts`) already registered handler *groups* without
- * it. The failure was a `No handler registered` at *invocation* time, so nothing caught it at build
- * time and the shell's own handler file looked untouched.
+ * and two suites already registered handler *groups* without it:
+ * `tests/integration/settingsMutations.integration.test.ts`, and `tests/spike/protocolPoc.test.ts`
+ * (retired 2026-09-21 with the rest of the P0 spike — see `spike/README.md`). The failure was a
+ * `No handler registered` at *invocation* time, so nothing caught it at build time and the shell's own
+ * handler file looked untouched.
  *
  * So the duplication was deliberate and bounded: five one-line bodies, behaviourally identical to the
  * handlers below. **It is dissolved rather than answered.** The reduction's fourth group deleted the
