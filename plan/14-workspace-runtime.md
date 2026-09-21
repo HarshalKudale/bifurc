@@ -531,6 +531,19 @@ it, and re-read `TRAPS.md` before doing so.
 
 ### Work item 4 — sever `activeWorkspaceId` from the servers
 
+> **⚠ History note, 2026-09-21: WI 2–5 and WI 1's protocol half are re-landed as ONE commit (`f2c2163`), not
+> five.** The per-work-item commits that carried them were **loose objects destroyed by a `git stash`** on this
+> drive — the `git rm` family's second member, and the reason to read `TRAPS.md` before reaching for any git
+> command that rewrites the index or a ref. The working tree survived intact; the *history* did not, so the
+> work below is real and verified but its commit boundaries are **not** the ones described in the per-item
+> callouts, which were written before the loss and record the order the work was *built* rather than the
+> shape it is *committed* in. Reconstructing five commits from a working tree would have invented boundaries
+> that never existed. Recovery: repoint `refs/heads/standalone-engine` at `174a01d` (P6 group 5 — the newest
+> **fully intact** commit: 606/606 blobs, 93/93 trees), `rm -f .git/index && git read-tree HEAD`, then
+> `git reflog expire --expire=now --all` and delete the stale `.git/objects/info/commit-graph` (it kept
+> citing the lost objects after the refs were repaired, which is why `fsck` was not clean until it was gone).
+> **`git fsck` is now clean.**
+
 > **PROXY HALF DONE 2026-09-21 — `proxy/server.ts` only.** All four readers (`start()` ×2, `reloadConfig()`
 > ×2) now go through one helper, `servedWorkspaceId()`: `workspaceId ?? (currentConfig ?? loadConfig()).activeWorkspaceId`.
 > The fallback is not a leftover — it is precisely how the desktop and the module facade keep working, because
@@ -654,6 +667,38 @@ it, and re-read `TRAPS.md` before doing so.
 > `workspaceId` on the four `blob.*` params, a per-runtime sweeper, and re-derived `blob.*` `invalid`
 > fixtures (those are the rows where the "invalid payload is the newly allowed key" hazard is still live,
 > since `blob.*` params are not yet scoped).
+>
+> **D17'S BLOB HALF IS NOW DONE 2026-09-21 — the fixtures hazard was live but not hit; the exposure was
+> somewhere the note did not name.** `blobRoot(workspaceId?)` namespaces, `stagingRoot` with it, an optional
+> `workspaceId` threaded through eleven store functions and the four commands, a sweep scoped by
+> `BlobSweepOptions.workspaceId` (a **correctness** requirement: without it a runtime reclaims its siblings'
+> in-flight transfers). The four fixtures were **fine**, contrary to the prediction above — the four `valid`
+> rows gained the field and the `invalid` rows were each verified to fail on a required-or-typed field rather
+> than on scope. **What the note did not anticipate is where the bug actually was: the call sites.** The
+> integration suite went **0 → 30 failures** because `export.create` was handed a workspace while its own
+> client's `blob.put` / `blob.read` / `blob.release` were not — so the engine staged an export into a
+> namespace its requester could not read. A host-wide root had been hiding it: with one namespace every id
+> resolves regardless of who asks. Fixed by scoping the **client**, never by relaxing the store. The audit
+> that closed it (grep for store calls passing **no** id — the question a find-replace cannot answer) left
+> two explicable survivors: the five egress commands (WI 8's work) and `fileOps/commands.ts:139-140`, where
+> the CA import's unscoped read is **correct** because the CA is one per *machine*, not per workspace. Full
+> account in `plan/protocol-changes.md`'s D17 entry; the transferable lesson is `TRAPS.md`'s "Namespacing a
+> store surfaces every half-threaded id".
+>
+> **And one finding about this work item's own contract, measured on a two-workspace host.** The protocol
+> half made the ten commands *accept* `workspaceId`; it did not make them *read* it.
+> `registerServerCommands()` still calls `proxy/server.ts`'s **module facade**, whose lazy default instance
+> is `createProxyServer({ workspaceId: null })` — the active workspace. Measured with two members listening
+> on 81 and 82: `server.status` reported `{ running: false, port: 0 }`; `server.start { workspaceId: "A" }`
+> returned **`{ ok: true }`** and bound a **third** server on the active workspace's configured port. **The
+> failure succeeds**, which is why nothing caught it — the facade is correct for the desktop, so every
+> existing suite passes. The rule this establishes: **an optional wire parameter is not done when the schema
+> accepts it, it is done when the body reads it** — and until then the protocol advertises a capability the
+> engine does not have, so a host member's client manages a runtime it never reached. This is WI 7's flip
+> (§9) arriving earlier than §5's sequencing expected, and it says the flip is **load-bearing for
+> correctness on a multi-workspace host**, not merely a tidy-up: the command layer must resolve a runtime
+> from `workspaceId` rather than fall through to the facade. Recorded as `TRAPS.md`'s "An optional param
+> that is *accepted and ignored* reads as implemented".
 
 ### Work item 5 — preflight and port allocation
 
