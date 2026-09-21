@@ -432,6 +432,44 @@ re-applying, re-verify the edits that *did* land, because a later batch can clob
 again in this session despite this entry already existing, because `TRAPS.md` was not read before the
 first write — which is the actual lesson: read this file *first*, not when something looks wrong.
 
+## Tooling: a count-asserting edit script is not idempotent when `new` contains `old`
+
+The entry above is why this repo's bulk edits go through a Python script that asserts a match **count** per
+pair (see `scripts/p6-reduction-*.py`). That script has a failure mode of its own, hit on the reduction's
+fourth group and caught only by re-running it.
+
+The guard looked reasonable:
+
+```python
+found_old, found_new = text.count(old), text.count(new)
+if found_old == 0 and found_new == n:   # "already applied" — WRONG
+    continue
+```
+
+It is wrong for every **append-shaped** edit, i.e. `new = old + extra` — a supersede pointer appended to a
+paragraph, a new section prepended to a heading, a progress note appended to a bullet. Applying such an edit
+leaves `old` **still present**, as a substring of `new`. So `found_old == 0` never holds, the skip never
+fires, and a re-run applies the edit a **second time**. On this group it duplicated `plan/07`'s new
+§5b-quindecies (71 lines) and `plan/13`'s progress paragraph — both of which the first run had reported as
+`ok`. Nothing warned; the second run printed `ok` again, which reads exactly like progress.
+
+**The guard must test `new` only:** if `found_new == n`, the edit is applied — whether or not `old` survives
+inside it. Whether a given pair is append-shaped is not something the caller should have to declare, and
+"append-shaped" is the *common* case for a doc ledger (every supersede note and every inserted section).
+
+Two habits catch it:
+
+- **Make the script idempotent and re-run it as a check.** A correct script reports all-skips the second
+  time. A duplicate is the signal — and it is the only signal, because the tool reports success either way.
+- **After any bulk edit, grep the *count* of a marker that should appear exactly once**
+  (`grep -c '^#### 5b-quindecies'`), not just its presence. Presence is what a duplicate has two of.
+
+Related, and worth knowing when hand-editing the same files: the scripts read and write with
+`newline=""`, so patterns must be translated to the file's own line ending. `src/**`, most of `tests/**` and
+`plan/07` / `plan/13` are CRLF; `packages/**` and `plan/README.md` are LF. A multi-line `old` written with
+bare `\n` simply **does not match** a CRLF file (found 0 — a clean abort), but a bare-`\n` *replacement*
+written into a CRLF file leaves one mixed-ending line, which is silent.
+
 ## Git / env
 
 - **NEVER `git stash`** (wiped the object store once). **`git fetch` doesn't persist remote-tracking
