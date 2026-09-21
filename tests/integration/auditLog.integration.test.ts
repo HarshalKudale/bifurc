@@ -1,7 +1,8 @@
 /**
  * Happy-path workflow test for the **Audit Log** feature.
  *
- * The Audit Log panel (`audit:list` / `audit:diff` / `audit:export`) was another
+ * The Audit Log panel (the `audit.list` / `audit.diff` / `audit.export` commands — the shell's
+ * `audit:*` channels that used to wrap them were deleted in the P6 reduction) was another
  * completely untested screen: it renders git history for a workspace, and the whole
  * pipeline — commit a mutation, read the log back, diff a commit, resolve the
  * changed files — had no coverage. A regression in the commit *subject format* (the

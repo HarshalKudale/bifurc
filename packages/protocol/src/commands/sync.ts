@@ -1,8 +1,8 @@
 /**
  * `sync.*`, `git.*` — git-backed workspace sync. `entity.publish`/`entity.restore` and
  * `folder.publish` are kept as their existing dedicated names (they already delegate to the
- * generic git ops internally, per `src/ipc/handlers/syncHandlers.ts`) rather than folded into
- * `git.*`, to avoid a rename with no behavioural benefit.
+ * generic git ops internally, per the shell's `syncHandlers.ts` — since deleted by the P6 reduction)
+ * rather than folded into `git.*`, to avoid a rename with no behavioural benefit.
  */
 import { z } from "zod";
 
