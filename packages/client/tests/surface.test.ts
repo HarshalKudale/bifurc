@@ -140,24 +140,30 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 67 transport + 48 entity + 7 subscribe + 6 shim + 16 local = 144
+    // 65 transport + 48 entity + 7 subscribe + 8 shim + 16 local = 144
     //
-    // Three moves on 2026-09-20. The total is asserted because it is what proves nothing was dropped
-    // in a move — a key that vanished would keep this test green only if some other count happened to
-    // absorb it, which the sum rules out.
+    // Four moves. The total is asserted because it is what proves nothing was dropped in a move — a
+    // key that vanished would keep this test green only if some other count happened to absorb it,
+    // which the sum rules out.
     //
     //   `transport` 73 → 72, `local` 13 → 14    `checkUpdate` — the surface's only `SPLIT`
     //   `transport` 72 → 70, `local` 14 → 16    `tlsRemoveCert` + `tlsCertStatus` — both two-sided
     //   `transport` 70 → 67, `shim` 3 → 6       `tlsGenerate` / `tlsImportCert` / `tlsImportKey`
+    //   `transport` 67 → 65, `shim` 6 → 8       `loadEntity` + `setEntityEnabled` (2026-09-21)
     //
-    // The third is a correction of a *mis*classification rather than a new decision. Those three were
-    // filed as 1:1 mappings while the shell channels they replaced appended a path the engine
-    // deliberately does not report; the 1:1 filing is exactly what let the field be dropped when they
-    // were routed, and `shim` is the kind that cannot express that mistake (`plan/07` §5b-undecies).
-    expect(byKind("transport")).toBe(67);
+    // The third and fourth are corrections of a *mis*classification rather than new decisions. Those
+    // five keys were filed as 1:1 mappings while the shell channels they replaced each performed a step
+    // the engine does not; the 1:1 filing is exactly what let a field be dropped when they were routed,
+    // and `shim` is the kind that cannot express that mistake (`plan/07` §5b-undecies, §5b-septies).
+    //
+    // The fourth pair is the only one of the five whose mis-filing was *live* rather than latent:
+    // `loadEntity`'s channel translated the engine-internal kinds `"rules"` / `"sockets"` to the
+    // protocol's `"proxyRules"` / `"wsConnections"`, and two panels pass the engine's names — so their
+    // loads threw `BAD_REQUEST` into a `.catch(() => {})` and silently returned nothing.
+    expect(byKind("transport")).toBe(65);
     expect(byKind("entity")).toBe(48);
     expect(byKind("subscribe")).toBe(7);
-    expect(byKind("shim")).toBe(6);
+    expect(byKind("shim")).toBe(8);
     expect(byKind("local")).toBe(16);
   });
 });

@@ -235,6 +235,72 @@ describe("createClient — command routing and payloads", () => {
     expect(t.calls).toEqual([{ cmd: "entity.load", payload: { workspaceId: "ws-1", kind: "mocks", id: "m-9" } }]);
   });
 
+  it("loadEntity translates the two engine-internal kinds its callers pass — the live bug, 2026-09-21", async () => {
+    /**
+     * The **`window.api`-fidelity half** of a two-sided translation, and the reason `loadEntity` is a
+     * `shim` rather than a `transport` entry.
+     *
+     * `EntityKind` renames two of the twelve CRUD kinds: the engine stores a proxy rule under `"rules"`
+     * and a websocket connection under `"sockets"`, the protocol calls them `"proxyRules"` and
+     * `"wsConnections"`. Two panels pass the engine's names —
+     * `ProxyRulesPanel.tsx:74,132,165` and `WebSocketsPanel.tsx:146,159,250` — and the deleted
+     * `entity:load` channel translated them with `toProtocolKind()` before invoking the command. The
+     * client forwarded them verbatim, so the frozen schema rejected them, and both panels'
+     * `.catch(() => {})` turned a `BAD_REQUEST` into "the entity has no fields".
+     *
+     * **This test would have failed before the fix**, which is what makes it worth writing: the
+     * pre-existing case above passes `"mocks"`, for which the translation is the identity, so it pinned
+     * the mapping's *existence* and not its *content*. Verified against the schema directly —
+     * `EntityLoadParams.safeParse({kind: "rules"})` is rejected.
+     */
+    const t = fakeTransport();
+    const { local } = fakeLocal();
+    const client = createClient(t, { local });
+
+    await client.loadEntity("ws-1", "rules", "r-1");
+    await client.loadEntity("ws-1", "sockets", "w-1");
+    await client.loadEntity("ws-1", "mappings", "m-1");
+
+    expect(t.calls).toEqual([
+      { cmd: "entity.load", payload: { workspaceId: "ws-1", kind: "proxyRules", id: "r-1" } },
+      { cmd: "entity.load", payload: { workspaceId: "ws-1", kind: "wsConnections", id: "w-1" } },
+      // The control: the other fourteen kinds must round-trip **unchanged**, so a table that widened
+      // the translation would fail here rather than silently renaming a kind the engine stores as-is.
+      { cmd: "entity.load", payload: { workspaceId: "ws-1", kind: "mappings", id: "m-1" } },
+    ]);
+  });
+
+  it("setEntityEnabled resolves `invalid_kind` for an out-of-enum kind, and does not call the engine", async () => {
+    /**
+     * The other half of the same channel pair, and **latent rather than live** — every caller passes a
+     * kind the enum accepts (the mocks panel's `resolveEntityKind` yields only `mocks` / `graphqlMocks` /
+     * `grpcMocks` / `soapMocks` in mock mode, and the two toggling panels pass `"mappings"` and
+     * `"rules"`). It is carried over because it is a *documented* client-facing behaviour of the surface
+     * being reconstructed: `renderer/types/window.ts:41` declares
+     * `Promise<{ ok: boolean; error?: string }>`, and the engine's own header says the guard
+     * "is client-facing behaviour and stays where the channel is" (`store/coreCommands.ts:24-28`).
+     *
+     * The `calls` assertion is the load-bearing half. A version that let the payload through and
+     * *also* returned the error would pass a result-only assertion while still sending a payload the
+     * schema rejects — the shape of mistake `respondingTransport`'s own note records.
+     */
+    const { t, calls } = respondingTransport(() => ({ ok: true }));
+    const { local } = fakeLocal();
+    const client = createClient(t, { local });
+
+    // `"requests"` is a real `EntityKind` but not an enabled-state kind — the boundary the guard exists
+    // for. `"sockets"` is rejected by *both* vocabularies, which is why it is not the control here.
+    await expect(client.setEntityEnabled("ws-1", "requests", "r-1", true))
+      .resolves.toEqual({ ok: false, error: "invalid_kind" });
+    expect(calls).toEqual([]);
+
+    // And a valid kind still goes through, so the guard cannot swallow everything.
+    await client.setEntityEnabled("ws-1", "rules", "r-1", true);
+    expect(calls).toEqual([
+      { cmd: "entity.setEnabled", payload: { workspaceId: "ws-1", kind: "rules", id: "r-1", enabled: true } },
+    ]);
+  });
+
   it("injects the entity kind for the CRUD collapse", async () => {
     const t = fakeTransport();
     const { local } = fakeLocal();
