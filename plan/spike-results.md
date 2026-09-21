@@ -5,6 +5,20 @@ observations, not a retrospective summary.
 
 Rule: record the raw output (stdout, screenshots, numbers). "It worked" is not evidence.
 
+> **This document SURVIVES the spike's retirement (2026-09-21), and that is deliberate.** The spike's
+> *runnable code* is gone — `spike/protocol/`, `spike/tsconfig.json`, `tests/spike/protocolPoc.test.ts`,
+> and `package.json`'s `spike:typecheck` script. **This record is not**, because it is the evidence that
+> gated P1: it is cited as provenance by `packages/protocol/src/commands/{graphql,soap,tls}.ts` and
+> `packages/protocol/src/errors.ts`, and it is why the renderer-unchanged thesis was allowed to proceed.
+> Retiring runnable code is not retiring the finding. What was removed and — more usefully — **the check
+> that established removal was safe** are recorded in `spike/README.md`.
+>
+> Two consequences for the text below: `npm run spike:typecheck` (cited in the compile-time section) no
+> longer exists, and the `tests/spike/protocolPoc.test.ts` assertions named here were replaced by
+> `tests/integration/protocolExecution.integration.test.ts`, which pins the same `soap.execute` contract
+> against a **real dead port** rather than `127.0.0.1:1`. Both statements remain true *of the spike as it
+> was run* — which is what an evidence record is for.
+
 > **Scope (2026-09-14):** only **spike 4 is required**. Spikes 1 and 3 were parked with the Tauri
 > decision (D4/D5); spike 2 is optional. Their sections are kept below so they can be run unchanged if
 > the shell migration resumes — mark them `SKIPPED` rather than deleting them.
@@ -188,8 +202,20 @@ No place needed renderer edits. **The thesis is confirmed, not refuted.**
 
 **Protocol approach confirmed:** ☒ yes ☐ needs revision
 
-**Spike branch deleted:** ☐ — not deleted. Per this session's scope (implementing the full decoupling
-plan on `standalone-engine`, not a disposable spike branch), `spike/protocol/` and
-`tests/spike/protocolPoc.test.ts` are kept in version control as the record of this de-risking work and
-superseded by the real `@bifurc/protocol` package built in P1. They are clearly marked "SPIKE CODE —
-throwaway, do not productionise" in every file header and are not imported by any production code path.
+**Spike branch deleted:** ☒ — **retired 2026-09-21**, by owner decision. *(The original entry read ☐ and
+is preserved here so the reversal is visible rather than silently overwritten:)*
+
+> *not deleted. Per this session's scope (implementing the full decoupling plan on `standalone-engine`,
+> not a disposable spike branch), `spike/protocol/` and `tests/spike/protocolPoc.test.ts` are kept in
+> version control as the record of this de-risking work and superseded by the real `@bifurc/protocol`
+> package built in P1. They are clearly marked "SPIKE CODE — throwaway, do not productionise" in every
+> file header and are not imported by any production code path.*
+
+**Why the reversal, and why it is not a contradiction of the reasoning above.** The original argument was
+sound while the spike still had a job: it was the record, and nothing had replaced it yet. By 2026-09-21
+both halves of that had expired — `@bifurc/protocol` fully superseded it, and every assertion worth
+keeping had a better home (see `spike/README.md` for the per-case table). What remained was 12 cases in a
+file whose one standing failure was **environment-sensitivity**, not a product bug: `soap.execute` against
+`127.0.0.1:1`, the address this sandbox intercepts. A retired artifact that fails on some hosts and not
+others costs more attention than it repays. **The record this entry says is "kept in version control" is
+now `spike/README.md` plus this document** — the finding survives; the runnable code does not.
