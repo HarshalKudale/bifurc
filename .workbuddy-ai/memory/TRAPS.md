@@ -1198,6 +1198,27 @@ documented as "removed in WI 7", but until then they are what every command call
 live implementation for the RPC surface. A header that says a path is temporary does not stop it being
 the path.
 
+**RESOLVED 2026-09-21 (WI 7) — and the fix's shape is the reusable part.** A module-level
+**runtime registry** (`runtime/runtimeRegistry.ts`) that `createWorkspaceHost()` populates as it creates
+each runtime and clears on `stop()`; the commands resolve through it. Three outcomes, and **the third is the
+one a naive fix omits**: a registered runtime for the named workspace → that runtime; no runtime but the
+target *is* the active workspace → the **facade** (which genuinely *is* the desktop's server, so the
+desktop is unchanged); anything else → **`absent`**, reported as such. Letting the third case fall through
+to the facade would re-create the original bug — acting on the active workspace while the caller named
+another — with a success code.
+
+**Mutation-check both branches, not the suite as a whole.** Disabling the runtime branch killed **7 of 8**
+cases; making `absent` fall through to the facade killed exactly the **2** that should die. That second
+mutation is the valuable one: it is the branch whose absence *looks* like it works, and a suite that only
+mutation-tested the first branch would have shown 7 reds and looked thorough.
+
+**One trap inside the trap, found by writing the fix.** `proxy/server.ts` seeds `currentPort = 0` but
+`webhookServer.ts` seeds it with `DEFAULT_WEBHOOK_PORT` (**9101**). So a "has it ever started?" guard
+written for the proxy does **not** transfer: a never-started webhook reports a *plausible* port, and
+re-binding it could take **another workspace's**. The rule that does transfer is sentinel-independent —
+`restart` re-binds only a port it has **observed** running; `start` binds only a port the **caller named**;
+otherwise report rather than guess.
+
 ## A sandboxed preload that requires anything but `electron` cannot load — and the failure looks like flakiness
 
 Found 2026-09-21 while trying to run `npm run dev` — **not** P14 work, despite P14 being the phase in
@@ -1253,6 +1274,19 @@ spec, so a result like "46 failed / 0 passed" gets carried as a known-bad baseli
 criterion 2 "CARRIED" — instead of being investigated as one defect with one cause. **When a whole suite
 fails rather than a slice of it, suspect the boot path before the tests.** A green unit suite is not
 evidence against it: `window.api` is only exercised in a real Electron renderer.
+
+**And the packaging guard already walks `dist/preload.js` — while checking a property the preload does
+not use.** `scripts/assert-packaged.mjs` queues **both** entry points (`dist/main.js` *and*
+`dist/preload.js`, line 203) and then resolves every specifier with **Node's** algorithm,
+`createRequire(<the requiring file>).resolve`. Inside the asar that *succeeds*: electron-builder 26.8.1
+dereferences the npm workspace, so `node_modules/@bifurc/{engine,protocol,client}` are in the archive and
+"44 of 44" `@bifurc/*` specifiers resolve (measured 2026-09-20, `plan/12`). So the guard **passes on an app
+that cannot boot**, and `release.yml` runs it before upload. The blind spot is structural, not a bug in the
+script: *resolvable by Node* is the wrong property for a file the sandboxed renderer loads. **The
+assertion that would catch it is the opposite shape** — `dist/preload.js` must contain exactly one
+`require(...)` and it must be `electron`; anything else means the file is a module graph and needs a
+bundler. Worth generalising: when a guard walks a graph, check *which* resolver the guard uses against
+*which* resolver the runtime will use. Two entry points in one walk can need two different properties.
 
 
 ## Deleting a test is a coverage claim — and "is X tested elsewhere?" cannot be answered by counting files
@@ -1310,3 +1344,152 @@ Six source files cite it too. The prediction was never re-derived — the same f
 into prose is never re-derived" section records, now with a sixth instance, and the *shape* was right while the
 *magnitude* was ~2× off. **A count that is roughly right is the most dangerous kind: it is close enough to be
 believed and wrong enough to be useless as a work estimate.**
+
+## An *additive* response field is still a user-visible change when a test pins the payload
+
+Found 2026-09-21, P14 WI 7. The work item's acceptance criterion is P6's rule — **zero user-visible
+change** — and the natural reading of "additive" is that it cannot violate that: adding a field breaks no
+caller, so it is safe. **The suite disagreed, correctly.**
+
+`server.status` gained an unconditional `workspaceId` echo. It failed in `tests/ipc/handlers.test.ts:764`:
+
+```
+expect(commandRegistry.invoke("server.status", {}, ctx)).toEqual({
+  running: true, port: 8080, error: null,
+})
+```
+
+`toEqual` on an object literal is an **exact** assertion, so the extra key is a failure. That test's own
+comment is the reason it exists — *"two views of the same `isRunning()`, with deliberately different
+payloads — collapsing them would silently change one of `serverStatus` / `proxyStatus`"* — so it is a
+deliberate pin on the desktop's payload, not incidental strictness.
+
+**The code was wrong, not the test.** The field's documented purpose is *"echoed so a multiplexed client
+can match response to request"* — and **a client that is multiplexing is exactly a client that sends an
+id**. So the echo became **conditional**: present when the caller supplied a `workspaceId`, absent
+otherwise. The desktop sends `{}`, gets a byte-identical payload, and a multiplexed client gets the
+disambiguation it needs.
+
+**Two transferable rules.**
+
+1. **When an existing test fails on your additive change, the first question is whether the test is
+   pinning a contract you were not aware of — not how to update it.** Here the pin was deliberate and
+   documented in a comment; "additive so it must be safe" was an assumption about *callers*, and the test
+   was making a claim about *payload shape*. Both can be true and the test still wins.
+2. **"Additive" and "no user-visible change" are different claims, and only the second was the
+   requirement.** An extra key is invisible to a caller that destructures; it is not invisible to one that
+   compares, serializes, hashes, or asserts. When the criterion is *zero* change, the safe default is to
+   make the addition **conditional on the caller asking for it** rather than to argue it is harmless.
+
+**And the corollary for the test suite: a `toEqual` on a whole response is a shape contract, and it should
+say so in a comment.** This one did, which is why the failure was diagnosable in one read instead of
+looking like an over-strict assertion someone should loosen.
+
+## A test's own fixture can carry the race the code under test was written to avoid
+
+Found 2026-09-21, full-suite run after P14 WI 7. `tests/runtime/portAllocator.test.ts` failed on
+`still takes each base itself when a reservation is supplied (regression)` — **not** the load-induced
+`gitStore`/`gitOps` pair, so it had to be identified rather than assumed. Isolated: **21/21 passed.**
+
+**The mechanism, and it is the irony.** That suite exists to pin D16's rule that the allocator must be driven
+by a **real `listen()`** and never by a probe-and-close, because a probe is a TOCTOU race. Its fixture does
+this:
+
+```
+const base = await freePort();        // bind(0) → read the OS-assigned port → close
+const out = await allocatePorts({ proxyBase: base, ... });
+expect(out.proxyPort).toBe(base);
+```
+
+`freePort()` is **bind-then-close — the exact shape D16 forbids the allocator from using.** It is fine in a
+fixture only while nothing races it, and under a full parallel run something can: the OS may hand the same
+ephemeral port to another worker's `freePort()`, or to a server another suite is starting. When that happens
+`allocatePorts` **correctly scans past the base**, and the assertion fails for a reason unrelated to the
+regression it guards.
+
+**What made it surface was an unrelated change.** WI 7 added `workspaceCommandScope.integration.test.ts`,
+which binds two more ports per run. The case had passed every full run before that. **So "it was green
+yesterday" is not evidence about a test whose fixture races — added load is enough to expose it.**
+
+**The fix, and why it is not a retry that hides bugs.** The two causes are distinguishable:
+**the regression leaves the base free** (the allocator skipped it); **a race leaves it held** (someone else
+has it). So the retry runs *only* while some missed base is genuinely occupied, and a base that is
+free-but-skipped is returned unchanged so the assertion still fails. Verified both directions:
+
+- re-introducing the original bug (`reserved.add(proxyBase)`) → **3 tests fail**, including the two modified
+  ones, so the guard is intact;
+- the fixture fix alone → 21/21.
+
+**The general rule: when you make a test's fixture tolerant, prove the tolerance is conditional.** A retry
+whose condition cannot distinguish "the environment interfered" from "the code is wrong" converts a
+regression detector into a flake absorber — and it does so silently, which is worse than the flake.
+
+## A sandboxed preload has NO module resolver — `require` is a five-name lookup table
+
+Diagnosed and fixed 2026-09-21. **The app never booted**, and the mechanism had been recorded for several
+sessions as a *symptom* ("P6 criterion 2 CARRIED: 46 failed / 0 passed") without a cause.
+
+```
+Unable to load preload script: I:/.../dist/preload.js
+Error: module not found: @bifurc/client
+    at preloadRequire (VM4 sandbox_bundle:2:144196)
+    at runPreloadScript (VM4 sandbox_bundle:2:144465)
+```
+
+**The mechanism.** `src/main.ts` sets `contextIsolation: true` / `nodeIntegration: false` and never mentions
+`sandbox`, so Electron's default applies — **`true` since v20** (this tree is on 42.3.0). A sandboxed preload
+does not run under Node's module system: the browser process reads the file, hands `{filePath, contents}` to
+`executeSandboxedPreloadScripts`, and evals it with a `require` bound to `preloadRequire`. That function's
+entire body is a lookup in Electron's own webpack module table, ending in
+`throw new Error("module not found: " + id)`. The table contains **`electron`, `events`, `url`, `timers`,
+`punycode`** and nothing else.
+
+**Consequences worth internalising:**
+
+- **There is no `node_modules` resolution and no filesystem resolution**, so a bare specifier and a relative
+  `./sibling` fail *identically*. `dist/preload.js` had `require("@bifurc/client")` **and**
+  `require("./ipcTransport")`; fixing only the first would have hit the second. **Fix the closure, not the
+  first error you see.**
+- **`window.api` is the entire renderer surface**, so every `window.api.*` call is `undefined`. The failure
+  is not "one feature is broken" — the app is a non-booting shell. That is what made 46 e2e specs fail as a
+  block, which reads like flakiness or a broken harness rather than one defect with one cause.
+
+**The blind spot that let it persist: a static require-walk proves REACHABILITY, not LOADABILITY.**
+`scripts/clean-main-dist.mjs`'s header records that it verified 92 stale `dist/` files were unreachable "by
+walking relative `require`s from `dist/main.js` and `dist/preload.js`". The walk was correct — those files
+genuinely were not reached — but walking `require`s out of `dist/preload.js` presumes the walker's resolver is
+the one that will run. In the sandbox it is not. **When you reason about a file loaded by another runtime,
+confirm which resolver that runtime uses before trusting a resolution argument.**
+
+**The fix: bundle it, and make the build prove it loads.** `scripts/build-preload.mjs` bundles
+`src/preload.ts` → `dist/preload.js` with esbuild (`bundle: true`, `format: "cjs"`, `external: ["electron"]`),
+and `build:main` runs it after `tsc` so it overwrites the unbundled output. Result: **one surviving
+`require("electron")`**, and 1.9 MB of self-contained preload.
+
+**The guard is the point of the script, not the bundling.** After building it evaluates the finished bundle
+with a `require` that knows **only** the five sandbox names and throws otherwise — i.e. it reproduces the
+sandbox's own failure mode at build time. Mutation-checked by marking `@bifurc/client` external: the guard
+fails the build with `module not found: @bifurc/client`, the exact runtime error, exit 1. Without the guard the
+condition returns the moment someone adds an import; a regex over `require("…")` would also be fooled by the
+string appearing inside a string literal, which is why it evaluates rather than greps.
+
+**Rejected alternatives, recorded so they are not re-proposed:** `sandbox: false` restores `require` and is a
+security downgrade (it hands the renderer Node's module system); hand-writing the 144-key surface again is the
+pre-P6 state that P5/P6 exist to remove.
+
+**Two incidental findings from the same investigation.**
+
+1. **`packages/engine/dist/` was left holding 161 declaration files and only 13 implementations** — so
+   `@bifurc/engine/transport/types` had no runtime file at all. A clean rebuild produced 135/135. The likely
+   cause is tsup's `clean: true` interacting with the safe-delete guard on this drive: a *blocked* clean
+   leaves `dist` half-deleted, and the dts leg then re-adds declarations over the remains, which is exactly
+   the observed shape (declarations present, JS missing). **A partial `dist` is silent until something
+   resolves into it** — the preload bundle surfaced it as a build error, which is the good direction.
+2. **The protocol's runtime barrel exports its fixtures** (`commands/index.ts:55` `export * from "./fixtures"`),
+   so the 93-entry fixture table ships inside the preload bundle. Harmless but wrong; noted, not fixed, since
+   changing the protocol's export surface is its own change with its own compatibility question.
+
+**And the `*/`-in-JSDoc trap bit again while writing the fix** — the header line
+"`@bifurc/*` … `packages/*/src`" closed the comment early and produced `SyntaxError: Unexpected identifier`.
+The existing `TRAPS.md` entry on this is accurate; the specific sting is that the offending token was a
+**glob**, which is exactly the thing you write without noticing in a path-heavy document.

@@ -782,6 +782,68 @@ all line up. This is why P9 moves *after* this phase.
 
 ### Work item 7 — the desktop adopts it
 
+> **THE COMMAND-LAYER HALF IS DONE 2026-09-21 — and it turned out to be the half that mattered for
+> correctness, ahead of the desktop adoption the heading names.** `runtime/runtimeRegistry.ts` (new) is the
+> lookup the command layer was missing; `runtime/runtimeServerOps.ts` (new) is how a resolved runtime's
+> servers are driven; `proxy/serverCommands.ts` and `proxy/webhookCommands.ts` resolve through both;
+> `runtime/host.ts` registers each runtime as it is created and clears the registry on `stop()`.
+>
+> **Why this came first, measured rather than reasoned.** `createWorkspaceHost()` returns its runtimes on
+> the handle it hands back, so they were reachable by whoever *called* it and nobody else — while the
+> commands serve two consumers (the host's RPC endpoint and the desktop's IPC) through a module-level
+> registry neither owns. So the commands called the **module facade**, and on a host with two workspaces:
+>
+> ```
+> host: ws-A proxy=81 webhook=9101     ws-B proxy=82 webhook=9102
+> server.status                 → { running: false, port: 0 }    ← two members ARE listening
+> server.start {workspaceId: A} → { ok: true }                    ← accepted, IGNORED
+> server.status                 → { running: false, port: 8791 }  ← a THIRD server
+> ```
+>
+> **The failure succeeds**, which is why every desktop suite stayed green through WI 1. This is the P6 §5c
+> class one layer up again: a consumer that works only because it is the *shell*.
+>
+> **The resolution rule, and the third branch is the load-bearing one.** A registered runtime for the named
+> workspace → that runtime. Otherwise, if the target *is* the active workspace → the module facade, which
+> **is** the desktop's server (`createEngine()` binds one proxy through it) and is what keeps this work item's
+> acceptance criterion ("zero user-visible change", P6's rule) true. Otherwise → **`absent`**, reported as
+> such. Falling through to the facade in that third case would re-create the original bug — acting on the
+> active workspace while the caller named another — with a success code.
+>
+> **A command never allocates a port.** `runtimeServerOps.ts` records why, and the reason is a measurement
+> rather than a preference: `proxy/server.ts` seeds `currentPort = 0` while `webhookServer.ts` seeds it with
+> **`DEFAULT_WEBHOOK_PORT` (9101)**. So a "never started" guard written for the proxy does not transfer — a
+> never-started webhook reports a *plausible* port, and re-binding it could take **another workspace's**.
+> The rule is therefore sentinel-independent: `restart` re-binds only a port it has **observed** running;
+> `start` binds only a port the **caller named**; otherwise it reports rather than guesses.
+>
+> **The wire contract is unchanged, which is why there is no `protocol-changes.md` entry.** WI 1 added the
+> field; this makes the engine *read* it. That distinction is the whole lesson: **an optional parameter is
+> not done when the schema accepts it, it is done when the body reads it** — and until then the protocol
+> advertises a capability the engine does not have. Recorded in `TRAPS.md` as *"An optional param that is
+> accepted and ignored reads as implemented"*.
+>
+> **One consolidation found while wiring it:** `protocol/commands/webhook.ts` carried its **own** copy of
+> `WorkspaceScope` instead of importing `./scope`, which `./scope`'s header already names as the hazard that
+> module exists to prevent ("four copies of one contract"). The two were still identical, so this was a
+> consolidation rather than a bug fix — but identical-and-separate is the state that precedes
+> identical-no-longer. `webhookServer.status` also now echoes the optional `workspaceId` its result type has
+> always carried, so an `absent` answer names the workspace it is about.
+>
+> **Verified:** `tests/integration/workspaceCommandScope.integration.test.ts` (new, **8 cases**) with the
+> active workspace set to A and every discriminating assertion addressing **B** — so a command that ignored
+> the parameter fails. **Mutation-checked twice:** disabling the runtime branch kills **7 of 8**; making
+> `absent` fall through to the facade kills exactly the **2** that should die. Both branches are therefore
+> independently guarded rather than jointly covered.
+>
+> **Still owed under this heading: the desktop adoption itself** — `src/main.ts:309-310` building runtimes
+> instead of calling `startServer()`. That is the half that changes the desktop, and it needs `createEngine()`'s
+> own proxy lifecycle (`index.ts:255`) to move with it, or the engine and a runtime would both bind (the
+> two-authorities hazard `host.ts`'s header records). **The bullet below about the legacy `server:*` channels
+> is now obsolete**: the P6 reduction's fifth group deleted all three on 2026-09-21, so there is no
+> `window.api` surface left to keep working — `src/ipc/handlers/systemHandlers.ts` retains only
+> `app:checkUpdate`, which is client-local by design.
+
 - `src/main.ts:309-310` stops calling `startServer(cfg.port)` / `startCompanionServer(...)` directly and
   builds runtimes instead. The companion call is unchanged.
 - The legacy channels `server:start|stop|restart` (`src/ipc/handlers/systemHandlers.ts:9-25`) must keep
