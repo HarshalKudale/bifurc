@@ -38,24 +38,34 @@
  * not read it (it times the call itself — see `restTabReducer.ts`'s own `durationMs`), so this is
  * latent, and it is recorded here rather than silently patched.
  *
- * ## The trap: do NOT re-point the legacy channels at this module yet
+ * ## The trap that no longer applies — and why it was right while it did
  *
- * The obvious "DRY" follow-up is to replace the shell's five `ipcMain.handle` bodies with
+ * The obvious "DRY" follow-up was to replace the shell's five `ipcMain.handle` bodies with
  * `commandRegistry.invoke("<command>", params, ctx)`. **That was tried in `serverCommands.ts` and
  * reverted, and it is a real regression rather than a style question.**
  *
- * The reason is how this module gets registered. `config.get` / `env.setActive` / `workspace.setActive`
- * are registered at **module scope** in `coreHandlers.ts`, so importing that file populates them. This
+ * The reason was how this module gets registered. `config.get` / `env.setActive` / `workspace.setActive`
+ * were registered at **module scope** in `coreHandlers.ts`, so importing that file populated them. This
  * module is registered by an **explicit call inside `registerIpcHandlers()`**, so a legacy body that
- * delegates here acquires a hidden ordering dependency on a function callers are not obliged to run —
+ * delegated here acquired a hidden ordering dependency on a function callers are not obliged to run —
  * and two suites (`tests/spike/protocolPoc.test.ts`,
- * `tests/integration/settingsMutations.integration.test.ts`) already register handler *groups* without
- * it. The failure is a `No handler registered` at *invocation* time, so nothing catches it at build
- * time and the shell's own handler file looks untouched.
+ * `tests/integration/settingsMutations.integration.test.ts`) already registered handler *groups* without
+ * it. The failure was a `No handler registered` at *invocation* time, so nothing caught it at build
+ * time and the shell's own handler file looked untouched.
  *
- * So the duplication is deliberate and bounded: five bodies, behaviourally identical to the handlers
- * below. **Step 3** removes it by deleting `registerIpcHandlers()` and the shell's handler groups
- * together — one implementation, no second entry point to keep in sync.
+ * So the duplication was deliberate and bounded: five bodies, behaviourally identical to the handlers
+ * below. **It is dissolved rather than answered.** The reduction's sixth group deleted all seventeen of
+ * `coreHandlers.ts`'s channels on 2026-09-21 (`plan/07` §5b-septendecies) and the file became
+ * `coreKinds.ts`; this module's five channels went with them, since they were in the same file. There is
+ * one implementation and no second entry point — which is what step 3 was going to achieve by deleting
+ * both halves together. §5b-sedecies generalised it: **"duplication kept deliberately to avoid a hidden
+ * coupling" is a temporary answer that a deletion can retire, and retiring it needs no new coupling.**
+ *
+ * The generalisable half is the one worth carrying: **the trap was about the *ordering* of an explicit
+ * call, and it survived every rewrite of the bodies.** Nothing in a body could have revealed it — it
+ * took re-pointing them and watching two suites fail with `UNKNOWN_COMMAND`. A regression that only a
+ * suite's *registration shape* can catch is invisible to typecheck, to the build, and to any test that
+ * runs `registerIpcHandlers()`.
  */
 import * as fs from "fs";
 import * as path from "path";

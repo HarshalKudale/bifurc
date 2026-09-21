@@ -4,13 +4,14 @@
  *
  * ## Why these four and not the other five in that file
  *
- * `config.ts` also declares `config.get`, `env.setActive` and `workspace.setActive`, and those are
- * already registered — but from `src/ipc/handlers/coreHandlers.ts`, i.e. from the **shell**. That is
- * the mirror image of the problem this module fixes and it is deliberately left alone here: P6 is
+ * `config.ts` also declares `config.get`, `env.setActive` and `workspace.setActive`, and those were
+ * already registered — but from `src/ipc/handlers/coreHandlers.ts`, i.e. from the **shell**. That was
+ * the mirror image of the problem this module fixes and it was deliberately left alone here: P6 is
  * about commands the registry cannot serve at all, and moving an already-registered command between
- * packages is a different change with a different blast radius. It is recorded in `plan/07` as a
- * follow-up, because on a containerised engine (P9) `config.get` would answer `UNKNOWN_COMMAND` for
- * exactly the same reason these four did.
+ * packages is a different change with a different blast radius. §5c took it as a separate pass, and the
+ * shell half is now gone entirely — the reduction's sixth group deleted `coreHandlers.ts`'s seventeen
+ * channels on 2026-09-21 and the file became `coreKinds.ts` (`plan/07` §5b-septendecies). So these four
+ * and those three no longer have a shell twin at all.
  *
  * ## `config.save` is SPLIT, and the body below is already the engine half
  *

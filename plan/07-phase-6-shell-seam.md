@@ -1740,6 +1740,518 @@ channels and none of them is `server:*` or `capture:shareJson` (the file contain
 name), so the fixture stays at **7 of 10**. The rule "grows with each **driven** channel" has now been
 observed in both directions three times.
 
+#### 5b-septendecies. The reduction, sixth group — `coreHandlers.ts` becomes `coreKinds.ts`, the largest group, and the one that found a live bug (2026-09-21)
+
+**Seventeen channels are gone and the file is not.** `src/ipc/handlers/coreHandlers.ts` — the reduction's
+largest remaining group — was reduced to a single `registerCrudKind<Environment>()` call plus the header,
+renamed to **`coreKinds.ts`**, and `registerCoreHandlers()` became **`registerCoreKinds()`**. The name
+follows the rule `crudHandlers.ts` → `crudKinds.ts` established one group earlier: a file named
+`*Handlers` that registers no handlers is a lie. §5b-sedecies predicted that "every remaining group is a
+whole-file deletion after this"; **that prediction was wrong for this file for the same reason it was
+wrong for `systemHandlers.ts`** — a non-channel registration kept it alive. The seventeen *channels* are
+gone; the file is reduced. Folding the one `environments` kind into `crudKinds.ts` is a **merge**, a
+different change with a different blast radius, and it is recorded as a follow-up rather than smuggled in
+with a deletion.
+
+**The group opened with a fix-first commit, and it is the `tls` shape arriving a second time —
+except this one was a live bug that had already shipped.** `entity:load`'s body applied
+`toProtocolKind()` (the map whose only non-identity entries are `rules → proxyRules` and
+`sockets → wsConnections`) before invoking the command; the client twin forwarded the caller's `kind`
+verbatim. Two renderer panels pass the **engine-internal** names — `ProxyRulesPanel.tsx`'s `"rules"` and
+`WebSocketsPanel.tsx`'s `"sockets"` — and `EntityLoadParams.kind` is the strict `EntityKind` enum, so both
+were being answered `BAD_REQUEST`. Both wrap the call in `.catch(() => {})`, so the failure surfaced as
+*"the entity has no fields"* rather than as an error.
+
+Verified empirically before touching anything, with a throwaway probe against the **built** protocol
+package rather than by reading the schema:
+
+| payload | old behaviour | cause |
+| --- | --- | --- |
+| `entity.load {kind:"rules"}` | **REJECTED** | strict `EntityKind` enum |
+| `entity.load {kind:"sockets"}` | **REJECTED** | strict `EntityKind` enum |
+| `entity.load {kind:"proxyRules"\|"wsConnections"\|"mocks"}` | OK | in the enum |
+| `entity.setEnabled {kind:"sockets"}` | REJECTED | gateway needs `wsConnections` |
+| `entity.setEnabled {kind:"rules"\|"mocks"}` | OK | in the enum |
+
+**The dead channel was the only correct implementation of that half.** Deleting it first would have
+destroyed a live behaviour and shipped the bug permanently — which is precisely what §5b-duodecies'
+`tls:generate` correction said, and the reason the procedure now *starts* with the criterion question
+rather than the deletion.
+
+**So the fix landed as `174a01d`, its own commit, before any channel was removed.** `loadEntity` and
+`setEntityEnabled` were reclassified `transport` → **`shim`** in `packages/client/src/surface.ts` (a
+`transport` filing *is* the claim that nothing happens beyond the call, and two things now do), and the
+steps moved into `packages/client/src/index.ts`:
+`ENGINE_TO_PROTOCOL_KIND` + `toProtocolKind()` for the load path, and a `safeParse` against
+`EntitySetEnabledParams.shape.kind` for the guard. Surface counts move **transport 67 → 65, shim 6 → 8**,
+total 144 unchanged — a reclassification cannot change what the contract covers, which is exactly what
+`handlers.test.ts`'s routed-surface guard asserts.
+
+**The renderer was not touched, and that is the point.** Non-negotiable #1 says a renderer edit during P6
+means something upstream is wrong, and the two panels are legitimately relying on `window.api` fidelity —
+they always passed engine-internal names and always worked. The step belonged to the client.
+
+**`entity:setEnabled`'s `invalid_kind` guard travelled too, although it is unreachable today.** All four
+renderer call sites pass valid kinds (`ProxyRulesPanel.tsx` `"rules"`, `MappingsPanel.tsx` `"mappings"`,
+and `useMocksPanelState`'s `resolveEntityKind`, which yields only the mock kinds in mock mode), and
+`useRequestsPanelState` has no `setEntityEnabled` at all. It was carried over anyway because
+`renderer/types/window.ts:41` declares `Promise<{ok: boolean; error?: string}>` and
+`store/coreCommands.ts` records the guard as client-facing behaviour. **The rule this establishes: a
+channel's owned step moves to the twin — the move is not conditional on the step's current
+reachability.** A latent contract and a live bug are the same shape at deletion time; only the evidence
+differs.
+
+**The delta is −25, and the decomposition is −5 generated + −20 hand-written — with the arithmetic
+*done by measurement*, not by counting the diff.** Measured: **101 files / 2,461 tests / 2,420 passed /
+40 skipped / 1 failed**, against a true pre-deletion baseline of **2,486** (see the correction below).
+The one failure is the standing environmental `soap.execute` (`ECONNREFUSED 127.0.0.1:1`).
+
+> **Correction (2026-09-21, at the verification gate): the first draft of this section claimed −41
+> against §5b-sedecies' 2,484, and *all three parts of that were wrong.** It is recorded rather than
+> quietly fixed because the way it was wrong is the reusable part.
+>
+> 1. **2,484 was the wrong baseline.** It was measured at `35ba2ff`, but this group opened with a
+>    fix-first commit — `174a01d`, §5b-undecies' `entity:load`/`entity:setEnabled` repair — and that
+>    commit added **two `it()`s to `packages/client/tests/client.test.ts`** (`+2 -0`, verified from the
+>    commit's own diff). So the baseline the deletion is measured against is **2,486**, not 2,484. A
+>    group that opens with a fix-first commit has a baseline that moves *before* the deletion starts, and
+>    the ledger has to re-measure it rather than reuse the previous group's number.
+> 2. **`expectedChannels` does not generate one `it` per entry — it generates one `it` per entry *inside
+>    a single loop*, so its own length is not a test count.** The old "−14 generated" figure came from
+>    counting the array's 16 → 4 entries and treating the difference as cases. The array is consumed by
+>    `for (const channel of expectedChannels) { it(...) }`, so removing five *entries* removes five
+>    generated `it`s — but the *remaining* entries' `it`s still exist. The generated contribution is
+>    **−5** (7 entries → 2), and §5b-septies' "one `it` per entry" phrasing describes the loop's shape,
+>    not a licence to read file size as coverage.
+> 3. **Counting `it(` lines in the diff is not a test count either.** The diff shows 18 removed and 4
+>    added — a naive −14 — but reformatted blocks hide their `it(`, and the file's real count moved
+>    135 → 110. **The only trustworthy number is the one a run reports**, which is why the reconciliation
+>    below is stated per-file from vitest output.
+>
+> The reconciled per-file measurement (`handlers.test.ts` 135 → 110; the four other suites 25 / 44 / 30 /
+> 12 all unchanged, net 0) gives −25, and 2,486 − 25 = 2,461 exactly. **When the measured delta and the
+> decomposition disagree, the decomposition is wrong** — this is the third time that rule has paid off in
+> the reduction, and the first time the error was +2 rather than −N.
+
+**Five assertions were folded into the "21 moved commands" block rather than deleted with their cases** —
+and this is the largest application of §5b-septies' rule so far. The block is the delete-direction test:
+re-point the cases whose assertions live only in the channel, delete the ones a suite already makes, and
+*move* the residue.
+
+| folded assertion | from which deleted case | why the block did not already make it |
+| --- | --- | --- |
+| `settingsChanged` has been called | `config:save` — "emits settings.changed" | the tray-update hook was asserted nowhere else; losing it would stop the tray following a settings change with every test green |
+| `discoverServices` returns a **non-empty** list | `services:discover` — "returns the list" | the block asserted `toEqual([])` against a mock returning `[]`, which cannot tell pass-through from replaced-with-empty |
+| `request.replay`'s **result** | `request:replay` — "returns its result" | the block asserted only the call slots; a handler that called the engine and discarded the answer would pass |
+| `entity.load` accepts `"proxyRules"` / `"wsConnections"` | `entity:load` ×2 | the cases drove the channel by name; the assertion is that the *protocol* names resolve, which is the half that stays here |
+| `server.restart` starting on `currentConfig.port` | (group 5, listed for completeness) | — |
+
+**And `entity.load`'s two re-pointed cases are deliberately weaker than the ones they replace, which is
+worth stating rather than hiding.** The deleted cases asserted that the **channel** translated `"rules"` →
+`"proxyRules"`; the re-pointed ones assert that the **command** accepts `"proxyRules"` — because the
+translation half now lives in the client, which is where the bug was. Pinning it here as well would be
+pinning it in the one place it cannot occur. The payload assertion lives in
+`packages/client/tests/client.test.ts` (*"loadEntity translates the two engine-internal kinds its callers
+pass — the live bug, 2026-09-21"*), which asserts `rules` → `proxyRules`, `sockets` → `wsConnections`, and
+`mappings` as the identity control.
+
+**The stale prediction was found and corrected rather than left to read as current.** `handlers.test.ts`
+carried a 2026-09-20 comment saying `toProtocolKind()` "lives in the factory and **dies with the
+channels**". It was true that the factory died; it was **false that the step was dead weight**, and the
+comment's confidence is exactly how the bug survived a day. It now records that the 2026-09-20 reading
+"was wrong about what dying would cost". Three engine docblocks that repeated the same claim were
+corrected in the same pass: `store/coreCommands.ts` (the `invalid_kind` guard's "stays where the channel
+is"), `store/configCommands.ts` ("`config.get` would answer `UNKNOWN_COMMAND`" — it no longer has a shell
+twin), and `runner/runnerCommands.ts` (whose trap is **still live**, since `runnerHandlers.ts` has not
+been reduced; its paragraph now says so instead of describing a registration that no longer exists).
+`commands/registry.ts`'s §5c history paragraph got the same treatment: its "**44 module-scope
+registrations remain**" is preserved as the mid-pass reading it was, with the fact that it went to zero
+recorded beside it.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 55 (6 files) | **38 (5 files)** |
+| live | 18 | 18 |
+| dead | 37 | **20** |
+
+**20 dead channels remain, in three files, and all three are all-dead:** `applicationHandlers.ts` (10),
+`runnerHandlers.ts` (6), `importExportHandlers.ts` (4). `clientHandlers.ts` stays 17 live / 0 dead, and
+`systemHandlers.ts` holds the one live client-local channel.
+
+> **Superseded 2026-09-21 by §5b-octodecies** (seventh group): `applicationHandlers.ts` is deleted,
+> leaving **18 dead in 2 files**, both all-dead. Read the inventory in the *latest* §5b-* section,
+> not the nearest one.
+
+**The dialog-owner risk subset is still 3** — unchanged by this group, because `coreHandlers.ts` owned
+none. It is `runner:exportReport`, `importExport:export`, `importExport:preflight`: **exactly the three
+groups still to go, one dialog-owner per remaining file.** Re-derived from the tree rather than carried
+forward, which is the rule §5b-sedecies was corrected into.
+
+**The spike's fixture reaches 10 of 10 — and the prediction it was waiting on turned out to be a
+non-sequitur.** `tests/spike/protocolPoc.test.ts` drives ten channels, three of which were this file's
+(`config:get`, `server:status`, `entity:setEnabled`), so the fixture grew **7 → 10 of 10**. The docblock
+used to say the table reaches 10 of 10 "exactly when the legacy surface is gone"; it now records that the
+inference was **wrong in a way worth keeping**: the spike drives ten *specific* channels, and twenty dead
+ones remain that it never touches. "This file is complete" and "the legacy surface is gone" are different
+claims, and the first is true while the second is not. What completeness *does* settle is §5b-ter's open
+question — the ten commands answer identically through a channel-free path, so this file's remaining value
+is the envelope and it no longer depends on the shell at all.
+
+#### 5b-octodecies. The reduction, seventh group — `applicationHandlers.ts` is deleted, and the delta is 0 for the second time (2026-09-21)
+
+**Ten channels, all dead, all one-line delegates — and the file goes with them.** `applications:list` /
+`:save` / `:delete` / `:start` / `:stop` / `:getState` / `:getAllStates` / `:getLogs` / `:checkPort` /
+`:killPort` left `src/ipc/applicationHandlers.ts`, which is now **deleted** rather than reduced, along
+with its import and call in `src/ipc/handlers.ts`. This is the first whole-file deletion since the
+second group, and — unlike the fourth, fifth and sixth — it needed no rename, because the file
+registered no kinds either.
+
+**The criterion cleared all ten without a fix first, and the reason is on the record from §5c slice 5.**
+Each body was `commandRegistry.invoke("<command>", {…}, ctx)` and nothing else: `ctx` is `{ bus }`, the
+payload is the caller's arguments re-shaped, and no body touched `dialog`, `app.*`, a trust store or any
+field the engine refuses to report. That is the `tls` / `entity.load` class **absent** rather than
+missed — and the reason it is absent is worth stating, because it is not luck: §5c slice 5 is the slice
+the ledger already calls *"the cleanest of the pass — nothing had to travel"*, since every dependency
+(`workspaceFs`'s entity readers, `applications/processSpawner`, `commandGenerator`, `portUtils`) was
+already inside `packages/engine`, and the shell file was a pure adapter from the day it was written.
+The only shell-side thing in it was `electron`'s `ipcMain`.
+
+**Delta 0, and it is the fourth group's cause rather than the `tls` group's** — which is why the number
+alone is not the finding. Two independent reasons, both checked:
+
+  - **No case was in `expectedChannels`**, so no generated `it` was lost. The array never listed an
+    `applications:*` channel.
+  - **No suite drove one by name.** `tests/integration/applications.integration.test.ts` was the only
+    importer of `registerApplicationHandlers`, and it drove all ten — so under §5b-ter's rule this was a
+    **re-point**, and a re-point preserves the count.
+
+Both halves matter: §5b-quindecies' "delta 0 has two causes and the count cannot separate them" is
+exactly this group's shape, and the separation came from reading the suite, not the number.
+
+**The suite now drives the commands, and the mapping is the deleted bodies' mapping reproduced
+verbatim.** `invoke("applications:save", appConfig)` became
+`invokeCommand("application.save", { application: appConfig })`; `invoke("applications:start", ws, id,
+"run")` became `invokeCommand("application.start", { workspaceId: ws, appId: id, mode: "run" })`; and
+`applications:stop` / `:getState` / `:getLogs` / `:checkPort` / `:killPort` — which took their argument
+**positionally** — became one-field payloads. That is §5b-quindecies' argument-shift trap in the
+direction that avoids it: the mapping is written from the *call sites*, not inferred from the command's
+parameter list, which is the sixth group's `workspace:add` lesson applied pre-emptively.
+
+Three incidental consequences of driving commands instead of channels, all recorded rather than
+discovered later:
+
+  - **The `waitFor` helper became async.** The commands return promises where the channels were
+    synchronous, so `waitFor(() => …status === "exited")` would have polled the value `undefined`
+    forever and failed on the timeout rather than on the assertion. The one-line widening
+    (`() => boolean | Promise<boolean>`) is load-bearing, not cosmetic.
+  - **The `has(channel)` case became `isRegistered(command)`.** The case asserted *registration*, and
+    under the reduction the thing that must be registered is the command — the same substitution
+    `handlers.test.ts` made for `folder:*` in the third group. It asserts the **namespace** rather than
+    the ratchet's whole set, because this suite's failure mode is a command that silently is not there.
+  - **The `afterAll` cleanup re-points too** (`application.stop`), or the suite leaks a child process
+    when a case fails mid-run.
+
+**The spike's fixture did not grow — the fifth non-growth, and it confirms the corrected rule in the
+other direction.** `tests/spike/protocolPoc.test.ts` drives ten channels and none is an
+`applications:*` one, so the fixture stays **10 of 10**. §5b-duodecies' "grows with each slice" was
+corrected by the second group to *"grows with each **driven** channel"*, and this group is a driven
+channel that is simply not in its ten.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 38 (5 files) | **28 (4 files)** |
+| live | 18 | 18 |
+| dead | 20 | **18** |
+
+> **Superseded 2026-09-21 by §5b-novendecies.** `runnerHandlers.ts`'s six channels are now deleted,
+> so the remaining surface is **12 dead channels in one file** (`importExportHandlers.ts`). The
+> paragraph below is kept as the seventh group's measurement, which is what the eighth group's
+> "before" column compares against.
+
+**18 dead channels remain in two files, and both are all-dead:** `runnerHandlers.ts` (6) and
+`importExportHandlers.ts` (4). The other 12 channels are `clientHandlers.ts`'s 17-channel live set
+minus nothing and `systemHandlers.ts`'s one client-local channel, plus `importExportHandlers.ts`'s four
+live-by-contract ones — re-derived from the tree rather than carried, which is the rule §5b-sedecies
+was corrected into.
+
+**The dialog-owner risk subset is still 3, and this group owned none of them.** Re-derived with
+`grep -n "dialog\." src/ipc src/ipc/handlers`: `runner:exportReport`, `importExport:export`,
+`importExport:preflight`. **Those are exactly the two groups still to go** — one dialog-owner in
+`runnerHandlers.ts`, two in `importExportHandlers.ts` — which makes the remaining work the reduction's
+highest-risk part rather than its tail.
+
+#### 5b-novendecies. The reduction, eighth group — `runnerHandlers.ts` is deleted, and the criterion finally has a channel that owns a step (2026-09-21)
+
+**Six channels, all dead, and the file goes with them.** `runner:saveReport`, `runner:exportReport`,
+`runner:getHistory`, `runner:saveConfig`, `runner:loadConfig` and `runner:listFolderIds` left
+`src/ipc/handlers/runnerHandlers.ts`, which is now **deleted** rather than reduced, along with its
+import and call in `src/ipc/handlers.ts`. `src/` goes 19 → 18 `.ts` files.
+
+**This is the first group where the criterion had real work to do, and it is worth being precise about
+which of the three shapes was present.** §5b-septendecies established that a body can be unsafe for
+three different reasons: it owns a step the twin drops (`tlsGenerate`), it owns a step the twin
+*forgot* (`entity:load`'s `toProtocolKind()`), or the client composes the same steps in a different
+order (`audit:export`). All three are "owns a step the engine does not perform"; they are distinguished
+by where the step went wrong. Applying the criterion channel by channel:
+
+  - **`runner:getHistory` and `runner:listFolderIds` — pure delegates.** Each body was one line,
+    `commandRegistry.invoke("runner.getHistory", { workspaceId, folderId }, ctx)`, and `ctx` is
+    `{ bus }`. Both engine implementations are in `runnerCommands.ts` (moved there in step 3e slice 2,
+    the §5c pair). Nothing owned, nothing to move.
+  - **`runner:saveReport`, `runner:saveConfig`, `runner:loadConfig` — self-contained duplicates, not
+    delegates.** These are the group's actual hazard, and they are *not* the `tls` shape: the shell body
+    and the engine command are **both complete implementations of the same behaviour**, written twice.
+    `runnerCommands.ts`'s header records that the obvious DRY fix — re-point the channel at the command
+    — was tried in `serverCommands.ts` and **reverted**, because a channel that delegates to a module
+    registered only inside `registerIpcHandlers()` acquires a hidden ordering dependency, and the
+    failure is a `No handler registered` at *invocation* time. Here the duplication was a **coverage**
+    hazard instead, which is the more dangerous of the two: `expectedChannels` never listed a
+    `runner:*` channel, so delta 0 could not be evidence of anything, and
+    `runnerStorage.integration.test.ts` drove the **shell copies** — it would have stayed fully green
+    with the engine halves rotted. Deleting the shell copies is the fix, because it removes the second
+    implementation the suite could have been testing.
+  - **`runner:exportReport` — the client half, and the only channel in the group that owned a step the
+    engine does not perform.** The body was: show the save dialog → derive the format from the chosen
+    extension → `call("runner.exportReport", …)` → `writeArtifact(artifact, filePath)`. The engine's
+    `runnerExportReport` (`packages/engine/src/fileOps/commands.ts:164`) renders and publishes; it
+    **cannot** show a dialog, and it **cannot** know the format, which is why `format` is a parameter the
+    client supplies. That is a genuine step-ownership, and the twin is
+    `packages/client/src/index.ts:927` — `exportRunnerReport`, which performs the same four steps through
+    `local.pickSavePath` and `artifactToFile`. **Checked rather than assumed**, step by step: same dialog
+    title, same `defaultName` (`${folderName}-report-${ts}.html`), same two filters, same `?? "collection"`
+    and `?? Date.now()` fallbacks, same `toISOString().replace(/[:.]/g, "-")`, same
+    `.endsWith(".json") → "json" : "html"`, same bare `{ok:false}` on cancel (no `canceled` key, because
+    the declared type has none). The client twin is *not* byte-identical in mechanism — it passes
+    `destPath` to the write hook, where the shell called `writeArtifact` directly — and that difference is
+    the fix `File_Ops_Protocol.md` §3.2 exists for, not a drift.
+
+**So the group cleared without a fix-first commit, and delta 0 has a third cause.** The three causes so
+far: *re-point* (Δ0, a suite drove the channel), *never had cases* (Δ0, nothing listed it), and now
+**both at once plus a duplicated implementation** (Δ0, and neither the generated list nor the suite can
+see the engine half at all). Read per-file, as §5b-quindecies insists — the count separates none of them.
+
+**The suite was re-pointed, and one block was folded rather than deleted.** The old file had two layers:
+four `describe` blocks driving `runner:*` channels, and a fifth — "runner.saveConfig /
+runner.loadConfig through the registry" — whose only purpose was to compare the **two live copies** of
+those commands against each other ("agrees with the shell channel on the file it reads, in both
+directions"). With one implementation there is nothing left to compare, so under §5b-septies' rule the
+residue **moved into the block it was shadowing**:
+
+  - The verbatim-write assertion (`onDisk` equals the config, keys `["delayMs","iterations","stopOnFailure"]`)
+    moved into the `runner.saveConfig / runner.loadConfig` block. It is about the **store's** fidelity —
+    the `z.object()` field-stripping that `plan/protocol-changes.md` records — not about the routing, so
+    it survives the reduction intact.
+  - The corrupt-config case (`null`, not `{}`) moved with it.
+  - The cross-implementation case (`viaRegistry` then `invoke("runner:loadConfig")`, and back) was
+    **deleted**, because its assertion — "the engine and the channel address the same bytes" — was a
+    claim about two implementations coexisting, and that claim is now vacuous rather than false.
+  - The export block moved from the channel's dialog composition to the **engine half** (three cases:
+    html, json, and the `?? "collection"` fallback), with a comment naming
+    `packages/client/tests/client.test.ts`'s two `exportRunnerReport` cases as where the dialog-first
+    half is pinned. That pairing is what makes deleting the shell copy safe; the client's cases were
+    **already there** (they are the regression tests for the hardcoded `format: "json"` bug), so nothing
+    had to be added to prove it.
+  - The registration check became `registry.isRegistered(command)` over the six-command namespace —
+    the same substitution `handlers.test.ts` made for `folder:*` (third group) and `application.*`
+    (seventh).
+
+Two cases are **new**, which is why the suite goes 21 → 22 rather than staying put:
+
+  - **The corrupt-run case** ("drops only the corrupt entry, not the whole folder"). `runnerCommands.ts`'s
+    docblock calls the nested `try` load-bearing — "a single corrupt `report.json` must drop that one
+    entry, not fail the whole folder" — and no test asserted it. A single flat `try` passes every other
+    case in the file.
+  - **The malformed-report casing** was split in two, because the old single case conflated two different
+    failure paths. A schema-invalid payload is rejected **at the registry boundary** and *throws out of
+    `invoke()`* (the body's `catch` never sees it); a payload that reaches the body but cannot be written
+    resolves `{ok:false, error}`. The old test asserted `{ok:false}`, which the registry cannot produce for
+    the payload it sent. Both are now asserted for what they are.
+
+**Delta nought, and this time it is measured rather than inferred — the suite's own baseline moved first.**
+The eighth group's gate opened at **101 files / 2,462 tests / 2,421 passed / 40 skipped / 1 failed**, a
+**+1 test** over the seventh group's 2,461. That is the new corrupt-run case, which was written into the
+suite during the re-point and therefore present on both sides of the measurement — so the delta *is* 0 and
+the +1 is the group's opening state, not its effect. The 1 failure remains the standing environmental
+`soap.execute` (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`).
+
+**The spike's fixture did not grow — the sixth non-growth, and the first one that is a *consequence* of
+this group rather than incidental to it.** `tests/spike/protocolPoc.test.ts` drives ten channels and the
+comment there names `runnerHandlers.ts` (6) among the dead ones the spike never touches, so the fixture
+stays **10 of 10**. The ten channels it drives are `config:get`, `server:status`, `entity:setEnabled`,
+`graphql:introspect`, `soap:execute`, `mock:add`, `mock:delete`, `folder:add`, `folder:move` and
+`tls:generate` — re-derived from `deletedChannelBodies`, not carried. Its surrounding comment was
+**updated** rather than left at "the legacy surface still holds twenty dead ones", because that sentence
+was an inventory claim and the inventory moved: ten of the twenty are now gone, and this spike drove none
+of them.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 28 (4 files) | **21 (3 files)** |
+| live | 10 | 10 |
+| dead | 18 | **11** |
+
+**The count is measured with `grep -c 'ipcMain.handle('`, and that is `src/ipc/rpcBridge.ts`'s own
+channel excluded** — it is bridged through the `RPC_CHANNEL` / `EVENT_CHANNEL` constants rather than a
+literal string, so it does not appear in a name-level grep. Counting it gives 22. The 21 is quoted
+because it is the reading that decomposes: `clientHandlers.ts` 17 + `systemHandlers.ts` 1 +
+`importExportHandlers.ts` 4 = 22, less the one `systemHandlers.ts` channel that is **client-local**
+(`app:checkUpdate`, which stays) = 21 in the dead/live accounting.
+
+**11 dead channels remain in one file, with one labelling judgement.** `importExportHandlers.ts`'s four
+are `importExport:formats`, `:export`, `:preflight` and `:import`. `:export` and `:preflight` are the
+dead ones under the criterion beyond argument — both own a `dialog.*` step (`showSaveDialog` at `:90`,
+`showOpenDialog` at `:123`). `:import` is dead by the same routing test as every other deleted channel
+(`packages/client/src` names no channel). **`:formats` is the one channel whose label is a judgement
+rather than a count**: it returns a static table and routes nowhere, but it may be genuinely
+client-local in the `app:checkUpdate` sense — so the reduction's last group must *decide* it rather
+than assume it, and a bare "12 dead" would have hidden that. `importExport:formats`,
+`:export`, `:preflight`, `:import`) are the whole remaining reduction — and they are the file §5b-decies
+classified as the one whose bodies are **not delegates**: they are the P3 client half (dialog + bytes +
+the `pendingUploads` map), two of them dialog-owners, and `surface.ts` files the client keys as
+`transport`/`shim`. The other 10 channels are `clientHandlers.ts`'s 17-channel live set, re-derived from
+the tree rather than carried.
+
+**The dialog-owner risk subset is now 2, and it is exactly the next group.** Re-derived with
+`grep -n "dialog\." src/ipc src/ipc/handlers`: `importExport:export` and `importExport:preflight`.
+`runner:exportReport` leaves the set by being deleted. The reduction therefore ends on its highest-risk
+file rather than on its easiest — which is the right order for it to end in, because the last group is the
+one where "the client twin is equivalent" has to be *shown* rather than assumed, and there is no
+remaining group after it to catch a mistake.
+
+#### 5b-vicendecies. The reduction, ninth and last group — `importExportHandlers.ts` is deleted, the strongest delta of the whole reduction, and the surface is closed (2026-09-21)
+
+**Four channels, the file deleted, and the only group that cost the ratchet anything.**
+`importExport:formats`, `:export`, `:preflight` and `:import` left
+`src/ipc/importExportHandlers.ts`, which is now **deleted** rather than reduced, along with its import
+and call in `src/ipc/handlers.ts`. `src/` goes 18 → 17 `.ts` files.
+
+**Delta −4, and it is the reduction's only genuine ratchet shrink — every earlier group's delta came
+from somewhere else.** The four names *were* in `tests/ipc/handlers.test.ts`'s `expectedChannels`, so
+four generated `it("registers a handler for …")` cases went with them: **110 → 106 tests**. §5b-decies
+… §5b-novendecies recorded Δ0 four times and Δ−5, Δ−3, −8, −25 for the others, and every one of those
+had to be *explained* (a re-point, a generated-list shrink from a different mechanism, a suite that
+was re-pointed wholesale). This one needs no explanation beyond the list itself, which is what makes it
+the cleanest measurement the reduction produced — and it is worth noting that it arrives *last*,
+because the file that was easiest to see was the one that was hardest to delete safely.
+
+**This is the group the whole criterion was built for, and the reason it went last.** §5b-decies
+classified `importExportHandlers.ts` as the **only** file whose bodies are not delegates, and
+§5b-novendecies left it as the last work with the note that *"the reduction ends on its highest-risk
+file rather than its easiest"*. The file opened with its own one-line statement of the shape: it is
+**the P3 client half** — dialog, bytes, and the `pendingUploads` map — not an adapter. Applying the
+criterion per channel:
+
+  - **`importExport:formats` — the judgement §5b-novendecies flagged, and it resolves to dead.** It was
+    the one channel whose label was a judgement rather than a count: it returns a static table, routes
+    nowhere, and could have been client-local in the `app:checkUpdate` sense. It is not. Its body is
+    `call("export.formats", {})` — a one-line delegate to an engine command — and
+    `packages/engine/src/importExport/commands.ts:59` registers that command. That file's header even
+    records the history: *"this module does register `export.formats` — the shell used to register that
+    one itself, and it moved here so all four `export.*`/`import.*` commands have a single owner and a
+    single call site."* So the body owns nothing, and the **reason it looked ambiguous is that it is the
+    only one of the four whose engine command returns data rather than an artifact** — a cheap read has
+    the shape of a client-local query and the shape of a delegate at the same time. The difference is
+    decided by whether a protocol command exists, not by the cost of the call.
+  - **`importExport:export` — a genuine step-owner, and the reduction's second dialog-first egress.**
+    Dialog → `export.create` (filename only crosses, never the path) → `writeArtifact`. Twin:
+    `packages/client/src/index.ts:585`'s `exportData`, which its own comment ties to
+    `File_Ops_Protocol.md` §3.2's ordering rule and to `pickSavePath`'s existence.
+  - **`importExport:preflight` — a step-owner with *four* steps.** Dialog → read + size-cap →
+    `blob.put` → `import.preflight` → and then it **remembers the upload** (`rememberUpload`). The last
+    step is the one a reader is most likely to miss, because it is not a call:
+    `pendingUploads.set(localPath, blobId)` is what lets the *next* channel avoid re-uploading the file.
+    Twin: `packages/client/src/index.ts:626`, which performs all four.
+  - **`importExport:import` — a step-owner that *reads* what preflight wrote.** `uploadFor(filePath)` is
+    the map lookup with a re-upload fallback (an app restart between the two steps), then
+    `import.commit`, then a `finally` that both forgets the upload and releases the blob. Twin:
+    `index.ts:653`, same `finally`, same order.
+
+**The `pendingUploads` map was the specific thing that could have been lost silently — and the check is
+that the client has its own copy, not that the channel is unreachable.** The map is the only piece of
+state P3 added to the shell, and it is cross-channel: `:preflight` writes it, `:import` reads it, so
+deleting either alone would have broken the pair in a way no single-channel test could see. Verified
+rather than assumed: `packages/client/src/index.ts:493` declares **its own** `pendingUploads =
+new Map<string, string>()`, with `rememberUpload` / `forgetUpload` / `uploadOnce` as closures at `:499`
+and `:512` — same key (the local path), same replace-and-release-the-displaced-entry behaviour, same
+fallback. That is the `tls` group's lesson applied in the direction that avoids it: the question is not
+"is the channel dead" but "does the twin carry the **state**, not just the calls".
+
+**The client's own comment named this deletion before it happened.** `packages/client/src/index.ts:354`:
+*"A copy of the shell's `kindLabel` in `src/ipc/importExportHandlers.ts`. That file is now dead … and it
+goes at step 3's final deletion, at which point this becomes the only copy. Copied rather than moved for
+one commit, because moving it would mean editing a file that is about to be deleted."* That is the
+pattern the reduction kept rediscovering the hard way — the twin was written first, its divergence
+documented, and the shell file retired after. It is worth naming as the **correct order**, because every
+group that went wrong (§5b-undecies' `tlsGenerate`, §5b-septendecies' `entity:load`) went wrong by
+deleting before the twin was complete.
+
+**The suite cost was one list, and the coverage argument is the strongest of the nine groups.** No suite
+drives an `importExport:*` channel by name — the two integration files that mention the path do so in
+**comments only** (`importExportHarness.ts:13`, `importExportBlob.integration.test.ts:179`), and both
+were updated to point at the client. `handlers.test.ts`'s `expectedChannels` lost its four names, and
+the `vi.mock("@bifurc/engine/importExport/registry")` block above it was **removed**: its comment
+justified it by *"its handlers register via the captured mockIpcMain"*, and with those handlers gone it
+was stubbing five functions nothing in the graph called. Removing it was verified, not assumed — the
+suite passes 106 without it, and the mock's only remaining effect would have been to keep a dead
+expectation alive.
+
+The equivalence rests on `packages/client/tests/client.test.ts`, which carries **two `describe` blocks
+and 22 references** for these four methods — including exactly the assertions this file could not make:
+*"exportData asks where BEFORE it asks the engine to render"*, *"exportData writes to the path the user
+chose and does not open a second dialog"*, *"preflightImport returns the path it chose, so the next step
+can reuse it"*, and *"importData reuses the path and the blob — no second dialog, no second upload"*.
+Those are **ordering and count** assertions, which is what the shell file's behaviour consisted of.
+Nothing had to be added to prove the twin: like group 8's `runner:exportReport`, the client was already
+better tested than the shell copy it replaced.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 21 (3 files) | **17 (2 files)** |
+| live | 10 | **10** |
+| dead | 11 | **0** |
+
+**The reduction is closed: every remaining channel is a keeper.** To state the numbers without the
+ambiguity that has caught earlier groups: `grep -c 'ipcMain.handle('` gives **17 in
+`clientHandlers.ts` and 1 in `systemHandlers.ts` — 18 total**, against 21 before this group. All of the
+17 are live (the client reaches them through `local.*`), and the 1 is `app:checkUpdate`, which is
+**client-local by classification** rather than live-legacy. So the table's "17 (2 files)" row counts
+`clientHandlers.ts` plus `systemHandlers.ts`'s survivor, and the live/dead split is 10 + 0 against a
+remainder of 1 client-local — three labels for 18 channels, which is exactly why §5b-sedecies was
+corrected into "re-derive per file" rather than quoting one total. **Zero dead channels remain**, and
+`registerIpcHandlers()` is now **the local-handler entry point** the plan said it would be reduced to.
+
+**`registerIpcHandlers()` is reduced, not deleted — and that is now a finished state rather than a
+pending one.** The function registers the engine command surface, calls the two remaining local handler
+entry points (`registerClientHandlers()` in `src/main.ts:294`, `registerSystemHandlers()` here), and
+calls `registerRpcBridge()`. Everything the reduction set out to remove has been removed; what is left
+is the set the plan's "Local handlers stay local" table names. The rollback flag in `plan/07` work item
+6 is correspondingly weaker than it was — there is no longer a legacy path to revert *to* — which is
+worth flagging for anyone reading that item as still current.
+
+**The dialog-owner risk subset is now empty.** Re-derived with `grep -n "dialog\." src/ipc
+src/ipc/handlers`: the only hits are inside `clientHandlers.ts`'s own fourteen local channels
+(`dialog:openFile`, `dialog:pickFilePath`, `dialog:pickFolderPath`, `client:pickSavePath`,
+`client:writeArtifact`, `client:readArtifactFile`), which are the local surface and not reduction
+targets. The three that were tracked — `runner:exportReport` (group 8), `importExport:export` and
+`importExport:preflight` (this group) — are all gone, and in each case the dialog moved to the client
+where the plan's architecture puts it.
+
+**The spike's fixture did not grow — the seventh non-growth, and its comment is now stale in a way worth
+recording.** `tests/spike/protocolPoc.test.ts` drives ten channels and none is an `importExport:*` one,
+so it stays **10 of 10**. Its paragraph names `importExportHandlers.ts`'s four among the dead ones it
+never touches, and that sentence is now **historical**: it was updated in group 8 to say the surface was
+down to eighteen dead in two files, and this group empties it. The file is left correct-by-context
+rather than edited a second time in one day, but the next reader should know the paragraph describes the
+state at the eighth group, not the ninth.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**

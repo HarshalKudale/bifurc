@@ -10,8 +10,10 @@
  * of that seam and nothing else:
  *
  *   `exportToFile()`   — run the exporter, then write its content to disk. This is what
- *                        `src/ipc/importExportHandlers.ts` does after `export.create` returns
- *                        inline bytes, minus the blob branch.
+ *                        `packages/client/src/index.ts`'s `exportData` does after `export.create`
+ *                        returns inline bytes, minus the blob branch. (`importExportHandlers.ts`
+ *                        was the shell's copy of those steps and was deleted with the P6
+ *                        reduction's ninth group, 2026-09-21 — `plan/07` §5b-vicendecies.)
  *   `preflightFile()` / `importFile()` — read a file back into an `ImportSource` and hand it to the
  *                        importer. This is what the shell does after `blob.put` has staged the
  *                        upload, minus the upload.

@@ -337,6 +337,58 @@ Two corollaries from the same job:
   rejects it — is what proves the guard is non-vacuous. A guard whose failure mode you have never observed
   is a guard you are guessing about.
 
+## The engine's command surface has no home outside the Electron shell
+
+**Found 2026-09-21 building P14's workspace host, and it is the P6 §5c bug class one layer up.**
+
+`createEngine()` registers **no** commands, by design (P3: *"the consumer declares what it is willing to
+serve"*). Every one of the eighteen `register*Commands()` calls lives in **`src/ipc/handlers.ts`**, inside
+`registerIpcHandlers()`. So any consumer that is not the shell gets an **empty registry** and answers
+`UNKNOWN_COMMAND` for commands the protocol declares and `@bifurc/client` advertises.
+
+**Why the ratchet could not see it:** the ratchet asks "is this command registered *in this process*", and in
+the shell's process the answer is yes — the shell registered it. The same blind spot §5c records, and the
+same shape as the corollary in "A *delegating* channel is both the risk and the evidence": a suite that
+registers the engine half itself cannot catch a missing call site.
+
+**The fix is `packages/engine/src/registerAll.ts#registerAllEngineCommands(registry)`** — the same eighteen
+calls, engine-side. **Do not delete the shell's calls in favour of it**: each carries a comment naming which
+P6 reduction group made it the only registration, and that is the ledger. Two lists of one thing drift, so
+`tests/integration/workspaceHost.integration.test.ts` asserts the engine-side list is a **superset** of the
+shell's — the direction that bites is *shell-serves-it, host-does-not*, because only the desktop runs in CI's
+default path. **If you add a `register*Commands()` call to the shell, add it to `registerAll.ts` too or that
+guard fails.**
+
+## A schema with `.strict()` makes an unimplemented parameter a REJECTION, not a default
+
+`ConfigGetParams` is `z.object({}).strict()`, so sending `config.get` with `{ workspaceId }` — as D13 says
+workspace-scoped commands will — is a **`BAD_REQUEST`**, not a silent extra field. **Consequence for
+planning:** adding `workspaceId` to a command that is `.strict()` is a *schema change* whose fixtures must be
+re-derived, not a widening you can slip in. Read the params schema before assuming "just pass the id".
+
+The same discovery carries the other half: `config.get` resolves `settings.activeWorkspaceId` **internally**
+(`store/config.ts#loadConfig`), which is the coupling `plan/14` WI 4 exists to sever. A host can hold N
+runtimes while every workspace-scoped *command* still answers for the active one — the servers were split
+before the commands were.
+
+## An assertion that needs a clean machine is testing the machine
+
+Real case, 2026-09-21: a host test opened with `expect(await portIsFree(9271)).toBe(true)` for the companion
+port, and **failed on the developer's machine** — a running `Bifurc.exe` (PID 58708) held it. That is not a
+bug in the host; the port is *supposed* to be held by a running app.
+
+**The fix is to compare a fingerprint, not a state.** Probe with `connect()` and report what happened
+(`ECONNREFUSED` → `"free"`, otherwise a report), then assert **before === after**. On a clean machine that is
+`free → free`; on a busy one `accepted → accepted`. It is **strictly stronger** than a status field either
+way, because both readings are real binds — and it fails correctly if the host *does* bind the address
+(a `listen()` on a held port fails rather than stealing it, so a host that tried would flip `free → accepted`
+on a clean machine).
+
+**The general rule:** before asserting "X is free/absent/false", ask what else on a real machine routinely
+makes it so. If the answer is "the developer's own running app", the assertion is environmental. `netstat -ano
+| grep <port>` then `tasklist /FI "PID eq <pid>"` identifies the holder; **do not kill it** — it may be the
+user's live application.
+
 ## The vitest suite goes down for hours at a time, and it is never your change
 
 Signature: *every* file fails at **collection** with `TypeError: Cannot read properties of undefined
@@ -472,7 +524,26 @@ written into a CRLF file leaves one mixed-ending line, which is silent.
 
 ## Git / env
 
-- **NEVER `git stash`** (wiped the object store once). **`git fetch` doesn't persist remote-tracking
+- **NEVER `git stash`** (wiped the object store once). **Hit again 2026-09-21, and this time the
+  mechanism is known.** Two separate hazards compound:
+  1. **The repo root is the PARENT directory, not `Bifurc/`.** `git rev-parse --show-toplevel` returns
+     `I:/workspace/Bifurc-Worskspace`, an **empty, commit-less repository**; the real repo is
+     `Bifurc/.git` on branch `standalone-engine`. A command whose paths are relative to `Bifurc/` is
+     therefore malformed for the repo git actually picks, and the operation is interrupted mid-write.
+  2. **An interrupted `git stash` deletes `.git/refs`.** That is not cosmetic: git's repo-validity check
+     requires `HEAD`, `config`, `objects` **and `refs`**, so with `refs` gone git declares
+     `Bifurc/.git` "not a repository" and **discovery silently climbs to the empty parent** — after
+     which *every* command operates on the wrong repo and `git status` lists the workspace *siblings*
+     (`Bifurc-temp/`, `bifurc-studio/`, …) as untracked. It also leaves a stale `multi-pack-index`
+     referencing packs that no longer exist (`failed to load pack in position 0/2/3/4` from `fsck`).
+     **Recovery, and it is total:** recreate `.git/refs/{heads,tags}`; write the tip from
+     `.git/logs/refs/heads/<branch>` (the **reflog is never touched** — it ends at the real HEAD hash);
+     `rm` the stale `multi-pack-index` (verify the one real pack with `git verify-pack -v <idx>` →
+     `… .pack: ok`); `rm .git/index && git reset` (the index referenced a never-written object).
+     `git fsck` then reports clean. **Nothing was lost either time.**
+  **The tell, and it must be checked before any write:** if `git rev-parse --show-toplevel` does not
+  return the app directory, **stop**. To read an old version of a file, use
+  `git show HEAD:<path> > /tmp/x` — never stash, never checkout. **`git fetch` doesn't persist remote-tracking
   refs** → never trust `origin/*`; use `git ls-remote`. **Verify old trees read-only** (`git grep
   <rev>`), never check out.
 - **A push pops a GCM GUI window and dies** — `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo
@@ -549,6 +620,122 @@ passed `{}` while ignoring whatever they were called with. So a re-point written
 pass**. Pass the command's real params object explicitly, and say in the helper's docblock *why* it is not
 generic.
 
+## De-singletonizing: a facade over ONE lazily-created default instance, and the test that proves it
+
+Established 2026-09-21 opening P14 (`plan/14` WI 2, the webhook receiver — §6 requires the factory shape be
+rehearsed there before `proxy/server.ts`). When a module-level singleton becomes a factory, the caller set
+must not change in the same step: `plan/14` §9's rollback is "keep the facade alongside the factory until WI 7
+flips the shell." So the shape is **`createXxx()` returning an instance, plus the old exported functions
+rewritten as a facade over one lazily-created default instance.** The webhook receiver's 10 exported names
+stayed byte-identical and `tests/ipc/handlers.test.ts` (which `vi.mock`s the module) stayed 106/106.
+
+Four things that are easy to get wrong, all hit or nearly hit:
+
+- **Lazy, not eager.** `let defaultInstance = null; function defaultServer() { if (!defaultInstance) … }` —
+  an eager `const defaultInstance = createXxx()` at module scope makes *importing* the module construct a
+  server, the side effect the old `let server = null` deliberately did not have. It also computes
+  `DEFAULT_WEBHOOK_PORT`'s value at import, so a `const` declared *below* the factory is a temporal-dead-zone
+  throw rather than a compile error. **Declare the default constant above the factory** (TS won't catch the
+  ordering, because `createWebhookServer` is a function body).
+- **The shared `EventEmitter` must NOT become per instance.** It is a constant the shell's forward and the
+  suite subscribe to; a fresh emitter per instance silently detaches both. Per-instance state is the
+  *mutable* state only — the server, the port, the error, and the maps.
+- **A cap that "becomes per workspace" stays a module constant.** Widening the *scope* of the thing being
+  counted (each instance enforces its own map) is not the same as making the *number* configurable. Say which
+  one you mean, or the next reader adds a constructor argument nobody passes.
+- **Test instance isolation on IDENTITY, not on a value both instances could share** (`TRAPS.md`, "A test
+  whose two inputs are indistinguishable passes on either branch"). Two instances on two ports, one suffix
+  active in A and 404 in B, a bind failure landing on the loser only. The criterion `plan/14` §8 names is
+  "starting runtime B does not observe runtime A's readiness" — the global-`isRunning()` trap — and only an
+  identity assertion catches it.
+
+**And the timing half, which cost a red run:** `start()` is fire-and-forget (`index.ts:140-144` — the servers
+publish no readiness signal but the predicate), so `start(p); expect(isRunning()).toBe(true)` fails. The
+original suite hid this behind a `setTimeout(r, 100)`. Poll a predicate with a deadline instead, and when a
+case deliberately triggers a bind failure, **attach an `error` listener to the shared emitter first** — Node
+throws `ERR_UNHANDLED_ERROR` otherwise and vitest reports it as an unhandled error separate from the tests.
+
+### The larger instance — `proxy/server.ts`, and the three things it added
+
+Done 2026-09-21 (`plan/14` WI 2 step 2). Same shape, ~1,600 lines instead of ~160, and it produced three
+additional rules:
+
+- **When the factory *body* is derived from the module-scope original, the original survives — and deleting
+  the wrong copy compiles.** `dispatch` and `dispatchHttps` existed twice after the edit: as factory closures,
+  and as the untouched module-scope functions they were copied from. TypeScript is happy either way **as long as
+  the two have not drifted**, so the duplication is silent. `diff` the two bodies (normalise indent with `sed`
+  first) and confirm the only differences are the ones you intend, *then* delete. Here the only intended one was
+  the type-import form — the old file's `import type { TLSSocket } from "tls"` versus the factory's inline
+  `import("tls").TLSSocket`.
+- **Truncating a region can take an unrelated `export … from` with it, and only a build/typecheck catches it.**
+  `export { replayRequest } from "./serverReplay"` sat one line under a section comment *inside* the deleted
+  block. No test failed — its consumer is `routingUtils.ts`'s own import — but `tsc --noEmit` failed instantly
+  with `TS2305: Module '"./server"' has no exported member 'replayRequest'`. **Treat a re-export block as part
+  of the facade and re-attach it on the kept side of the cut; never assume tests cover an export's existence.**
+- **A module-level mutable that is *also* another module's state does not become per-instance by wrapping it.**
+  The TLS CA (`tlsCert.ts`'s `caCertPem` / `caKeyPem` / `certCache`) is loaded by `start()` and unloaded by
+  `stop()` — so with N proxy instances, **B's `start()` overwrites A's CA and either one's `stop()` unloads it
+  for both**, silently degrading the other workspace's HTTPS interception to tunnelling. The factory makes this
+  *visible*; it does not fix it. Check every `loadX()`/`unloadX()` pair reachable from the constructor body for
+  this shape, and hand the ones that are genuinely app-wide to the composition root (here: WI 3's host) rather
+  than absorbing them into the instance.
+
+**And one correction-not-code rule:** `currentPort` is not reset by `stop()`, only by the next `start()`, so a
+`getPort()` assertion taken after a stop reads the *previous* port. The new case failed; the case was fixed.
+**When pre-existing behaviour surfaced by a refactor contradicts a new test's assumption, change the test — the
+alternative silently ships a behaviour change inside a "pure refactor" commit.**
+
+### The CA fix, and where the ownership flag belongs (WI 3, 2026-09-21)
+
+The trap above says "hand the ones that are genuinely app-wide to the composition root". **For the TLS CA the
+right place turned out to be the factory, not the root** — because the root cannot express it. `tlsCert.ts`
+has **no API for "I loaded it, someone else unloads it"**: the only lever is *whether `stop()` calls
+`unloadCA()`*, and only the instance knows if it is alone. So `createProxyServer()` takes `ownsCA` (default
+`true` = the pre-P14 desktop), a host member passes `false`, and the shared anchor survives its siblings.
+
+Two rules this produced:
+
+- **"Fix the ownership, do not delete the release."** Removing the `unloadCA()` call outright makes the
+  hazard vanish and leaks the CA past the `stop()` it was written to bound — the desktop's single-proxy
+  lifecycle genuinely needs it. **When a shared resource breaks under N instances, the question is "who owns
+  the lifecycle", never "which line do I delete".**
+- **Check the *other* branch of the same conditional.** The hazard was in `stop()`; the *same* bug sat in
+  `start()`'s `else` — a non-owning instance whose own config has TLS off called `unloadCA()` and silently
+  killed a TLS-enabled sibling's interception. Grep every call to the shared release function, not just the
+  tear-down path.
+
+### A memoised teardown means one test FILE holds one lifecycle
+
+Hit 2026-09-21 adding `startCompanion: false`'s case to `engineSmoke.integration.test.ts`: the file **failed**
+on `portIsFree(proxyPort)` after `stop()` and the same test **passed alone**. Cause: `shutdownEngine()`
+memoises **process-wide** (`shutdown.ts:26`), and the engine is single-use — so the *second* engine in a
+process awaits an already-settled promise, its `stopServer()` never runs, and the proxy port stays bound. The
+file's own header documents the constraint; nothing enforced it.
+
+**A lifecycle whose teardown is memoised process-wide gets one test file per engine shape.** Vitest gives each
+*file* its own worker, which is what makes this work. Do **not** reach for `vi.resetModules()` to fit a second
+lifecycle into one file — it hands the test a fresh copy of the store's module-level state and stops it
+testing what ships. Assert the release (`portIsFree`) too, or the leak is invisible: the status flags said
+"stopped" while the socket was still bound.
+
+**Same class of fixture trap, twice more in `tests/proxy/server.test.ts`:** its file-level `beforeEach` gives
+**every** `net.createServer()` call the *same* mock object, so two "independent" instances share `listening`
+and one's `stop()` flips the other — any isolation-shaped case must re-mock with
+`mockImplementation(() => makeMockServer())` in its own `beforeEach`. And its `vi.mock("fs")` makes
+`fs.mkdtempSync` a silent no-op, so a real temp dir needs `vi.importActual("fs")`. **A test file's global mocks
+and its shared fixtures are part of every case's environment — including the cases added a week later.**
+
+### A module-scope `let` that a factory now shadows is dead code `tsc` cannot see
+
+Found 2026-09-21, one commit *after* the refactor that orphaned them: `proxy/server.ts` still declared
+`server`, `currentPort`, `currentConfig`, `fullRules`, `lastError`, `enabledSets` at module scope, while the
+factory held its own copies of all six. Nothing read the module ones — **only the header comment still named
+them** — so `tsc --noEmit` passed, every test passed, and the file looked de-singletonized while carrying six
+misleading declarations. This is the same failure mode as the duplicated `dispatch` bodies above, in its
+quieter form: there the copy *was* live and drift would compile; here the copy is dead and nothing at all
+complains. **When a factory takes over module state, delete the module declarations in the same commit** —
+grep each name for any reference outside the factory body, and treat "only a comment mentions it" as a hit.
+
 ## Deleting a phase's evidence artifact is a phase decision, not a pass decision
 
 Found 2026-09-20: `tests/spike/protocolPoc.test.ts` (330 lines, 12 tests) had been deleted in the same edit
@@ -597,6 +784,23 @@ level, so **each array entry is its own test**. Deleting 18 channel names theref
 the suite delta read `−18 tests / −18 passed`, which looks exactly like a deletion pass that threw away
 coverage.
 
+> **Sharpened 2026-09-21 by a mistake in the other direction.** The rule above is right, but it was then
+> over-applied: in the sixth group the array went 7 → 2 entries, so the generated contribution was **−5**,
+> and the *rest* of the file's movement (−20, hand-written blocks) was invisible to that reasoning. Two
+> errors followed. **First, the array's length is not a file's test count** — quoting "−14 generated" from
+> 16 → 4 entries counted entries as tests, when the entries that *remained* still generate their `it`s.
+> **Second, counting `it(` lines in a `git diff` is not a count either**: 18 removed / 4 added suggested
+> −14, while the file's real movement was **135 → 110**, because reformatting hides lines and generated
+> cases have no source line at all. **Only a run reports a count.** Measure per-file with vitest
+> (`Tests  N passed`), compare against the file's *own* previous run, and treat the total as a sum of
+> measured per-file numbers rather than as a diff statistic.
+
+> **And the baseline itself can move before the deletion starts.** This group opened with a fix-first commit
+> (`174a01d`) that added **two `it()`s to `packages/client/tests/client.test.ts`**. The previous group's
+> recorded total (2,484) predated it, so the true baseline was **2,486** — and a reconciliation against
+> 2,484 came out **2 high**, which reads as "the arithmetic is *better* than reality" and is easy to dismiss.
+> **A group that opens with a fix-first commit invalidates the inherited baseline; re-measure it.**
+
 It had not. Those channels no longer exist, so a test asserting a handler for them would assert the *absence*
 of the thing the list exists to check. **The rule: before reading a suite delta as lost coverage, find out
 whether the removed cases were *generated from a data list*.** The signature is a delta that is an exact
@@ -607,6 +811,38 @@ preserves the count, a generated list shrinks with it.
 And pair it with the inverse check: the deletion *did* break two cases, in a different file, and the count
 went **up** (`1 failed` → `3 failed`). Both halves are needed — neither a delta of 0 nor one of −18 is
 evidence on its own; the mechanism is.
+
+## A suite can be getting its registrations as a side effect of a handler file
+
+Found 2026-09-21, in the sixth reduction group's verification gate — and **the deletion itself gave no hint
+it was coming.** Four suites failed with `No handler registered for command "request.replay"` /
+`"workspace.add"`, errors that are *routed-surface* (the envelope reached the registry; the registry had
+nothing to dispatch to) rather than transport errors, and every failure was in a file the pass had edited.
+
+The mechanism: a suite that calls `registerSomeHandlers()` or a `*Kinds()` group **runs that file's module
+scope**, and for four suites the handler files' module scope was quietly the thing that registered the
+commands they drive. `server:status` is the cleanest instance — `systemHandlers.ts` called
+`registerServerCommands()` at module scope, so the spike inherited it transitively, and it survived the fifth
+group's deletion of `server:restart/stop/start` and only died with `server:status` in the sixth. Deleting the
+channels removed a registration nothing else provided.
+
+**The rule: a command whose only registration came from a handler file the reduction deleted must be wired
+explicitly by every suite that drives it.** Concretely — **compare each suite's `register*Commands()` set
+against `src/ipc/handlers.ts`, never against the suite's own history.** The suite's history looks fine; it is
+the *shell* that changed.
+
+**What makes this a trap rather than a chore is the error message.** `No handler registered for "config:save"`
+names a channel that has been dead since §5c and points the reader at a file that no longer contains it, so
+the instinct is to look for a deleted channel rather than a missing registration line.
+
+Two adjacent misdirections found in the same gate, both mine and not the deletion's:
+**`theme:*` / `zoom:*` are LIVE channels** in `clientHandlers.ts` (17 live / 0 dead — untouchable), shell-local
+behaviour touching `webContents` and the title-bar overlay, so the reduction has no claim on them; inventing
+`theme.get` / `zoom.set` commands for them produced `No handler registered for command "theme.set"`.
+**And read a channel's positional signature off its call sites, never off the command's parameter list** —
+`workspace:add` takes one argument (the name; the command generates the id), and mapping `(id, name)` gave
+`Invalid payload for command "workspace.add": expected string, received undefined` *on `name`*. That is the
+fifth group's argument-shift trap recurring in a new place.
 
 ## A count written into prose is never re-derived — and it propagates
 
@@ -647,6 +883,45 @@ The cheap defence, and it is the one that actually fired here: **re-derive from 
 prose.** `grep -n "dialog\." <the four remaining files>` returned exactly three sites in three files, which
 settled the subset at **3** in one command. The ledger's four sections had all agreed with each other and
 were all wrong.
+
+**A fifth instance, 2026-09-21, for a suite whose cases are *generated* — and this one caused the `git stash`
+disaster above.** P14 WI 1 added a scoped block to `packages/protocol/src/commands/index.test.ts`, whose body
+is a `for (const action of actions)` loop emitting two `it`s per command. The new block added three
+`it.each(SCOPED)` of ten plus two standalone assertions. The recorded delta was "190 → 216 (+26)", with **+5
+left flagged as unaccounted** — and the reconciliation was being chased when the stash destroyed the store.
+
+The true numbers, obtained by enumerating the run's own names (`--reporter=json`, then
+`assertionResults[].title`, then classify by regex):
+
+```
+generated per-command pairs (92 commands × 2)   184
+coverage invariant                                1
+services.discover NOT scoped                      1
+scoped block (3 × 10)                            30
+                                      total     216      prior = 216 − 31 = 185,  delta = +31
+```
+
+**Both halves of the earlier figure were wrong, and the mechanism is the interesting part.** The prior count
+was never 190: the 26 was obtained by subtracting only the 30 `it.each` cases from the post-change total and
+attributing the residual to the change — so the *baseline absorbed* the coverage invariant and the non-scoping
+assertion, two cases that existed on both sides. And the delta was then read as *smaller* than the block
+added, which is what created the phantom "+5". **A count that is too low by exactly the number of
+pre-existing cases looks like a missing test rather than an arithmetic slip**, and it sent me looking for a
+test that did not exist.
+
+**The rule: for a suite with loops or `it.each`, never count by hand and never subtract portions of an
+edit — enumerate the run and classify by name.** The enumerable form is one command and is authoritative:
+
+```
+npx vitest run <file> --reporter=json --outputFile=/tmp/x.json
+node -e 'const j=require("/tmp/x.json");
+  const ns=j.testResults.flatMap(r=>r.assertionResults).map(a=>a.title);
+  console.log(ns.length); console.log(ns.filter(n=>/ — accepts a valid payload$/.test(n)).length);'
+```
+
+This also removes the entire *reason* the stash was run: the prior count of a file can be had from the file's
+own generator, without touching git. Reaching for `git stash` to answer a question about test code cost the
+session's commit history.
 
 ## A table that stands in for a wrapper must not reproduce what the wrapper supplied
 
@@ -748,3 +1023,95 @@ Two habits this should leave behind. **Restore before diagnosing** — `git chec
 non-destructive when the work was never committed, and diagnosing on a damaged tree wastes the effort. And
 **verify the tree immediately after any bulk-deleting command**, so the damage is attributed to the command
 that caused it rather than to whatever ran last.
+
+## A reserved port that includes its own base is a silent off-by-one
+
+`allocatePorts()` gained a `reserved` set so the scan would not hand out ports the host was about to bind
+itself (the RPC endpoint, a not-yet-started workspace). The first version also put both *bases* in it — and
+a base is the starting point of its own range, so `findFreePortFrom(base)` skipped `base` and returned
+`base + 1`. Every base-path allocation was off by one.
+
+**Why it survived a full-suite run and an integration test.** A runtime on `base + 1` still comes up and
+still serves. `tests/integration/workspaceHost.integration.test.ts` observed ports `81` and `82` and the plan
+text wrote that up as "D16's `80`-base plus contiguous scan" — which is what it *looked* like. The assertion
+that would have caught it is on the **identity of the first port**, and the host test did not make it. Only
+`tests/runtime/portAllocator.test.ts` did, and it failed immediately: `expected 52008 to be 52006`.
+
+**The second attempt reserved only the other range's base** — which fixed the proxy half and broke the
+webhook half identically, because a base is a base whichever range it belongs to. Reserving **neither** is
+the rule; cross-range safety comes from `reserved.add(proxyPort)` *after* the proxy is chosen, which is
+strictly stronger than avoiding one hypothetical collision point. The diagnostic that settled it was
+instrumenting the real test file to print `base`, `proxyPort` and `tryBind(base)` — the proxy half was
+already correct and the failure had moved to the webhook.
+
+**Two process lessons.** A probe file written by hand is *not* equivalent to the failing test: my first three
+probes all passed while the real file failed, because the divergence was inside the real test's own
+assertions, not in the module. Copy the failing file and instrument *it*, rather than reconstructing it.
+And `packages/engine/dist/` is what some suites actually load — `vitest.config.ts` aliases
+`@bifurc/engine/*` to `packages/engine/src/`, but I chased a stale `dist/` for several runs on the strength
+of that comment alone. Verify which file is loaded (`grep` the built output for the line you just changed)
+before theorising about behaviour.
+
+## `git stash` is destructive on this drive too — it can take the object store with it
+
+**The second member of the `git rm` family, found 2026-09-21, and worse.** The command was an attempt to
+measure a suite's *prior* test count by hiding one file:
+
+```
+git stash push --keep-index -q -- packages/protocol/src/commands/index.test.ts
+```
+
+It left the repository with `fatal: bad object HEAD`. `git log`, `git status` and `git diff` all failed.
+The damage was not to the working tree — **every file was intact** — but to the store:
+
+- `.git/refs/heads/standalone-engine` still held the right sha (`df3cdaf…`), and `.git/logs/HEAD` held a
+  complete reflog naming every commit of the session.
+- **Not one of those shas resolved.** `git cat-file -t` failed for `df3cdaf`, `11ee39f`, `63e8a40`,
+  `9ef3f3e`, `6b8ac10` — all five commits, plus every tree and blob they referenced.
+- The pack verified `ok` but held only **40 pre-session commits**; the session's commits had lived as
+  **loose objects**, and `.git/objects/df/` no longer existed.
+- `git fsck` reported only `refs/heads/standalone-engine: invalid sha1 pointer …` and reflog errors — the
+  pack itself was healthy, which is what makes this look like ref corruption rather than data loss.
+
+**Recovery, and it is worth having the procedure written down because nothing in `git` suggests it works.**
+The trick is that the *ref* was broken while an *older* commit was still perfect. Find the newest readable
+commit, repoint the branch by writing the file directly (no porcelain command will run while `HEAD` is
+unresolvable), then rebuild the index:
+
+```
+# 1. Find the newest commit that still resolves. Do NOT loop with a `while read` over the reflog —
+#    it hit the 120 s foreground timeout; use `git cat-file --batch-check` over the shas instead.
+tail -60 /tmp/reflog_pairs.txt | awk '{print $2}' | sort -u \
+  | git cat-file --batch-check          # "commit" vs "missing" per sha
+
+# 2. Verify the candidate is not just readable but COMPLETE — a commit object can survive
+#    while its trees do not:
+git ls-tree -r <candidate> | awk '{print $3}' > /tmp/blobs.txt
+git cat-file --batch-check < /tmp/blobs.txt | awk '{print $2}' | sort | uniq -c   # want: N blob, 0 missing
+
+# 3. Repoint the branch. `git update-ref` and `git reset` both fail here; write the ref file.
+cp .git/logs/HEAD /tmp/reflog_HEAD_backup.txt
+printf '%s\n' <candidate> > .git/refs/heads/standalone-engine
+git rev-parse HEAD                            # now resolves
+
+# 4. Clear the poisoned reflog, then rebuild the index. `git reset --mixed` FAILS: it reads the old
+#    index, which still points at the missing blobs. Remove the index and re-read the tree.
+git reflog expire --expire=now --all
+rm -f .git/index && git read-tree HEAD
+git status --short                            # the whole working tree shows as changes; nothing lost
+```
+
+**What this cost and what it left.** The five missing commits are **unrecoverable** — `git fsck`'s dangling
+commits were all dated 2026-09-06 … 2026-09-15, i.e. everything the session produced was inside the
+destroyed objects, and no reflog or `ORIG_HEAD` points at an intact one. What survived is the **working
+tree**, which is the real work; the commit *history* for P14 WI 2–5 plus P6 groups 6–9 was lost. Had the
+tree also been lost, this would have been a multi-day session gone.
+
+**So: never `git stash` in this repository.** The task that motivated it — measuring a suite's prior test
+count — has a non-destructive answer and should never have needed git at all: enumerate the current run and
+classify by name. `git stash` was reaching for `git` to answer a question about *test code*, and the same
+information was available from `npx vitest run <file> --reporter=json` (see the next section, where the
+count that motivated the stash was also wrong). Note also that **`git rm` and `git stash` are both in this
+family** — the common factor is a git command that rewrites the index or the ref on a data drive that
+appears to be doing something unusual with hardlinks. Treat all of them as destructive here and prefer the
+plain-filesystem equivalent plus `git add`.
