@@ -1231,7 +1231,9 @@ re-point, which is why it is the next slice rather than a footnote to this one.
 > **Corrected 2026-09-21 — see §5b-undecies.** The risk subset above is **one channel short**: its criterion
 > was *owns a `dialog.*`*, and `tls:generate` owns a **path** instead. The group that channel belongs to was
 > the first slice attempted, and it was not deletable until that was found — the shell half being deleted was
-> the last correct implementation of a field the client had already dropped.
+> the last correct implementation of a field the client had already dropped. **The widened subset is
+> therefore 8, and §5b-sedecies carries its full accounting (8 → 5 → 4 → 4 → 4 → 3).** Read the subset from
+> the *latest* §5b-* section: this table's 7 is the historical measurement, not the current count.
 
 #### 5b-undecies. The risk subset was one channel short — `tls:generate`, and the reduction would have erased the fix (2026-09-21)
 
@@ -1435,9 +1437,15 @@ channel", and a deleted channel that nothing drives is verified by the deletion 
 17 live / 0 dead and still untouchable; the other seven all-dead-or-mixed files are `coreHandlers.ts` (17),
 `applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
 `app:checkUpdate`), `folderHandlers.ts` (4) and `importExportHandlers.ts` (4). **The dialog-owner risk subset
-shrinks 7 → 6** — `audit:export` was one of §5b-decies' seven, and its dialog-first ordering now lives in the
-client's `exportAudit`, which `client.test.ts` asserts *by order* (`"exportAudit asks where BEFORE it asks the
-engine to render"`) rather than by intent.
+shrinks 5 → 4** — `audit:export` was one of §5b-decies' seven, and group 1 had already taken the widened
+subset 8 → 5 by deleting the three `tls` channels that own a step. `audit:export`'s dialog-first ordering now
+lives in the client's `exportAudit`, which `client.test.ts` asserts *by order* (`"exportAudit asks where BEFORE
+it asks the engine to render"`) rather than by intent.
+
+> **Corrected 2026-09-21 — see §5b-sedecies.** This paragraph first read "**shrinks 7 → 6**", computed from
+> §5b-decies' seven without subtracting the three `tls` channels group 1 had just deleted (§5b-duodecies did
+> not restate the subset, so the count was carried forward rather than re-derived). The correct sequence is
+> **8 → 5 → 4**, and the subset is **3** after the fifth group.
 
 #### 5b-quaterdecies. The reduction, third group — `folderHandlers.ts` is deleted, and the §5c guard fails for working (2026-09-21)
 
@@ -1506,7 +1514,7 @@ of them. The rule is "grows with each **driven** channel", and it is worth havin
 **46 dead channels remain in 6 files**, one handler group per commit: `coreHandlers.ts` (17),
 `applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
 `app:checkUpdate`) and `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The
-dialog-owner risk subset is unchanged at 6, since this group owned no dialog.
+dialog-owner risk subset is unchanged at **4**, since this group owned no dialog.
 
 → **Superseded the same day by §5b-quindecies** (fourth group): `crudHandlers.ts` is gone, leaving **41 dead
 in 5 files**. Read the inventory in the *latest* §5b-* section, not the nearest one.
@@ -1567,7 +1575,11 @@ target.)
 **41 dead channels remain in 5 files**, one handler group per commit: `coreHandlers.ts` (17),
 `applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `systemHandlers.ts` (4 dead + `app:checkUpdate`) and
 `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The dialog-owner risk subset
-stays at 6, since this group owned no dialog.
+stays at **4**, since this group owned no dialog.
+
+→ **Superseded the same day by §5b-sedecies** (fifth group): `systemHandlers.ts` is reduced to one channel,
+leaving **37 dead in 4 files**, all of them all-dead. Read the inventory in the *latest* §5b-* section, not the
+nearest one.
 
 **One thing the next group must check, and it is the shape this group just established.** `systemHandlers.ts`
 holds four dead channels of two different kinds, and the difference decides the order:
@@ -1581,6 +1593,152 @@ holds four dead channels of two different kinds, and the difference decides the 
     `audit:export`'s was (§5b-terdecies).
 
 That is the "SUPERSEDED SHELL HALF" class, and it is the last class that can still hide a lost step.
+
+#### 5b-sedecies. The reduction, fifth group — `systemHandlers.ts` shrinks to one channel, and the "trap" is dissolved rather than answered (2026-09-21)
+
+**Four channels are gone and the file is not.** `server:start` / `server:stop` / `server:restart` and
+`capture:shareJson` left `src/ipc/handlers/systemHandlers.ts`, which now registers exactly **one** channel —
+`app:checkUpdate`. This is the reduction's first *reduction* rather than a whole-file deletion, and the reason
+is the fact that kept this file out of the all-dead list since §5b-decies: `app:checkUpdate` is
+**client-local, not legacy**, so it was never a reduction target. `packages/protocol` no longer declares
+`app.checkUpdate`; `src/preload.ts:87` is its only caller. **`systemHandlers.ts` therefore leaves the
+reduction's scope**, and every remaining group is a whole-file deletion.
+
+**The group held the two shapes §5b-quindecies named as its first question, and both resolved the way the
+criterion says they must.**
+
+  - **The three `server:*` bodies were self-contained** — `loadConfig()` → `stopServer()` /
+    `startServer(cfg.port)` — the same shape as the `crud` group's five, so §5b-ter's question had to be asked
+    per channel by reading the command rather than inherited from the classification. The check was against
+    `packages/engine/src/proxy/serverCommands.ts`'s bodies: `server.start` loads the config itself and starts
+    on `cfg.port`; `server.stop` calls `stopServer()`; `server.restart` is stop-then-start, in that order.
+    Nothing else. The commands take no payload, so the translation is argument-free — what the channel did
+    *was* call the command.
+  - **`capture:shareJson` owned the dialog, and its twin's ordering is deliberately the opposite one.** The
+    channel was dialog-first (`File_Ops_Protocol.md` §3.2); the client's `shareCaptureJson` is
+    **artifact-first**, because the artifact is a `JSON.stringify` of entries the renderer already holds, so
+    rendering before the user commits costs nothing — whereas asking first would discard the engine's own
+    `suggestedName` as the dialog's default. That makes it the **counterpart to `audit.export`** rather than a
+    repetition of it: there the client *had* to become dialog-first (§5b-terdecies), here it must not. So the
+    difference is not a lost step — and it is now pinned rather than asserted in prose.
+    `packages/client/tests/client.test.ts`'s *"shareCaptureJson renders BEFORE it asks — the deliberate
+    exception to dialog-first"* asserts the call **order** (`["capture.shareJson",
+    "writeArtifact:captured-requests.json"]`) and that the hook is handed the *artifact's* name rather than
+    the caller's fallback. **That is the `exportAudit` lesson applied pre-emptively:** a docblock and a call
+    site that disagree is how that bug survived, so the docblock's claim became a test instead.
+
+**The delta is −8, and it decomposes exactly: −9 deleted, +1 added.** It is the largest delta of the five
+groups and the first whose *arithmetic* was predicted wrong — worth recording, because the error was in the
+decomposition and not in the mechanism.
+
+  - **−9 in `tests/ipc/handlers.test.ts`.** Three generated `expectedChannels` cases (one `it` per entry,
+    §5b-septies' signature) **plus six hand-written cases.** The six are the correction: three `describe`s
+    stood there — `server:restart`, `server:stop`, `server:start` — and **each held two `it`s**, one
+    asserting `registeredHandlers.has(channel)` and one driving `getHandler(channel)`. The prediction carried
+    forward from §5b-quindecies said "three behaviour cases", i.e. it counted the *channels* and not the
+    *cases*. The mechanism was right; the count was half.
+  - **+1 in `packages/client/tests/client.test.ts`**, the ordering test above.
+  - **0 from re-points.** The two integration suites that drove these channels by name
+    (`settingsMutations`, `capture`) re-pointed them through **local tables** in their own `invoke` — the
+    third group's shape, chosen over the shared `deletedChannelHarness` for the same reason
+    `foldersAndWorkspaces` chose it: a suite that drives eleven channels and lost three does not want a
+    harness modelling channels the reduction has not reached.
+
+**Reconciliation: 101 files / 2,484 tests / 2,443 passed / 40 skipped / 1 failed — delta −8**, and the one
+failure is the standing environmental `soap.execute` (`ECONNREFUSED 127.0.0.1:1`, §5b-ter's note), so the pass
+count moves by exactly the −8 the decomposition predicts. The group's **first** run failed twice, and the
+second failure was this group's own fixture bug (the argument shift below) — recorded rather than tidied away,
+because the delta was −8 *and* the suite was red, and neither fact was inferred from the other.
+
+**The six server cases were deleted rather than re-pointed, and this is the first group where §5b-septies'
+rule cut in the *delete* direction.** Every one of the six duplicated something already asserted:
+
+  - the three `has()` cases asserted what `expectedChannels` generates a case for **and** what the "registry
+    coverage" block asserts by iterating every protocol command (*"implements every protocol command — the
+    pinned list is empty"*) — the same fact three times over;
+  - the three behaviour cases asserted `startServer` / `stopServer` were called and `{ok:true}` returned,
+    which the *"delivers the 21 moved commands through the registry"* block asserts against the same mocks —
+    and asserts **more**, namely the stop-before-start order, which is the actual contract.
+
+**And the one assertion that block did not make was folded into it, not dropped.** The deleted
+`server:restart` case set `currentConfig.port = 9090` and asserted `startServer` was called with it; the
+command-level block asserted the order but not the port. So
+`expect(startServer).toHaveBeenCalledWith(currentConfig.port)` now sits in that block. **That fold is the
+difference between deleting a duplicate and
+deleting coverage**, and it is the check to run on every remaining group: re-point the cases whose assertions
+live only in the channel, delete the ones a suite already makes, and *move* the residue rather than discarding
+it with the case.
+
+**The "trap" in `serverCommands.ts` is dissolved, not answered — and the distinction is the generalisable
+part.** That header carried a "**do NOT re-point the legacy channels at this module yet**" warning: a
+delegating body would have acquired a hidden ordering dependency on `registerIpcHandlers()`, because
+`coreHandlers.ts` registers at module scope while this module is registered by an explicit call — and two
+suites deliberately register handler *groups* without ever calling `registerIpcHandlers()`, so re-pointing
+broke six of their tests with `UNKNOWN_COMMAND`. **The warning was right.** Deleting the channels removes the
+duplication it protected against, so it retires **without any new coupling at all** — and the two suites did
+not have to change their registration shape: they kept registering the same handler groups and re-pointed the
+three `server:*` calls inside their own `invoke`. **The lesson: "duplication kept deliberately to avoid a
+hidden coupling" is a temporary answer that a deletion can retire, and the deletion is cheaper than the
+coupling it declines.**
+
+**A fixture-reproduction trap this group produced, caught by the suite rather than by review.** The capture
+suite's local table was first written with the deleted body's `(_e, entries, suggestedName)` signature — and
+that is wrong, because the table's branch *replaces* the `fn({}, ...args)` call that used to inject the event,
+so every argument shifts by one. The suite failed with `BAD_REQUEST: Invalid input: expected array, received
+string` on `entries`, which had arrived as the suggested filename. The convention is visible in both existing
+tables (`deletedChannelHarness.ts`, `foldersAndWorkspaces`' folder table): they take the caller's
+**positional** arguments and **no event**. **The generalisable part: a positional call is split across two
+places — the wrapper injects the event, the table builds the payload — so a table standing in for the
+wrapper's whole body must not reproduce the half the wrapper supplies.** Getting that seam wrong is a silent
+*shift* rather than a missing value, so nothing about the failure looks like a signature problem.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 59 (6 files) | **55 (6 files)** |
+| live | 18 | 18 |
+| dead | 41 | **37** |
+
+The file total does not move with the channel count, and that is this group's signature: `app:checkUpdate`
+stays, so the live 18 is unchanged and the file is **reduced rather than deleted** — the only group of the five
+whose file survives. (`src/ipc/rpcBridge.ts` still holds its one `ipcMain.handle(RPC_CHANNEL, …)` call site and
+is excluded as before — the reduction's *subject*, not its target. Note the trap §5b-duodecies' header
+records: counting *lines* rather than *call sites* misses a registration whose channel name sits on the next
+line, which is why this is a call-site count — `client:writeArtifact` and `applications:start` are both written
+that way.)
+
+**37 dead channels remain, in 4 files, and every one of those files is now all-dead** — so the remaining
+groups are whole-file deletions with no mixed case left: `coreHandlers.ts` (17), `applicationHandlers.ts`
+(10), `runnerHandlers.ts` (6), `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead.
+
+**And the dialog-owner risk subset is 3 — not the 6 that three earlier sections state, because that count
+propagated without ever being re-derived, which is TRAPS.md's own trap arriving from the other side.**
+Re-derived from the tree rather than from prose:
+
+| After | Subset | Change |
+| --- | --- | --- |
+| §5b-decies | 7 | the measured `dialog.*` owners |
+| §5b-undecies | **8** | criterion widens — `tls:generate` owns a *path*, not a dialog |
+| group 1 (`tlsHandlers`) | **5** | `tls:generate`, `tls:exportCert`, `tls:importKey` — three of the eight |
+| group 2 (`syncHandlers`) | **4** | `audit:export` |
+| groups 3, 4 | 4 | neither owned a dialog |
+| group 5 (this one) | **3** | `capture:shareJson` |
+
+The three that remain are `runner:exportReport`, `importExport:export` and `importExport:preflight` — i.e.
+exactly the three groups still to go, one dialog-owner per remaining file, except `coreHandlers.ts` and
+`applicationHandlers.ts`, which own none. **Group 1's omission is where the error entered**: §5b-duodecies did
+not restate the subset, and §5b-terdecies then computed from §5b-decies' 7 without subtracting the three
+channels its immediate predecessor had just deleted — so "7 → 6" was written, and groups 3, 4 and 5 inherited
+"6". **The rule this plan keeps rediscovering, now from the ledger side: a count that is *carried forward*
+must be re-derived at the point it is used, and the cheapest way is to re-measure the tree rather than to read
+the previous paragraph.** The corrections are applied to §5b-terdecies, §5b-quaterdecies and §5b-quindecies in
+the same pass.
+
+**The spike's fixture did not grow** — the third non-growth, after groups 2 and 4. `protocolPoc` drives ten
+channels and none of them is `server:*` or `capture:shareJson` (the file contains no occurrence of either
+name), so the fixture stays at **7 of 10**. The rule "grows with each **driven** channel" has now been
+observed in both directions three times.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
