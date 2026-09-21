@@ -1198,3 +1198,115 @@ documented as "removed in WI 7", but until then they are what every command call
 live implementation for the RPC surface. A header that says a path is temporary does not stop it being
 the path.
 
+## A sandboxed preload that requires anything but `electron` cannot load — and the failure looks like flakiness
+
+Found 2026-09-21 while trying to run `npm run dev` — **not** P14 work, despite P14 being the phase in
+progress. The window opens and the UI renders, but every `window.api` call is undefined. CEF devtools:
+
+```
+Unable to load preload script: I:\...\dist\preload.js
+Error: module not found: @bifurc/client
+    at preloadRequire (VM4 sandbox_bundle:2:144196)
+    at runPreloadScript (VM4 sandbox_bundle:2:144465)
+    at executeSandboxedPreloadScripts (VM4 sandbox_bundle:2:143738)
+```
+
+**The mechanism, read out of Electron 42's own bundle.** `src/main.ts` sets `contextIsolation: true` and
+`nodeIntegration: false` and never mentions `sandbox`, so the default (`true` since Electron 20) applies.
+A sandboxed preload does not run under Node's module system: the browser process reads the file and hands
+`{ filePath, contents }` to `executeSandboxedPreloadScripts`, which evals it with a `require` bound to
+`preloadRequire`. That function is, in full:
+
+```js
+function preloadRequire(e, t) {
+  if (e.loadedModules.has(t)) return e.loadedModules.get(t);
+  if (e.loadableModules.has(t)) { const r = e.loadableModules.get(t)(); return e.loadedModules.set(t, r), r }
+  throw new Error(`module not found: ${t}`)
+}
+```
+
+`loadableModules` is the module table of Electron's *own* webpack bundle — `electron`, `events`, `url`,
+`timers`, punycode. **There is no `node_modules` resolution and no filesystem resolution at all**, so a
+bare specifier and a relative `./sibling` fail identically; the error just names whichever appears first
+in the file. `grep -a -o 'preloadRequire.\{0,600\}' node_modules/electron/dist/electron.exe` is how to
+read this rather than guess at it.
+
+**Why it worked for the project's whole life, then stopped.** `build:main` is `tsc` + `tsc-alias` with no
+bundling, so a bare import survives into `dist/preload.js` verbatim. Until P6 that was harmless:
+`git show bae3732:src/preload.ts` is a self-contained 196-line table whose **only** import is `electron`.
+Commit `1268bfd` (2026-09-18 17:36, "route config:get through the RPC bridge") added
+`import { createClient } from "@bifurc/client"` plus `./ipcTransport` — and `./ipcTransport` pulls in
+`@bifurc/protocol` and `@bifurc/engine/transport/types` (real runtime values: `toRpcError`,
+`remoteErrorToEngineError`, `BUS_NAME_BY_WIRE_NAME`). The last playwright report on disk is 16:32 the
+same day. So the breakage is P6's, not P14's, and the archaeology that proves it is three `git log -S`
+calls plus `git show <commit>:src/preload.ts`.
+
+**The rule: for a sandboxed preload, "it compiled" says nothing — the only valid preload is a bundle.**
+`tsc` emits a module graph, and a sandboxed preload has no resolver. The one-line check:
+`grep 'require("' dist/preload.js` must return exactly one line, `electron`. Corollaries: the `@bifurc/*`
+specifiers that `tsconfig.json` deliberately leaves bare are fine for `main.js` (Node resolves them) and
+fatal for `preload.js`; the same unbundled file ships in the asar, so packaging does not hide it; and
+`tsc` will not report anything, so no typecheck or unit suite can catch it.
+
+**The trap inside the trap: it reads as environmental flakiness.** A non-booting app fails *every* e2e
+spec, so a result like "46 failed / 0 passed" gets carried as a known-bad baseline — here, as P6
+criterion 2 "CARRIED" — instead of being investigated as one defect with one cause. **When a whole suite
+fails rather than a slice of it, suspect the boot path before the tests.** A green unit suite is not
+evidence against it: `window.api` is only exercised in a real Electron renderer.
+
+
+## Deleting a test is a coverage claim — and "is X tested elsewhere?" cannot be answered by counting files
+
+Found 2026-09-21, retiring the P0 spike (`spike/protocol/` + `tests/spike/protocolPoc.test.ts`, 12 cases).
+The deletion was correct, but **two of the twelve cases would have been silently lost by a naive delete**, and
+the check that found them is not the obvious one.
+
+**What "the obvious check" gets wrong.** The tempting test is *grep for the command name across `tests/`, count
+the files that mention it*. It failed in **both** directions on the first pass:
+
+- **False negative — `mock.delete` looked uncovered** (0 files outside the spike). It *is* covered, in
+  `tests/integration/settingsMutations.integration.test.ts`, under its engine name **`entity.delete`**. The
+  spike used the legacy channel name; the real suite uses the command name; both are the same behaviour.
+- **False positive — `INVALID_PARAMS` looked covered by implication.** `grep -rn INVALID_PARAMS` over all source
+  resolves to **only** `spike/protocol/*` and the spike test. The real system answers **`BAD_REQUEST`**
+  (`tests/ipc/handlers.test.ts` pins it extensively). So that case was the spike testing **its own throwaway
+  transport** — the one case where deletion genuinely removes an assertion, and the assertion was about code
+  that no longer exists. Counting files that mention a string cannot tell "this contract is pinned" from
+  "this string only ever existed here".
+
+**Read the assertion, not the name.** The two that mattered were only visible by opening the tests:
+`soap.execute`'s dead-endpoint contract is pinned in `tests/integration/protocolExecution.integration.test.ts`,
+and `tls.generate`'s renderer-facing `certPath`/`keyPath` shape is pinned in
+`packages/client/tests/client.test.ts:1176`. Both were **better** than the spike's version, which is the point:
+
+**The retirement was safe because each contract had a better home, and that had to be established per case.**
+Not because the code was old, and not because the file was marked "throwaway, do not productionise" — a header
+saying that is a statement of intent, not a coverage audit.
+
+**Two sub-lessons worth keeping.**
+
+1. **A test can be the *only* pin on a contract and still be the wrong test to keep.** `soap.execute` was the
+   suite's one standing failure *because* it asserted against `127.0.0.1:1` — the address this sandbox
+   intercepts — so its result depended on which answer the host gave. The replacement asserts the same two
+   shapes (throw vs resolve `{ok:false}`) against `deadPort()`, which starts a real server, takes its
+   **OS-assigned** port, closes it, and returns that port. **Same contract, firmer fixture.** When retiring a
+   flaky test, look for the version that does not depend on the environment, and prefer replacing it over
+   either keeping the flake or dropping the contract.
+
+2. **A citation that makes a claim about where coverage lives must be updated when coverage moves; a citation
+   that records provenance should not be.** The spike had ~16 citing documents and only **one** was the first
+   kind (`soapCommands.ts`'s "which is exactly what `tests/spike/protocolPoc.test.ts` pins"). The rest
+   ("validated in the P0 spike", "the productionised form of `spike/protocol/shape.ts`") are *historical and
+   still true* — rewriting them would erase the fact that the shape had a predecessor worth naming. So the
+   edit set is: **update the coverage claims, annotate the provenance, delete neither.** Getting this backwards
+   produces either a tree full of dead references or a history that has been quietly rewritten.
+
+**And the count, because this repository counts.** The plan predicted the retirement would take "`spike/` plus
+**five** plan docs". Re-derived 2026-09-21, it was **nine** documents citing the spike's *code*
+(`spike/protocol`, `protocolPoc`, `spike:typecheck`, `spike/tsconfig`) — **sixteen** mention the word "spike" in
+some sense, and the difference is not pedantry: the other seven are naming *other* spikes (1/2/3) or using the
+word generically, and treating them as citations would have meant editing documents that were already correct.
+Six source files cite it too. The prediction was never re-derived — the same failure mode the "a count written
+into prose is never re-derived" section records, now with a sixth instance, and the *shape* was right while the
+*magnitude* was ~2× off. **A count that is roughly right is the most dangerous kind: it is close enough to be
+believed and wrong enough to be useless as a work estimate.**

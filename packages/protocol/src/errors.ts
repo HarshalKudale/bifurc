@@ -4,8 +4,8 @@
  * Today's handlers return ad-hoc `{ok:false, error: "some string"}` or throw. Neither survives
  * a network boundary or lets a client react differently per failure. This is the enrichment
  * layer — see the important caveat below about how it composes with the LEGACY envelope
- * semantics validated in the P0 spike (`spike/protocol/legacyTransport.ts`,
- * `plan/spike-results.md`).
+ * semantics validated in the P0 spike (`plan/spike-results.md`; the spike's code,
+ * `spike/protocol/legacyTransport.ts`, was retired 2026-09-21 — see `spike/README.md`).
  */
 import { z } from "zod";
 

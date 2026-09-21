@@ -441,6 +441,11 @@ it, and re-read `TRAPS.md` before doing so.
 > **The full run reported 2 failures and both are the documented load flakes**
 > (`gitStore.test.ts` hook timeout + `EBUSY: rmdir`; `soap.execute` in the spike suite), which is why the
 > *second* measurement is the one that counts — isolated, this work is green everywhere it touches.
+> *(The spike half of that pair no longer exists — retired 2026-09-21, `spike/README.md` — so the
+> environmental set is now **two files, not three**, and both are load-induced and variable in count.
+> The "second measurement is the one that counts" rule is therefore now load-bearing rather than
+> advisory: with the standing failure gone, any single failure in a run is a flake to be isolated, and
+> `--reporter=json` is how you name it instead of assuming.)*
 >
 > **One new file, not two cases in an existing one** — and that detail is load-bearing: adding the
 > `startCompanion: false` case to `engineSmoke.integration.test.ts` made that file **fail** on
@@ -978,7 +983,7 @@ finished work is the one kind nobody re-checks.
 
 | Phase | The pivot's assumption | Measured | Verdict |
 |---|---|---|---|
-| P0 | the spike's record is inert | it drives **10 legacy channels**, 2 of which P6 stage 3b deleted | **survives, via a shim** — §12.6 |
+| P0 | the spike's record is inert | it drives **10 legacy channels**, 2 of which P6 stage 3b deleted | **RETIRED 2026-09-21** — the shim was the last consumer, so the spike went with it — §12.6 |
 | P1 | the command table is the frozen shape the pivot widens | true; §WI 1/8 already own the change | extends |
 | P2 | `createEngine()` is the composition WI 2/3/5/7 dissect | true, and it is the *whole* inventory | extends |
 | P3 | **blob staging is already per-workspace** (§2.2) | **false** — it is host-wide, with no `workspaceId` | **correct §2.2; decision needed** — §12.1 |
@@ -1097,6 +1102,32 @@ so the ten-command envelope proof stays whole. The consequence worth stating: it
 in the tree where a deleted channel name is live, and the last consumer of `spike/protocol/`. Retiring the
 P0 spike code is a legitimate later decision — but it is a *phase* decision, not a deletion-pass one, and it
 means `spike/` goes too plus five plan docs that cite it.
+
+> **RESOLVED 2026-09-21 — the decision was taken, and this section's own framing is why it was taken
+> carefully.** The owner retired the spike. `spike/protocol/`, `spike/tsconfig.json`,
+> `tests/spike/protocolPoc.test.ts` and `package.json`'s `spike:typecheck` are gone; the full account is
+> `spike/README.md`.
+>
+> **The prediction above was right about the shape and wrong about the magnitude.** "It means `spike/` goes
+> too plus five plan docs that cite it" — re-derived, it was **nine** documents citing the spike's code
+> (`spike/protocol`, `protocolPoc`, `spike:typecheck`, `spike/tsconfig`), plus six source files. Sixteen
+> documents mention the word "spike", but seven of those name *other* spikes or use it generically. The count
+> was never re-derived, which is the failure mode this repository keeps recording. What made it tractable was
+> that most citations are *provenance* ("validated in the P0 spike"), which stays true and needed only a
+> retirement marker, and only **one** was a live claim about where coverage lives (`soapCommands.ts`).
+>
+> **And the thing this section did not anticipate is the part worth carrying forward.** The reason the
+> retirement was safe is not that the spike was old — it is that **every assertion worth keeping already
+> had a better home**, which had to be established per case rather than assumed. Two of the twelve would
+> have been silently lost by a naive deletion: `soap.execute`'s dead-endpoint contract (now
+> `protocolExecution.integration.test.ts`, on a real dead port instead of `127.0.0.1:1` — **same contract,
+> firmer fixture**) and `tls.generate`'s renderer-facing `certPath`/`keyPath` shape (now
+> `packages/client/tests/client.test.ts:1176`, asserted with `toEqual` at the shim that produces it, two
+> layers closer than the spike was). The generalisable rule is in `spike/README.md`: **"does anything else
+> test X?" is not answerable by counting files that mention X** — both directions were wrong on the first
+> pass, one false-negative (`mock.delete`, covered under its engine name `entity.delete`) and one
+> false-positive (`INVALID_PARAMS`, where the spike was testing its own throwaway transport and the code
+> does not exist outside it).
 
 ### 12.7 What this audit did **not** check
 
