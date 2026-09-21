@@ -5,13 +5,15 @@
  * workspace". It is what makes the routing key `(workspaceId, urlSuffix)` expressible on the wire — a suffix
  * registered in workspace A must be `404` in workspace B, and without the parameter a multiplexed host has no
  * way to say which one a registration belongs to.
+ *
+ * **`WorkspaceScope` is imported, not redeclared (2026-09-21).** This file used to carry its own copy of the
+ * object, which made two definitions of one contract — the drift hazard `./scope`'s own header names, and
+ * the reason that module exists. Found while wiring P14 WI 7 (which had to read the field in
+ * `webhookCommands.ts`); the two copies were still identical, so this is a consolidation rather than a bug
+ * fix, but identical-and-separate is exactly the state that precedes identical-no-longer.
  */
 import { z } from "zod";
-
-const WorkspaceScope = z.object({
-  /** The workspace to act on. Omitted → the active workspace (the desktop's behaviour). */
-  workspaceId: z.string().optional(),
-});
+import { WorkspaceScope } from "./scope";
 
 export const WebhookRegisterActiveParams = z.object({
   webhookId: z.string(),

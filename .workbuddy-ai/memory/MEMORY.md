@@ -60,10 +60,10 @@ non-booting app, not flakiness. Fix = bundle the preload (esbuild/tsup, `--exter
   that mention X** — both directions were wrong on the first pass (one false-negative, one false-positive).
   See `spike/README.md`.
 
-**Current: 2552 tests — 2510 passed, 40 skipped, 2 failed** (both the load-induced pair), **104 files**.
-*(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) → **2,552**
-(spike retired: −12 = exactly the spike file's case count, of which 1 was failing ⇒ passed −11, failed −1,
-skipped unchanged at 40). **Name every delta's mechanism.**)*
+**Current: 2560 tests — 2518 passed, 40 skipped, 2 failed** (both the load-induced pair), **105 files**.
+*(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) → 2,552
+(spike retired: −12 = exactly the spike file's case count) → **2,560** (WI 7: +8 = exactly the new
+`workspaceCommandScope` file's cases; files +1). **Name every delta's mechanism.**)*
 
 ## Phase state — the plans are the authority
 
@@ -106,17 +106,20 @@ switched the **pointer only**) · WI 5 (allocator + `advisory` preflight) · WI 
 4. **A path a header calls temporary is still the live implementation** (`proxy/server.ts`, "removed in WI 7").
 
 **Still owed:** WI 1's `runtime.json` preferred-port plumbing from the UI/settings (allocator + registry honour
-`preferred*`; only the *editor* is missing) · WI 6 (host artifact, feeds P9) · WI 7 (desktop adopts the runtime —
-§13.3: the single edit is `src/main.ts:309-310`) · WI 8 (five egress commands gain `workspaceId`).
+`preferred*`; only the *editor* is missing) · WI 6 (host artifact, feeds P9) · **WI 7's desktop half** — the
+command layer is DONE (below); what remains is `src/main.ts:309-310` building runtimes, which needs
+`createEngine()`'s own proxy lifecycle (`index.ts:255`) to move with it or the engine and a runtime would both
+bind · WI 8 (five egress commands gain `workspaceId`).
 
-**WI 7's real blocker, measured 2026-09-21:** the command layer has **no way to resolve `workspaceId` to a
-runtime** — `host.runtimes` is reachable only by the caller of `createWorkspaceHost()`, and the commands serve
-both the host's RPC endpoint and the desktop's IPC. `registerServerCommands()` therefore calls the **module
-facade** (`workspaceId: null` = the active workspace), so on a two-workspace host `server.status` reports
-`{running:false, port:0}` with two members listening, and `server.start {workspaceId:"A"}` returns **`{ok:true}`**
-while binding a *third* server. **The failure succeeds.** Owner decision: WI 7 adds a **runtime registry the host
-registers into**, with the facade fallback preserved, so the desktop is unchanged and a host member becomes
-reachable.
+**WI 7's command layer — DONE 2026-09-21.** `runtime/runtimeRegistry.ts` (the lookup the commands were missing)
++ `runtime/runtimeServerOps.ts` (how a resolved runtime's servers are driven). Resolution has **three**
+outcomes and the third is load-bearing: named runtime → that runtime; no runtime but target **is** the active
+workspace → the **facade** (which genuinely *is* the desktop's server, so the desktop is byte-identical);
+anything else → **`absent`**. Falling through to the facade in the third case re-creates the original bug with
+a success code. **A command never allocates a port** — and the reason is a measurement: `proxy/server.ts` seeds
+`currentPort = 0` but `webhookServer.ts` seeds it with **9101**, so a "never started" guard written for one does
+not transfer. `restart` re-binds only an **observed** port; `start` binds only a **caller-named** port.
+**Mutation-checked twice** (runtime branch off → 7/8 fail; `absent`→facade → exactly the 2 that should die).
 
 **NOT scoped, deliberately:** `services.discover` is host-wide (asserted in `index.test.ts`) ·
 `fileOps/commands.ts:139-140` — **the CA is one per *machine*, not per workspace** (`caCertPath()` under

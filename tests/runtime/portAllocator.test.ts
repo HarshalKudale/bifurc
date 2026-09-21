@@ -56,6 +56,78 @@ async function freePort(): Promise<number> {
   return port;
 }
 
+/** Whether a real `listen()` on `port` succeeds. Used only to tell a race from the regression — see below. */
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = new net.Server();
+    const done = (free: boolean): void => {
+      srv.removeAllListeners();
+      srv.on("error", () => {});
+      srv.close(() => resolve(free));
+    };
+    srv.once("error", () => done(false));
+    srv.once("listening", () => done(true));
+    try {
+      srv.listen(port, "127.0.0.1");
+    } catch {
+      done(false);
+    }
+  });
+}
+
+/**
+ * Run an allocation from freshly-probed bases, retrying when a **probe's own port was taken** in the window
+ * between `freePort()` closing it and the allocator's `tryBind` reaching it.
+ *
+ * ## Why this is needed, and why it does not weaken the regression it guards
+ *
+ * `freePort()` is bind-then-close — **the exact TOCTOU shape D16 forbids the allocator from using.** It is
+ * acceptable in a *fixture* only while nothing races it, and under a full parallel run something can: the
+ * OS may hand the same ephemeral port to another worker's `freePort()`, or to a server another suite is
+ * starting. When that happens `allocatePorts` **correctly** scans past the base, and an assertion of the
+ * form `expect(out.proxyPort).toBe(base)` fails for a reason that has nothing to do with the base-skip
+ * regression it exists to catch.
+ *
+ * This was observed on 2026-09-21 once P14 WI 7 added `workspaceCommandScope.integration.test.ts`, which
+ * binds two more ports per run: the case passed **21/21 isolated** and failed in the full suite.
+ *
+ * **The two causes are distinguishable, and that is what makes this safe rather than a retry that hides
+ * bugs.** The regression leaves the base **free** (the allocator skipped it); a race leaves it **held**
+ * (someone else has it). So a retry happens *only* while some missed base is genuinely occupied, and a base
+ * that is free-but-skipped is returned unchanged so the caller's assertion still fails. A genuine
+ * regression is deterministic, so it survives all five attempts and fails exactly as before.
+ */
+async function allocateFromUncontendedBases(
+  run: (proxyBase: number, webhookBase: number) => Promise<{ proxyPort: number; webhookPort: number }>,
+  opts: {
+    /**
+     * Set when the two ranges are deliberately given the **same** base, so the webhook is *expected* to land
+     * elsewhere (`reserved.add(proxyPort)` excludes it). Without this the helper would read that expected
+     * difference as a miss and retry until it gave up.
+     */
+    webhookSharesProxyBase?: boolean;
+  } = {},
+): Promise<{ out: { proxyPort: number; webhookPort: number }; proxyBase: number; webhookBase: number }> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const proxyBase = await freePort();
+    const webhookBase = await freePort();
+    const out = await run(proxyBase, webhookBase);
+
+    const proxyMissed = out.proxyPort !== proxyBase;
+    const webhookMissed = !opts.webhookSharesProxyBase && out.webhookPort !== webhookBase;
+    if (!proxyMissed && !webhookMissed) return { out, proxyBase, webhookBase };
+
+    // Retry only while a miss is explained by someone else holding the port. A miss on a base that is still
+    // free is the allocator skipping its own base — return and let the assertion report it.
+    const lostToRace =
+      (proxyMissed && !(await portIsFree(proxyBase))) || (webhookMissed && !(await portIsFree(webhookBase)));
+    if (lostToRace) continue;
+
+    return { out, proxyBase, webhookBase };
+  }
+  throw new Error("could not obtain uncontended base ports in 5 attempts");
+}
+
 afterEach(async () => {
   while (held.length) {
     const srv = held.pop()!;
@@ -240,13 +312,16 @@ describe("allocatePorts() — D16's resolution order", () => {
    * distinguishes them, so it must assert both ports and not merely the proxy's.
    */
   it("still takes each base itself when a reservation is supplied (regression)", async () => {
-    const base = await freePort();
-    const webhookBase = await freePort();
     const rpcPort = await freePort();
 
-    const out = await allocatePorts({ proxyBase: base, webhookBase, reserved: [rpcPort] });
+    // `allocateFromUncontendedBases` rather than raw `freePort()`: the bases are probed bind-then-close, so
+    // under a parallel run one can be taken before the allocator reaches it, and the allocator would then
+    // *correctly* scan — failing this assertion for the wrong reason. See the helper's header.
+    const { out, proxyBase, webhookBase } = await allocateFromUncontendedBases((p, w) =>
+      allocatePorts({ proxyBase: p, webhookBase: w, reserved: [rpcPort] }),
+    );
 
-    expect(out.proxyPort).toBe(base);
+    expect(out.proxyPort).toBe(proxyBase);
     expect(out.webhookPort).toBe(webhookBase);
   });
 
@@ -265,13 +340,17 @@ describe("allocatePorts() — D16's resolution order", () => {
     // The hazard the original "bases reserve each other" line was reaching for. With one base used for both
     // ranges the webhook allocation must not be handed the proxy's port; the guard is `reserved.add(proxyPort)`
     // after the proxy is chosen, not the base.
-    const shared = await freePort();
+    //
+    // `webhookSharesProxyBase` because the webhook *should* differ here — the helper would otherwise read the
+    // intended behaviour as a miss.
+    const { out, proxyBase } = await allocateFromUncontendedBases(
+      (shared) => allocatePorts({ proxyBase: shared, webhookBase: shared }),
+      { webhookSharesProxyBase: true },
+    );
 
-    const out = await allocatePorts({ proxyBase: shared, webhookBase: shared });
-
-    expect(out.proxyPort).toBe(shared);
+    expect(out.proxyPort).toBe(proxyBase);
     expect(out.webhookPort).not.toBe(out.proxyPort);
-    expect(out.webhookPort).toBe(shared + 1);
+    expect(out.webhookPort).toBe(proxyBase + 1);
   });
 });
 
