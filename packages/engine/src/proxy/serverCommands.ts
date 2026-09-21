@@ -69,38 +69,107 @@
  * three `server:*` calls in `settingsMutations` were re-pointed at the commands in that suite's own
  * `invoke`. The lesson is that "duplication kept deliberately to avoid a hidden coupling" is a
  * *temporary* answer that a deletion can retire, and that retiring it needs no new coupling at all.
+ *
+ * ## P14 WI 7 — these now resolve a runtime from `workspaceId` instead of the facade
+ *
+ * WI 1's protocol half made the six commands *accept* an optional `workspaceId`. It did not make them
+ * *read* it, and this module was the reason: it called the module facade
+ * (`server.ts`'s `isRunning` / `getPort` / `startServer`), whose lazy default instance is
+ * `createProxyServer({ workspaceId: null })` — the **active** workspace. On a host serving two workspaces
+ * that produced a `server.status` of `{ running: false, port: 0 }` while both members were listening, and
+ * a `server.start { workspaceId: "A" }` that returned **`{ ok: true }`** after binding a *third* server on
+ * the active workspace's configured port. **The failure succeeded**, which is why every desktop suite
+ * stayed green through it.
+ *
+ * `resolveRuntimeScope()` (`runtime/runtimeRegistry.ts`) is the fix, and its third case is the load-bearing
+ * one: a workspace that is explicitly named but has no registered runtime is reported as **`absent`**, not
+ * silently redirected to the facade. Redirecting would have re-created the same bug — acting on one
+ * workspace while the caller asked for another — with a success code.
+ *
+ * **The desktop is untouched, and that is the acceptance criterion.** With no runtimes registered, a
+ * request resolving to the active workspace still takes the facade branch, which is exactly what
+ * `createEngine()` binds. P6's rule for this work item is *zero user-visible change*.
+ *
+ * `services.discover` is deliberately **not** scoped: it reports the ports this host is listening on,
+ * which is a property of the host and not of any workspace. Asserted in `index.test.ts` so it reads as a
+ * decision rather than an oversight.
  */
 import type { CommandRegistry } from "../commands/registry";
+import type {
+    ProxyStatusParams,
+    ServerRestartParams,
+    ServerStartParams,
+    ServerStatusParams,
+    ServerStopParams,
+} from "@bifurc/protocol";
 import { loadConfig } from "../store/config";
 import { discoverServices } from "./service-discovery";
 import { getPort, getServerError, isRunning, startServer, stopServer } from "./server";
+import { absentRuntimeError, echoWorkspace, resolveRuntimeScope } from "../runtime/runtimeRegistry";
+import { restartManagedServer, startManagedServer } from "../runtime/runtimeServerOps";
 
 export function registerServerCommands(registry: CommandRegistry): void {
-    registry.register("server.status", () => ({
-        running: isRunning(),
-        port: getPort(),
-        error: getServerError(),
-    }));
-
-    registry.register("server.start", () => {
-        const cfg = loadConfig();
-        startServer(cfg.port);
-        return { ok: true };
+    registry.register("server.status", (params: ServerStatusParams) => {
+        const scope = resolveRuntimeScope(params.workspaceId);
+        const echo = echoWorkspace(params.workspaceId, scope.workspaceId);
+        if (scope.kind === "runtime") {
+            const proxy = scope.runtime.proxy;
+            return { running: proxy.isRunning(), port: proxy.getPort(), error: proxy.getError(), ...echo };
+        }
+        if (scope.kind === "facade") {
+            return { running: isRunning(), port: getPort(), error: getServerError(), ...echo };
+        }
+        return { running: false, port: 0, error: absentRuntimeError(scope.workspaceId), ...echo };
     });
 
-    registry.register("server.stop", () => {
-        stopServer();
-        return { ok: true };
+    registry.register("server.start", (params: ServerStartParams) => {
+        const scope = resolveRuntimeScope(params.workspaceId);
+        // The host allocated this workspace's port and started it (D16), so a command reports rather than
+        // binds — see `runtimeServerOps.ts`'s header for why that is not merely tidiness.
+        if (scope.kind === "runtime") return startManagedServer(scope.runtime.proxy);
+        if (scope.kind === "facade") {
+            startServer(loadConfig().port);
+            return { ok: true };
+        }
+        return { ok: false };
     });
 
-    registry.register("server.restart", () => {
-        const cfg = loadConfig();
-        stopServer();
-        startServer(cfg.port);
-        return { ok: true };
+    registry.register("server.stop", (params: ServerStopParams) => {
+        const scope = resolveRuntimeScope(params.workspaceId);
+        if (scope.kind === "runtime") {
+            scope.runtime.proxy.stop();
+            return { ok: true };
+        }
+        if (scope.kind === "facade") {
+            stopServer();
+            return { ok: true };
+        }
+        return { ok: false };
     });
 
-    registry.register("proxy.status", () => ({ running: isRunning() }));
+    registry.register("server.restart", (params: ServerRestartParams) => {
+        const scope = resolveRuntimeScope(params.workspaceId);
+        if (scope.kind === "runtime") return restartManagedServer(scope.runtime.proxy);
+        if (scope.kind === "facade") {
+            // Stop then start, exactly as the runtime branch does — `restart` is not a distinct code path,
+            // which is the property the module header records for the pre-P14 body.
+            const cfg = loadConfig();
+            stopServer();
+            startServer(cfg.port);
+            return { ok: true };
+        }
+        return { ok: false };
+    });
+
+    registry.register("proxy.status", (params: ProxyStatusParams) => {
+        const scope = resolveRuntimeScope(params.workspaceId);
+        if (scope.kind === "runtime") return { running: scope.runtime.proxy.isRunning() };
+        if (scope.kind === "facade") return { running: isRunning() };
+        // `ProxyStatusResult` is `{ running }` and carries no error field — unlike `server.status`, which
+        // is why the two are separate commands. `false` is the truthful answer for a workspace this host
+        // does not serve: nothing is running *for it*.
+        return { running: false };
+    });
 
     registry.register("services.discover", () => discoverServices());
 }
