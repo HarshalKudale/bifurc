@@ -33,13 +33,15 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   `expectedChannels` entry**. `*Handlers.ts` → `*Kinds.ts` for soap/graphql/grpc; **"six caller files"
   corrected to five**.
 - **The reduction — `plan/07` §5b-decies (inventory) / §5b-undecies (criterion) / §5b-duodecies (group 1) /
-  §5b-terdecies (group 2) / §5b-quaterdecies (group 3).** Measured 2026-09-21 (`ipcMain.handle(` **call
-  sites**): **64 literal channels in the 7 handler files = 18 live + 46 dead → 46 to go across 6 files**,
-  one handler group per commit. Decidable by construction: `window.api` *is* the client
-  (`src/preload.ts:110`) and `packages/client/src` names no channel, so only preload's `local` block's 18
-  are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**; every other file all-dead except
+  §5b-terdecies (group 2) / §5b-quaterdecies (group 3) / §5b-quindecies (group 4).** Measured 2026-09-21
+  (`ipcMain.handle(` **call sites**): **59 literal channels in the 6 handler files = 18 live + 41 dead → 41
+  to go across 5 files**, one handler group per commit. Decidable by construction: `window.api` *is* the
+  client (`src/preload.ts:110`) and `packages/client/src` names no channel, so only preload's `local` block's
+  18 are reachable. `clientHandlers.ts` **17 live / 0 dead → untouchable**; every other file all-dead except
   `systemHandlers.ts` (`app:checkUpdate`). §5b-decies' "68" is a **different partition** from its 75 dead
-  (it excludes the dialog-owners) — do not reconcile them.
+  (it excludes the dialog-owners) — do not reconcile them. **Read the inventory in the *latest* §5b-* section,
+  not the nearest one** — each section's table is a dated reading, and §5b-quaterdecies' "46 remain" is
+  superseded.
 - **The criterion is `owns a step the engine does not perform`** — §5b-decies said `dialog.*` and was one
   channel short. `tls:generate` owns a *path*, and that mattered: `tlsGenerate` / `tlsImportCert` /
   `tlsImportKey` were routed as 1:1 `transport` calls in step 3b-1 and had been **silently dropping
@@ -49,14 +51,25 @@ discoverable from the code. Status → `plan/README.md`; the executor pivot → 
   `unknown`. A *payload-shape* difference counts too: `folder:add`'s channel **spread** its argument where the
   client picks two fields — inert only because the renderer contract excludes `workspaceId`, so check the
   contract, not the intuition.
-- **Three groups deleted:** `tlsHandlers.ts` (6, delta 0 — *re-point*), `syncHandlers.ts` (19, delta −5 —
-  *generated list*), `folderHandlers.ts` (4, delta −3 — **both at once**, read per-file). `expectedChannels`
-  in `handlers.test.ts` is the only thing that turns a channel name into a test (one `it` per entry).
+- **Four groups deleted:** `tlsHandlers.ts` (6, delta 0 — *re-point*), `syncHandlers.ts` (19, delta −5 —
+  *generated list*), `folderHandlers.ts` (4, delta −3 — **both at once**, read per-file), `crudHandlers.ts`
+  → **`crudKinds.ts`** (5, delta 0 — **never had any**; a rename, so `git ls-files src/` is unchanged at 20).
+  `expectedChannels` in `handlers.test.ts` is the only thing that turns a channel name into a test (one `it`
+  per entry), so **delta 0 has two causes and the count cannot separate them** — re-pointed cases (`tls`) or
+  no cases at all (`crud`).
   **A suite that drives a channel *by name* fails loudly (`No handler registered`) — "failures up" means
   RE-POINT it (drive the command), not delete the test**; `handlers.test.ts`'s `entity.*` / `history.*` /
   `folder.*` helpers are the idiom, and a many-call-site suite gets a shared test harness
   (`tests/integration/deletedChannelHarness.ts`) rather than N rewrites — but that harness is **not a second
-  contract**. The spike's retired-channel fixture grows only with a **driven** channel (7 of 10 now).
+  contract**. The spike's retired-channel fixture grows only with a **driven** channel (7 of 10 now; group 4
+  added none).
+- **A file's name is a claim, and the reduction keeps having to fix the ones that stop being true.**
+  `*Handlers.ts` → `*Kinds.ts` for soap/graphql/grpc in stage 3b, and now `crudHandlers.ts` → `crudKinds.ts`
+  — §5b-octies had *deliberately* kept the name because the file registered "six kinds **and** five live
+  `webhook*` channels", and deleting the five expired the premise. When you rename, fix the **comments at the
+  call sites too**: five of them said the call "wires the *channels* and the per-kind options", false in its
+  first half. A stale comment on a *renamed* function is worse than on a deleted one — the deleted one fails
+  loudly, this one reads as current.
 - **A guard whose floor is a file count fails as the tree shrinks — and the tree shrinking is the work.**
   `handlers.test.ts`'s §5c anti-vacuity check was `src/` > 20 `.ts` files; the reduction hit exactly 20.
   Now expressed as **presence** (`preload.ts`, `ipc/handlers.ts`, `ipc/rpcBridge.ts`). **`V1_COMPANION_ACTIONS`
