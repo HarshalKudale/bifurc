@@ -757,7 +757,9 @@ rather than a type.
       re-pointed through a new `tests/integration/deletedChannelHarness.ts` — a *test* harness, explicitly
       not a second contract — rather than having 62 assertions about git rewritten. **Inventory: 68 literal
       channels remain in 8 files = 18 live + 50 dead**, so **50 dead across 7 files** remain; the
-      dialog-owner risk subset shrinks 7 → 6 (`audit:export` gone).
+      dialog-owner risk subset shrinks **5 → 4** (`audit:export` gone) — corrected from "7 → 6", which had
+      computed from §5b-decies' seven without subtracting the three `tls` channels group 1 deleted; the
+      widened subset is 8, and `plan/07` §5b-sedecies carries the full accounting.
       **Progress 2026-09-21, third group — `folderHandlers.ts` is gone, and the §5c guard failed for
       working** (`plan/07` §5b-quaterdecies). Four channels, all dead, all one-line delegates — the smallest
       all-dead file, and the first group the widened criterion cleared without a fix. **Delta −3, and the
@@ -794,6 +796,34 @@ rather than a type.
       current**. The spike's fixture **did not grow** (it drives none of the five; the file contains no
       occurrence of "webhook"), the same non-growth as the second group. **Inventory: 59 literal channels in
       6 files = 18 live + 41 dead**, so **41 dead across 5 files** remain.
+      **Progress 2026-09-21, fifth group — `systemHandlers.ts` shrinks to one channel, and the "trap" is
+      dissolved rather than answered** (`plan/07` §5b-sedecies). Four channels left
+      (`server:start` / `server:stop` / `server:restart`, `capture:shareJson`) and the file is **not**
+      deleted: `app:checkUpdate` is **client-local, not legacy**, so it was never a reduction target and the
+      file leaves the reduction's scope. The group held the two shapes the fourth group named as its first
+      question, and both cleared. The three `server:*` bodies were **self-contained** (not `invoke()`
+      delegates), so §5b-ter's question was asked per channel against `proxy/serverCommands.ts` and found
+      exact equivalents — which is also what **dissolves that module's "do NOT re-point the legacy channels"
+      trap**: the duplication it warned about is gone, and retiring it needed no new coupling, since the two
+      suites kept registering handler *groups* and re-pointed the calls in their own `invoke`. The dialog
+      owner's twin is the **opposite** case from `audit:export` — `shareCaptureJson` is artifact-first
+      *deliberately*, and the difference is now pinned by a new ordering test in `packages/client`, not
+      asserted in prose. **Delta −8 = −9 deleted + 1 added**, and the arithmetic was predicted wrong: the
+      prediction said "three behaviour cases" because it counted the *channels* — the three `describe`s each
+      held **two** `it`s (a `has()` case and a behaviour case). **Suite: 101 / 2,484 / 2,443 / 40 / 1** — the 1
+      is the standing environmental `soap.execute`, and the pass count moves by exactly the −8 the
+      decomposition predicts. The six server cases were **deleted, not
+      re-pointed** (first group where §5b-septies' rule cut in that direction): each duplicated
+      `expectedChannels`, the registry-coverage block, or the "21 moved commands" block. The one assertion
+      the latter lacked — `server.restart` starting on `currentConfig.port` — was **folded into it**, which is
+      the difference between deleting a duplicate and deleting coverage. A **fixture-reproduction trap** was
+      caught by the suite: the capture table first reproduced the deleted body's `(_e, …)` signature, but its
+      branch *replaces* the `fn({}, …args)` call that injected the event, so every argument shifted by one.
+      **Inventory: 55 literal channels in 6 files = 18 live + 37 dead**, so **37 dead in 4 files** remain —
+      and **all four are all-dead**, so every remaining group is a whole-file deletion. The spike's fixture
+      **did not grow** (third non-growth; it drives neither prefix). **The dialog-owner risk subset is 3, not
+      the 6 three earlier sections stated** — a count carried forward without being re-derived (8 → 5 → 4 →
+      4 → 4 → 3), corrected in `plan/07` in the same pass.
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening

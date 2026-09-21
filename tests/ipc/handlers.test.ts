@@ -346,7 +346,15 @@ describe("src/ipc/handlers.ts", () => {
       // would now assert the absence of the thing this list exists to check. Their behaviour is
       // covered at engine level — `store/auditCommands.ts` and `sync/syncCommands.ts`.
       "request:replay", "server:status", "proxy:status",
-      "server:restart", "server:stop", "server:start",
+      // ── The three server-lifecycle channels are gone (P6 reduction, fifth group, 2026-09-21) ──
+      // `server:restart` / `server:stop` / `server:start` were deleted with the four dead channels in
+      // `src/ipc/handlers/systemHandlers.ts` (`plan/07` §5b-sedecies). They were the first group whose
+      // bodies were **not** `commandRegistry.invoke()` delegates — they called `startServer` /
+      // `stopServer` directly — so the criterion was re-applied per channel against
+      // `proxy/serverCommands.ts` rather than inherited, and it found exact equivalents.
+      // Their behaviour is asserted at the command level in the "delivers the 21 moved commands"
+      // block below, which is why no case here needed re-pointing.
+      // `app:checkUpdate` **stays**: it is client-local, not legacy.
       "app:checkUpdate",
     ];
 
@@ -702,11 +710,16 @@ describe("src/ipc/handlers.ts", () => {
 
         // `restart` is stop-then-start, not a distinct code path — and the order is the contract:
         // starting before stopping would rebind a port the old listener still holds.
+        //
+        // `startServer(currentConfig.port)` is asserted here rather than in a case of its own: the
+        // deleted `server:restart` handler had one, the reduction's fifth group removed it as a
+        // duplicate of this block, and this is the one assertion it made that this block did not.
         vi.mocked(startServer).mockClear();
         vi.mocked(stopServer).mockClear();
         expect(commandRegistry.invoke("server.restart", {}, ctx)).toEqual({ ok: true });
         expect(vi.mocked(stopServer).mock.invocationCallOrder[0])
           .toBeLessThan(vi.mocked(startServer).mock.invocationCallOrder[0]);
+        expect(startServer).toHaveBeenCalledWith(currentConfig.port);
 
         expect(commandRegistry.invoke("services.discover", {}, ctx)).toEqual([]);
         expect(discoverServices).toHaveBeenCalled();
@@ -1631,53 +1644,26 @@ describe("src/ipc/handlers.ts", () => {
     });
   });
 
-  // ── server:restart ────────────────────────────────────────────────────
-
-  describe("server:restart handler", () => {
-    it("stops and restarts the server at the configured port", () => {
-      currentConfig.port = 9090;
-      vi.mocked(isRunning).mockReturnValue(true);
-
-      const result = getHandler("server:restart")(EVENT);
-
-      expect(stopServer).toHaveBeenCalled();
-      expect(startServer).toHaveBeenCalledWith(9090);
-      expect(result).toEqual({ ok: true });
-    });
-
-    it("registers a handler for 'server:restart'", () => {
-      expect(registeredHandlers.has("server:restart")).toBe(true);
-    });
-  });
-
-  // ── server:stop ───────────────────────────────────────────────────────
-
-  describe("server:stop handler", () => {
-    it("registers a handler for 'server:stop'", () => {
-      expect(registeredHandlers.has("server:stop")).toBe(true);
-    });
-
-    it("stops the server and returns { ok: true }", () => {
-      const result = getHandler("server:stop")(EVENT);
-      expect(stopServer).toHaveBeenCalled();
-      expect(result).toEqual({ ok: true });
-    });
-  });
-
-  // ── server:start ──────────────────────────────────────────────────────
-
-  describe("server:start handler", () => {
-    it("registers a handler for 'server:start'", () => {
-      expect(registeredHandlers.has("server:start")).toBe(true);
-    });
-
-    it("starts the server at the configured port and returns { ok: true }", () => {
-      currentConfig.port = 8181;
-      const result = getHandler("server:start")(EVENT);
-      expect(startServer).toHaveBeenCalledWith(8181);
-      expect(result).toEqual({ ok: true });
-    });
-  });
+  // ── server:restart / server:stop / server:start — cases deleted ──────
+  //
+  // Three `describe`s stood here, six cases in all: for each channel one `it` asserting
+  // `registeredHandlers.has(channel)` and one driving `getHandler(channel)`. The reduction's fifth
+  // group deleted the channels (`plan/07` §5b-sedecies), and **all six were already covered
+  // elsewhere**, which is why none was re-pointed:
+  //
+  //  - the three `has()` cases asserted what `expectedChannels` generated a case for — the same
+  //    assertion twice over, and the generated one is the list that exists to check it. Registration
+  //    of `server.start` / `server.stop` / `server.restart` is *also* asserted by the "registry
+  //    coverage" block, which iterates every protocol command.
+  //  - the three behaviour cases asserted `startServer` / `stopServer` were called and `{ok:true}`
+  //    returned — which the "delivers the 21 moved commands" block above asserts against the same
+  //    mocks, and asserts *more* (the stop-before-start order). The one assertion that block was
+  //    missing — `server.restart` starting on `currentConfig.port` — was folded into it rather than
+  //    left behind here.
+  //
+  // Deleting rather than re-pointing follows `plan/07` §5b-septies' rule: re-point the cases whose
+  // assertions live only in the channel, delete the ones a suite already makes. Re-pointing these
+  // would have produced three literal duplicates of a block 900 lines above them.
 
   // ── rule:update — not-found branch ──────────────────────────────────
 
