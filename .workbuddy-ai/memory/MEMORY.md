@@ -66,10 +66,11 @@ flakiness) — **but that has not been re-measured.** Details: `TRAPS.md`, two e
   that mention X** — both directions were wrong on the first pass (one false-negative, one false-positive).
   See `spike/README.md`.
 
-**Current: 2560 tests — 2518 passed, 40 skipped, 2 failed** (both the load-induced pair), **105 files**.
-*(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) → 2,552
-(spike retired: −12 = exactly the spike file's case count) → **2,560** (WI 7: +8 = exactly the new
-`workspaceCommandScope` file's cases; files +1). **Name every delta's mechanism.**)*
+**Current: 2577 tests — 2536 passed, 40 skipped, 1 failed** (the load-induced pair, at a count of 1 this run),
+**106 files**. *(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) →
+2,552 (spike retired: −12 = exactly the spike file's case count) → 2,560 (WI 7 command layer: +8 = the new
+`workspaceCommandScope` file) → **2,577** (WI 6: +17 = `hostArgs.test.ts`'s 16 + 1 host integration case).
+**Name every delta's mechanism.**)*
 
 ## Phase state — the plans are the authority
 
