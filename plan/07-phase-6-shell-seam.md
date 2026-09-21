@@ -1356,6 +1356,83 @@ channels were in **neither** subset — two delegated to a helper, four owned a 
 have been wrong in the same way the plan's other stale counts were. 68 + 7 = 75 dead, and 75 − 6 = the 69
 above. Stated because the next reader will otherwise try to reconcile 68 with 87.
 
+#### 5b-terdecies. The reduction, second group — `syncHandlers.ts` is deleted, and the first group that cost tests (2026-09-21)
+
+**The largest single file is gone: `src/ipc/handlers/syncHandlers.ts`, 19 channels, all dead.** It is the
+group §5b-decies' table lists as 19 dead / 0 live, and unlike the `tls` group it needed no fix first — the
+widened criterion (*owns a step the engine does not perform*, §5b-undecies) found no such step in 18 of the
+19.
+
+The 19th is why the criterion is the right one rather than a restatement of "owns a dialog". `audit:list` is
+the file's **only** body that is not a `commandRegistry.invoke()` adapter — it called `queryLog` directly,
+because §5a kept it un-re-pointed: a delegating legacy body would acquire a hidden ordering dependency on
+`registerAuditCommands()`, which runs from `registerIpcHandlers()`. **Deleting the channel dissolves that
+concern rather than answering it.** The `audit.list` command becomes the only implementation, and it was
+already the only one the client reached — `window.api.listAudit` → `audit.list`, never the channel.
+
+| # | what the group needed | result |
+| --- | --- | --- |
+| 17 | nothing — one-line `invoke()` delegates, every twin confirmed | deleted |
+| 1 | `audit:list` — the non-delegation §5a is about | deleted; the command is now the implementation |
+| 1 | `audit:export` — a `dialog.showSaveDialog` | deleted; the client's `exportAudit` is dialog-first **and asserted** |
+
+**The delta is −5, and the mechanism is named rather than inferred.** `tests/ipc/handlers.test.ts`'s
+`expectedChannels` listed exactly five of the nineteen — `audit:list`, `audit:diff`, `audit:export`,
+`history:list`, `history:diff` — and that file generates **one `it` per entry**, so removing the five entries
+is exactly −5. The other fourteen generated nothing: they were hand-written `ipcMain.handle` literals, and
+`expectedChannels` is the only thing in the suite that turns a channel name into a test. This is the
+**generated-list** signature from §5b-septies' trap — and the opposite of the `tls` group's *re-point*
+signature (delta 0) for the same nominal operation, which is why the count alone never identifies the
+mechanism.
+
+**Reconciliation: 101 files / 2,495 tests / 2,454 passed / 40 skipped / 1 failed.** Baseline
+2,500 / 2,459 / 40 / 1 → **−5 tests, −5 passed**, the one failure unchanged (`soap.execute`, environmental,
+`ECONNREFUSED 127.0.0.1:1`).
+
+**The "failures up" signal fired first, and resolving it is what keeps the delta at −5 rather than −10.**
+Before the re-point the five affected suites read **6 failed / 219 passed**: five *real* failures —
+`describe("history:list handler")` (3) and `describe("history:diff handler")` (2) called
+`getHandler("history:list")` / `("history:diff")` **by name**, and a deleted channel is exactly what
+`getHandler` looks up — plus the environmental `soap.execute`. §5b-ter's rule is that a suite driving a
+deleted channel is **re-pointed, not deleted**, and this file already had the idiom: the `entity.*` helpers
+stage 3b added drive the collapsed commands directly. The five cases now call `historyList()` / `historyDiff()`,
+which is what the channels did minus the channel. The re-point is not cosmetic: the assertions pin behaviour
+that lives **only** in the command — `workspaceId` falling back to the active workspace, `limit`/`offset`
+defaulting to 100/0 (`sync/syncCommands.ts:196-200`) — because the channel forwarded its argument object
+whole and never touched those fields.
+
+**Two integration suites drove these channels by name, and the fix is a harness rather than 62 rewrites.**
+`gitRemote.integration.test.ts` and `gitSync.integration.test.ts` call `invoke("sync:push", …)` and its
+siblings **62 times** across 16 channels, and their subject is real git behaviour, not the shell's routing. A
+new `tests/integration/deletedChannelHarness.ts` holds the positional → payload mapping the deleted bodies
+performed, and both suites now read `const invoke = invokeDeletedChannel`. It is explicitly **not a second
+contract**: the production mapping is the client's (`packages/client/src/index.ts`) and is asserted in
+`client.test.ts`; the harness exists so that deleting a shell channel does not require rewriting 62 assertions
+about git. `channel.replace(":", ".")` is exact for all 16 — checked against the deleted bodies, not assumed.
+
+**And the correction this group produced: the spike's fixture needed no entry.** §5b-duodecies' note that the
+retired-channel fixture "grows with each slice" is true only when the spike drives the channel. This spike
+drives **ten** channels and none is a `sync.*` / `git.*` / `audit.*` / `history.*` one, so the fixture stays
+at **5 of 10**. Adding `audit:list` would have been an entry nothing ever looks up. Stated because "the table
+grows with each slice" reads as a rule and is not one — the rule is "the table grows with each *driven*
+channel", and a deleted channel that nothing drives is verified by the deletion compiling, not by a fixture.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 87 (9 files) | **68 (8 files)** |
+| live | 18 | 18 |
+| dead | 69 | **50** |
+
+**50 dead channels remain in 7 files**, one handler group per commit. `clientHandlers.ts` is still
+17 live / 0 dead and still untouchable; the other seven all-dead-or-mixed files are `coreHandlers.ts` (17),
+`applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
+`app:checkUpdate`), `folderHandlers.ts` (4) and `importExportHandlers.ts` (4). **The dialog-owner risk subset
+shrinks 7 → 6** — `audit:export` was one of §5b-decies' seven, and its dialog-first ordering now lives in the
+client's `exportAudit`, which `client.test.ts` asserts *by order* (`"exportAudit asks where BEFORE it asks the
+engine to render"`) rather than by intent.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
@@ -1661,6 +1738,15 @@ worth noting as the *legitimate* shape: the channel owns a `dialog.showSaveDialo
 shell-side concern) and delegates the artifact through `call("audit.export", …)`, which resolves to an
 engine registration in `fileOps/commands.ts`. **The distinction is not "delegates vs. duplicates" but
 "who owns the part the engine cannot have."**
+
+> **Update 2026-09-21 — §5b-terdecies: the shell file and all 19 channels are gone.** The reduction's
+> second group deleted them. The §5a ordering concern that kept `audit:list` un-re-pointed became moot
+> with the channel: the `audit.list` **command** is now the only implementation, registered by
+> `registerAuditCommands()` from `registerIpcHandlers()`, and the client's `listAudit` was already its
+> only caller. `audit:export`'s dialog-first shape is the client's `exportAudit` (`local.ts`), where the
+> ordering is asserted rather than merely intended — and `audit.diff` had already moved to
+> `sync/syncCommands.ts` in this slice's own move, which is why the "19 channels" above outlived its
+> accuracy by a day in one respect (the count) and by a pass in another (the location).
 
 **Nothing had to travel** — the second slice in a row where every dependency was already in
 `packages/engine` (`sync/syncManager`, `sync/autoSync`, `sync/gitOps`, `sync/statusTracker`,

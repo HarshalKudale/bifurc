@@ -258,6 +258,22 @@ const listEntities = async <T = any>(kind: string): Promise<T[]> => {
   return r.entities as T[];
 };
 
+/**
+ * The `history.*` commands, driven directly — the same substitution as the `entity.*` helpers above,
+ * for the P6 reduction's **second** group (`plan/07` §5b-terdecies).
+ *
+ * `history:list` and `history:diff` were deleted with `src/ipc/handlers/syncHandlers.ts` on 2026-09-21.
+ * Both were one-line `commandRegistry.invoke()` adapters — `history:list` forwarded its whole argument
+ * object, `history:diff` mapped four positional args — so calling the command is what the channel did,
+ * minus the channel. The commands are not merely equivalent here, they are where the behaviour moved:
+ * `history.list` is what resolves `workspaceId` from the active workspace and defaults `limit`/`offset`,
+ * and the assertions below (active-workspace fallback, 100/0 defaults) pin exactly those steps.
+ */
+const historyList = <T = any>(opts: any): Promise<T> =>
+  commandRegistry.invoke("history.list", opts, ENTITY_CTX);
+const historyDiff = <T = any>(commitHash: string, filePath: string, workspaceId: string): Promise<T> =>
+  commandRegistry.invoke("history.diff", { commitHash, filePath, workspaceId }, ENTITY_CTX);
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("src/ipc/handlers.ts", () => {
@@ -297,8 +313,12 @@ describe("src/ipc/handlers.ts", () => {
       "env:setActive",
       "workspace:add", "workspace:rename", "workspace:delete", "workspace:setActive",
       "importExport:formats", "importExport:export", "importExport:preflight", "importExport:import",
-      "audit:list", "audit:diff", "audit:export",
-      "history:list", "history:diff",
+      // ── The five audit/history channels are gone (P6 reduction, second group, 2026-09-21) ──────
+      // `audit:list`, `audit:diff`, `audit:export`, `history:list` and `history:diff` were deleted
+      // with `syncHandlers.ts` (`plan/07` §5b-terdecies). Each was reachable only through the client,
+      // which routes to the `audit.*` / `history.*` **commands** directly, so asserting a handler here
+      // would now assert the absence of the thing this list exists to check. Their behaviour is
+      // covered at engine level — `store/auditCommands.ts` and `sync/syncCommands.ts`.
       "request:replay", "server:status", "proxy:status",
       "server:restart", "server:stop", "server:start",
       "app:checkUpdate",
@@ -1955,14 +1975,14 @@ describe("src/ipc/handlers.ts", () => {
   // than migrated — a migrated version would be asserting that the shell forwards events to a channel
   // no client listens on, i.e. pinning dead behaviour.
 
-  // ── history:list ──────────────────────────────────────────────────────
+  // ── history.list ──────────────────────────────────────────────────────
 
-  describe("history:list handler", () => {
+  describe("history.list command (the deleted `history:list` channel)", () => {
     it("delegates to queryLog with the provided filePath", async () => {
       const mockEntries = [{ commitHash: "abc1234", action: "update", entity: "mock", entityId: "m1", entityName: "My Mock", actor: "local", ts: 1000, workspaceId: "default" }];
       vi.mocked(queryLog).mockResolvedValue({ entries: mockEntries as any, total: 1 });
 
-      const result = await getHandler("history:list")(EVENT, { filePath: "mocks/m1.json", workspaceId: "default", limit: 50, offset: 0 });
+      const result = await historyList({ filePath: "mocks/m1.json", workspaceId: "default", limit: 50, offset: 0 });
 
       expect(queryLog).toHaveBeenCalledWith(
         expect.objectContaining({ filePath: "mocks/m1.json", workspaceId: "default", limit: 50, offset: 0 }),
@@ -1975,7 +1995,7 @@ describe("src/ipc/handlers.ts", () => {
       vi.mocked(queryLog).mockResolvedValue({ entries: [], total: 0 });
       currentConfig.activeWorkspaceId = "default";
 
-      await getHandler("history:list")(EVENT, { filePath: "mappings/m1.json" });
+      await historyList({ filePath: "mappings/m1.json" });
 
       expect(queryLog).toHaveBeenCalledWith(
         expect.objectContaining({ workspaceId: "default", filePath: "mappings/m1.json" }),
@@ -1985,7 +2005,7 @@ describe("src/ipc/handlers.ts", () => {
     it("defaults limit to 100 and offset to 0 when not provided", async () => {
       vi.mocked(queryLog).mockResolvedValue({ entries: [], total: 0 });
 
-      await getHandler("history:list")(EVENT, { filePath: "rules/r1.json", workspaceId: "default" });
+      await historyList({ filePath: "rules/r1.json", workspaceId: "default" });
 
       expect(queryLog).toHaveBeenCalledWith(
         expect.objectContaining({ limit: 100, offset: 0 }),
@@ -1993,9 +2013,9 @@ describe("src/ipc/handlers.ts", () => {
     });
   });
 
-  // ── history:diff ──────────────────────────────────────────────────────
+  // ── history.diff ──────────────────────────────────────────────────────
 
-  describe("history:diff handler", () => {
+  describe("history.diff command (the deleted `history:diff` channel)", () => {
     it("returns before and after states for a commit", async () => {
       const beforeState = { id: "m1", name: "Old Name" };
       const afterState = { id: "m1", name: "New Name" };
@@ -2003,7 +2023,7 @@ describe("src/ipc/handlers.ts", () => {
         .mockResolvedValueOnce(afterState)
         .mockResolvedValueOnce(beforeState);
 
-      const result = await getHandler("history:diff")(EVENT, "abc1234", "mocks/m1.json", "default");
+      const result = await historyDiff("abc1234", "mocks/m1.json", "default");
 
       expect(getEntityAtCommit).toHaveBeenCalledWith("abc1234", "default", "mocks/m1.json");
       expect(getEntityAtCommit).toHaveBeenCalledWith("abc1234~1", "default", "mocks/m1.json");
@@ -2014,7 +2034,7 @@ describe("src/ipc/handlers.ts", () => {
     it("returns null before/after when entity does not exist at commit", async () => {
       vi.mocked(getEntityAtCommit).mockResolvedValue(null);
 
-      const result = await getHandler("history:diff")(EVENT, "deadbeef", "mocks/missing.json", "default");
+      const result = await historyDiff("deadbeef", "mocks/missing.json", "default");
 
       expect(result.before).toBeNull();
       expect(result.after).toBeNull();

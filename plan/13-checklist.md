@@ -738,8 +738,26 @@ rather than a type.
       channels were in neither subset, which is exactly why the group needed a fix first. Collateral repairs
       across the two slices: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored —
       it is P0's runtime evidence and the baseline's documented 1 failure, and its retired-channel fixture
-      now covers 4 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases
+      now covers 5 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases
       failing `No handler registered`.
+      **Progress 2026-09-21, second group — `syncHandlers.ts` is gone, and this is the first group that cost
+      tests** (`plan/07` §5b-terdecies). The largest single file: **19 channels, all dead** — 17 one-line
+      `commandRegistry.invoke()` delegates, plus `audit:list` (the non-delegation §5a is about, whose
+      ordering concern **dissolves** when the channel is deleted: the `audit.list` command is now the only
+      implementation, and the client's `listAudit` was already its only caller) and `audit:export` (the
+      client's `exportAudit` is dialog-first and asserted by order). **Delta −5, mechanism named:**
+      `expectedChannels` listed exactly five of the nineteen, and `handlers.test.ts` generates one `it` per
+      entry — the **generated-list** signature, the opposite of the `tls` group's *re-point* signature
+      (delta 0) for the same operation. **Suite: 101 / 2,495 / 2,454 / 40 / 1** (baseline 2,500 / 2,459 / 40
+      / 1 → −5 tests, −5 passed; the 1 failure is the environmental `soap.execute`). The "failures up" signal
+      fired first — 5 real failures, `getHandler("history:list"/"history:diff")` called **by name** — and
+      resolving it is what kept the delta at −5 rather than −10: the five cases were **re-pointed** to the
+      `history.*` commands (the idiom stage 3b's `entity.*` helpers already established) rather than deleted.
+      The two integration suites that drove these channels by name (62 call sites, 16 channels) were
+      re-pointed through a new `tests/integration/deletedChannelHarness.ts` — a *test* harness, explicitly
+      not a second contract — rather than having 62 assertions about git rewritten. **Inventory: 68 literal
+      channels remain in 8 files = 18 live + 50 dead**, so **50 dead across 7 files** remain; the
+      dialog-owner risk subset shrinks 7 → 6 (`audit:export` gone).
 - [x] Step 3d — unblock the pinned keys (`plan/07` *Step 3d*, `plan/protocol-changes.md` ×2) — three of
       the four were **schema** problems rather than routing problems; `NARROWED` and `BLOCKED` are
       retired rather than left empty. Also fixed a consequence the ratchet could not see: the widening
@@ -850,11 +868,13 @@ rather than a type.
 
 **Gate:**
 - [x] 101 unit suites pass (same count as baseline) — **met on every step**; the current figure is **101
-      files / 2,507 tests — 2,466 passed, 40 skipped, 1 documented `soap.execute` flake**, re-measured on
-      the committed state after step 3f. That is the baseline plus §5c-viii's static guard, minus the
-      **two** tests `packages/protocol/src/commands/index.test.ts` generates per command for the deleted
-      `app.checkUpdate` (`accepts a valid payload` / `rejects an invalid payload`) — a delta accounted
-      for by mechanism, not by count
+      files / 2,495 tests — 2,454 passed, 40 skipped, 1 documented `soap.execute` flake**, measured
+      2026-09-21 on the reduction's second group. **This supersedes the 2,507 / 2,466 this bullet used to
+      carry**: that figure contradicted both §5b-duodecies and the step-3b paragraph above (2,500 / 2,459),
+      and the measurement settles it — the second group's delta is exactly **−5** (five `expectedChannels`
+      entries removed, one generated `it` each), so the pre-change total was 2,500, not 2,507. Recorded as a
+      correction rather than a silent edit because the plan's discipline is to name a delta by mechanism, and
+      "the number in the checklist was wrong" is itself a mechanism this file has now produced twice.
 - [ ] 11 e2e specs pass, **unmodified** — **carried as an owner-run verification.** Still the real gate
       for 3b-1 and 3b-3, because the unit suite tests handlers rather than the preload. Re-attempted
       2026-09-20 from the agent shell and it reproduced the documented environmental failure **exactly**

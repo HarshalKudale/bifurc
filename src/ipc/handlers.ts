@@ -1,7 +1,6 @@
 import { registerImportExportHandlers } from "@/ipc/importExportHandlers";
 import { registerApplicationHandlers } from "@/ipc/applicationHandlers";
 
-import { registerSyncHandlers } from "@/ipc/handlers/syncHandlers";
 import { registerFolderHandlers } from "@/ipc/handlers/folderHandlers";
 import { registerSoapKinds } from "@/ipc/handlers/soapKinds";
 import { registerGraphqlKinds } from "@/ipc/handlers/graphqlKinds";
@@ -136,7 +135,9 @@ export function registerIpcHandlers(): void {
   registerApplicationCommands(commandRegistry);
   // Step 3e slice 6: the 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` /
   // `entity.restore` / `audit.diff` / `history.*` commands, out of `handlers/syncHandlers.ts`'s module
-  // scope. Another "nothing had to travel" slice — every dependency was already engine-side — with one
+  // scope. **That file is now gone** — the reduction's second group deleted its 19 channels on
+  // 2026-09-21 (`plan/07` §5b-terdecies), so this call is the commands' only registration.
+  // Another "nothing had to travel" slice — every dependency was already engine-side — with one
   // exception worth knowing about: `folder.publish` declares a **local** `sanitizeDirName` that shares
   // its name with `store/workspaceFs`'s exported one and does something different (replaces illegal
   // characters with `-` instead of stripping them, and has no `"unnamed"` fallback). It was kept local
@@ -197,7 +198,6 @@ export function registerIpcHandlers(): void {
   wireLogEventsToBus();
 
   // Register all categorized handlers
-  registerSyncHandlers();
   registerFolderHandlers();
   registerSoapKinds();
   registerGraphqlKinds();

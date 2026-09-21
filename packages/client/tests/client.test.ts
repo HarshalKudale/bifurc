@@ -856,7 +856,7 @@ describe("createClient — dialog-first egress (step 3b-3)", () => {
      * called `artifactToFile(await call("exportAudit", …))` with no `destPath`, so the engine ran
      * first and the dialog second — and `audit.export` is `queryLog({ limit: 0 })`, the workspace's
      * **entire** `git log`. Cancelling therefore still paid for the full query, which is precisely the
-     * cost `src/ipc/handlers/syncHandlers.ts` records P3 removing when it made this channel
+     * cost the shell's `syncHandlers.ts` (since deleted) recorded P3 removing when it made this channel
      * dialog-first.
      *
      * Ordering is asserted rather than values because that is the whole defect, and because the
