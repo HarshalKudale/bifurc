@@ -628,6 +628,53 @@ it from a source that looks authoritative. Verify with history rather than arith
 settled this one in a single command and showed that six was never true, not even before some file was
 merged away.
 
+**A fourth instance, 2026-09-21, and it is the one to read if you only read one** — because the wrong number
+was *derived* rather than merely quoted, and the derivation was arithmetic over the wrong base. The
+dialog-owner risk subset was measured at **7** in §5b-decies; §5b-undecies widened the criterion and added
+`tls:generate`, making it **8**; the first reduction group then deleted three of the eight, taking it to
+**5**. But §5b-duodecies never restated the subset, so §5b-terdecies computed from *§5b-decies' 7* — two
+sections back, past the widening *and* past the deletion — and wrote "shrinks **7 → 6**". Groups 3, 4 and 5
+then inherited "6" by quoting, and it stood for four sections.
+
+Two things distinguish this instance. **The error entered through an *omission*:** a section that does not
+mention a number cannot be caught by re-reading it, so the next section reaches past it to the last place the
+number appears. And **the count was not just stale, it was arithmetically wrong at the moment it was
+written** — 7 → 6 was never a valid step, since one deletion of one channel from a set of eight cannot leave
+six. A stale *reading* is undetectable from the page; a wrong *delta* is not, if you check that the delta and
+the change agree.
+
+The cheap defence, and it is the one that actually fired here: **re-derive from the artefact, not from the
+prose.** `grep -n "dialog\." <the four remaining files>` returned exactly three sites in three files, which
+settled the subset at **3** in one command. The ledger's four sections had all agreed with each other and
+were all wrong.
+
+## A table that stands in for a wrapper must not reproduce what the wrapper supplied
+
+Found 2026-09-21 on the P6 reduction's fifth group, and **caught by the suite, not by review** — the failing
+assertion was a `BAD_REQUEST` about a payload field, which looks nothing like a signature problem.
+
+The pattern is the reduction's test migration: a deleted channel's body is reproduced by a table entry, and
+the suite's `invoke` helper branches on the table before falling through to the real `handlers` map. The
+deleted body's signature included the IPC event — `ipcMain.handle("capture:shareJson", async (_e, entries,
+suggestedName) => …)` — so the table entry was written the same way. **But the branch it lives in *replaces*
+the `fn({}, ...args)` call that used to inject the event**, so `_e` swallowed `entries` and `entries` received
+the suggested filename:
+
+```
+BAD_REQUEST: Invalid payload for command "capture.shareJson": expected array, received string   ← path: ["entries"]
+```
+
+**A positional call is split across two places** — the wrapper injects the event and forwards the rest; the
+table builds the payload from the rest. A table that stands in for the wrapper's *whole* body must therefore
+take the caller's **positional** arguments and no event. The convention is visible in the two existing
+tables (`tests/integration/deletedChannelHarness.ts`, `foldersAndWorkspaces`' `DELETED_FOLDER_CHANNELS`):
+both are `(args) => payload`, neither declares an event.
+
+**The generalisable part is the failure mode, not the fix.** Getting this seam wrong is a silent *shift* of
+every argument by one, not a missing value — so no error names a signature, and the assertion that fires is
+about whatever the misaligned argument happened to land in. When reproducing a deleted handler body, ask
+which half of the call the *harness* supplies before copying the signature.
+
 ## A cast to the declared return type turns a contract into an assertion — and `transport` is a claim
 
 Found 2026-09-21 starting the P6 reduction on `tlsHandlers.ts`. Two mechanisms, one bug.
