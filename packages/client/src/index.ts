@@ -790,19 +790,46 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     grpcStopMockServer: () => call("grpcStopMockServer", {}) as ReturnType<BifurcApi["grpcStopMockServer"]>,
 
     // ── TLS ─────────────────────────────────────────────────────────────────
+    //
+    // Three shims rather than three transport calls, and the extra step is a path the engine will
+    // not report. `File_Ops_Protocol.md` §8 keeps the engine's directory layout out of the protocol,
+    // so `tls.generate` answers `{ok, fingerprint}` and `tls.importCert` / `tls.importKey` answer
+    // `{ok}`. The renderer needs a path regardless — `TlsSettingsSection.tsx` writes `tlsCaCertPath`
+    // / `tlsCaKeyPath` from this result and treats a missing field as "not configured", so without
+    // it the user generates a CA and the settings never learn it.
+    //
+    // The path is the **shell's** fact and the shell already reports it: `tlsCertStatus` is a
+    // client-local hook whose `certPath` / `keyPath` are `caCertPath()` / `caKeyPath()` in
+    // `certLifecycle.ts`. Asking it here keeps one implementation rather than a second copy — the
+    // copy this replaces was the inline composition inside the legacy `tls:*` channels.
+    //
+    // These were plain `call(...)` passthroughs until 2026-09-20, which is exactly how the field went
+    // missing when P6 step 3b-1 routed them. `surface.ts` now classifies all three as `shim`, so the
+    // 1:1 mapping that caused it cannot be re-asserted by a later reader.
     tlsImportCert: async () => {
       const up = await uploadLocalFile();
       if ("canceled" in up) return { ok: false };
-      if ("error" in up) return { ok: false };
-      return call("tlsImportCert", { blobId: up.blobId }) as ReturnType<BifurcApi["tlsImportCert"]>;
+      if ("error" in up) return { ok: false, error: up.error };
+      const r = (await call("tlsImportCert", { blobId: up.blobId })) as { ok: boolean; error?: string };
+      if (!r.ok) return r;
+      const { certPath } = await local.tlsCertStatus();
+      return { ...r, path: certPath ?? undefined };
     },
     tlsImportKey: async () => {
       const up = await uploadLocalFile();
       if ("canceled" in up) return { ok: false };
-      if ("error" in up) return { ok: false };
-      return call("tlsImportKey", { blobId: up.blobId }) as ReturnType<BifurcApi["tlsImportKey"]>;
+      if ("error" in up) return { ok: false, error: up.error };
+      const r = (await call("tlsImportKey", { blobId: up.blobId })) as { ok: boolean; error?: string };
+      if (!r.ok) return r;
+      const { keyPath } = await local.tlsCertStatus();
+      return { ...r, path: keyPath ?? undefined };
     },
-    tlsGenerate: () => call("tlsGenerate", {}) as ReturnType<BifurcApi["tlsGenerate"]>,
+    tlsGenerate: async () => {
+      const r = (await call("tlsGenerate", {})) as { ok: boolean; fingerprint?: string; error?: string };
+      if (!r.ok) return r;
+      const { certPath, keyPath } = await local.tlsCertStatus();
+      return { ...r, certPath: certPath ?? undefined, keyPath: keyPath ?? undefined };
+    },
     tlsExportCert: async () => {
       const r = await artifactToFile(await call("tlsExportCert", {}), "bifurc-ca.crt");
       return r.ok ? { ok: true, filePath: r.filePath } : { ok: false, canceled: r.canceled, error: r.error };

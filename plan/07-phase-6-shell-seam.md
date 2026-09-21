@@ -1222,6 +1222,88 @@ part.**
 read it. What remains is mechanical but not small: 68 deletions across 9 files, each with its suite to
 re-point, which is why it is the next slice rather than a footnote to this one.
 
+> **Corrected 2026-09-21 — see §5b-undecies.** The risk subset above is **one channel short**: its criterion
+> was *owns a `dialog.*`*, and `tls:generate` owns a **path** instead. The group that channel belongs to was
+> the first slice attempted, and it was not deletable until that was found — the shell half being deleted was
+> the last correct implementation of a field the client had already dropped.
+
+#### 5b-undecies. The risk subset was one channel short — `tls:generate`, and the reduction would have erased the fix (2026-09-21)
+
+**§5b-decies' risk criterion — "owns a shell-side `dialog.*` step" — is too narrow.** The step that makes a
+dead channel unsafe to delete is not the dialog: it is **any step the engine does not perform**. A dialog is
+the loud instance; the quiet one is *synthesising a field the engine deliberately refuses to report*, and the
+TLS family is where that lives.
+
+Found by starting the reduction on `tlsHandlers.ts` — the group §5b-decies' own table shows as 6 dead / 0 live
+— and asking §5b-ter's question of each of the six in turn: *what does this body do that the client twin does
+not?*
+
+| Channel | Shell-side step | Client twin | Verdict |
+| --- | --- | --- | --- |
+| `tls:certStatus` | none — delegates to `readCertStatus()` | `local` → `client:tlsCertStatus` → `readCertStatus()` | safe |
+| `tls:removeCert` | none — delegates to `uninstallEngineCa()` | `local` → `client:tlsRemoveCert` | safe |
+| `tls:exportCert` | `dialog.showSaveDialog` | `tlsExportCert` → `artifactToFile` | safe — and artifact-first is *sanctioned*, `local.ts:195` names it |
+| `tls:importCert` | dialog + `path: caCertPath()` | `tlsImportCert` | **the path is dropped** |
+| `tls:importKey` | dialog + `path: caKeyPath()` | `tlsImportKey` | **the path is dropped** |
+| `tls:generate` | `certPath: caCertPath()` + `keyPath: caKeyPath()` | `tlsGenerate` | **both paths are dropped** |
+
+**The three "dropped" rows are a live regression, not a latent one, and it was already in the tree.**
+`File_Ops_Protocol.md` §8 keeps the engine's directory layout out of the protocol — `tls.generate` answers
+`{ok, fingerprint}` and `tls.importCert` / `tls.importKey` answer `{ok}`
+(`packages/engine/src/fileOps/commands.ts:42,142`) — while the renderer records the paths from those results
+and reads a missing one as "not configured":
+
+```
+renderer/panels/settings/TlsSettingsSection.tsx:36,48   if (result.ok && result.path)                        // import
+renderer/panels/settings/TlsSettingsSection.tsx:67      if (result.ok && result.certPath && result.keyPath)  // generate
+```
+
+So the user clicks *Generate with mkcert*, the CA is written into the engine's data dir, `handleGlobalChange`
+is never reached, `config.tlsCaCertPath` stays null, and the panel goes on saying "not configured". From the
+user's side the button is a no-op. The import pair behaves identically.
+
+**It was introduced by P6 step 3b-1, and the evidence is the pre-routing preload.**
+`git show 8d0b81a^:src/preload.ts` has `tlsGenerate: () => ipcRenderer.invoke("tls:generate")` — the channel
+that computed the paths — and `8d0b81a` replaced the table with `{ ...client }`, whose `tlsGenerate` was
+`() => call("tlsGenerate", {})`. The channel kept working for anyone who called it directly, and nothing did.
+**The dead channel was the last correct implementation and the live one was the wrong one**, which is the
+general shape this whole section exists to warn about.
+
+**The classification was the cause, not a symptom.** All three keys were filed `transport` — "a 1:1 mapping
+onto a protocol command" — and that filing *is* the claim that nothing needs to happen beyond the call.
+`shim` is the kind that says otherwise. This is the second time in P6 that a wrong filing produced a wrong
+**behaviour** rather than merely a wrong note; `checkUpdate`'s `SPLIT` was the first, and it too was resolved
+by reclassifying the key rather than by moving code.
+
+**Fixed 2026-09-21 by making the filing true.** The three keys are `shim` in `surface.ts` now, and each body
+appends the path the **shell** computes — `caCertPath()` / `caKeyPath()`, read from the `tlsCertStatus` local
+hook, which is where `certLifecycle.ts:336` already reports them:
+
+```
+tlsGenerate   → call("tls.generate")  → + certPath, keyPath   from local.tlsCertStatus()
+tlsImportCert → upload → call(…)      → + path: certPath
+tlsImportKey  → upload → call(…)      → + path: keyPath
+```
+
+No new channel and no new `ClientLocal` member: `tlsCertStatus` already reports both paths, so the synthesis
+stays in the one place that owns it rather than gaining a second copy. `window.api` is unchanged in **shape**
+— same 144 keys, same arities — and the fix restores the result shape `renderer/types/window.ts:182-185`
+declares and the pre-P6 build delivered.
+
+**Two consequences worth stating.**
+
+1. **The risk criterion is now "owns a step the engine does not perform", and `tlsHandlers.ts` is deletable.**
+   All six channels have a twin carrying their behaviour — three of them only since this fix. The dialog-only
+   test would have passed the whole group and deleted the fix along with the channels: the `tlsRemoveCert`
+   failure mode one level up, where the deletion does not lose a behaviour so much as the **only record** of
+   one the live path had already lost.
+2. **No test in the suite could have caught this.** `surface.test.ts` asserts 144 keys and per-kind totals, so
+   a reclassification that keeps the total is invisible to it, and a dropped *field* was invisible to
+   everything else. Hence the four assertions added to `packages/client/tests/client.test.ts` under *"the TLS
+   path shims (step 3b-1 regression)"* — they assert the returned **shape**, which is the thing that broke.
+   `transport` 70 → 67 and `shim` 3 → 6, while the 73 routed entries are unchanged, so
+   `tests/ipc/handlers.test.ts`'s guard did not move.
+
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 
 **Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
