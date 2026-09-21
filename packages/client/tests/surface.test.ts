@@ -140,18 +140,24 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 70 transport + 48 entity + 7 subscribe + 3 shim + 16 local = 144
+    // 67 transport + 48 entity + 7 subscribe + 6 shim + 16 local = 144
     //
-    // Two moves on 2026-09-20, both `transport` → `local`, and both asserted because the sum is what
-    // proves nothing was dropped in the move — a key that vanished would keep this test green only if
-    // some other count happened to absorb it, which the total rules out.
+    // Three moves on 2026-09-20. The total is asserted because it is what proves nothing was dropped
+    // in a move — a key that vanished would keep this test green only if some other count happened to
+    // absorb it, which the sum rules out.
     //
     //   `transport` 73 → 72, `local` 13 → 14    `checkUpdate` — the surface's only `SPLIT`
     //   `transport` 72 → 70, `local` 14 → 16    `tlsRemoveCert` + `tlsCertStatus` — both two-sided
-    expect(byKind("transport")).toBe(70);
+    //   `transport` 70 → 67, `shim` 3 → 6       `tlsGenerate` / `tlsImportCert` / `tlsImportKey`
+    //
+    // The third is a correction of a *mis*classification rather than a new decision. Those three were
+    // filed as 1:1 mappings while the shell channels they replaced appended a path the engine
+    // deliberately does not report; the 1:1 filing is exactly what let the field be dropped when they
+    // were routed, and `shim` is the kind that cannot express that mistake (`plan/07` §5b-undecies).
+    expect(byKind("transport")).toBe(67);
     expect(byKind("entity")).toBe(48);
     expect(byKind("subscribe")).toBe(7);
-    expect(byKind("shim")).toBe(3);
+    expect(byKind("shim")).toBe(6);
     expect(byKind("local")).toBe(16);
   });
 });
