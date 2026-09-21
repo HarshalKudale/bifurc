@@ -14,7 +14,7 @@
  * It drives the REAL registered IPC handlers against REAL local HTTP servers and
  * asserts the bytes the user would see in the response pane. The only things mocked
  * are Electron itself (there is no Electron in a Vitest process) and `@/main`
- * (`coreHandlers` imports `updateTrayMenu` from it).
+ * (the engine half of the shell's `coreHandlers` used to import `updateTrayMenu` from it).
  *
  * **The nine protocol-client cases now drive the registry, not a channel.** P6 stage 3b
  * deleted `graphql:introspect` / `graphql:execute` / `soap:execute` / `soap:fetchWsdl` and
@@ -56,12 +56,63 @@ vi.mock("electron", () => ({
   },
 }));
 
-// `coreHandlers` imports `updateTrayMenu` from `@/main`; importing the real main
-// process module would try to build windows and a tray.
+// The engine half of the shell's `coreHandlers` used to import `updateTrayMenu` from `@/main` —
+// that call became a `settings.changed` bus emission in P2 and the file is now `coreKinds.ts`, so
+// nothing under test imports it any more. The mock stays because a transitively imported real `main`
+// would try to build windows and a tray.
 vi.mock("@/main", () => ({ updateTrayMenu: vi.fn() }));
 
-/** Invoke a registered handler the way ipcMain would (first arg is the event). */
+/**
+ * Invoke a registered handler the way ipcMain would (first arg is the event), with the P6 reduction's
+ * deleted channels translated back to the commands that replaced them.
+ *
+ * Two groups reached this suite, and both are handled here rather than in the call sites because the
+ * call sites are the *evidence* — they still read as `invoke("request:replay", …)`, which is precisely
+ * the shell signature the renderer used, and rewriting twelve of them into `commandRegistry.invoke`
+ * would leave nothing in the file that records what was deleted.
+ *
+ *   - **`src/ipc/handlers/coreHandlers.ts`** — the reduction's sixth group (`plan/07`
+ *     §5b-septendecies, 2026-09-21) deleted `config:get` and `request:replay` and the rest of its
+ *     seventeen. This suite drives `request:replay` (eleven call sites) and `config:get` transitively
+ *     through the REST-send setup.
+ *   - **the step-3b `*Handlers.ts` → `*Kinds.ts` renames** deleted `healthbar:checkUrl` /
+ *     `healthbar:getServices` / `healthbar:saveServices` and `entity:load` from this suite's path too.
+ *
+ * The translation keeps the **positional** shape the channels used (`healthbar:saveServices` took
+ * `(workspaceId, services)`, `entity:load` took `(workspaceId, kind, id)`) and maps into each command's
+ * named payload. The one entry that is not a plain rename is `entity:load`: the channel's `kind` was a
+ * **protocol** name and the command translates it (`toEngineKind`), so the field is passed straight
+ * through and the translation happens inside the engine — see `coreCommands.ts:98`.
+ */
+const DELETED_CHANNELS: Record<string, (args: any[]) => { command: string; payload: any }> = {
+  "config:get": () => ({ command: "config.get", payload: {} }),
+  // `request:replay` is the one entry here whose channel took a **positional tuple of four** rather than
+  // a single object — `(method, url, headers, body)` — and the command takes one named payload. A first
+  // draft wrote `([params]) => ({ command: "request.replay", payload: params })`, which passed the method
+  // string through as the whole payload and failed as `Invalid payload for command "request.replay":
+  // expected object, received string`. The error arrives as a thrown `EngineError` from
+  // `registry.invoke`'s `safeParse`, i.e. it surfaces in the middle of the *test*, not at the call.
+  "request:replay": ([method, url, headers, body]) =>
+    ({ command: "request.replay", payload: { method, url, headers, body } }),
+  // `config:save` **does** need an entry, and the reason is worth keeping: §5c moved the channel's body
+  // into `configCommands.ts`, so the channel name has been dead since P2 — but the call sites' *shape*
+  // is still the channel's, i.e. one plain object (`invoke("config:save", config)`), and the command
+  // takes `{ config }` rather than the config itself (`ConfigSaveParams`). So this is the case where a
+  // name that predates the reduction still needs a translation line added by it.
+  "config:save": ([config]) => ({ command: "config.save", payload: { config } }),
+  "entity:load": ([workspaceId, kind, id]) => ({ command: "entity.load", payload: { workspaceId, kind, id } }),
+  "healthbar:checkUrl": ([url]) => ({ command: "healthbar.checkUrl", payload: { url } }),
+  "healthbar:getServices": ([workspaceId]) => ({ command: "healthbar.getServices", payload: { workspaceId } }),
+  "healthbar:saveServices": ([workspaceId, services]) =>
+    ({ command: "healthbar.saveServices", payload: { workspaceId, services } }),
+};
+
 function invoke<T = any>(channel: string, ...args: any[]): T {
+  const deleted = DELETED_CHANNELS[channel];
+  if (deleted) {
+    const { command, payload } = deleted(args);
+    return commandRegistry.invoke(command as never, payload, { bus }) as T;
+  }
   const fn = handlers.get(channel);
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
@@ -264,13 +315,14 @@ beforeAll(async () => {
     res.end('<?xml version="1.0"?><definitions name="TestService"/>');
   });
 
-  const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
+  const { registerCoreKinds } = await import("@/ipc/handlers/coreKinds");
   const { registerGraphqlKinds } = await import("@/ipc/handlers/graphqlKinds");
   const { registerSoapKinds } = await import("@/ipc/handlers/soapKinds");
   const { registerGrpcKinds } = await import("@/ipc/handlers/grpcKinds");
-  // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine.
-  // `registerCoreHandlers()` wires the *channels*; a suite that registers handler groups by hand has to
-  // wire the engine half too, or the channel exists with nothing behind it.
+  // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine — and the
+  // reduction's sixth group then deleted that file's channels and renamed it to `coreKinds.ts`
+  // (`plan/07` §5b-septendecies). `registerCoreKinds()` is now the shell's `environments` kind and
+  // nothing else; the *commands* still need wiring, which is the line below.
   const { commandRegistry } = await import("@bifurc/engine/commands/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   // P6 §5c slice 4: the nine protocol-client commands left the three handler files' module scope as
@@ -284,9 +336,29 @@ beforeAll(async () => {
   // All three handler groups registered below reach that factory, so without this call their channels
   // exist with nothing behind them.
   const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  // `request.replay` and the three `healthbar.*` commands are registered by `miscCommands`, and until the
+  // reduction's sixth group this suite never had to wire it: `coreHandlers.ts`'s `request:replay` channel
+  // *was* the registration, so deleting that channel removed this suite's route to a command it drives
+  // eleven times. Without this line the failure is `[INTERNAL] No handler registered for command
+  // "request.replay"` — a routed-surface failure, not a transport one, and it surfaces as an envelope
+  // error exactly like the `soap.execute` case below. The `healthbar:*` channels belong to the step-3b
+  // `*Kinds.ts` renames and were already gone; they are in the fixture table for the same reason.
+  //
+  // The general rule this is the second instance of today (the spike needed `registerServerCommands()`
+  // for the same reason): **a command whose only registration came from a handler file the reduction
+  // deleted must be wired explicitly by every suite that drives it.** `src/ipc/handlers.ts` is the
+  // authority for the full set — compare against its `register*Commands()` calls, not against the
+  // previous version of this list.
+  const { registerMiscCommands } = await import("@bifurc/engine/miscCommands");
+  // `config.save` is the other command this suite drives by the name of a channel that §5c already
+  // deleted — `invoke("config:save", …)` resolves through the `handlers.get()` fallback to a plain
+  // command, so it needs its registering module wired rather than a table entry.
+  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
 
-  registerCoreHandlers();
+  registerCoreKinds();
   registerCoreCommands(commandRegistry);
+  registerMiscCommands(commandRegistry);
+  registerConfigCommands(commandRegistry);
   registerGraphqlCommands(commandRegistry);
   registerSoapCommands(commandRegistry);
   registerGrpcCommands(commandRegistry);

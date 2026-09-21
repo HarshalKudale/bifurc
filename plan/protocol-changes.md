@@ -472,6 +472,81 @@ preload function with no IPC).
 
 ---
 
+### 2026-09-21 — ten workspace-scoped commands gain an optional `workspaceId` (P14 WI 1 / D13)
+
+**Phase:** P14 (work item 1, the protocol-shape half)
+**Type:** **additive** (minor bump; no `PROTOCOL_VERSION` major)
+**Change:** `workspaceId?: string` is added to the params of ten commands, all of them addressed to a server
+that a host may be running once per workspace:
+
+| File | Commands |
+|---|---|
+| `commands/server.ts` | `server.status`, `server.start`, `server.stop`, `server.restart`, `proxy.status` |
+| `commands/webhook.ts` | `webhook.registerActive`, `webhook.unregisterActive`, `webhookServer.start`, `webhookServer.stop`, `webhookServer.status` |
+
+The field is **optional**, and that is the entire compatibility story: omitted means *the active workspace*,
+which is what the single-workspace desktop has always meant by these commands. A host member's client always
+sends one, because for it there is no meaningful default — D13 puts N workspaces behind **one** RPC endpoint,
+so an unaddressed `server.status` would be ambiguous between them. The two `*StatusResult` shapes add an
+optional `workspaceId` echo so a multiplexed client can match a response to its request rather than assuming
+FIFO.
+
+**`services.discover` is deliberately NOT scoped** — it lists the ports this *host* is listening on, which is
+a property of the host and not of any workspace. That omission is asserted in `index.test.ts` so it is a
+decision rather than something a later reader has to guess at.
+
+**Why this is a schema change and not a widening, in the plan's terms.** All ten were
+`z.object({}).strict()`. `.strict()` turns an *unknown* key into a rejection, so adding a parameter does not
+merely relax a check — it changes which keys are known. This is the case `plan/14` §12.2 flagged as "WI 1's
+change invalidates that command's fixtures", and the instruction was to **re-derive them, not trust them**.
+
+**The fixtures were re-derived, and the outcome is worth recording because it is the opposite of the
+expectation.** The five `server.*` / `proxy.status` rows and the two `webhookServer` rows used
+`invalid: { extra: true }` — a generic unknown-key near-miss. Those still reject, because `extra` is still
+unknown; but the generic form no longer tests anything specific to *this* change. They were replaced with a
+near-miss on the new field (`{ workspaceId: 42 }`), which is a strictly better assertion: a missing optional
+field is valid by construction, so "reject a missing one" is not a test, whereas "reject a wrong-typed one"
+exercises the type check the parameter just gained. **Nothing needed re-deriving in the sense the plan
+anticipated** — no fixture became accidentally-valid — and that is itself the finding: the hazard was a
+fixture whose invalid payload *is* the newly allowed key, and none of the ten was written that way.
+
+`packages/protocol/src/commands/index.test.ts` also gained a relationship test the per-command pair cannot
+express: for each of the ten, `workspaceId` present **is accepted**, absent **is still accepted**, and a
+non-string **is rejected**. Both directions of the first two are load-bearing — asserting only "present is
+accepted" would pass if someone made the field *required* and broke every desktop caller, which is the single
+most likely way this change goes wrong.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **185 → 216** cases (**+31**). The figure was
+taken by enumerating the run's own test names rather than by counting edits, because the first attempt at this
+number was wrong by five and the error was invisible from the diff:
+
+| Kind | Count |
+| --- | --- |
+| Generated per-command pairs (92 commands × 2) | 184 |
+| The coverage invariant (`it` over `COMMAND_FIXTURES`) | 1 |
+| `services.discover` is deliberately NOT scoped | 1 |
+| Scoped block — three `it.each(SCOPED)` of 10 | 30 |
+| **Total** | **216** |
+
+The prior count is therefore **185**, not the 190 an earlier revision of this entry carried. **What went wrong:
+the earlier figure subtracted only the 30 `it.each` cases from 216 and then attributed the residual 26 to the
+change, so the baseline absorbed the coverage invariant and the non-scoping assertion — two cases that existed
+before the change and still exist after it.** The +5 that `plan/14` recorded as "unaccounted" was never
+unaccounted; it was a baseline miscalculation, and the reconciliation was being chased because the arithmetic
+was done from memory instead of from the enumerable run. **Enumerate the run (`--reporter=json` +
+`assertionResults[].title`), classify by name, and only then subtract** — a suite whose cases are *generated*
+has no reliable hand-count, and this is the second time in P14 that a count written into prose drifted from the
+tree.
+
+No command was added or removed, so `COMMANDS` is still 92 and the per-command generator still emits 2 cases
+each. The extensions' four frozen commands
+(`EXTENSION_FROZEN_COMMANDS` — `mock:add`, `request:add`, `folder:add`, `config:get`) are **untouched**:
+none of them is in the ten.
+
+**Approved by:** `plan/14` D13, taken before P14 began. This entry records the landing, not a new decision.
+
+---
+
 
 ## Guidance
 

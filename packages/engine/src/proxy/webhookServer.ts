@@ -7,6 +7,44 @@
  * - Inactive webhooks → 404 JSON error.
  * - GET /bifurc/webhooks/<urlSuffix> → 200 JSON "alive" for easy testing.
  * - Server lifecycle: start/stop via IPC. Status persists across panel navigations.
+ *
+ * ## P14 work item 2 — the factory, and why the facade is still here
+ *
+ * `createWebhookServer()` returns an instance owning every piece of state this module used to hold at
+ * module scope (the `http.Server`, `currentPort`, `lastError`, and the two active-webhook maps), so a
+ * host can run one receiver per workspace. §6 of `plan/14` chose this file — not `proxy/server.ts` — as
+ * the place to learn what de-singletonizing costs: ~180 lines, no TLS, no CONNECT tunnelling, and only
+ * two maps and a port as global state.
+ *
+ * **The module-level functions below are a facade over one lazily-created default instance, and they
+ * stay until WI 7 flips the desktop onto the runtime.** §9's rollback says WI 1–2 "keep the module-level
+ * facade alongside the factory until WI 7 flips the shell. Reverting is deleting the factory and
+ * restoring the facade." So this is deliberately two entry points with one implementation: every
+ * existing caller (`webhookCommands.ts`, `tests/proxy/webhookServer.test.ts`) keeps working unchanged,
+ * and nothing about `window.api` moves.
+ *
+ * **Two things a naive factory gets wrong, both guarded here:**
+ *
+ * 1. **`MAX_ACTIVE_WEBHOOKS` becomes per instance but stays a module constant.** `plan/14` WI 2 says the
+ *    cap becomes "per workspace — a product decision". Per-workspace scope means each instance enforces
+ *    its own count against its own map; it does **not** mean the number differs per instance, so the
+ *    value stays the exported `5` rather than becoming a constructor argument. (`renderer/…/
+ *    useWebhooksPanelState.ts:11` holds a duplicate `5` for the UI hint — WI 2 must still decide whether
+ *    that is pushed to the renderer, which cannot happen before P7.)
+ * 2. **`webhookEmitter` is NOT per instance.** It is the process-wide EventEmitter the shell's forward and
+ *    the suite subscribe to; a fresh emitter per instance would silently detach both. The instance emits
+ *    to the shared emitter *and* the shared bus, exactly as before.
+ *
+ * The per-workspace *routing* key (`(workspaceId, urlSuffix)` in §2.3) is **WI 1's** protocol change, not
+ * this one: this step is the mechanical de-singletonization, and carrying the parameter on
+ * `webhook.registerActive` would be a behaviour change with no test to drive it. Noted so the two steps are
+ * not conflated.
+ *
+ * **The maps are already per-instance, which is the part that matters** (re-checked 2026-09-21): both
+ * `activeWebhookSuffixes` and `activeSuffixToId` are declared *inside* `createWebhookServer()`, so two
+ * instances cannot see each other's suffixes and the acceptance criterion ("a suffix registered in workspace
+ * A is `404` in workspace B") already holds by construction. What WI 1 adds is the ability for one instance
+ * to serve *several* workspaces at once; nothing here needs to change for the N-instances case.
  */
 
 import * as http from "http";
@@ -24,155 +62,230 @@ export interface WebhookPayload {
   body: string;
 }
 
-// ── Module-level state ────────────────────────────────────────────────────────
+/** The instance a factory call returns. Mirrors the module's old surface, one per runtime. */
+export interface WebhookServerInstance {
+  readonly workspaceId: string | null;
+  registerActive(webhookId: string, urlSuffix: string): void;
+  unregisterActive(webhookId: string): void;
+  activeCount(): number;
+  start(port: number): void;
+  stop(): void;
+  isRunning(): boolean;
+  getPort(): number;
+  getError(): string | null;
+}
 
-let server: http.Server | null = null;
-let currentPort = 9101;
-let lastError: string | null = null;
-
-/** Set of urlSuffixes for webhooks currently open in a tab (active). */
-const activeWebhookSuffixes = new Set<string>();
-/** Map of urlSuffix → webhookId for active webhooks. */
-const activeSuffixToId = new Map<string, string>();
+// ── Shared, process-wide ──────────────────────────────────────────────────────
 
 export const webhookEmitter = new EventEmitter();
 
-// ── Active webhook registry (called from renderer IPC) ────────────────────────
-
-export function registerActiveWebhook(webhookId: string, urlSuffix: string): void {
-  const normalized = normalizeSuffix(urlSuffix);
-  activeWebhookSuffixes.add(normalized);
-  activeSuffixToId.set(normalized, webhookId);
-}
-
-export function unregisterActiveWebhook(webhookId: string): void {
-  for (const [suffix, id] of activeSuffixToId.entries()) {
-    if (id === webhookId) {
-      activeWebhookSuffixes.delete(suffix);
-      activeSuffixToId.delete(suffix);
-      break;
-    }
-  }
-}
-
-export function getActiveWebhookCount(): number {
-  return activeWebhookSuffixes.size;
-}
-
-/** Maximum number of simultaneously active webhook listeners. */
+/** Maximum number of simultaneously active webhook listeners **per workspace**. */
 export const MAX_ACTIVE_WEBHOOKS = 5;
+
+/** The fallback port for a receiver that has not been started, matching `webhookCommands.ts`'s own. */
+const DEFAULT_WEBHOOK_PORT = 9101;
 
 function normalizeSuffix(suffix: string): string {
   // Strip leading slashes; lowercase; remove trailing slash
   return suffix.replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
 }
 
+// ── The factory ───────────────────────────────────────────────────────────────
+
+/**
+ * Create one webhook receiver. Every mutable the module used to hold at module scope lives here instead,
+ * so two callers get two independent receivers, two ports and two error states.
+ *
+ * `workspaceId` is carried for §2.3's routing key and for diagnostics; it is not yet used to key the
+ * active maps (see the header). Passing `null` is the app-level/pre-runtime case.
+ */
+export function createWebhookServer(opts: { workspaceId?: string | null } = {}): WebhookServerInstance {
+  const workspaceId = opts.workspaceId ?? null;
+
+  let server: http.Server | null = null;
+  let currentPort = DEFAULT_WEBHOOK_PORT;
+  let lastError: string | null = null;
+
+  /** Set of urlSuffixes for webhooks currently open in a tab (active). */
+  const activeWebhookSuffixes = new Set<string>();
+  /** Map of urlSuffix → webhookId for active webhooks. */
+  const activeSuffixToId = new Map<string, string>();
+
+  function stop(): void {
+    if (server) {
+      server.close();
+      server = null;
+    }
+  }
+
+  function start(port: number): void {
+    if (server) stop();
+    currentPort = port;
+    lastError = null;
+
+    server = http.createServer((req, res) => {
+      const url = req.url ?? "/";
+      const BASE = "/bifurc/webhooks/";
+
+      if (!url.startsWith(BASE)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not found" }));
+        return;
+      }
+
+      const rawSuffix = url.slice(BASE.length);
+      const suffix = normalizeSuffix(rawSuffix);
+
+      // GET: alive check (regardless of active status)
+      if (req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", webhook: suffix || "/" }));
+        return;
+      }
+
+      if (req.method !== "POST") {
+        res.writeHead(405, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Method not allowed. Use POST." }));
+        return;
+      }
+
+      // Only accept if this webhook is active (open in a tab)
+      if (!activeWebhookSuffixes.has(suffix)) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: "Webhook not active",
+          detail: "Open this webhook in a tab to activate it.",
+        }));
+        return;
+      }
+
+      const webhookId = activeSuffixToId.get(suffix) ?? "";
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === "string") headers[k] = v;
+        else if (Array.isArray(v)) headers[k] = v.join(", ");
+      }
+
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf-8");
+        const payload: WebhookPayload = {
+          webhookId,
+          urlSuffix: suffix,
+          ts: Date.now(),
+          method: req.method ?? "POST",
+          headers,
+          body,
+        };
+
+        // Emit to main process listeners (IPC forward)
+        webhookEmitter.emit("payload", payload);
+
+        // Emit on the bus — that is how a payload reaches a client. The shell carries it over
+        // `EVENT_CHANNEL`; the `webhookEmitter.emit` above is the in-process shortcut that predates it.
+        bus.emitTyped("webhook.payload", payload);
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, received: true }));
+      });
+
+      req.on("error", () => {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Bad request" }));
+      });
+    });
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      lastError = err.message;
+      webhookEmitter.emit("error", lastError);
+      server = null;
+    });
+
+    server.listen(port, "127.0.0.1", () => {
+      lastError = null;
+    });
+  }
+
+  return {
+    workspaceId,
+    registerActive(webhookId, urlSuffix) {
+      const normalized = normalizeSuffix(urlSuffix);
+      activeWebhookSuffixes.add(normalized);
+      activeSuffixToId.set(normalized, webhookId);
+    },
+    unregisterActive(webhookId) {
+      for (const [suffix, id] of activeSuffixToId.entries()) {
+        if (id === webhookId) {
+          activeWebhookSuffixes.delete(suffix);
+          activeSuffixToId.delete(suffix);
+          break;
+        }
+      }
+    },
+    activeCount() {
+      return activeWebhookSuffixes.size;
+    },
+    start,
+    stop,
+    isRunning() {
+      return server !== null && server.listening;
+    },
+    getPort() {
+      return currentPort;
+    },
+    getError() {
+      return lastError;
+    },
+  };
+}
+
+// ── The module-level facade (removed in WI 7) ──────────────────────────────────
+//
+// One lazily-created default instance backing the pre-P14 module functions. Lazy rather than eager so
+// that importing this module has no side effect on the shared `webhookEmitter` or the bus — the same
+// property the old module-scope `let server = null` had.
+
+let defaultInstance: WebhookServerInstance | null = null;
+
+function defaultServer(): WebhookServerInstance {
+  if (!defaultInstance) defaultInstance = createWebhookServer({ workspaceId: null });
+  return defaultInstance;
+}
+
+// ── Active webhook registry (called from renderer IPC) ────────────────────────
+
+export function registerActiveWebhook(webhookId: string, urlSuffix: string): void {
+  defaultServer().registerActive(webhookId, urlSuffix);
+}
+
+export function unregisterActiveWebhook(webhookId: string): void {
+  defaultServer().unregisterActive(webhookId);
+}
+
+export function getActiveWebhookCount(): number {
+  return defaultServer().activeCount();
+}
+
 // ── Server lifecycle ──────────────────────────────────────────────────────────
 
 export function startWebhookServer(port: number): void {
-  if (server) stopWebhookServer();
-  currentPort = port;
-  lastError = null;
-
-  server = http.createServer((req, res) => {
-    const url = req.url ?? "/";
-    const BASE = "/bifurc/webhooks/";
-
-    if (!url.startsWith(BASE)) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
-      return;
-    }
-
-    const rawSuffix = url.slice(BASE.length);
-    const suffix = normalizeSuffix(rawSuffix);
-
-    // GET: alive check (regardless of active status)
-    if (req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", webhook: suffix || "/" }));
-      return;
-    }
-
-    if (req.method !== "POST") {
-      res.writeHead(405, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Method not allowed. Use POST." }));
-      return;
-    }
-
-    // Only accept if this webhook is active (open in a tab)
-    if (!activeWebhookSuffixes.has(suffix)) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        error: "Webhook not active",
-        detail: "Open this webhook in a tab to activate it.",
-      }));
-      return;
-    }
-
-    const webhookId = activeSuffixToId.get(suffix) ?? "";
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (typeof v === "string") headers[k] = v;
-      else if (Array.isArray(v)) headers[k] = v.join(", ");
-    }
-
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
-      const body = Buffer.concat(chunks).toString("utf-8");
-      const payload: WebhookPayload = {
-        webhookId,
-        urlSuffix: suffix,
-        ts: Date.now(),
-        method: req.method ?? "POST",
-        headers,
-        body,
-      };
-
-      // Emit to main process listeners (IPC forward)
-      webhookEmitter.emit("payload", payload);
-
-      // Emit on the bus — that is how a payload reaches a client. The shell carries it over
-      // `EVENT_CHANNEL`; the `webhookEmitter.emit` above is the in-process shortcut that predates it.
-      bus.emitTyped("webhook.payload", payload);
-
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, received: true }));
-    });
-
-    req.on("error", () => {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Bad request" }));
-    });
-  });
-
-  server.on("error", (err: NodeJS.ErrnoException) => {
-    lastError = err.message;
-    webhookEmitter.emit("error", lastError);
-    server = null;
-  });
-
-  server.listen(port, "127.0.0.1", () => {
-    lastError = null;
-  });
+  defaultServer().start(port);
 }
 
 export function stopWebhookServer(): void {
-  if (server) {
-    server.close();
-    server = null;
-  }
+  defaultInstance?.stop();
 }
 
 export function isWebhookServerRunning(): boolean {
-  return server !== null && server.listening;
+  return defaultInstance !== null && defaultInstance.isRunning();
 }
 
 export function getWebhookPort(): number {
-  return currentPort;
+  return defaultInstance?.getPort() ?? DEFAULT_WEBHOOK_PORT;
 }
 
 export function getWebhookServerError(): string | null {
-  return lastError;
+  return defaultInstance?.getError() ?? null;
 }
+
