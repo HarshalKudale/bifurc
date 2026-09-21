@@ -718,8 +718,21 @@ rather than a type.
       **7 are a risk subset** owning a shell-side `dialog.*` step whose client twin must be confirmed first —
       `runner:exportReport`, `audit:export`, `capture:shareJson`, `tls:exportCert`, `tls:importKey`,
       `importExport:export`, `importExport:preflight` — which is the `tlsRemoveCert` lesson, and is exactly
-      §5b-bis's "9 superseded shell halves" minus the 2 `tls` channels that are now `local`. **Still open:**
-      the reduction itself, in those three steps. Collateral repairs
+      §5b-bis's "9 superseded shell halves" minus the 2 `tls` channels that are now `local`.
+      **Progress 2026-09-21 — the first group is done, and the risk criterion is one channel wider**
+      (`plan/07` §5b-undecies, §5b-duodecies). The criterion above tested for a shell-side `dialog.*`, and
+      `tls:generate` owns a **path** instead: the shell half appended `caCertPath()` / `caKeyPath()` to the
+      engine's `{ok, fingerprint}`, which `File_Ops_Protocol.md` §8 forbids the engine from reporting. The
+      criterion is now **"owns a step the engine does not perform"**. It mattered immediately —
+      `tlsGenerate` / `tlsImportCert` / `tlsImportKey` were routed as 1:1 `transport` calls in step 3b-1 and
+      had been **silently dropping those paths ever since**, so the Settings panel's Generate and Import
+      buttons were no-ops while the CA sat on disk. Fixed by reclassifying the three keys `shim`
+      (`transport` 70 → 67, `shim` 3 → 6) and reading the paths from the `tlsCertStatus` local hook, with
+      four new assertions on the returned *shape* — nothing in the suite had asserted one. **Then** the group
+      was deleted: `tlsHandlers.ts` is gone — **6 of the 68 passthroughs** — and the suite is **unchanged at
+      2,500 / 2,459 / 40 / 1**, a *re-point* signature rather than a generated-list one, because
+      `expectedChannels` never listed these six. **Still open:** 62 channels across the remaining 8 files,
+      one handler group per commit. Collateral repairs
       across the two slices: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored —
       it is P0's runtime evidence and the baseline's documented 1 failure, and its retired-channel fixture
       now covers 4 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases

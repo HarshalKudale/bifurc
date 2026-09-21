@@ -164,8 +164,9 @@ function exportCert(registry: CommandRegistry): TlsExportCertResult {
  *
  * This is the item-6 acceptance criterion ("no `filePath` in any protocol command or result type")
  * expressed as a runtime assertion rather than a grep. A `path` field added back for a
- * renderer convenience — the tempting regression, since `tls:importCert` still has to return one
- * (see `src/ipc/handlers/tlsHandlers.ts`) — fails here.
+ * renderer convenience — the tempting regression, since `tlsImportCert` still has to return one, as
+ * the client's shim does (`packages/client/src/index.ts`) — fails here. The shim's `path` is the
+ * **client's** fact and never crosses the wire, which is the distinction this assertion protects.
  */
 function expectArtifactKeys(artifact: object, branch: "inline" | "blobId"): void {
     const shared = ["ok", "mimeType", "sha256", "size", "suggestedName"];
