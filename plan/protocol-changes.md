@@ -547,6 +547,94 @@ none of them is in the ten.
 
 ---
 
+### 2026-09-21 — the four `blob.*` commands gain an optional `workspaceId` (P14 WI 1 / D17)
+
+**Phase:** P14 (work item 1, the blob half)
+**Type:** **additive** (minor bump; no `PROTOCOL_VERSION` major)
+**Change:** `workspaceId?: string` is added to the params of `blob.put`, `blob.stat`, `blob.read` and
+`blob.release`. Engine-side, the store resolves `<dataDir>/blobs/<workspaceId>/…` and the TTL sweep walks
+only that namespace; omitted means the host-wide root.
+
+**Why this is a change at all.** `plan/14` §12.1 audited the pre-pivot assumption that blob staging was
+*already* per-workspace and measured it **false** — `blobRoot()` was `<dataDir>/blobs` (`blob/store.ts`) and
+the four params carried no `workspaceId` (this file), pinned by `tests/blob/store.test.ts:62` for the
+Docker-volume requirement. D17 decided the namespace on 2026-09-20. Without it a `blobId` from workspace A
+resolves for workspace B, and B's sweep can collect A's in-flight transfer — the failure mode is a
+cross-workspace read and a vanishing upload, neither of which is visible to a single-workspace test.
+
+**A namespace, not a move.** The root stays under `dataDir()`, so `plan/04`'s Docker requirement holds
+unchanged: `path.relative(dataDir(), blobRoot(wsId))` is `blobs/<wsId>` and never starts with `..`. Asserted
+both ways in `tests/blob/store.test.ts`.
+
+**The fixtures were re-derived, and here the hazard the plan anticipated IS live — unlike the ten.** All four
+are `.strict()`, and the module header in `blob.ts` says so. The four `valid` rows now supply `workspaceId`,
+so the new field is exercised on the happy path. The `invalid` rows were checked individually rather than
+assumed: `blob.put`'s is a missing `filename`, `blob.read`'s a negative `offset`, and `blob.stat` /
+`blob.release` use `{}` — which stays invalid because `blobId` is required, i.e. **for a reason unrelated to
+scope**. That last pair is worth naming: an `{}`-shaped `invalid` row keeps passing after this change while
+testing nothing about the new field, which is exactly the "silently stops testing rejection" pattern the D13
+entry described. Each row was verified to fail on a required-or-typed field and never on scope.
+
+**`.merge()` ordering is a live trap and was measured, not assumed.** `WorkspaceScope` now lives in
+`commands/scope.ts` because three command files need it. Zod is **v4 (4.6.5)**, and the two orderings
+disagree:
+
+```
+Base.strict().merge(Scope).safeParse({ bogus: 1 }).success → true    ← unknown keys SILENTLY allowed
+Base.merge(Scope).strict().safeParse({ bogus: 1 }).success → false   ← correct
+```
+
+So `merge` returns a fresh object schema and does not carry strictness forward. Every consumer therefore
+writes `Base.merge(WorkspaceScope).strict()`. Getting this wrong would have quietly widened four `.strict()`
+commands to permissive ones while every "the valid fixture parses" test still passed.
+
+**Not scoped here, deliberately:** the five egress commands that stage artifacts above
+`BLOB_INLINE_THRESHOLD_BYTES` (`export.create`, `tls.exportCert`, `runner.exportReport`, `capture.shareJson`,
+`audit.export`) do **not** gain `workspaceId`. D17 names the four `blob.*` params, and extending the field to
+the egress set is a separate protocol change with its own fixtures and its own entry — recorded in
+`blob/publish.ts`'s header so the omission is visible from a call site that reads as complete.
+
+**The landing found a real bug, and it is the one this entry should be read for.** The first integration run
+went from **0 → 30 failures**, all `blob-not-found` on round trips that had passed minutes earlier. Cause:
+`export.create` had been handed `TEST_WS` while the test client's own `blob.put` / `blob.read` /
+`blob.release` had not, so **the engine's export was staged into a namespace its own requester could not
+read** — a latent defect a host-wide root had been concealing, since with one namespace every id resolved
+regardless of who asked. Fixed in four rounds (30 → 22 → 4 → 3 → 1 → 0) by scoping the *client*, then three
+engine call sites the first substitution pass missed, then `publishArtifact`'s missing fourth argument. **The
+fix is always to scope the caller, never to relax the store:** making `blobRoot()` fall back to the shared
+root on a miss would have cleared all 30 failures and destroyed the property D17 exists to create.
+
+**The plan's hazard note named the wrong place.** `plan/14` WI 1 predicted the `blob.*` `invalid` fixtures
+would need re-deriving. They did not — the fixtures were fine. The exposure was entirely in the *call sites*,
+which the note did not mention. A hazard note records where its author was looking, not where the bug is.
+
+**The follow-up audit, and what it left standing.** A grep for store call sites that pass **no** id — the
+question a find-replace cannot answer — returned exactly two files, both now explicable rather than open:
+
+- `packages/engine/src/fileOps/commands.ts:139-140` (`tlsImport`'s `statBlob(blobId)` /
+  `blobContentPath(blobId)`) — **deliberately unscoped, and this is a decision rather than an omission.**
+  The CA is one per *machine*, not per workspace: `caCertPath()` / `caKeyPath()` resolve under
+  `appDataDir()` (`proxy/certManager.ts`), which on Windows is `%LOCALAPPDATA%/Bifurc` and unreachable from
+  the workspace data root by that module's own recorded decision; `tls.exportCert` reads the same paths; and
+  `proxy/server.ts`'s `ownsCA` flag exists because N workspaces share that one mkcert root. A CA import is a
+  transfer between a client and **the machine's** CA — the workspace is not a participant — so a
+  `workspaceId` here would let a client stage under A and import into the shared CA, i.e. the same
+  half-threading the integration failures had just exposed, arriving this time on purpose. Recorded in the
+  function's own docblock.
+- The five egress commands above — WI 8's work, as stated.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **216 → 228** cases (**+12**), decomposed by
+enumerating the run rather than by counting edits: 184 generated pairs (92 commands x 2, unchanged — no
+command was added), 1 coverage invariant, 1 `services.discover` non-scoping assertion, and the scoped
+`it.each` block at **42** (three of fourteen scoped commands, up from ten). `tests/blob/store.test.ts`
+**58 → 63** (five D17 cases, all asserting on **identity** per the acceptance criterion) and the blob suites
+**94/94** overall; `tests/integration/importExportBlob.integration.test.ts` back to **45/45**.
+
+**Approved by:** `plan/14` D17, taken 2026-09-20 after §12.1 measured the "already per-workspace" claim
+false. This entry records the landing, not a new decision.
+
+---
+
 
 ## Guidance
 

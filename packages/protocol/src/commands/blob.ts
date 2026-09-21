@@ -19,8 +19,25 @@
  * `blob.read` / `blob.release` specified in `@bifurc/protocol`" as a P3 precondition, but P1 only
  * landed the *envelope* half (`Capability.BLOB` in `envelope.ts`) and made `export.ts`
  * `blobId`-shaped. The commands themselves did not exist, so P3 could not start. Added 2026-09-16.
+ *
+ * ## `workspaceId` — the per-workspace staging namespace (P14 D17, WI 1)
+ *
+ * All four gained an optional `workspaceId`, so a `blobId` is scoped to the workspace that staged
+ * it: the store resolves `<dataDir>/blobs/<workspaceId>/…` instead of one shared `blobs/`, and the
+ * TTL sweep walks only its own namespace. The alternative — one shared staging area — means a
+ * `blobId` from workspace A resolves for workspace B, and B's sweep can collect A's in-flight
+ * transfer. `plan/14` §12.1 measured the original claim ("staging is already per-workspace") as
+ * **false**, which is why this is a change here rather than a note.
+ *
+ * **Optional for the same reason as the servers'**: omitted means the host-wide root, which is
+ * what the single-workspace desktop means. A host member always sends one. As with `server.ts`,
+ * `.strict()` means this is a schema change, so the four `invalid` fixtures were **re-derived
+ * rather than trusted** — and here the hazard the plan anticipated *is* live, because these rows
+ * are near-misses on `blobId` and a payload carrying only `{ workspaceId }` would now be invalid
+ * for the *right* reason only by accident.
  */
 import { z } from "zod";
+import { WorkspaceScope } from "./scope";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Protocol constants
@@ -124,6 +141,7 @@ export const BlobPutParams = z
     /** base64. Chunked/streaming upload is a transport concern (P4/P5), not a wire-shape change. */
     data: z.string().min(1),
   })
+  .merge(WorkspaceScope)
   .strict();
 export type BlobPutParams = z.infer<typeof BlobPutParams>;
 
@@ -137,7 +155,7 @@ export interface BlobPutResult {
 // blob.stat — egress, engine → client
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const BlobStatParams = z.object({ blobId: z.string().min(1) }).strict();
+export const BlobStatParams = z.object({ blobId: z.string().min(1) }).merge(WorkspaceScope).strict();
 export type BlobStatParams = z.infer<typeof BlobStatParams>;
 
 export interface BlobStatResult {
@@ -164,6 +182,7 @@ export const BlobReadParams = z
     /** Bytes to return. Omitted means `BLOB_READ_CHUNK_BYTES`. */
     length: z.number().int().positive().optional(),
   })
+  .merge(WorkspaceScope)
   .strict();
 export type BlobReadParams = z.infer<typeof BlobReadParams>;
 
@@ -178,7 +197,7 @@ export interface BlobReadResult {
 // blob.release — the fast path out of staging
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const BlobReleaseParams = z.object({ blobId: z.string().min(1) }).strict();
+export const BlobReleaseParams = z.object({ blobId: z.string().min(1) }).merge(WorkspaceScope).strict();
 export type BlobReleaseParams = z.infer<typeof BlobReleaseParams>;
 
 export interface BlobReleaseResult {

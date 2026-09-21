@@ -10,6 +10,11 @@
  *
  * ## What it reclaims
  *
+ * Scope is set by `BlobSweepOptions.workspaceId` (P14 D17): omitted means the whole
+ * `<dataDir>/blobs/` root, passed means one workspace's namespace. The table below describes the
+ * entries **within** whatever root it was given — the shape is the same either way, which is why
+ * the namespace cost this module only the one option and no branch.
+ *
  * | Entry | Reclaimed when |
  * |---|---|
  * | `<blobId>/` with `meta.json` | `createdAt + ttl <= now` |
@@ -64,6 +69,21 @@ export interface BlobSweepOptions {
   ttlMs?: number;
   /** Called for each entry that could not be removed. The sweep continues regardless. */
   onError?: (err: unknown, entry: string) => void;
+  /**
+   * P14 D17 — sweep **only** this workspace's namespace. Omitted means the whole blob root.
+   *
+   * **A host member must pass its own id, and this is a correctness requirement rather than
+   * tidiness.** Without it, a runtime's sweep would walk every sibling's directory: at best it
+   * would reclaim another workspace's in-flight transfer whose TTL had not been refreshed from
+   * that runtime's clock, and at worst two runtimes would race on the same `rmSync`. The lease is
+   * per-blob and the clock is shared, but the *set of blobs a runtime owns* is only knowable from
+   * the namespace, so the sweep has to be told.
+   *
+   * **Not derived from `dataDir()` or any ambient state**, for the same reason `blobRoot()` takes
+   * an explicit argument: a sweep that guessed its scope would silently sweep the wrong set, and
+   * the symptom (a sibling's transfer vanishing) is far from the cause.
+   */
+  workspaceId?: string;
 }
 
 /** Total size of everything under `dir`, for entries that have no metadata to trust. */
@@ -109,7 +129,7 @@ function isOlderThan(fullPath: string, now: number, ttlMs: number): boolean {
 export function sweepBlobs(opts: BlobSweepOptions = {}): BlobSweepResult {
   const now = opts.now ?? Date.now();
   const ttlMs = opts.ttlMs ?? BLOB_TTL_MS;
-  const root = blobRoot();
+  const root = blobRoot(opts.workspaceId);
 
   let entries: fs.Dirent[];
   try {

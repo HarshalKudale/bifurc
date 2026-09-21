@@ -134,16 +134,43 @@ export function describeBlobError(err: unknown): string {
 // Paths
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The blob root. Resolved lazily from the data root on every call, so it follows
- * `setDataRoot()` — same discipline as the rest of the store modules, and the reason
- * `tsup`'s `bundle: false` matters. */
-export function blobRoot(): string {
-  return path.join(dataDir(), BLOB_DIR_NAME);
+/**
+ * The blob root, optionally namespaced by workspace (P14 D17).
+ *
+ * ```
+ * blobRoot()        → <dataDir>/blobs            ← the host-wide root (the desktop's shape)
+ * blobRoot("ws1")   → <dataDir>/blobs/ws1        ← one workspace's staging area
+ * ```
+ *
+ * **Why a namespace rather than a move.** The root stays under `dataDir()`, so `plan/04`'s
+ * Docker-volume requirement (an engine restart must not lose in-flight transfers) holds unchanged
+ * — D17 calls this a namespace for exactly that reason. What changes is that two workspaces in one
+ * host no longer share one `blobs/` directory, where a `blobId` from A would resolve for B and a
+ * sweep for A could collect B's in-flight transfer.
+ *
+ * **Why the argument is optional and the no-argument form is kept.** The desktop constructs one
+ * engine and means "the whole data dir" — it has no workspace to scope to at this layer, and
+ * forcing an id through would either invent one or break every existing caller. A host member
+ * always passes its id, so the two behaviours coexist without a flag, exactly as `servedWorkspaceId()`
+ * does for the proxy (`proxy/server.ts`). That parallel is deliberate: this is the same severance,
+ * one layer down.
+ *
+ * Resolved lazily from the data root on every call, so it follows `setDataRoot()` — same
+ * discipline as the rest of the store modules.
+ */
+export function blobRoot(workspaceId?: string): string {
+  const root = path.join(dataDir(), BLOB_DIR_NAME);
+  return workspaceId === undefined ? root : path.join(root, workspaceId);
 }
 
-/** Where `createStaging()` puts in-flight writes. */
-export function stagingRoot(): string {
-  return path.join(blobRoot(), BLOB_STAGING_DIR_NAME);
+/**
+ * Where `createStaging()` puts in-flight writes.
+ *
+ * Scoped by workspace for the same reason `blobRoot()` is: two runtimes staging concurrently must
+ * not be able to see each other's partial writes, and the sweep must only ever collect its own.
+ */
+export function stagingRoot(workspaceId?: string): string {
+  return path.join(blobRoot(workspaceId), BLOB_STAGING_DIR_NAME);
 }
 
 /**
@@ -163,9 +190,9 @@ function assertBlobId(blobId: string): void {
   }
 }
 
-function blobDir(blobId: string): string {
+function blobDir(blobId: string, workspaceId?: string): string {
   assertBlobId(blobId);
-  const root = blobRoot();
+  const root = blobRoot(workspaceId);
   const dir = path.join(root, blobId);
   // Defence in depth — see `assertBlobId`. A resolved path that is not a direct child of the
   // root means the id escaped, whatever the reason.
@@ -193,9 +220,14 @@ function blobDir(blobId: string): string {
  * reads a blob that `import.preflight` already read, and the user may sit on the collision dialog
  * for a while in between. Past `BLOB_TTL_MS` that surfaces as a clean `blob-not-found`, not as
  * corruption — the sweep only ever collects whole blobs.
+ *
+ * **`workspaceId` (P14 D17)** must be the *same* value the blob was staged under. A blob id is
+ * only unique within a workspace's namespace, so passing a different id — or omitting one for a
+ * blob staged with one — resolves to a path that does not exist and surfaces as `blob-not-found`.
+ * That is the intended failure: it is not-found rather than a cross-workspace read.
  */
-export function blobContentPath(blobId: string): string {
-  return path.join(blobDir(blobId), BLOB_CONTENT_NAME);
+export function blobContentPath(blobId: string, workspaceId?: string): string {
+  return path.join(blobDir(blobId, workspaceId), BLOB_CONTENT_NAME);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,8 +263,8 @@ function writeMeta(dir: string, meta: BlobMeta): void {
  * removed by something else reports *not found* instead of a size and a hash for bytes that are
  * not there. One `existsSync` per read is nothing next to a `readdir`-and-`stat` sweep.
  */
-function readMeta(blobId: string): BlobMeta {
-  const dir = blobDir(blobId);
+function readMeta(blobId: string, workspaceId?: string): BlobMeta {
+  const dir = blobDir(blobId, workspaceId);
   const metaPath = path.join(dir, BLOB_META_NAME);
   let raw: string;
   try {
@@ -374,8 +406,13 @@ export function assertIngressWithinLimit(
  *
  * @param now Override for the lease anchor. Exists so TTL behaviour is testable without fake
  *   timers; production callers omit it.
+ * @param workspaceId P14 D17 — the namespace to stage under. Omitted means the host-wide root.
  */
-export function putBlob(params: BlobPutParams, now: number = Date.now()): BlobPutResult {
+export function putBlob(
+  params: BlobPutParams,
+  now: number = Date.now(),
+  workspaceId?: string,
+): BlobPutResult {
   assertIngressWithinLimit(params.size, params.data.length);
 
   const bytes = Buffer.from(params.data, "base64");
@@ -386,13 +423,19 @@ export function putBlob(params: BlobPutParams, now: number = Date.now()): BlobPu
     );
   }
 
-  return writeBlob(bytes, params.filename, params.mimeType, now);
+  return writeBlob(bytes, params.filename, params.mimeType, now, workspaceId);
 }
 
 /** The one place a blob directory is created. Shared by `putBlob` and `StagingHandle.commit`. */
-function writeBlob(bytes: Buffer, filename: string, mimeType: string, now: number): BlobPutResult {
+function writeBlob(
+  bytes: Buffer,
+  filename: string,
+  mimeType: string,
+  now: number,
+  workspaceId?: string,
+): BlobPutResult {
   const blobId = newBlobId();
-  const dir = path.join(blobRoot(), blobId);
+  const dir = path.join(blobRoot(workspaceId), blobId);
   fs.mkdirSync(dir, { recursive: true });
 
   const sha256 = sha256Of(bytes);
@@ -425,6 +468,7 @@ export function putBlobBytes(
   filename: string,
   mimeType: string,
   now: number = Date.now(),
+  workspaceId?: string,
 ): BlobPutResult {
   if (bytes.length > BLOB_MAX_INGRESS_BYTES) {
     throw new BlobError(
@@ -432,7 +476,7 @@ export function putBlobBytes(
       `Artifact of ${bytes.length} bytes exceeds the ${BLOB_MAX_INGRESS_BYTES}-byte limit.`,
     );
   }
-  return writeBlob(bytes, filename, mimeType, now);
+  return writeBlob(bytes, filename, mimeType, now, workspaceId);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -446,8 +490,8 @@ export function putBlobBytes(
  * let a client decide whether it has time to start a large download, which would be defeated if
  * the act of asking reset the clock.
  */
-export function statBlob(blobId: string, now: number = Date.now()): BlobStatResult {
-  const meta = readMeta(blobId);
+export function statBlob(blobId: string, now: number = Date.now(), workspaceId?: string): BlobStatResult {
+  const meta = readMeta(blobId, workspaceId);
   return {
     size: meta.size,
     mimeType: meta.mimeType,
@@ -472,8 +516,12 @@ export function statBlob(blobId: string, now: number = Date.now()): BlobStatResu
  * final `offset === size` probe — does not, so an idle client cannot hold a blob alive forever
  * with an empty read.
  */
-export function readBlob(params: BlobReadParams, now: number = Date.now()): BlobReadResult {
-  const meta = readMeta(params.blobId);
+export function readBlob(
+  params: BlobReadParams,
+  now: number = Date.now(),
+  workspaceId?: string,
+): BlobReadResult {
+  const meta = readMeta(params.blobId, workspaceId);
   const offset = params.offset ?? 0;
   const length = params.length ?? BLOB_READ_CHUNK_BYTES;
 
@@ -485,7 +533,7 @@ export function readBlob(params: BlobReadParams, now: number = Date.now()): Blob
   }
 
   const want = Math.min(length, meta.size - offset);
-  const fd = fs.openSync(path.join(blobDir(params.blobId), BLOB_CONTENT_NAME), "r");
+  const fd = fs.openSync(path.join(blobDir(params.blobId, workspaceId), BLOB_CONTENT_NAME), "r");
   let read: number;
   let slice: Buffer;
   try {
@@ -495,7 +543,7 @@ export function readBlob(params: BlobReadParams, now: number = Date.now()): Blob
     fs.closeSync(fd);
   }
 
-  if (read > 0) refreshLease(params.blobId, meta, now);
+  if (read > 0) refreshLease(params.blobId, meta, now, workspaceId);
 
   return {
     data: slice.subarray(0, read).toString("base64"),
@@ -510,9 +558,9 @@ export function readBlob(params: BlobReadParams, now: number = Date.now()): Blob
  * `meta.json`, so touching mtime alone would extend nothing. The mtime fallback in the sweep is
  * only for directories that have no metadata at all (a crashed `put`).
  */
-function refreshLease(blobId: string, meta: BlobMeta, now: number): void {
+function refreshLease(blobId: string, meta: BlobMeta, now: number, workspaceId?: string): void {
   try {
-    writeMeta(blobDir(blobId), { ...meta, createdAt: now });
+    writeMeta(blobDir(blobId, workspaceId), { ...meta, createdAt: now });
   } catch {
     // Best effort. A failed lease refresh must not fail a read that already succeeded — the
     // worst case is that the sweep collects a blob the client is still reading, which the
@@ -533,8 +581,8 @@ function refreshLease(blobId: string, meta: BlobMeta, now: number): void {
  * swallowed so a client can tell "I cleaned up" from "there was nothing there", which is
  * genuinely different information during a retry.
  */
-export function releaseBlob(blobId: string): BlobReleaseResult {
-  const dir = blobDir(blobId);
+export function releaseBlob(blobId: string, workspaceId?: string): BlobReleaseResult {
+  const dir = blobDir(blobId, workspaceId);
   if (!fs.existsSync(dir)) return { ok: false };
   fs.rmSync(dir, { recursive: true, force: true });
   return { ok: true };
@@ -575,11 +623,20 @@ export interface StagingOptions {
    * default can also use it.
    */
   maxBytes?: number;
+  /**
+   * P14 D17 — the workspace to stage under. Omitted means the host-wide root.
+   *
+   * **Both the staging directory and the commit target are scoped from this one value**, so a
+   * handle cannot stage into one workspace and commit into another; the pair would have to be
+   * constructed inconsistently to do that, and there is no code path that takes them separately.
+   */
+  workspaceId?: string;
 }
 
 export function createStaging(opts: StagingOptions = {}): StagingHandle {
   const maxBytes = opts.maxBytes ?? BLOB_MAX_INGRESS_BYTES;
-  const dir = stagingRoot();
+  const { workspaceId } = opts;
+  const dir = stagingRoot(workspaceId);
   fs.mkdirSync(dir, { recursive: true });
   const stagingPath = path.join(dir, `stage_${crypto.randomBytes(16).toString("hex")}`);
   let settled = false;
@@ -602,7 +659,7 @@ export function createStaging(opts: StagingOptions = {}): StagingHandle {
 
       const sha256 = sha256OfFile(stagingPath);
       const blobId = newBlobId();
-      const target = path.join(blobRoot(), blobId);
+      const target = path.join(blobRoot(workspaceId), blobId);
       fs.mkdirSync(target, { recursive: true });
       // Same volume by construction (both under the data root), so this is a rename, not a copy:
       // a 200 MB archive is moved into place in constant time.

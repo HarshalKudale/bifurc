@@ -170,14 +170,24 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "import.preflight": { valid: { kind: "mocks", format: "json", workspaceId: "ws1", blobId: "blob_test" }, invalid: { format: "json", workspaceId: "ws1", blobId: "blob_test" } },
   "import.commit": { valid: { kind: "mocks", format: "json", workspaceId: "ws1", blobId: "blob_test" }, invalid: { kind: "mocks", workspaceId: "ws1", blobId: "blob_test" } },
 
+  // Re-derived for P14 D17: all four gained an optional `workspaceId`. The `valid` rows supply it
+  // so the field is exercised on the happy path; the `invalid` rows are **near-misses that do not
+  // depend on it**, which is the point of re-deriving rather than appending. A row whose invalid
+  // payload was `{}` would now be invalid for the *same* reason as before (a missing `blobId`), so
+  // it would keep passing while testing nothing about the new field — harmless here, but exactly
+  // the pattern that silently stops testing rejection when the newly-allowed key is the one under
+  // test. Each `invalid` below still fails on a *required or typed* field, never on scope.
   "blob.put": {
-    valid: { filename: "export.json", mimeType: "application/json", size: 2, data: "e30=" },
+    valid: { filename: "export.json", mimeType: "application/json", size: 2, data: "e30=", workspaceId: "ws1" },
     // missing filename
     invalid: { mimeType: "application/json", size: 2, data: "e30=" },
   },
-  "blob.stat": { valid: { blobId: "b1" }, invalid: {} },
-  "blob.read": { valid: { blobId: "b1", offset: 0, length: 1024 }, invalid: { blobId: "b1", offset: -1 } },
-  "blob.release": { valid: { blobId: "b1" }, invalid: {} },
+  "blob.stat": { valid: { blobId: "b1", workspaceId: "ws1" }, invalid: {} },
+  "blob.read": {
+    valid: { blobId: "b1", offset: 0, length: 1024, workspaceId: "ws1" },
+    invalid: { blobId: "b1", offset: -1, workspaceId: "ws1" },
+  },
+  "blob.release": { valid: { blobId: "b1", workspaceId: "ws1" }, invalid: {} },
 
   "script.execute": { valid: { script: "1+1", context: "pre", envVars: {} }, invalid: { script: "1+1", context: "bogus", envVars: {} } },
   "request.replay": { valid: { method: "GET", url: "http://x", headers: {}, body: "" }, invalid: { method: "GET", url: "http://x" } },

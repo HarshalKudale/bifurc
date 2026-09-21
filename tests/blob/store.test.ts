@@ -29,6 +29,7 @@ import {
   stagingRoot,
   statBlob,
 } from "@bifurc/engine/blob/store";
+import { sweepBlobs } from "@bifurc/engine/blob/sweep";
 import { dataDir, resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
 
 const b64 = (input: string | Buffer): string =>
@@ -51,10 +52,17 @@ describe("blob/store", () => {
   });
 
   /** The common case: stage a string and hand back the id. */
-  function stage(content: string, filename = "mocks-export.json", mimeType = "application/json", now = T0) {
+  function stage(
+    content: string,
+    filename = "mocks-export.json",
+    mimeType = "application/json",
+    now = T0,
+    workspaceId?: string,
+  ) {
     return putBlob(
       { filename, mimeType, size: Buffer.byteLength(content), data: b64(content) },
       now,
+      workspaceId,
     );
   }
 
@@ -508,6 +516,93 @@ describe("blob/store", () => {
       expect(path.dirname(handle.path)).toBe(stagingRoot());
       expect(path.relative(blobRoot(), stagingRoot())).toBe(".staging");
       handle.discard();
+    });
+  });
+
+  /**
+   * P14 D17 — the blob namespace is per workspace.
+   *
+   * The acceptance criterion is stated as **"asserted on identity (the blob exists under A and not
+   * under B), not on a value both could share"** (`plan/14`, the criteria list). That wording is the
+   * whole design of this block: a test that only checked "B's read does not return A's bytes" would
+   * pass if the lookup fell through to an empty string, and a test that only checked "the two roots
+   * differ" would pass even if neither held the blob. Each assertion below names *where* the bytes
+   * are, so a collapse of the namespace fails on a path rather than on a plausible-looking absence.
+   */
+  describe("workspace namespace (P14 D17)", () => {
+    it("nests the workspace root under the host-wide root — a namespace, not a move", () => {
+      // The Docker-volume requirement survives: `<dataDir>/blobs/<wsId>` is still under `dataDir()`,
+      // which is what makes this a namespace rather than a relocation. The pre-existing layout test
+      // above pins the un-scoped root; this one pins the scoped form's *relationship* to it.
+      expect(blobRoot("ws1")).toBe(path.join(dataDir(), "blobs", "ws1"));
+      expect(path.relative(dataDir(), blobRoot("ws1"))).toBe(path.join("blobs", "ws1"));
+      expect(path.relative(dataDir(), blobRoot("ws1")).startsWith("..")).toBe(false);
+      // And the no-argument form is unchanged, because the desktop depends on it.
+      expect(blobRoot()).toBe(path.join(dataDir(), "blobs"));
+    });
+
+    it("a blob staged by workspace A is NOT FOUND when read with workspace B", () => {
+      const { blobId } = stage("hello from A", "a.json", "application/json", T0, "wsA");
+
+      // Identity, both halves: it is where A put it, and it is NOT where B would look.
+      const underA = path.join(blobRoot("wsA"), blobId, "content");
+      const underB = path.join(blobRoot("wsB"), blobId, "content");
+      expect(fs.existsSync(underA)).toBe(true);
+      expect(fs.readFileSync(underA, "utf-8")).toBe("hello from A");
+      expect(fs.existsSync(underB)).toBe(false);
+
+      // And the typed failure, not a raw ENOENT: `statBlob` converts it, which is the boundary
+      // rule (`File_Ops_Protocol.md` section 8) — an ENOENT message carries an engine-side path.
+      expect(() => statBlob(blobId, T0, "wsB")).toThrow(/No such blob/);
+      expect(() => readBlob({ blobId }, T0, "wsB")).toThrow(/No such blob/);
+      // The same id resolves under its own workspace, so the failure above is the namespace and
+      // not a broken fixture. "hello from A" is 12 bytes.
+      expect(statBlob(blobId, T0, "wsA").size).toBe(12);
+    });
+
+    it("keeps two workspaces' staging areas apart", () => {
+      const a = stage("A", "a.json", "application/json", T0, "wsA");
+      const b = stage("B", "b.json", "application/json", T0, "wsB");
+
+      // Each is reachable only from its own root — asserted as a pair of paths, not as counts.
+      expect(fs.existsSync(path.join(blobRoot("wsA"), a.blobId))).toBe(true);
+      expect(fs.existsSync(path.join(blobRoot("wsA"), b.blobId))).toBe(false);
+      expect(fs.existsSync(path.join(blobRoot("wsB"), b.blobId))).toBe(true);
+      expect(fs.existsSync(path.join(blobRoot("wsB"), a.blobId))).toBe(false);
+
+      // The staging directories are likewise distinct, so an abandoned handle in A is invisible to B.
+      const stagingA = createStaging({ workspaceId: "wsA" });
+      const stagingB = createStaging({ workspaceId: "wsB" });
+      expect(path.dirname(stagingA.path)).toBe(stagingRoot("wsA"));
+      expect(path.dirname(stagingB.path)).toBe(stagingRoot("wsB"));
+      expect(path.dirname(stagingA.path)).not.toBe(path.dirname(stagingB.path));
+      stagingA.discard();
+      stagingB.discard();
+    });
+
+    it("a sweep for one workspace reclaims only its own expired blob", () => {
+      const expired = stage("old", "old.json", "application/json", T0, "wsA");
+      const live = stage("new", "new.json", "application/json", T0 + 2 * BLOB_TTL_MS, "wsB");
+
+      // Sweep A at a time past A's TTL. B's blob is younger, so this also proves the sweep reads
+      // `createdAt` per blob rather than comparing every entry to one wall clock.
+      const res = sweepBlobs({ now: T0 + BLOB_TTL_MS + 1, workspaceId: "wsA" });
+      expect(res.removed).toBe(1);
+      expect(fs.existsSync(path.join(blobRoot("wsA"), expired.blobId))).toBe(false);
+      // The sibling is untouched — this is the assertion the whole option exists for.
+      expect(fs.existsSync(path.join(blobRoot("wsB"), live.blobId))).toBe(true);
+      expect(() => statBlob(live.blobId, T0 + 2 * BLOB_TTL_MS, "wsB")).not.toThrow();
+    });
+
+    it("a staging handle commits into the same namespace it staged in", () => {
+      // Both the staging directory and the commit target derive from one option, so this asserts
+      // that `commit()` did not fall back to the host-wide root while `path` was scoped.
+      const handle = createStaging({ workspaceId: "ws7" });
+      fs.writeFileSync(handle.path, "seven");
+      const { blobId } = handle.commit({ filename: "s.txt", mimeType: "text/plain" }, T0);
+      expect(fs.existsSync(path.join(blobRoot("ws7"), blobId, "content"))).toBe(true);
+      expect(fs.existsSync(path.join(blobRoot(), blobId))).toBe(false);
+      expect(statBlob(blobId, T0, "ws7").size).toBe(5);
     });
   });
 });

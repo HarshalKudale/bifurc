@@ -1115,3 +1115,86 @@ count that motivated the stash was also wrong). Note also that **`git rm` and `g
 family** — the common factor is a git command that rewrites the index or the ref on a data drive that
 appears to be doing something unusual with hardlinks. Treat all of them as destructive here and prefer the
 plain-filesystem equivalent plus `git add`.
+
+## Namespacing a store surfaces every *half-threaded* id, and only the integration suite sees it
+
+Found 2026-09-21 during P14 D17 (blob staging becomes `<dataDir>/blobs/<wsId>/`). The change is
+mechanical — add an optional `workspaceId` to eleven functions and four commands — and the unit suites
+stayed green throughout. What failed was different in kind:
+
+`tests/integration/importExportBlob.integration.test.ts` went from **0 → 30 failures**, every one a
+`blob-not-found` on a round trip that had passed minutes earlier. The cause was not the store: it was
+that `export.create` had been given `TEST_WS` while its own client's `blob.put` / `blob.read` /
+`blob.release` had not, so the engine staged bytes into one namespace and the client read from another.
+**The engine's own export was unreadable by the client that requested it** — a real latent bug that a
+host-wide root had been hiding, because with one namespace every id resolved regardless of who asked.
+
+**Three things this establishes, and the third is the expensive one.**
+
+1. **A namespace change is not additive even when every signature is optional.** The old behaviour
+   (omitted = the host-wide root) is exactly what makes the half-threaded call sites *look* correct in
+   isolation. Test coverage that passes for both the scoped and unscoped path is not coverage of the
+   transition.
+
+2. **Fix by scoping the caller, never by relaxing the store.** The tempting repair — make `blobRoot()`
+   fall back to the shared root when the blob is not found under the given workspace — would have made
+   all 30 failures go away and destroyed the property D17 exists to create. The store's job is to be
+   strict; the caller's job is to say who it is.
+
+3. **Grep for *call sites*, in the shape the code actually has, and expect the first batch to be
+   incomplete.** My first substitution pass matched the obvious `statBlob(params.blobId)` and missed
+   **three** more sites in the same file because they sat inside a different wrapper
+   (`await entry.pathImporter.run(...)` vs the preflight twin), and it never matched
+   `publishArtifact(...)` at all because that call simply had no fourth argument to substitute. A
+   mechanical find-replace over a threaded parameter is only as good as the regex, and the regex was
+   written against the shape I *remembered*. The audit that finally worked asks the opposite question —
+   *"which calls pass NO id?"* — because that is the set the substitution cannot reach:
+
+   ```
+   grep -rn "statBlob(\|readBlob(\|blobContentPath(\|releaseBlob(\|putBlob(\|putBlobBytes(\|createStaging(" \
+     --include=*.ts packages/engine/src/ src/ \
+     | grep -v "blob/store.ts\|blob/sweep.ts" | grep -vE "workspaceId|function |import |\* "
+   ```
+
+   The two remaining hits it produced were both real and both **deliberate omissions** (see the next
+   section) — an audit that returns a short, *explicable* list is the useful outcome, not a clean one.
+
+**Corollary for the plan's own hazard notes:** `plan/14` warned that the `blob.*` `invalid` fixtures
+would need re-deriving because a fixture whose invalid payload is the newly allowed key silently stops
+testing rejection. That hazard was **live but not hit** — the fixtures happened to be fine, and the
+exposure was entirely in the call sites the note did not mention. A hazard note names where the author
+was looking, not where the bug is.
+
+## An optional param that is *accepted and ignored* reads as implemented
+
+Found 2026-09-21, P14 WI 1 remainder, by probe rather than by reading. After the protocol half added an
+optional `workspaceId` to `server.start` / `.stop` / `.restart` / `.status` and `proxy.status`, the
+schemas accepted it — but `registerServerCommands()` still called the module **facade**
+(`startServer(port)`, `isRunning()`, `getPort()`), whose lazy default instance is created with
+`workspaceId: null` and therefore means *the active workspace*. Measured on a host running two workspaces:
+
+```
+host started:  probe-ws-a: proxy=81 webhook=9101     probe-ws-b: proxy=82 webhook=9102
+server.status                → { running: false, port: 0 }      ← two members are listening
+server.start {workspaceId: A} → { ok: true }                     ← accepted, ignored
+server.status                → { running: false, port: 8791 }    ← a THIRD server, on the config port
+```
+
+**The failure mode is the one that costs the most to find: it succeeds.** `server.start` returned
+`{ ok: true }` after binding a server nobody asked for. Nothing threw, nothing logged, and no suite
+failed — because the module facade is *correct* for the desktop (one proxy, meaning "whatever the user
+selected"), so every existing test passes. Only asking the question of a two-workspace host exposes it.
+
+**The rule: an optional parameter is not `done` when the schema accepts it — it is done when the body
+reads it.** For a wire contract the two are independently verifiable and only the first is visible from
+the protocol package. So a protocol change that adds a field must be paired with either (a) a call-site
+change, or (b) an explicit record that the field is accepted-and-pending, written where the *handler*
+lives. Leaving it implicit makes the protocol advertise a capability the engine does not have, which is
+worse than not having the field: a host member's client will send the id, get `{ ok: true }`, and manage
+a runtime it never reached.
+
+**And the same applies to a facade meant to *not* be used.** `proxy/server.ts`'s module functions are
+documented as "removed in WI 7", but until then they are what every command calls, so the facade is the
+live implementation for the RPC surface. A header that says a path is temporary does not stop it being
+the path.
+
