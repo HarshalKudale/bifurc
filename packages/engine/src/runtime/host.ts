@@ -60,6 +60,7 @@ import { bootstrapWorkspaces } from "../startup";
 import { setDataRoot, dataDir } from "../store/paths";
 import { EventLog } from "../transport/eventLog";
 import { createWorkspaceRuntime, type WorkspaceRuntime, type WorkspaceRuntimeStatus } from "./workspaceRuntime";
+import { clearRuntimes, registerRuntime } from "./runtimeRegistry";
 import { allocatePorts, PortUnavailableError, PortRangeExhaustedError } from "./portAllocator";
 import {
   loadRuntimeRegistry,
@@ -231,6 +232,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
         ownsCA: false,
       });
       runtimes.set(ws.id, runtime);
+      /**
+       * Register **before** `start()`, deliberately. A command that arrives while this runtime is still
+       * binding must resolve to *this* instance rather than fall through to the facade — otherwise the
+       * window between `runtimes.set` and `start()` is one where `server.status` would report the active
+       * workspace's server instead of this one, which is the exact class of wrong-target answer WI 7
+       * removes. The registry is a lookup, not a health check: `isRunning()` is how a caller asks whether
+       * it has come up.
+       */
+      registerRuntime(runtime);
 
       const st = await runtime.start();
       recordResolvedPorts(runtimeRegistry, ws.id, {
@@ -316,6 +326,10 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
         await runtime.stop();
       }
       runtimes.clear();
+      // And the command layer's lookup, or a stopped host would leave `server.status` answering for
+      // workspaces it no longer serves — a stale answer of the same kind `currentPort` surviving `stop()`
+      // produces one layer down (`proxy/server.ts`'s recorded trap).
+      clearRuntimes();
       // The host owns the log (one authority for `seq`), so it closes it.
       log.close();
     },
