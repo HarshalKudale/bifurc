@@ -205,6 +205,13 @@ rather than inferred, and so an operator can move it without editing the image.
 
 ### Work item 0 — the measurement that gates everything (1–2 days)
 
+> **DONE 2026-09-21 — the record is §13, and it supersedes the dated list below.** §13 re-derives every
+> module-level mutable in `proxy/`, every reader of `port` / `webhookPort` / `activeWorkspaceId` /
+> `isRunning()`, and every caller of the four lifecycle functions. **Verdict: the phase is mechanical, with
+> the readiness predicate the one non-mechanical part — and the measurement found that
+> `createEngine()` starts the companion server (`index.ts:232`), which WI 3's own acceptance criterion
+> forbids for the host.** Read §13.1–§13.4 before starting WI 1.
+
 Produce a written inventory, not a design:
 
 - every module-level mutable in `proxy/` and every reader of it;
@@ -212,8 +219,23 @@ Produce a written inventory, not a design:
 - every caller of `startServer` / `stopServer` / `startCompanionServer` / `restartCompanionServer`.
 
 Known callers today: `proxy/serverCommands.ts:74-90`, `store/configCommands.ts:63-73`, `index.ts:231-243`,
-`src/main.ts:309-310`, `src/ipc/handlers/systemHandlers.ts:9-25`, `src/ipc/handlers/coreHandlers.ts:56-69`,
-`shutdown.ts:45-46`, `startup.ts:90-99,122`.
+`src/main.ts:309-310`, `shutdown.ts:45-46`, `startup.ts:90-99,122`.
+
+> **Corrected 2026-09-21 — two of those callers no longer exist, and the list is now shorter than it was
+> when this work item was written.** `src/ipc/handlers/systemHandlers.ts:9-25` (the three `server:*`
+> bodies) went with the reduction's fifth group, and `src/ipc/handlers/coreHandlers.ts:56-69` (the
+> `config:save` body) went with its sixth — that file is now `coreKinds.ts` and calls `startServer` not
+> at all (`plan/07` §5b-sedecies, §5b-septendecies). **Both duplicates were of bodies this list already
+> names**: `proxy/serverCommands.ts` and `store/configCommands.ts` are where the behaviour actually lives,
+> so the *distinct* caller count is one lower in each case, not two. Re-derive this list from the tree
+> before relying on it — it is a dated reading, and the phase it measures has since deleted six handler
+> files.
+>
+> **Re-derived 2026-09-21 in §13.3, and the re-derivation is now the authority.** Measured: **11 call
+> sites, of which exactly one is the shell** (`src/main.ts:309-310` — WI 7's single edit); the rest are
+> engine commands (`serverCommands`, `configCommands`), the engine lifecycle (`createEngine`, `shutdown`)
+> and tests. The list above named six and is now four lines short of the tree in one direction and two
+> over in another — use §13.3.
 
 **If that list is short the phase is mechanical. If it is not, this phase's estimate is wrong and you find
 out in a day rather than in week three.**
@@ -248,6 +270,85 @@ out in a day rather than in week three.**
   port is my proxy on?" stops having a single answer, and the user has to be told.
 
 ### Work item 2 — de-singletonize the proxy and webhook servers into factories
+
+> **STEP 1 DONE 2026-09-21 — the webhook receiver, which §6 requires be proven first.** §6's second item:
+> "Prove the factory change on the webhook receiver first, not the proxy. It is ~160 lines, has no TLS and
+> no CONNECT tunnelling, and its only global state is two maps and a port — so it is the cheapest place in
+> this codebase to learn what de-singletonizing actually costs." It cost: **one file, no caller changes, no
+> `window.api` movement.** `createWebhookServer({ workspaceId })` now owns the `http.Server`, the port, the
+> error and both active maps; the old module functions became a facade over one lazily-created default
+> instance, which stays until WI 7 flips the shell (§9). `tests/proxy/webhookServer.test.ts` went **15 → 24
+> cases** (+9), all green, and `tests/ipc/handlers.test.ts` stayed **106/106** — the case that matters,
+> because it `vi.mock`s this module and would have failed loudly on an export it lost. **Three things the
+> work established, recorded so WI 2's proxy half does not re-learn them:**
+>
+> 1. **`MAX_ACTIVE_WEBHOOKS` stays a module constant, not a constructor argument.** "Per workspace" scopes
+>    the *map*, not the number. Its duplicate at
+>    `renderer/panels/webhooks/useWebhooksPanelState.ts:11` is a UI hint the renderer cannot stop holding
+>    before P7, so WI 2 still owes a decision on whether the value is pushed to it.
+> 2. **`webhookEmitter` must NOT become per instance.** It is the shared EventEmitter the shell's forward and
+>    the suite subscribe to; a per-instance emitter detaches both silently.
+> 3. **The per-workspace routing key is WI 1's job, not WI 2's.** Keying the active maps by
+>    `(workspaceId, urlSuffix)` needs `webhook.registerActive` to carry the parameter first, or it is a
+>    behaviour change with no test to drive it. WI 2 is the mechanical de-singletonization; §2.3's
+>    `(workspaceId, urlSuffix)` key lands with the protocol change.
+>
+> **And one measurement carried into the proxy half:** the readiness predicate. `getError()`/`isRunning()`
+> are the only readiness signals either server publishes (`index.ts:140-144`), so `index.ts:242`'s
+> `waitUntilReady(isRunning, getServerError)` must re-point at the instance rather than wrap the global —
+> §13.4 confirms this is the phase's one non-mechanical part.
+>
+> **The suite delta, measured 2026-09-21 and its mechanism named.** Baseline was 101 / 2,458 / 2,417 / 40 / 1;
+> the full run after this step is **101 / 2,467 / 2,424 / 40 / 3**. **Total +9 = the nine new webhook cases,
+> and nothing else** — files delta 0 (an edited file, no new file), skipped delta 0, and no command-count
+> change, so `packages/protocol/src/commands/index.test.ts`'s 2-per-command generator is untouched. The
+> **2 extra failures are the two documented load-induced flakes**, not a regression:
+> `tests/store/gitStore.test.ts` (**24/24 isolated**, 102 s) and `tests/sync/gitOps.test.ts`
+> (**4/4 isolated**, 18 s), both `EBUSY: rmdir` / hook-timeout on their temp dirs under a full-run load.
+> Isolated back, the true figure is **2,426 passed / 1 failed** — the 1 being the standing environmental
+> `soap.execute`.
+>
+> **STEP 2 DONE 2026-09-21 — `proxy/server.ts`, the half §6 said would be harder.** `createProxyServer({ workspaceId })`
+> now owns all six mutables (`server`, `currentPort`, `currentConfig`, `fullRules`, `lastError`, `enabledSets`);
+> `dispatch` and `dispatchHttps` became inner closures over that state, and the seven module functions became a
+> facade over one lazily-created default instance — the same shape step 1 established. **One file, no caller
+> changes, no `window.api` movement, `src/main.ts:7`'s `startServer` import untouched.** `tests/proxy/server.test.ts`
+> went **80 → 89** (+9 isolation cases), and **the 80 pre-existing cases all stayed green without a single edit** —
+> which is the strongest available evidence the facade is behaviourally transparent, and the same signal
+> `tests/ipc/handlers.test.ts` gave in step 1.
+>
+> **Four findings the proxy half added, all worth carrying:**
+>
+> 1. **The two duplicated bodies had to be proven identical before deletion, not assumed.** `dispatch` and
+>    `dispatchHttps` exist twice during the transition — once as factory closures, once as module-scope
+>    leftovers (the original functions, whose bodies the factory closures were derived from). Deleting the
+>    wrong copy compiles fine whenever the two have drifted. Both were diffed against their factory twins
+>    (`sed`-normalised indent, `diff`) and confirmed identical but for the type-import form
+>    (`import type { TLSSocket }` vs the inline `import("tls").TLSSocket`) — *then* removed. The inline form
+>    survives because a module-scope `import type` inside a function body was the old file's style; the
+>    factory uses the identical semantics with no file-level import to dangle.
+> 2. **Truncating a file can silently take a re-export with it.** `export { replayRequest } from "./serverReplay"`
+>    sat at the top of the deleted region, one line under a section comment. `npm run typecheck` caught it
+>    immediately (`routingUtils.ts(8,10): error TS2305: Module '"./server"' has no exported member 'replayRequest'`),
+>    but the lesson is that the *re-export block* is part of the facade, not decoration — it must be re-attached
+>    on the kept side of the cut. It was, and `replayRequest` is verified present in `dist` via
+>    `proxy.replayRequest`.
+> 3. **The TLS CA is genuinely process-global, and this is where that bites.** `start()` calls `loadCA(...)` /
+>    `unloadCA()` (`tlsCert.ts` holds `caCertPem` / `caKeyPem` / `certCache` in module state). With N instances,
+>    **B's `start()` overwrites A's CA, and either one's `stop()` unloads it for both** — so the second workspace's
+>    HTTPS interception silently degrades to tunnelling. WI 2 deliberately does **not** fix this: it is a real
+>    constraint the factory now makes visible, and the fix (one shared CA loaded once by the host, or per-instance
+>    CA state) belongs to WI 3's host composition. Recorded there as a constraint, not silently absorbed.
+> 4. **`currentPort` is not reset by `stop()`** — only by the next `start()` — so a `getPort()` assertion taken
+>    after a stop reads the *previous* port. This is pre-existing behaviour, faithfully preserved; it surfaced as
+>    a failing new case, and the case was corrected rather than the code, because changing it would be a
+>    behaviour change smuggled into a refactor.
+>
+> **The suite delta for step 2 alone: +9, total → 2,476, and again nothing else moved.** Re-verified against the
+> same baseline arithmetic: 2,467 → 2,476 is exactly the nine new proxy cases; file count, skipped count and
+> command-count generator all unchanged. Measured after `npm run build:packages` (which the app requires, and
+> which the safe-delete guard failed once — bypass with
+> `env -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR -u CODEBUDDY_TOOL_CALL_ID`, per TRAPS.md).
 
 - `proxy/server.ts` → `createProxyServer()` returning an instance; the six module-level mutables
   (`:20-25`) become instance state.
@@ -291,23 +392,312 @@ inside `packages/engine`** (`runtime/host.ts`), *not* a new `packages/host` pack
 `store/paths.ts`'s data root. Promote it to its own package only if the Docker dependency closure demands
 it, and re-read `TRAPS.md` before doing so.
 
+> **PARTIAL DONE 2026-09-21 — the runtime and the companion switch; the host entry point itself is not
+> written yet.** Three pieces landed, in this order:
+>
+> 1. **`EngineOptions.startCompanion?: boolean` (default `true`).** §13.3 found `createEngine()` binding
+>    the companion unconditionally (`index.ts:232`), which this work item's own criterion forbids for a
+>    host. Now `doStart()` skips the start, the readiness wait, and the preflight port check, with
+>    `status().companionPort` reading `null`. Default `true` keeps the shell byte-identical.
+> 2. **`createWorkspaceRuntime()` — `packages/engine/src/runtime/workspaceRuntime.ts`.** The signature is
+>    the one sketched above, with two deliberate departures. **`dataDir` is not a parameter**: the runtime
+>    does not resolve a data root or bootstrap anything — the engine is a *library* by D10, and a runtime
+>    reproducing `setDataRoot()` would give a host two competing lifecycle authorities. **Ports are
+>    required, not optional**: allocation is D16's rule and needs host-wide knowledge of what the other
+>    runtimes took, so a runtime that invented its own port would reintroduce the TOCTOU race WI 5 warns
+>    about. It also does not expose `registry` — a transport is per *host* by D13, so the host passes the
+>    registry to `createSocketServer()`, not to a runtime.
+> 3. **The TLS-CA constraint WI 2 handed forward is now closed in the factory.**
+>    `createProxyServer()` gained **`ownsCA`** (default `true` = the pre-P14 desktop behaviour). A host
+>    member passes `false`: it still `loadCA()`s its own configured CA — idempotent, same paths, same
+>    PEMs — but **never `unloadCA()`s**, because that one mkcert root is shared by every workspace on the
+>    machine and outlives any single runtime. Deleting the `unloadCA()` call instead would leak the CA
+>    past the stop it was written to bound, which is why the ownership flag is the fix and not its
+>    removal. **One related case WI 2's code got wrong and this fixed:** a non-owning instance whose own
+>    config has TLS *off* used to call `unloadCA()` in its `start()`, silently breaking a TLS-enabled
+>    sibling. Now that branch is owner-only, and there is a case for it.
+>
+> **Also removed:** the six module-scope mutables in `proxy/server.ts` (`server`, `currentPort`,
+> `currentConfig`, `fullRules`, `lastError`, `enabledSets`) were still declared after WI 2 step 2 —
+> shadowed by the factory's instance state, read by nothing, and named only by the header comment, so
+> `tsc` could not catch them. That is the leftover-duplicate hazard WI 2's own trap entry records;
+> deleting them is part of WI 3 because a host is the first caller that could have been misled by them.
+>
+> **What the tests establish, and why they had to be integration tests.** The criterion §8 names is
+> *"starting runtime B does not observe runtime A's readiness"*. A symmetric `vi.mock("net")` harness
+> cannot show it — it hands every `createServer()` call the **same** object, which is the fixture artifact
+> that produced two false failures while writing step 2's isolation cases. So
+> `tests/integration/workspaceRuntime.integration.test.ts` writes **two** real workspaces to a real data
+> root and boots two runtimes on real sockets: distinct ports, distinct readiness, a bind failure landing
+> on the loser only with the winner serving over the wire, and `stop()` on A leaving B answering.
+> `tests/proxy/server.test.ts` went **80 → 92** (+9 isolation, +3 CA ownership).
+>
+> **Suite movement, measured 2026-09-21 with the mechanism named: 101 files / 2,476 → 103 files / 2,482,
+> i.e. +2 files and +6 tests — and the six separate exactly.** The two files are new
+> (`hostStartup.integration.test.ts` 1 case + `workspaceRuntime.integration.test.ts` 2 cases), and the other
+> three are `tests/proxy/server.test.ts`'s +3 CA-ownership cases. `tests/proxy/server.test.ts`'s +9
+> isolation cases are **not** in this delta — they belong to WI 2 step 2's measurement, already banked at
+> 2,467 → 2,476. Skipped stayed 40, and the per-command generator was untouched, so no command-count move.
+> **The full run reported 2 failures and both are the documented load flakes**
+> (`gitStore.test.ts` hook timeout + `EBUSY: rmdir`; `soap.execute` in the spike suite), which is why the
+> *second* measurement is the one that counts — isolated, this work is green everywhere it touches.
+>
+> **One new file, not two cases in an existing one** — and that detail is load-bearing: adding the
+> `startCompanion: false` case to `engineSmoke.integration.test.ts` made that file **fail** on
+> `portIsFree(proxyPort)` after `stop()`, and pass alone. The cause is that `shutdownEngine()` memoises
+> **process-wide**, so the *second* engine in a process awaits an already settled promise, its
+> `stopServer()` never runs, and the proxy port stays bound. `engineSmoke`'s own header documents exactly
+> that ("a process can only ever run the start→stop cycle *once*"), so the fix is one lifecycle file per
+> engine shape — **not** `vi.resetModules()`, which would hand the test a fresh copy of the store's module
+> state and stop it testing what ships. The file is restored byte-identical.
+>
+> **Still owed:** `runtime/host.ts` itself (the composition, the RPC endpoint wiring, auth, `SIGTERM`), and
+> WI 5's allocator, which the host needs before it can pass ports to `createWorkspaceRuntime()`.
+
+> **WI 3 DONE 2026-09-21 — `runtime/host.ts`, and the three findings it produced.** The composition landed as
+> `createWorkspaceHost()` plus `runWorkspaceHost()` (the signal-handling wrapper, kept separate so a caller
+> embedding a host owns its own signals). Two supporting modules came with it: `runtime/hostRegistry.ts`
+> (WI 1's host-local `runtime.json`, needed now because a host cannot allocate ports twice on a restart) and
+> `src/registerAll.ts`.
+>
+> **1. The first finding is the one worth the phase: a headless host had *nothing behind its registry*.**
+> `createEngine()` registers **no** commands by design — P3's *"the consumer declares what it is willing to
+> serve"* — and for the desktop that consumer is `src/ipc/handlers.ts#registerIpcHandlers()`. A host has no
+> shell, so the endpoint it bound answered `UNKNOWN_COMMAND` for `config.get`. That is the P6 §5c bug class
+> **one layer up**, and it was invisible until a non-shell consumer existed: the shell was registering all
+> eighteen groups, so the ratchet's "is this command registered in this process" test passed. The fix is
+> `registerAllEngineCommands(registry)` — the same eighteen calls, engine-side, so the list has a home that
+> is not the shell. **The shell's own calls are kept, deliberately**: each carries a comment naming which P6
+> deletion made it the only registration, and collapsing them would delete that record. Two lists of one
+> thing drift, so a guard asserts `registerAllEngineCommands()` is a **superset** of the shell's set — the
+> direction that can actually bite (a command the shell serves and the host does not is a desktop-works-,
+> container-fails bug no desktop suite can see).
+>
+> **2. D13's `workspaceId`-in-params is not merely unimplemented — the schema rejects it.** The first draft of
+> the host's test sent `config.get` with `{ workspaceId }` and got `BAD_REQUEST`, because
+> `ConfigGetParams` is `z.object({}).strict()`. `.strict()` turns an extra key into a rejection, so WI 1 cannot
+> add the parameter as a widening — **it is a schema change, and it invalidates that command's fixtures**
+> (`TRAPS.md`, "widening invalidates fixtures"). Also worth stating: `config.get` resolves
+> `settings.activeWorkspaceId` internally (`store/config.ts#loadConfig`), which is exactly the coupling WI 4
+> exists to sever. The host test asserts the *current* behaviour and says so in a comment, so WI 1's change is
+> visible rather than absorbed.
+>
+> **3. `startCompanion` was necessary but not sufficient, and the test says which is which.** The acceptance
+> criterion is *"a workspace host starts with no companion server"*, and the host never calls `createEngine()`
+> at all — so it never reaches `startCompanionServer()` by construction, and the flag remains the *desktop's*
+> route out (WI 7). The test asserts the companion address is unchanged across the host's whole lifetime via a
+> **connect fingerprint** (`ECONNREFUSED` → `"free"`, otherwise a report), not by demanding the port be free.
+> That distinction is load-bearing: the real 9271 was already held by a running `Bifurc.exe` on this machine,
+> and an assertion that needs a clean machine is a test that fails for reasons unrelated to the code —
+> `TRAPS.md`'s evidence-quality rule. A fingerprint is strictly stronger than a status field either way,
+> because both readings are real binds.
+>
+> **Allocation went through the real path end to end.** The host called `allocatePorts()` and the two runtimes
+> bound **81 and 82**. The resolved ports reached `runtime.json` and **not** `workspace.json`, which the test
+> asserts directly by reading both files (the D16 rule: the git-tracked file syncs between machines and the
+> port would collide). `allocatePorts` gained a **`reserved` set** for this: the RPC endpoint and
+> not-yet-started workspaces bind ports the scan must not hand out, and the allocator cannot know them — only
+> the host can.
+>
+> **⚠ Correction, 2026-09-21 — `81` and `82` were NOT D16's base-plus-scan.** This document first recorded
+> them as "D16's `80`-base-on-Windows plus contiguous scan, observed rather than asserted". The ports were
+> real, but the mechanism was not: the first version of the `reserved` set added **both bases** to itself, so
+> each range's scan skipped its own base and landed on `base + 1`. The true output was "base skipped, then
+> contiguous" — i.e. `0 + 81`. Nothing failed, because a runtime on the wrong-but-free port still comes up and
+> still serves, and **the host test asserted only that the runtimes were serving**. `tests/runtime/portAllocator.test.ts`
+> caught it immediately (`expected 52008 to be 52006`), which is why it exists in that shape.
+>
+> The second attempt reserved only the *other* range's base, which fixed the proxy half and broke the webhook
+> half identically — a base is a base whichever range it belongs to. **Reserving neither is the rule**;
+> cross-range safety comes from `reserved.add(proxyPort)` *after* the proxy is chosen, which covers every port
+> the proxy actually took rather than one hypothetical collision point (a `BIFURC_PROXY_BASE_PORT` of 9101
+> makes the two ranges overlap, and that case is now asserted directly).
+>
+> Two further discoveries from the same failure, both in `TRAPS.md`. **`freePort()` hands back `base + 1`**:
+> an ephemeral port requested right after another bind is reliably adjacent, so a test that says
+> `base = holdPort(); webhookBase = freePort()` silently makes the two ranges collide and then blames the
+> allocator — two cases here were doing exactly that and now separate their bases deliberately. And **the
+> acceptance-criterion lesson**: "asserted on *identity*, not on a value both could share" is written into §8
+> for rules and blobs, but the port criterion was satisfied by *observation*, which is precisely the weaker
+> instrument. Observation is not assertion.
+>
+> **Suite delta, measured: 104 files / 2,500 → 105 files / 2,509, i.e. +1 file and +9 tests.** Of the +9, **2**
+> are in `tests/integration/workspaceHost.integration.test.ts` (the host lifecycle, and the drift guard), **5**
+> are the WI 5 preflight advisory cases in `tests/startup.test.ts`, and **2** are the allocator regression cases
+> this correction added (`tests/runtime/portAllocator.test.ts`, 18 → 21 once the pre-existing adjacency bug is
+> counted). The guard's floor is a sanity bound, not the assertion: it measured **92** registered command
+> names, and the real check is the superset comparison. Skipped stayed 40; no command-count move (no command
+> was added or removed — `registerAll.ts` registers names that already existed).
+
 ### Work item 4 — sever `activeWorkspaceId` from the servers
 
+> **PROXY HALF DONE 2026-09-21 — `proxy/server.ts` only.** All four readers (`start()` ×2, `reloadConfig()`
+> ×2) now go through one helper, `servedWorkspaceId()`: `workspaceId ?? (currentConfig ?? loadConfig()).activeWorkspaceId`.
+> The fallback is not a leftover — it is precisely how the desktop and the module facade keep working, because
+> they construct one proxy and mean "whatever the user has selected". A host member always passes an id, so it
+> never reaches the fallback, and the two behaviours coexist without a flag.
+>
+> **The fallback must be re-read per call, NOT captured in `start()`.** Capturing it would freeze the desktop
+> on whichever workspace was active at startup and silently break `workspace.setActive`. That is asserted
+> directly (`tests/proxy/server.test.ts`, 89 → 93 cases, plus 2 in `tests/ipc/handlers.test.ts` and 2 rewritten
+> in `tests/integration/settingsMutations.integration.test.ts`): two instances read two different workspaces; an
+> instance reads its **own** id and **not** `cfg.activeWorkspaceId` (the config is deliberately set to a
+> *third* value, `ws-active`, so a mistaken read fails on identity rather than passing plausibly); an instance
+> with no id follows the active workspace; and that fallback is re-read on `reloadConfig()`.
+>
+> **A type error caught a real bug.** `servedWorkspaceId()` first returned `string | null` (because
+> `workspaceId` is nullable) and `tsup`'s **dts** leg rejected all four call sites — after the JS leg had
+> printed "Build success", so the failure reads as a mystery exit-1 unless you grep the log for `error TS`.
+> `activeWorkspaceId` is declared **non-nullable** (`store/config.ts:27`), so returning `string` is the honest
+> signature: the old code would have resolved a missing config to the workspace named `""` rather than fail.
+>
+> **The mock wrapper must delegate, not stub.** An earlier version of the new test mocked `loadEnabledSets` to
+> return empty sets, which silently changed dispatch for the whole file — **22 of 74** pre-existing cases
+> failed. The enabled set decides which mocks and mappings are live, so the instrument has to be inert:
+> `vi.fn(actual.loadEnabledSets)` records the call and still returns the real answer.
+>
+> **`webhookServer.ts` needs nothing for this work item — re-checked, not assumed.** Both routing maps
+> (`activeWebhookSuffixes`, `activeSuffixToId`) are declared *inside* `createWebhookServer()`, so two instances
+> cannot see each other's suffixes and §8's "a suffix registered in workspace A is `404` in workspace B"
+> already holds by construction. What WI 1 adds is one instance serving *several* workspaces; the N-instances
+> case is done.
+>
+> **Two integration cases had to be inverted, and that is the point of them.** `settingsMutations` asserted
+> *"re-routes the running proxy when the active workspace is switched"* and *"goes back to the first
+> workspace's mock when the switch is reverted"* — the exact behaviour the decision above removes. They were
+> rewritten (not deleted) to assert that the same port keeps serving the same workspace across a switch, which
+> is the stronger statement and the one that caught the change: restoring `reloadConfig()` now fails the first
+> assertion. A test that encodes the old contract is how a behaviour change announces itself.
+>
+> **Status: the proxy half is done; `workspace.setActive` is decided and landed; `webhookServer.ts` needs
+> nothing; `config.save`'s split belongs with WI 7 (already independent guards — see below).**
+
 - `proxy/server.ts:29-31` reads `cfg.activeWorkspaceId` for rules and enabled sets → the proxy reads its
-  own `workspaceId`, passed at construction.
+  own `workspaceId`, passed at construction. **Done 2026-09-21, with the `?? activeWorkspaceId` fallback kept
+  for the no-id case — see the callout above.**
 - `legacyCompanion.ts:130,166,197` **keeps** reading `activeWorkspaceId`. It is the one place where "the
   active workspace" is a legitimate app-level notion: it is what the user is looking at.
-- `workspace.setActive` (`store/coreCommands.ts:70-79`) currently calls `reloadConfig()`, which reloads the
-  *proxy*. **Decide:** switching workspace in the UI should **leave every running proxy alone** and switch
-  only the pointer. A workspace's rules should keep serving while you edit another one. This is a visible
-  behaviour change (today the port stops serving the old workspace's rules) and should be confirmed before
-  it lands.
+- `workspace.setActive` (`store/coreCommands.ts:87-96`) called `reloadConfig()`, which reloaded the *proxy*.
+  **DECIDED 2026-09-21 (owner): switch the pointer only — the `reloadConfig()` call is removed.** Switching
+  workspace in the UI updates `activeWorkspaceId` and the UI, and every running proxy keeps serving its own
+  workspace. This is what makes "two workspaces, each serving its own rules" true for the **desktop** and not
+  just for a host, so it is part of the acceptance criterion rather than a nicety. The visible change is that
+  the old workspace's proxy keeps answering on its port after you switch — intended under D10, where the port
+  is owned by the workspace and not by the selection.
+  **`env.setActive` keeps its `reloadConfig()`, and that asymmetry is load-bearing**: an *environment* is
+  proxy state (which rules and enabled sets are live), so changing it genuinely has to re-point the proxy
+  serving that workspace. The two commands look symmetric and are not. Both directions are asserted —
+  `tests/ipc/handlers.test.ts` gained `workspace.setActive` **does not** reload and `env.setActive` **does**
+  (the second exists so the first cannot be "fixed" by deleting the reload from a shared helper).
+  Note the proxy-mocked suite is the right home for this: `tests/integration/foldersAndWorkspaces.integration.test.ts`
+  passes with or without the call, because it only observes the pointer.
 - **`config.save` must be split, not deleted.** `store/configCommands.ts:63-66` restarts the proxy when the
   port changes and `:67-73` restarts the companion. Under D10 the proxy half no longer belongs to
   `config.save`; the companion half stays. Deleting the whole block compiles cleanly and silently kills
   companion port changes.
+  **Re-measured 2026-09-21: the split is already done at the line level** — `:57` is the unconditional
+  `reloadConfig()` and `:64-67` restarts the proxy only when `isRunning()` is false or the port/TLS changed,
+  while `:68-75` is a *separate* `if` on `companionPort` that imports `restartCompanionServer` statically
+  (deliberately: a bare `require` would only resolve because `tsc-alias` post-processes the build, putting a
+  user-facing path out of reach of a test runner). So the two halves are already independent guards, and the
+  remaining work is to make the proxy half optional for a workspace whose runtime owns its own port — that
+  belongs with WI 7, when the desktop stops being the only consumer. Recorded so it is not re-derived.
+
+### Work item 1 — the protocol shape (first half landed; the port plumbing is still owed)
+
+> **PROTOCOL HALF DONE 2026-09-21 — ten commands carry an optional `workspaceId`; the host-local
+> `runtime.json` *preferred-port* plumbing and D17's blob-root namespacing are still owed.**
+>
+> **The ten, and why the omission is a decision.** `server.start|stop|restart|status`, `proxy.status`,
+> `webhook.registerActive|unregisterActive`, `webhookServer.start|stop|status` moved from
+> `z.object({}).strict()` to a shared `WorkspaceScope` (`{ workspaceId?: string }`). **`services.discover`
+> is deliberately left unscoped** — it reports the ports this host is listening on, which is a property of
+> the host and not of any workspace — and that omission is asserted in `index.test.ts` so a later reader
+> cannot read it as an oversight.
+>
+> **`.strict()` makes this a schema change, not a widening.** `.strict()` turns an unknown key into a
+> rejection, so adding a parameter changes *which keys are known*. §12.2 flagged that WI 1 invalidates the
+> affected fixtures and instructed re-deriving rather than trusting them.
+>
+> **The fixtures were re-derived, and the outcome is the opposite of the expectation — worth recording
+> because the hazard was anticipated and did not materialise.** The five `server.*` / `proxy.status` rows and
+> the two `webhookServer` rows used `invalid: { extra: true }`. Those still reject (`extra` is still
+> unknown), but the generic form no longer tests anything specific to this change, so they were replaced with
+> a near-miss on the **new** field (`{ workspaceId: 42 }`) — a strictly better assertion, since a missing
+> optional field is valid by construction. **No fixture became accidentally-valid**: the hazard is a fixture
+> whose *invalid* payload is the newly allowed key, and none of the ten was written that way.
+>
+> **The count, and a correction that matters more than the number.** `index.test.ts` went **185 → 216
+> (+31)**, measured by enumerating the run's own test names (`--reporter=json` →
+> `assertionResults[].title` → classify by name), because the suite's body is a `for (const action of
+> actions)` loop emitting **2 `it`s per command**. An earlier revision of `protocol-changes.md` recorded
+> "190 → 216 (+26)" and `plan/14` flagged **+5 as unaccounted**; both figures were wrong and the "+5" was
+> phantom. The true decomposition is 184 generated pairs (92 × 2) + 1 coverage invariant + 1
+> `services.discover` assertion + **30** from the new block (three `it.each(SCOPED)` of ten) = **216**, so
+> the prior count is **185** and the delta is **+31**. **The mechanism of the error is the lesson:** the 26
+> came from subtracting only the 30 `it.each` cases from 216 and attributing the residual to the change, so
+> the *baseline absorbed* two cases that existed on both sides — and a total that is too low by exactly the
+> number of pre-existing cases **looks like a missing test rather than an arithmetic slip**, which is what
+> sent the reconciliation looking for a test that was never there. **For a generated suite, never count by
+> hand; enumerate and classify.** This is the fifth instance of the "count in prose" family in `TRAPS.md`,
+> and the one that cost this session's commit history (see the `git stash` section there).
+>
+> **What the new block asserts, and why both directions are load-bearing.** For each of the ten:
+> `workspaceId` present **is accepted**, absent **is still accepted**, non-string **is rejected**. The
+> per-command pair above cannot express this — it checks that *the fixture* parses, and a fixture is one
+> payload, whereas what "omitted means the active workspace" means on the wire is a **relationship**.
+> Asserting only "present is accepted" would pass if someone made the field *required* and broke every
+> desktop caller, which is the single most likely way this change goes wrong.
+>
+> **Still owed under this work item:** (a) the host-local `runtime.json` preferred-port plumbing from the
+> UI/settings, and (b) D17's blob-root namespacing — `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, a
+> `workspaceId` on the four `blob.*` params, a per-runtime sweeper, and re-derived `blob.*` `invalid`
+> fixtures (those are the rows where the "invalid payload is the newly allowed key" hazard is still live,
+> since `blob.*` params are not yet scoped).
 
 ### Work item 5 — preflight and port allocation
+
+> **ALLOCATOR DONE 2026-09-21 — `packages/engine/src/runtime/portAllocator.ts`, 18 real-socket cases; the
+> `preflight()` half is still owed.** The allocator is its own module rather than part of
+> `createWorkspaceRuntime()` because allocation is the **host's** job: it needs host-wide knowledge of what
+> the other runtimes already took, which is precisely why the runtime takes ports as required inputs.
+>
+> **D16's resolution order is two distinct paths, not one fallback.** A taken **per-workspace override**
+> throws `PortUnavailableError`, whose message names the next free port — D16's "never silently move a port
+> the user chose", and the message has to be *actionable* or the rule is just a crash. A taken
+> **environment base** scans contiguously upward instead, because the increment is the designed path for
+> every workspace after the first. `BIFURC_PROXY_BASE_PORT` moves the **base**, not one workspace's port, so
+> the increment still works after it; a **malformed** value throws rather than silently defaulting, because a
+> container that set the variable meant it and a silent fallback would publish the wrong port.
+>
+> **The one thing that must not be done differently, and the reason this needed real-socket tests:**
+> `tryBind()` performs an actual `listen()` and releases the handle before resolving. D16 forbids building
+> this on `applications/portUtils.ts#checkPortInUse`, which binds-then-closes so the *caller's* real bind
+> happens later — a TOCTOU race. The load-bearing assertion is therefore not "reports a taken port as
+> taken" (easy, and a mock would pass it) but **"after `tryBind` says free, a real `listen()` on that port
+> succeeds"** — a leaked probe would make every allocation fail at the caller's own bind. `checkPortInUse`
+> keeps its legitimate use (reporting, where it can name the owning PID) and `killProcessOnPort` is
+> untouched.
+>
+> **Deliberately not done:** the scan does **not** consult the registry first and jump to a remembered port.
+> D16's point is that the increment is the designed path, and a sequential scan from the base lands the same
+> runtimes on the same ports on restart as long as they are free — without needing to remember.
+>
+> **Still owed for this work item (the `preflight()` half is now DONE 2026-09-21 — see below).**
+
+> **PREFLIGHT HALF DONE 2026-09-21 — `StartupCheck.advisory`.** The contract change landed without changing
+> `!ok`'s meaning for a single pre-P14 caller: `advisory?: boolean` is **absent** (never `false`) on a fatal
+> finding, so `checks.filter((c) => !c.ok)` — `plan/10`'s entrypoint — keeps its P2 semantics, and a
+> D16-aware consumer filters on `!c.ok && !c.advisory`. A busy **base** port returns `advisory: true` with a
+> hint naming the increment; a busy **per-workspace override** stays fatal with the "free the port, or change
+> this workspace's configured port" hint, because D16's fail-loudly rule is about a port the *user* chose.
+> `PreflightPort` gained `nextFree`, so the hint can be concrete ("workspace proxies will use 81 and up")
+> rather than telling a user to change a setting that is about to be superseded.
+>
+> `tests/startup.test.ts` went **5 → 10 cases** (+5): advisory-with-`nextFree`, advisory-without-inventing-a-
+> number, override-stays-fatal, mixed (only the busy ones flag, only one is advisory), and free-advisory-port
+> -is-plain-`ok`. The four pre-existing port cases were left untouched, which is the evidence that the
+> contract did not move for them.
 
 - **`preflight()`'s port check must become non-fatal — this is a contract change, not a tweak.**
   `startup.ts:90-99,122` reports a busy port as `{ ok: false, code: "port-in-use" }`, and `plan/10`'s
@@ -671,3 +1061,134 @@ about**, and (b) the readers of the three globals §1.1 lists. It did **not** re
 P2's four-layer import rewrite, P3's "17 formats round-trip" claim, P4's conformance-runner count, or P5's
 seven-key disagreement. None of those is referenced by the pivot, so none of them can be *contradicted* by
 it — but "not contradicted" is a weaker statement than "verified", and it is the honest one.
+
+---
+
+## 13. Work item 0 — the measurement, re-derived 2026-09-21
+
+**This is the gate §6 makes a hard stop, and it is a measurement, not a design.** The whole phase's estimate
+rests on the reader count being small. It is. Everything below was read off the tree at
+`86efa6c` (post-reduction, `src/` 17 files, 101 files / 2,458 tests) with
+`grep` scoped to `packages/*/src`, `src/`, `tests/` — **never** to `coverage*/`, `dist/` or `release/`
+(`TRAPS.md`: a repo-wide grep drowns in the eleven generated coverage trees).
+
+### 13.1 Module-level mutable state in `proxy/` and every reader
+
+**Three modules hold process-global server state.** Each is a singleton today and each is a WI 2 factory
+candidate — with the readiness predicate as the one non-mechanical part.
+
+| Module | Module-level state | Readers of that state |
+|---|---|---|
+| `proxy/server.ts:20-25` | `server`, `currentPort`, `currentConfig`, `fullRules`, `lastError`, `enabledSets` | `isRunning()` `:108`, `getPort()` `:112`, `getServerError()` `:116`, `reloadConfig()` `:120-124`, and every `dispatch`/`dispatchHttps` body `:137-292` (reads `currentConfig`/`fullRules`/`enabledSets` through `workspaceCfg` `:144,:258`) |
+| `proxy/webhookServer.ts:29-36` | `server`, `currentPort`, `lastError`, `activeWebhookSuffixes`, `activeSuffixToId` | `isWebhookServerRunning()` `:168`, `getWebhookPort()` `:172`, `getWebhookServerError()` `:176`, `getActiveWebhookCount()` `:58`; the request path reads both maps at `:104,:113` |
+| `transport/legacyCompanion.ts:96-97` | `wss`, `currentPort` | `isCompanionRunning()`, `getCompanionPort()` — **app-level by D10, stays a singleton** |
+
+`webhookEmitter` (`webhookServer.ts:38`) is a fourth module-level object: an `EventEmitter` **constant**, not
+mutable state, exported so the shell and the suite can subscribe. It is not a WI 2 concern — a factory that
+returned a fresh emitter per instance would break the one subscriber (`registerIpcHandlers()`'s forward) and
+`tests/proxy/webhookServer.test.ts:136`, which attaches to the imported singleton.
+
+**The three command modules are readers, not owners:**
+`proxy/serverCommands.ts:76-102` (six commands), `proxy/webhookCommands.ts:82-108` (five commands),
+`store/configCommands.ts:64-75` (the `config.save` proxy+companion restart). All three read
+`loadConfig()` and call the singletons — which is why WI 1's `workspaceId` params and WI 2's factories meet
+here.
+
+### 13.2 Every reader of the four globals §4 WI 0 names
+
+| Global | Reader count | The readers |
+|---|---|---|
+| `AppConfig.port` | **6** | `proxy/serverCommands.ts:84` (`server.start`), `:96` (`server.restart`), `store/configCommands.ts:64,66` (`config.save`), `index.ts:231` (`createEngine`), `src/main.ts:309` (**shell**) |
+| `AppSettings.webhookPort` | **3** | `proxy/webhookCommands.ts:95` (`webhookServer.start`), `index.ts:212` (preflight), `store/appSettings.ts:83-85` (the default) |
+| `AppConfig.activeWorkspaceId` | **9 real readers** | `proxy/server.ts:30-31` + `:122-123` (rules + enabled sets — **WI 4's target**), `proxy/serverUtils.ts:36`, `lib/…`→`store/config.ts:68,126,275,299`, `sync/syncManager.ts:134`, `transport/legacyCompanion.ts:133,169,200` (**stays**), `store/coreCommands.ts:80`, `store/configCommands.ts:87,112`, `importExport/importers/workspace-{zip,json}.ts`, plus the entity/folder/audit/sync command bodies that fall back to it when a param omits a `workspaceId` (`entityCrudCommands.ts` ×5, `folderCommands.ts:92`, `auditCommands.ts:56`, `syncCommands.ts:197`) |
+| `isRunning()` | **4** | `proxy/serverCommands.ts:77` (`server.status`), `:100` (`proxy.status`), `store/configCommands.ts:64` (`config.save`), `index.ts:242` (`createEngine`'s readiness predicate) |
+
+**Two readers the plan does not name and that matter:**
+
+- **`entry` readers of `activeWorkspaceId` are mostly not the proxy.** Of the 9, exactly **two** are the
+  server's (`server.ts:30-31`, re-read in `reloadConfig()` `:122-123`). The rest are *command bodies* that
+  use it as the "current workspace" default for a param — a client/session notion, not a server one. WI 4's
+  scope is therefore **`proxy/server.ts` only**; do not "sever" the command bodies, or every
+  `entity.*`/`folder.*` caller that omits `workspaceId` breaks. `legacyCompanion` is explicitly out (§4 WI 4).
+- **`isRunning()`'s four readers split 2/2 across two work items.** `serverCommands`' two are WI 1/2;
+  `configCommands.ts:64` is WI 4's `config.save` split; `index.ts:242` is WI 2's readiness predicate. So
+  **`isRunning()` cannot be deleted — it must become per-instance**, read through the runtime (§10's third
+  High risk: "a global `isRunning()` reports the wrong runtime ready").
+
+### 13.3 Every caller of the four lifecycle functions
+
+**Measured 2026-09-21, post-reduction — 11 call sites, of which 6 are `src/`-free.** Compare §4 WI 0's list,
+which names `systemHandlers.ts` and `coreHandlers.ts`: **both were deleted by the reduction** (§5b-quindecies,
+§5b-septendecies), and each duplicate was of a body this table already lists — so the *distinct* caller count
+is one lower in each case, and the two `src/` entries below are the only shell survivors.
+
+| Function | Call site | Kind |
+|---|---|---|
+| `startServer` | `proxy/serverCommands.ts:84` (`server.start`) | engine command |
+| | `proxy/serverCommands.ts:96` (`server.restart`) | engine command |
+| | `store/configCommands.ts:66` (`config.save` — the split half) | engine command, **WI 4** |
+| | `index.ts:231` (`createEngine.doStart`) | engine lifecycle, **WI 3/7** |
+| | `src/main.ts:309` (**the shell**, `app.whenReady`) | **WI 7 — the one the desktop gives up** |
+| | `tests/integration/proxyHarness.ts:331`, `tests/integration/settingsMutations.integration.test.ts:336` | **test** (real binds) |
+| `stopServer` | `proxy/serverCommands.ts:89` (`server.stop`), `:95` (`server.restart`) | engine command |
+| | `store/configCommands.ts:65` (`config.save` — the split half) | engine command, **WI 4** |
+| | `shutdown.ts:46` | engine lifecycle |
+| | `tests/integration/proxyHarness.ts` (via its `stop` closure), `settingsMutations…` | test |
+| `startCompanionServer` | `index.ts:232` (`createEngine`) | engine lifecycle — **WRONG under D10, see below** |
+| | `src/main.ts:310` (**the shell**) | shell, app-level |
+| | `tests/integration/settingsMutations…:532,552`, `companionServer.integration.test.ts:74` | test |
+| `restartCompanionServer` | `store/configCommands.ts:74` (`config.save` — **the half that STAYS**) | engine command, **WI 4** |
+| | `tests/integration/companionServer.integration.test.ts:152` | test |
+
+**Two findings the enumeration produced, both worth acting on:**
+
+1. **`createEngine()` starts the companion server — `index.ts:232` — and under D10 that is wrong.** §11 says
+   this phase "does not move the companion server out of the engine", which is about the *module*; it says
+   nothing about the *lifecycle call*. But WI 3's acceptance criterion is "a workspace host starts with **no
+   Electron and no companion server** — assert the companion port is *not* listening", and the host composes
+   runtimes **from `createEngine()` or from the new `runtime/host.ts`**. If the host reuses `createEngine()`,
+   line 232 starts the companion in the host too and the criterion can only be met by the host *not* using
+   `createEngine()` — i.e. by duplicating lines 199-243. **The host entry point must be able to compose the
+   runtimes without the companion line**, which means `createEngine()`'s companion start has to become
+   optional (an `EngineOptions.startCompanion?: boolean`, defaulting true so the shell's byte-identical
+   behaviour holds) or move out of `doStart()` into the shell. **This is a WI 3 design decision with an
+   acceptance criterion riding on it; record it now rather than discover it at the criterion.**
+
+2. **`config.save`'s split is already visible in the table, and it is cleaner than §4 WI 4 implies.** The
+   proxy half is `:64-67`, the companion half is `:68-75`, and the companion call is
+   `restartCompanionServer` — a *different function* from `startServer`/`stopServer`. So the split is a
+   deletion of the `if` block at `:64-67` once the proxy is per-runtime, with the companion `if` left
+   intact. **Deleting `:64-67` compiles cleanly; deleting `:68-75` instead kills companion port changes
+   with nothing failing** — §10's Medium risk, and the one to get right in a single commit.
+
+### 13.4 The verdict — is the phase mechanical?
+
+**Yes, with one caveat, and the caveat is the readiness predicate.**
+
+The reader count is small: **three stateful modules, 22 reader sites, 11 lifecycle call sites, and exactly
+one of the eleven is the shell** (`src/main.ts:309-310`, which is WI 7's single edit). Measured against the
+codebase the reduction just took from 20 handler files to 17, this is a smaller surface than the reduction's
+first group. Nothing here is a hidden cluster.
+
+The caveat is §4 WI 2's "readiness is the non-mechanical part", now confirmed by measurement rather than
+asserted: `index.ts:242` awaits `waitUntilReady(isRunning, getServerError)`, and `isRunning()`/`getServerError()`
+are the **only** readiness signal either server publishes (`index.ts:140-144` documents this, and neither
+`startServer()` nor `startWebhookServer()` returns its `net.Server`/`http.Server`). A factory change makes that
+predicate per-instance, so **`isRunning()` must be re-pointed at the instance, not merely wrapped** — and the
+acceptance criterion that catches it is "starting runtime B does not observe runtime A's readiness". This is
+the reason §6 says to rehearse the factory shape on the webhook receiver first: the webhook receiver has the
+*same* readiness problem (`isWebhookServerRunning()` `:168`) at a third of the size and none of the TLS.
+
+**Consequence for the estimate:** unchanged. WI 0's one-day cost is spent; the list is short and the phase is
+mechanical behind the readiness work.
+
+### 13.5 What this measurement did **not** do
+
+- It did **not** touch or count `renderer/` — the webhook panel's `MAX_ACTIVE_WEBHOOKS = 5`
+  (`renderer/panels/webhooks/useWebhooksPanelState.ts:11`) is a **duplicate of the engine's constant**
+  (`webhookServer.ts:63`) that WI 2 makes per-workspace; the renderer copy cannot be edited before P7
+  (non-negotiable #1), so WI 2 must state whether the renderer's cap is left as a UI hint or the value is
+  pushed to it. Recorded here as an open WI 2 question, not resolved.
+- It did **not** re-measure P3's blob layer — §12.1 already did, and D17 owns it.
+- It is a **reading, not an invariant**: "measured 2026-09-21: N". Re-derive before relying on any number
+  above (`TRAPS.md`, "A count written into prose is never re-derived").

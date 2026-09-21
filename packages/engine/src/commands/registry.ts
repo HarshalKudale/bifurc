@@ -14,7 +14,8 @@
  *
  * Scope of this pass (see `plan/03-phase-2-engine-extraction.md` work item 7 for the full
  * status note): the registry itself is complete and unit-tested, and roughly 112 commands
- * across `coreHandlers.ts`, the CRUD-factory channels (`entityCrudFactory.ts` — `mock:add`,
+ * across `coreHandlers.ts` (now `coreKinds.ts` — see below), the CRUD-factory channels
+ * (`entityCrudFactory.ts` — `mock:add`,
  * `rule:update`, `ws:delete`, `env:add`, and every other kind collapse onto `entity.create`/
  * `entity.update`/`entity.delete`), `entity:load`/`entity:setEnabled`, the no-`AppConfig`-array
  * kinds (`graphqlSchemas`/`protoFiles`/`wsdls`, via `entity.create`/`entity.delete`/`entity.list`
@@ -31,6 +32,16 @@
  * `store/coreCommands.ts`) and the two from `runnerHandlers.ts` (now `runner/runnerCommands.ts`) — so
  * **44 module-scope registrations remain** in `src/`, and this file's own registry stays complete for
  * them only because the shell happens to import them.
+ *
+ * **Update (P6 §5c-then-reduction, 2026-09-21): the 44 above went to zero, and the sentence you just
+ * read is preserved as the mid-pass reading it was.** All 51 moved across seven slices, and the
+ * `ipcMain.handle` reduction has since deleted the channels of five handler groups. `coreHandlers.ts`
+ * is now `coreKinds.ts` and registers only the `environments` kind; `syncHandlers.ts`,
+ * `folderHandlers.ts`, `crudHandlers.ts` and `tlsHandlers.ts` are gone, and `systemHandlers.ts` holds
+ * one client-local channel. **Nothing in `src/` registers a command at module scope any more**, which is
+ * the static property `tests/ipc/handlers.test.ts`'s §5c guard asserts — and it is worth noting that
+ * guard was *needed*, because every claim in the paragraph above was true and the containerised engine
+ * (P9) was still broken: a per-process ratchet cannot see a module side effect.
  */
 import { type CommandAction, getCommandParamsSchema, isKnownCommand, EngineError } from "@bifurc/protocol";
 import type { bus } from "../eventBus";
@@ -148,13 +159,16 @@ export type CommandHandler<Params = unknown, Result = unknown> = (
 // `spec()` helper, so there is no stronger static type to recover without editing the frozen
 // protocol package. Correctness comes from the runtime `schema.safeParse()` in `invoke()` below,
 // not from the type system — handlers should narrow with the same schema type import if they
-// want compile-time help (see `coreHandlers.ts` for the pattern).
+// want compile-time help (see `store/coreCommands.ts` for the pattern — the reference used to point at
+// the shell file those registrations lived in, which is now `src/ipc/handlers/coreKinds.ts` and
+// registers none of them).
 
 /**
  * One handler per command name, validated against the frozen protocol schema. Deliberately
  * synchronous end-to-end (no `async invoke`): several existing handlers
- * (`config:get`, `env:setActive`, `workspace:setActive`) are synchronous today and
- * `tests/ipc/handlers.test.ts` asserts on their return value without `await`. Wrapping every
+ * (`config.get`, `env.setActive`, `workspace.setActive` — the shell *channels* that used to mirror
+ * them were deleted on 2026-09-21, but the commands themselves are still synchronous) are synchronous
+ * today and `tests/ipc/handlers.test.ts` asserts on their return value without `await`. Wrapping every
  * call in a `Promise` would silently change that contract. Handlers that are themselves async
  * still work — `invoke()` just returns whatever the handler returns, sync value or `Promise`,
  * unchanged.

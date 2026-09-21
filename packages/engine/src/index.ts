@@ -78,6 +78,22 @@ export interface EngineOptions {
    * *blocking* is an open product decision, recorded in `plan/03`.
    */
   onPreflightWarning?: (check: StartupCheck) => void;
+  /**
+   * P14 WI 3 — whether this engine binds the **legacy companion** server (the browser-extension
+   * WebSocket bridge). Defaults to `true`, so the Electron shell's behaviour is unchanged.
+   *
+   * A **workspace host** (`plan/14`) passes `false`, and that is not an optimisation: D10 makes the
+   * host's deployable unit a workspace rather than the engine, and `plan/14`'s WI 3 acceptance
+   * criterion is that *"a workspace host starts with no companion server."* The companion is
+   * app-level state (`legacyCompanion.ts` is a module-level singleton by design — `plan/14` WI 2
+   * records it as deliberately not de-singletonized), so N per-workspace runtimes inside one host
+   * cannot each own one.
+   *
+   * When `false`: `doStart()` skips `startCompanionServer()` and its readiness wait, and
+   * `status().companionPort` reads `null`. `shutdownEngine()`'s `stopCompanionServer()` stays as it
+   * is — it is null-guarded, so calling it for a server this engine never started is already a no-op.
+   */
+  startCompanion?: boolean;
 }
 
 export interface EngineStatus {
@@ -194,6 +210,12 @@ export function createEngine(opts: EngineOptions): Engine {
    */
   const log = new EventLog({ bus });
 
+  /**
+   * P14 WI 3 — resolved once, at construction. The default `true` is what keeps the Electron shell
+   * byte-identical: it passes no option, so nothing about its startup changes.
+   */
+  const companionEnabled = opts.startCompanion ?? true;
+
   async function doStart(): Promise<EngineStatus> {
     // Must come first: every store module resolves through the data root.
     setDataRoot(opts.dataDir);
@@ -210,7 +232,9 @@ export function createEngine(opts: EngineOptions): Engine {
       ports: [
         { name: "proxy", port: settings.port },
         { name: "webhook", port: settings.webhookPort ?? 9101 },
-        { name: "companion", port: settings.companionPort ?? 9271 },
+        // Only checked when this engine will actually bind it — a host that passes
+        // `startCompanion: false` should not be warned about a port it never opens.
+        ...(companionEnabled ? [{ name: "companion", port: settings.companionPort ?? 9271 }] : []),
       ],
     });
     for (const check of checks) if (!check.ok) warn(check);
@@ -229,7 +253,8 @@ export function createEngine(opts: EngineOptions): Engine {
     stopLogWiring = wireLogEventsToBus(bus);
 
     startServer(settings.port);
-    startCompanionServer(settings.companionPort ?? 9271);
+    // P14 WI 3 — a host omits the companion entirely (`EngineOptions.startCompanion`).
+    if (companionEnabled) startCompanionServer(settings.companionPort ?? 9271);
 
     // `startServer()` and `startCompanionServer()` are fire-and-forget — both hand off to an async
     // `listen()` and return immediately, so `isRunning()` is still false on the very next line.
@@ -240,14 +265,18 @@ export function createEngine(opts: EngineOptions): Engine {
     // `status().proxyError`, and the shell has always tolerated a busy port. Waiting on the error
     // as well as on success keeps `start()` bounded either way.
     await waitUntilReady(isRunning, getServerError);
-    await waitUntilReady(isCompanionRunning, () => null);
+    // Only waited on when it was started; `isCompanionRunning()` would otherwise stay false and
+    // cost the full 5 s deadline for a server this engine deliberately never opened.
+    if (companionEnabled) await waitUntilReady(isCompanionRunning, () => null);
 
     return status();
   }
 
   function status(): EngineStatus {
     const proxyUp = isRunning();
-    const companionUp = isCompanionRunning();
+    // `false` when the companion was never started, so `companionPort` below reads `null` rather
+    // than `getCompanionPort()`'s stale value — the same trap `currentPort` set in the proxy.
+    const companionUp = companionEnabled && isCompanionRunning();
     return {
       running: proxyUp,
       dataDir: isDataRootSet() ? dataDir() : opts.dataDir,
@@ -393,6 +422,27 @@ export * as randomNames from "./lib/randomNames";
 export * as randomizer from "./lib/randomizer";
 export * as eventBus from "./eventBus";
 export * as proxy from "./proxy/server";
+export * as webhookServer from "./proxy/webhookServer";
+// P14 WI 3 — the per-workspace unit a host deploys (D10/D11). Exported as a namespace rather than a
+// named re-export so a caller writes `runtime.createWorkspaceRuntime(...)`, which reads as the
+// composition it is: the runtime is not part of the engine's own lifecycle.
+export * as runtime from "./runtime/workspaceRuntime";
+// P14 WI 3 — the workspace **host**: the composition a deployable unit runs. Separate from `runtime` because
+// it is the opposite end of the abstraction: a runtime is one workspace's servers, a host is the thing that
+// owns N of them plus the one RPC endpoint (D13) and the signal handling.
+export * as host from "./runtime/host";
+// P14 WI 1 — the **host-local** `runtime.json`. Deliberately not part of `runtime`: it is a property of *this
+// machine hosting these workspaces*, never of the workspaces' content, which is exactly why it is not
+// `workspace.json` (that file is git-tracked and syncs).
+export * as hostRegistry from "./runtime/hostRegistry";
+// P14 WI 3 — the engine's **whole** command surface in one call, for a consumer with no shell.
+// `createEngine()` registers nothing by design (P3: "the consumer declares what it is willing to serve"),
+// and until a headless host existed the only declaration was the Electron shell's `registerIpcHandlers()`.
+export { registerAllEngineCommands } from "./registerAll";
+// P14 WI 5 — D16's allocator. Separate from the runtime because allocation is the *host's* job: it needs
+// host-wide knowledge of what the other runtimes already took, which is exactly why the runtime takes ports
+// as required inputs rather than choosing them.
+export * as ports from "./runtime/portAllocator";
 export * as sync from "./sync/syncManager";
 export * as applications from "./applications/processSpawner";
 export * as companion from "./transport/legacyCompanion";

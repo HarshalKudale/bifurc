@@ -43,12 +43,40 @@ export interface StartupCheck {
   code?: StartupCheckCode;
   message?: string;
   hint?: string;
+  /**
+   * P14 WI 5 — true when a `!ok` finding must **not** stop a host from starting.
+   *
+   * `plan/10`'s container entrypoint does `checks.filter((c) => !c.ok)` and exits non-zero, which is right
+   * for git and the data dir. It is **wrong for a base port**: under D16 a busy base port is the *normal*
+   * case for a host's second workspace, so a fatal check would refuse to start exactly the configuration the
+   * executor pivot exists to enable. A consumer that wants the P2 semantics keeps using `!c.ok`; one that
+   * wants the D16 semantics filters on `!c.ok && !c.advisory`.
+   *
+   * Absent (never `false`) for a fatal check, so `!c.ok` alone stays correct for every pre-P14 code path.
+   */
+  advisory?: boolean;
 }
 
 export interface PreflightPort {
   /** Human-readable label used in the check's message, e.g. "proxy", "webhook", "companion". */
   name: string;
   port: number;
+  /**
+   * P14 WI 5 — whether a busy port is merely *informational* (`true`) or a real finding (`false`/absent).
+   *
+   * - **A base port is advisory.** `plan/14` D16 derives the base from the environment and each workspace
+   *   scans upward from it, so the second workspace finding the base taken is the *designed* path, not a
+   *   fault. The hint points at the increment.
+   * - **A per-workspace override is NOT advisory.** D16's rule is that a taken override "fails loudly" —
+   *   it is a port the user chose, and silently moving it would be a lie about what happened.
+   */
+  advisory?: boolean;
+  /**
+   * The first free port at or above `port`, when the caller already knows it (the host's allocator does).
+   * Used to make the hint concrete — "port 80 is taken; workspace proxies will use 81 and up" — instead of
+   * telling a user to change a setting that is about to be superseded anyway.
+   */
+  nextFree?: number;
 }
 
 export interface PreflightOptions {
@@ -90,11 +118,30 @@ function checkDataDirWritable(dataDir: string): StartupCheck {
 async function checkPortAvailable(p: PreflightPort): Promise<StartupCheck> {
   const info = await checkPortInUse(p.port);
   if (!info.inUse) return { ok: true };
+
+  const held = `Port ${p.port} (${p.name}) is already in use${info.pid ? ` by PID ${info.pid}` : ""}.`;
+
+  if (!p.advisory) {
+    // D16's fail-loudly path: a per-workspace override is a port the user chose, so the hint must tell them
+    // to free it or change it — and must not imply the engine will pick another one.
+    return {
+      ok: false,
+      code: "port-in-use",
+      message: held,
+      hint: "Free the port, or change this workspace's configured port.",
+    };
+  }
+
+  // D16's designed path: a busy *base* port is normal for the second workspace, so this is informational.
+  // The hint names the increment rather than a setting, because the base is derived from the environment
+  // and the increment is what will actually happen.
+  const increment = p.nextFree != null ? `workspace proxies will use ${p.nextFree} and up` : "workspace proxies will count upward from it";
   return {
     ok: false,
     code: "port-in-use",
-    message: `Port ${p.port} (${p.name}) is already in use${info.pid ? ` by PID ${info.pid}` : ""}.`,
-    hint: "Free the port, or change the configured port in settings.",
+    message: `${held} This is the base port for ${p.name} proxies.`,
+    hint: `Nothing to fix — a taken base port is expected when a host runs more than one workspace; ${increment}.`,
+    advisory: true,
   };
 }
 

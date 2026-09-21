@@ -1,23 +1,45 @@
 /**
  * `server.*`, `proxy.status`, `services.discover` — proxy server lifecycle and health.
+ *
+ * ## `workspaceId` — the per-workspace scoping (P14 D13, WI 1)
+ *
+ * A host runs N workspaces behind **one** RPC endpoint, so these commands are addressed to a workspace and
+ * carry its id in their params. It is **optional**, and that is the whole compatibility story: omitted means
+ * "the active workspace", which is what the single-workspace desktop means today. A host member's client
+ * always sends one, because for it there is no meaningful default.
+ *
+ * These fields were `z.object({}).strict()`, so adding a key is a **schema change and not a widening**:
+ * `.strict()` turns an unknown key into a rejection, which means the `invalid: { extra: true }` fixtures
+ * (`fixtures.ts:57-62`) keep rejecting — they assert "an unknown key fails", which stays true for a key that
+ * is still unknown. That is why those fixtures did **not** need re-deriving, while `config.get`'s does not
+ * change either. Verify per command rather than trusting the pattern: a fixture whose invalid payload happens
+ * to be the newly allowed key would silently stop testing rejection.
  */
 import { z } from "zod";
 
-export const ServerStatusParams = z.object({}).strict();
+/** The optional per-workspace scope shared by every command in this file. */
+const WorkspaceScope = z.object({
+  /** The workspace to act on. Omitted → the active workspace (the desktop's behaviour). */
+  workspaceId: z.string().optional(),
+});
+
+export const ServerStatusParams = WorkspaceScope.strict();
 export type ServerStatusParams = z.infer<typeof ServerStatusParams>;
 export interface ServerStatusResult {
   running: boolean;
   port: number;
   error: string | null;
+  /** The workspace this status describes — echoed so a multiplexed client can match response to request. */
+  workspaceId?: string;
 }
 
-export const ServerStartParams = z.object({}).strict();
+export const ServerStartParams = WorkspaceScope.strict();
 export type ServerStartParams = z.infer<typeof ServerStartParams>;
 
-export const ServerStopParams = z.object({}).strict();
+export const ServerStopParams = WorkspaceScope.strict();
 export type ServerStopParams = z.infer<typeof ServerStopParams>;
 
-export const ServerRestartParams = z.object({}).strict();
+export const ServerRestartParams = WorkspaceScope.strict();
 export type ServerRestartParams = z.infer<typeof ServerRestartParams>;
 
 export interface ServerLifecycleResult {
@@ -26,7 +48,7 @@ export interface ServerLifecycleResult {
 
 /** Subset of `server.status`. DROP candidate flagged in `plan/handler-classification.md` —
  * kept for now pending verification no external client depends on the narrower shape. */
-export const ProxyStatusParams = z.object({}).strict();
+export const ProxyStatusParams = WorkspaceScope.strict();
 export type ProxyStatusParams = z.infer<typeof ProxyStatusParams>;
 export interface ProxyStatusResult {
   running: boolean;

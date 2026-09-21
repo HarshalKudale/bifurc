@@ -38,4 +38,58 @@ describe("@bifurc/protocol command schemas", () => {
       expect(result.success).toBe(false);
     });
   }
+
+  /**
+   * P14 WI 1 (D13) — the workspace-scoped servers accept a `workspaceId`, and the two properties that make
+   * it a compatibility story rather than a break.
+   *
+   * The generic per-command pair above cannot assert this: it checks that *the fixture* parses, and a fixture
+   * is one payload. What matters here is a **relationship** — present is accepted, absent is still accepted —
+   * which is what "omitted means the active workspace" actually means on the wire. Asserting both directions
+   * is also what would catch someone making the field required, the single most likely way this change goes
+   * wrong for the desktop.
+   */
+  describe("workspaceId scoping (P14 D13)", () => {
+    const SCOPED = [
+      "server.status",
+      "server.start",
+      "server.stop",
+      "server.restart",
+      "proxy.status",
+      "webhook.registerActive",
+      "webhook.unregisterActive",
+      "webhookServer.start",
+      "webhookServer.stop",
+      "webhookServer.status",
+    ] as const;
+
+    it.each(SCOPED)("%s accepts a workspaceId", (action) => {
+      const { params } = COMMANDS[action];
+      const fixture = COMMAND_FIXTURES[action];
+      const withWs = { ...(fixture.valid as object), workspaceId: "ws1" };
+      const result = params.safeParse(withWs);
+      expect(result.success, result.success ? "" : JSON.stringify(result.error?.issues)).toBe(true);
+    });
+
+    it.each(SCOPED)("%s still accepts the payload WITHOUT a workspaceId (the desktop's shape)", (action) => {
+      const { params } = COMMANDS[action];
+      const fixture = COMMAND_FIXTURES[action];
+      const withoutWs = { ...(fixture.valid as Record<string, unknown>) };
+      delete withoutWs.workspaceId;
+      const result = params.safeParse(withoutWs);
+      expect(result.success, result.success ? "" : JSON.stringify(result.error?.issues)).toBe(true);
+    });
+
+    it.each(SCOPED)("%s rejects a non-string workspaceId", (action) => {
+      const { params } = COMMANDS[action];
+      const result = params.safeParse({ workspaceId: 42 });
+      expect(result.success).toBe(false);
+    });
+
+    it("services.discover is deliberately NOT scoped — it reports host-wide services", () => {
+      // Recorded as an assertion so the omission is a decision rather than an oversight: the command lists
+      // ports this host is listening on, which is a property of the host and not of any workspace.
+      expect(COMMANDS["services.discover"].params.safeParse({ workspaceId: "ws1" }).success).toBe(false);
+    });
+  });
 });

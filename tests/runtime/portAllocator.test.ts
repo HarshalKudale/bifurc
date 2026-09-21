@@ -1,0 +1,306 @@
+/**
+ * P14 WI 5 — the port allocator, tested against **real sockets**.
+ *
+ * The unit under test is defined by its interaction with the OS, so every case here binds real ports. A
+ * mocked `net` could not fail in the way that matters: the whole reason D16 forbids `checkPortInUse` is that
+ * a probe-then-close can be raced, and a mock has no race.
+ *
+ * The load-bearing cases are therefore:
+ *   - `tryBind` reports a held port as unavailable AND **releases** a free one (a probe that leaks the port
+ *     would make every allocation fail at the caller's real `listen()`);
+ *   - the base path **scans upward** from a taken base (the designed path for the second workspace);
+ *   - an override **throws** and names the next free port (D16's fail-loudly rule);
+ *   - the proxy and webhook ranges are independent.
+ */
+
+import { describe, it, expect, afterEach, vi } from "vitest";
+import * as net from "net";
+
+import {
+  allocatePorts,
+  findFreePortFrom,
+  nextFreePortAbove,
+  proxyBasePort,
+  tryBind,
+  PortRangeExhaustedError,
+  PortUnavailableError,
+  WEBHOOK_BASE_PORT,
+} from "@bifurc/engine/runtime/portAllocator";
+
+/** Ports this file holds open, released in `afterEach` so a failure cannot leak into the next case. */
+const held: net.Server[] = [];
+
+/** Bind and HOLD a port, so it is genuinely unavailable — returns it. */
+async function holdPort(port = 0): Promise<number> {
+  const srv = new net.Server();
+  await new Promise<void>((resolve, reject) => {
+    srv.once("error", reject);
+    srv.listen(port, "127.0.0.1", () => resolve());
+  });
+  held.push(srv);
+  const addr = srv.address();
+  return typeof addr === "object" && addr ? addr.port : port;
+}
+
+/** Ask the OS for a free port and release it — for cases that need a *specific* starting number. */
+async function freePort(): Promise<number> {
+  const srv = new net.Server();
+  const port = await new Promise<number>((resolve, reject) => {
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      resolve(typeof addr === "object" && addr ? addr.port : 0);
+    });
+  });
+  await new Promise<void>((resolve) => srv.close(() => resolve()));
+  return port;
+}
+
+afterEach(async () => {
+  while (held.length) {
+    const srv = held.pop()!;
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  }
+  vi.unstubAllEnvs();
+});
+
+describe("tryBind() — the real bind, not a probe", () => {
+  it("reports a free port as available AND actually releases it", async () => {
+    const port = await freePort();
+    expect(await tryBind(port)).toBe(true);
+
+    // The point: the probe must not hold the port. A caller binds it for real immediately after, and
+    // would hit EADDRINUSE against a leaked probe.
+    const srv = new net.Server();
+    await new Promise<void>((resolve, reject) => {
+      srv.once("error", reject);
+      srv.listen(port, "127.0.0.1", () => resolve());
+    });
+    held.push(srv);
+    expect((srv.address() as net.AddressInfo).port).toBe(port);
+  });
+
+  it("reports a held port as unavailable", async () => {
+    const port = await holdPort();
+    expect(await tryBind(port)).toBe(false);
+  });
+});
+
+describe("findFreePortFrom() — the environment-base scan (D16 order #2)", () => {
+  it("returns the base itself when it is free", async () => {
+    const base = await freePort();
+    expect(await findFreePortFrom(base)).toBe(base);
+  });
+
+  it("scans contiguously upward when the base is taken", async () => {
+    const base = await holdPort();
+    const firstFree = await holdPort(base + 1);
+    expect(firstFree).toBe(base + 1);
+
+    // base and base+1 are both held, so the scan must land on base+2 — the designed path for the second
+    // workspace, not a degraded one.
+    expect(await findFreePortFrom(base)).toBe(base + 2);
+  });
+
+  it("returns null when the whole scanned range is exhausted", async () => {
+    // Ask from the last legal base so the scan has exactly one candidate, and hold it.
+    await holdPort(65535);
+    // 65535 is the top of the port space, so the scan runs out rather than wrapping to 0.
+    expect(await findFreePortFrom(65535)).toBeNull();
+  });
+
+  it("skips a reservation a sibling runtime is already using", async () => {
+    // Simulates the real multi-workspace case: runtime A took base; runtime B scans from base.
+    const base = await holdPort();
+    expect(await findFreePortFrom(base)).toBe(base + 1);
+  });
+});
+
+describe("nextFreePortAbove() — advisory, for the fail-loudly message", () => {
+  it("returns the given port when it is free", async () => {
+    const port = await freePort();
+    expect(await nextFreePortAbove(port)).toBe(port);
+  });
+
+  it("walks past held ports", async () => {
+    const port = await holdPort();
+    await holdPort(port + 1);
+    expect(await nextFreePortAbove(port)).toBe(port + 2);
+  });
+});
+
+describe("allocatePorts() — D16's resolution order", () => {
+  it("scans upward from the base for both ranges when there is no override", async () => {
+    const base = await freePort();
+    // Separated on purpose: two consecutive `freePort()`s come back adjacent, which would make the proxy
+    // scan take the webhook's base (see the adjacency note on "keeps the two ranges independent" below).
+    const webhookBase = base + 10;
+    expect(await tryBind(webhookBase)).toBe(true);
+
+    const out = await allocatePorts({ proxyBase: base, webhookBase });
+
+    expect(out.proxyPort).toBe(base);
+    expect(out.webhookPort).toBe(webhookBase);
+    // Neither was a preferred port, so the host knows both were chosen by scanning.
+    expect(out.proxyPortWasPreferred).toBe(false);
+    expect(out.webhookPortWasPreferred).toBe(false);
+  });
+
+  it("honours a per-workspace override when it is free", async () => {
+    const preferred = await freePort();
+    const preferredWebhook = await freePort();
+
+    const out = await allocatePorts({
+      proxyBase: await freePort(),
+      webhookBase: await freePort(),
+      preferredProxyPort: preferred,
+      preferredWebhookPort: preferredWebhook,
+    });
+
+    expect(out.proxyPort).toBe(preferred);
+    expect(out.webhookPort).toBe(preferredWebhook);
+    expect(out.proxyPortWasPreferred).toBe(true);
+    expect(out.webhookPortWasPreferred).toBe(true);
+  });
+
+  it("THROWS on a taken proxy override, naming the next free port — never silently increments", async () => {
+    const taken = await holdPort();
+    const nextFree = await holdPort(taken + 1);
+    expect(nextFree).toBe(taken + 1);
+
+    let thrown: unknown;
+    try {
+      await allocatePorts({ preferredProxyPort: taken, webhookBase: await freePort() });
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(PortUnavailableError);
+    const err = thrown as PortUnavailableError;
+    expect(err.requested).toBe(taken);
+    // D16: the message must say what to do, so it names a concrete free port.
+    expect(err.nextFree).toBe(taken + 2);
+    expect(err.message).toContain(String(taken));
+    expect(err.message).toContain(String(taken + 2));
+    expect(err.message).toMatch(/in use/i);
+  });
+
+  it("THROWS on a taken webhook override too", async () => {
+    const taken = await holdPort();
+    await expect(
+      allocatePorts({ webhookBase: await freePort(), preferredWebhookPort: taken }),
+    ).rejects.toBeInstanceOf(PortUnavailableError);
+  });
+
+  /**
+   * A trap worth stating, because it made this case fail for the wrong reason.
+   *
+   * `holdPort()` and `freePort()` both bind an **ephemeral** port, and the OS hands out adjacent numbers: a
+   * `freePort()` taken right after a `holdPort()` is reliably `base + 1` — measured six times, `gap = 1`
+   * every time. So the naive version of this case (`base = holdPort()`, `webhookBase = freePort()`) puts the
+   * webhook base exactly where the proxy scan is about to land, and the webhook is then legitimately pushed
+   * to `base + 2`. The assertion fails while the allocator is behaving correctly.
+   *
+   * The ranges must therefore be separated **deliberately**, by asking for the webhook base from a different
+   * span rather than from the one the OS is currently handing out.
+   */
+  it("keeps the two ranges independent — a taken proxy port does not consume a webhook port", async () => {
+    const base = await holdPort();
+    // Deliberately far from the proxy range: an ephemeral port here would be `base + 1`.
+    const webhookBase = base + 10;
+    expect(await tryBind(webhookBase)).toBe(true);
+
+    const out = await allocatePorts({ proxyBase: base, webhookBase });
+
+    expect(out.proxyPort).toBe(base + 1);
+    // The webhook is untouched by the proxy's scan.
+    expect(out.webhookPort).toBe(webhookBase);
+  });
+
+  it("throws PortRangeExhaustedError when nothing is free near the top of the port space", async () => {
+    // Base 65535 with 65535 held leaves no room for a single increment.
+    await holdPort(65535);
+    await expect(allocatePorts({ proxyBase: 65535, webhookBase: await freePort() })).rejects.toBeInstanceOf(
+      PortRangeExhaustedError,
+    );
+  });
+
+  /**
+   * The regression a `reserved` set introduced, and the reason this case exists.
+   *
+   * The first version of the reserved set added **both bases** to it, so each range's scan skipped its own
+   * base and every base-path allocation landed on `base + 1`. Nothing failed: the port was free, the runtime
+   * came up, and the host's integration test *observed* `81, 82` and was written up as "D16's base plus
+   * contiguous scan" when the truth was "base skipped, then contiguous". A wrong-but-working port is
+   * invisible to any test that only asserts the runtime is serving — so the assertion here is on the
+   * **identity of the first port**, in both ranges, with a reservation present.
+   *
+   * The second attempt reserved only the *other* range's base, which fixed the proxy half and broke the
+   * webhook half for exactly the same reason. Reserving **neither** is the correct rule; this case is what
+   * distinguishes them, so it must assert both ports and not merely the proxy's.
+   */
+  it("still takes each base itself when a reservation is supplied (regression)", async () => {
+    const base = await freePort();
+    const webhookBase = await freePort();
+    const rpcPort = await freePort();
+
+    const out = await allocatePorts({ proxyBase: base, webhookBase, reserved: [rpcPort] });
+
+    expect(out.proxyPort).toBe(base);
+    expect(out.webhookPort).toBe(webhookBase);
+  });
+
+  it("skips a reserved port the scan would otherwise have taken", async () => {
+    const base = await holdPort();
+    const rpcPort = base + 1;
+
+    // base is held and base+1 is reserved, so the scan must land on base+2 — the reservation is honoured
+    // even though nothing is bound there.
+    const out = await allocatePorts({ proxyBase: base, webhookBase: await freePort(), reserved: [rpcPort] });
+
+    expect(out.proxyPort).toBe(base + 2);
+  });
+
+  it("keeps the two ranges apart even when the bases overlap (env var can make them)", async () => {
+    // The hazard the original "bases reserve each other" line was reaching for. With one base used for both
+    // ranges the webhook allocation must not be handed the proxy's port; the guard is `reserved.add(proxyPort)`
+    // after the proxy is chosen, not the base.
+    const shared = await freePort();
+
+    const out = await allocatePorts({ proxyBase: shared, webhookBase: shared });
+
+    expect(out.proxyPort).toBe(shared);
+    expect(out.webhookPort).not.toBe(out.proxyPort);
+    expect(out.webhookPort).toBe(shared + 1);
+  });
+});
+
+describe("proxyBasePort() — the per-environment base (D16)", () => {
+  it("defaults to 80 on win32 and 8080 elsewhere", () => {
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", "");
+    const expected = process.platform === "win32" ? 80 : 8080;
+    expect(proxyBasePort()).toBe(expected);
+  });
+
+  it("is moved by BIFURC_PROXY_BASE_PORT, and the increment still works after it", async () => {
+    const base = await freePort();
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", String(base));
+    expect(proxyBasePort()).toBe(base);
+
+    // The variable moves the BASE, not one workspace's port — so a sibling still gets base+1.
+    await holdPort(base);
+    expect(await findFreePortFrom(proxyBasePort())).toBe(base + 1);
+  });
+
+  it("fails loudly on a malformed override rather than silently using the default", () => {
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", "not-a-port");
+    expect(() => proxyBasePort()).toThrow(/BIFURC_PROXY_BASE_PORT/);
+
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", "70000");
+    expect(() => proxyBasePort()).toThrow(/BIFURC_PROXY_BASE_PORT/);
+  });
+
+  it("uses the webhook base 9101 on every platform", () => {
+    expect(WEBHOOK_BASE_PORT).toBe(9101);
+  });
+});

@@ -177,7 +177,7 @@ let client: ProtocolClient;
 
 describe("Spike 4 — protocol PoC runtime smoke test", () => {
   beforeAll(async () => {
-    const { registerCoreHandlers } = await import("../../src/ipc/handlers/coreHandlers");
+    const { registerCoreKinds } = await import("../../src/ipc/handlers/coreKinds");
     const { registerCrudKinds } = await import("../../src/ipc/handlers/crudKinds");
     const { registerGraphqlKinds } = await import("../../src/ipc/handlers/graphqlKinds");
     const { registerSoapKinds } = await import("../../src/ipc/handlers/soapKinds");
@@ -190,6 +190,13 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // P6 §5c: `config.get` and `entity.setEnabled` moved out of `coreHandlers`' module scope into the
     // engine, for the same reason `tls.generate` moved in P3 — a suite that registers handlers by hand
     // has to wire the engine half too, or the channel exists with nothing behind it.
+    //
+    // **The channels are now gone too.** The reduction's sixth group deleted all seventeen of
+    // `coreHandlers.ts`'s on 2026-09-21 and the file became `coreKinds.ts` (`plan/07` §5b-septendecies).
+    // Three of the ten this spike drives were among them — `config:get`, `server:status` and
+    // `entity:setEnabled` — so all three are re-attached in the fixture below, and the fixture reaches
+    // **10 of 10**. `server:status` additionally needed `registerServerCommands()` wired above, which
+    // the channel had been supplying by side effect; see the note at that call.
     const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
     // P6 §5c slice 3: `folder.*` moved out of `folderHandlers.ts`'s module scope as well, and that
     // file's channels delegated rather than duplicating, so the engine half has to be wired here too.
@@ -204,13 +211,28 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // `registerCrudKinds()` above wires the per-kind options the four commands dispatch through; it
     // registers no channels (the reduction's fourth group deleted the file's last five, 2026-09-21).
     const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+    // `server.status` is registered here for the first time as of the reduction's sixth group, and the
+    // reason is worth recording because **nothing about deleting `coreHandlers.ts` suggested this file
+    // needed a new line.** This spike drives `server:status` as one of its ten channels, and until
+    // 2026-09-21 that channel *was* the registration: `systemHandlers.ts` called
+    // `registerServerCommands()` at module scope, and this file happened to get it transitively. The
+    // fifth group deleted `server:restart` / `server:stop` / `server:start` and left `server:status`
+    // live, so the transitive path survived it; the sixth group deleted `server:status` — which this
+    // spike never calls through the channel anymore, only through the fixture — and the path went with
+    // it. The failure was `[INTERNAL] No handler registered for command "server.status"`, i.e. the
+    // fixture faithfully re-attached the channel to a command no one had registered. That is the shape
+    // to expect generally: **a suite that registers handler groups by hand gets its commands as a side
+    // effect of whichever group called `register*Commands()`, and the reduction is exactly the process
+    // of deleting those side effects.**
+    const { registerServerCommands } = await import("@bifurc/engine/proxy/serverCommands");
 
-    registerCoreHandlers();
+    registerCoreKinds();
     registerCrudKinds();
     registerGraphqlKinds();
     registerSoapKinds();
     registerCertCommands(commandRegistry);
     registerCoreCommands(commandRegistry);
+    registerServerCommands(commandRegistry);
     registerFolderCommands(commandRegistry);
     registerGraphqlCommands(commandRegistry);
     registerSoapCommands(commandRegistry);
@@ -222,10 +244,11 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // table grows with each **driven** channel — not with each slice, which is the correction the
     // reduction's second group produced: `graphql:introspect` / `soap:execute` went in slice 1 (the nine
     // one-line passthroughs), `mock:add` / `mock:delete` in slice 2 (the 48 factory-generated channels),
-    // `tls:generate` in the reduction's first group (the six `tls:*` channels), and `folder:add` /
-    // `folder:move` in its third (the four `folder:*` channels). The second group — `syncHandlers.ts`,
-    // 19 channels — added none, because this spike drives no `sync.*` / `git.*` / `audit.*` / `history.*`
-    // channel at all.
+    // `tls:generate` in the reduction's first group (the six `tls:*` channels), `folder:add` /
+    // `folder:move` in its third (the four `folder:*` channels), and `config:get` / `server:status` /
+    // `entity:setEnabled` in its sixth (the seventeen `coreHandlers.ts` channels). Groups 2, 4 and 5
+    // added none, because this spike drives no `sync.*` / `git.*` / `audit.*` / `history.*` channel, no
+    // `webhook*` channel and no `server:*` / `capture:*` channel respectively.
     //
     // This spike's subject is the **envelope**, not the routing, so each retired channel is re-attached
     // with *the exact body it had*. That is not a weakening: every one of those bodies was itself a
@@ -233,14 +256,38 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     // reads real output. It also doubles as the check that the deletion lost nothing — the ten commands
     // answer identically, only some of them now arrive by a shorter path.
     //
-    // Treat the table as a **measure of the pass**: it covers 7 of the 10 channels this spike drives
-    // today, and it reaches 10 of 10 exactly when the legacy surface is gone. At that point this file
-    // stops being evidence about the shell and becomes a pure envelope test — which is the open
-    // question recorded in `plan/07` §5b-ter.
+    // **The table now covers 10 of the 10 channels this spike drives — it is complete as of the
+    // reduction's sixth group (2026-09-21).** The previous version of this paragraph said that would
+    // happen "exactly when the legacy surface is gone", and that inference is **wrong in a way worth
+    // keeping**: the two events are independent. The spike drives ten *specific* channels; when this
+    // was written the legacy surface still held twenty dead ones (`applicationHandlers.ts` 10,
+    // `runnerHandlers.ts` 6, `importExportHandlers.ts` 4) that this spike never touches. So "this file
+    // is complete" and "the legacy surface is gone" are different claims, and the first is now true
+    // while the second is not.
+    //
+    // **Updated 2026-09-21, after the reduction's eighth group:** the surface is down to eighteen dead
+    // channels in two files (`runnerHandlers.ts`'s six went in that group — see `plan/07`
+    // §5b-novendecies — and `importExportHandlers.ts`'s four remain). Ten of the twenty have now been
+    // deleted, and this spike drove **none of those ten**, which is the same non-growth the seventh
+    // group recorded and the confirmation that this file's completeness was never coupled to the
+    // surface's. What the completeness *does* establish is the thing the open question in `plan/07`
+    // §5b-ter asked: the ten commands answer identically through a channel-free path, so this file's
+    // remaining value is the envelope, and it no longer depends on the shell at all.
     const { bus } = await import("@bifurc/engine/eventBus");
     // The deleted `tls:generate` body called both of these; the fixture that reproduces it must too.
     const { caCertPath, caKeyPath } = await import("@bifurc/engine/proxy/certManager");
     const deletedChannelBodies: Record<string, (...args: any[]) => unknown> = {
+      // The three `coreHandlers.ts` channels this spike drives (reduction's sixth group). All three were
+      // one-line `commandRegistry.invoke()` adapters, so the re-attachment is the adapter with the
+      // channel removed — `toArgs` supplies the positional arguments the channels took, and each is
+      // named back here. Note `entity:setEnabled`'s channel also carried an `invalid_kind` guard ahead of
+      // the invoke; it is **not** reproduced, because the guard is client-facing behaviour that moved to
+      // `packages/client/src/index.ts` (`174a01d`) and this spike's client predates it. The only kind
+      // this spike sends is `"mocks"`, which the guard passes either way.
+      "config:get": (_e) => commandRegistry.invoke("config.get", {}, { bus }),
+      "server:status": (_e) => commandRegistry.invoke("server.status", {}, { bus }),
+      "entity:setEnabled": (_e, wsId: string, kind: string, id: string, enabled: boolean) =>
+        commandRegistry.invoke("entity.setEnabled", { workspaceId: wsId, kind, id, enabled }, { bus }),
       "graphql:introspect": (_e, params) => commandRegistry.invoke("graphql.introspect", params, { bus }),
       "soap:execute": (_e, params) => commandRegistry.invoke("soap.execute", params, { bus }),
       // `mocks` is one of the ten kinds whose protocol name equals its engine kind, so the adapter's
