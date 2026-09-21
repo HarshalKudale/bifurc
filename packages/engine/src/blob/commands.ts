@@ -27,10 +27,24 @@ import { putBlob, readBlob, releaseBlob, statBlob } from "./store";
  *
  * Throws if any of them is already registered — `CommandRegistry.register()` is strict by design,
  * and a double registration means two different implementations are competing for one wire name.
+ *
+ * ## `workspaceId` (P14 D17) — passed from the param, never from ambient state
+ *
+ * Each handler forwards `params.workspaceId` straight into the store, so the namespace is decided
+ * by the *caller* rather than by whatever workspace this process happens to consider active. That
+ * is deliberate and it is the same rule the proxy follows: a host member always sends an id, the
+ * desktop omits one and gets the host-wide root, and neither path can be influenced by a config
+ * read at call time. Reading `activeWorkspaceId` here instead would make `blob.read` depend on
+ * mutable selection state — so a `blobId` staged under A could resolve under B after a switch,
+ * which is precisely the cross-workspace leak D17 exists to prevent.
  */
 export function registerBlobCommands(registry: CommandRegistry): void {
-  registry.register("blob.put", (params: BlobPutParams) => putBlob(params));
-  registry.register("blob.stat", (params: BlobStatParams) => statBlob(params.blobId));
-  registry.register("blob.read", (params: BlobReadParams) => readBlob(params));
-  registry.register("blob.release", (params: BlobReleaseParams) => releaseBlob(params.blobId));
+  registry.register("blob.put", (params: BlobPutParams) => putBlob(params, Date.now(), params.workspaceId));
+  registry.register("blob.stat", (params: BlobStatParams) =>
+    statBlob(params.blobId, Date.now(), params.workspaceId),
+  );
+  registry.register("blob.read", (params: BlobReadParams) => readBlob(params, Date.now(), params.workspaceId));
+  registry.register("blob.release", (params: BlobReleaseParams) =>
+    releaseBlob(params.blobId, params.workspaceId),
+  );
 }

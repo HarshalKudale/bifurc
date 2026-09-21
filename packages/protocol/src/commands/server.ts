@@ -14,14 +14,12 @@
  * is still unknown. That is why those fixtures did **not** need re-deriving, while `config.get`'s does not
  * change either. Verify per command rather than trusting the pattern: a fixture whose invalid payload happens
  * to be the newly allowed key would silently stop testing rejection.
+ *
+ * `WorkspaceScope` itself lives in `./scope` — three command files need it now, and the `.merge()` ordering
+ * trap that goes with it is documented there.
  */
 import { z } from "zod";
-
-/** The optional per-workspace scope shared by every command in this file. */
-const WorkspaceScope = z.object({
-  /** The workspace to act on. Omitted → the active workspace (the desktop's behaviour). */
-  workspaceId: z.string().optional(),
-});
+import { WorkspaceScope } from "./scope";
 
 export const ServerStatusParams = WorkspaceScope.strict();
 export type ServerStatusParams = z.infer<typeof ServerStatusParams>;

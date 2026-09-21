@@ -194,11 +194,22 @@ async function exportCreate(
     )) as ExportCreateResult;
 }
 
-/** `blob.put` — the client uploading bytes it read from its own disk. */
+/**
+ * `blob.put` — the client uploading bytes it read from its own disk.
+ *
+ * **`workspaceId: TEST_WS` is required, not decorative (P14 D17).** The blob namespace is per
+ * workspace, so a `blob.put` without a scope stages under the host-wide root while
+ * `export.create` (which is handed `TEST_WS` for its own domain work) stages under
+ * `blobs/<TEST_WS>/`. The two halves of one transfer would then look in different places and every
+ * round-trip below would fail at `blob.read` with `blob-not-found` — which is exactly what
+ * happened when D17 landed, and it is the correct failure: an unscoped client against a scoped
+ * server is the cross-workspace case D17 exists to prevent. The fix is to scope the client, not to
+ * relax the store.
+ */
 function pushBlob(registry: CommandRegistry, filename: string, bytes: Buffer, mimeType = "application/json"): string {
     const res = registry.invoke(
         "blob.put",
-        { filename, mimeType, size: bytes.length, data: bytes.toString("base64") },
+        { filename, mimeType, size: bytes.length, data: bytes.toString("base64"), workspaceId: TEST_WS },
         ctx,
     ) as BlobPutResult;
     return res.blobId;
@@ -216,7 +227,7 @@ function pullBlob(registry: CommandRegistry, blobId: string): Buffer {
     let offset = 0;
     // A hung `eof` would otherwise spin forever and take the whole suite with it.
     for (let guard = 0; guard < 10_000; guard++) {
-        const res = registry.invoke("blob.read", { blobId, offset }, ctx) as BlobReadResult;
+        const res = registry.invoke("blob.read", { blobId, offset, workspaceId: TEST_WS }, ctx) as BlobReadResult;
         const slice = Buffer.from(res.data, "base64");
         if (slice.length) chunks.push(slice);
         offset += slice.length;
@@ -333,7 +344,7 @@ describe("export → blob → import", () => {
 
     it("never re-uploads: one blob serves both preflight and commit", async () => {
         const { registry, blobId } = await stageMockExport();
-        const before = statBlob(blobId).size;
+        const before = statBlob(blobId, Date.now(), TEST_WS).size;
 
         expect(preflight(registry, "mocks", "mocks-json", blobId).ok).toBe(true);
         // `import.preflight` is an in-process `readFileSync` that does NOT slide the lease, so a
@@ -341,7 +352,7 @@ describe("export → blob → import", () => {
         // property (`File_Ops_Protocol.md` §2.3) — the whole reason the interface stopped taking a
         // path and started taking content.
         expect((await commit(registry, "mocks", "mocks-json", blobId, "override")).ok).toBe(true);
-        expect(statBlob(blobId).size).toBe(before);
+        expect(statBlob(blobId, Date.now(), TEST_WS).size).toBe(before);
     });
 
     it("leaves the blob in place after commit, so a failed commit is retryable", async () => {
@@ -351,18 +362,18 @@ describe("export → blob → import", () => {
         // The engine does NOT auto-release. `File_Ops_Protocol.md` §5 makes cleanup the *client's*
         // call, because the user may resolve collisions and commit again — and a commit that
         // released its own source would make that second attempt fail with `blob-not-found`.
-        expect(statBlob(blobId).size).toBeGreaterThan(0);
+        expect(statBlob(blobId, Date.now(), TEST_WS).size).toBeGreaterThan(0);
 
         // The client's cleanup. `ok:false` on the second call means "nothing there", which is
         // different information from "I deleted it" during a retry — hence a result, not a throw.
-        expect(registry.invoke("blob.release", { blobId }, ctx)).toEqual({ ok: true });
-        expect(registry.invoke("blob.release", { blobId }, ctx)).toEqual({ ok: false });
+        expect(registry.invoke("blob.release", { blobId, workspaceId: TEST_WS }, ctx)).toEqual({ ok: true });
+        expect(registry.invoke("blob.release", { blobId, workspaceId: TEST_WS }, ctx)).toEqual({ ok: false });
         expect(fs.existsSync(path.join(blobRoot(), blobId))).toBe(false);
     });
 
     it("reports a released blob as a blob-not-found error, not as a thrown exception", async () => {
         const { registry, blobId } = await stageMockExport();
-        registry.invoke("blob.release", { blobId }, ctx);
+        registry.invoke("blob.release", { blobId, workspaceId: TEST_WS }, ctx);
 
         // A user who leaves the collision dialog open past `BLOB_TTL_MS` gets the same shape of
         // failure as one who cancelled and came back. Both are an `ok:false` result carrying a
@@ -542,7 +553,7 @@ describe("the inline-vs-blob threshold", () => {
         expect(parsed.mocks[0].responseBody).toHaveLength(100_000);
 
         // And the store agrees with what the command reported.
-        const stat = registry.invoke("blob.stat", { blobId: exp.blobId }, ctx) as BlobStatResult;
+        const stat = registry.invoke("blob.stat", { blobId: exp.blobId, workspaceId: TEST_WS }, ctx) as BlobStatResult;
         expect(stat.size).toBe(exp.size);
         expect(stat.sha256).toBe(exp.sha256);
         expect(stat.filename).toBe(exp.suggestedName);
@@ -562,7 +573,7 @@ describe("the inline-vs-blob threshold", () => {
 
         const stat = registry.invoke(
             "blob.stat",
-            { blobId: pushBlob(registry, exp.suggestedName, bytesOf(registry, exp)) },
+            { blobId: pushBlob(registry, exp.suggestedName, bytesOf(registry, exp)), workspaceId: TEST_WS },
             ctx,
         ) as BlobStatResult;
         expect(stat.filename).toBe("my-mocks-backup.json");
@@ -710,7 +721,7 @@ describe("format coverage through the blob layer", () => {
 
             // Imports are transform-and-discard, so the client releases — and the release must work
             // for every format, including the two that read through a path.
-            expect(registry.invoke("blob.release", { blobId }, ctx)).toEqual({ ok: true });
+            expect(registry.invoke("blob.release", { blobId, workspaceId: TEST_WS }, ctx)).toEqual({ ok: true });
         });
     }
 });
