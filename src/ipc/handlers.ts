@@ -1,7 +1,6 @@
 import { registerImportExportHandlers } from "@/ipc/importExportHandlers";
 import { registerApplicationHandlers } from "@/ipc/applicationHandlers";
 
-import { registerFolderHandlers } from "@/ipc/handlers/folderHandlers";
 import { registerSoapKinds } from "@/ipc/handlers/soapKinds";
 import { registerGraphqlKinds } from "@/ipc/handlers/graphqlKinds";
 import { registerGrpcKinds } from "@/ipc/handlers/grpcKinds";
@@ -111,7 +110,9 @@ export function registerIpcHandlers(): void {
   // Step 3e slice 3: the four `folder.*` commands, out of `handlers/folderHandlers.ts`'s module scope.
   // Every one of that file's channels **delegates** through `commandRegistry.invoke()`, so the four
   // channels were only ever as alive as this registry — on a containerised engine they had nothing
-  // behind them at all.
+  // behind them at all. **That file is now gone** — the reduction's third group deleted its four
+  // channels on 2026-09-21 (`plan/07` §5b-quaterdecies), so this call is the commands' only
+  // registration.
   registerFolderCommands(commandRegistry);
   // Step 3e slice 4: the nine "protocol client" commands — `graphql.introspect` / `graphql.execute`,
   // `soap.fetchWsdl` / `soap.execute`, and the five `grpc.*` stubs — out of the three
@@ -198,7 +199,6 @@ export function registerIpcHandlers(): void {
   wireLogEventsToBus();
 
   // Register all categorized handlers
-  registerFolderHandlers();
   registerSoapKinds();
   registerGraphqlKinds();
   registerGrpcKinds();
