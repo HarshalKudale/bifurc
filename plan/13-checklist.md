@@ -729,10 +729,13 @@ rather than a type.
       buttons were no-ops while the CA sat on disk. Fixed by reclassifying the three keys `shim`
       (`transport` 70 → 67, `shim` 3 → 6) and reading the paths from the `tlsCertStatus` local hook, with
       four new assertions on the returned *shape* — nothing in the suite had asserted one. **Then** the group
-      was deleted: `tlsHandlers.ts` is gone — **6 of the 68 passthroughs** — and the suite is **unchanged at
+      was deleted: `tlsHandlers.ts` is gone — **6 of the 75 dead channels** — and the suite is **unchanged at
       2,500 / 2,459 / 40 / 1**, a *re-point* signature rather than a generated-list one, because
-      `expectedChannels` never listed these six. **Still open:** 62 channels across the remaining 8 files,
-      one handler group per commit. Collateral repairs
+      `expectedChannels` never listed these six. **Inventory re-measured 2026-09-21** (`ipcMain.handle(`
+      call sites): **87 literal channels remain in the 9 handler files = 18 live + 69 dead**, so **69 dead
+      channels across 8 files** remain, one handler group per commit. Note §5b-decies' "68 pure passthroughs"
+      is a *different partition* from its 75 dead — it excludes the 7 dialog-owners, and the six `tls`
+      channels were in neither subset, which is exactly why the group needed a fix first. Collateral repairs
       across the two slices: `tests/spike/protocolPoc.test.ts` had been deleted without a record (restored —
       it is P0's runtime evidence and the baseline's documented 1 failure, and its retired-channel fixture
       now covers 4 of the 10 channels it drives), and the tree had been left mid-slice-1 with 19 cases
