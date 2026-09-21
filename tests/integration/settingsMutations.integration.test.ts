@@ -200,11 +200,11 @@ beforeEach(async () => {
   const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
   const { registerSystemHandlers } = await import("@/ipc/handlers/systemHandlers");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
-  const { registerCrudHandlers } = await import("@/ipc/handlers/crudHandlers");
+  const { registerCrudKinds } = await import("@/ipc/handlers/crudKinds");
   registerCoreHandlers();
   registerSystemHandlers();
   registerClientHandlers();
-  registerCrudHandlers();
+  registerCrudKinds();
 });
 
 // P6 §5c: `config.get` and `workspace.setActive` moved out of `coreHandlers`' module scope into the
@@ -223,7 +223,7 @@ beforeAll(async () => {
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   registerCoreCommands(commandRegistry);
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
-  // This goes in the `beforeAll` above, **not** next to `registerCrudHandlers()` in the `beforeEach` —
+  // This goes in the `beforeAll` above, **not** next to `registerCrudKinds()` in the `beforeEach` —
   // see the note above for why a registry registration in `beforeEach` kills every test after the
   // first. The channels below are the ones `beforeEach` re-registers harmlessly.
   const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");

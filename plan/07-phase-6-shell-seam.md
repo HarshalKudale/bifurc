@@ -1079,9 +1079,15 @@ the other suites that hand-register handler groups wire *different* groups. The 
 "the suites that register handlers by hand" without checking which handlers — the same shape of error as the
 "132 legacy channels" undercount, in the other direction.
 
-**`crudHandlers.ts` deliberately keeps its name.** It registers six kinds **and** five live `webhook*`
-channels (`webhook:registerActive`, `webhook:unregisterActive`, `webhookServer:start|stop|status`), so
-"handlers" is still half-true there. Renaming it would have been the same mistake in reverse.
+**`crudHandlers.ts` deliberately keeps its name — *for now*.** It registers six kinds **and** five live
+`webhook*` channels (`webhook:registerActive`, `webhook:unregisterActive`,
+`webhookServer:start|stop|status`), so "handlers" is still half-true there. Renaming it would have been the
+same mistake in reverse.
+
+> **Superseded 2026-09-21 by §5b-quindecies.** The reduction's fourth group deleted the five channels, so the
+> premise above expired and the file became `crudKinds.ts` / `registerCrudKinds()`. The decision was right
+> while it lasted, and it is recorded rather than edited away because the *reason* is the useful part: a
+> file name is a claim, and this one was true until the channels went.
 
 **The "six caller files" claim was wrong, and P6 had repeated it four times.** It is **five** —
 `coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`. The sentence disproved
@@ -1501,6 +1507,80 @@ of them. The rule is "grows with each **driven** channel", and it is worth havin
 `applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
 `app:checkUpdate`) and `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The
 dialog-owner risk subset is unchanged at 6, since this group owned no dialog.
+
+→ **Superseded the same day by §5b-quindecies** (fourth group): `crudHandlers.ts` is gone, leaving **41 dead
+in 5 files**. Read the inventory in the *latest* §5b-* section, not the nearest one.
+
+#### 5b-quindecies. The reduction, fourth group — `crudHandlers.ts` becomes `crudKinds.ts`, and the first group that cost nothing (2026-09-21)
+
+**`src/ipc/handlers/crudHandlers.ts` is gone: 5 channels, all dead** (`webhook:registerActive`,
+`webhook:unregisterActive`, `webhookServer:start|stop|status`). It is the first group whose channels are
+**not** `commandRegistry.invoke()` delegates — every one of the five calls its engine function directly
+(`registerActiveWebhook`, `unregisterActiveWebhook`, `startWebhookServer`, `stopWebhookServer`,
+`isWebhookServerRunning` / `getWebhookPort` / `getWebhookServerError`), which is the shape §5a left them in
+and the reason §5b-decies' classification had to be re-derived rather than inherited. The widened criterion
+(*owns a step the engine does not perform*, §5b-undecies) found none: the engine half is exact, and in one
+case strictly more capable — `webhookServer.start` accepts an optional `port`, which the shell body ignored
+(`proxy/webhookCommands.ts`).
+
+**The delta is 0, and that is the third distinct signature in four groups.** The five channels were never in
+`handlers.test.ts`'s `expectedChannels`, so no generated `it` was lost; and no suite drives them **by name**,
+so nothing had to be re-pointed. Their behaviour is asserted at the **command** level already —
+`handlers.test.ts`'s "slice 3" block pins the port-resolution chain (explicit `port` → `cfg.webhookPort` →
+`9101`) and the three-field status shape, and it does so against `commandRegistry.invoke()`. So a group can
+cost zero either because its cases were *re-pointed* (the `tls` signature, §5b-duodecies) or because **it
+never had any** — and the count alone cannot tell those apart, which is the same lesson §5b-terdecies drew
+from the opposite direction.
+
+**The file was renamed, and the exception that kept its name has expired.** §5b-octies recorded a deliberate
+decision *not* to rename it, on the grounds that it registered six kinds **and** five live `webhook*`
+channels, so "handlers" was still half-true. Deleting the five channels removes the premise, so the exception
+goes with it: the file is now `crudKinds.ts` with `registerCrudKinds()`, matching `soapKinds.ts` /
+`graphqlKinds.ts` / `grpcKinds.ts`. **The blast radius is five files** — `src/ipc/handlers.ts` (import +
+call), `tests/integration/entityConflictScope.integration.test.ts`,
+`tests/integration/foldersAndWorkspaces.integration.test.ts`,
+`tests/integration/settingsMutations.integration.test.ts` and `tests/spike/protocolPoc.test.ts` — and each
+test file also carried a comment saying `registerCrudHandlers()` "wires the *channels* and the per-kind
+options". **That comment is now false in its first half**, which is why it was fixed in the same commit: the
+call is what populates the per-kind registry the four collapsed `entity.*` commands dispatch through, and it
+registers no channels at all. A stale comment on a *renamed* function is worse than a stale comment on a
+deleted one — the deleted one fails loudly, this one reads as current.
+
+**And the spike's fixture did not grow, which is the rule cutting the same way as the second group.**
+`tests/spike/protocolPoc.test.ts` drives **ten** channels and none of them is `webhook:*` or
+`webhookServer:*` (measured: the file contains no occurrence of "webhook"), so the retired-channel fixture
+stays at **7 of 10**. The rule is "grows with each **driven** channel": third group, two driven, fixture grew;
+second and fourth, none driven, fixture unchanged.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 64 (7 files) | **59 (6 files)** |
+| live | 18 | 18 |
+| dead | 46 | **41** |
+
+(`src/ipc/rpcBridge.ts` still holds 2 `ipcMain.handle(` call sites and is excluded as before: it registers
+`RPC_CHANNEL` and the step-3a push channel — the bridge, i.e. the reduction's *subject* rather than its
+target.)
+
+**41 dead channels remain in 5 files**, one handler group per commit: `coreHandlers.ts` (17),
+`applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `systemHandlers.ts` (4 dead + `app:checkUpdate`) and
+`importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The dialog-owner risk subset
+stays at 6, since this group owned no dialog.
+
+**One thing the next group must check, and it is the shape this group just established.** `systemHandlers.ts`
+holds four dead channels of two different kinds, and the difference decides the order:
+
+  - its three `server:*` bodies (`server:start` / `server:stop` / `server:restart`) are **self-contained** in
+    exactly the way these five were — they call `startServer` / `stopServer` directly rather than through the
+    registry — so they need the same confirmation that the `server.*` commands are exact equivalents. They
+    are, and §5a's trap is why they were left that way; the check is cheap and it is not optional.
+  - `capture:shareJson` owns a `dialog.showSaveDialog` and is one of §5b-decies' remaining six, so it is
+    **not** cleared by the criterion until the client's dialog-first ordering is confirmed the way
+    `audit:export`'s was (§5b-terdecies).
+
+That is the "SUPERSEDED SHELL HALF" class, and it is the last class that can still hide a lost step.
 
 ### 5c. The mirror problem: five engine commands are registered *from the shell*
 

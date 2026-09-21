@@ -15,8 +15,10 @@
  *
  *  - `registerEntityCrudHandlers(opts)` / `registerSimpleEntityHandlers(opts)` were called from **five
  *    shell handler files** — `coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers` and
- *    `soapHandlers`. (Every P6 doc before 2026-09-20 says *six*, including one that then lists exactly
- *    those five names; measured with `git log -S`, five is the number that has ever been true.) They did
+ *    `soapHandlers`. Three of those five have since been renamed to `*Kinds.ts` once their channels
+ *    went — `graphql`/`grpc`/`soap` in stage 3b, `crudHandlers` → `crudKinds.ts` in the reduction's
+ *    fourth group. Every P6 doc before 2026-09-20 says *six*, including one that then lists exactly
+ *    those five names; measured with `git log -S`, five is the number that has ever been true. They did
  *    two unrelated things: they inserted the kind's options into a module-level container, **and** they
  *    installed three `ipcMain.handle` channels. **Stage 3b (2026-09-20) deleted the second half**, and
  *    the wrappers with it — the five files now call `registerCrudKind()` / `registerSimpleKind()`
@@ -247,7 +249,8 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
   // the **shell's IPC channel prefix** standing in for the kind, which was the last place engine
   // behaviour was keyed off a naming convention only the Electron shell has (P6 step 3, 2026-09-20).
   // The equivalence is exact rather than approximate: `ipcPrefix` was set to `"rule"` / `"mock"` on
-  // exactly the `rules` / `mocks` registrations and on no others (`crudHandlers.ts`), so the two
+  // exactly the `rules` / `mocks` registrations and on no others (`crudHandlers.ts`, now
+  // `crudKinds.ts`), so the two
   // spellings select the same two kinds. `kind` is the engine's own vocabulary, which is what the
   // rest of this file already branches on (`opts.kind === "environments"` in `deleteEntityCore`).
   if (opts.kind === "rules" || opts.kind === "mocks") {

@@ -178,7 +178,7 @@ let client: ProtocolClient;
 describe("Spike 4 — protocol PoC runtime smoke test", () => {
   beforeAll(async () => {
     const { registerCoreHandlers } = await import("../../src/ipc/handlers/coreHandlers");
-    const { registerCrudHandlers } = await import("../../src/ipc/handlers/crudHandlers");
+    const { registerCrudKinds } = await import("../../src/ipc/handlers/crudKinds");
     const { registerGraphqlKinds } = await import("../../src/ipc/handlers/graphqlKinds");
     const { registerSoapKinds } = await import("../../src/ipc/handlers/soapKinds");
     // P3 work item 5: `tls:generate` became a thin client of the `tls.generate` **command**, which
@@ -201,12 +201,12 @@ describe("Spike 4 — protocol PoC runtime smoke test", () => {
     const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
     const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
     // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
-    // `registerCrudHandlers()` above wires the channels and the per-kind options; the four commands
-    // those channels delegate to are the engine half.
+    // `registerCrudKinds()` above wires the per-kind options the four commands dispatch through; it
+    // registers no channels (the reduction's fourth group deleted the file's last five, 2026-09-21).
     const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
 
     registerCoreHandlers();
-    registerCrudHandlers();
+    registerCrudKinds();
     registerGraphqlKinds();
     registerSoapKinds();
     registerCertCommands(commandRegistry);

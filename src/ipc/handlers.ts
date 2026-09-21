@@ -5,7 +5,7 @@ import { registerSoapKinds } from "@/ipc/handlers/soapKinds";
 import { registerGraphqlKinds } from "@/ipc/handlers/graphqlKinds";
 import { registerGrpcKinds } from "@/ipc/handlers/grpcKinds";
 import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
-import { registerCrudHandlers } from "@/ipc/handlers/crudHandlers";
+import { registerCrudKinds } from "@/ipc/handlers/crudKinds";
 import { registerRunnerHandlers } from "@/ipc/handlers/runnerHandlers";
 import { registerCoreHandlers } from "@/ipc/handlers/coreHandlers";
 
@@ -80,6 +80,10 @@ export function registerIpcHandlers(): void {
   // ignored its (non-existent) argument, while `WebhookServerStartParams` declares an optional `port`.
   // The engine half honours it and falls back to `cfg.webhookPort ?? 9101`, so every existing caller
   // — all of which pass nothing — gets exactly the old behaviour.
+  //
+  // **The five channels are now deleted** — the reduction's fourth group removed them on 2026-09-21
+  // (`plan/07` §5b-quindecies), and `crudHandlers.ts` became `crudKinds.ts` with them. This call is
+  // the five commands' only registration.
   registerWebhookCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (fourth slice): the five `misc.ts` commands — `healthbar.getServices` /
   // `healthbar.saveServices` / `healthbar.checkUrl`, `request.replay` and `script.execute`. All five
@@ -203,7 +207,10 @@ export function registerIpcHandlers(): void {
   registerGraphqlKinds();
   registerGrpcKinds();
   registerSystemHandlers();
-  registerCrudHandlers();
+  // Renamed from `registerCrudHandlers()` on 2026-09-21: the reduction's fourth group deleted this
+  // file's last five channels (`webhook:*`, `webhookServer:*`), so it now registers kinds and nothing
+  // else. See `crudKinds.ts`'s header and `plan/07` §5b-quindecies.
+  registerCrudKinds();
   registerRunnerHandlers();
   registerCoreHandlers();
 

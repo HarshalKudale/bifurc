@@ -4,8 +4,9 @@
  *
  * ## Why these moved out of the shell (P6 finding 5)
  *
- * They were served by `ipcMain.handle` bodies in `src/ipc/handlers/crudHandlers.ts`, which works only
- * while the shell and the engine are the same process. They are not shell concerns: every function
+ * They were served by `ipcMain.handle` bodies in `src/ipc/handlers/crudHandlers.ts` — now
+ * `crudKinds.ts`, and those bodies are gone (P6 reduction, fourth group, 2026-09-21) — which worked
+ * only while the shell and the engine were the same process. They are not shell concerns: every function
  * they call already lives in `packages/engine/src/proxy/webhookServer.ts`, including the listening
  * server and the module-level `currentPort` / `lastError` state. P9's container is the case that makes
  * it concrete — a containerised engine that cannot answer `webhookServer.status` cannot be supervised,
