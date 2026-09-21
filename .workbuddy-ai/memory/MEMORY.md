@@ -20,21 +20,27 @@ Authorities: status → `plan/README.md` · live phase → `plan/14` · suites �
   SIGTERMs the long legs).
 - **No renderer edits P1–P6**; `window.api` byte-identical. `node`/`require` cannot load absolute `I:\…` module
   paths — write probes *inside* the repo with a bare specifier.
-## 🔴 Open defect — the sandboxed preload kills `window.api` (found 2026-09-21; **not** P14)
+## ✅ FIXED 2026-09-21 (`e8e535f`) — the sandboxed preload killed `window.api` (found 2026-09-21; not P14)
 
-`npm run dev` opens a window with **no `window.api`**: `Unable to load preload script: dist/preload.js` →
+`npm run dev` opened a window with **no `window.api`**: `Unable to load preload script: dist/preload.js` →
 `module not found: @bifurc/client`. `src/main.ts` `webPreferences` sets `contextIsolation: true`,
-`nodeIntegration: false`, never `sandbox: false` → Electron 42's default sandbox applies → the preload runs in the
+`nodeIntegration: false`, never `sandbox: false` → Electron 42's default sandbox applies → the preload ran in the
 `sandbox_bundle` realm, whose `require` is `preloadRequire`: it resolves **only** ids in Electron's own webpack
-module map (`electron`, `events`, `url`, `timers`). **No node_modules and no filesystem resolution exists** — the
-contents are handed in and evaled, so a relative `./x` fails exactly as a bare specifier does. `build:main` is plain
-`tsc` + `tsc-alias` (**no bundling**), so `dist/preload.js` keeps bare requires: `@bifurc/client` (line 4) and, via
-`./ipcTransport`, `@bifurc/protocol` + `@bifurc/engine/transport/types` (runtime values). Pre-P6 `src/preload.ts`
-imported **only `electron`** — a self-contained 196-line table — which is why it worked for the project's whole
-life. `1268bfd` (2026-09-18 17:36, P6 "route config:get through the RPC bridge") added it; the last playwright
-report is 16:32 that day. **This is the mechanism behind P6 criterion 2's carried `46 failed / 0 passed`** — a
-non-booting app, not flakiness. Fix = bundle the preload (esbuild/tsup, `--external:electron`) in `build:main`;
-`sandbox: false` is a security downgrade. Blast radius includes the packaged app.
+module map (`electron`, `events`, `url`, `timers`, `punycode`). **No node_modules and no filesystem resolution
+exists** — the contents are handed in and evaled, so a relative `./x` failed exactly as a bare specifier did.
+`build:main` was plain `tsc` + `tsc-alias` (**no bundling**), so `dist/preload.js` kept bare requires.
+`1268bfd` (2026-09-18 17:36, P6 "route config:get through the RPC bridge") introduced it; the last playwright
+report is 16:32 that day.
+
+**The fix:** `scripts/build-preload.mjs` bundles `src/preload.ts` with esbuild (`format: "cjs"`,
+`external: ["electron"]`), run from `build:main` via `build:preload`. `sandbox: false` was rejected as a security
+downgrade. **Its guard is the valuable half** — it *evaluates* the bundle with a `require` that knows only
+Electron's five names and fails the build otherwise, because a regex or a static require-walk proves
+reachability, not loadability. Verified: `dist/preload.js` contains exactly one `require("electron")`.
+**So `build:main` is now required after any `src/preload.ts` change** — `build:packages` alone does not rebuild it.
+**P6 criterion 2 is now *possibly* closable** (its carried `46 failed / 0 passed` was a non-booting app, not
+flakiness) — **but that has not been re-measured.** Details: `TRAPS.md`, two entries (the canonical one is
+"A sandboxed preload has NO module resolver").
 
 ## Measuring the suite
 
@@ -72,8 +78,9 @@ non-booting app, not flakiness. Fix = bundle the preload (esbuild/tsup, `--exter
   `renderer/types/window.ts`.**
 - **P6 done in scope** — 144/144 keys classified, zero `SPLIT`; all 51 §5c commands moved and statically guarded.
   `registerClientHandlers()` sits beside the reduced `registerIpcHandlers()` (`src/main.ts:294`). **Criterion 2
-  ("11 e2e specs pass, unmodified") is CARRIED** (46 failed / 0 passed) — **the preload defect above is its known
-  mechanism.** WI 2 (process split) downgraded by D14 — desktop stays in-process.
+  ("11 e2e specs pass, unmodified") is CARRIED** (46 failed / 0 passed) — **its mechanism was the preload defect,
+  which is now FIXED** (`e8e535f`, see above), so the criterion is *possibly* closable — **re-measure it before
+  claiming it.** WI 2 (process split) downgraded by D14 — desktop stays in-process.
 - **The reduction is CLOSED** — nine groups, one file per commit, `src/` 20 → 17 files. Re-derived from the tree
   2026-09-21 = **18 `ipcMain.handle(` sites, all keepers** (17 in `clientHandlers.ts`, 17 live / 0 dead; + 1
   client-local in `systemHandlers.ts`). `coreKinds.ts` keeps 1 `registerCrudKind<Environment>()` — **a kind is NOT
@@ -106,10 +113,18 @@ switched the **pointer only**) · WI 5 (allocator + `advisory` preflight) · WI 
 4. **A path a header calls temporary is still the live implementation** (`proxy/server.ts`, "removed in WI 7").
 
 **Still owed:** WI 1's `runtime.json` preferred-port plumbing from the UI/settings (allocator + registry honour
-`preferred*`; only the *editor* is missing) · WI 6 (host artifact, feeds P9) · **WI 7's desktop half** — the
-command layer is DONE (below); what remains is `src/main.ts:309-310` building runtimes, which needs
-`createEngine()`'s own proxy lifecycle (`index.ts:255`) to move with it or the engine and a runtime would both
-bind · WI 8 (five egress commands gain `workspaceId`).
+`preferred*`; only the *editor* is missing) · **WI 6 DONE 2026-09-21** (`runtime/hostArgs.ts` + `runtime/hostCli.ts`
+— `node dist/runtime/hostCli.js --data-dir … --workspace …`; verified against the built artifact) · **WI 7's
+desktop half** — the command layer is DONE (below); what remains is `src/main.ts:309-310` building runtimes,
+which needs `createEngine()`'s own proxy lifecycle (`index.ts:255`) **and ~17 `reloadConfig()` importer callers**
+to move with it, or config changes stop reaching the running proxy · WI 8 (five egress commands gain `workspaceId`).
+
+**WI 6's measured caveat — `--data-dir` does NOT redirect the settings file on Windows.** `settingsPath()`
+prefers `%LOCALAPPDATA%/Bifurc/app.json` regardless of `setDataRoot()`, so a `--data-dir` run reads the *user's*
+settings; the first artifact run served 0 workspaces and exited 0 for exactly that reason. **Linux-invisible**
+(on Linux/macOS it falls through to `dataDir()/app.json`), so it is a **P9 deployment caveat**, not a defect —
+recorded rather than patched, since a patch is a *third* answer to "where is the settings file". What WI 6 fixed
+is the **silence**: the host now names each requested workspace it cannot find *and the directory it looked in*.
 
 **WI 7's command layer — DONE 2026-09-21.** `runtime/runtimeRegistry.ts` (the lookup the commands were missing)
 + `runtime/runtimeServerOps.ts` (how a resolved runtime's servers are driven). Resolution has **three**

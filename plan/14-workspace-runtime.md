@@ -773,12 +773,64 @@ it, and re-read `TRAPS.md` before doing so.
 ### Work item 6 — the deployable host artifact (feeds P9)
 
 ```bash
-node <engine>/runtime/host.js --data-dir /data --rpc-socket /run/bifurc.sock --token-file /run/token
+node <engine>/dist/runtime/hostCli.js --data-dir /data --rpc-socket /run/bifurc.sock --token-file /run/token
 ```
 
 Documented deployment: **one container = one workspace**, one volume = that workspace's `data/` + `blobs/`.
 N is supported but not recommended — one workspace per volume makes the volume, the ports and the lifecycle
 all line up. This is why P9 moves *after* this phase.
+
+> **DONE 2026-09-21.** Two modules: `runtime/hostArgs.ts` (parsing, validation, usage text) and
+> `runtime/hostCli.ts` (the executable). **The path is `hostCli.js`, not `host.js` as sketched above**, and
+> that is a correction rather than a preference: putting the CLI in `host.ts` needs a `main` guard, and this
+> package emits **both esm and cjs** whose entry checks differ (`require.main === module` vs
+> `import.meta.url === pathToFileURL(...)`), while `import.meta` is a syntax error in the cjs leg. `host.ts`
+> is also imported by tests and by `registerAll`, so an unguarded execution there would start a host inside
+> every importing process. The executable is its own module and **nothing imports it** — which is why it
+> needs no guard, and why the parsing was split out (`hostCli.ts` cannot be imported by a test without
+> starting a host).
+>
+> **Flags:** `--data-dir` (required; `BIFURC_DATA_DIR` as a fallback), `--rpc-socket`, `--token-file`,
+> `--workspace` (repeatable, order preserved), `--help`. Both `--flag value` and `--flag=value`. An
+> **unrecognised flag is fatal**, per the same rule D16 applies to `BIFURC_PROXY_BASE_PORT`: a typo'd
+> `--data-dirr` that was skipped leaves the host on the default data root, which presents as "my workspaces
+> vanished". `--help` is a *request*, not an error — stdout, exit 0 — and an `error` result carries the
+> usage text so a container log is self-explanatory.
+>
+> **Verified against the built artifact, not just the source.** `npm run build --workspace @bifurc/engine`,
+> then `node packages/engine/dist/runtime/hostCli.js --data-dir <temp> --workspace ws-e2e`:
+> `[host] workspace "E2E Workspace" is serving: proxy 80, webhook 9101` / `[host] rpc endpoint:
+> \\.\pipe\bifurc-<pid>` / `serving 1 workspace(s)`. `--help` → stdout, exit 0. No `--data-dir` → stderr,
+> **exit 1**. `packages/engine/tests/runtime/hostArgs.test.ts` (new, **16 cases**).
+>
+> ## ⚠ A measured deployment caveat, and the reason it is recorded here rather than fixed
+>
+> **`--data-dir` does not redirect the settings file on Windows.** The first artifact run came up
+> `serving 0 workspace(s)` and exited 0 — and the cause was `settingsPath()`, which on Windows prefers
+> `%LOCALAPPDATA%/Bifurc/app.json` **regardless of `setDataRoot()`**. So the host read the *user's* real
+> settings, `--workspace ws-e2e` matched nothing in that list, and the filter produced an empty set.
+> Confirmed directly: the real `%LOCALAPPDATA%\Bifurc\app.json` held workspace `mtsamun7rer3p`.
+>
+> This is the **pre-existing `appDataDir()`-vs-`dataDir()` divergence** that `proxy/certManager.ts` records
+> and that `plan/03` assigns to P8/P9 ("fixing it is a product decision"). It is **Linux-invisible** — on
+> Linux/macOS `settingsPath()` falls through to `dataDir()/app.json`, so the documented container
+> deployment works — which is exactly why it is a P9 caveat and not a WI 6 defect. Recorded rather than
+> silently patched, because the alternative would be a *third* answer to "where is the settings file".
+>
+> **What WI 6 does fix is the silence.** `host.ts` now names each requested workspace it cannot find, with
+> the directory it looked in:
+>
+> ```
+> [host] requested workspace "ws-e2e" is not in the settings (looked in C:\Users\…\AppData\Local\Bifurc)
+>        — it will not be served
+> ```
+>
+> That one line is the whole diagnostic — it distinguishes "no such workspace" from "wrong settings file",
+> which the bare `serving 0 workspace(s)` could not. Not fatal, matching D16's "skip loudly, do not refuse
+> to start" for a taken port override. Guarded by a new case in
+> `tests/integration/workspaceHost.integration.test.ts` (**2 → 3**), which asserts both that the real
+> workspace is still served *and* that the missing one is named — so the notice cannot be "fixed" by
+> replacing serving with an error.
 
 ### Work item 7 — the desktop adopts it
 
