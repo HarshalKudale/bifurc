@@ -29,12 +29,19 @@
  *
  * ## What is deliberately not here
  *
- * `audit.diff` is `audit.list`'s sibling and is *also* registered from the shell — at **module scope**
- * in `src/ipc/handlers/syncHandlers.ts`. It is **not** moved here, and the reason is `plan/07` §5c's
- * trap rather than tidiness: a module-scope registration takes effect on *import*, so moving it behind
- * an explicit `registerAuditCommands()` call would silently unregister it for the suites that import
- * the handler group without running `registerIpcHandlers()`. Moving already-registered commands is a
- * separate pass with its own blast radius.
+ * `audit.diff` is `audit.list`'s sibling and is registered **elsewhere** — in `sync/syncCommands.ts`
+ * behind `registerSyncCommands()` — because it reads the same git history the `history.*` commands do,
+ * whereas `audit.list` queries the log. Different dependency, different module.
+ *
+ * That placement is the resolution of `plan/07` §5c's trap, and this docblock used to state the trap
+ * against a now-superseded fact: it said `audit.diff` was registered at **module scope** in
+ * `src/ipc/handlers/syncHandlers.ts`. A module-scope registration takes effect on *import*, so moving
+ * it behind an explicit `register*Commands()` call would silently unregister it for the suites that
+ * import the handler group without running `registerIpcHandlers()`. Step 3e slice 6 (2026-09-19)
+ * moved it with the other 16 `sync.*` / `git.*` / `history.*` commands and made `registerSyncCommands()`
+ * the explicit call, and both integration suites were re-pointed to make that call themselves — which
+ * is exactly what the trap said was required. The shell file has since been deleted outright (P6
+ * reduction, second group, 2026-09-21 — `plan/07` §5b-terdecies).
  */
 import type { AuditListParams } from "@bifurc/protocol";
 import type { CommandRegistry } from "../commands/registry";

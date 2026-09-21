@@ -9,8 +9,9 @@
  *
  * Before this suite the path was covered only in mocked-unit form:
  * `packages/engine/src/sync/publishService.ts` sat at 54%, `packages/engine/src/sync/gitOps.ts` at 74% (branches 32%),
- * and `src/ipc/handlers/syncHandlers.ts` at 25%. These drive the REAL registered IPC
- * handlers against a REAL git repository in a temp workspace and assert the commits,
+ * and `src/ipc/handlers/syncHandlers.ts` at 25% (that shell file was deleted in the P6 reduction, second
+ * group, 2026-09-21). These drive the REAL git machinery behind those channels against a REAL git
+ * repository in a temp workspace and assert the commits,
  * diffs and files that actually land on disk. Only Electron itself is mocked.
  *
  * Runs in the integration project (shared process-global data-root override ⇒
@@ -46,13 +47,16 @@ vi.mock("electron", () => ({
     },
 }));
 
-import { registerSyncHandlers } from "@/ipc/handlers/syncHandlers";
+import { invokeDeletedChannel } from "./deletedChannelHarness";
 
-async function invoke<T = any>(channel: string, ...args: any[]): Promise<T> {
-    const fn = handlers.get(channel);
-    if (!fn) throw new Error(`No handler registered for "${channel}"`);
-    return await fn({}, ...args);
-}
+/**
+ * The channels this suite drove were deleted on 2026-09-21 — `syncHandlers.ts`, the P6 reduction's second
+ * handler group — so the call shape now resolves through `deletedChannelHarness`, which holds the
+ * positional → payload mapping the deleted bodies performed. **The call sites below are deliberately
+ * unchanged**: their subject is real git behaviour, not the shell's routing layer, and rewriting them
+ * would bury the deletion in diff noise.
+ */
+const invoke = invokeDeletedChannel;
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -127,15 +131,16 @@ beforeAll(async () => {
     await initWorkspaceRepo(TEST_WS);
 
     // P6 §5c slice 6: the 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` /
-    // `entity.restore` / `audit.diff` / `history.*` commands left `syncHandlers.ts`'s module scope,
-    // and every channel in that file *delegates* through `commandRegistry.invoke()`. Without this
-    // call the channels exist with nothing behind them — a `No handler registered` at invocation
-    // time. Before the move this suite got the registry populated as an import side effect of
-    // `registerSyncHandlers()`.
+    // `entity.restore` / `audit.diff` / `history.*` commands left `syncHandlers.ts`'s module scope and
+    // now live in the engine. Without this call they answer `No handler registered` at invocation time.
+    //
+    // Since 2026-09-21 this is the **only** registration the suite needs: the channels that wrapped these
+    // commands were deleted (P6's reduction, second group), so `deletedChannelHarness` invokes the
+    // registry directly and there is no longer a channel layer whose absence would surface as
+    // `No handler registered` for a *channel* rather than for a command.
     const { commandRegistry } = await import("@bifurc/engine/commands/registry");
     const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
     registerSyncCommands(commandRegistry);
-    registerSyncHandlers();
 });
 
 afterAll(() => {
