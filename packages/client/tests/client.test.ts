@@ -730,11 +730,29 @@ describe("createClient — artifact egress", () => {
  * dialog opened before the command", "was it opened twice" — because that is what the old shape got
  * wrong, and a value-only assertion passes either way.
  */
-function fsLocal(opts: { savePath?: string | null; openPath?: string | null; file?: LocalFileContent } = {}) {
+function fsLocal(
+  opts: {
+    savePath?: string | null;
+    openPath?: string | null;
+    file?: LocalFileContent;
+    /**
+     * What the `tlsCertStatus` hook reports for the two CA paths.
+     *
+     * The three TLS shims ask this hook for the path the engine deliberately will not report, so the
+     * fixture has to be able to answer with a real one. A stub that always returned `null` would make
+     * the shims look broken — and, worse, a shim that *ignored* the answer would look correct.
+     */
+    certPaths?: { certPath: string | null; keyPath: string | null };
+  } = {},
+) {
   const seen: string[] = [];
   const { local } = fakeLocal();
   const resolved: ClientLocal = {
     ...local,
+    tlsCertStatus: async () => {
+      const base = await local.tlsCertStatus();
+      return { ...base, certPath: opts.certPaths?.certPath ?? null, keyPath: opts.certPaths?.keyPath ?? null };
+    },
     pickSavePath: async (o: SavePathOptions) => {
       seen.push(`pickSavePath:${o.defaultName ?? ""}`);
       return opts.savePath === undefined ? "/tmp/chosen.json" : opts.savePath;
@@ -1029,5 +1047,65 @@ describe("createClient — single-dialog ingress (step 3b-3)", () => {
 
     expect(res).toEqual({ ok: true, imported: 1 });
     expect(seen).toEqual(["readArtifactFile:ask"]);
+  });
+});
+
+/**
+ * The three methods whose only reason for being shims is a path the engine will not report.
+ *
+ * `File_Ops_Protocol.md` §8 keeps the engine's directory layout out of the protocol, so `tls.generate`
+ * answers `{ok, fingerprint}` and the two imports answer `{ok}`. `TlsSettingsSection.tsx` records
+ * `tlsCaCertPath` / `tlsCaKeyPath` from the result and reads a missing field as "not configured" — so
+ * routing these three as 1:1 transport calls, which is what P6 step 3b-1 did, made the Generate and
+ * Import buttons no-ops on the settings: the CA landed on disk and the UI never learned it.
+ *
+ * The assertions below are what fails if anyone files them as `transport` again. That is the whole
+ * point of pinning them here rather than only in `surface.test.ts`'s counts: the count would still be
+ * 144 if the classification regressed, and the counts test cannot see a dropped *field*.
+ */
+describe("createClient — the TLS path shims (step 3b-1 regression)", () => {
+  const CERT = "C:/data/ca-cert.pem";
+  const KEY = "C:/data/ca-key.pem";
+
+  it("tlsGenerate appends the shell's certPath and keyPath to the engine's answer", async () => {
+    const { local } = fsLocal({ certPaths: { certPath: CERT, keyPath: KEY } });
+    const { t, calls } = respondingTransport(() => ({ ok: true, fingerprint: "sha256:abc" }));
+    const client = createClient(t, { local });
+
+    const res = await client.tlsGenerate();
+
+    expect(res).toEqual({ ok: true, fingerprint: "sha256:abc", certPath: CERT, keyPath: KEY });
+    // The engine is asked once and only for the command: it has no path to give, so the extra step
+    // must be a client-local hook rather than another round-trip.
+    expect(calls.map((c) => c.cmd)).toEqual(["tls.generate"]);
+  });
+
+  it("tlsGenerate reports a failure without inventing a path", async () => {
+    const { local } = fsLocal({ certPaths: { certPath: CERT, keyPath: KEY } });
+    const { t } = respondingTransport(() => ({ ok: false, error: "mkcert not found" }));
+    const client = createClient(t, { local });
+
+    await expect(client.tlsGenerate()).resolves.toEqual({ ok: false, error: "mkcert not found" });
+  });
+
+  it("tlsImportCert and tlsImportKey each append their own path, and not the other's", async () => {
+    const { local } = fsLocal({
+      openPath: "C:/picked/ca.pem",
+      certPaths: { certPath: CERT, keyPath: KEY },
+    });
+    const { t } = respondingTransport((cmd) => (cmd === "blob.put" ? { blobId: "blob-9" } : { ok: true }));
+    const client = createClient(t, { local });
+
+    await expect(client.tlsImportCert()).resolves.toEqual({ ok: true, path: CERT });
+    await expect(client.tlsImportKey()).resolves.toEqual({ ok: true, path: KEY });
+  });
+
+  it("a cancelled TLS import stays a bare {ok:false} and never reaches the engine", async () => {
+    const { local } = fsLocal({ openPath: null });
+    const { t, calls } = respondingTransport(() => ({ ok: true }));
+    const client = createClient(t, { local });
+
+    await expect(client.tlsImportCert()).resolves.toEqual({ ok: false });
+    expect(calls.some((c) => c.cmd.startsWith("tls."))).toBe(false);
   });
 });
