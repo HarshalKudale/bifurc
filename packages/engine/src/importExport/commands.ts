@@ -89,7 +89,7 @@ async function exportCreate(params: ExportCreateParams): Promise<ExportCreateRes
       // The client's filename wins when it supplied one: it is what the user typed into the save
       // dialog. The exporter's `suggestedName` is the engine's default, for a client that does not
       // show a native dialog (P7's web UI downloads instead).
-      return publishArtifact(res.content, params.filename || res.suggestedName, mimeType);
+      return publishArtifact(res.content, params.filename || res.suggestedName, mimeType, params.workspaceId);
     }
 
     if (entry.pathExporter) {
@@ -121,7 +121,7 @@ async function publishStaged(
   mimeType: string,
 ): Promise<ExportCreateResult> {
   const pathExporter = entry.pathExporter!;
-  const staging = createStaging();
+  const staging = createStaging({ workspaceId: params.workspaceId });
 
   try {
     const res = await pathExporter.run(params.workspaceId, staging.path);
@@ -166,17 +166,20 @@ function importPreflight(params: ImportPreflightParams): ImportPreflightResult {
     // `statBlob` is what supplies the client's filename, which the content-shaped importers need
     // (dotenv names the new environment after it; OpenAPI picks YAML vs JSON by its extension).
     // It also gives a clean `blob-not-found` for an id that was released or swept.
-    const meta = statBlob(params.blobId);
+    const meta = statBlob(params.blobId, Date.now(), params.workspaceId);
 
     if (entry.importer) {
       return entry.importer.preflight(params.workspaceId, {
-        content: readBlobText(params.blobId),
+        content: readBlobText(params.blobId, params.workspaceId),
         filename: meta.filename,
       });
     }
 
     if (entry.pathImporter) {
-      return entry.pathImporter.preflight(params.workspaceId, blobContentPath(params.blobId));
+      return entry.pathImporter.preflight(
+        params.workspaceId,
+        blobContentPath(params.blobId, params.workspaceId),
+      );
     }
 
     return { ok: false, error: `Format "${params.format}" cannot be imported.` };
@@ -200,12 +203,12 @@ async function importCommit(params: ImportCommitParams): Promise<ImportCommitRes
   const strategy: CollisionStrategy = params.collisionStrategy ?? "keep";
 
   try {
-    const meta = statBlob(params.blobId);
+    const meta = statBlob(params.blobId, Date.now(), params.workspaceId);
 
     if (entry.importer) {
       return await entry.importer.run(
         params.workspaceId,
-        { content: readBlobText(params.blobId), filename: meta.filename },
+        { content: readBlobText(params.blobId, params.workspaceId), filename: meta.filename },
         strategy,
       );
     }
@@ -213,7 +216,7 @@ async function importCommit(params: ImportCommitParams): Promise<ImportCommitRes
     if (entry.pathImporter) {
       return await entry.pathImporter.run(
         params.workspaceId,
-        blobContentPath(params.blobId),
+        blobContentPath(params.blobId, params.workspaceId),
         strategy,
       );
     }
@@ -237,8 +240,8 @@ async function importCommit(params: ImportCommitParams): Promise<ImportCommitRes
  * it again one stack frame later. The trade-off is that this read does not refresh the lease, which
  * is noted on `blobContentPath`.
  */
-function readBlobText(blobId: string): string {
-  return fs.readFileSync(blobContentPath(blobId), "utf-8");
+function readBlobText(blobId: string, workspaceId?: string): string {
+  return fs.readFileSync(blobContentPath(blobId, workspaceId), "utf-8");
 }
 
 /** `<kind-kebab>-export.<first extension>`. Mirrors the default the shell's save dialog used to

@@ -133,6 +133,37 @@ function tlsExportCert(): TlsExportCertResult {
  * violation. Going through the store's metadata read first converts that into a typed
  * `blob-not-found` and keeps the message path-free. It does **not** slide the lease, which is what
  * we want: the bytes are consumed immediately after, so there is nothing to hold the blob for.
+ *
+ * ## The two store calls here are deliberately UNSCOPED, and the reason is not the same as the egress
+ * ## set's
+ *
+ * P14 D17 namespaced the blob root per workspace and gave the four `blob.*` params a `workspaceId`.
+ * This function reads through the same store with **no** workspace, so it resolves the host-wide root
+ * — and, unlike the four egress commands, that is not an omission awaiting WI 8. It is the correct
+ * answer, because **the CA is not a per-workspace entity**:
+ *
+ * - `caCertPath()` / `caKeyPath()` resolve under `appDataDir()` (`proxy/certManager.ts`), which is
+ *   `%LOCALAPPDATA%/Bifurc` on Windows — a directory the workspace data root does not reach, by that
+ *   module's own recorded and deliberate decision.
+ * - `tls.exportCert` above reads the same two paths for the same reason: there is exactly one CA per
+ *   engine, and `proxy/server.ts`'s `ownsCA` flag exists precisely because that one mkcert root is
+ *   shared by every workspace on the machine.
+ * - `tls.importCert` **uploads** into `blob.put` under whatever namespace the client chose and then
+ *   reads it back here. So the two halves must agree, and the honest way to make them agree is for
+ *   this side to read where the CA actually lives — which is what it does, and what
+ *   `tests/integration/fileOps.integration.test.ts` exercises with an unscoped `blob.put`.
+ *
+ * **The asymmetry with `blob.*` is the point, and it is worth stating so a later reader does not
+ * "fix" it.** A workspace-scoped namespace is for transfers *between a client and one workspace's
+ * staging area*. A CA import is a transfer between a client and **the machine's** one CA — the
+ * workspace on whose behalf the dialog was opened is not a participant. Adding a `workspaceId` here
+ * would let a client stage under A and import into the shared CA, which is the same half-threading
+ * D17's integration failure exposed in `export.create` — arriving this time as a *deliberate* bug
+ * rather than an accident.
+ *
+ * If a per-workspace CA ever arrives (it has not been proposed), the change is to the CA's *location*
+ * in `certManager.ts` — one place — and this function follows it without knowing. Scoping these two
+ * calls would instead have to be undone.
  */
 function tlsImport(blobId: string, destPath: string): TlsImportResult {
   try {

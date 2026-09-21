@@ -49,8 +49,9 @@ describe("@bifurc/protocol command schemas", () => {
    * is also what would catch someone making the field required, the single most likely way this change goes
    * wrong for the desktop.
    */
-  describe("workspaceId scoping (P14 D13)", () => {
+  describe("workspaceId scoping (P14 D13 / D17)", () => {
     const SCOPED = [
+      // D13 — the servers, addressed to a workspace behind one host-wide RPC endpoint.
       "server.status",
       "server.start",
       "server.stop",
@@ -61,6 +62,11 @@ describe("@bifurc/protocol command schemas", () => {
       "webhookServer.start",
       "webhookServer.stop",
       "webhookServer.status",
+      // D17 — the blob layer, so a blobId is namespaced to the workspace that staged it.
+      "blob.put",
+      "blob.stat",
+      "blob.read",
+      "blob.release",
     ] as const;
 
     it.each(SCOPED)("%s accepts a workspaceId", (action) => {
