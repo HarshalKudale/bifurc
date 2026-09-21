@@ -1,9 +1,29 @@
-import { ipcMain } from "electron";
+/**
+ * The six CRUD kinds, registered directly — **no channels**.
+ *
+ * Renamed from `crudHandlers.ts` on 2026-09-21, when the P6 reduction's fourth group deleted the file's
+ * last five channels (`webhook:registerActive`, `webhook:unregisterActive`,
+ * `webhookServer:start|stop|status`). `plan/07` §5b-septies had recorded a decision to *keep* the
+ * `*Handlers` name, on the grounds that the file registered "six kinds **and** five live `webhook*`
+ * channels", so "handlers" was still half-true. **That premise has expired, so the exception expires with
+ * it**, and this file joins the three siblings stage 3b renamed for the same reason — `soapKinds.ts`,
+ * `graphqlKinds.ts`, `grpcKinds.ts`.
+ *
+ * What remains is the engine half of the CRUD factory's inversion (P6 stage 3b): `registerCrudKind()` is
+ * the engine's per-kind options registry, and calling it from the shell is how the four collapsed
+ * `entity.*` commands learn a kind's `configKey`, folder key, validation and conflict rule. The channels
+ * that used to sit beside these calls were one-line `commandRegistry.invoke()` adapters, and they are
+ * gone — the client reaches the commands directly.
+ *
+ * The five webhook channels' behaviour is unchanged and is covered at the **command** level
+ * (`tests/ipc/handlers.test.ts`'s "slice 3" block asserts the port-resolution chain — explicit `port` →
+ * `cfg.webhookPort` → `9101` — and the three-field status shape), which is why deleting them cost no
+ * tests. `registerWebhookCommands()` is called from `src/ipc/handlers.ts`.
+ */
 import { registerCrudKind } from "@bifurc/engine/store/entityCrudCommands";
-import { loadConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "@bifurc/engine/store/config";
-import { registerActiveWebhook, unregisterActiveWebhook, startWebhookServer, stopWebhookServer, isWebhookServerRunning, getWebhookPort, getWebhookServerError } from "@bifurc/engine/proxy/webhookServer";
+import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "@bifurc/engine/store/config";
 
-export function registerCrudHandlers() {
+export function registerCrudKinds() {
   // ── Mappings ───────────────────────────────────────────────────────────────
 
   registerCrudKind<LocalMapping>({
@@ -85,31 +105,4 @@ export function registerCrudHandlers() {
     folderConfigKey: "webhookFolders",
     getNameEntry: (hook) => ({ name: hook.name, urlSuffix: hook.urlSuffix }),
   });
-
-  ipcMain.handle("webhook:registerActive", (_e, webhookId: string, urlSuffix: string) => {
-    registerActiveWebhook(webhookId, urlSuffix);
-    return { ok: true };
-  });
-
-  ipcMain.handle("webhook:unregisterActive", (_e, webhookId: string) => {
-    unregisterActiveWebhook(webhookId);
-    return { ok: true };
-  });
-
-  ipcMain.handle("webhookServer:start", () => {
-    const cfg = loadConfig();
-    startWebhookServer(cfg.webhookPort ?? 9101);
-    return { ok: true };
-  });
-
-  ipcMain.handle("webhookServer:stop", () => {
-    stopWebhookServer();
-    return { ok: true };
-  });
-
-  ipcMain.handle("webhookServer:status", () => ({
-    running: isWebhookServerRunning(),
-    port: getWebhookPort(),
-    error: getWebhookServerError(),
-  }));
 }

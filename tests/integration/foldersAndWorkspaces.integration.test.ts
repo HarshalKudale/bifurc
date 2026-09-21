@@ -130,7 +130,7 @@ beforeAll(async () => {
   ws = createWorkspace();
 
   const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
-  const { registerCrudHandlers } = await import("@/ipc/handlers/crudHandlers");
+  const { registerCrudKinds } = await import("@/ipc/handlers/crudKinds");
   // P6 §5c: `config.get`, `entity.load` and `workspace.setActive` moved out of `coreHandlers`' module
   // scope into the engine. `registerCoreHandlers()` wires the *channels*; a suite that registers handler
   // groups by hand has to wire the engine half too, or the channel exists with nothing behind it.
@@ -143,15 +143,15 @@ beforeAll(async () => {
   // registration the four need.
   const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
-  // `registerCrudHandlers()` wires the *channels* and the per-kind options; the four commands those
-  // channels delegate to are the engine half and have to be registered explicitly.
+  // `registerCrudKinds()` wires the per-kind options those four commands dispatch through. It registers
+  // no channels — the reduction's fourth group took the file's last five on 2026-09-21.
   const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
 
   registerCoreHandlers();
   registerCoreCommands(commandRegistry);
   registerFolderCommands(commandRegistry);
   registerEntityCrudCommands(commandRegistry);
-  registerCrudHandlers();
+  registerCrudKinds();
 });
 
 afterAll(() => {
