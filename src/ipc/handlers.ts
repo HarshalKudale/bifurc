@@ -61,9 +61,15 @@ export function registerIpcHandlers(): void {
   // methods it could not deliver against the real engine. The proxy server and its port/error state
   // are engine state, not shell state.
   //
-  // Those shell bodies **stay as they are** for now, which is deliberate rather than an oversight:
-  // re-pointing them at the registry would make them depend on this function having run, and two
-  // suites register handler *groups* without it. See `serverCommands.ts`'s header for the full trap.
+  // Those shell bodies **stayed as they were** rather than being re-pointed, which was deliberate
+  // rather than an oversight: re-pointing them at the registry would have made them depend on this
+  // function having run, and two suites register handler *groups* without it. See `serverCommands.ts`'s
+  // header for the full trap.
+  //
+  // **The trap is now dissolved rather than answered** — the reduction's fifth group deleted the three
+  // `server:*` channels on 2026-09-21 (`plan/07` §5b-sedecies), so the duplication it warned about is
+  // gone and this call is the commands' only registration. `app:checkUpdate` did **not** come with
+  // them: it is client-local, not legacy.
   registerServerCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (second slice): `config.save` and the three `workspace.*` lifecycle
   // commands. Same class of bug as the six above — served only by shell `ipcMain.handle` bodies, so

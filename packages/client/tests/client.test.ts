@@ -892,6 +892,46 @@ describe("createClient — dialog-first egress (step 3b-3)", () => {
     expect(calls.some((c) => c.cmd === "audit.export")).toBe(false);
   });
 
+  it("shareCaptureJson renders BEFORE it asks — the deliberate exception to dialog-first", async () => {
+    /**
+     * The **counterpart** to the two `exportAudit` cases above, and the confirmation that made
+     * deleting the shell's `capture:shareJson` channel safe (P6 reduction, fifth group, 2026-09-21).
+     *
+     * The shell channel was dialog-first — save dialog, then `capture.shareJson`, then write. The
+     * client is deliberately the other way round, and `local.ts`'s egress note gives the reason: this
+     * artifact is a `JSON.stringify` of entries the renderer already holds, so rendering it before the
+     * user commits costs nothing, whereas asking first would throw away the engine's own
+     * `suggestedName` as the dialog's default. `audit.export` is the opposite case — `queryLog({
+     * limit: 0 })`, the whole `git log` — which is why that one *had* to become dialog-first and this
+     * one must not.
+     *
+     * Two facts are pinned, and neither is about values: that no `pickSavePath` happens (the hook is
+     * called with no `destPath`, so it shows the dialog itself, after the render), and that the hook is
+     * handed the **artifact's** name rather than the caller's fallback. Without this the difference
+     * lives only in a docblock — and `exportAudit` is the worked example of what happens when a
+     * docblock and a call disagree: the docblock was edited to sanction the bug.
+     */
+    const order: string[] = [];
+    const { local } = fsLocal();
+    local.writeArtifact = async (_b: string, suggestedName: string, _m: string, destPath?: string) => {
+      order.push(`writeArtifact:${destPath ?? suggestedName}`);
+      return { ok: true, filePath: destPath ?? "/tmp/written" };
+    };
+    const { t } = respondingTransport((cmd) => {
+      order.push(cmd);
+      return cmd === "capture.shareJson"
+        ? { ok: true, inline: "eA==", suggestedName: "captured-requests.json", mimeType: "application/json" }
+        : { ok: true };
+    });
+    const client = createClient(t, { local });
+
+    const res = await client.shareCaptureJson([{ id: "x" }], "capture-GET-1.json");
+
+    // The command first, then the hook — and no `pickSavePath` anywhere in between.
+    expect(order).toEqual(["capture.shareJson", "writeArtifact:captured-requests.json"]);
+    expect(res).toEqual({ ok: true, filePath: "/tmp/written" });
+  });
+
   /**
    * The regression this replaced: the client hardcoded `format: "json"`, so routing
    * `exportRunnerReport` silently deleted HTML export — which is the dialog's *default*. The chosen
