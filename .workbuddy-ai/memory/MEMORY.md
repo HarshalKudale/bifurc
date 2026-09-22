@@ -58,9 +58,10 @@ screenshots + `trace: on-first-retry` leave `test-results/<spec>-<test>-electron
 - **A repo can change under you.** Check `HEAD` before committing; re-measure after. An uncommitted body of
   work is the largest single risk on the board.
 
-**Current: 2,638 tests / 113 files — 2,598 passed, 40 skipped, 0 failed** (2026-09-22, *after* the 6b product
-change; committed at `8c961c5`, re-measured on the committed tree). **e2e: 11 specs / 46 tests — 46 expected,
-0 unexpected, 0 flaky, owner-measured 2026-09-22.** Trajectory in `plan/07`.
+**Current: 2,646 tests / 114 files — 2,606 passed, 40 skipped, 0 failed** (2026-09-22, after P7's browser
+transport adapter landed). The refactor *alone* was measured separately first — 2,638, **zero delta** — and the
+**+8** is exactly the new browser cases. **e2e: 11 specs / 46 tests — 46 expected, 0 unexpected, 0 flaky,
+owner-measured 2026-09-22.** Trajectory in `plan/07`.
 
 ## Phase state — the plans are the authority
 
@@ -80,14 +81,22 @@ change; committed at `8c961c5`, re-measured on the committed tree). **e2e: 11 sp
 
 ## P7 — the web UI (`plan/08`) — the live phase, opened 2026-09-22
 
-WI 0 (the opening measurement) done. **119 renderer IPC methods / 234 call sites / 209 files, 0 without a
-`surface.ts` key; 144 surface keys, 25 never called** — and those 25 are almost exactly item 4's target.
-**`createWsTransport` is Node-only** (`node:crypto`/`http`/`https`/`net` + the `ws` package), so a browser
-needs its own `Transport` over the native `WebSocket` API — **item 1 is one adapter heavier than the plan
-says**. Item 3's `dialog:*` channels **no longer exist** (P6 removed them; grep = 0); the live surface is
-`window.api.<method>`, 16 of them file/dialog-shaped rather than 8. **No web target in the tree.** **Next
-build: the browser transport adapter** — everything else is blocked behind a client that can connect, and it
-is the only part testable *without* a browser UI (against a real host over a real socket).
+**WI 0 (the opening measurement) done.** **119 renderer IPC methods / 234 call sites / 209 files, 0 without a
+`surface.ts` key; 144 surface keys, 25 never called** — and those 25 are almost exactly item 4's target. Item
+3's `dialog:*` channels **no longer exist** (P6 removed them; grep = 0); the live surface is
+`window.api.<method>`, 16 of them file/dialog-shaped rather than 8. **No web target in the tree.**
+
+**WI 1's adapter is BUILT** — `@bifurc/web-client` (`packages/web-client`): 8 cases against a **real engine over
+a real socket**, mutation-checked. It implements `ClientChannel` and lets `createClientSession` own the rest; a
+second session would be the third copy `session.ts` exists to prevent. **The wire machinery (`types.ts` +
+`session.ts`) now lives in `@bifurc/protocol/src/wire/`** — protocol is the package that already enforces
+`platform: "neutral"`, so the browser's graph contains no Node built-in (grepped from `dist`, not assumed).
+**`framing.ts` stayed in engine** (byte-stream framing; a WebSocket needs none of it). **The browser sends
+*text* frames**, matching the engine's server and its own `ws` client. Engine keeps thin re-exports, so the
+shell is untouched. `@bifurc/client` was *already* `platform: "neutral"` — only the transport was ever missing.
+
+**Still open, and the next real work:** no web target exists (`apps/web`), and **`ws.ts`'s client still does
+not use `createClientSession`** — it carries its own copy of the state machine (`TRAPS.md`).
 
 ## P14 — the executor pivot (`plan/14`, D10–D17) — CLOSED, §8 is 21 met · 0 open
 
