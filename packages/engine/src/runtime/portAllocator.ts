@@ -9,7 +9,8 @@
  * | # | Source | If the port is taken |
  * |---|---|---|
  * | 1 | **Per-workspace override** (the host-local registry, or the settings UI) | **Fail loudly**, naming the next free port. Never silently move a port the user chose. |
- * | 2 | **Environment base** — `80` on win32, `8080` elsewhere, overridable via `BIFURC_PROXY_BASE_PORT` | Scan upward: `base + 1`, `base + 2`, … |
+ * | 2 | **Remembered resolved port** — what this workspace actually bound on a previous run | **Fall through to 3.** A remembered *outcome* is not a request, so it must never become a startup failure. |
+ * | 3 | **Environment base** — `80` on win32, `8080` elsewhere, overridable via `BIFURC_PROXY_BASE_PORT` | Scan upward: `base + 1`, `base + 2`, … |
  *
  * The webhook port follows the same shape with base `9101` on every platform (already above 1024, so no
  * platform split is needed).
@@ -25,17 +26,28 @@
  * the right tool for **reporting** a busy port to a user (it can name the owning PID, which a bind cannot),
  * and `killProcessOnPort` is unaffected.
  *
- * ## Scanning, and what "contiguous" means
+ * ## Scanning, and where the remembered port sits
  *
- * The scan is `base, base+1, base+2, …` up to `SCAN_LIMIT`. It deliberately does **not** consult the
- * registry first and jump to a remembered port: D16's whole point is that the increment is the designed path
- * for every workspace after the first, so a host that restarts should land its runtimes on the same ports as
- * long as the same ports are free — which the scan does naturally, in order, without needing to remember.
+ * The scan is `base, base+1, base+2, …` up to `SCAN_LIMIT`. It is the **last** of D16's three sources, and the
+ * remembered port is tried **before** it — which is what makes a workspace's proxy URL stable. D16, verbatim:
+ * *"A workspace that landed on 81 because 80 was busy **keeps 81** after 80 frees up — a stable URL is worth
+ * more to the browser-proxy workflow than reclaiming the base."* Without this step the scan would walk the
+ * workspace back down to the base the moment it freed up, and a browser configured for `:81` would break
+ * silently.
+ *
+ * **The remembered port is soft, and that is why it is a separate input from the override rather than reusing
+ * it.** Passing it as `preferredProxyPort` would have been a one-line change and would have been wrong: D16's
+ * fail-loudly rule is for a port **the user chose**, and a busy remembered port is nobody's mistake — it is
+ * another process having taken the port since. So a remembered port that is taken falls through to the scan,
+ * exactly as if it had never been remembered. *(This was missing until 2026-09-22; the allocator had no soft
+ * input, so `host.ts` could not honour D16 without turning a taken remembered port into a hard startup
+ * failure. See `plan/14` §8 criteria 6a/6b.)*
  *
  * ## What this module does not do
  *
- * It does not read the registry, write it, or know what a workspace is. It takes a *preference* and returns
- * a *port*. The host owns the registry (`plan/14` §4: the resolved port is recorded in the host-local
+ * It does not read the registry, write it, or know what a workspace is. It takes a *preference* and a
+ * *remembered port*, and returns a *port*. The host owns the registry (`plan/14` §4: the resolved port is
+ * recorded in the host-local
  * `runtime.json`, **never** in `workspace.json`, which is git-tracked and therefore syncs and collides).
  */
 
@@ -190,6 +202,17 @@ export interface AllocatedPorts {
   proxyPortWasPreferred: boolean;
   /** True when `preferredWebhookPort` was honoured as-is. */
   webhookPortWasPreferred: boolean;
+  /**
+   * True when the port came from `rememberedProxyPort` — D16's stickiness path, as opposed to the scan.
+   *
+   * Exposed because the **outcome cannot distinguish the two**: on a quiet machine the remembered port and the
+   * scan produce the same number, so "the port did not move" is not evidence that the remembered value was
+   * used. This flag is. Same reasoning as the `IS_WINDOWS` count in `plan/14` §8 criterion 3 — when the claim
+   * is about *which mechanism ran*, assert the mechanism, not the result it happens to share.
+   */
+  proxyPortWasRemembered: boolean;
+  /** True when the port came from `rememberedWebhookPort`. */
+  webhookPortWasRemembered: boolean;
 }
 
 export interface AllocateOptions {
@@ -197,6 +220,16 @@ export interface AllocateOptions {
   preferredProxyPort?: number | null;
   /** A per-workspace webhook override, same rule. */
   preferredWebhookPort?: number | null;
+  /**
+   * The port this workspace resolved to on a **previous run**, from the host-local `runtime.json`.
+   *
+   * **Soft, and that is the entire difference from `preferredProxyPort`:** honoured when it is free, skipped
+   * when it is not, never thrown over. Tried after the override and before the base scan — D16's stickiness
+   * rule. See the module header.
+   */
+  rememberedProxyPort?: number | null;
+  /** The remembered webhook port, same rule. */
+  rememberedWebhookPort?: number | null;
   /** The environment base for the proxy. Defaults to `proxyBasePort()`. */
   proxyBase?: number;
   /** The environment base for the webhook. Defaults to `WEBHOOK_BASE_PORT`. */
@@ -217,10 +250,11 @@ export interface AllocateOptions {
 /**
  * Allocate the proxy and webhook ports for one workspace.
  *
- * **The override path throws rather than moving**, which is the whole difference between the two sources in
- * D16's table: an override is a choice the user made, so an allocator that quietly gave them a different
- * port would be lying about what it did. The base path scans, because the increment is the designed
- * behaviour.
+ * **The override path throws rather than moving**, which is the whole difference between D16's sources: an
+ * override is a choice the user made, so an allocator that quietly gave them a different port would be lying
+ * about what it did. The **remembered** path does neither — it takes the port it was given when that port is
+ * available, and otherwise behaves exactly as if it had not been given one. The base path scans, because the
+ * increment is the designed behaviour.
  *
  * The two allocations are independent — a taken proxy port must not consume the webhook range, and the
  * callers of this function are themselves serialised by the host (one call per runtime, in order), because
@@ -229,6 +263,9 @@ export interface AllocateOptions {
 export async function allocatePorts(opts: AllocateOptions = {}): Promise<AllocatedPorts> {
   const proxyBase = opts.proxyBase ?? proxyBasePort();
   const webhookBase = opts.webhookBase ?? WEBHOOK_BASE_PORT;
+  // Captured as `const`s so the `!== null` narrowing survives the `await` inside the conditions below.
+  const rememberedProxy = opts.rememberedProxyPort ?? null;
+  const rememberedWebhook = opts.rememberedWebhookPort ?? null;
   // Materialised once, and the port this call allocates is added to it as it is chosen — so the webhook
   // allocation cannot be handed the port the proxy allocation just took when the two ranges overlap (they do
   // not today, but a `BIFURC_PROXY_BASE_PORT` of 9101 makes them overlap, and an allocator that relied on the
@@ -251,6 +288,7 @@ export async function allocatePorts(opts: AllocateOptions = {}): Promise<Allocat
   // ── proxy ──────────────────────────────────────────────────────────────────
   let proxyPort: number;
   let proxyPortWasPreferred = false;
+  let proxyPortWasRemembered = false;
 
   if (opts.preferredProxyPort != null) {
     const preferred = opts.preferredProxyPort;
@@ -263,6 +301,11 @@ export async function allocatePorts(opts: AllocateOptions = {}): Promise<Allocat
     }
     proxyPort = preferred;
     proxyPortWasPreferred = true;
+  } else if (rememberedProxy !== null && !reserved.has(rememberedProxy) && (await tryBind(rememberedProxy))) {
+    // D16's stickiness. The bind is the entire test, so a remembered port that has since been taken falls
+    // through to the scan below rather than throwing — a remembered outcome must not be able to stop a host.
+    proxyPort = rememberedProxy;
+    proxyPortWasRemembered = true;
   } else {
     // `proxyBase` is deliberately **not** in `reserved` — it is this range's own starting point, and the
     // first workspace on a free machine must be able to take it. Only the host's reservations are excluded.
@@ -275,6 +318,7 @@ export async function allocatePorts(opts: AllocateOptions = {}): Promise<Allocat
   // ── webhook ────────────────────────────────────────────────────────────────
   let webhookPort: number;
   let webhookPortWasPreferred = false;
+  let webhookPortWasRemembered = false;
 
   if (opts.preferredWebhookPort != null) {
     const preferred = opts.preferredWebhookPort;
@@ -283,6 +327,14 @@ export async function allocatePorts(opts: AllocateOptions = {}): Promise<Allocat
     }
     webhookPort = preferred;
     webhookPortWasPreferred = true;
+  } else if (
+    rememberedWebhook !== null &&
+    !reserved.has(rememberedWebhook) &&
+    (await tryBind(rememberedWebhook))
+  ) {
+    // Same rule as the proxy half — soft, and falling through rather than failing.
+    webhookPort = rememberedWebhook;
+    webhookPortWasRemembered = true;
   } else {
     // Same rule as the proxy half: `webhookBase` is this range's own start, never a reservation.
     const found = await findFreePortFrom(webhookBase, "webhook", reserved);
@@ -290,5 +342,12 @@ export async function allocatePorts(opts: AllocateOptions = {}): Promise<Allocat
     webhookPort = found;
   }
 
-  return { proxyPort, webhookPort, proxyPortWasPreferred, webhookPortWasPreferred };
+  return {
+    proxyPort,
+    webhookPort,
+    proxyPortWasPreferred,
+    webhookPortWasPreferred,
+    proxyPortWasRemembered,
+    webhookPortWasRemembered,
+  };
 }

@@ -3798,11 +3798,14 @@ clean across all three packages.
       *(3b-1 added **exactly +4** — the `client:writeArtifact` cases, the only genuinely new code in
       the step. Everything else moved rather than being written, and the flip itself added none, so
       the flip's own delta is zero. Measured, not inferred.)*
-- [ ] **11 e2e specs pass, unmodified.** Same count as baseline. **Carried as an owner-run
-      verification** — it needs a normal terminal, see Preconditions. Re-attempted 2026-09-20 and it
-      reproduced the documented environmental failure *exactly* (**46 failed / 0 passed**, every test
-      dying at `firstWindow()`), so what is open is the agent shell's inability to host a GUI process,
-      not the seam. **This is the only criterion P6 closes with open.**
+- [x] **11 e2e specs pass, unmodified.** Same count as baseline. **MET 2026-09-22 — the carry is
+      discharged, by the instrument it named.** Owner-run: **11 specs / 46 tests — 46 expected, 0
+      unexpected, 0 flaky, 0 skipped**, read from `report.json` inside the run's own
+      `playwright-report/index.html` rather than re-run. It was carried from 2026-09-20 because it needs a
+      normal terminal (see Preconditions, whose three controls establish that the shell's failure was
+      environmental — **46 failed / 0 passed**, every test dying at `firstWindow()` in ~850 ms, a
+      *constant* rather than a measurement). **This checkbox read `[ ]` until 2026-09-22 evening while the
+      table fifteen lines above already said MET** — the checkbox/table drift `plan/14` §8 records.
 - [x] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
 - [x] `window.api` is identical to baseline. The instrument is
       **`packages/client/tests/surface.test.ts`**, which imports the real `src/preload.ts` under a
@@ -3818,7 +3821,8 @@ clean across all three packages.
       runs in CI *before* the artifact is uploaded. **The NSIS installer and a real packaged launch
       remain unverified** — carried to P12, not dropped.
 - [x] **No user-visible change.** Same UI, same behaviour, same performance. Met in code; the e2e run is
-      its instrument, and that is the carried item above.
+      its instrument, and **that instrument ran green on 2026-09-22** — see criterion 2 above, which is no
+      longer a carried item.
 
 ### Moved out of this gate 2026-09-20 — the process split's criteria
 
@@ -3848,7 +3852,7 @@ rollback layer; see Rollback.
 | # | Criterion | State 2026-09-20 |
 | --- | --- | --- |
 | 1 | Unit suites pass | **Met** — 101 files / **2,507** tests, **2,466** passed, 40 skipped, 1 documented `soap.execute` flake, re-measured on the committed state after step 3f. The numbers *in* the criterion are stale twice over: 2,508 at step 3d, 2,509 after §5c-viii's guard, 2,507 after step 3f — the −2 being the two per-command schema tests `packages/protocol/src/commands/index.test.ts` generates for the deleted `app.checkUpdate`. |
-| 2 | 11 e2e specs pass, unmodified | **Carried** — owner-run; needs a normal terminal. Re-measured 2026-09-20, reproduced exactly. |
+| 2 | 11 e2e specs pass, unmodified | **MET 2026-09-22** — owner-run: **11 specs / 46 tests, 46 expected, 0 unexpected, 0 flaky, 0 skipped**, read from `report.json` inside the run's own `playwright-report/index.html`. Was carried from 2026-09-20. |
 | 3 | Renderer unchanged | **Met** — nothing under `renderer/` is modified. |
 | 4 | `window.api` identical | **Met** — `packages/client/tests/surface.test.ts` diffs the real `src/preload.ts` against `SURFACE_KEYS` in both directions, and runs in the suite. |
 | 5 | App launches, **engine spawns**, handshake completes | **Moved** → work item 2. |
@@ -3860,12 +3864,23 @@ rollback layer; see Rollback.
 | 11 | Rollback flag `BIFURC_ENGINE_RPC=0` | **Decided: dropped.** There was never a second path for it to restore. |
 | 12 | No user-visible change | **Met in code**; the e2e run is its instrument and is the carried item (see 2). |
 
-**Status: P6 is closed in scope on 2026-09-20, with one item carried.** The seam is proven, the packaging
-is verified end to end from the entry points, and the four process-split criteria now live with the work
-that will satisfy them. The carried item is criterion 2 — *"11 e2e specs pass, unmodified"* — which no
-agent shell can run (see Preconditions, with three controls establishing it is environmental). **It is
-carried, not waived:** the milestone's code claims are all backed by an instrument that does run, and the
-one claim whose instrument does not is named above rather than quietly dropped.
+**Status: P6 is closed on 2026-09-22, with no item carried.** The seam is proven, the packaging is
+verified end to end from the entry points, and the four process-split criteria live with the work that
+will satisfy them (the workspace host, `plan/14` §7). **Criterion 2 — the last one open — closed
+2026-09-22 at 11/11 specs, 46/46 tests**, owner-run and read from the run's own report artifact. It was
+carried from 2026-09-20 because no agent shell can host a GUI process (see Preconditions, with three
+controls establishing that the shell's failure was environmental); **the carry is now discharged by the
+instrument it named**, which is the point of having named one rather than waiving the criterion.
+
+**What the carry cost, and what it bought.** Seven failures across four owner-run rounds, **every one
+test- or fixture-side; no product code changed for any of them** — three stale tests, two stale locators,
+one stale fixture and one stale nav helper. The most useful property of the exercise is that the unit
+suite could not have found any of them: ~2,600 unit and integration tests were green throughout, because
+they build their own fixtures from `src/`, so the e2e fixture's **on-disk shape** was exercised by nothing
+but a real Electron run. That gap now has a guard —
+`tests/integration/e2eFixtureContract.integration.test.ts` runs `writeSampleWorkspace()` and reads it back
+through the engine's own `loadConfig()`. **A gate that no cheap instrument can run is worth carrying only
+if it leaves a cheap instrument behind.**
 
 ---
 

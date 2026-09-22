@@ -1,7 +1,7 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig, AppConfig, Environment, ProxyRule } from "../store/config";
+import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, Environment, ProxyRule, type WorkspaceDispatchSlice } from "../store/config";
 import { readEnabledSet, bootstrapEnabledSet, readAllEntities } from "../store/workspaceFs";
 import { HOP_BY_HOP } from "./constants";
 import { sendHtml, buildHomePage, buildNotMappedPage } from "./pages";
@@ -106,6 +106,18 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
   let lastError: string | null = null;
   let enabledSets: EnabledSets = { mocks: new Set(), mappings: new Set(), rules: new Set() };
 
+  /**
+   * This instance's own workspace-scoped entities — mocks, mappings, environments. (P14 WI 4's gap, closed
+   * 2026-09-22.)
+   *
+   * `currentConfig` cannot supply them: it comes from `loadConfig()`, which is **active-workspace-only**, so
+   * for a host member it holds the *active* workspace's mocks and mappings while `fullRules` and
+   * `enabledSets` hold the instance's. `workspaceCfg()` used to cross-filter the two, which matched nothing
+   * and left the instance serving nothing at all — silently. Set by `start()` / `reloadConfig()`; see
+   * `loadWorkspaceDispatchSlice()` for the measurement.
+   */
+  let wsSlice: WorkspaceDispatchSlice | null = null;
+
   function stop(): void {
     if (server) {
       server.close();
@@ -127,6 +139,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     const ws = servedWorkspaceId();
     fullRules = readAllEntities<ProxyRule>(ws, "rules");
     enabledSets = loadEnabledSets(ws);
+    wsSlice = loadWorkspaceDispatchSlice(ws);
     currentPort = port;
     lastError = null;
 
@@ -203,6 +216,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     const ws = servedWorkspaceId();
     fullRules = readAllEntities<ProxyRule>(ws, "rules");
     enabledSets = loadEnabledSets(ws);
+    wsSlice = loadWorkspaceDispatchSlice(ws);
   }
 
   /**
@@ -239,7 +253,12 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     headerLines: string[],
     bodyBuf: Buffer,
   ): void {
-    const cfg = workspaceCfg(currentConfig ?? loadConfig(), fullRules, enabledSets);
+    const cfg = workspaceCfg(
+      currentConfig ?? loadConfig(),
+      fullRules,
+      enabledSets,
+      wsSlice ?? loadWorkspaceDispatchSlice(servedWorkspaceId()),
+    );
     const t0 = Date.now();
     const id = mkId();
 
@@ -351,7 +370,12 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     hostname: string,
     port: number,
   ): void {
-    const cfg = workspaceCfg(currentConfig ?? loadConfig(), fullRules, enabledSets);
+    const cfg = workspaceCfg(
+      currentConfig ?? loadConfig(),
+      fullRules,
+      enabledSets,
+      wsSlice ?? loadWorkspaceDispatchSlice(servedWorkspaceId()),
+    );
     const t0 = Date.now();
     const id = mkId();
 
@@ -404,16 +428,73 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
   };
 }
 
-// ── The module-level facade (removed in WI 7) ──────────────────────────────────
+// ── The module-level facade ───────────────────────────────────────────────────
 //
 // One lazily-created default instance backing the pre-P14 module functions, the same shape the webhook
 // receiver took. Lazy rather than eager so importing this module has no side effect.
+//
+// **Not "removed in WI 7", which is what this header used to say.** WI 7's desktop half landed 2026-09-22
+// and kept the facade *deliberately*: 23 engine modules import `reloadConfig()` from here (17 ×
+// `importExport/importers/*`, plus `startup.ts`, `store/{configCommands,coreCommands,entityCrudCommands}.ts`,
+// `sync/syncCommands.ts`, `transport/legacyCompanion.ts`), and the facade is what lets that keep meaning
+// "the active workspace's server, wherever it lives". What changed is that it can now be **bound** to an
+// instance someone else owns — see `bindProxyInstance()`.
 
 let defaultInstance: ProxyServerInstance | null = null;
 
+/**
+ * P14 WI 7 — the instance every module function acts on, when someone has adopted one.
+ *
+ * ## Why an explicit binding, and not a registry lookup
+ *
+ * The obvious shape — `getRuntime(loadConfig().activeWorkspaceId)?.proxy` — is **wrong here**, and WI 4 is
+ * why. `workspace.setActive` deliberately no longer calls `reloadConfig()`, so on the desktop the active
+ * pointer and the running proxies are **independent by design**: the port is owned by the workspace, not by
+ * which one is selected. Resolving by the active id would, after a switch, look up a runtime for the newly
+ * active workspace, find none, and fall back to the lazy default below — whose `isRunning()` is `false`
+ * while the real proxy is listening on a bound port. That is the WI 1 bug shape ("the failure succeeds")
+ * arriving through a new door.
+ *
+ * So the binding names no workspace: whoever adopted an instance says so, and every module function follows
+ * it. `src/main.ts` binds its one `WorkspaceRuntime`'s proxy here; `createEngine()` and every test bind
+ * nothing and get the lazy default, unchanged.
+ *
+ * **Why this module does not import `runtime/`:** `runtimeRegistry.ts`'s header records that its graph must
+ * stay acyclic, and `runtime/workspaceRuntime.ts` imports *this* module as a value. A value import in the
+ * other direction would close that loop. A binding is a parameter, not a lookup, so there is no edge at all.
+ */
+let boundInstance: ProxyServerInstance | null = null;
+
+/**
+ * Adopt `instance` as the instance every module function acts on, or `null` to return to the lazy default.
+ *
+ * Idempotent and last-write-wins. `src/main.ts` calls it once at startup; a test calls it with `null` to get
+ * a clean module back. Nothing else should call it — a second binder would silently steal the first one's
+ * server, which is why the parameter is an instance rather than a workspace id.
+ */
+export function bindProxyInstance(instance: ProxyServerInstance | null): void {
+  boundInstance = instance;
+}
+
+/** The instance the module functions act on. Creates the lazy default only when nothing is bound. */
 function defaultServer(): ProxyServerInstance {
+  if (boundInstance) return boundInstance;
   if (!defaultInstance) defaultInstance = createProxyServer({ workspaceId: null });
   return defaultInstance;
+}
+
+/**
+ * The instance to *read* from, without creating one.
+ *
+ * `isRunning()` / `getPort()` / `getServerError()` / `stopServer()` must not have the side effect of
+ * creating an instance: they are reached from `status()` paths and from readiness polls, and
+ * `createEngine()`'s `waitUntilReady()` polls `isRunning()` in a loop. `defaultServer()` would create the
+ * lazy default on the first poll of a never-started engine, which would be a behaviour change for every
+ * caller that only ever asked. This preserves the pre-WI-7 property exactly — the old bodies were
+ * `defaultInstance !== null && defaultInstance.isRunning()` and `defaultInstance?.…`.
+ */
+function existingServer(): ProxyServerInstance | null {
+  return boundInstance ?? defaultInstance;
 }
 
 export function startServer(port: number): void {
@@ -421,19 +502,19 @@ export function startServer(port: number): void {
 }
 
 export function stopServer(): void {
-  defaultInstance?.stop();
+  existingServer()?.stop();
 }
 
 export function isRunning(): boolean {
-  return defaultInstance !== null && defaultInstance.isRunning();
+  return existingServer()?.isRunning() ?? false;
 }
 
 export function getPort(): number {
-  return defaultInstance?.getPort() ?? 0;
+  return existingServer()?.getPort() ?? 0;
 }
 
 export function getServerError(): string | null {
-  return defaultInstance?.getError() ?? null;
+  return existingServer()?.getError() ?? null;
 }
 
 export function reloadConfig(): void {
