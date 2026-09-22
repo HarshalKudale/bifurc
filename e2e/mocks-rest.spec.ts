@@ -60,6 +60,19 @@ test.describe("Mocks panel — REST", () => {
                 .locator("input[placeholder='http://example.localhost/endpoint']")
                 .last()
                 .fill("http://example.localhost/api/e2e-mock-update");
+            /**
+             * **The response body is required, and this test used to omit it.**
+             *
+             * `RestTab.tsx:164` gates Save on `resMode === "none" || resBody.trim()`, and a new REST mock
+             * starts at `resMode: "json"` with `resBody: ""` (`restTabReducer.ts:130-131`). So Save stays
+             * **disabled** and the click times out after 30 s — which is exactly what the failure showed:
+             * `locator resolved to <button disabled …>Save Mock</button>`.
+             *
+             * The sibling test above is named "creates a REST mock **with a body** and status" and fills
+             * one; this test was written without that step. Filling the body is what makes the update path
+             * reachable at all, and it is what a user must do too.
+             */
+            await fillVisibleCodeEditor(page, '{"status":"ok"}');
             await page.getByRole("button", { name: /Save Mock/i }).click();
             await expect(page.locator("body")).toContainText(name);
 
