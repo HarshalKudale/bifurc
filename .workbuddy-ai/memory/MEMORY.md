@@ -1,16 +1,15 @@
 # Bifurc — Project Memory
 
 **Read `TRAPS.md` first** (failure modes not discoverable from the code). Authorities: state →
-`plan/README.md` §Status · live phase → `plan/08` · closed → `plan/14` · decisions → `plan/00-decisions.md` ·
-suites → `TESTING.md` · ledgers → `plan/07` · procedures → the `bifurc-*` skills. **A pointer, not a
-record.**
+`plan/README.md` §Status · live phase → `plan/08` · decisions → `plan/00-decisions.md` · suites →
+`TESTING.md` · ledgers → `plan/07` · procedures → the `bifurc-*` skills. **A pointer, not a record.**
 
 ## 🚫 Standing rule — the user runs shell-bound commands
 
 `npm run dev`, `npm run test:e2e`, anything Electron/GUI/GPU: **ask, don't run**. **An agent-shell failure
 is evidence about the agent shell, not the product** — name the mechanism that makes it
-environment-specific, or ask instead. **Never start a build you will not wait for.** A failed run's evidence
-is already on disk (`test-results/*/error-context.md`) — read it before asking for a re-run.
+environment-specific, or ask instead. **Never start a build you will not wait for.** Read a failed run's
+evidence from disk (`test-results/*/error-context.md`) before asking for a re-run.
 
 ## Layout — what silently wastes a session
 
@@ -40,10 +39,9 @@ unexpected, 0 flaky, owner-measured.
 - **P0–P6 done** (P6 criterion 2 owner-run 46/46). P4 8/10; P3 item 5 open as *UI* → P7. **P14 CLOSED — §8
   21 met · 0 open** (`plan/14`).
 - **P7 is live** (`plan/08`): wire machinery in `@bifurc/protocol/src/wire/`; **`@bifurc/web-client`** (browser
-  `ClientChannel` + the 16 `RequiredClientLocal` members); `ws.ts`'s third session copy gone; first web
-  target **`apps/web`**. **Run `tsc` after any type-level change — vitest does not typecheck.**
+  `ClientChannel` + 16 `RequiredClientLocal` members); `ws.ts`'s third session copy gone; first web target
+  **`apps/web`**. **Run `tsc` after any type-level change — vitest does not typecheck.**
 - **Not in the plans:** **P5's spec is `packages/client/src/surface.ts` (144 keys)**; `src/preload.ts` is the
-  authority, not `renderer/types/window.ts`. **Dead-channel reduction CLOSED** — `src/` 20 → 17 files; **a
+  authority, not `renderer/types/window.ts`. **Dead-channel reduction CLOSED** (`src/` 20 → 17 files); **a
   kind is NOT a channel**. Re-measure from the tree, not prose.
-- **`build:main` is required after any `src/preload.ts` change** (`e8e535f`). **Open gaps:** `tlsRemoveCert`'s
-  engine half is unreachable from any non-shell `ClientLocal`; CA install is manual in a browser.
+- **`build:main` is required after any `src/preload.ts` change** (`e8e535f`). Open gaps live in `plan/08`.
