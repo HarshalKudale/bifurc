@@ -11,7 +11,7 @@ import { createIpcTransport } from "./ipcTransport";
  * ## What this file is
  *
  * It was a hand-written table of 136 `ipcRenderer.invoke` calls. It is now a one-line spread of the
- * client, with **no overrides left**. The table is gone because `renderer/types/window.ts` was
+ * client, with **no overrides left**. The table is gone because `packages/gui/src/types/window.ts` was
  * never the contract — `src/preload.ts` was — and `@bifurc/client` was built in P5 to satisfy that
  * contract exactly, positional arguments included. So `{ ...client }` *is* the surface, and the
  * surface test in `packages/client/tests/surface.test.ts` asserts it against the real object.

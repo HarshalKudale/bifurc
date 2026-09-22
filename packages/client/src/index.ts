@@ -19,7 +19,7 @@
  *
  * ## `BifurcApiFull` — why the return type is not just `BifurcApi`
  *
- * `renderer/types/window.ts` disagrees with the runtime in **two** directions, on **seven** keys in
+ * `packages/gui/src/types/window.ts` disagrees with the runtime in **two** directions, on **seven** keys in
  * total, and both directions are silent failures if left alone:
  *
  * - **Narrower — four keys missing.** `isFirstLaunch`, `completeFirstLaunch`, `getZoomLevel`,
@@ -37,7 +37,7 @@
  */
 
 import type { Transport, EngineEvent } from "@bifurc/engine/transport/types";
-import type { BifurcApi } from "../../../renderer/types/window";
+import type { BifurcApi } from "../../gui/src/types/window";
 // A **runtime** import, unlike everything else this file takes from the protocol: the enum is the
 // single source for the `invalid_kind` guard below, so the client does not restate the six kinds.
 import { EntitySetEnabledParams } from "@bifurc/protocol";
@@ -47,7 +47,7 @@ import { DEFAULT_RETRY_POLICY, withRetry, type RetryPolicy } from "./retry";
 import type { ArtifactWriteResult, ClientLocal, ReadFileOptions } from "./local";
 
 /**
- * The three keys `renderer/types/window.ts` marks **optional** (`?`) although `src/preload.ts`
+ * The three keys `packages/gui/src/types/window.ts` marks **optional** (`?`) although `src/preload.ts`
  * always provides them: `setTitleBarOverlay`, `getTheme`, `setTheme`.
  *
  * This is the *same* defect as the four missing keys below, pointing the other way — there the
@@ -58,7 +58,7 @@ import type { ArtifactWriteResult, ClientLocal, ReadFileOptions } from "./local"
  * a hole in the contract.
  *
  * Tightened to required in `BifurcApiFull`. The signatures are *not* restated — the mapped type
- * below reads them out of `BifurcApi`, so they cannot drift from `renderer/types/window.ts`.
+ * below reads them out of `BifurcApi`, so they cannot drift from `packages/gui/src/types/window.ts`.
  */
 type OptionalInDeclaredType = "setTitleBarOverlay" | "getTheme" | "setTheme";
 
@@ -180,8 +180,8 @@ function bytesToBase64(bytes: Uint8Array): string {
  * `"requests"`, `"webhooks"`, …) **except** two, which pass the engine's:
  *
  * ```
- * renderer/panels/ProxyRulesPanel.tsx:74,132,165   loadEntity(ws, "rules",   id)
- * renderer/panels/WebSocketsPanel.tsx:146,159,250  loadEntity(ws, "sockets", id)
+ * packages/gui/src/panels/ProxyRulesPanel.tsx:74,132,165   loadEntity(ws, "rules",   id)
+ * packages/gui/src/panels/WebSocketsPanel.tsx:146,159,250  loadEntity(ws, "sockets", id)
  * ```
  *
  * This is the **`window.api`-fidelity half** of a translation that has two halves. The engine owns
@@ -325,7 +325,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
    *
    * **This is the unwrapping the shell channels used to do, and the reason all 16 create keys were
    * wrong on the routed path.** `addMapping` / `addRule` / `addRequest` / … returned `{id, entity}`
-   * while `renderer/types/window.ts` declares `Promise<LocalMapping>` and the panels consume it
+   * while `packages/gui/src/types/window.ts` declares `Promise<LocalMapping>` and the panels consume it
    * directly — `MappingsPanel.tsx:120` pushes the result straight into `config.mappings`, and
    * `ProxyRulesPanel.tsx:155` files it as a loaded entity. The `as ReturnType<BifurcApi[…] >` cast made
    * the compiler agree with the **declaration** rather than with the runtime, so nothing failed: the
@@ -570,7 +570,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     // accepts (the mocks panel's `resolveEntityKind` yields only `mocks` / `graphqlMocks` / `grpcMocks` /
     // `soapMocks` in mock mode, and the two panels that toggle pass the literals `"mappings"` and
     // `"rules"`). It is carried over anyway because it is a *documented* client-facing behaviour of the
-    // surface being reconstructed, and `renderer/types/window.ts`'s `Promise<{ok: boolean; error?:
+    // surface being reconstructed, and `packages/gui/src/types/window.ts`'s `Promise<{ok: boolean; error?:
     // string}>` is the contract that says so.
     setEntityEnabled: (wsId, kind, id, enabled) => {
       if (!EntitySetEnabledParams.shape.kind.safeParse(kind).success) {

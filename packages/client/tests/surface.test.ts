@@ -4,7 +4,7 @@
  *
  * ## Why this imports the real preload instead of reading the type
  *
- * `renderer/types/window.ts` under-declares the runtime surface by four keys
+ * `packages/gui/src/types/window.ts` under-declares the runtime surface by four keys
  * (`isFirstLaunch`, `completeFirstLaunch`, `getZoomLevel`, `setZoomLevel` — see
  * `src/surface.ts`'s header). A key-diff driven by the *type* would therefore report zero
  * differences while the client was missing four methods the renderer can call today. So this
@@ -53,7 +53,7 @@ describe("the window.api surface", () => {
 
   it("exposes 144 keys, which is what the preload actually has", async () => {
     /**
-     * Pinned deliberately. The plan says 136 and `renderer/types/window.ts` declares 140; both
+     * Pinned deliberately. The plan says 136 and `packages/gui/src/types/window.ts` declares 140; both
      * are stale, and a test that merely said "> 100" would let either number drift back in.
      */
     const keys = await realPreloadKeys();
@@ -109,7 +109,7 @@ describe("the window.api surface", () => {
      * `tlsRemoveCert` and `tlsCertStatus` joined on the same day, for a third reason again: each is
      * **two-sided** — an engine half plus an operation on the host's OS trust store — so routing either
      * one delivers half the answer and silently drops the other. `tlsRemoveCert` was the live defect
-     * (`renderer/panels/settings/TlsSettingsSection.tsx` calls it, and the OS store kept trusting the
+     * (`packages/gui/src/panels/settings/TlsSettingsSection.tsx` calls it, and the OS store kept trusting the
      * CA); `tlsCertStatus` lost the three drift fields. They are listed here so the reclassification
      * cannot be quietly undone — this is the assertion that would have caught the original routing.
      */

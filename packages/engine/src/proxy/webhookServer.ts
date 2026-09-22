@@ -247,7 +247,7 @@ export function createWebhookServer(opts: { workspaceId?: string | null } = {}):
 // property the old module-scope `let server = null` had.
 //
 // **Not "removed in WI 7", which is what this header used to say.** WI 7's desktop half landed 2026-09-22
-// and kept this facade *deliberately*: `renderer/panels/WebhooksPanel.tsx` starts the receiver through
+// and kept this facade *deliberately*: `packages/gui/src/panels/WebhooksPanel.tsx` starts the receiver through
 // `window.api.startWebhookServer()`, so `webhookServer.start`'s `facade` branch is a live path and not a
 // legacy one. What changed is that it can now be **bound** — see `bindWebhookInstance()`.
 

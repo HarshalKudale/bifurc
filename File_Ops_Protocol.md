@@ -95,7 +95,7 @@ this will land cleanly.
 
 ### 2.3 The actual blocker: a filesystem path round-trips through React state
 
-`renderer/components/modals/ImportExportModal.tsx`:
+`packages/gui/src/components/modals/ImportExportModal.tsx`:
 
 ```ts
 // line 100 — engine opens the dialog and reads the file
@@ -367,7 +367,7 @@ dropped:
 | `tlsHandlers.ts:59` — `tls:importKey` returns engine `path` | engine FS layout |
 | `runnerHandlers.ts:44` — `runner:exportReport` returns `filePath` | client path echoed by engine |
 | `capture:shareJson` returns `filePath` | client path echoed by engine |
-| `renderer/types/window.ts:44,45,191` | renderer types encode the above |
+| `packages/gui/src/types/window.ts:44,45,191` | renderer types encode the above |
 
 And one behavioural leak — the only place a **display name is derived from a path**:
 

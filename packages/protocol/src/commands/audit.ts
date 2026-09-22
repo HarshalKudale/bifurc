@@ -26,7 +26,7 @@ export type AuditEntry = z.infer<typeof AuditEntrySchema>;
  * added rather than routed around is that `QueryLogOptions` — the type the handler actually takes —
  * has all three. `.strict()` turns that gap into a `BAD_REQUEST` rather than a silently ignored
  * filter, so the schema was rejecting payloads the real caller sends:
- * `renderer/panels/AuditLogPanel.tsx:61–62` sets `fromTs` and `toTs` from the panel's date filter.
+ * `packages/gui/src/panels/AuditLogPanel.tsx:61–62` sets `fromTs` and `toTs` from the panel's date filter.
  *
  * Worth recording *how* this was mis-classified, because the mistake is instructive: the ratchet in
  * `tests/ipc/handlers.test.ts` filed it `NARROWED` and called the narrowing "**latent, not live**",

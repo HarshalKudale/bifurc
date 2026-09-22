@@ -7,7 +7,7 @@
  * instead of being remembered.
  *
  * The preload is imported **for real** (with `electron` mocked) rather than read from the type,
- * because `renderer/types/window.ts` under-declares the runtime by four keys — a type-driven diff
+ * because `packages/gui/src/types/window.ts` under-declares the runtime by four keys — a type-driven diff
  * would pass while the client was missing them. See `src/surface.ts`'s header.
  */
 
@@ -276,7 +276,7 @@ describe("createClient — command routing and payloads", () => {
      * kind the enum accepts (the mocks panel's `resolveEntityKind` yields only `mocks` / `graphqlMocks` /
      * `grpcMocks` / `soapMocks` in mock mode, and the two toggling panels pass `"mappings"` and
      * `"rules"`). It is carried over because it is a *documented* client-facing behaviour of the surface
-     * being reconstructed: `renderer/types/window.ts:41` declares
+     * being reconstructed: `packages/gui/src/types/window.ts:41` declares
      * `Promise<{ ok: boolean; error?: string }>`, and the engine's own header says the guard
      * "is client-facing behaviour and stays where the channel is" (`store/coreCommands.ts:24-28`).
      *

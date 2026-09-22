@@ -422,7 +422,7 @@ creates churn.
 > `runner.listFolderIds` convert (both take just `workspaceId`/`folderId`). Two more were
 > **tried and reverted** — a second real schema-gap finding, the same class as `audit.list`:
 > - `runner:saveReport`/`runner:exportReport` take the real `CollectionRunReport` object
->   (`renderer/lib/collectionRunner.ts`), which carries `requestId`, `url`, `testLogs`,
+>   (`packages/gui/src/lib/collectionRunner.ts`), which carries `requestId`, `url`, `testLogs`,
 >   `preScriptError`, `postScriptError` per result — none of which exist in the protocol's
 >   `RunResult`/`RunReport` schemas.
 > - `runner:saveConfig`/`runner:loadConfig` were actually converted and then **failed a real

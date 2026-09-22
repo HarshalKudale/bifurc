@@ -12,25 +12,25 @@ Safe deletions. Zero behavioral change.
 
 These 7 files are imported in `panelFactory.tsx` but **never rendered** (all routing goes through the unified `RequestsPanel` / `MocksPanel`). `LogsPanel` is not even imported anywhere.
 
-#### [DELETE] [GraphQLRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GraphQLRequestsPanel.tsx)
-#### [DELETE] [GraphQLMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GraphQLMocksPanel.tsx)
-#### [DELETE] [GrpcRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GrpcRequestsPanel.tsx)
-#### [DELETE] [GrpcMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/GrpcMocksPanel.tsx)
-#### [DELETE] [SoapRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/SoapRequestsPanel.tsx)
-#### [DELETE] [SoapMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/SoapMocksPanel.tsx)
-#### [DELETE] [LogsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/panels/LogsPanel.tsx)
+#### [DELETE] [GraphQLRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/GraphQLRequestsPanel.tsx)
+#### [DELETE] [GraphQLMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/GraphQLMocksPanel.tsx)
+#### [DELETE] [GrpcRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/GrpcRequestsPanel.tsx)
+#### [DELETE] [GrpcMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/GrpcMocksPanel.tsx)
+#### [DELETE] [SoapRequestsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/SoapRequestsPanel.tsx)
+#### [DELETE] [SoapMocksPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/SoapMocksPanel.tsx)
+#### [DELETE] [LogsPanel.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/panels/LogsPanel.tsx)
 
-#### [MODIFY] [panelFactory.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/panelFactory.tsx)
+#### [MODIFY] [panelFactory.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/lib/panelFactory.tsx)
 Remove the 6 dead imports (lines 21-26).
 
 ### 1.2 Delete Dead Utility File
 
-#### [DELETE] [applicationUtils.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/applicationUtils.ts)
+#### [DELETE] [applicationUtils.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/lib/applicationUtils.ts)
 Contains `RunConfigType`, `AppProcessStatus`, etc. — **zero imports** across the entire codebase.
 
 ### 1.3 Purge Dead Strings
 
-#### [MODIFY] [strings.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/strings.ts)
+#### [MODIFY] [strings.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/lib/strings.ts)
 Remove the entire `applications:` section (~120 lines, ~lines 680-800) — the "Applications" panel is disabled and these strings are never referenced.
 
 ### 1.4 Remove Dead Imports & Unused Variables (per-file)
@@ -112,7 +112,7 @@ The boilerplate of stripping `HOP_BY_HOP` headers, formatting `set-cookie`, and 
 
 ### 2.5 Create `useProtocolEditor` Hook (Frontend)
 
-#### [NEW] `renderer/hooks/useProtocolEditor.ts`
+#### [NEW] `packages/gui/src/hooks/useProtocolEditor.ts`
 `RestTab`, `GrpcTab`, `GraphQLTab`, and `SoapTab` all duplicate:
 - Draft persistence via `useDraftPersist`
 - State initialization and `useReducer` boilerplate
@@ -123,7 +123,7 @@ Extract into a single `useProtocolEditor(protocol, reducer, stateToPayload)` hoo
 
 ### 2.6 Create `createTabReducer` Factory (Frontend)
 
-#### [NEW] `renderer/lib/createTabReducer.ts`
+#### [NEW] `packages/gui/src/lib/createTabReducer.ts`
 The 4 tab reducers (`restTabReducer`, `grpcTabReducer`, `graphqlTabReducer`, `soapTabReducer`) independently define identical:
 - Lifecycle states: `sending`, `saving`, `loading`, `resStatus`, `error`
 - Generic actions: `SET_FIELD`, `LOAD_ENTITY`, `LOAD_DRAFT`, `SEND_START`, `SEND_SUCCESS`, `SEND_ERROR`, `SAVE_START`, `SAVE_SUCCESS`
@@ -132,13 +132,13 @@ Create a base reducer factory that handles the common lifecycle, allowing each p
 
 ### 2.7 Create `useMultiplexedEntities` Hook (Frontend)
 
-#### [NEW] `renderer/hooks/useMultiplexedEntities.ts`
+#### [NEW] `packages/gui/src/hooks/useMultiplexedEntities.ts`
 `MocksPanel` and `RequestsPanel` contain **identical** protocol-multiplexing logic: building `itemProtocolMap`, `allItemsMap`, `folderViewItems`, and switch-based CRUD dispatch for REST/GraphQL/gRPC/SOAP entities. Extract into a shared hook.
 
 ### 2.8 Consolidate Persistence Hooks
 
-#### [MODIFY] [useDraftPersist.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/useDraftPersist.ts)
-#### [MODIFY] [usePersistedState.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/lib/usePersistedState.ts)
+#### [MODIFY] [useDraftPersist.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/lib/useDraftPersist.ts)
+#### [MODIFY] [usePersistedState.ts](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/lib/usePersistedState.ts)
 These two hooks handle overlapping persistence logic. Consolidate into a single `usePersistedState` with a `draft` mode option.
 
 ### 2.9 JSON Import/Export Factory (Backend)
@@ -152,7 +152,7 @@ All `*-json.ts` importers and exporters share nearly identical logic, differing 
 
 ### 3.1 Create `<EntityEditorLayout>` Component
 
-#### [NEW] `renderer/components/common/EntityEditorLayout.tsx`
+#### [NEW] `packages/gui/src/components/common/EntityEditorLayout.tsx`
 The layout of `SidebarLayout + FolderTree + TabBar + active-tab-wrapper` is duplicated across **6 panels** (Mocks, Requests, WebSockets, Webhooks, ProxyRules, Capture). Create a single layout component:
 ```tsx
 <EntityEditorLayout
@@ -167,23 +167,23 @@ The layout of `SidebarLayout + FolderTree + TabBar + active-tab-wrapper` is dupl
 
 ### 3.2 Create `<MasterDetailLayout>` Component
 
-#### [NEW] `renderer/components/common/MasterDetailLayout.tsx`
+#### [NEW] `packages/gui/src/components/common/MasterDetailLayout.tsx`
 `ProxyRulesPanel` and `CapturePanel` both use a "list on left, detail on right" pattern. Standardize into a shared layout.
 
 ### 3.3 Create `<ProtocolEditorLayout>` Component
 
-#### [NEW] `renderer/components/common/ProtocolEditorLayout.tsx`
+#### [NEW] `packages/gui/src/components/common/ProtocolEditorLayout.tsx`
 `RestTab`, `GrpcTab`, `GraphQLTab`, and `SoapTab` all render the same structural layout: `EditorTitleBar + TabStrip + two-pane-resizable + BottomBar`. Extract into a shared component.
 
 ### 3.4 Extract `<ProxyRuleForm>` Component
 
-#### [NEW] `renderer/components/rules/ProxyRuleForm.tsx`
+#### [NEW] `packages/gui/src/components/rules/ProxyRuleForm.tsx`
 `ProxyRuleDetailsPanel` and `RuleTab` contain near-identical form state management (`stateFromRule`), validation (`validate`), and save handlers. Extract the shared form fields into `<ProxyRuleForm>`.
 
 ### 3.5 Consolidate Token Hint Components
 
-#### [MODIFY] [EnvVarHint.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/components/editor/EnvVarHint.tsx)
-#### [MODIFY] [RandomizerHint.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/renderer/components/editor/RandomizerHint.tsx)
+#### [MODIFY] [EnvVarHint.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/components/editor/EnvVarHint.tsx)
+#### [MODIFY] [RandomizerHint.tsx](file:///i:/workspace/Bifurc-Worskspace/Bifurc/bifurc/packages/gui/src/components/editor/RandomizerHint.tsx)
 These share dropdown/token-insertion UI logic. Create a generalized `<TokenHint>` base component with type-specific renderers.
 
 ### 3.6 Move Misplaced Files

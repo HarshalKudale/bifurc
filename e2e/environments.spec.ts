@@ -6,7 +6,7 @@ import { openEnvironmentsManager } from "./helpers";
  * (`openEnvironmentsManager`).
  *
  * There is no sidebar entry for it, and the reason is easy to get wrong: `environments` **is** in
- * `PANEL_REGISTRY` (`renderer/lib/panelRegistry.tsx:160`) but carries `showInSidebar: false`, and
+ * `PANEL_REGISTRY` (`packages/gui/src/lib/panelRegistry.tsx:160`) but carries `showInSidebar: false`, and
  * `enabledPanels` (`:207`) filters exactly those out. No `NavItem` is rendered, so no
  * `nav-environments` testid exists in the DOM. (`settings`, `workspace` and `audit` are the same.)
  *

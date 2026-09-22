@@ -1,0 +1,19 @@
+{
+  "name": "@bifurc/gui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The shared Bifurc UI (D18). Exports <App />; platform-independent, reading window.api for every external call. Imported by the Electron renderer and by the browser host in web/.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  }
+}
