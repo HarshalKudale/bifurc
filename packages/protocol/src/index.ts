@@ -11,3 +11,9 @@ export * from "./errors";
 export * from "./envelope";
 export * from "./events";
 export * from "./commands/index";
+// The client-side wire machinery: the `Transport` abstraction, the `ClientChannel` contract and the
+// shared client session. It lives here rather than in `@bifurc/engine` because a **browser** has to
+// load it, and engine is a Node package — see `wire/session.ts`'s header. `platform: "neutral"` in
+// `tsup.config.ts` is what keeps it honest.
+export * from "./wire/types";
+export * from "./wire/session";
