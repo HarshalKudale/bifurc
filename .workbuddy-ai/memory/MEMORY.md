@@ -1,5 +1,34 @@
 # Bifurc — Project Memory
 
+## 🚫 STANDING RULE — ask the user to run shell-bound commands; never run them here
+
+**Anything that needs a real desktop session or a real Electron/GPU process must be run BY THE USER.**
+Named explicitly: `npm run dev`, `npm run test:e2e` (`npx playwright test`), and anything that launches
+Electron or a GUI. Ask, then wait.
+
+**Why (user's instruction, 2026-09-21):** *"Anything that cannot be done from your agent shell — like
+`npm run dev` or `npm run test:e2e` — you have to ask me, the user, about running it. Do not run it in your
+agent-sandboxed environment, because it will fail without having an actual issue and **you will break the
+working code**."*
+
+**Two concrete failures this caused, both mine, both in one session:**
+1. I treated an agent-shell e2e failure as evidence about the product. It is not: Electron cannot launch
+   from this shell (the GPU process fails), so *every* spec dies at `electronApplication.firstWindow` in
+   ~850 ms. The count is a constant, not a signal — `TRAPS.md` says so and I read it too late.
+2. I launched a full `npm run build` in the background while the user was working, then concluded from a
+   transient `Cannot find module './workspaceFs'` that **I** had broken `dist/`. **I had not** — the user
+   confirmed `npm run dev` started fine. Two builds cleaning the same `dist/` race; a mid-flight tree is
+   not a broken tree, and the honest move is to ask before diagnosing.
+
+**The generalisation: an agent-shell failure is evidence about the agent shell, not about the product.**
+Before reporting one, name the mechanism that would make it environment-specific. If you cannot, ask the
+user to run it rather than reporting a failure — a false report costs a debugging session and, worse,
+invites "fixes" to code that was working.
+
+**Corollary — do not start a build you will not wait for.** A backgrounded build that gets killed leaves a
+half-written `dist/`, and the next `npm run dev` from the user fails on it. Run builds to completion and
+collect the exit code, or do not start them.
+
 **Read `TRAPS.md` first** (`.workbuddy-ai/memory/TRAPS.md`) — failure modes not discoverable from the code.
 Authorities: status → `plan/README.md` · live phase → `plan/14` · suites → `TESTING.md` · P6/§5c ledgers →
 `plan/07` · protocol history → `plan/protocol-changes.md` · procedures → the `bifurc-*` skills.
@@ -38,9 +67,28 @@ downgrade. **Its guard is the valuable half** — it *evaluates* the bundle with
 Electron's five names and fails the build otherwise, because a regex or a static require-walk proves
 reachability, not loadability. Verified: `dist/preload.js` contains exactly one `require("electron")`.
 **So `build:main` is now required after any `src/preload.ts` change** — `build:packages` alone does not rebuild it.
-**P6 criterion 2 is now *possibly* closable** (its carried `46 failed / 0 passed` was a non-booting app, not
-flakiness) — **but that has not been re-measured.** Details: `TRAPS.md`, two entries (the canonical one is
-"A sandboxed preload has NO module resolver").
+
+**MEASURED BY THE USER, 2026-09-21 — the preload fix took the e2e suite from "everything fails" to 4 failures.**
+`npm run test:e2e` on the user's machine: **4 failed** out of 11 specs, where the carried baseline was
+`46 failed / 0 passed`. **P6 criterion 2 is therefore neither closed nor waived — it is 7/11 passing, and the
+four are named:**
+
+| Spec | Test |
+|---|---|
+| `e2e/app.spec.ts:68` | Navigation › common tab keybinds work on tabbed panels |
+| `e2e/happy-path-workflows.spec.ts:138` | visits all screens and runs core happy-path CRUD workflows |
+| `e2e/mocks-rest.spec.ts:49` | Mocks panel — REST › updates an existing REST mock |
+| `e2e/proxy-rules.spec.ts:15` | Proxy Rules panel › renders the panel with its add control and seeded rules |
+
+**⚠ The carried `46 failed / 0 passed` was NEVER a measurement of the product.** It came from this agent
+shell, where Electron cannot launch at all (GPU process fails) and every spec dies at
+`electronApplication.firstWindow` in ~850 ms. So the *number* was an environment constant — and the
+preload defect happened to fail the same suite for a different reason. **Both my claims were half wrong in
+opposite directions:** the preload defect *was* why the suite failed for the user (46 → 4 proves it), but the
+`46` figure itself was never evidence about it. A matching count is not a matching cause; a count from a
+broken environment is not a cause at all.
+
+Details: `TRAPS.md`, two entries (canonical: "A sandboxed preload has NO module resolver").
 
 ## Measuring the suite
 
@@ -66,13 +114,14 @@ flakiness) — **but that has not been re-measured.** Details: `TRAPS.md`, two e
   that mention X** — both directions were wrong on the first pass (one false-negative, one false-positive).
   See `spike/README.md`.
 
-**Current: 2587 tests — 2544 passed, 40 skipped, 3 failed** (all three in the documented environmental set:
-`certTrust` certutil — **34/34 isolated** — plus the load-induced `gitStore`/`gitOps` pair), **106 files**.
+**Current: 2592 tests — 2552 passed, 40 skipped, 0 failed** (the load-induced `gitStore`/`gitOps` pair did not
+fire this run; `certTrust` passed), **107 files**.
 *(Trajectory: 101 / 2,458 / 2,417 / 40 / 1 → … → 2,507 (WI 3) → 2,564 (WI 1 protocol + D17) → 2,552 (spike
 retired: −12 = exactly the spike file's case count) → 2,560 (WI 7 command layer: +8 = the new
 `workspaceCommandScope` file) → 2,577 (WI 6: +17 = `hostArgs.test.ts`'s 16 + 1 host integration case) →
-**2,587** (WI 8: +10 = the protocol suite's +9 (3 new scoped commands × 3 `it.each` cases) + 1 integration
-case; files unchanged, both existing files edited). **Name every delta's mechanism.**)*
+2,587 (WI 8: +10 = the protocol suite's +9 (3 new scoped commands × 3 `it.each` cases) + 1 integration case) →
+**2,592** (e2e fixture fix: +5 = the new `e2eFixtureContract.integration.test.ts`; files +1). **Name every
+delta's mechanism.**)*
 
 ## Phase state — the plans are the authority
 
@@ -81,9 +130,45 @@ case; files unchanged, both existing files edited). **Name every delta's mechani
   `renderer/types/window.ts`.**
 - **P6 done in scope** — 144/144 keys classified, zero `SPLIT`; all 51 §5c commands moved and statically guarded.
   `registerClientHandlers()` sits beside the reduced `registerIpcHandlers()` (`src/main.ts:294`). **Criterion 2
-  ("11 e2e specs pass, unmodified") is CARRIED** (46 failed / 0 passed) — **its mechanism was the preload defect,
-  which is now FIXED** (`e8e535f`, see above), so the criterion is *possibly* closable — **re-measure it before
-  claiming it.** WI 2 (process split) downgraded by D14 — desktop stays in-process.
+  ("11 e2e specs pass, unmodified") is 7/11 — 4 failed, user-measured 2026-09-21** after the preload fix
+  (was `46 failed / 0 passed`, an agent-shell constant — see the preload section above).
+  **ALL FOUR ARE DIAGNOSED AND FIXED 2026-09-22, awaiting the user's re-run** — and **none was a product bug**:
+  three were stale tests and one a stale fixture. See "Reading the e2e failure artifacts" below.
+  WI 2 (process split) downgraded by D14.
+
+## 🥇 Reading the e2e failure artifacts — do this instead of asking for a re-run to diagnose
+
+**The evidence for a failed e2e run is already on disk, and reading it costs nothing and risks nothing.**
+`playwright.config.ts` sets `screenshot: "only-on-failure"` and `trace: "on-first-retry"`, so after the user
+runs `npm run test:e2e` there is, per failing test, `test-results/<spec>-<test>-electron/` containing
+`error-context.md` (the error + a full accessibility snapshot of the page) and `test-failed-1.png`.
+
+**Every one of the four 2026-09-21 failures was diagnosed from those files alone**, including the decisive
+evidence in each case — the disabled `Save Mock` button, the panel rendering `—` with `2 rules`, and the
+unmatched locator names. Read `test-results/*/error-context.md` **before** asking the user to re-run anything:
+it is the difference between "here is the cause" and "please run it again so I can guess".
+
+**The four, all fixed 2026-09-22** (details in `2026-09-22.md`):
+1. `proxy-rules.spec.ts:15` — **the fixture wrote `names.json` as `{id: "name"}` (a string) while the engine
+   reads `EntityNameEntry` objects** (`fsNamesIndex.ts:5`), so `ruleNames[id]?.name` was `undefined` → every
+   seeded name and pattern blank. **All four indexes were wrong the same way** (`rules`/`requests`/`sockets`/
+   `webhooks`), and the field differs per kind: `rules → url (=pattern)`, `requests → method + url`,
+   `sockets → url`, `webhooks → urlSuffix` (`config.ts:133,168-170,175-176,184-185`).
+2. `mocks-rest.spec.ts:49` — the test **forgot the response body**: `RestTab.tsx:164` gates Save on
+   `resMode === "none" || resBody.trim()`, and a new mock starts `resMode: "json"`, `resBody: ""`. The sibling
+   test is named "creates a REST mock **with a body**" and fills one.
+3. `happy-path-workflows.spec.ts:330` — a **local** `clickTitlebarButton(/^Manage Environments/i)` that
+   matches nothing at rest; `openEnvironmentsManager` in `e2e/helpers/index.ts` exists precisely for this and
+   its docblock records the identical bug. The fix had been applied to `app.spec.ts` and never reached here.
+4. `app.spec.ts:69` — a locator for **a label nothing produces**: `REST 3` appears in that one line repo-wide
+   and was never a seeded name. Rewritten to open a seeded request. **The least verifiable of the four.**
+
+**And the guard that was missing:** ~2,600 unit/integration tests were green throughout, because they build
+their own fixtures from `src/` — the e2e fixture's on-disk shape was exercised by **nothing but a real
+Electron run**. `tests/integration/e2eFixtureContract.integration.test.ts` (new, 5 cases) runs
+`writeSampleWorkspace()` and reads it back through `loadConfig()`. **A "no blank field" property must be
+scoped to fields that are *required*** — the first two versions reported `mappings`, whose display field is
+`label` and whose `map-003.label` is `""` **deliberately**.
 - **The reduction is CLOSED** — nine groups, one file per commit, `src/` 20 → 17 files. Re-derived from the tree
   2026-09-21 = **18 `ipcMain.handle(` sites, all keepers** (17 in `clientHandlers.ts`, 17 live / 0 dead; + 1
   client-local in `systemHandlers.ts`). `coreKinds.ts` keeps 1 `registerCrudKind<Environment>()` — **a kind is NOT

@@ -1561,3 +1561,17 @@ is the shape worth copying for any "you asked for X and got nothing" case:
 it.** `grep` for every function that builds a path from an env var or a root override and check each one
 consults the override. A redirect that covers 3 of 4 resolvers is worse than none, because the failure is
 partial and looks like data loss.
+
+**Third victim, 2026-09-22 — and this time it produced a *false diagnosis*, which is the worst shape yet.**
+Writing the guard for the e2e-fixture bug, I called `setDataRoot(<temp>)` and then `loadConfig()`, and got
+**0 entities of every kind** — which reads exactly like "the fixture writes nothing", i.e. like the bug I was
+there to pin. It was not: `setDataRoot()` is *silently ignored* on win32 once `%LOCALAPPDATA%` is set, so the
+engine read the developer's real profile. The fix is to set `process.env.LOCALAPPDATA` to the temp root
+**before** anything resolves a path — which is what the e2e fixture itself does — and to restore it in
+`afterAll`, because a leaked `%LOCALAPPDATA%` would redirect every later integration test in the same worker.
+
+**The pattern across all three victims: the failure is always attributed to the thing you were working on.**
+`certManager` blamed the CA's location, the WI 6 CLI blamed an empty data root, and this one blamed the
+fixture. In each case the real cause was one resolver consulting a *different* override — and in each case the
+wrong attribution was plausible enough to act on. **When a path-dependent check finds nothing, verify the
+resolution inputs before verifying the thing you are checking.**
