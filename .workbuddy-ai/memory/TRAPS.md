@@ -1937,3 +1937,68 @@ swept. **A file that should import something and does not is invisible to every 
 what is there** — the same shape as `"nothing else reads it"` needing a grep of `packages/` and not only
 `src/`. Recorded as a **known open item** rather than a suspicion: whoever next touches `ws.ts` should convert
 its client to `createClientSession`.
+
+**RESOLVED 2026-09-22 (same day).** `ws.ts`'s client is now a `ClientChannel` + `createClientSession`, ~180
+lines of duplicated state machine deleted, and the file kept only what is genuinely per-transport: the `ws`
+library's `.on()` API, the `headers` option, the ten-second connect timeout, and the close code. The
+conformance suite (57 cases) passed unchanged, so the two copies really did agree — **except** that completing
+the extraction is what exposed the two findings below. **An extraction that is left incomplete does not just
+duplicate code; it hides whatever the incomplete copy was getting wrong**, because the shared suite is the
+instrument that would have said so, and the old copy was not being run through it.
+
+## A widening every *implementation* satisfies can still break a *consumer* — and no test suite will say so
+
+Found 2026-09-22, completing the extraction above. `ClientChannel.encode`/`write` were widened from `Buffer` to
+`Uint8Array` so the wire machinery could move into `@bifurc/protocol` and a browser bundle could load it. The
+justification was sound and was recorded as such: **`Buffer extends Uint8Array`, so every existing channel still
+satisfies the contract.** That is true — of every *implementation*. `encode(): Uint8Array` happily accepts a
+`Buffer`-returning one.
+
+It is not true of a **consumer**. `packages/engine/tests/transport/session.test.ts` declared its recorder as
+`const written: Buffer[] = []` and the session **pushes into it** — so the widening made the session hand a
+plain `Uint8Array` to an array typed `Buffer[]`, which is a type error. "Covariant return, bivariant parameter"
+describes the interface; it says nothing about what a caller stores the result in.
+
+**The part that matters: the suite was green.** 2,646 tests, 0 failed, with this error present on `HEAD` for a
+full commit — because **`npm test` runs vitest, and vitest does not typecheck.** The only instrument that sees
+it is `tsc -p packages/engine/tsconfig.json`, and that is not wired into `npm test`. So:
+
+- **A green suite is not a typecheck**, and a type-level change is not covered by a behavioural suite no matter
+  how many cases it has. Widening a public contract needs the typechecker run *deliberately*, because nothing
+  else in the loop will do it.
+- The error was also **outside `src/`** — it was in a test fixture — so a typecheck scoped to `src/` would have
+  missed it too. The engine's `tsconfig` includes `tests/**/*.ts`; keep it that way.
+- The fix belongs at the **consumer**, not the interface: the fixture's recorder became `Uint8Array[]`. The one
+  place the two genuinely meet is `framing.ts`'s decoder, which is `Buffer`-based and stayed in the engine —
+  bridged there with an explicit `Buffer.from(buffer)` rather than by widening production framing code to suit
+  a test.
+
+## A crash fix's only observable can be an unhandled error, which a failure count does not see
+
+Found in the same run, and found *only* because of the previous section's discipline. Mutation M5 was added to
+guard the connect timeout, and writing that case made the timeout path reachable **for the first time in the
+file's life**. It immediately produced:
+
+```
+Error: WebSocket was closed before the connection was established
+ ❯ WebSocket.close     node_modules/ws/lib/websocket.js:306
+ ❯ release             packages/engine/src/transport/ws.ts
+ ❯ Object.dispose → teardown → session.fail
+ ❯ Timeout._onTimeout
+```
+
+`release()` calls `removeAllListeners()` and *then* `close()`. On a socket still `CONNECTING`, `ws`'s `close()`
+aborts the handshake and emits `error` on the **next tick** — and an `error` event with no listener **throws**.
+A later tick is outside the surrounding `try`, so it escapes as an uncaught exception and takes the process
+down instead of failing one session. The fix is one line: re-attach a swallow handler *after* the detach, so the
+one listener whose absence is fatal outlives the cleanup.
+
+**This was pre-existing.** The pre-refactor copy detached and closed in the same order; the behaviour-preserving
+refactor carried the bug across faithfully. Nothing had ever exercised the timeout, so nothing had ever emitted
+it — which is the whole reason it survived.
+
+**The methodological finding is the sharper one.** Vitest reported this as `Tests 16 passed` **plus**
+`Errors 1 error`. A mutation harness that decides "caught" by counting failed tests therefore calls the crash
+fix **unguarded**, and the first version of this one did exactly that. **Switch the signal to the exit code** —
+and more generally, *"did the run fail?"* is not the same question as *"did any test fail?"*, and only the first
+one covers unhandled errors, unhandled rejections, and anything thrown outside a test body.
