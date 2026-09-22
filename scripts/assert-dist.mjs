@@ -42,7 +42,16 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** The emitted trees to check, and the extensions a relative specifier may resolve to. */
-const TREES = ["dist", "packages/protocol/dist", "packages/engine/dist", "packages/client/dist"];
+const TREES = [
+  "dist",
+  "packages/protocol/dist",
+  "packages/engine/dist",
+  "packages/client/dist",
+  // Added 2026-09-22 with the P7 web target, and missing for the same reason `build:packages` was: the
+  // package was new, and every hand-written enumeration of "the packages" has to be found by hand. tsup
+  // emits it with `bundle: false`, so it is a module graph and belongs here rather than in `SKIP_DIRS`.
+  "packages/web-client/dist",
+];
 
 /**
  * Subtrees to skip, and **`dist/renderer` is the important one**.
