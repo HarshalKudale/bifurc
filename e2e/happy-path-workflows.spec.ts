@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures/electronApp";
 import type { Page } from "@playwright/test";
+import { openEnvironmentsManager } from "./helpers";
 
 test.setTimeout(180_000);
 
@@ -327,7 +328,13 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         await expect(page.locator("body")).toContainText("Configure workspace settings and remote sync");
 
         // Environments CRUD
-        await clickTitlebarButton(page, /^Manage Environments/i);
+        //
+        // **Not `clickTitlebarButton(page, /^Manage Environments/i)`.** That label exists only inside
+        // the environment dropdown, so a role-locator for it matches nothing at rest and the click times
+        // out — the exact bug `openEnvironmentsManager`'s docblock in `e2e/helpers/index.ts:104` records,
+        // and which was already fixed in `app.spec.ts`. This file kept its own copy of the wrong
+        // approach, so the fix never reached it.
+        await openEnvironmentsManager(page);
         await page.getByRole("button", { name: /New Environment/i }).first().click();
         const envNameInput = page.locator('input[value="New Environment"]').first();
         await expect(envNameInput).toBeVisible();
