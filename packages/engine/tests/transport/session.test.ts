@@ -11,8 +11,9 @@
  * Three in particular:
  *
  *  - **`opened()` must replay the outbox verbatim.** The first version called `sendFrame()` on entries
- *    that were already encoded, and `encodeFrame` does `JSON.stringify` — so a `Buffer` would have gone
- *    out as `{"type":"Buffer","data":[…]}` and the peer would have rejected it as `not_an_object`. Over
+ *    that were already encoded, and `encodeFrame` does `JSON.stringify` — so an already-encoded frame
+ *    would have gone out as an indexed object (`{"0":123,…}`) rather than as the frame, and the peer
+ *    would have rejected it as `not_an_object`. Over
  *    a real transport this is *indirectly* covered (every queued subscription would be lost and nine
  *    conformance cases would fail), but the failure it produces is "the subscription never fires", which
  *    is the hardest class in this layer to attribute. A fake channel that records the bytes makes the
@@ -39,7 +40,7 @@ import {
 import type { EngineEvent, Transport } from "../../src/transport/types";
 
 /** Decode everything the fake channel was handed, so a double-encode is an assertion failure. */
-function decodeAll(buffers: readonly Buffer[]): Record<string, unknown>[] {
+function decodeAll(buffers: readonly Uint8Array[]): Record<string, unknown>[] {
   const frames: Record<string, unknown>[] = [];
   const decoder = createFrameDecoder({
     onFrame: (frame) => frames.push(frame as Record<string, unknown>),
@@ -47,7 +48,12 @@ function decodeAll(buffers: readonly Buffer[]): Record<string, unknown>[] {
       throw err;
     },
   });
-  for (const buffer of buffers) decoder.push(buffer);
+  for (const buffer of buffers) {
+    // `createFrameDecoder` is `framing.ts` — the byte-stream codec, which stayed `Buffer`-based in the
+    // engine. The channel contract is `Uint8Array`, so the two meet here; at runtime these *are*
+    // Buffers (`encodeFrame` produces them), and the conversion is what tells the compiler so.
+    decoder.push(Buffer.from(buffer));
+  }
   return frames;
 }
 
@@ -55,7 +61,7 @@ interface Harness {
   session: ClientSession;
   transport: Transport;
   /** Encoded bytes handed to `channel.write()`. */
-  written: Buffer[];
+  written: Uint8Array[];
   fatals: Error[];
   /** Flip to make the next `write()` throw, as a dead peer would. */
   state: { failWrites: boolean; disposals: number; closes: number };
@@ -76,7 +82,7 @@ interface Harness {
 }
 
 function harness(overrides: Partial<ClientChannel> = {}): Harness {
-  const written: Buffer[] = [];
+  const written: Uint8Array[] = [];
   const fatals: Error[] = [];
   const state = { failWrites: false, disposals: 0, closes: 0 };
   let ready = false;
@@ -127,8 +133,8 @@ function harness(overrides: Partial<ClientChannel> = {}): Harness {
 describe("session — the channel contract", () => {
   it("queues frames written before the channel is ready, and replays them VERBATIM on opened()", () => {
     // The bug this case was written for. `opened()` must not route queued bytes back through
-    // `sendFrame()`, because `encodeFrame` would `JSON.stringify` an already-encoded `Buffer` and the
-    // peer would reject `{"type":"Buffer","data":[…]}` as `not_an_object` — silently losing every
+    // `sendFrame()`, because `encodeFrame` would `JSON.stringify` an already-encoded `Uint8Array` into
+    // an indexed object rather than the frame, and the peer would reject it as `not_an_object` — losing every
     // subscription queued before the channel came up.
     const h = harness();
 
@@ -138,7 +144,7 @@ describe("session — the channel contract", () => {
 
     h.open();
     expect(h.written).toHaveLength(1);
-    // The frame decodes as the control frame it was meant to be — not as a serialised Buffer.
+    // The frame decodes as the control frame it was meant to be — not as a serialised typed array.
     expect(h.sent()).toEqual([
       { id: expect.any(String), action: "subscribe", payload: { events: ["event.log.entry"] } },
     ]);

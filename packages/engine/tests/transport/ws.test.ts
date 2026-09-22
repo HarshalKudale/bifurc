@@ -24,7 +24,8 @@
  * holds rather than assuming a duration. Nothing here asserts on *how long* anything takes.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { WebSocket } from "ws";
+import { createServer as createTcpServer, type AddressInfo } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
 import { CommandRegistry, type CommandContext } from "../../src/commands/registry";
 import { EngineEventBus } from "../../src/eventBus";
@@ -358,5 +359,72 @@ describe("ws — the auth consequence (work item 5)", () => {
       // placeholder would quietly turn an audit entry into an unattributable one.
       peer: expect.stringMatching(/^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/),
     });
+  });
+});
+
+/**
+ * The two responsibilities that stayed in this file when the session state machine moved out.
+ *
+ * Both are **channel** concerns, and that is the point: `createClientSession` knows nothing about
+ * sockets, so it cannot know what "too long to connect" means, and it never sees a close code. They
+ * are also the two lines a mutation check found unguarded — dropping the code from the message, or
+ * raising the timeout from ten seconds to an hour, changed no result in any suite. A mutation nothing
+ * catches is a line nothing is testing, so these cases exist to pin them.
+ */
+describe("ws — what the channel owns and the session does not", () => {
+  it("carries the engine's close code into the fatal, so a policy close is diagnosable", async () => {
+    // `CLOSE_CODE_POLICY` is 1008, and the server uses it for a malformed frame or an internal error —
+    // so the code is the difference between "the engine hung up" and "the engine hung up *because*
+    // something was wrong". A bare `WebSocketServer` is used rather than `createWsServer`, and the code
+    // is deliberately **not** the policy one: `4321` can only reach the message if the value came off
+    // the event, which is precisely what is being asserted.
+    const wss = new WebSocketServer({ host: DEFAULT_WS_HOST, port: 0 });
+    await new Promise<void>((resolve) => wss.once("listening", () => resolve()));
+    const port = (wss.address() as AddressInfo).port;
+    wss.on("connection", (socket) => socket.close(4321, "a test close"));
+
+    const fatals: Error[] = [];
+    const transport = createWsTransport(`ws://${DEFAULT_WS_HOST}:${port}`, {
+      onFatal: (e) => fatals.push(e),
+    });
+    transports.push(transport);
+
+    // Both routes reach the same place and both are correct: if the close lands before the handshake
+    // settles, `ensureReady()` rejects; if after, `assertOpen()` throws. Either message must name it.
+    await expect(transport.request("config.get", {})).rejects.toThrow(/4321/);
+    expect(fatals).toHaveLength(1);
+    expect(fatals[0]!.message).toMatch(/4321/);
+    await new Promise<void>((resolve) => wss.close(() => resolve()));
+  });
+
+  it("TIMES OUT a peer that accepts the connection but never completes the handshake", async () => {
+    // The case a failed *connect* does not cover: the TCP connection succeeds, so there is no error to
+    // react to, and the WebSocket client has no handshake timeout of its own. Without this timer the
+    // caller waits forever — the hung-request class this layer exists to prevent, arriving by a
+    // different route. A plain TCP listener that says nothing is exactly that peer.
+    const accepted: import("node:net").Socket[] = [];
+    const silent = createTcpServer((socket) => {
+      accepted.push(socket);
+      // Accept, then deliberately say nothing.
+    });
+    await new Promise<void>((resolve) => silent.listen(0, DEFAULT_WS_HOST, () => resolve()));
+    const port = (silent.address() as AddressInfo).port;
+
+    const fatals: Error[] = [];
+    const transport = createWsTransport(`ws://${DEFAULT_WS_HOST}:${port}`, {
+      connectTimeoutMs: 250,
+      onFatal: (e) => fatals.push(e),
+    });
+    transports.push(transport);
+
+    // Asserted **by value**, so the case also fails if the configured timeout is ignored in favour of
+    // the default — which is the mutation that survived.
+    await expect(transport.request("config.get", {})).rejects.toThrow(/Timed out after 250ms/);
+    expect(fatals).toHaveLength(1);
+
+    // Destroy the accepted sockets before closing, or `net.Server.close()` never calls back: it waits
+    // for live connections to end, and this one was accepted precisely in order to stay open.
+    for (const socket of accepted) socket.destroy();
+    await new Promise<void>((resolve) => silent.close(() => resolve()));
   });
 });
