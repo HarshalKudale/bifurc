@@ -2002,3 +2002,72 @@ it — which is the whole reason it survived.
 fix **unguarded**, and the first version of this one did exactly that. **Switch the signal to the exit code** —
 and more generally, *"did the run fail?"* is not the same question as *"did any test fail?"*, and only the first
 one covers unhandled errors, unhandled rejections, and anything thrown outside a test body.
+
+## A platform `WebSocket` fires `error` and then **no `close`** — a channel cannot be copied across hosts
+
+Found 2026-09-22, chasing a single full-suite failure: `browserTransport.test.ts` → *"reports a connect failure
+distinctly from a dropped session"* died on vitest's 15 s test timeout. A probe of the platform's own
+`WebSocket` (Node 22's, i.e. undici's) settled it in one run — three failing connects, all identical:
+
+```
+released port                 error@5ms   readyState=0
+http, upgrade refused by hand error@7ms   readyState=0
+tcp, destroyed on connect     error@1ms   readyState=0
+```
+
+**`error` fires; `close` never does**; `readyState` is still `CONNECTING` seconds later. `ws` — the library the
+engine's channel uses — *does* emit `close` after `error`, and a spec-compliant browser does too, so `ws.ts`'s
+*"`ws` always emits `close` after `error`, so the teardown and the rejection both happen there"* is true where
+it is written and **false on the platform the browser package runs on**. **So that handler cannot be copied
+here**: silencing `onerror` and letting `close` report — the `ws.ts` shape — leaves a wrong address reported
+by **nothing** on undici, so `ensureReady()` never settles and the caller hangs instead of failing. That was
+the shape of the first attempt at this fix, and the probe above is why it was abandoned.
+
+The rule: **a channel's failure reporting is a statement about the host, not about the protocol.** When a
+second `ClientChannel` is written for a different platform, all six members need re-deriving — and the ones
+with no test behind them are exactly the ones that get copied.
+
+The shape that holds here:
+
+- `error`, **only while the socket has never opened** (`if (open) return`) — on this host the only signal a
+  failed connect has;
+- `close`, for the established case, where the message is `Session closed: …`;
+- a **connect timeout**, for a peer that accepts TCP and then answers nothing — a refusal fires `error`,
+  silence fires nothing at all.
+
+The original handler reported **unconditionally**, which is the opposite defect: `fail()` is idempotent and
+first-wins, so which message a caller saw was decided by *which event fired first* rather than by whether the
+socket had ever opened — announcing a dropped session as `Could not connect` wherever `error` precedes
+`close`. So the two naive positions, report always and report never, are both wrong, in opposite directions.
+That is why the guard is `open` rather than a choice of message.
+
+## A test timeout is a different finding from a failed assertion
+
+`Error: Test timed out in 15000ms` is not a vague assertion failure; it says **something never settled**, and
+that narrows the search in one step — no message was computed, no branch was taken, a promise simply never
+resolved. Here it pointed straight at "the connect neither opened nor errored", which no failed assertion
+could have said.
+
+Its corollary is a *false* positive worth knowing: **an unsettled promise and a starved event loop look
+identical** in a load-induced run, so the first instinct — "it is just slow under load" — is also wrong. This
+failure was deterministic once reproduced, and it was a real defect both times it appeared.
+
+## An `http.Server` with no `upgrade` listener leaves an upgrade request in limbo
+
+Measured while building a deterministic "something is listening, but it is not an engine" fixture: a plain
+`http.Server` with an ordinary `'request'` handler **neither answers** a WebSocket upgrade request **nor closes
+it**. The client hangs — so the case written to test a *refusal* instead reproduced the very hang it was meant
+to be distinguished from, failing on the 10 s connect timeout with the wrong message, which is how it was
+noticed.
+
+To make a refusal deterministic, write it by hand on the `'upgrade'` event:
+
+```ts
+server.on("upgrade", (_req, socket) => {
+  socket.write("HTTP/1.1 426 Upgrade Required\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+  socket.end();
+});
+```
+
+A bare `node:net` server is the other deterministic option and needs no HTTP parsing at all: destroy the socket
+on arrival for a refusal, or hold it and never write for silence.
