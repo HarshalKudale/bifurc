@@ -1199,6 +1199,44 @@ JSONC, unlike `tsc`. Comments are fine in `tsup.config.ts` (transpiled) but fata
 
 ---
 
+### 4.14 The web target specifically (P7)
+
+**`packages/web-client/tests/browserTransport.test.ts` (10) — the browser `ClientChannel` over the platform
+`WebSocket`.** Eight cases came with the package; two were added 2026-09-22 after the first full-suite run
+failed on a **15 s test timeout** rather than on an assertion. That distinction is worth more than it looks:
+a timeout says *something never settled*, so no message was computed and no branch was taken. A probe of the
+platform's own `WebSocket` (Node 22's, i.e. undici's) settled it in one run — on a failed connect it fires
+`error` and then **no `close` at all**, with `readyState` still `CONNECTING`. `ws`, which the engine's
+channel uses, *does* emit `close` after `error`, so `ws.ts`'s reasoning is true where it is written and false
+here, and **that handler cannot be copied**. The two new cases are the other two ways a connect can end: a
+bare `node:net` server that accepts and never answers (which is what the connect timeout is for), and an
+`http.Server` whose `'upgrade'` handler writes a 426 **by hand** — an ordinary `'request'` handler leaves the
+upgrade in limbo, so the "refusal" fixture reproduced the very hang it was meant to be distinguished from.
+Both are mutation-guarded by **exit code**, not by a failure count: never arming the timer, and silencing
+`onerror`, each make the run exit 1. The second mutation is also what showed the dead-address case *passing*
+through its own disjunction (`/Could not connect|Timed out after/`), which is why the refusal case exists.
+
+**`packages/web-client/tests/browserLocal.test.ts` — the client-local half.** The 16 `RequiredClientLocal`
+members, written DOM-optional (`storage()` returns `undefined` rather than throwing, `detectPlatform()` falls
+back to `"unknown"`, `applyZoom()` swallows a missing `document`), which is what lets the suite below run in
+the **node** environment rather than jsdom.
+
+**`apps/web/tests/connect.test.ts` (3) — the composition, against a real engine over a real socket.** The
+first suite that can exercise the whole web path, because `createClient` **requires** a `local` and there is
+no Electron shell here to supply one: a real round trip, a client-local operation over the same instance, and
+the dropped-engine path through `onFatal`. It runs in node deliberately — under jsdom the first `open` event
+throws, because jsdom's `WebSocket` is undici's and builds its `Event` objects from a different realm than
+the `EventTarget` it dispatches them to (measured, and recorded in the file's header). What it pins is the
+*wiring*: a real `WebSocket` in a real page is work item 6's Playwright job.
+
+**A note on what that third case does *not* guard.** It asserts the fatal is the *dropped* message
+(`/^Session closed/`) and rejects `Could not connect` outright, but deleting the `open` guard in `channel.ts`
+leaves it **passing** — `server.close()` is a clean close and never reaches the `error` path on this host. The
+instrument for that line is `browserTransport.test.ts`. See `TRAPS.md`, "A case can be sound and still guard
+nothing about the line you changed".
+
+---
+
 ## 5. Workflow changes
 
 ### `vitest.config.ts`

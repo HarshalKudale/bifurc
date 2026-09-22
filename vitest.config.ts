@@ -161,6 +161,13 @@ export default defineConfig({
         // through source in tests, and omitting it would report the whole package as uncovered
         // while it has a suite of its own.
         "packages/client/src/**/*.ts",
+        // The browser client package (P7). Same reasoning as the two entries above, and this is the one
+        // easiest to forget because the package is new: without it `channel.ts` and `local.ts` are
+        // exercised by two suites and still reported as uncovered — §4.8's mistake in a new costume.
+        "packages/web-client/src/**/*.ts",
+        // The web target's own source. `connect.ts` is covered by `apps/web/tests/connect.test.ts`; its
+        // DOM half is excluded below, for the same reason as `src/main.ts`.
+        "apps/web/src/**/*.ts",
         "renderer/lib/**/*.ts",
         // Both extensions: the capture/search/tab-reducer logic lives in `.ts` files under
         // renderer/components, and matching only `.tsx` hid it from the report entirely —
@@ -173,6 +180,9 @@ export default defineConfig({
         // Process entry points — exercised by launching the app, not by unit tests.
         "src/main.ts",
         "src/preload.ts",
+        // The web target's DOM half, for the same reason: `main.ts` renders the page and is exercised by
+        // loading it. `connect.ts` beside it holds the composition and no DOM, and is covered.
+        "apps/web/src/main.ts",
         // Type-only modules.
         "**/*.d.ts",
         "packages/engine/src/store/types.ts",
@@ -201,8 +211,12 @@ export default defineConfig({
        * of the renderer. Raise these numbers as gaps are closed; never lower them to
        * make CI pass.
        *
-       * Current actuals (see TESTING.md §4.1): statements 49.07%, branches 32.66%,
-       * functions 37.26%, lines 51.52% — measured 2026-09-16, at the end of P3 work item 1.
+       * Actuals when these floors were set (see TESTING.md §4.1): statements 49.07%,
+       * branches 32.66%, functions 37.26%, lines 51.52% — measured 2026-09-16, at the end of
+       * P3 work item 1. **Re-measured 2026-09-22, with `packages/web-client/src` and `apps/web/src`
+       * newly included: 56.37 / 39.15 / 44.54 / 58.88.** So the floors now sit ~7–9 pts below the
+       * actuals, and raising them is a deliberate decision rather than an oversight — the policy below
+       * says to raise them as gaps close, and this is the point at which that becomes available.
        *
        * Set ~2 pts below the actuals, with one exception: `branches` stays at 31 because
        * 2 pts below 32.66 is 30, and ratcheting *down* is exactly what the policy forbids.
