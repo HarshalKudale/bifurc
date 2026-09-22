@@ -31,6 +31,65 @@ the RPC transport.
 
 ---
 
+## Work item 0 — the opening measurement (2026-09-22)
+
+Re-derived from the tree **before** starting, because this document's prose was written on 2026-09-20 and P14
+has since changed what it describes. **Four of its load-bearing claims did not survive.** The method is P14's:
+a phase's premises are a claim about the tree, and a claim about the tree is checked by measuring it.
+
+### What holds
+
+- **D8 is answered: (b) inspection + light editing** (`plan/00-decisions.md`). Acceptance criterion 1 has a
+  definition to measure against, not a vibe.
+- **P6 shipped, and the engine is separately addressable.** Precondition satisfied.
+- **P3's blob flows exist** — `blob.put` / `blob.stat` / `blob.read` / `blob.release`, now namespaced per
+  workspace by D17.
+
+### What the measurement found
+
+**The renderer's IPC surface is 119 methods across 234 call sites**, in 209 `.ts`/`.tsx` files — and **every
+one of the 119 is already on the P5 client surface**: 0 of them lack a key in
+`packages/client/src/surface.ts` (144 keys). That is the best news here and it is worth stating as a
+*measurement* rather than an assumption: **the adapter this phase must write has no gaps to invent.** It is a
+mapping, not a design, and the mapping target already exists and is already the spec.
+
+**25 of the 144 keys are never called by the renderer at all** — and they are almost exactly work item 4's
+table: `platform`, `getTheme` / `setTheme`, `getZoomLevel` / `setZoomLevel`, `isFirstLaunch` /
+`completeFirstLaunch`, `setTitleBarOverlay`, `pickFilePath` / `pickFolderPath`, `proxyStatus`,
+`grpcMockServerStatus`, `gitGetDiff` / `gitGetHistory` / `gitSync`, `onWebhookPayload`. **Item 4 is
+corroborated by measurement** — but note what that means in practice: those keys are *unused*, so a browser
+build that omits them silently will not fail a single existing test. They need explicit decisions, not
+substitutions nobody notices are absent.
+
+**The one wrong claim that costs a work item.** Item 1 says *"`packages/client` already has a `ws` transport.
+In the browser, the only new piece is discovery."* A `createWsTransport(url)` does exist — but at
+`packages/engine/src/transport/ws.ts:226`, in a file importing `node:crypto`, `node:http`, `node:https`,
+`node:net` and the Node `ws` package. **It is Node-only, so a browser cannot load it.** The browser needs its
+own `Transport` over the native `WebSocket` API, sharing the framing and the auth shape with the Node one.
+**"Discovery only" understates this item by exactly one transport adapter** — and that adapter is the item's
+real content.
+
+**Item 3's table names channels that no longer exist.** It lists eight `dialog:*` call sites; a repo-wide grep
+for `dialog:` under `renderer/` returns **0**, because P6's dead-channel reduction deleted those channels. The
+live surface is `window.api.<method>`, and by that measure there are **16 file/dialog-shaped methods**:
+`openFileDialog`, `exportData`, `importData`, `preflightImport`, `exportAudit`, `exportRunnerReport`,
+`saveRunnerReport`, `getImportExportFormats`, `listProtoFiles`, `addProtoFile`, `tlsImportCert`,
+`tlsImportKey`, `tlsExportCert`, `saveConfig`, `saveRunnerConfig`, `healthbarSaveServices`. The table's
+**component** column is still useful; its **channel** column is not — and the criterion "all 8 dialog call
+sites replaced" should be re-derived **per method** before it is ticked, not per row.
+
+**There is no web target in the tree.** No `apps/`, no `web/`, no `renderer-web`. Item 5 builds one from
+nothing — consistent with the estimate, but worth stating rather than discovering.
+
+### The consequence for sequencing
+
+Item 1 is **not** "discovery". It is a **browser transport adapter plus discovery**, and it is first because
+everything else is blocked behind a client that can connect. It is also the only part of this phase that is
+testable **without a browser UI** — against a real host over a real socket, which is the shape P14's
+instruments already use.
+
+---
+
 ## Work item 1 — Browser RPC client
 
 `packages/client` already has a `ws` transport. In the browser, the only new piece is discovery:
@@ -42,6 +101,11 @@ await client.hello({ clientName: "web", clientVersion: VERSION });
 ```
 
 The browser client uses the **same** `createClient` and the same shims. No divergence.
+
+> **Corrected 2026-09-22 — see work item 0.** The transport named above is **Node-only**: `ws.ts` imports
+> `node:crypto` / `node:http` / `node:https` / `node:net` and the `ws` package, so a browser cannot load it.
+> The browser needs its own `Transport` over the native `WebSocket` API. "The only new piece is discovery"
+> understates this item by one adapter.
 
 ---
 
@@ -71,6 +135,11 @@ existing global footer component.
 ## Work item 3 — Replace native dialogs with blob flows
 
 Every `dialog:*` call site becomes a browser file input or a download.
+
+> **Corrected 2026-09-22 — see work item 0.** The `dialog:*` channels in the table below **no longer exist**;
+> P6's dead-channel reduction removed them, and a grep for `dialog:` under `renderer/` returns 0. The live
+> surface is `window.api.<method>`, where **16** methods are file/dialog-shaped rather than 8. Keep the table
+> for its component column; re-derive the channel column before ticking the criterion.
 
 | Renderer location | Current | Replacement |
 |---|---|---|
