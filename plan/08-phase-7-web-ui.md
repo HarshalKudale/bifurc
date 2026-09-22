@@ -107,6 +107,59 @@ The browser client uses the **same** `createClient` and the same shims. No diver
 > The browser needs its own `Transport` over the native `WebSocket` API. "The only new piece is discovery"
 > understates this item by one adapter.
 
+### The placement decision (2026-09-22)
+
+**The adapter is a new package, `@bifurc/web-client`.** Decided by the owner, on the grounds that the
+programme's point is decoupled packages. Three placements were on the table; the other two were rejected
+on measured grounds rather than taste:
+
+- **`packages/engine/src/transport/wsBrowser.ts`** — where every other transport lives, but `engine` is a
+  Node package (`ws`, `simple-git`, `mkcert`, `archiver`) and a browser bundle reaching into it is the
+  opposite of the goal.
+- **`packages/client/src/browser.ts`** — the smallest surface for the app, but `@bifurc/engine` is only a
+  **devDependency** of the client and its engine import is **type-only** (`index.ts:39`), so using the
+  shared session at runtime would mean promoting a Node package into a browser bundle.
+
+**The measurement that made the new package viable.** The browser needs exactly one thing at *runtime*:
+`createClientSession`. `Transport` and `EngineEvent` are **type-only** imports, erased at build, and cost a
+browser bundle nothing — which is already how `@bifurc/client` uses them. So the problem reduced to where
+`session.ts` can live.
+
+**`types.ts` and `session.ts` moved into `@bifurc/protocol`** as `src/wire/`. Two facts decided the
+destination, and both were checked rather than assumed:
+
+1. `@bifurc/protocol` already declares itself "environment-agnostic: no Node built-ins, importable from
+   Node, Bun, and a **browser bundle**", and enforces it with `platform: "neutral"` in its `tsup.config.ts`
+   — *"fail loudly if a future command schema accidentally pulls one in."* The build is the instrument, so
+   the move cannot silently regress.
+2. `framing.ts` did **not** move. It is length-prefix framing for byte streams, `Buffer`-heavy throughout,
+   and a WebSocket needs none of it — `ws.ts` sends a bare message because the protocol frames natively.
+   Moving it would have been cargo-culting a "wire trio" that is really a pair plus a stream codec.
+
+**Two changes were required for `session.ts` to load outside Node**, both small and both type-level:
+
+- `randomUUID` came from `node:crypto`; it is now `globalThis.crypto.randomUUID()`, present in every
+  browser and in Node from 19 on. Verified present on this machine's Node 22.22.2.
+- `ClientChannel.encode`/`write` were typed against `Buffer`, a Node global. They are now `Uint8Array`.
+  `Buffer` extends `Uint8Array`, so every existing channel still satisfies the contract — the widening is
+  backward-compatible, not a break.
+
+**The browser sends *text* frames, deliberately.** `encode()` still returns bytes because `stdio` and
+`socket` need a length prefix; but the engine's server reads every frame as text
+(`JSON.parse(raw.toString())`), and `@bifurc/engine`'s own `ws` client sends text. Sending binary would
+work — `ws` emits a `Buffer` for binary and `.toString()` decodes it — but it would exercise a server path
+no existing test covers. Text keeps the browser and the Node client byte-identical on the wire.
+
+**Engine keeps thin re-exports** at `transport/types.ts` and `transport/session.ts`, so the ~10 existing
+importers — including the shell's `ipc/rpcBridge.ts` and `ipcTransport.ts` — keep working unchanged.
+Repointing them at `@bifurc/protocol` is a follow-up; a second import path for the same declarations is a
+wart, not a defect.
+
+**One thing this did *not* fix, recorded because the move made it visible:** `ws.ts`'s client does **not**
+use `createClientSession`. It still carries its own copy of the whole state machine — pending, control,
+listeners, teardown, deliver — which is exactly the "third copy where similar becomes drifted" that
+`session.ts` was extracted to prevent. It is a refactor candidate for whoever next touches `ws.ts`.
+
 ---
 
 ## Work item 2 — Connection and session UX
