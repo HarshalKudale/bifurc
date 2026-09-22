@@ -66,7 +66,22 @@ test.describe("Navigation", () => {
     });
 
     test("common tab keybinds work on tabbed panels", async ({ page }) => {
-        await page.getByRole("button", { name: /^REST 3$/i }).nth(1).click();
+        /**
+         * **This used to be `getByRole("button", { name: /^REST 3$/i }).nth(1)` — a label nothing in the
+         * tree produces.** A repo-wide grep for `REST 3` over the e2e, renderer, src, package-src and
+         * tests trees returns this one line and nothing else, and `git log -S '"REST 3"' --
+         * e2e/fixtures/sampleData.ts` shows it was never a seeded name either. Tab labels come from the
+         * entity's **name** (`useRequestsPanelState.ts`'s `tabLabel`: `item.name`, else
+         * `item.summary || "Request"`), and the fixture seeds `Get All Users` / `Create New User` /
+         * `Update User` — so the locator could only ever time out.
+         *
+         * A **saved** request is what this test needs, not a draft: after `Ctrl+S` it asserts
+         * `Update Request`, which only a saved tab offers. So open one from the sidebar by its seeded
+         * name. The sidebar item and its tab share that name, which is presumably what the original
+         * `.nth(1)` was reaching for.
+         */
+        await openPanel(page, "Requests");
+        await page.getByRole("button", { name: /^Update User$/i }).first().click();
         await page.waitForTimeout(400);
 
         await page.keyboard.press("ControlOrMeta+T");
