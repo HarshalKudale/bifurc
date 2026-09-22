@@ -175,6 +175,20 @@ vi.mock("@bifurc/engine/store/config", () => ({
   saveConfig: vi.fn((cfg: AppConfig) => { currentConfig = cfg; }),
   generateId: vi.fn(() => `id-${Date.now()}`),
   loadEntity: vi.fn(() => null),
+  /**
+   * Derived from the same `currentConfig` the mocked `loadConfig` serves, so the two cannot disagree.
+   *
+   * They must not: `workspaceCfg()` filters the slice's entities by the enabled sets, so a slice that
+   * disagreed with `loadConfig()` would silently change dispatch — the failure mode
+   * `tests/proxy/server.test.ts`'s instrument comment records in full.
+   */
+  loadWorkspaceDispatchSlice: vi.fn((wsId: string) => ({
+    workspaceId: wsId,
+    mocks: currentConfig.mocks ?? [],
+    mappings: currentConfig.mappings ?? [],
+    environments: currentConfig.environments ?? [],
+    activeEnvironmentId: currentConfig.activeEnvironmentId ?? null,
+  })),
   // Types only — no runtime value needed for interfaces
 }));
 

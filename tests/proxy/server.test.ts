@@ -33,8 +33,8 @@ vi.mock("@bifurc/engine/store/workspaceFs", () => ({
 }));
 
 // Mock store/config at top level so it is effective for the imported server module
-vi.mock("@bifurc/engine/store/config", () => ({
-  loadConfig: vi.fn(() => ({
+vi.mock("@bifurc/engine/store/config", () => {
+  const loadConfig = vi.fn(() => ({
     port: 8080,
     minimizeToTray: true,
     workspaces: [{ id: "default", name: "Workspace 1", activeEnvironmentId: null }],
@@ -47,10 +47,38 @@ vi.mock("@bifurc/engine/store/config", () => ({
     requestFolders: [],
     environments: [],
     activeEnvironmentId: null,
-  })),
-  saveConfig: vi.fn(),
-  generateId: vi.fn(() => "test-id"),
-}));
+  }));
+
+  return {
+    loadConfig,
+    /**
+     * Derived from `loadConfig`'s **most recent** return value, rather than by calling it again.
+     *
+     * Both halves of that are load-bearing, and both are the kind of thing this file has already been bitten
+     * by once (see the `loadEnabledSets` wrapper's comment below):
+     *
+     * - **The slice must agree with `loadConfig()`.** `workspaceCfg()` filters the slice's entities by the
+     *   enabled sets, so a slice that disagreed would silently change dispatch for every case here — which is
+     *   exactly what the first version of that instrument did, at a cost of 22 failures.
+     * - **It must not *call* `loadConfig()`.** Several cases assert `toHaveBeenCalledOnce()` on it, and the
+     *   proxy now calls both in sequence, so an extra call from the instrument would fail assertions about a
+     *   different mechanism. `mock.results` is how a test double reports what it was last asked to return.
+     */
+    loadWorkspaceDispatchSlice: vi.fn((wsId: string) => {
+      const results = loadConfig.mock.results;
+      const cfg = (results.length ? results[results.length - 1].value : {}) as any;
+      return {
+        workspaceId: wsId,
+        mocks: cfg.mocks ?? [],
+        mappings: cfg.mappings ?? [],
+        environments: cfg.environments ?? [],
+        activeEnvironmentId: cfg.activeEnvironmentId ?? null,
+      };
+    }),
+    saveConfig: vi.fn(),
+    generateId: vi.fn(() => "test-id"),
+  };
+});
 
 // Mocked so the WI 4 cases can observe *which* workspace the proxy asks for. It is the only place the
 // severed `activeWorkspaceId` read is observable, and it is not part of the instance's public surface.

@@ -194,7 +194,14 @@ describe("createWorkspaceRuntime — two runtimes in one process, real sockets",
     expect(statusA.proxyPort).not.toBe(statusB.proxyPort);
     expect(statusA.webhookPort).not.toBe(statusB.webhookPort);
 
-    // ── both genuinely serve ──────────────────────────────────────────────────
+    // ── both are up and answering over the wire ───────────────────────────────
+    //
+    // **This is a LIVENESS check, not the "each serving its own rules" criterion.** The home page is served
+    // regardless of any rule, mock or mapping, so it cannot fail for a config-scoping defect — and for a
+    // while it was cited as though it could, which is why `plan/14` §8's first criterion read as met while a
+    // runtime serving a non-active workspace served nothing at all (closed 2026-09-22). **The content half
+    // lives in `tests/integration/workspaceDispatchScope.integration.test.ts`**, which asserts each runtime
+    // serves its own mock and its own rule and *not* the other's.
     const [homeA, homeB] = await Promise.all([getHomePage(proxyA), getHomePage(proxyB)]);
     expect(homeA.status).toBe(200);
     expect(homeA.body).toContain("Bifurc");

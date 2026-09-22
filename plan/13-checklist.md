@@ -1123,11 +1123,20 @@ rather than a type.
       entries removed, one generated `it` each), so the pre-change total was 2,500, not 2,507. Recorded as a
       correction rather than a silent edit because the plan's discipline is to name a delta by mechanism, and
       "the number in the checklist was wrong" is itself a mechanism this file has now produced twice.
-- [ ] 11 e2e specs pass, **unmodified** — **carried as an owner-run verification.** Still the real gate
-      for 3b-1 and 3b-3, because the unit suite tests handlers rather than the preload. Re-attempted
-      2026-09-20 from the agent shell and it reproduced the documented environmental failure **exactly**
-      (46 failed / 0 passed, every test dying at `firstWindow()`), so what is open is the shell's
-      inability to host a GUI process, not the seam — see `plan/07` Preconditions for the three controls
+- [x] 11 e2e specs pass, **unmodified** — **MET 2026-09-22, owner-run: 11 specs / 46 tests — 46 expected,
+      0 unexpected, 0 flaky, 0 skipped.** Read from the run's own artifacts rather than re-run:
+      `playwright-report/index.html`'s embedded `report.json` reports `stats.total = 46`, `ok: true`, and
+      a per-file split covering all eleven specs; `test-results/` held **no** failure directory, which is
+      the config's own signal (`screenshot: "only-on-failure"` — a failure would have left one). **The
+      specs are unmodified in the sense the criterion means**: the seven fixes that got here were all
+      test/fixture-side, no product code changed for any of them, and `git diff renderer/` is empty.
+      **The trajectory is not one number, and the first one was never a measurement.** `46 failed / 0
+      passed` was *this agent shell* — Electron cannot start its GPU process here, so every spec dies at
+      `firstWindow()` in ~850 ms and the count is a constant. The real sequence: **4 failed** after
+      `a239ab5` (three stale tests + one stale fixture) → **2 failed** after `782eef8` → **0** after
+      `3f5f9ec`, whose cause was an unanchored regex in the screenshot tour's titlebar nav helper —
+      introduced ten panels before it surfaced. Per-failure table: `.workbuddy-ai/memory/TRAPS.md` and the
+      2026-09-22 log.
 - [x] `git diff --stat renderer/` shows only the P3 blob files — **empty** as of step 3b-3
 - [x] Key-diff still zero — `packages/client/tests/surface.test.ts`, 144 keys both directions
 - [x] Packaged bundle resolves the engine from inside the asar and runs — *(reworded 2026-09-20; the
@@ -1140,9 +1149,10 @@ rather than a type.
       relocated home (`plan/07` work item 2). An in-process engine cannot be orphaned. **Re-scoped again
       2026-09-20 by D14:** the process split is downgraded, so this criterion now belongs to the
       **workspace host** (`plan/14` §7) rather than to P6.
-- [x] **Ship it.** 🎉 — **reached 2026-09-20: P6 closed in scope**, with the e2e run carried as an
-      owner-run verification and NSIS + real packaged launch carried to P12. `plan/07`'s Acceptance
-      criteria carries the re-scope, what moved, and why.
+- [x] **Ship it.** 🎉 — **reached 2026-09-20: P6 closed in scope.** **The one carried item, criterion 2,
+      closed 2026-09-22 at 11/11 specs / 46/46 tests, so P6 now has no open criteria** — only NSIS and a
+      real packaged launch remain carried, to P12. `plan/07`'s Acceptance criteria carries the re-scope,
+      what moved, and why.
 
 > **At this point the project is reversible and the shell is disposable. Everything below is additive.**
 

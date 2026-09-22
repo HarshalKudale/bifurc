@@ -240,20 +240,62 @@ export function createWebhookServer(opts: { workspaceId?: string | null } = {}):
   };
 }
 
-// ── The module-level facade (removed in WI 7) ──────────────────────────────────
+// ── The module-level facade ────────────────────────────────────────────────────
 //
 // One lazily-created default instance backing the pre-P14 module functions. Lazy rather than eager so
 // that importing this module has no side effect on the shared `webhookEmitter` or the bus — the same
 // property the old module-scope `let server = null` had.
+//
+// **Not "removed in WI 7", which is what this header used to say.** WI 7's desktop half landed 2026-09-22
+// and kept this facade *deliberately*: `renderer/panels/WebhooksPanel.tsx` starts the receiver through
+// `window.api.startWebhookServer()`, so `webhookServer.start`'s `facade` branch is a live path and not a
+// legacy one. What changed is that it can now be **bound** — see `bindWebhookInstance()`.
 
 let defaultInstance: WebhookServerInstance | null = null;
 
+/**
+ * P14 WI 7 — the receiver every module function acts on, when someone has adopted one.
+ *
+ * The mirror of `proxy/server.ts`'s `bindProxyInstance()`, including *why* it is a binding rather than a
+ * `getRuntime(activeWorkspaceId)` lookup: WI 4 made the desktop's active pointer independent of its running
+ * servers, so resolving by the active id would lose the real receiver after a workspace switch. That file's
+ * docblock carries the full argument; it is not repeated here.
+ *
+ * **The desktop binds without starting.** `src/main.ts` binds its one `WorkspaceRuntime`'s webhook here but
+ * calls `runtime.proxy.start(port)`, never `runtime.start()` — the latter binds both servers, and the
+ * receiver has always been user-started. Binding must not open a port.
+ */
+let boundInstance: WebhookServerInstance | null = null;
+
+/**
+ * Adopt `instance` as the receiver every module function acts on, or `null` to return to the lazy default.
+ *
+ * Idempotent and last-write-wins; `src/main.ts` calls it once, a test calls it with `null` to get a clean
+ * module back.
+ */
+export function bindWebhookInstance(instance: WebhookServerInstance | null): void {
+  boundInstance = instance;
+}
+
+/** The receiver the module functions act on. Creates the lazy default only when nothing is bound. */
 function defaultServer(): WebhookServerInstance {
+  if (boundInstance) return boundInstance;
   if (!defaultInstance) defaultInstance = createWebhookServer({ workspaceId: null });
   return defaultInstance;
 }
 
+/**
+ * The receiver to *read* from, without creating one — the mirror of `proxy/server.ts`'s `existingServer()`.
+ * `stopWebhookServer()` / `isWebhookServerRunning()` / `getWebhookPort()` / `getWebhookServerError()` are
+ * reached from status paths and must not create an instance as a side effect of being asked.
+ */
+function existingServer(): WebhookServerInstance | null {
+  return boundInstance ?? defaultInstance;
+}
+
 // ── Active webhook registry (called from renderer IPC) ────────────────────────
+//
+// The map these three act on is **per instance**, so they follow the binding like everything else.
 
 export function registerActiveWebhook(webhookId: string, urlSuffix: string): void {
   defaultServer().registerActive(webhookId, urlSuffix);
@@ -274,18 +316,18 @@ export function startWebhookServer(port: number): void {
 }
 
 export function stopWebhookServer(): void {
-  defaultInstance?.stop();
+  existingServer()?.stop();
 }
 
 export function isWebhookServerRunning(): boolean {
-  return defaultInstance !== null && defaultInstance.isRunning();
+  return existingServer()?.isRunning() ?? false;
 }
 
 export function getWebhookPort(): number {
-  return defaultInstance?.getPort() ?? DEFAULT_WEBHOOK_PORT;
+  return existingServer()?.getPort() ?? DEFAULT_WEBHOOK_PORT;
 }
 
 export function getWebhookServerError(): string | null {
-  return defaultInstance?.getError() ?? null;
+  return existingServer()?.getError() ?? null;
 }
 

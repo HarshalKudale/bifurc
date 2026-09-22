@@ -93,75 +93,123 @@ function proxyRule(id: string, workspaceId = "ws", enabled = true): ProxyRule {
 
 // ── workspaceCfg ──────────────────────────────────────────────────────────────
 
+/**
+ * The slice the proxy passes in: the **instance's** workspace with its own entities.
+ *
+ * Built by hand rather than from `loadWorkspaceDispatchSlice()`, so this stays a unit test of the filter —
+ * the loader is covered against real files by `tests/integration/workspaceDispatchScope.integration.test.ts`.
+ */
+function slice(
+  workspaceId: string,
+  over: {
+    mocks?: MockRule[];
+    mappings?: LocalMapping[];
+    environments?: Environment[];
+    activeEnvironmentId?: string | null;
+  } = {},
+) {
+  return {
+    workspaceId,
+    mocks: over.mocks ?? [],
+    mappings: over.mappings ?? [],
+    environments: over.environments ?? [],
+    activeEnvironmentId: over.activeEnvironmentId ?? null,
+  };
+}
+
+const NO_SETS = { mocks: new Set<string>(), mappings: new Set<string>(), rules: new Set<string>() };
+
 describe("workspaceCfg()", () => {
-  it("returns the config untouched when there is no active workspace", () => {
-    const cfg = baseCfg({ activeWorkspaceId: "", mappings: [mapping("m1")] });
-    const res = workspaceCfg(cfg, [], { mocks: new Set(), mappings: new Set(), rules: new Set() });
-    expect(res).toBe(cfg);
+  it("uses the SLICE's workspace, not cfg.activeWorkspaceId", () => {
+    // **The case the 2026-09-22 fix exists for, and the only one that fails if the id is read out of the
+    // config again.** The slice names `ws`; the config names `other` and holds `other`'s entities. Before
+    // the fix this function filtered `cfg`'s entities by `cfg.activeWorkspaceId`, so a proxy instance
+    // serving `ws` got `other`'s mocks and mappings cross-filtered against `ws`'s enabled sets — which
+    // matched nothing, and left the instance serving nothing at all, silently.
+    const cfg = baseCfg({
+      activeWorkspaceId: "other",
+      mappings: [mapping("m-other", "other")],
+      mocks: [mock("k-other", "other")],
+    });
+    const res = workspaceCfg(
+      cfg,
+      [],
+      { mocks: new Set(["k-other"]), mappings: new Set(["m-other"]), rules: new Set() },
+      slice("ws"),
+    );
+
+    expect(res.activeWorkspaceId).toBe("ws");
+    expect(res.mappings).toHaveLength(0);
+    expect(res.mocks).toHaveLength(0);
+  });
+
+  it("takes environments and activeEnvironmentId from the slice", () => {
+    // Same class: `loadConfig()` resolves both for the *active* workspace, so a host member would otherwise
+    // resolve mock variables against another workspace's environment.
+    const envA = { id: "env-a", name: "A", variables: [], createdAt: 0, workspaceId: "ws" } as Environment;
+    const envB = { id: "env-b", name: "B", variables: [], createdAt: 0, workspaceId: "other" } as Environment;
+    const cfg = baseCfg({ activeEnvironmentId: "env-b", environments: [envB] });
+
+    const res = workspaceCfg(cfg, [], NO_SETS, slice("ws", { environments: [envA], activeEnvironmentId: "env-a" }));
+
+    expect(res.activeEnvironmentId).toBe("env-a");
+    expect(res.environments.map((e) => e.id)).toEqual(["env-a"]);
   });
 
   it("keeps only mappings that are in the enabled set", () => {
-    const cfg = baseCfg({ mappings: [mapping("m1"), mapping("m2")] });
-    const res = workspaceCfg(cfg, [], {
-      mocks: new Set(),
-      mappings: new Set(["m1"]),
-      rules: new Set(),
-    });
+    const res = workspaceCfg(
+      baseCfg(),
+      [],
+      { ...NO_SETS, mappings: new Set(["m1"]) },
+      slice("ws", { mappings: [mapping("m1"), mapping("m2")] }),
+    );
     expect(res.mappings.map((m) => m.id)).toEqual(["m1"]);
   });
 
-  it("keeps only mappings belonging to the active workspace", () => {
-    const cfg = baseCfg({ mappings: [mapping("m1", "ws"), mapping("m2", "other")] });
-    const res = workspaceCfg(cfg, [], {
-      mocks: new Set(),
-      mappings: new Set(["m1", "m2"]),
-      rules: new Set(),
-    });
+  it("drops a mapping whose own workspaceId disagrees with the slice's", () => {
+    const res = workspaceCfg(
+      baseCfg(),
+      [],
+      { ...NO_SETS, mappings: new Set(["m1", "m2"]) },
+      slice("ws", { mappings: [mapping("m1", "ws"), mapping("m2", "other")] }),
+    );
     expect(res.mappings.map((m) => m.id)).toEqual(["m1"]);
   });
 
   it("takes proxy rules from fullRules (not the stubbed cfg.proxyRules)", () => {
     const cfg = baseCfg({ proxyRules: [] });
-    const fullRules = [proxyRule("r1"), proxyRule("r2")];
-    const res = workspaceCfg(cfg, fullRules, {
-      mocks: new Set(),
-      mappings: new Set(),
-      rules: new Set(["r1"]),
-    });
+    const res = workspaceCfg(
+      cfg,
+      [proxyRule("r1"), proxyRule("r2")],
+      { ...NO_SETS, rules: new Set(["r1"]) },
+      slice("ws"),
+    );
     expect(res.proxyRules.map((r) => r.id)).toEqual(["r1"]);
   });
 
   it("accepts proxy rules with no workspaceId (legacy rules)", () => {
-    const cfg = baseCfg({});
     const legacy = { ...proxyRule("r1"), workspaceId: "" } as ProxyRule;
-    const res = workspaceCfg(cfg, [legacy], {
-      mocks: new Set(),
-      mappings: new Set(),
-      rules: new Set(["r1"]),
-    });
+    const res = workspaceCfg(baseCfg(), [legacy], { ...NO_SETS, rules: new Set(["r1"]) }, slice("ws"));
     expect(res.proxyRules.map((r) => r.id)).toEqual(["r1"]);
   });
 
   it("filters mocks by workspace and enabled set", () => {
-    const cfg = baseCfg({ mocks: [mock("k1"), mock("k2"), mock("k3", "other")] });
-    const res = workspaceCfg(cfg, [], {
-      mocks: new Set(["k1", "k3"]),
-      mappings: new Set(),
-      rules: new Set(),
-    });
+    const res = workspaceCfg(
+      baseCfg(),
+      [],
+      { ...NO_SETS, mocks: new Set(["k1", "k3"]) },
+      slice("ws", { mocks: [mock("k1"), mock("k2"), mock("k3", "other")] }),
+    );
     expect(res.mocks.map((m) => m.id)).toEqual(["k1"]);
   });
 
   it("disables everything when the enabled sets are empty", () => {
-    const cfg = baseCfg({
-      mappings: [mapping("m1")],
-      mocks: [mock("k1")],
-    });
-    const res = workspaceCfg(cfg, [proxyRule("r1")], {
-      mocks: new Set(),
-      mappings: new Set(),
-      rules: new Set(),
-    });
+    const res = workspaceCfg(
+      baseCfg(),
+      [proxyRule("r1")],
+      NO_SETS,
+      slice("ws", { mappings: [mapping("m1")], mocks: [mock("k1")] }),
+    );
     expect(res.mappings).toHaveLength(0);
     expect(res.mocks).toHaveLength(0);
     expect(res.proxyRules).toHaveLength(0);
