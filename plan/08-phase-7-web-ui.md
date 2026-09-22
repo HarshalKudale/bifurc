@@ -23,6 +23,48 @@ the RPC transport.
 
 ---
 
+## The architecture this phase targets — D18 (2026-09-22)
+
+> **One UI, two hosts.** The Electron app and the browser app import the **same** UI; the only thing that
+> varies is the communication module underneath it. The browser hides host-local affordances (native
+> dialogs, tray, titlebar, zoom) and adds remote-host selection. Recorded as **D18** in
+> [`00-decisions.md`](00-decisions.md).
+
+The first landing was a framework-free probe page **on purpose** — so that a failure there would be a failure
+of the *client* and not of a screen built on top of it. That is still what `apps/web` is. It is **not** the
+phase's target, and this section supersedes the "no React" reasoning that landing recorded.
+
+### Why the seam is already there — measured 2026-09-22
+
+The expensive-looking part of a shared UI is "route 240 shell calls through an interface". **That work is
+already done, and not by us:**
+
+| Claim | Measurement |
+| --- | --- |
+| The renderer is shell-free | **0** imports of `electron`, `node:` or `@bifurc/*`. Its only non-relative imports are `react`, `react-dom/client`, `react-resizable-panels`, `react-complex-tree`, `lucide-react`, `@radix-ui/react-switch`, `@lezer/highlight` and the CodeMirror packages |
+| It has exactly one shell seam | `window.api` — **240** references across **43** files, **234** of them method calls (the other 6 pass the object itself). That is WI 0's *"119 methods across 234 call sites"* counted the other way round, and the two agree; every other `window.*` is standard DOM: `addEventListener` 11, `removeEventListener` 11, `dispatchEvent` 6, `innerWidth` / `innerHeight` 1 each |
+| That seam is already *injected*, not imported | `renderer/types/window.ts` ends in `declare global { interface Window { api: BifurcApi } }` — the UI names the shape and never constructs it |
+| Both shells already fill it the same way | `src/preload.ts:61` → `createClient(createIpcTransport(), { local })` → `contextBridge.exposeInMainWorld("api", { ...client })`. `apps/web/src/connect.ts` → `createClient(createBrowserTransport({ url }), { local: createBrowserLocal() })` |
+
+**So the communication module the two hosts differ in is not something this phase must invent.** It is the
+`Transport` argument to `createClient`, and both transports already exist. What is missing is that the *UI* is
+not yet a package — it is a directory the root Vite config hardcodes as its `root`.
+
+### What that means for the work items
+
+- **Work item 1** (browser client) is unchanged, and still first.
+- **Work item 2** gains a shape: the connection/session UI is *shared* UI, so its states are states of the
+  shared shell rather than of a browser-only page. Its two auth states still need the `hello` handshake.
+- **Work item 5** changes character. It is no longer "build a page"; it is **extract the renderer into a
+  package, and give both shells a build that consumes it.** The root `vite.config.ts` hardcodes
+  `root: "renderer"`, registers `@vitejs/plugin-react`, and aliases `@` into the renderer tree — so the
+  extraction touches both Vite configs and the coverage `include` set.
+
+> **The blast radius is the build, not the code.** The 240 call sites do not change. Two Vite configs, the
+> `workspaces` glob, the coverage `include`, CI, and `renderer/types/window.ts`'s global declaration do.
+
+---
+
 ## Preconditions
 
 - P6 shipped. Engine is a real, separately-addressable process.
@@ -349,7 +391,9 @@ users stuck.
 
 ## Work item 5 — Build and host
 
-- Reuse the Vite config (`vite.config.ts`, root `renderer`, alias `@` → `renderer`).
+- Reuse the Vite config (`vite.config.ts`, root `renderer`, alias `@` → `renderer`). **Under D18 this is no
+  longer "reuse" — see §"The architecture this phase targets": the shared UI gets its own config, and each
+  host's config adds only its own entry.**
 - Add a second entry or a build mode for the web target.
 - Output a static bundle; serve from any static host, or have the **engine serve it** — which is
   attractive for Docker, since the engine and UI then ship as one artifact.
@@ -371,10 +415,16 @@ The split is deliberate: `src/connect.ts` holds the composition and **no DOM**; 
 and no decisions. That is what lets a Node-side suite drive the composition against a real engine over a
 real socket — the closest such a suite can get to "it works in a browser".
 
-**On "reuse the Vite config":** the *tooling* is reused (Vite 8, the same output shape as `dist/renderer`,
-`base: "./"`), but `apps/web` has its **own** `vite.config.ts`. The root one sets `root: "renderer"`,
-registers `@vitejs/plugin-react`, and aliases `@` into the renderer tree — every one of which would
-silently apply to a page that has no React and must not resolve the Electron renderer's components.
+**On "reuse the Vite config" — corrected by D18.** The *tooling* is reused (Vite 8, the same output shape as
+`dist/renderer`, `base: "./"`), but `apps/web` has its **own** `vite.config.ts`, and that was the right call
+*for this landing*: the root config sets `root: "renderer"`, registers `@vitejs/plugin-react`, and aliases `@`
+into the renderer tree — every one of which would silently apply to a probe page that has no React.
+
+What was wrong was the reasoning's reach. It read as a statement about the phase, and under **D18** the
+opposite is true: `apps/web` will import the shared UI *including* its React components. The split that
+matters is therefore not "desktop config vs web config" but **"shared-UI config vs per-host config"** — the
+React plugin and the `@` alias move to the shared UI's config, and each host's config adds only what its own
+entry needs. See §"The architecture this phase targets".
 
 **The engine-serving option stays open but is not taken.** `base: "./"` is what makes the output servable
 from a subpath, which is what "have the engine serve it" needs; nothing here wires that up.
@@ -422,10 +472,14 @@ runs it.
 - [ ] Handshake failure, auth failure and version mismatch all produce actionable UI, not generic errors.
 - [ ] Disconnect/reconnect works; the UI never silently freezes.
 - [ ] `resyncRequired` handled visibly.
-- [ ] All 8 dialog call sites replaced with browser equivalents.
+- [ ] All 8 dialog call sites replaced with browser equivalents. **Re-derive before ticking — the number is
+      stale.** WI 0 measured **16** file/dialog-shaped `window.api` methods, and a repo-wide grep for
+      `dialog:` under `renderer/` returns **0** because P6's dead-channel reduction deleted those channels.
+      Tick this **per method**, not per row of item 3's table.
 - [ ] Large export path chosen and documented with a stated size limit.
 - [ ] Cert install limitation surfaced in the UI with instructions.
-- [ ] Multi-engine profiles work.
+- [ ] Multi-engine profiles work. **Now "host + workspace selection"** — renamed by the P14 note at the top of
+      this document (D10–D13), and under **D18** it is *shared* UI rather than browser-only.
 - [ ] E2E coverage on Chromium, Firefox and WebKit.
 
 ---
