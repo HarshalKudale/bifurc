@@ -158,7 +158,7 @@ Plus two envelope-semantics checks: unknown action → `UNKNOWN_COMMAND` (not a 
 
 Evidence: `spike/protocol/shape.ts` type-checks a `ProtocolClient` (built purely from the Zod command
 defs + the legacy-channel adapter) as **mutually assignable** with `Pick<BifurcApi, ...>` for the 10
-spike methods, using the renderer's own `renderer/types/window.ts` — with **zero edits to that file or
+spike methods, using the renderer's own `packages/gui/src/types/window.ts` — with **zero edits to that file or
 any renderer source**. The client's method signatures (`addMock(mock)`, `setEntityEnabled(wsId, kind,
 id, enabled)`, etc.) are positional and renderer-shaped; the object-shaped wire payload is assembled
 inside the client via each command's `toArgs` adapter, which is exactly the "compatibility shim" P5

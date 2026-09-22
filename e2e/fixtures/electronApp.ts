@@ -136,10 +136,10 @@ export const test = base.extend<ElectronFixtures>({
         /**
          * Accept the Terms of Service screen before the app renders.
          *
-         * `renderer/App.tsx:23` gates the entire shell on
+         * `packages/gui/src/App.tsx:23` gates the entire shell on
          * `usePersistedState<boolean>("app:tos-accepted", false)` — if that key is absent the app
          * returns `<TermsAcceptanceScreen />` and nothing else is reachable. `usePersistedState` is
-         * backed by plain `localStorage` (`renderer/lib/storage.ts`), so this is **per-profile
+         * backed by plain `localStorage` (`packages/gui/src/lib/storage.ts`), so this is **per-profile
          * renderer state, not `app.json`**.
          *
          * That distinction is the whole reason this lives here rather than in `sampleData.ts`:

@@ -24,12 +24,12 @@
  *
  * `isFirstLaunch`, `completeFirstLaunch`, `getZoomLevel` and `setZoomLevel` are exposed by
  * `src/preload.ts` and implemented in `src/ipc/handlers/clientHandlers.ts`, but absent from
- * `renderer/types/window.ts`. They are declared here, and `BifurcApiFull` (see `index.ts`) re-adds
+ * `packages/gui/src/types/window.ts`. They are declared here, and `BifurcApiFull` (see `index.ts`) re-adds
  * them to the returned type — so the client satisfies the declared type *and* keeps the four keys
  * the renderer can actually call. See `surface.ts`'s header for the full argument.
  */
 
-import type { BifurcApi } from "../../../renderer/types/window";
+import type { BifurcApi } from "../../gui/src/types/window";
 
 /** A file the client has read, in the shape the preload's `openFileDialog` already returns. */
 export interface LocalFileContent {
@@ -112,7 +112,7 @@ export interface ClientLocal {
    * to `tls.removeCert`, which is the engine's half alone: the engine deletes its keypair, and the
    * *client* is supposed to un-trust the certificate it installed, using the
    * `AppSettings.tlsTrustedCa` record written at install time. Routing it therefore left the OS store
-   * trusting a CA whose keypair was gone — and `renderer/panels/settings/TlsSettingsSection.tsx`
+   * trusting a CA whose keypair was gone — and `packages/gui/src/panels/settings/TlsSettingsSection.tsx`
    * calls this from the "remove certificate" button, so the UI reported success while the browser
    * went on trusting it. `certLifecycle.uninstallEngineCa()` names that exact failure in its own
    * docblock, and it is the failure routing this key reintroduced.

@@ -69,7 +69,7 @@ export interface AppSettings {
   zoomLevel: number;
   /** Whether the user has manually set the zoom level (disables auto-detection from display) */
   zoomLevelSetByUser: boolean;
-  /** Selected UI theme id (see renderer/lib/themes.ts). Null = use the built-in default. */
+  /** Selected UI theme id (see packages/gui/src/lib/themes.ts). Null = use the built-in default. */
   themeId: string | null;
 }
 

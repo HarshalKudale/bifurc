@@ -78,7 +78,7 @@ diff against.
 implementation has ever registered**. `import.commit`, `import.preflight` and `export.create` were
 declared in P1 and left unimplemented — `packages/engine/src/importExport/registry.ts` is where they
 land, and P3 is the phase that lands them. A client cannot depend on an enum that only ever
-rejected, and the only in-repo client (`renderer/types/ipc.ts`, mirrored by hand) already sends
+rejected, and the only in-repo client (`packages/gui/src/types/ipc.ts`, mirrored by hand) already sends
 `keep`/`override`/`new`. The change makes the schema accept what the only client sends, and removes
 fields no client ever read.
 
@@ -152,7 +152,7 @@ engine's own type — that translation table was the thing the mismatch would ha
 stating plainly: **none of these six commands has ever been registered in a `CommandRegistry`.** They
 were declared in P1 and left unimplemented; the shell performed the work inline in
 `tlsHandlers.ts` / `runnerHandlers.ts` / `syncHandlers.ts` / `systemHandlers.ts` instead. A client
-cannot depend on a payload no server has ever accepted. The only in-repo client (`renderer/types/ipc.ts`,
+cannot depend on a payload no server has ever accepted. The only in-repo client (`packages/gui/src/types/ipc.ts`,
 mirrored by hand) does not name any of these commands — it calls the `ipcMain` **channels**, whose
 renderer-facing return shapes are **unchanged** by this entry and stay byte-identical per
 `README.md` non-negotiable #3. The shell bridges channel → command, exactly as it already does for
@@ -239,7 +239,7 @@ frozen companion-extension commands (`mock:add`, `request:add`, `folder:add`, `c
 `keyPath` from `appDataDir()` for the renderer, exactly as `tls:importCert` already does — this is
 category 3 in `plan/04` item 6 (an engine FS layout detail the shell computes), and it is removed in
 P7, not here. Note that `tls:certStatus`'s renderer-facing shape is preserved even though **no
-renderer code calls it**: `renderer/types/window.ts:188` declares it, and non-negotiable #3 is about
+renderer code calls it**: `packages/gui/src/types/window.ts:188` declares it, and non-negotiable #3 is about
 the surface, not about whether something currently reads it.
 
 **A `fix` rode along: the corrupt-CA state is now reportable.** `packages/engine/src/fileOps/commands.ts`
@@ -288,7 +288,7 @@ and this schema lacked.
 category's own definition is *"a decision, not a move"* — so the decision was taken. But the stronger
 reason is that the narrowing turned out to be **live, not latent**: the ratchet's justification was
 "nothing currently passes those — `auditList` exists on `window.api` and no renderer code calls it",
-and that check was a grep for the *method name*. `renderer/panels/AuditLogPanel.tsx:61–62` reaches the
+and that check was a grep for the *method name*. `packages/gui/src/panels/AuditLogPanel.tsx:61–62` reaches the
 same command through `window.api` and sets `fromTs`/`toTs` whenever its date filter is used. Because the
 schema is `.strict()`, that difference is a `BAD_REQUEST` rather than an ignored filter — so routing
 `audit.list` before this change would have broken the audit panel's date range, with every unit test in
@@ -351,7 +351,7 @@ happened. But the frozen schema was wrong **twice over**, and only one half was 
 1. It **required** `requestOrder`, so it rejected what real callers save.
    `tests/integration/runnerStorage.integration.test.ts:207` round-trips
    `{delayMs: 250, stopOnFailure: true, iterations: 3}` and line 218 saves `{delayMs: 0}` — neither has
-   a `requestOrder`. `renderer/lib/useCollectionRunner.ts:67` sends `{requestOrder, delayMs}`, a third
+   a `requestOrder`. `packages/gui/src/lib/useCollectionRunner.ts:67` sends `{requestOrder, delayMs}`, a third
    distinct subset. The shell's own `runner:saveConfig` body takes `config: any` and does
    `JSON.stringify(config, null, 2)` with no validation at all, so there was never a fixed shape to
    describe.

@@ -32,14 +32,14 @@ instrument is what defines the surface, and the shell can still call `close()` b
 
 | this document says | the code says | why it matters |
 |---|---|---|
-| `WindowApi`, "136 methods" | **`BifurcApi`**, **144** methods | `renderer/types/window.ts` has never exported `WindowApi`. The counts are stale in both directions — see the next row. |
-| `renderer/types/window.ts` is "the authoritative list of the surface to reproduce" | **`src/preload.ts` is**; the type declares **140** | The type disagrees with the runtime on **seven** keys, in **two** directions. A client built to satisfy the type alone would have silently dropped four runtime keys *and* left three methods it must provide looking optional. |
+| `WindowApi`, "136 methods" | **`BifurcApi`**, **144** methods | `packages/gui/src/types/window.ts` has never exported `WindowApi`. The counts are stale in both directions — see the next row. |
+| `packages/gui/src/types/window.ts` is "the authoritative list of the surface to reproduce" | **`src/preload.ts` is**; the type declares **140** | The type disagrees with the runtime on **seven** keys, in **two** directions. A client built to satisfy the type alone would have silently dropped four runtime keys *and* left three methods it must provide looking optional. |
 | `createClient(transport): WindowApi` | `createClient(transport, { local })` | The client-local half has no sensible default — a native file picker and an OS trust store cannot be faked, and a default that did nothing would look like a working install. |
 | "Timeouts: per-command, **from the protocol**" | the protocol has **no timeout field** | `COMMANDS[action]` is `{ params, legacyChannel }`. Nothing in `packages/protocol` carries a duration. See "What is still open" below. |
 
 ### The seven-key gap, which is the finding this phase was worth running for
 
-`src/preload.ts` is the authority and `renderer/types/window.ts` is a secondary check. They disagree
+`src/preload.ts` is the authority and `packages/gui/src/types/window.ts` is a secondary check. They disagree
 on exactly seven keys:
 
 - **Four the type omits** — `isFirstLaunch`, `completeFirstLaunch`, `getZoomLevel`, `setZoomLevel`.
@@ -85,11 +85,11 @@ than merely plausible:
   them. Adding `timeoutMs` to `CommandSpec` is the right home — `plan/05`'s hardening needs the same
   table, so a client-only copy would be the second copy — but it is a protocol change, so it is left
   as an explicit decision rather than taken in passing. Today a hung `soap.execute` still hangs.
-- **`renderer/types/window.ts` is imported by relative path** across the package boundary
-  (`packages/client/src/index.ts` → `../../../renderer/types/window`), which the Risks table below
+- **`packages/gui/src/types/window.ts` is imported by relative path** across the package boundary
+  (`packages/client/src/index.ts` → `../../../packages/gui/src/types/window`), which the Risks table below
   flags. It compiles and resolves in both `tsc` and the built `dist/`, so it is not yet a problem.
   Moving the type to `@bifurc/protocol` or a `packages/contract` would require **editing
-  `renderer/types/window.ts`**, which the non-negotiables forbid for P1–P6 — so the relative path is
+  `packages/gui/src/types/window.ts`**, which the non-negotiables forbid for P1–P6 — so the relative path is
   the compliant choice until P7 at the earliest.
 
 ---
@@ -98,7 +98,7 @@ than merely plausible:
 
 - Conformance suite green on `in-process` and `stdio` (P4).
 - Auth implemented for `ws`.
-- `renderer/types/window.ts` is the authoritative list of the surface to reproduce. — **corrected
+- `packages/gui/src/types/window.ts` is the authoritative list of the surface to reproduce. — **corrected
   2026-09-18: `src/preload.ts` is the authority.** The type declares 140 of the 144 runtime keys and
   marks three more optional, so it is a *secondary check*, not the spec. See the status section.
 
@@ -106,7 +106,7 @@ than merely plausible:
 
 ## Work item 1 — Take the existing surface as the spec
 
-`renderer/types/window.ts` already declares the whole API — **144 methods, not the 136 this document
+`packages/gui/src/types/window.ts` already declares the whole API — **144 methods, not the 136 this document
 said** (see the status section; the type declares 140 and the preload exposes 144). **Do not redesign
 it.** Treat it as the contract — but take the **runtime** surface, not the declared one, as the thing
 to reproduce.
@@ -190,7 +190,7 @@ place where behaviour can drift, so keep them explicit and tested.
 | `tlsInstallCA` | **client-local** | OS trust store operation |
 | `isFirstLaunch`, `completeFirstLaunch` | **client-local** | shell launch state |
 
-**`window.api.platform` is dead code.** `renderer/types/window.ts:193` declares it and nothing reads it
+**`window.api.platform` is dead code.** `packages/gui/src/types/window.ts:193` declares it and nothing reads it
 (verified). Keep it for shape-compatibility if you like, but do not wire it to anything.
 
 ---
@@ -201,7 +201,7 @@ The property that makes P6 safe. Add a compile-time assertion:
 
 ```ts
 // packages/client/tests/shape.test-d.ts
-import type { WindowApi } from "../../../renderer/types/window";
+import type { WindowApi } from "../../../packages/gui/src/types/window";
 
 const client = createClient(fakeTransport);
 // Fails to compile if the client is missing a method or has the wrong signature
@@ -211,7 +211,7 @@ const _check: WindowApi = client;
 This turns "the renderer doesn't need changing" from an intention into a build failure. **It is the
 single most valuable test in the phase.**
 
-Note: `renderer/types/window.ts` must be importable from the client package. If that requires moving the
+Note: `packages/gui/src/types/window.ts` must be importable from the client package. If that requires moving the
 type into `@bifurc/protocol` or a shared `packages/contract`, do that — a shared type is better than a
 relative path across package boundaries.
 

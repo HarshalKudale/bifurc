@@ -8,14 +8,14 @@
  *
  * ## Why this file exists at all
  *
- * The plan's precondition says `renderer/types/window.ts` is "the authoritative list of the
+ * The plan's precondition says `packages/gui/src/types/window.ts` is "the authoritative list of the
  * surface to reproduce", and its acceptance criterion says "All 136 methods present". Both
  * numbers are stale, and the difference is load-bearing:
  *
  * | source | keys |
  * |---|---|
  * | `src/preload.ts` — what `window.api` actually **is** at runtime | **144** |
- * | `renderer/types/window.ts` — what it is **declared** to be | 140 |
+ * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 140 |
  *
  * The type under-declares the runtime by four keys, and every one of them is a method the
  * renderer can call today:
@@ -36,7 +36,7 @@
  *
  * There is a **second** disagreement, pointing the other way, and the same reasoning catches it:
  * `setTitleBarOverlay`, `getTheme` and `setTheme` are declared **optional** (`?`) in
- * `renderer/types/window.ts` although `src/preload.ts` always provides them. So the declared type
+ * `packages/gui/src/types/window.ts` although `src/preload.ts` always provides them. So the declared type
  * is *looser* than the runtime there rather than narrower — and a client that simply omitted
  * `getTheme` would satisfy `BifurcApi`, pass the type-level shape test, and then fail the first
  * time the renderer called it. Optionality is the more insidious of the two directions, because
@@ -217,7 +217,7 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
 
   // ── client-local: OS / window operations, never a transport call ─────────
   openExternal: local("opens a URL on the client's own machine"),
-  setTitleBarOverlay: local("Electron BrowserWindow; read by renderer/hooks/useTheme.ts"),
+  setTitleBarOverlay: local("Electron BrowserWindow; read by packages/gui/src/hooks/useTheme.ts"),
   tlsInstallCA: local("mutates the client machine's OS trust store"),
 
   // ── the trust-store pair, reclassified `transport` → `local` on 2026-09-20 ─
@@ -316,8 +316,8 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   completeFirstLaunch: local("shell launch state; exposed by preload but undeclared in BifurcApi"),
   getZoomLevel: local("Electron webContents zoom; exposed by preload but undeclared in BifurcApi"),
   setZoomLevel: local("Electron webContents zoom; exposed by preload but undeclared in BifurcApi"),
-  getTheme: local("Electron nativeTheme; read by renderer/hooks/useTheme.ts"),
-  setTheme: local("Electron nativeTheme; read by renderer/hooks/useTheme.ts"),
+  getTheme: local("Electron nativeTheme; read by packages/gui/src/hooks/useTheme.ts"),
+  setTheme: local("Electron nativeTheme; read by packages/gui/src/hooks/useTheme.ts"),
 
   // ── collection runner ────────────────────────────────────────────────────
   saveRunnerReport: t("runner.saveReport"),

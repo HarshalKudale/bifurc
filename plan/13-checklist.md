@@ -768,7 +768,7 @@ rather than a type.
       contributing 0) — so the delta must be read per-file, not per-group. **Suite: 101 / 2,492 / 2,451 / 40
       / 1.** The one apparent regression that is not: the channel's `folder:add` **spread** its argument
       (`{ kind, ...folder }`) where the client picks two fields — inert only because
-      `renderer/types/window.ts:63` excludes `workspaceId` from the contract. The integration suite's helper
+      `packages/gui/src/types/window.ts:63` excludes `workspaceId` from the contract. The integration suite's helper
       *does* pass `workspaceId`, so its translation keeps the spread; getting it wrong would not have failed
       loudly, because the active workspace is `TEST_WS` there anyway. **The §5c static guard's anti-vacuity
       floor was `src/` > 20 `.ts` files** and the reduction shrank the tree to exactly 20 — a count coupled to

@@ -5,7 +5,7 @@ import { writeEntity, upsertNameEntry } from "../../store/workspaceFs";
 import { reloadConfig } from "../../proxy/server";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
-// ── cURL parser (duplicated from renderer/lib/curlParser.ts for main process use) ──
+// ── cURL parser (duplicated from packages/gui/src/lib/curlParser.ts for main process use) ──
 
 const SKIP_HEADERS = new Set([
   "host", "proxy-connection", "connection", "content-length", "transfer-encoding",

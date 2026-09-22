@@ -539,7 +539,7 @@ describe("src/ipc/handlers.ts", () => {
        * **The caveat that entry gave for calling it latent rather than live was wrong, and the way it
        * was wrong is the part worth keeping.** It said "nothing currently passes those — `auditList`
        * exists on `window.api` and no renderer code calls it". That check was a grep for the *method
-       * name*, and `renderer/panels/AuditLogPanel.tsx:61–62` reaches the same command through
+       * name*, and `packages/gui/src/panels/AuditLogPanel.tsx:61–62` reaches the same command through
        * `window.api` and sets `fromTs`/`toTs` whenever its date filter is used. So the narrowing was
        * **live**, and routing this command as it stood would have broken the audit panel's date
        * filter — invisibly to every test here, because these tests drive the *handler*, not the panel.
@@ -640,7 +640,7 @@ describe("src/ipc/handlers.ts", () => {
         // could be dropped again and the only symptom would be the audit panel's date filter quietly
         // returning everything.
         //
-        // The payload is exactly what `renderer/panels/AuditLogPanel.tsx:61–62` builds when a
+        // The payload is exactly what `packages/gui/src/panels/AuditLogPanel.tsx:61–62` builds when a
         // date range is set — which is the whole reason the widening was necessary rather than
         // optional: under the pre-2026-09-19 `.strict()` schema this was a `BAD_REQUEST`.
         const { AuditListParams } = await import("@bifurc/protocol");

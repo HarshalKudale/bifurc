@@ -183,7 +183,7 @@ The existing design system renders correctly in WebKitGTK on the oldest distro y
 ### Why it matters
 
 `oklch()` appears in **7 renderer files** and `color-mix()` in **2** — including
-`renderer/tokens.css`, `renderer/styles.css` and `renderer/lib/codemirrorTheme.ts`. If WebKitGTK
+`renderer/tokens.css`, `renderer/styles.css` and `packages/gui/src/lib/codemirrorTheme.ts`. If WebKitGTK
 doesn't resolve them, **the entire visual design breaks on Linux** — silently, as wrong colours, not as
 an error.
 
@@ -204,7 +204,7 @@ an error.
    getComputedStyle(document.getElementById('probe')).backgroundColor   // expect a real rgb/oklch
    getComputedStyle(document.getElementById('mix')).backgroundColor     // expect a resolved colour, not transparent
    ```
-4. Also check the titlebar: `renderer/components/layout/TitleBar.tsx` uses `oklch`/`color-mix` and is a
+4. Also check the titlebar: `packages/gui/src/components/layout/TitleBar.tsx` uses `oklch`/`color-mix` and is a
    visible, high-traffic surface.
 
 ### Test matrix
