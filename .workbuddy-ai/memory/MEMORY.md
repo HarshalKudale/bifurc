@@ -47,9 +47,9 @@ claim too" (own section), Δ0's three causes (`plan/07` §2041). The four that c
   *what would it fail on?* **Prefer a NARROW mutation**, and **check it is well-formed first**.
 - **A repo can change under you.** Check `HEAD` before committing; re-measure after.
 
-**Current: 2,662 tests / 115 files — 2,622 passed, 40 skipped, 0 failed** (2026-09-22, after P7's browser
-`ClientLocal`). The **+16 tests / +1 file** is exactly the new cases. **e2e: 11 specs / 46 tests — 46 expected,
-0 unexpected, 0 flaky, owner-measured 2026-09-22.** Trajectory in `plan/07`.
+**Current: 2,664 tests / 115 files — 2,624 passed, 40 skipped, 0 failed** (2026-09-22, after the `ws.ts`
+client became a `ClientChannel`). The **+2** is exactly the two new `ws` cases. **e2e: 11 specs / 46 tests — 46
+expected, 0 unexpected, 0 flaky, owner-measured 2026-09-22.** Trajectory in `plan/07`.
 
 ## Phase state — the plans are the authority
 
@@ -72,31 +72,17 @@ claim too" (own section), Δ0's three causes (`plan/07` §2041). The four that c
 surface keys, 25 never called.** Item 3's `dialog:*` channels **no longer exist** (P6 removed them); the live
 surface is `window.api.<method>`, 16 file/dialog-shaped rather than 8. **No web target in the tree.**
 
-**WI 1 BUILT — `@bifurc/web-client`**, a **new package** on the owner's decision (decoupling is the goal;
-recorded in `plan/08`). Two halves, both against **real** I/O, no mocks:
+**WI 1 + 1b BUILT — the build record is `plan/08` §"The build record (2026-09-22)"; read it there.** In short:
+`@bifurc/web-client`, a **new package** on the owner's decision (decoupling is the goal), supplies a
+`ClientChannel` over the native `WebSocket` and the **16 required `RequiredClientLocal` members**, without
+which `createClient` cannot be called at all; the wire machinery moved to `@bifurc/protocol/src/wire/` so the
+browser's graph holds no Node built-in (grepped from `dist`, not assumed); and **`ws.ts`'s third copy of the
+session state machine is gone** (WI 1b). **Run `tsc` explicitly after any type-level change — vitest does not
+typecheck.**
 
-- `channel.ts` / `createBrowserTransport` — a `ClientChannel` over the native `WebSocket`, letting
-  `createClientSession` own correlation, refcounting and teardown (**a second session would be the third copy
-  `session.ts` exists to prevent**). Sends **text** frames, matching the engine's server and its own `ws`
-  client. 8 cases against a real `createWsServer`.
-- `local.ts` / `createBrowserLocal` — the **16 required `RequiredClientLocal` members**, without which
-  `createClient` cannot be called at all (it *requires* `local`). Declared `satisfies`, never `as`. 16 jsdom
-  cases. **9 do the desktop's real work; 7 report a truthful failure** — 2 throw (`pickFilePath`,
-  `pickFolderPath`: a browser has no paths) and 5 refuse structurally (`setTitleBarOverlay`, `tlsInstallCA` →
-  `needsManualInstall`, `tlsRemoveCert`, `tlsCertStatus`, `checkUpdate` → `ok:false` **with the version still
-  reported**, so it cannot be read as "up to date"). `openExternal` is an **http/https allowlist +
-  `noopener,noreferrer`**: the URL comes from a possibly remote engine, and `window.open("javascript:…")` would
-  run script in a trusted context.
-
-**The wire machinery (`types.ts` + `session.ts`) moved to `@bifurc/protocol/src/wire/`** — protocol already
-enforces `platform: "neutral"`, so the browser's graph has no Node built-in (grepped from `dist`, not assumed).
-`framing.ts` **stayed in engine** (a WebSocket needs no byte-stream framing). Engine keeps thin re-exports, so
-the shell is untouched. `@bifurc/client` was *already* `platform: "neutral"` — only the transport was missing.
-
-**Open, and the next real work:** no `apps/` exists — a web target is built from nothing. **`ws.ts`'s client
-still does not use `createClientSession`** — it carries its own copy of the state machine (`TRAPS.md`).
-**`tlsRemoveCert`'s engine half is unreachable from any non-shell `ClientLocal`** — the hook is injected
-*without* the transport, so it is a gap in the injection point, not in the browser file.
+**Open, and the next real work:** no `apps/` exists — a web target is built from nothing (item 5). Two gaps
+are **recorded, not worked around**: `tlsRemoveCert`'s engine half is unreachable from any non-shell
+`ClientLocal` (a gap in the injection point), and CA install is manual in a browser (item 4).
 
 ## P14 — the executor pivot (`plan/14`, D10–D17) — CLOSED, §8 is 21 met · 0 open
 
