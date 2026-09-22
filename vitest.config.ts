@@ -119,7 +119,15 @@ export default defineConfig({
         test: {
           ...shared,
           name: "unit",
-          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx", "packages/**/*.test.ts"],
+          include: [
+            "tests/**/*.test.ts",
+            "tests/**/*.test.tsx",
+            "packages/**/*.test.ts",
+            // The web target's own suite (P7 work item 5). It sits outside `packages/` because it is an
+            // app rather than a library, so without this entry its tests would never run — and a glob
+            // that looks like it covers everything is exactly how a suite goes silently unexecuted.
+            "apps/**/*.test.ts",
+          ],
           // Integration tests live under tests/integration and bind real ports.
           exclude: ["tests/integration/**"],
         },
