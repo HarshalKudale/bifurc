@@ -213,6 +213,64 @@ capabilities have no browser equivalent and are **recorded rather than worked ar
 engine half is unreachable from any non-shell `ClientLocal` (the hook is injected *without* the transport, so
 the gap is in the injection point, not in the browser file), and CA install is manual by nature (item 4).
 
+### The two defects the suite found (2026-09-22) — a connect that never settles, and a message that lies
+
+The first full-suite run after `apps/web` landed reported **one** failure, and a **test timeout is different
+evidence from a failed assertion**: it says something never settled. That narrowed it in one step.
+`packages/web-client/tests/browserTransport.test.ts` → *"reports a connect failure distinctly from a dropped
+session"* died on vitest's 15 s limit rather than on an expectation. (An earlier report put the failure in
+`apps/web/tests/connect.test.ts` as a wrong *message*; that did not reproduce, and reading the file it cannot:
+its fatal is only produced with `open === false`, which needs a socket that never opened, while its `probe()`
+— a round trip — cannot succeed without one. Recorded as unexplained rather than as fixed.)
+
+**Defect 1 — nothing bounded the connect.** `ensureReady()` armed no timer, and a peer that accepts the TCP
+connection and then never answers the upgrade produces no `open`, no `error` and no `close`, so the promise
+never settled and every request behind it waited forever. That is the "hangs rather than rejects" failure
+`plan/05` forbids, arriving through the one door `createClientSession` cannot see.
+
+**The mechanism, measured rather than argued.** A probe against the platform's own `WebSocket` — Node 22's,
+i.e. undici's — shows that on a **failed connect it fires `error` and then no `close` at all**, with
+`readyState` still `CONNECTING` seconds later. Three forms behave identically: a port that was bound and
+released, a listener that refuses the upgrade, and a listener that destroys the socket on arrival.
+
+That is a property of the **host**, not of the protocol. `ws` — which the engine's channel uses — does emit
+`close` after `error`, and a spec-compliant browser does too, so `ws.ts`'s *"`ws` always emits `close` after
+`error`, so the teardown and the rejection both happen there"* is true where it is written and **false here**.
+The consequence is that **that handler cannot be copied**: silencing `onerror` and letting `close` report — the
+`ws.ts` shape — would leave a wrong address reported by **nothing** on this host. The first attempt at this
+fix took exactly that shape, which is what made the trap visible.
+
+**Defect 2 — the message did not depend on whether the connection had ever been established.** Both handlers
+called `fail()` unconditionally, and `fail()` is idempotent and first-wins, so which message a caller saw was
+decided by **which event fired first** rather than by whether the socket ever opened. On a host where `error`
+precedes `close` for an established connection that drops abnormally, that announces a dropped session as
+`Could not connect` — the message item 2's UI answers with "retry from scratch" rather than "reconnect".
+
+So the two naive positions — report always, or never — are wrong in opposite directions, and the shape that
+holds is a guard:
+
+- **`error`, only while the socket has never opened** (`if (open) return`). On this host that is the only
+  signal a failed connect has.
+- **`close`, for the established case**, where it says `Session closed: …`.
+- **A connect timeout** for the third case — a peer that accepts the TCP connection and then answers nothing.
+  A refusal fires `error`; silence fires nothing at all. `DEFAULT_CONNECT_TIMEOUT_MS = 10_000`, the engine's
+  number and the engine's wording so the two clients report a slow engine identically, overridable via
+  `connectTimeoutMs`, armed with the connect and disarmed on `open`, on `close` and in `releaseSocket()`.
+
+Three cases, each guarding one path, and each shown to fail without it:
+
+| Case | Guards | Without the fix |
+|---|---|---|
+| dead address (bound, then released) | that a connect failure settles at all | hung on vitest's 15 s limit |
+| a peer that accepts and never answers | the connect timeout | hangs |
+| a listener that refuses the upgrade | the `error` handler | falls back to the 10 s timeout, wrong message |
+
+The last one exists *because of* the mutation discipline rather than beside it: silencing `onerror` (M9) left
+the dead-address case **passing** through its disjunction, so without it that handler would have been
+unguarded. The dead-address case also asserts the **distinction** rather than one spelling of it —
+`/Could not connect|Timed out after/` and **not** `/Session closed/` — because both spellings mean "the engine
+was never reached", and the second is the message work item 2 answers with "reconnect".
+
 ## Work item 2 — Connection and session UX
 
 This is genuinely new surface that has no Electron equivalent.
@@ -299,6 +357,53 @@ users stuck.
   removes CORS entirely. **Recommended for the Docker story.**
 
 ---
+
+### The first landing (2026-09-22) — `apps/web`
+
+A new workspace app, `apps/web`, that does exactly one thing:
+`createClient(createBrowserTransport({ url }), { local: createBrowserLocal() })` against a real engine, and
+report the result. No framework, no UI — so that a failure here is a failure of the **client** and not of a
+screen built on top of it. `?engine=ws://host:port` selects the endpoint, defaulting to
+`ws://127.0.0.1:8080` (D16's win32 base), so one bundle points at a local, a Docker-hosted or a remote
+engine without a rebuild.
+
+The split is deliberate: `src/connect.ts` holds the composition and **no DOM**; `src/main.ts` holds the DOM
+and no decisions. That is what lets a Node-side suite drive the composition against a real engine over a
+real socket — the closest such a suite can get to "it works in a browser".
+
+**On "reuse the Vite config":** the *tooling* is reused (Vite 8, the same output shape as `dist/renderer`,
+`base: "./"`), but `apps/web` has its **own** `vite.config.ts`. The root one sets `root: "renderer"`,
+registers `@vitejs/plugin-react`, and aliases `@` into the renderer tree — every one of which would
+silently apply to a page that has no React and must not resolve the Electron renderer's components.
+
+**The engine-serving option stays open but is not taken.** `base: "./"` is what makes the output servable
+from a subpath, which is what "have the engine serve it" needs; nothing here wires that up.
+
+**Three defects this increment found, none of them in the new code:**
+
+1. **`build:packages` never built `@bifurc/web-client`.** It listed protocol, engine and client only — so the
+   new package's `dist/` was stale from the moment `local.ts` was added, and since a browser bundler
+   resolves `@bifurc/web-client` to `dist/`, `createBrowserLocal` **did not exist** there. Fixed by adding it
+   to `build:packages` and `typecheck:packages`, adding `apps/*` to `workspaces`, and adding
+   `apps/**/*.test.ts` to the vitest `unit` include — without which the app's suite would never have run,
+   because a glob that looks like it covers everything is how a suite goes silently unexecuted. `build:web`
+   is deliberately **not** part of `npm run build`: the desktop build should not build the web target.
+2. **`channel.ts` reported a dropped session as "Could not connect", and never bounded the connect.**
+   `onerror` and `onclose` both called `fail()` unconditionally, and `fail()` is idempotent — so whichever
+   fires first wins, and a browser fires `error` **then** `close` when an *established* connection drops
+   abnormally, which makes the message a function of **event order** rather than of whether the socket ever
+   opened. `onerror` now reports **only while the socket has never opened** (`if (open) return`), and
+   `onclose` distinguishes the two cases the same way. Separately, `ensureReady()` armed no timer at all, so
+   a peer that accepts the TCP connection and then answers nothing left the promise unsettled forever;
+   `DEFAULT_CONNECT_TIMEOUT_MS` now covers it. Both are written up in §"The two defects the suite found".
+3. **A docblock that *documents* `@vitest-environment` is itself that directive.** See `TRAPS.md`.
+
+**Verified:** `tsc` clean on all five packages/apps; the bundle contains **0 `node:` built-ins, 0
+`require(`, 0 `process.env`** and pulls in no `ws` package, while using `WebSocket`, `localStorage` and
+`document`. The two `Buffer`/`electron` textual matches in the bundle are a feature-detected
+`globalThis.Buffer ?? atob` fallback and protocol *strings* (`"electron-shell"`, surface descriptions) —
+checked rather than assumed. What is **not** verified here is a real browser: that is item 6, and the owner
+runs it.
 
 ## Work item 6 — Browser-specific testing
 
