@@ -48,14 +48,14 @@ start a build you will not wait for** — a killed build leaves a half-written `
 `test-results/<spec>-<test>-electron/error-context.md` — the error **plus a full accessibility snapshot of
 the page** — and `test-failed-1.png`. Every failure below was diagnosed from those files alone.
 
-**P6 criterion 2 ("11 e2e specs pass, unmodified"): 9/11, user-measured 2026-09-22**; the last two are
-fixed in `782eef8` and awaiting the re-run. Trajectory: `46 failed / 0 passed` → **4 failed** after
-`e8e535f` (preload fix) → **2 failed** after `a239ab5`. **The `46` was never a product measurement** — it
-was this agent shell; the preload defect merely failed the same suite for a different reason. A matching
-count is not a matching cause.
+**P6 criterion 2 ("11 e2e specs pass, unmodified"): 10/11, user-measured 2026-09-22**, the last one fixed
+in `3f5f9ec` and awaiting the re-run. Trajectory: `46 failed / 0 passed` → **4 failed** after `e8e535f`
+(preload fix) → **2 failed** after `a239ab5` → **1 failed** after `782eef8`. **The `46` was never a product
+measurement** — it was this agent shell; the preload defect merely failed the same suite for a different
+reason. A matching count is not a matching cause.
 
-**Six failures over two sessions — three stale tests, two stale locators, one stale fixture. NONE a
-product bug; no product code changed for any.**
+**Seven failures over three runs — stale tests, stale locators, one stale fixture, one stale nav helper.
+NONE a product bug; no product code changed for any.**
 
 | Where | Cause | Commit |
 |---|---|---|
@@ -65,6 +65,7 @@ product bug; no product code changed for any.**
 | `app.spec.ts:69` | A locator for `REST 3`, **a label nothing produces** (introduced by `bae3732`, 2026-09-14, and nowhere else) | `a239ab5`, re-fixed `782eef8` |
 | `app.spec.ts:68` | **The tree row is not a button** — `FolderTreeItemNode.tsx:28` renders `<div title={item.name} onClick=…>`, so its role is `generic` and its name comes from `title`. And `Ctrl+T` opens the **protocol chooser**, not the form: `useRequestsPanelState.ts:94` sets `draftProtocols[tabId] = null` | `782eef8` |
 | `screenshots.spec.ts:117` | Declared `Manage Environments` as `trigger:"titlebar"`, but `EnvSelector.tsx:46` renders it only while the dropdown is open (`{open && …}`) | `782eef8` |
+| `screenshots.spec.ts:117` **again** | The tour's **titlebar nav helper used an UNANCHORED regex**, so `/Workspace/i` + `.nth(0)` clicked the workspace **switcher** ("SW Sample Workspace") instead of the Workspace **panel** (`setPanel("workspace")`), and its `fixed inset-0 z-40` backdrop (`WorkspaceDropdown.tsx:76`) then swallowed panel 11's one *real* click. Silent until then because every other nav click runs inside `evaluate(el.click())`, which bypasses hit-testing. Also meant `10-workspace.png` was a screenshot of the dropdown, not the panel | `3f5f9ec` |
 
 **An assertion must be able to fail.** `getByText("New Request")` also matched the panel's own "New
 request" button, so it passed with the keybind doing nothing — replaced by the chooser's unique heading
