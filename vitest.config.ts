@@ -214,9 +214,11 @@ export default defineConfig({
        * Actuals when these floors were set (see TESTING.md §4.1): statements 49.07%,
        * branches 32.66%, functions 37.26%, lines 51.52% — measured 2026-09-16, at the end of
        * P3 work item 1. **Re-measured 2026-09-22, with `packages/web-client/src` and `apps/web/src`
-       * newly included: 56.37 / 39.15 / 44.54 / 58.88.** So the floors now sit ~7–9 pts below the
-       * actuals, and raising them is a deliberate decision rather than an oversight — the policy below
-       * says to raise them as gaps close, and this is the point at which that becomes available.
+       * newly included: 56.37–56.39 / 39.15–39.16 / 44.54 / 58.88–58.91 across two runs** — the spread
+       * is V8's own noise, ~0.05 pt between identical runs, which is §4.1's footnote 2. So the floors
+       * now sit ~7–9 pts below the actuals, and raising them is a deliberate decision rather than an
+       * oversight: the policy below says to raise them as gaps close, and this is the point at which
+       * that becomes available.
        *
        * Set ~2 pts below the actuals, with one exception: `branches` stays at 31 because
        * 2 pts below 32.66 is 30, and ratcheting *down* is exactly what the policy forbids.
