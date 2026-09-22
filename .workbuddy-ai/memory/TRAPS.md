@@ -1791,6 +1791,17 @@ The distinction is *what the claim is about*. A count of a **generated set** is 
 belongs to the runner (`--reporter=json`). A count of **occurrences in a source file** is a claim about the
 code, and reading the file is the direct instrument. What must not happen is counting the second kind by eye.
 
+**And the count must be taken over the module's *code*, not over its text — learned the hard way on
+2026-09-22.** The criterion-3 case counted the raw source, and it failed on a **documentation** edit: a
+docblock added the same evening, while implementing 6b, merely *names* `IS_WINDOWS`, which took the count from
+2 to 3. A comment is not a branch on platform, so the instrument had been made sensitive to prose — and the
+tempting "fix" would have been to delete a useful explanation to satisfy a test, which is the worst possible
+outcome for an instrument. Comment-only lines are now dropped before counting, while a trailing comment on a
+*code* line is deliberately kept, so a real second use cannot hide behind one.
+
+**Ask of any text-count: does what it counts include prose?** If yes, it will one day fail on an edit that
+changed nothing about the behaviour it guards — and the pressure will be to weaken the prose, not the count.
+
 ### A mutation you cannot attribute is not evidence
 
 Mutation-testing the new guards produced one run where the mutation itself was malformed — the replacement
@@ -1840,6 +1851,34 @@ path** (two tests read it). Grep for a field's **readers**, not its writers, and
 an open decision rather than as a dead field: D16 says that value must decide the next start, so the omission
 is the *feature* that is missing, not cruft to delete.
 
+*(Resolved the same evening: the owner chose to implement D16, and `allocatePorts` gained a **soft**
+`remembered*` source — tried when free, skipped when taken, never thrown over — with `proxyPortWasRemembered`
+on the result, because the *outcome* cannot distinguish that path from the scan. The corollary stands
+regardless: reading the **writers** and not the readers is how the omission was found.)*
+
 **And the meta-lesson, because it is the second time in two batches:** the audit was right to distrust the
 checkboxes, and then trusted its own rewording. An instrument can answer a neighbouring question — **so can a
 criterion.**
+
+## A repo can change under you — check `HEAD` before you commit, and re-measure after
+
+Found 2026-09-22, and it is the one hazard in this repo that no amount of reading the tree will reveal. A
+batch finished its work and left the tree uncommitted — as the previous batches had — and by the time it
+returned, **a second session had been active in the same repo**: the tree was clean at a new commit, the
+programme status table had been rewritten, and the daily log contained a batch entry written by someone else.
+
+**Nothing was lost that time**, but every failure mode here is an expensive one: a commit that sweeps up work
+nobody has run; a document edited from two directions so a sentence lands twice; and the reverse — your own
+edits landing inside someone else's commit under a message that describes *their* work.
+
+**The rule:** before committing, run `git log --oneline -1` and `git status` — **do not assume the tree is the
+one you left.** If `HEAD` moved, **re-measure before reporting anything as verified**: a test count is a
+statement about *a revision*, and the revision on disk may no longer be the one you measured. (Here the count
+had moved by exactly the six tests the last batch added, and two documents that state the suite size were
+still carrying the old number — re-measuring and **re-writing every place that states the result** are two
+steps, and only the first had been done.)
+
+**And when a document disagrees with itself after such a merge** — a sentence twice, a row holding two
+narratives — treat it as a merge artefact and **find its provenance before fixing it**
+(`git show HEAD~1:<file>`): the duplicate may be the *older* text, in which case deleting the wrong copy
+throws away the newer account.

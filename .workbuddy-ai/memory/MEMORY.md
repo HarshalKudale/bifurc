@@ -61,9 +61,10 @@ to the **full** suite rather than assume it from a filtered run.
 - **A checkbox and a table cell are two copies of one claim, and they drift.** Counting a document's own
   markers is a one-line cross-check on whether two places that state the same thing agree.
 
-**Current: 2,632 tests / 113 files — 2,592 passed, 40 skipped, 0 failed** (2026-09-22, *before* the 6b
-product change — re-measure). **e2e: 11 specs / 46 tests — 46 expected, 0 unexpected, 0 flaky,
-owner-measured 2026-09-22.** Trajectory in `plan/07`.
+**Current: 2,638 tests / 113 files — 2,598 passed, 40 skipped, 0 failed** (2026-09-22, *after* the 6b product
+change; committed at `8c961c5` and re-measured on the committed tree). The **+6** over the previous 2,632 is
+exactly 6b's five allocator cases and one integration case — nothing else moved. **e2e: 11 specs / 46 tests —
+46 expected, 0 unexpected, 0 flaky, owner-measured 2026-09-22.** Trajectory in `plan/07`.
 
 ## Phase state — the plans are the authority
 

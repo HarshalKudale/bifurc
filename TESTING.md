@@ -1,6 +1,6 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-22 · suite: **2,632 tests / 113 files — 2,592 passed, 40 skipped, 0 failed** (no
+_Last reviewed: 2026-09-22 · suite: **2,638 tests / 113 files — 2,598 passed, 40 skipped, 0 failed** (no
 known failure: the standing `soap.execute` flake was retired with the P0 spike on 2026-09-21 — see §7)_
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
