@@ -85,7 +85,6 @@
  * `node:https` that has no test behind it. That is the honest position — the guard is what makes it
  * safe to leave that work to P9/P12.
  */
-import { randomUUID } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
@@ -97,9 +96,10 @@ import {
   RpcRequestSchema,
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
+  createClientSession,
   type CapabilityValue,
+  type ClientChannel,
   type CommandAction,
-  type EventName,
   type RpcResponse,
 } from "@bifurc/protocol";
 import {
@@ -120,9 +120,7 @@ import type { EventLog } from "./eventLog";
 import {
   assertBridgeIsTotal,
   BUS_NAME_BY_WIRE_NAME,
-  remoteErrorToEngineError,
   toRpcError,
-  type EngineEvent,
   type Transport,
 } from "./types";
 
@@ -217,197 +215,59 @@ export interface WsTransportOptions {
  * its control frame rather than dropping it, because a subscription that is silently discarded is
  * indistinguishable from "nothing has happened yet" — the failure mode `plan/05` singles out.
  *
- * `seq` comes from the engine, off the `EventEnvelope`. This is not a detail: `stdio`'s client
- * numbers arriving events with a local counter, which is sound only because `stdio` has no replay.
- * A client-side recount here would make `lastSeq` meaningless — it would number events by arrival
- * rather than by origin, so a session subscribed to a subset of events would compute a resume point
- * the engine does not recognise.
+ * **The state machine is not in this file.** Correlation by `id`, the control-frame set, subscriber
+ * refcounting by wire name, the outbox, the envelope rule, and the guarantee that a request in flight
+ * when the peer dies **rejects rather than hangs** all live in `createClientSession`
+ * (`@bifurc/protocol`'s `wire/session.ts`). This file supplies only the six `ClientChannel` members.
+ *
+ * It used to carry its own copy — the **third** one, after `stdio` and `socket` — and the copies had
+ * already drifted: this one read `seq` off the envelope while `stdio`'s recounted locally. That is
+ * precisely the "similar becomes drifted" failure `session.ts` was extracted to prevent, and it was
+ * invisible until the extraction forced the question *"who else implements this?"*. The `seq` rule
+ * (`seq` is engine-scoped, so a session subscribed to a subset sees deliberate gaps) is documented
+ * there, where all three transports now share one implementation of it.
  */
 export function createWsTransport(url: string, opts: WsTransportOptions = {}): Transport {
-  /** Requests awaiting a response, keyed by the `id` we generated. */
-  const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-  /** `id`s of control frames we sent, tracked only so a response to one is *recognised*. */
-  const control = new Set<string>();
-  /**
-   * Live subscriptions, keyed by wire name.
-   *
-   * A set of **tokens**, one per `subscribe()` call, not a set of callbacks: subscribing the same
-   * function to the same event twice must fire twice, and each unsubscribe must remove only its own.
-   * `in-process` behaves that way, and the whole point of the shared conformance suite is that the
-   * transports cannot disagree about things like this.
-   */
-  const listeners = new Map<string, Set<{ cb: (e: EngineEvent) => void }>>();
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
 
-  /** Frames written before the socket opened. Drained by `flush()` on `open`. */
-  let outbox: string[] = [];
   let socket: WebSocket | undefined;
   let open = false;
   let connecting: Promise<void> | undefined;
-  let closed = false;
-  let fatal: Error | undefined;
 
   /**
-   * The single teardown path.
+   * The single release path, called from **any** teardown via `ClientChannel.dispose()`.
    *
-   * `pending` is snapshotted and cleared **before** anything is rejected, because a rejection handler
-   * is arbitrary caller code that could re-enter here and must find nothing to act on. This is also
-   * what makes a hung client impossible: a request in flight when the peer dies rejects instead of
-   * leaving the caller awaiting a promise nobody will ever settle — the classic serialising-transport
-   * bug, and invisible until something crashes.
+   * Listeners are detached **before** the socket is closed: the `close` we are about to trigger must
+   * not re-enter `session.fail()`, and a `message` already queued must not be delivered into state
+   * that has just been cleared. Must not throw — it runs inside the teardown path, where there is
+   * nobody left to report a failure to.
    */
-  function teardown(reason: Error, notify: boolean): void {
-    if (closed) return;
-    closed = true;
-    fatal = reason;
-
-    const waiting = [...pending.values()];
-    pending.clear();
-    control.clear();
-    outbox = [];
-    for (const entry of waiting) entry.reject(reason);
-
-    for (const set of listeners.values()) set.clear();
-    listeners.clear();
-
+  function release(): void {
     const dead = socket;
     socket = undefined;
     open = false;
-    if (dead !== undefined) {
-      // Listeners first: the `close` we are about to trigger must not re-enter teardown, and a
-      // `message` already queued must not be delivered into cleared state.
-      dead.removeAllListeners();
-      try {
-        dead.close();
-      } catch {
-        // Already gone. `close()` must never throw.
-      }
-    }
-
-    if (notify) opts.onFatal?.(reason);
-  }
-
-  function assertOpen(what: string): void {
-    if (!closed) return;
-    throw fatal
-      ? new EngineError("ENGINE_ERROR", `Cannot ${what}: this session ended. ${fatal.message}`)
-      : new EngineError("ENGINE_ERROR", `Cannot ${what}: this transport has been closed.`);
-  }
-
-  function send(frame: string): void {
-    if (closed) return;
-    if (socket === undefined || !open) {
-      outbox.push(frame);
-      return;
-    }
+    if (dead === undefined) return;
+    dead.removeAllListeners();
+    /**
+     * The one listener that must **outlive** the detach.
+     *
+     * `ws`'s `close()` on a socket that never finished connecting aborts the handshake and then emits
+     * `error` on the **next tick** — "WebSocket was closed before the connection was established". An
+     * `error` event with no listener **throws**, and because it is emitted on a later tick the `try`
+     * below cannot catch it, so it escapes as an uncaught exception and takes the process down rather
+     * than failing one session. That is the same hazard the connect handler's `error` no-op documents.
+     *
+     * Reachable whenever a connect times out, because the socket is still `CONNECTING` — and it was
+     * live in the pre-refactor copy too, which detached and closed in the same order. Nothing had ever
+     * exercised the timeout, so nothing had ever emitted it.
+     */
+    dead.on("error", () => {});
     try {
-      socket.send(frame);
-    } catch (err) {
-      // A send failure is a dead socket, not a caller error. `teardown` rejects everything in flight.
-      teardown(
-        new EngineError("ENGINE_ERROR", `Send failed: ${err instanceof Error ? err.message : String(err)}`),
-        true,
-      );
-    }
-  }
-
-  function flush(): void {
-    const queued = outbox;
-    outbox = [];
-    for (const frame of queued) send(frame);
-  }
-
-  function sendControl(action: string, payload: unknown): void {
-    const id = randomUUID();
-    control.add(id);
-    send(encode({ id, action, payload }));
-  }
-
-  function deliver(frame: Record<string, unknown>): void {
-    const wire = frame.event;
-    if (typeof wire !== "string") return;
-    const set = listeners.get(wire);
-    if (set === undefined || set.size === 0) return;
-    const event: EngineEvent = {
-      event: wire as EventName,
-      // The engine's own `seq`, never a local recount — see the factory's header.
-      seq: typeof frame.seq === "number" ? frame.seq : 0,
-      payload: frame.payload,
-    };
-    // Iterate a copy: a callback may unsubscribe itself, which mutates `set`.
-    for (const token of [...set]) token.cb(event);
-  }
-
-  function handleResponse(frame: Record<string, unknown>): void {
-    const id = frame.id;
-    if (typeof id !== "string") {
-      teardown(
-        new EngineError("ENGINE_ERROR", "Received a frame that is neither a response nor an event."),
-        true,
-      );
-      return;
-    }
-
-    if (control.delete(id)) {
-      // A control acknowledgement. `ok:true` needs nothing further; `ok:false` means the engine
-      // refused a subscription the client had already validated against the same frozen
-      // `EVENT_NAMES` list — so either the two ends disagree about the protocol, or the engine is
-      // withholding something (no handshake yet, or a replay window that moved).
-      //
-      // All of those are surfaced through `onFatal` rather than swallowed, because the caller has no
-      // other channel: `subscribe()` is synchronous and returns only an unsubscribe function, so
-      // there is nowhere to report a late refusal. A caller that believed it was subscribed and is
-      // not would wait forever for events that will never arrive, which is precisely the "silently
-      // never fires" defect the transport contract forbids. Fatal is also consistent with the
-      // documented recovery for the `CONFLICT` case: reconnect without `lastSeq` and re-fetch.
-      if (frame.ok === false) {
-        teardown(
-          new EngineError(
-            "ENGINE_ERROR",
-            `The engine refused a transport control frame: ${remoteErrorToEngineError(frame.error).message}`,
-          ),
-          true,
-        );
-      }
-      return;
-    }
-
-    const entry = pending.get(id);
-    if (entry === undefined) {
-      // A response to an id we are not waiting on — a duplicate, or a late answer to a request whose
-      // session has moved on. There is no caller to tell, and killing a working session over it would
-      // be worse than ignoring it.
-      return;
-    }
-    pending.delete(id);
-
-    if (frame.ok === true) {
-      // UNINSPECTED. An inner `{ok:false}` is the handler's own report and reaches the caller as data.
-      entry.resolve(frame.data);
-      return;
-    }
-    if (frame.ok === false) {
-      entry.reject(remoteErrorToEngineError(frame.error));
-      return;
-    }
-    entry.reject(new EngineError("ENGINE_ERROR", "Response frame has no boolean `ok` field."));
-  }
-
-  function onMessage(raw: RawData): void {
-    if (closed) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw.toString());
+      dead.close();
     } catch {
-      teardown(new EngineError("ENGINE_ERROR", "The engine sent a frame that is not JSON."), true);
-      return;
+      // Already gone. `close()` must never throw.
     }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      teardown(new EngineError("ENGINE_ERROR", "The engine sent a frame that is not an object."), true);
-      return;
-    }
-    const record = parsed as Record<string, unknown>;
-    if (typeof record.event === "string") deliver(record);
-    else handleResponse(record);
   }
 
   function ensureConnected(): Promise<void> {
@@ -416,12 +276,16 @@ export function createWsTransport(url: string, opts: WsTransportOptions = {}): T
 
     const timeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     const ws = new WebSocket(url, opts.protocols, { headers: opts.headers });
-    // Assigned before `open` so `teardown()` can always reach the socket it must destroy.
+    // Assigned before `open` so `release()` can always reach the socket it must destroy.
     socket = ws;
 
     connecting = new Promise<void>((resolve, reject) => {
       let settled = false;
 
+      /**
+       * The connect timeout is a **channel** concern, not a session one: `createClientSession` knows
+       * nothing about how a peer is reached, so it cannot know what "too long" means.
+       */
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -429,21 +293,35 @@ export function createWsTransport(url: string, opts: WsTransportOptions = {}): T
           "ENGINE_ERROR",
           `Timed out after ${timeoutMs}ms connecting to ${url}.`,
         );
-        teardown(err, true);
+        session.fail(err, true);
         reject(err);
       }, timeoutMs);
 
       ws.on("open", () => {
-        if (settled || closed) return;
+        if (settled || session.closed) return;
         settled = true;
         clearTimeout(timer);
         open = true;
-        flush();
+        // Drains the session's outbox: subscriptions queued before the socket came up are replayed
+        // verbatim, which is what makes a `subscribe()` before `request()` safe.
+        session.opened();
         resolve();
       });
 
       ws.on("message", (raw) => {
-        onMessage(raw);
+        // Decoding is a channel concern — `stdio` and `socket` hand over length-prefixed bytes, so
+        // the session is handed an already-parsed frame and never sees `RawData`.
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw.toString());
+        } catch {
+          session.fail(
+            new EngineError("ENGINE_ERROR", "The engine sent a frame that is not JSON."),
+            true,
+          );
+          return;
+        }
+        session.receive(parsed);
       });
 
       /**
@@ -462,11 +340,11 @@ export function createWsTransport(url: string, opts: WsTransportOptions = {}): T
         if (!settled) {
           settled = true;
           clearTimeout(timer);
-          teardown(reason, true);
+          session.fail(reason, true);
           reject(reason);
           return;
         }
-        teardown(reason, true);
+        session.fail(reason, true);
       });
     });
 
@@ -480,122 +358,36 @@ export function createWsTransport(url: string, opts: WsTransportOptions = {}): T
     return connecting;
   }
 
-  return {
-    kind: "ws",
+  const channel: ClientChannel = {
+    /**
+     * `encode()` returns **bytes**, not a string, because the other two channels frame a byte stream
+     * and the session must be able to hand either an opaque `Uint8Array`. The WebSocket protocol
+     * frames messages itself, so the bytes here are simply the UTF-8 of the JSON and `write()`
+     * decodes them straight back — the round trip is the price of one shared session.
+     */
+    encode: (frame) => encoder.encode(encode(frame)),
 
-    async request(cmd: string, payload: unknown): Promise<unknown> {
-      assertOpen("request()");
-      await ensureConnected();
-      assertOpen("request()");
-
-      const id = randomUUID();
-      const promise = new Promise<unknown>((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-      });
-
-      try {
-        send(encode({ id, action: cmd, payload }));
-      } catch (err) {
-        // The payload could not be framed. Drop the pending entry so it cannot leak, and report the
-        // caller's error — the session is still healthy.
-        pending.delete(id);
-        throw err instanceof EngineError
-          ? err
-          : new EngineError("BAD_REQUEST", err instanceof Error ? err.message : String(err));
-      }
-
-      return promise;
+    write: (frame) => {
+      const live = socket;
+      if (live === undefined) return;
+      // Text, not bytes: the engine's `ws` server reads frames as text (`raw.toString()`) and answers
+      // in kind, so sending binary here would be a protocol the other end does not speak.
+      live.send(decoder.decode(frame));
     },
 
-    subscribe(events: string[], cb: (e: EngineEvent) => void): () => void {
-      assertOpen("subscribe()");
-      if (events.length === 0) return () => {};
-
-      // All-or-nothing, and synchronously — `subscribe()` is not async, so a bad name has to be
-      // caught here rather than awaited. Validating against the protocol's own list is what makes the
-      // engine's answer predictable: both ends read the same frozen `EVENT_NAMES`, so a refusal would
-      // mean the engine is out of step with the protocol rather than that the caller was wrong.
-      const fresh: string[] = [];
-      for (const wire of events) {
-        if (!BUS_NAME_BY_WIRE_NAME.has(wire)) {
-          throw new EngineError(
-            "UNSUPPORTED",
-            `This transport cannot deliver "${wire}". It is either not a known event or not yet on ` +
-              `the wire; see BUS_EVENTS_NOT_ON_THE_WIRE in packages/engine/src/transport/types.ts.`,
-          );
-        }
-        if (!listeners.has(wire)) {
-          listeners.set(wire, new Set());
-          fresh.push(wire);
-        }
-      }
-
-      const token = { cb };
-      for (const wire of events) listeners.get(wire)!.add(token);
-
-      // Only ask for names the engine is not already sending us — refcounted by *name*, so two
-      // callers subscribing to `event.log.entry` share one wire subscription.
-      if (fresh.length > 0) {
-        /**
-         * Start connecting if nothing has yet.
-         *
-         * Without this, a client that only ever subscribes would sit with its control frames in the
-         * `outbox` forever: the socket is opened lazily by `request()`, and `subscribe()` — which
-         * cannot await — has no other way to trigger it. The symptom is a subscription that succeeds,
-         * never fires, and never errors, which is exactly the failure mode the transport contract
-         * forbids and the hardest one to diagnose.
-         *
-         * The rejection is swallowed here and surfaced through `onFatal` (fired by `teardown` inside
-         * `ensureConnected`) and through any pending request. A `subscribe()` caller has nowhere to
-         * receive it — the method is synchronous and returns only an unsubscribe function.
-         */
-        void ensureConnected().catch(() => undefined);
-        sendControl("subscribe", { events: fresh });
-      }
-
-      let detached = false;
-      return () => {
-        if (detached) return;
-        detached = true;
-        const dropped: string[] = [];
-        for (const wire of events) {
-          const set = listeners.get(wire);
-          if (set === undefined) continue;
-          set.delete(token);
-          if (set.size === 0) {
-            listeners.delete(wire);
-            dropped.push(wire);
-          }
-        }
-        // Nothing to send if the session is already gone, and nothing that *can* be sent.
-        if (dropped.length > 0 && !closed) sendControl("unsubscribe", { events: dropped });
-      };
-    },
-
-    async close(): Promise<void> {
-      if (closed) return;
-      /**
-       * Say goodbye before tearing down.
-       *
-       * Without this the engine's session keeps its `EventLog` subscriptions attached until it
-       * notices the socket died — and it has no reason to notice promptly, because nothing is
-       * written on a graceful close. On a long-lived engine that is one leaked listener per closed
-       * session, accumulating until Node's warning fires and the leak is blamed on whatever
-       * subscribed last. Best-effort throughout: `close()` must not throw, because a caller cleaning
-       * up in a `finally` block has nothing to do with a failure to say goodbye.
-       */
-      const live = [...listeners.keys()];
-      if (live.length > 0) {
-        try {
-          sendControl("unsubscribe", { events: live });
-        } catch {
-          // The socket is already gone; there is nobody left to tell.
-        }
-      }
-      // Not `notify: true` — a caller-initiated close is not a fault.
-      teardown(new EngineError("ENGINE_ERROR", "This transport has been closed."), false);
-    },
+    isReady: () => socket !== undefined && open,
+    ensureReady: () => ensureConnected(),
+    dispose: () => release(),
+    /**
+     * The caller's `onFatal` is fired by the session, which owns the decision about whether a death
+     * was a fault — a caller-initiated `close()` is deliberately not one, because reporting a clean
+     * shutdown as a fault would make every orderly exit look like a crash to whatever is watching.
+     */
+    onFatal: (error) => opts.onFatal?.(error),
   };
+
+  const session = createClientSession({ kind: "ws", channel });
+  return session.transport;
 }
 
 // ── the server ───────────────────────────────────────────────────────────────
