@@ -51,6 +51,24 @@ import {
  */
 const WS_OPEN = 1;
 
+/**
+ * How long to wait for TCP **and** the WebSocket handshake before giving up.
+ *
+ * The same number, and the same message, as `@bifurc/engine`'s `ws` channel — so the two clients
+ * report a slow or half-dead engine identically rather than one of them hanging.
+ *
+ * **This is a channel concern and not a session one**, which is why it lives here rather than in
+ * `createClientSession`: that layer knows nothing about how a peer is reached, so it cannot know what
+ * "too long" means. The engine's channel makes the same split and says so.
+ *
+ * It is not decoration. A peer that **accepts the TCP connection and then never answers the upgrade**
+ * produces neither an `open` nor a `close`, so without this timer `ensureReady()` never settles and
+ * every request behind it waits forever — the "hangs rather than rejects" failure `plan/05` singles
+ * out, arriving through the one door the session cannot see. Found by the suite on 2026-09-22: a
+ * released ephemeral port was re-bound by another test's listener and one case timed out at 15 s.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+
 export interface BrowserTransportOptions {
   /** The engine's WebSocket endpoint, e.g. `ws://127.0.0.1:8080`. */
   url: string;
@@ -73,6 +91,8 @@ export interface BrowserTransportOptions {
    * implementation the host happens to provide — and so a non-browser host can supply one.
    */
   webSocketFactory?: (url: string, protocols?: string | string[]) => WebSocket;
+  /** Overrides `DEFAULT_CONNECT_TIMEOUT_MS`. */
+  connectTimeoutMs?: number;
 }
 
 export function createBrowserTransport(opts: BrowserTransportOptions): Transport {
@@ -81,6 +101,24 @@ export function createBrowserTransport(opts: BrowserTransportOptions): Transport
   let socket: WebSocket | undefined;
   let open = false;
   let connecting: Promise<void> | undefined;
+  /**
+   * The armed connect timeout.
+   *
+   * Held here rather than inside the promise so `releaseSocket()` can clear it: it is the one piece
+   * of connect state that survives the handler detach, and one left armed after a teardown would
+   * keep the event loop alive for up to ten seconds after every `close()`. Clearing it there is
+   * **defensive rather than load-bearing** — `teardown` is idempotent, so a late fire reports
+   * nothing — and is kept for the same reason the handler detach below is: the alternative is to
+   * depend on the ordering of a file this one does not own.
+   */
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Disarm the connect timeout. Safe to call when none is armed. */
+  function clearConnectTimer(): void {
+    if (connectTimer === undefined) return;
+    clearTimeout(connectTimer);
+    connectTimer = undefined;
+  }
 
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
@@ -93,6 +131,7 @@ export function createBrowserTransport(opts: BrowserTransportOptions): Transport
     const dead = socket;
     socket = undefined;
     open = false;
+    clearConnectTimer();
     if (dead === undefined) return;
 
     // Detach **before** closing, so the `close` this triggers cannot re-enter the session.
@@ -120,6 +159,7 @@ export function createBrowserTransport(opts: BrowserTransportOptions): Transport
     if (socket !== undefined && open) return Promise.resolve();
     if (connecting !== undefined) return connecting;
 
+    const timeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     const s = factory(opts.url, opts.protocols);
     // Assigned before `open` can fire so `releaseSocket()` can always reach the socket it must close.
     socket = s;
@@ -141,9 +181,31 @@ export function createBrowserTransport(opts: BrowserTransportOptions): Transport
         reject(reason);
       };
 
+      /**
+       * The third way a connect can end, and the only one the socket itself will not report.
+       *
+       * A refused connection fires `close` and a failed handshake fires `error` — but a peer that
+       * accepts the TCP connection and then never answers the upgrade fires **neither**. That is a
+       * reachable state rather than a hypothetical: a port that was free when it was measured can be
+       * bound by something else a moment later, which is exactly what this suite's dead-address case
+       * does. Without this timer the promise never settles and the caller waits forever, which is the
+       * "hangs rather than rejects" failure the transport contract forbids — arriving through the one
+       * door `createClientSession` cannot see, because it does not know how a peer is reached.
+       *
+       * Reported through `fail()` like every other connect failure, so the session tears down, the
+       * promise rejects and `onFatal` fires. One path, not three.
+       */
+      connectTimer = setTimeout(() => {
+        if (settled) return;
+        fail(
+          new EngineError("ENGINE_ERROR", `Timed out after ${timeoutMs}ms connecting to ${opts.url}.`),
+        );
+      }, timeoutMs);
+
       s.onopen = () => {
         if (settled || session.closed) return;
         settled = true;
+        clearConnectTimer();
         open = true;
         // Flush whatever the session queued before the socket came up — subscription control frames,
         // typically. `session.opened()` replays them verbatim; see the split in `session.ts`.
@@ -166,19 +228,51 @@ export function createBrowserTransport(opts: BrowserTransportOptions): Transport
       };
 
       /**
-       * The browser gives no detail here, by design: exposing why a cross-origin connect failed would
-       * leak information about the other origin. So the message names only what we asked for.
+       * **A failed connect is reported here — and on this platform it is reported *only* here.**
+       *
+       * Measured, not assumed (2026-09-22): Node's own `WebSocket` — undici's — fires `error` and then
+       * **no `close` at all** when a connect fails. Three forms were probed and all three behaved
+       * identically, with `readyState` still `CONNECTING` seconds later: a port that had been bound and
+       * released, a listener that refused the upgrade by hand, and a listener that destroyed the socket
+       * on arrival. `ws` — which the engine's own channel uses — *does* emit `close` after `error`, and
+       * a spec-compliant browser does too. So this is a property of the **host**, not of the protocol,
+       * and `ws.ts`'s handler cannot be copied verbatim here.
+       *
+       * That is why the guard is `open` rather than nothing, and both halves of it are load-bearing:
+       *
+       * - **Reporting unconditionally** is the defect this replaced. `error` also fires when an
+       *   *established* connection drops, so every dropped session was announced as `Could not connect`
+       *   — the message work item 2's UI reads as "the address was wrong" rather than "reconnect".
+       * - **Silencing it entirely** is the tempting over-correction, and it is worse: on this host it
+       *   leaves a wrong address with **no** report at all, so `ensureReady()` never settles and the caller
+       *   hangs rather than fails. Only a socket that never opened belongs to this handler.
+       *
+       * `fail()` is idempotent and first-wins, so when `close` does follow `error` — a browser — this
+       * message is the one that survives, and it is the right one: the socket never opened.
        */
       s.onerror = () => {
+        if (open) return; // Established: `close` owns that message, and it says something different.
         fail(new EngineError("ENGINE_ERROR", `Could not connect to ${opts.url}.`));
       };
 
-      // `close` always follows `error`, so this is the ordinary path for a peer that goes away.
+      /**
+       * The other reporting path, distinguishing the two cases by whether the socket ever opened — the
+       * only difference a caller can act on. "Could not connect" means retry from scratch; "the engine
+       * closed the connection" means reconnect. A single message for both would make the UI lie.
+       *
+       * On this host the `!open` half is unreachable (see `onerror`): undici does not emit `close` for a
+       * failed connect. It is kept because on a browser it is *the* path for that case, and dropping it
+       * would make this file correct on the platform it is tested on and wrong on the platform it is
+       * written for.
+       */
       s.onclose = () => {
+        clearConnectTimer();
         fail(
           new EngineError(
             "ENGINE_ERROR",
-            `Session closed: the engine closed the connection to ${opts.url}.`,
+            open
+              ? `Session closed: the engine closed the connection to ${opts.url}.`
+              : `Could not connect to ${opts.url}.`,
           ),
         );
       };

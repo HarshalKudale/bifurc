@@ -1,17 +1,24 @@
 /**
  * `@bifurc/web-client` — the browser half of the Bifurc client.
  *
- * It exports exactly one thing: a `Transport` over the platform's native `WebSocket`. That is the
- * whole of what a browser was missing. `@bifurc/client` is already built for a browser bundle
- * (`platform: "neutral"` in its `tsup.config.ts`, and no Node built-in in its graph), and it is a pure
- * mapping over a `Transport` — so the composition is the app's, and it is one line:
+ * It exports **two** things, and both are halves of what a browser was missing: a `Transport` over the
+ * platform's native `WebSocket` (the wire) and `createBrowserLocal` (the sixteen client-local
+ * operations — `createClient` *requires* a `local`, and there is no Electron shell in a page to supply
+ * one). `@bifurc/client` is already built for a browser bundle (`platform: "neutral"` in its
+ * `tsup.config.ts`, and no Node built-in in its graph), so the composition is the app's, and it is one
+ * line:
  *
  * ```ts
  * import { createClient } from "@bifurc/client";
- * import { createBrowserTransport } from "@bifurc/web-client";
+ * import { createBrowserLocal, createBrowserTransport } from "@bifurc/web-client";
  *
- * const client = createClient(createBrowserTransport({ url }));
+ * const client = createClient(createBrowserTransport({ url }), { local: createBrowserLocal() });
  * ```
+ *
+ * This header said "exactly one thing" and showed a `createClient` call with **no `local`** for a day
+ * after `local.ts` landed — an example that would not compile, in the file whose job is to say what the
+ * package is. A docblock that restates a file's own exports drifts the moment they change; the
+ * correction is recorded rather than quietly made.
  *
  * ## Why this package exists at all
  *
