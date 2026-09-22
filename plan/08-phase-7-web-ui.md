@@ -162,6 +162,57 @@ listeners, teardown, deliver — which is exactly the "third copy where similar 
 
 ---
 
+### The build record (2026-09-22) — what WI 1 actually landed
+
+Two halves in `packages/web-client`, both against **real** I/O and with no mocks:
+
+- **`channel.ts` / `createBrowserTransport`** — a `ClientChannel` over the native `WebSocket`, letting
+  `createClientSession` own correlation, refcounting and teardown. Writing a second session would have been
+  the **third** copy `session.ts` exists to prevent. It sends **text** frames, matching the engine's server
+  and its own `ws` client. 8 cases against a real `createWsServer`.
+- **`local.ts` / `createBrowserLocal`** — the **16 required `RequiredClientLocal` members**, without which
+  `createClient` cannot be called at all (it *requires* `local`). Declared with `satisfies`, never `as`. 16
+  jsdom cases. Of the sixteen, **9 do the desktop's real work and 7 report a truthful failure**: 2 **throw**
+  (`pickFilePath`, `pickFolderPath` — a browser file input yields a `File` whose name is a bare name with no
+  directory, so the desktop's reusable-path contract cannot be honoured, and a synthetic path would fail one
+  step later instead of here) and 5 **refuse structurally** (`setTitleBarOverlay`; `tlsInstallCA` →
+  `needsManualInstall` + instructions, which is a *supported outcome* rather than an error; `tlsRemoveCert`;
+  `tlsCertStatus`; `checkUpdate` → `ok:false` **with the version still reported**, so "I cannot answer this"
+  cannot be misread as "you are up to date"). `openExternal` is an **http/https allowlist plus
+  `noopener,noreferrer`**: the URL comes from a possibly remote engine, and `window.open("javascript:…")`
+  would run script in a context the user trusts.
+
+**The wire machinery moved as a precondition.** `types.ts` + `session.ts` → `@bifurc/protocol/src/wire/`,
+because protocol is the package that already enforces `platform: "neutral"` and is therefore the only one
+whose build fails loudly if a Node built-in creeps in. `framing.ts` **stayed in the engine** — it is
+length-prefix framing for byte streams and a WebSocket needs none of it; moving it would have been
+cargo-culting a "wire trio" that is really a pair plus a stream codec. Engine keeps thin re-exports, so the
+shell is untouched. `@bifurc/client` was *already* `platform: "neutral"` — only the transport was missing.
+
+**The `ws.ts` third copy is gone (WI 1b).** `createWsTransport`'s client is now a `ClientChannel` +
+`createClientSession`: ~180 lines of duplicated state machine deleted, leaving only what is per-transport
+(the `ws` library's `.on()` API; the `headers` option, where a remote deployment puts a bearer credential;
+the ten-second connect timeout; and the close code). The conformance suite (57 cases) passed unchanged, which
+is the evidence the two copies agreed.
+
+Completing that extraction exposed **two defects that were already on `HEAD` and green in `npm test`**.
+Neither is a P7 regression; both are recorded in `TRAPS.md`:
+
+1. A **type error** left by the `Buffer` → `Uint8Array` widening. The widening was justified as safe because
+   `Buffer extends Uint8Array` — true of every *implementation*, false of a *consumer*: `session.test.ts`
+   stored into a `Buffer[]`. `npm test` runs vitest, **and vitest does not typecheck**, so it shipped for a
+   full commit. **Run `tsc -p packages/engine/tsconfig.json` explicitly after any type-level change.**
+2. An **uncaught exception** on the connect-timeout path. `release()` detached every listener and *then*
+   called `close()`; on a socket still `CONNECTING`, `ws.close()` aborts the handshake and emits `error` on
+   the **next tick**, and an `error` event with no listener **throws** — outside the `try`, so it escaped as
+   an uncaught exception rather than failing one session. Pre-existing: the pre-refactor copy had the same
+   order, and nothing had ever exercised the timeout, so nothing had ever emitted it.
+
+**Still open after WI 1:** no web target exists (`apps/`) — that is item 5, built from nothing. Two
+capabilities have no browser equivalent and are **recorded rather than worked around**: `tlsRemoveCert`'s
+engine half is unreachable from any non-shell `ClientLocal` (the hook is injected *without* the transport, so
+the gap is in the injection point, not in the browser file), and CA install is manual by nature (item 4).
+
 ## Work item 2 — Connection and session UX
 
 This is genuinely new surface that has no Electron equivalent.
