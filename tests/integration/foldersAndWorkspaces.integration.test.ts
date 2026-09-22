@@ -57,7 +57,7 @@ vi.mock("@/main", () => ({ updateTrayMenu: vi.fn() }));
  *
  * The channel spread the whole argument (`{ kind, ...folder }`); the client picks `name` and `parentId`
  * only. That difference is inert *for the renderer*, whose contract excludes `workspaceId`
- * (`renderer/types/window.ts:63`: `Omit<Folder, "id" | "createdAt" | "workspaceId">`) — but this suite's
+ * (`packages/gui/src/types/window.ts:63`: `Omit<Folder, "id" | "createdAt" | "workspaceId">`) — but this suite's
  * `addFolder()` helper deliberately passes `workspaceId: TEST_WS`, which the spread carried and the
  * client's field-picking would drop. So the translation keeps the spread. Getting this wrong would not
  * fail loudly: it would move the folder into the *active* workspace, which happens to be `TEST_WS` here,

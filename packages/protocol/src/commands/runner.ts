@@ -12,7 +12,7 @@ import { WorkspaceScope } from "./scope";
 const RunResult = z.object({
   /**
    * These four are carried by the renderer's real `RunnerRequestResult`
-   * (`renderer/lib/collectionRunner.ts`) and were dropped by the P1 schema, which was written from
+   * (`packages/gui/src/lib/collectionRunner.ts`) and were dropped by the P1 schema, which was written from
    * the HTML renderer's field *usage* rather than from the type. `z.object()` strips unknown keys,
    * so their absence silently truncated the **JSON** report export — the HTML renderer touches only
    * fields the schema happened to have, which is exactly why this would have shipped unnoticed.

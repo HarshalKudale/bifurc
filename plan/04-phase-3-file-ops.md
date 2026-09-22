@@ -467,7 +467,7 @@ The genuinely new design work. Full detail in `File_Ops_Protocol.md` §6.
 > with the stale-entry replacement.
 >
 > **Every new field is additive.** `window.api` is byte-identical through P6
-> (`README.md` non-negotiable #3) — `renderer/types/window.ts` and `preload.ts` are untouched, and
+> (`README.md` non-negotiable #3) — `packages/gui/src/types/window.ts` and `preload.ts` are untouched, and
 > the renderer reads none of `fingerprint`, `trustState`, `trustedFingerprint`, `firefoxDetected`,
 > `alreadyTrusted`, `verified` or `clientUntrusted`.
 >
@@ -648,7 +648,7 @@ Every one of these must become a blob reference or be dropped. Verified against 
 | `runnerHandlers.ts` — `runner:exportReport` | engine → client | ✅ the engine returns `ArtifactResult`; the shell returns the user's own `filePath` (category 2) |
 | `capture:shareJson` | engine → client | ✅ same — the engine returns `ArtifactResult`; the shell returns the user's own `filePath` (category 2) |
 | `audit:export` | engine → client | ✅ the engine returns `ArtifactResult`; the shell returns the user's own `filePath` (category 2) |
-| `renderer/types/window.ts:44, 45, 191` | renderer types encode the above | ⬜ deferred to P7 — the renderer must stay byte-identical through P6 |
+| `packages/gui/src/types/window.ts:44, 45, 191` | renderer types encode the above | ⬜ deferred to P7 — the renderer must stay byte-identical through P6 |
 
 **One more path leak was found and fixed while converting the ingress pair**, and it is the kind
 that would have been easy to leave: `tls.importCert` read `blobContentPath(blobId)` directly, and
@@ -665,9 +665,9 @@ crosses the boundary. Fixed by going through `statBlob()` first, which converts 
 
 Minimal, but not zero:
 
-- `renderer/types/window.ts` — drop `filePath` from `ExportRequest`/`PreflightRequest`/`ImportRequest`
+- `packages/gui/src/types/window.ts` — drop `filePath` from `ExportRequest`/`PreflightRequest`/`ImportRequest`
   result types; add the blob shapes.
-- `renderer/components/modals/ImportExportModal.tsx:100–117` — stop parking `res.filePath` in state;
+- `packages/gui/src/components/modals/ImportExportModal.tsx:100–117` — stop parking `res.filePath` in state;
   carry `blobId` instead.
 - Certificate UI — add the fingerprint display, the install step, the Firefox note, and the "CA changed,
   reinstall" warning.

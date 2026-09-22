@@ -46,7 +46,7 @@
  *
  * | Type | Fields | In `RunReport`? |
  * | --- | --- | --- |
- * | `CollectionRunReport` (`renderer/lib/collectionRunner.ts`) | 9 | all 9 |
+ * | `CollectionRunReport` (`packages/gui/src/lib/collectionRunner.ts`) | 9 | all 9 |
  * | `RunnerRequestResult` | 11 | all 11 |
  *
  * That table is the whole reason this is `MOVABLE` rather than `NARROWED`. The P1 schema was written

@@ -43,7 +43,7 @@ uses — and you de-risk the entire programme.
 
 | Finding | Evidence |
 |---|---|
-| **Renderer is 100% platform-agnostic** | `renderer/types/window.ts:193` declares `platform: string`, but it is **never read anywhere** in the renderer. No `navigator.userAgent` sniffing. Zero platform branches. Fully portable to any webview. |
+| **Renderer is 100% platform-agnostic** | `packages/gui/src/types/window.ts:193` declares `platform: string`, but it is **never read anywhere** in the renderer. No `navigator.userAgent` sniffing. Zero platform branches. Fully portable to any webview. |
 | **Tray menu is trivial** | `main.ts:78` — three items: Open, a `minimizeToTray` checkbox, Quit. Small Rust rewrite, not a subsystem. |
 | **Zoom is shell-only** | `renderer/` has **zero** references to `zoomLevel`. It is entirely a `main.ts` + `systemHandlers.ts` concern, so the renderer doesn't care how zoom is implemented. |
 | **Engine has no asset-path coupling** | `__dirname` / `process.resourcesPath` appear **only** in `main.ts` (lines 38–39, 171, 184 — all shell). No engine module resolves assets from disk. **This is the key enabler for compiling the engine to a standalone binary** — nothing will break on missing `node_modules`. |

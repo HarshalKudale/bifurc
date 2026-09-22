@@ -15,8 +15,8 @@
     "rootDir": "..",
     "baseUrl": "..",
     "paths": {
-      "@/*": ["./renderer/*"]
+      "@/*": ["./packages/gui/src/*"]
     }
   },
-  "include": ["**/*.ts", "../renderer/types/window.ts"]
+  "include": ["**/*.ts", "../packages/gui/src/types/window.ts"]
 }

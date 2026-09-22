@@ -31,8 +31,8 @@
  * this group began with a **fix-first** commit rather than a deletion (`174a01d`). Its body applied
  * `toProtocolKind()` — the map whose only non-identity entries are `rules → proxyRules` and
  * `sockets → wsConnections` — and the client twin forwarded the caller's `kind` verbatim. Two panels
- * pass the engine-internal names (`renderer/panels/ProxyRulesPanel.tsx`'s `"rules"`,
- * `renderer/panels/WebSocketsPanel.tsx`'s `"sockets"`) and `EntityLoadParams.kind` is the strict
+ * pass the engine-internal names (`packages/gui/src/panels/ProxyRulesPanel.tsx`'s `"rules"`,
+ * `packages/gui/src/panels/WebSocketsPanel.tsx`'s `"sockets"`) and `EntityLoadParams.kind` is the strict
  * `EntityKind` enum, so both were being answered `BAD_REQUEST` and both wrap the call in
  * `.catch(() => {})` — the failure surfaced as "the entity has no fields". Deleting the channel first
  * would have destroyed the only correct implementation of a live behaviour, exactly as group 1 would

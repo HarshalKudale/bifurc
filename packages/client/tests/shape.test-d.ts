@@ -23,19 +23,19 @@
  * This is the productionised form of `spike/protocol/shape.ts` (the P0 spike, marked "throwaway, do
  * not productionise"), which proved the same property over a 10-method `Pick<>`. Two things changed
  * on the way in: the scope is now the **whole** surface rather than a slice, and the type is named
- * **`BifurcApi`** — the plan says `WindowApi`, but `renderer/types/window.ts` has never exported that
+ * **`BifurcApi`** — the plan says `WindowApi`, but `packages/gui/src/types/window.ts` has never exported that
  * name. `BifurcApi` is the real one; the plan's sketch is stale on this point.
  *
  * ## Why the client is checked against `BifurcApi` and not the other way round
  *
- * `BifurcClient` is a **superset** of `BifurcApi`: it adds the four keys `renderer/types/window.ts`
+ * `BifurcClient` is a **superset** of `BifurcApi`: it adds the four keys `packages/gui/src/types/window.ts`
  * under-declares (see `src/surface.ts`'s header) plus the lifecycle method `close`. So the client is
  * assignable to the declared type but not vice versa — `BifurcApi` has no `close`. Asserting mutual
  * assignability here would therefore be wrong, and the spike's two-direction pattern is narrowed
  * below to the *shared* keys, which is the direction that actually catches signature drift.
  */
 import type { Transport } from "@bifurc/engine/transport/types";
-import type { BifurcApi } from "../../../renderer/types/window";
+import type { BifurcApi } from "../../gui/src/types/window";
 import type { BifurcApiFull, BifurcClient, OptionalInDeclaredType } from "../src/index";
 import { createClient } from "../src/index";
 import type { ClientLocal } from "../src/local";
@@ -113,7 +113,7 @@ type CloseIsNotPartOfTheSurface = "close" extends keyof BifurcApi ? never : true
 const _closeIsOutsideTheSurface: CloseIsNotPartOfTheSurface = true;
 const _closeIsCallable: () => Promise<void> = client.close;
 
-// ── 6. The unsubscribe contract, per method. `renderer/types/window.ts` types all seven as
+// ── 6. The unsubscribe contract, per method. `packages/gui/src/types/window.ts` types all seven as
 //       returning `() => void`; the plan warns that "silently returning `undefined` leaks
 //       listeners", so a client that typed any of these as `void` must fail here rather than leak
 //       subscriptions at runtime. The mapped type checks each key, and the literal must be total.

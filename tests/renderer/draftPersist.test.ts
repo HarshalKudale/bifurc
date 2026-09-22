@@ -16,7 +16,7 @@ const mockStorage = new MockLocalStorage();
 
 import { saveDraft, loadDraft, clearDraft, getDraftIds } from "@/hooks/useDraftPersist";
 
-describe("renderer/lib/useDraftPersist.ts — pure helpers", () => {
+describe("packages/gui/src/lib/useDraftPersist.ts — pure helpers", () => {
   beforeEach(() => {
     mockStorage.clear();
   });

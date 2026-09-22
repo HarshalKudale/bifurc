@@ -20,7 +20,7 @@ if (!(globalThis as any).btoa) {
   (globalThis as any).atob = (str: string) => Buffer.from(str, "base64").toString("binary");
 }
 
-describe("renderer/lib/utils.ts", () => {
+describe("packages/gui/src/lib/utils.ts", () => {
   describe("mkRowId()", () => {
     it("returns a non-empty string", () => {
       const id = mkRowId();

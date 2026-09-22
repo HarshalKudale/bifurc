@@ -295,7 +295,7 @@ out in a day rather than in week three.**
 >
 > 1. **`MAX_ACTIVE_WEBHOOKS` stays a module constant, not a constructor argument.** "Per workspace" scopes
 >    the *map*, not the number. Its duplicate at
->    `renderer/panels/webhooks/useWebhooksPanelState.ts:11` is a UI hint the renderer cannot stop holding
+>    `packages/gui/src/panels/webhooks/useWebhooksPanelState.ts:11` is a UI hint the renderer cannot stop holding
 >    before P7, so WI 2 still owes a decision on whether the value is pushed to it.
 > 2. **`webhookEmitter` must NOT become per instance.** It is the shared EventEmitter the shell's forward and
 >    the suite subscribe to; a per-instance emitter detaches both silently.
@@ -957,7 +957,7 @@ all line up. This is why P9 moves *after* this phase.
 > `WorkspaceRuntime.start()` unconditionally binds **both** servers (`workspaceRuntime.ts`), and
 > `webhookPort` is a **required** option. But the desktop has **never** started the webhook receiver at boot:
 > `src/main.ts` starts only the proxy and the companion, and the receiver is started **on demand** —
-> `renderer/panels/WebhooksPanel.tsx:100` → `window.api.startWebhookServer()` → `webhookServer.start` →
+> `packages/gui/src/panels/WebhooksPanel.tsx:100` → `window.api.startWebhookServer()` → `webhookServer.start` →
 > `startWebhookServer(port)`.
 >
 > **So `main.ts` calling `runtime.start()` would open a webhook port at desktop boot that the product has
@@ -1856,7 +1856,7 @@ mechanical behind the readiness work.
 ### 13.5 What this measurement did **not** do
 
 - It did **not** touch or count `renderer/` — the webhook panel's `MAX_ACTIVE_WEBHOOKS = 5`
-  (`renderer/panels/webhooks/useWebhooksPanelState.ts:11`) is a **duplicate of the engine's constant**
+  (`packages/gui/src/panels/webhooks/useWebhooksPanelState.ts:11`) is a **duplicate of the engine's constant**
   (`webhookServer.ts:63`) that WI 2 makes per-workspace; the renderer copy cannot be edited before P7
   (non-negotiable #1), so WI 2 must state whether the renderer's cap is left as a UI hint or the value is
   pushed to it. Recorded here as an open WI 2 question, not resolved.

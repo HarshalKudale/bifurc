@@ -5,8 +5,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "main": "dist/main.js",
   "workspaces": [
-    "packages/*",
-    "apps/*"
+    "packages/*"
   ],
   "author": {
     "name": "Harshal Kudale"
@@ -18,11 +17,12 @@
     "build:main": "npm run clean:main && npm run build:packages && tsc && tsc-alias && npm run build:preload",
     "build:preload": "node scripts/build-preload.mjs",
     "build:renderer": "vite build",
-    "build:web": "npm run build --workspace @bifurc/web",
-    "typecheck:web": "npm run typecheck --workspace @bifurc/web",
+    "build:web": "vite build --config web/vite.config.ts",
+    "typecheck:web": "tsc -p web/tsconfig.json",
     "assert:dist": "node scripts/assert-dist.mjs",
     "build": "npm run build:main && npm run build:renderer",
     "dev": "npm run build && electron .",
+    "dev:web": "vite --config web/vite.config.ts",
     "start": "electron .",
     "typecheck:packages": "npm run typecheck --workspace @bifurc/protocol && npm run typecheck --workspace @bifurc/engine && npm run typecheck --workspace @bifurc/client && npm run typecheck --workspace @bifurc/web-client",
     "typecheck": "npm run build:packages && npm run typecheck:packages && tsc --noEmit",
@@ -111,7 +111,9 @@
   "dependencies": {
     "@bifurc/client": "*",
     "@bifurc/engine": "*",
+    "@bifurc/gui": "*",
     "@bifurc/protocol": "*",
+    "@bifurc/web-client": "*",
     "@codemirror/autocomplete": "^6.20.2",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-html": "^6.4.11",

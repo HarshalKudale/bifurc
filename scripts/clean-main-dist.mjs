@@ -1,6 +1,6 @@
 /**
  * Remove the app's *compiled* output before `tsc` re-emits it — everything under `dist/`
- * except `dist/renderer/`, which belongs to Vite (`build:renderer`).
+ * except `dist/renderer/` and `dist/web/`, which belong to Vite (`build:renderer`, `build:web`).
  *
  * ## Why this exists
  *
@@ -26,18 +26,20 @@
  * Deleting them is the fix; re-emitting is what `tsc` does next. This runs on every
  * `build:main`, so the condition cannot come back.
  *
- * ## Why `dist/renderer` is excluded
+ * ## Why the two Vite bundles are excluded
  *
- * Vite emits content-hashed bundles there with `emptyOutDir: true`, and it owns that
- * directory. It is *not* tsc output — its files have no `src/` counterpart, so any
- * "delete what has no source" heuristic would classify the whole renderer bundle as stale
- * and delete the app's UI. `build:main` must not touch what `build:renderer` owns.
+ * Vite emits content-hashed bundles there with `emptyOutDir: true`, and it owns those
+ * directories. They are *not* tsc output — their files have no `src/` counterpart, so any
+ * "delete what has no source" heuristic would classify a whole bundle as stale and delete
+ * the app's UI. `build:main` must not touch what `build:renderer` or `build:web` owns.
+ *
+ * `web` joined `renderer` here under D18, when the browser host became a second Vite build.
  */
 import fs from "node:fs";
 import path from "node:path";
 
 const DIST = path.resolve("dist");
-const KEEP = new Set(["renderer"]);
+const KEEP = new Set(["renderer", "web"]);
 
 if (!fs.existsSync(DIST)) {
   console.log("[clean:main] no dist/ yet — nothing to do");

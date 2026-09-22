@@ -73,14 +73,14 @@ Separate from the agent-shell limitation above, the reason the suite fails on a 
 **first-launch Terms of Service**, and it is worth writing down because the fix is not where you would
 look for it.
 
-`renderer/App.tsx:23` gates the *entire* shell:
+`packages/gui/src/App.tsx:23` gates the *entire* shell:
 
 ```ts
 const [tosAccepted, setTosAccepted] = usePersistedState<boolean>("app:tos-accepted", false);
 if (!tosAccepted) return <TermsAcceptanceScreen onAccept={() => setTosAccepted(true)} />;
 ```
 
-`usePersistedState` is backed by plain **`localStorage`** (`renderer/lib/storage.ts` — `getItem` /
+`usePersistedState` is backed by plain **`localStorage`** (`packages/gui/src/lib/storage.ts` — `getItem` /
 `setItem`, JSON-encoded). So the flag is **per-profile renderer state, not `app.json`**, which means
 `writeSampleWorkspace()` cannot reach it however much you add to it. `sampleData.ts` already writes
 `hasSeenWelcome: true`, and that is *correct but irrelevant* — it drives `app:isFirstLaunch`, a different
@@ -275,7 +275,7 @@ this would have been a **data-loss bug in saved run history**, not a type error 
 calls; it is now `{ ...client }` plus **eight explicit overrides**. **136 of the 144 keys route
 through the bridge.**
 
-The reason the table could just be deleted is that `renderer/types/window.ts` was never the contract
+The reason the table could just be deleted is that `packages/gui/src/types/window.ts` was never the contract
 — `src/preload.ts` was — and `@bifurc/client` was built in P5 to satisfy that contract exactly,
 **positional arguments included** (`loadEntity: (wsId, kind, id) => call("loadEntity", { workspaceId:
 wsId, kind, id })`). So the client's methods are drop-in replacements for the old bodies, which is
@@ -608,7 +608,7 @@ certificate in the host's OS store, reading back the record `AppSettings.tlsTrus
 exactly this purpose. Its own docblock names the failure the two-sided shape prevents — "which is how a
 user ends up believing they removed a certificate their browser still trusts". The client routes to
 `tls.removeCert` and gets `engineRemoved` alone, so the un-trust never happens. **It is reachable**:
-`renderer/panels/settings/TlsSettingsSection.tsx:57` calls `window.api.tlsRemoveCert()` from the "remove
+`packages/gui/src/panels/settings/TlsSettingsSection.tsx:57` calls `window.api.tlsRemoveCert()` from the "remove
 certificate" button and then clears the panel's `tlsEnabled` / `tlsCaCertPath` / `tlsCaKeyPath`, so the UI
 reports success while the OS store goes on trusting a CA whose keypair is gone. And since step 3f removed
 the last preload override, `window.api` **is** `{ ...client }` — so the shell channel that did this
@@ -687,7 +687,7 @@ cancelling stops paying for the query**: the pre-P3 handler ran `queryLog({ limi
 `git log` — before asking where to put the result. The client's twin evaluated
 `await call("exportAudit", { format })` as an *argument* to `artifactToFile`, so the command ran first and
 the dialog second; `artifactToFile`'s dialog-first case is selected by passing its third argument
-(`destPath`), which that call omitted. It was reachable — `renderer/panels/AuditLogPanel.tsx:106` calls
+(`destPath`), which that call omitted. It was reachable — `packages/gui/src/panels/AuditLogPanel.tsx:106` calls
 `window.api.exportAudit(format)` and the preload is `{ ...client }` — so the cost P3 removed was back.
 **Fixed** by giving the key the same three-step `pickSavePath` → command → `artifactToFile(…, dest)` shape
 `exportData` already had.
@@ -908,7 +908,7 @@ The engine's `entity.create` answers the frozen **`{id, entity}`** envelope
 (`entityCrudCommands.ts:413`); the surface declares the **raw** entity; and the shell channel unwrapped it
 by hand (`entityCrudFactory.ts:72`, `return "entity" in result ? result.entity : result`). The client
 never did. So on the routed path **all 16 `add*` keys** handed their caller `{id, entity}` where
-`renderer/types/window.ts` declares `Promise<LocalMapping>` — and the panels consume it directly:
+`packages/gui/src/types/window.ts` declares `Promise<LocalMapping>` — and the panels consume it directly:
 `MappingsPanel.tsx:120` pushes the result straight into `config.mappings`, `ProxyRulesPanel.tsx:155` files
 it as a loaded entity. Nothing failed, because the `as ReturnType<BifurcApi[…] >` cast made the compiler
 agree with the **declaration** rather than with the runtime. `checkUpdate` (step 3f) and `tlsCertStatus`
@@ -1271,8 +1271,8 @@ not?*
 and reads a missing one as "not configured":
 
 ```
-renderer/panels/settings/TlsSettingsSection.tsx:36,48   if (result.ok && result.path)                        // import
-renderer/panels/settings/TlsSettingsSection.tsx:67      if (result.ok && result.certPath && result.keyPath)  // generate
+packages/gui/src/panels/settings/TlsSettingsSection.tsx:36,48   if (result.ok && result.path)                        // import
+packages/gui/src/panels/settings/TlsSettingsSection.tsx:67      if (result.ok && result.certPath && result.keyPath)  // generate
 ```
 
 So the user clicks *Generate with mkcert*, the CA is written into the engine's data dir, `handleGlobalChange`
@@ -1304,7 +1304,7 @@ tlsImportKey  → upload → call(…)      → + path: keyPath
 
 No new channel and no new `ClientLocal` member: `tlsCertStatus` already reports both paths, so the synthesis
 stays in the one place that owns it rather than gaining a second copy. `window.api` is unchanged in **shape**
-— same 144 keys, same arities — and the fix restores the result shape `renderer/types/window.ts:182-185`
+— same 144 keys, same arities — and the fix restores the result shape `packages/gui/src/types/window.ts:182-185`
 declares and the pre-P6 build delivered.
 
 **Two consequences worth stating.**
@@ -1468,7 +1468,7 @@ criterion suggests.
 `{ kind, ...folder }` — a **spread** — while the client's `addFolder` picks `name` and `parentId`
 explicitly. A spread that carries a field the twin drops is exactly the `tlsGenerate` shape (§5b-undecies),
 so it was checked rather than waved through. It is inert because the **contract** excludes the field:
-`renderer/types/window.ts:63` types the argument `Omit<Folder, "id" | "createdAt" | "workspaceId">`, and
+`packages/gui/src/types/window.ts:63` types the argument `Omit<Folder, "id" | "createdAt" | "workspaceId">`, and
 every renderer call site passes only `{ name, parentId }`. `FolderAddParams` is not `.strict()`, so the
 schema does not care either way.
 
@@ -1804,7 +1804,7 @@ they always passed engine-internal names and always worked. The step belonged to
 renderer call sites pass valid kinds (`ProxyRulesPanel.tsx` `"rules"`, `MappingsPanel.tsx` `"mappings"`,
 and `useMocksPanelState`'s `resolveEntityKind`, which yields only the mock kinds in mock mode), and
 `useRequestsPanelState` has no `setEntityEnabled` at all. It was carried over anyway because
-`renderer/types/window.ts:41` declares `Promise<{ok: boolean; error?: string}>` and
+`packages/gui/src/types/window.ts:41` declares `Promise<{ok: boolean; error?: string}>` and
 `store/coreCommands.ts` records the guard as client-facing behaviour. **The rule this establishes: a
 channel's owned step moves to the twin — the move is not conditional on the step's current
 reachability.** A latent contract and a live bug are the same shape at deletion time; only the evidence
@@ -3365,7 +3365,7 @@ That last row is stronger than it looks. `packages/client/tests/surface.test.ts`
 `src/preload.ts` under a mocked Electron and captures the object handed to
 `contextBridge.exposeInMainWorld`. So *"the renderer's surface is unchanged"* is asserted against the
 actual object rather than against a type — which is the only version of that claim worth having, given
-`renderer/types/window.ts` is known to under-declare.
+`packages/gui/src/types/window.ts` is known to under-declare.
 
 **What none of this proves: that Electron's real IPC round trip works.** `ipcRenderer.invoke` is mocked
 on one side and `ipcMain.handle` on the other, so the wire *between* them is the one thing untested

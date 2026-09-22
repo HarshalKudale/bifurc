@@ -27,7 +27,7 @@ const entries = ["main.js", "preload.js"];
 const walk = (dir) =>
   fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) return e.name === "renderer" ? [] : walk(p);
+    if (e.isDirectory()) return e.name === "renderer" || e.name === "web" ? [] : walk(p);
     return e.name.endsWith(".js") && !e.name.endsWith(".map") ? [p] : [];
   });
 
@@ -60,7 +60,7 @@ while (queue.length) {
 
 const bytes = (set) => [...set].reduce((n, f) => n + fs.statSync(f).size, 0);
 
-console.log(`dist .js files (excl. renderer):      ${all.length}`);
+console.log(`dist .js files (excl. renderer/web):  ${all.length}`);
 console.log(`  stale (no matching src/*.ts):       ${staleSet.size}   ${(bytes(staleSet) / 1024).toFixed(0)} KB`);
 console.log(`  live:                               ${all.length - staleSet.size}`);
 console.log(`reachable from main.js/preload.js:    ${seen.size}`);
