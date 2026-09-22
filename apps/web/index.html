@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bifurc — web client</title>
+  </head>
+  <body>
+    <main id="app">
+      <h1>Bifurc</h1>
+      <!--
+        The whole of the first web target. It exists to answer one question — does a decoupled
+        `createClient` actually reach an engine from a page? — and deliberately does nothing else, so
+        that a failure here is a failure of the client and not of a UI that was built on top of it.
+      -->
+      <p id="status">Starting…</p>
+      <pre id="detail"></pre>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
