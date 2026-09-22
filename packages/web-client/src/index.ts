@@ -23,3 +23,11 @@
  * if a future edit introduces one, the build fails here rather than in a page at runtime.
  */
 export { createBrowserTransport, type BrowserTransportOptions } from "./channel";
+
+/**
+ * The browser's answer to `ClientLocal` — the sixteen client-local operations, without which
+ * `createClient` cannot be called at all in a page. See `local.ts` for why seven of the sixteen report a
+ * truthful failure rather than pretending (two throw, five return a structured refusal), and why
+ * `openExternal` is a security boundary here rather than a convenience.
+ */
+export { createBrowserLocal, type BrowserLocalOptions } from "./local";
