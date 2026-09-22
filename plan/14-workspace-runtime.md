@@ -160,7 +160,13 @@ and the only platform-dependent value is a single constant.
 | # | Source | If the port is taken |
 |---|---|---|
 | 1 | **Per-workspace override** — `preferredPort` in the host-local registry, or the settings UI | **Fail loudly**, naming the next free port. Never silently move a port the user chose. |
-| 2 | **Environment base** — `80` on win32, `8080` elsewhere; overridable via `BIFURC_PROXY_BASE_PORT` | Scan upward: `base + 1`, `base + 2`, … |
+| 2 | **Remembered resolved port** — what this workspace actually bound on a previous run, from the host-local registry | **Fall through to 3.** A remembered *outcome* is not a request, and must never become a startup failure. |
+| 3 | **Environment base** — `80` on win32, `8080` elsewhere; overridable via `BIFURC_PROXY_BASE_PORT` | Scan upward: `base + 1`, `base + 2`, … |
+
+> **Source 2 was specified here from the start and implemented only on 2026-09-22.** The allocator had no
+> *soft* input, so `host.ts` passed nothing rather than turn a taken remembered port into a hard startup
+> failure — and the row was silently satisfied by the scan instead. The acceptance audit caught it by
+> **measuring**, not by reading. See §8 criteria 6a/6b and lesson 3.
 
 `BIFURC_PROXY_BASE_PORT` moves the **base**, not one workspace's port, so the increment keeps working after
 it — which is what a container wants: pin the published port without giving up the fallback.
@@ -173,6 +179,11 @@ proxy rule. Correct it if the intent differs.)*
 on 81 because 80 was busy **keeps 81** after 80 frees up — a stable URL is worth more to the browser-proxy
 workflow than reclaiming the base. *(Alternative: re-prefer the base on every start, at the cost of the proxy
 silently moving under the user. Recommended against.)*
+
+**Implemented 2026-09-22** as `allocatePorts`'s `rememberedProxyPort` / `rememberedWebhookPort` — a third,
+**soft** source: tried when free, skipped when not, never thrown over. `AllocatedPorts` reports
+`proxyPortWasRemembered` / `webhookPortWasRemembered`, because the **outcome cannot distinguish this path from
+the scan** — on a quiet machine both produce the same number — so the flag is the only honest instrument.
 
 **Two things the rule still needs:**
 
@@ -621,8 +632,13 @@ it, and re-read `TRAPS.md` before doing so.
   remaining work is to make the proxy half optional for a workspace whose runtime owns its own port — that
   belongs with WI 7, when the desktop stops being the only consumer. Recorded so it is not re-derived.
 
-### Work item 1 — the protocol shape (first half landed; the port plumbing is still owed)
+### Work item 1 — the protocol shape
 
+> **⚠ SUPERSEDED 2026-09-22 — both halves have landed; this header was stale.** The `runtime.json`
+> preferred-port plumbing is in the tree (`host.ts:223` passes `entry.preferredProxyPort` into
+> `allocatePorts`), and D17's blob namespacing is WI 1/WI 8's blob half. What remains is only the *editor*
+> for `runtime.json`, which is a renderer edit and therefore **P7** (non-negotiable #3).
+>
 > **PROTOCOL HALF DONE 2026-09-21 — ten commands carry an optional `workspaceId`; the host-local
 > `runtime.json` *preferred-port* plumbing and D17's blob-root namespacing are still owed.**
 >
@@ -707,8 +723,13 @@ it, and re-read `TRAPS.md` before doing so.
 
 ### Work item 5 — preflight and port allocation
 
+> **⚠ The `preflight()` half is no longer owed — it landed; this note was stale.** `tests/startup.test.ts:87`
+> is the five-case suite covering exactly the busy-*base* vs busy-*override* distinction (§8 criterion 8 —
+> which the 2026-09-22 audit recorded **unmet** as a **false negative**, because it searched
+> `tests/integration/` only).
+>
 > **ALLOCATOR DONE 2026-09-21 — `packages/engine/src/runtime/portAllocator.ts`, 18 real-socket cases; the
-> `preflight()` half is still owed.** The allocator is its own module rather than part of
+> `preflight()` half was still owed when this was written.** The allocator is its own module rather than part of
 > `createWorkspaceRuntime()` because allocation is the **host's** job: it needs host-wide knowledge of what
 > the other runtimes already took, which is precisely why the runtime takes ports as required inputs.
 >
@@ -888,13 +909,180 @@ all line up. This is why P9 moves *after* this phase.
 > `absent` fall through to the facade kills exactly the **2** that should die. Both branches are therefore
 > independently guarded rather than jointly covered.
 >
-> **Still owed under this heading: the desktop adoption itself** — `src/main.ts:309-310` building runtimes
+> **✅ LANDED 2026-09-22.** The desktop adoption is done — the two sections below record the shape it had to take, why the plan's own wording for it was wrong, and the defect it uncovered. What follows is the original statement of what was owed, kept as the record: **the desktop adoption itself** — `src/main.ts:309-310` building runtimes
 > instead of calling `startServer()`. That is the half that changes the desktop, and it needs `createEngine()`'s
 > own proxy lifecycle (`index.ts:255`) to move with it, or the engine and a runtime would both bind (the
 > two-authorities hazard `host.ts`'s header records). **The bullet below about the legacy `server:*` channels
 > is now obsolete**: the P6 reduction's fifth group deleted all three on 2026-09-21, so there is no
 > `window.api` surface left to keep working — `src/ipc/handlers/systemHandlers.ts` retains only
 > `app:checkUpdate`, which is client-local by design.
+>
+> ---
+>
+> ## 🚩 MEASURED 2026-09-22 — the desktop half as *specified* is wrong, in one direction and right in another
+>
+> The owner picked shape (a) ("the facade delegates"). Measuring it before writing it turned up **three
+> facts that change the specification**, one of which invalidates the sentence above it.
+>
+> ### 1. The plan's own wording — "the facade delegates to the registered runtime **for the active workspace**" — is wrong under WI 4, and following it would ship a bug
+>
+> WI 4 (`coreCommands.ts:83-101`) **deleted** the `reloadConfig()` that `workspace.setActive` used to call,
+> and said why: *"Under D10–D12 each workspace has its own runtime, so the pointer and the proxies are
+> independent, and a workspace's rules should keep serving while you edit another one. Dropping the call is
+> what makes 'two workspaces, each serving its own rules' true for the desktop and not just for a host."*
+> It is annotated **"Visible change, and the reason this needed confirming"**.
+>
+> So on the desktop the **active pointer and the proxy are already independent**. A facade that resolves by
+> `cfg.activeWorkspaceId` would, after a workspace switch, look up a runtime for the *new* active id, find
+> none, and fall back to its lazy default instance — whose `isRunning()` is **false** while the real proxy is
+> listening on a bound port. That is the WI 1 bug shape ("the failure succeeds") arriving through a new door.
+> **The facade must bind to the desktop's runtime, not to whatever is active.**
+>
+> ### 2. `proxy/server.ts`'s header still describes the pre-WI-4 world, and it is load-bearing prose
+>
+> Its lines 33-38 say the `workspaceId ?? cfg.activeWorkspaceId` fallback *"is exactly how the module facade
+> and the desktop keep working, because they construct one proxy and mean 'whatever the user has selected'."*
+> **After WI 4 the desktop's proxy does not follow a switch at all** — `start()`/`reloadConfig()` capture
+> `fullRules` and `enabledSets` for one workspace and `workspace.setActive` no longer re-captures them. The
+> sentence is stale in exactly the way `TRAPS.md`'s *"The docblock that sanctions the bug"* records. The
+> *behaviour* is fine (it is what D10 wants); the *description* is what would mislead the next reader — and
+> it is the sentence a naive implementation of this work item would have trusted.
+>
+> **The good news this carries: the desktop's proxy is already, in effect, a single-workspace proxy.** That
+> removes the objection that a `WorkspaceRuntime` (whose `workspaceId` is fixed) cannot represent the
+> desktop. It can — it is what the desktop already behaves like.
+>
+> ### 3. The real hazard is the **webhook receiver**, and it is a user-visible change
+>
+> `WorkspaceRuntime.start()` unconditionally binds **both** servers (`workspaceRuntime.ts`), and
+> `webhookPort` is a **required** option. But the desktop has **never** started the webhook receiver at boot:
+> `src/main.ts` starts only the proxy and the companion, and the receiver is started **on demand** —
+> `renderer/panels/WebhooksPanel.tsx:100` → `window.api.startWebhookServer()` → `webhookServer.start` →
+> `startWebhookServer(port)`.
+>
+> **So `main.ts` calling `runtime.start()` would open a webhook port at desktop boot that the product has
+> never opened** — a new listening socket, a new `preflight` warning on any machine where `9101` is taken,
+> and a direct violation of §8's "one proxy port" and P6's zero-visible-change rule.
+>
+> ### The shape this yields — no engine contract change, and it is smaller than the original
+>
+> The two facades gain an explicit **binding**, and the desktop binds them to its runtime:
+>
+> 1. `proxy/server.ts` and `proxy/webhookServer.ts` each expose `bindProxyInstance()` /
+>    `bindWebhookInstance()`; `defaultServer()` returns the bound instance when there is one, else the lazy
+>    default. **No new import edge** — `proxy/*` does not need to import `runtime/`, so the acyclic graph
+>    `runtimeRegistry.ts`'s header protects is untouched.
+> 2. `src/main.ts` creates **one** `WorkspaceRuntime` for the active workspace, `registerRuntime()`s it,
+>    binds both facades to its two instances, and **calls `runtime.proxy.start(cfg.port)` — not
+>    `runtime.start()`** — so the webhook stays unstarted until the user asks for it. `startServer(cfg.port)`
+>    keeps working verbatim, because it now delegates.
+> 3. `ownsCA: true`, which is the documented single-runtime case ("a single-runtime caller that wants the
+>    pre-P14 behaviour passes `true`").
+> 4. `shutdownEngine()` needs no change: its `stopServer()` now reaches the runtime's proxy. It does not stop
+>    the webhook today either, so that asymmetry is preserved rather than introduced.
+>
+> **One acknowledged artefact, documented rather than hidden:** `bootstrapWorkspaces()` runs *before* the
+> runtime exists and calls `reloadConfig()`, which creates the lazy default instance. It is never bound and
+> never started, so it is inert — but it exists, and a test must pin that the bound instance wins over it.
+>
+> ---
+>
+> ## 🚩 AND ONE DEFECT THIS WORK FOUND THAT WAS NOT ITS OWN — WI 4's dispatch read the active pointer (✅ fixed 2026-09-22)
+>
+> Found while trying to make the `reloadConfig` guard *discriminating*: the first version of
+> `tests/integration/facadeBinding.integration.test.ts` put the runtime on a workspace **other than** the
+> active one, so that "which workspace got reloaded?" would have a different answer per branch. It failed —
+> and the cause is a real gap in **WI 4**, not in this work item.
+>
+> `serverUtils.ts:35-44`'s `workspaceCfg()` filters dispatch by **`cfg.activeWorkspaceId`**:
+>
+> ```ts
+> export function workspaceCfg(cfg, fullRules, enabledSets): AppConfig {
+>   const wsId = cfg.activeWorkspaceId;   // ← the CONFIG's pointer, not the instance's own workspace
+>   ...
+>   proxyRules: fullRules.filter((r) => (!r.workspaceId || r.workspaceId === wsId) && enabledSets.rules.has(r.id)),
+>   mocks:      cfg.mocks.filter((m) => m.workspaceId === wsId && enabledSets.mocks.has(m.id)),
+>   mappings:   cfg.mappings.filter((m) => m.workspaceId === wsId && enabledSets.mappings.has(m.id)),
+> }
+> ```
+>
+> Both call sites (`proxy/server.ts:242,354`) pass `currentConfig ?? loadConfig()`. So an instance created
+> with `workspaceId: "B"` reads **B's** rules into `fullRules` (`servedWorkspaceId()` — WI 4's severance,
+> working as designed) and then **filters every one of them out**, because `activeWorkspaceId` is `"A"`.
+> The instance serves nothing. **WI 4 severed `activeWorkspaceId` from the proxy's *reads* but not from its
+> *dispatch filter*.**
+>
+> ### Why no suite caught it — the same shape as everything else in this document
+>
+> `tests/integration/workspaceRuntime.integration.test.ts`'s "both genuinely serve" step asserts
+> **`getHomePage(port)`** — the proxy's own UI page, which is served regardless of any rule, mock or
+> mapping. So §8's **first** criterion — *"Two workspaces run their proxies simultaneously on different
+> ports, **each serving its own rules**, with no cross-talk — asserted on *identity* (each serves a mock the
+> other does not have)"* — is asserted on something that **cannot detect the failure**. The identity
+> instrument was chosen correctly for *ports* and *readiness* in that file; for *content* it was chosen for
+> convenience, and that is the only reason this is not already known. **It is the criterion's own wording,
+> not an inference: "each serving its own rules" is the claim, and a home page is not a rule.**
+>
+> ### Status: ✅ FIXED 2026-09-22 — and the fix was **not** what this section first said it was
+>
+> The first draft here claimed the fix was "thread the instance's `servedWorkspaceId()` into `workspaceCfg()`".
+> **The measurement above disproves that:** `cfg.mocks` / `cfg.mappings` are *the active workspace's entities*,
+> so no id passed to the filter can recover a non-active workspace's mocks — the data was never loaded. The
+> real fix is a **loader**, not a filter:
+>
+> - **`store/config.ts` → `loadWorkspaceDispatchSlice(wsId)`** (new). Builds the same shape `loadConfig()`
+>   builds for the active workspace, for **any** id: that workspace's mocks, mappings, environments and
+>   selected environment, with `enabled` resolved from `enabled.json`. Two deliberate omissions, both stated
+>   in its docblock: no `autoSyncFsDirectories()` (a read must not mutate a workspace the caller may not be
+>   looking at) and no `__global__` auto-creation (that is a read that writes; a host bootstraps explicitly).
+> - **`proxy/serverUtils.ts` → `workspaceCfg(cfg, fullRules, enabledSets, slice)`** takes that slice and reads
+>   the id from **it**, never from `cfg`. It also overrides `activeWorkspaceId` / `activeEnvironmentId` /
+>   `environments`, so `activeEnv()`, script and variable resolution, and `pages.ts`'s mapping list all agree
+>   with the entities instead of pointing back at the active pointer's workspace.
+> - **`proxy/server.ts`** loads the slice in `start()` / `reloadConfig()` alongside `fullRules` /
+>   `enabledSets` — so both halves now come from the same workspace — and passes it at both dispatch sites.
+>
+> **Verified, and the guards are mutation-checked.** New
+> `tests/integration/workspaceDispatchScope.integration.test.ts` (4 cases) asserts, over real sockets and real
+> files, that B's runtime serves **B's own mock and B's own rule** while A is active, that A's mock does *not*
+> come back through B's port, and — as a control — that A's runtime serves A's own mock. The rewritten
+> `tests/proxy/serverUtils.test.ts` covers the filter directly (`workspaceCfg()` 8 cases, up from 7: one
+> deleted because its premise is gone, two added). **Reverting `const wsId = slice.workspaceId` to
+> `cfg.activeWorkspaceId` fails exactly 3** — the unit case named for it, B's own mock+rule, and the
+> cross-talk direction. **The control correctly survives that mutation**, because for the active workspace the
+> two ids coincide; that is what makes it a control rather than a guard.
+>
+> **And the assertion that hid this has been re-labelled.** `workspaceRuntime.integration.test.ts`'s "both
+> genuinely serve" step is now *"both are up and answering over the wire"*, with a comment saying it is a
+> liveness check that **cannot** fail for a scoping defect and pointing at the file that can. Leaving it named
+> "genuinely serve" is how §8's first criterion came to read as met.
+>
+> ### Measured two-sided, with only the active pointer differing
+>
+> A throwaway probe (not committed) wrote two workspaces, each with its own mock, mapping and rule, and
+> started a runtime for **B**:
+>
+> | Request, against B's port | active = **A** | active = **B** |
+> |---|---|---|
+> | `GET /api/b` — **B's own mock** | **404** | **200** `{"from":"B"}` |
+> | `GET http://api.test/data` — **B's own rule** | **502**, upstream hits **0** | **200** `{"from":"upstream"}`, upstream hits **1** |
+>
+> The second row is the clean comparison — a `targetType: "external"` rule needs no mapping, and nothing
+> else differs between the two runs.
+>
+> **And the first row is *not* cross-talk**, which is the part worth being precise about: A's mock is `404`
+> too. The two halves of the config **cancel**, because they come from different workspaces —
+> `cfg.mocks` / `cfg.mappings` from **A** (via `loadConfig()`, which reads the active workspace by
+> construction: `config.ts:68,80-82`) while `enabledSets` comes from **B** (via
+> `loadEnabledSets(servedWorkspaceId())`). So A's entities are filtered out by *B's* enabled set, and B's
+> are absent from `cfg` entirely. The observable result is not the wrong workspace's data — it is **no data
+> at all**, silently, as 404/502.
+>
+> **So the fix is larger than threading one id.** `workspaceCfg()` is the visible symptom; the root is that
+> a proxy's entities come from a config loader that is active-workspace-only. Making a host member serve its
+> own mocks and mappings means loading *that* workspace's entities — a new loader in `store/config.ts` plus
+> the proxy's assembly — and `store/config.ts` is read by every panel. **That is the owner decision, and it
+> is why this was not fixed as part of WI 7.**
 
 - `src/main.ts:309-310` stops calling `startServer(cfg.port)` / `startCompanionServer(...)` directly and
   builds runtimes instead. The companion call is unchanged.
@@ -980,7 +1168,7 @@ all line up. This is why P9 moves *after* this phase.
 ## 5. Sequencing
 
 ```
-P6 (in scope; carried: "11 e2e specs pass, unmodified")
+P6 (CLOSED 2026-09-22 — 11/11 e2e specs, 46/46 tests; no open criterion)
   │
   ▼
 P14 — workspace runtime  ← this document
@@ -1022,7 +1210,7 @@ bare engine.
 
 | Phase | Was | Now |
 |---|---|---|
-| **P6** | gate includes the process split (4 carried criteria) | **downgraded (D14).** The desktop stays in-process; the four criteria (spawn, restart-with-backoff, no orphan, self-terminate) move to the workspace host's gate, where Docker's `SIGTERM` plus a socket-close watchdog satisfy them. **Criterion 2 — "11 e2e specs pass, unmodified" — is still CARRIED, not waived.** |
+| **P6** | gate includes the process split (4 carried criteria) | **downgraded (D14).** The desktop stays in-process; the four criteria (spawn, restart-with-backoff, no orphan, self-terminate) move to the workspace host's gate, where Docker's `SIGTERM` plus a socket-close watchdog satisfy them. **Criterion 2 — "11 e2e specs pass, unmodified" — was CARRIED, not waived; the carry was discharged 2026-09-22 at 11 specs / 46 tests** (owner-run, read from the run's own `report.json` rather than re-run). **P6 has no open criterion left.** |
 | **P7 Web UI** | connect the renderer to an engine | **unchanged in effort, better specified.** It connects to a *host* and selects a *workspace*, so work item 2's "multi-engine profiles" becomes "host + workspace". Work item 5's "have the engine serve the UI" becomes "have the **host** serve the UI" — still same-origin, still no CORS. |
 | **P8 CLI** | ~3 weeks, after P5 | **PARKED (D15).** Not deleted. |
 | **P9 Docker** | "the engine in a container" | **rewritten as "the workspace host in a container"**, now depending on P14. Effort roughly unchanged; the artifact, the volume layout and the port table all change. |
@@ -1048,51 +1236,284 @@ the engine — which is consistent with D10.
 
 ## 8. Acceptance criteria
 
-- [ ] **Two workspaces run their proxies simultaneously on different ports, each serving its own rules**,
+- [x] **Two workspaces run their proxies simultaneously on different ports, each serving its own rules**,
       with no cross-talk — asserted on *identity* (each serves a mock the other does not have), not on a
-      value both could share.
-- [ ] **The D16 sequence holds per environment.** On `win32`: 80, then 81, then 82. Elsewhere: 8080, then
+      value both could share. **MET 2026-09-22** —
+      `tests/integration/workspaceDispatchScope.integration.test.ts` asserts exactly this, in both
+      directions, over real sockets. **It was not met before that date, despite reading as met:** the
+      instrument standing in for it was `workspaceRuntime.integration.test.ts`'s `getHomePage()`, and a home
+      page is not a rule. See WI 7's third finding above.
+- [x] **The D16 sequence holds per environment.** On `win32`: 80, then 81, then 82. Elsewhere: 8080, then
       8081, then 8082. Assert the **sequence**, not merely that each runtime came up — and assert it for
       **both** bases, since the base is the only platform-dependent value in the whole rule.
-- [ ] **The platform branch is one constant.** Assert the allocator yields base `80` under a simulated
+      **MET 2026-09-22** — `tests/runtime/portAllocator.test.ts:205` scans upward for **both** ranges, `:167`
+      contiguously; and the host runs land two workspaces on **80 and 81** (`portRestartStability`, observed
+      in the server log rather than inferred).
+- [x] **The platform branch is one constant.** Assert the allocator yields base `80` under a simulated
       `win32` and base `8080` otherwise, and that nothing else in the allocation path branches on platform.
-- [ ] **An override fails loudly rather than silently moving.** Set `preferredPort` to a port already held;
-      assert the runtime reports the conflict and names the next free port.
-- [ ] **`EACCES` advances rather than killing the runtime** — set an override below 1024 on a platform that
+      **MET 2026-09-22** — `tests/runtime/portAllocator.test.ts`, "the platform branch is one constant".
+      Three cases load the module **fresh** under a faked `process.platform` (`IS_WINDOWS` is computed at
+      module load, so stubbing the platform after import would assert the *real* platform twice and pass
+      vacuously), and the invariant half is a **count**: `process.platform` read exactly once,
+      `IS_WINDOWS` used exactly once. A count is the right instrument here because the claim *is* a count —
+      no behavioural test can express "nothing else branches" without enumerating every output.
+      **Mutation-verified: adding a second `process.platform` read fails exactly that one case, and nothing
+      else in the file.**
+      **And the count must be taken over the module's *code*, not over its text — learned the hard way the same
+      evening.** The first version counted the raw source and failed on a **documentation** edit: a docblock
+      added while implementing 6b merely *names* `IS_WINDOWS`, which took the count to 3. A comment is not a
+      branch on platform, so the instrument had been made sensitive to prose — and the tempting fix would have
+      been to delete a useful explanation to satisfy a test. Comment-only lines are now dropped before
+      counting, while a trailing comment on a *code* line is kept, so a real second use cannot hide behind one.
+- [x] **An override fails loudly rather than silently moving.** Set `preferredPort` to a port already held;
+      assert the runtime reports the conflict and names the next free port. **MET** — `:238` (proxy) and
+      `:260` (webhook) both name the next free port; `:374` fails loudly on a malformed env override.
+- [x] **`EACCES` advances rather than killing the runtime** — set an override below 1024 on a platform that
       forbids binding there and confirm the runtime still comes up. *(Defensive per D16: the default path
       never attempts a privileged port, so this guards the override case only.)*
-- [ ] **The resolved port survives a restart:** stop the host, free the base port, start again, and confirm
-      the workspace that had incremented is **still** on its incremented port.
-- [ ] **The allocator never hands out a reserved port** — with the companion on 9271 and the gRPC
+      **MET 2026-09-22, and the criterion's wording needed correcting first.** "Override" names **both** of
+      D16's sources, and the parenthetical is true of only one: the default bases are `80`/`8080` and `8080`
+      needs no privilege, so the case that reaches a privileged port is an operator overriding the
+      **environment base** (`BIFURC_PROXY_BASE_PORT`). That reading is also the only one consistent with D16,
+      because a *per-workspace* override that cannot be bound must **throw**, not advance. Both halves are
+      now asserted in `tests/runtime/portAllocator.test.ts`: the **base advances** and the **per-workspace
+      override still throws**. `EACCES` is **injected** — `net.Server.prototype.listen` made to emit the
+      error on `nextTick`, the asynchronous path a real failure takes, rather than thrown synchronously
+      (which would exercise `tryBind`'s `try/catch` instead of its `on("error")`) — because win32 cannot
+      produce it for real.
+      **Mutation-verified: treating only `EADDRINUSE` as unavailable fails exactly those two cases and
+      nothing else in the file.**
+- [x] **6a — a new host reproduces the previous ports.** The original criterion's *mechanism* was
+      unsatisfiable: `workspaceHost.integration.test.ts:331` asserts `host.start()` after `stop()`
+      **rejects** (`already been stopped`), so "stop the host … start again" is impossible **by design**, and
+      the claim that matters is about a **new** host. Instrument:
+      `tests/integration/portRestartStability.integration.test.ts` — a second host lands on the same ports,
+      **and still does with `runtime.json` deleted**, which pins that the stability comes from the **scan**.
+      **MET.** *(This half of the 2026-09-22 rewording was right.)*
+- [x] **6b — D16's stickiness: a workspace that incremented *keeps* its port when the base frees up.**
+      **MET 2026-09-22 (evening) — implemented, on the owner's decision.** D16 decides it in as many words:
+      *"The resolved port is recorded in the host-local registry, so a restart reuses it. A workspace that
+      landed on 81 because 80 was busy **keeps 81** after 80 frees up — a stable URL is worth more to the
+      browser-proxy workflow than reclaiming the base. (Alternative: re-prefer the base on every start …
+      **Recommended against.**)"*
+      **The defect, measured rather than read:** `host.ts:222-226` implemented **the alternative D16 recommends
+      against**. A probe driving `BIFURC_PROXY_BASE_PORT` to a controlled base showed it directly — with the
+      base held, host 1 placed the workspace on `base + 1`; with the base **freed**, host 2 placed it on
+      **`base`**. `recordResolvedPorts()` wrote `resolvedProxyPort` and **no product code path read it**: the
+      field was **write-only**, because the allocator had no *soft* input, and passing the value as a
+      `preferred*` one would have turned a taken remembered port into a hard startup failure.
+      **The fix — option (a), chosen by the owner:** `allocatePorts` gained `rememberedProxyPort` /
+      `rememberedWebhookPort`, a third and **soft** source, which is the only reading consistent with D16's
+      fail-loudly rule applying to *user overrides* rather than to a remembered outcome. `host.ts` now passes
+      `entry.resolvedProxyPort` / `entry.resolvedWebhookPort`, and `AllocatedPorts` gained
+      `proxyPortWasRemembered` / `webhookPortWasRemembered` **because the outcome cannot distinguish the two
+      paths** — on a quiet machine the remembered port and the scan produce the same number, so the *flag* is
+      the only instrument that answers the question the criterion is actually asking.
+      **Instrument:** `portRestartStability.integration.test.ts`'s third case — the base held, then freed, then
+      asserted **free** (or "it kept its port" is uninteresting), and the workspace keeps its higher port — plus
+      five allocator cases: the free path, the fall-through, the ordering against the override, the reservation
+      check, and the webhook half.
+      **Mutation-verified with three narrow mutations, each moving exactly its own guards:** removing the
+      remembered path fails exactly **4** (free path, reservation contrast, webhook half, stickiness case);
+      making it a **hard** override fails exactly **3** (fall-through, reservation contrast, integration
+      softness case); and letting it **outrank the override** fails exactly **1** (the ordering case). The two
+      cases that *survive* the first mutation are the point — they guard ordering and softness, not presence.
+      *(History: this was reported met earlier the same day on a **weakened** claim, then re-opened. Lesson 3.)*
+- [x] **The allocator never hands out a reserved port** — with the companion on 9271 and the gRPC
       placeholder at 9102, assert no runtime is ever assigned either. Include the webhook interaction: the
       second workspace's webhook skips `9102` and lands on `9103`.
-- [ ] `preflight()` does **not** fail on a busy *base* port (the second-workspace case) and **does** fail on
+      **MET 2026-09-22** — the "named reservations" block in `tests/runtime/portAllocator.test.ts`. Each
+      case **holds the ports below the reserved one**, so the scan genuinely wants it; without that the
+      reservation would never be consulted and the case would pass whether or not it worked. The two
+      constants are written out rather than imported, because the claim is that the allocator is *told* them
+      and never derives them.
+- [x] `preflight()` does **not** fail on a busy *base* port (the second-workspace case) and **does** fail on
       a busy *per-workspace override*.
-- [ ] `server.status` reports the **resolved** port, and it differs between two concurrently running
-      workspaces.
-- [ ] The webhook receiver routes by `(workspaceId, urlSuffix)`: a suffix registered in workspace A is
+      **MET — and it was met all along.** `tests/startup.test.ts:87` ("port advisories (P14 WI 5 / D16)") is
+      a five-case suite covering exactly this, including both in a single run (`:131`). The 2026-09-22 audit
+      recorded this row as **unmet** after searching only `tests/integration/`; that was a **false
+      negative**, and it is the audit's own lesson turned around — **searching one directory is the same
+      error as counting the files that mention a thing.**
+- [x] `server.status` reports the **resolved** port, and it differs between two concurrently running
+      workspaces. **MET** — `workspaceRuntime.integration.test.ts:187-194`.
+- [x] The webhook receiver routes by `(workspaceId, urlSuffix)`: a suffix registered in workspace A is
       `404` in workspace B.
-- [ ] **Blob staging is per workspace (D17):** a blob `put` by workspace A is *not found* when `read` with
+      **MET 2026-09-22** — `tests/integration/webhookWorkspaceScope.integration.test.ts`, over real sockets
+      and **in both directions** (each workspace `200`s its own suffix and `404`s the other's), plus the
+      per-workspace active-set budget and `unregisterActive` leaving the sibling alone. The mechanism is that
+      `activeWebhookSuffixes` lives *inside* `createWebhookServer()`, so **one receiver per workspace *is*
+      the key**. Asserted on **identity** — a receiver that `404`ed everything would satisfy a one-way test.
+      **Mutation-verified: reverting `registerActive` to the facade — the pre-WI-7 shape — fails both
+      cases.**
+- [x] **Blob staging is per workspace (D17):** a blob `put` by workspace A is *not found* when `read` with
       workspace B's `workspaceId` — asserted on identity (the blob exists under A and not under B), not on a
       value both could share. And the blob root is still under `dataDir()`: `<dataDir>/blobs/<wsId>/`, so
       `path.relative(dataDir(), blobRoot(wsId))` never starts with `..`.
-- [ ] **A `WorkspaceRuntime.stop()` releases its own staging** — the sweeper is per-runtime, so stopping A
+- [x] **A `WorkspaceRuntime.stop()` releases its own staging** — the sweeper is per-runtime, so stopping A
       does not stop B's, and A's in-flight blobs are not collected by B's sweep.
-- [ ] `server.status` reports the port and the error of the **requested** workspace, not of the last one
+- [x] `server.status` reports the port and the error of the **requested** workspace, not of the last one
       started.
-- [ ] A workspace host starts with **no Electron and no companion server** — assert the companion port is
+- [x] A workspace host starts with **no Electron and no companion server** — assert the companion port is
       *not* listening.
-- [ ] The readiness predicate is per-runtime: starting runtime B does not observe runtime A's readiness.
-- [ ] `store/paths.ts` still has **exactly one** data root in the process (`_dataRootOverride` set once) —
+- [x] The readiness predicate is per-runtime: starting runtime B does not observe runtime A's readiness.
+- [x] `store/paths.ts` still has **exactly one** data root in the process (`_dataRootOverride` set once) —
       assert it, do not assume it.
-- [ ] The desktop's user-visible behaviour is unchanged: one proxy port, one visible workspace,
+      **MET 2026-09-22** — `tests/runtime/singleDataRoot.test.ts`. The declaration is counted **engine-wide**
+      (one `let dataRoot`, one `let _dataRootOverride`, each asserted by *path* rather than by length, so a
+      duplicate names itself), `bundle: false` in `packages/engine/tsup.config.ts` is asserted as the
+      mechanism that keeps one declaration one **runtime** instance, and the sharing is shown behaviourally
+      — `workspaceFs.dataRoot()` derived from `paths.dataDir()`, with the override **layered on** the one root
+      rather than being a second one. **Mutation-verified twice: a second module declaring a root fails the
+      structural case; `bundle: true` fails the config case.**
+      *(Two corrections to the criterion's own wording: `_dataRootOverride` is in `store/workspaceFs.ts`, not
+      `store/paths.ts`; and there are legitimately **two variables** for **one root** — `paths`' root and
+      `workspaceFs`' test-only override on top of it. The file pins that layering.)*
+- [x] The desktop's user-visible behaviour is unchanged: one proxy port, one visible workspace,
       `window.api` byte-identical.
-- [ ] `SIGTERM` on the host stops every runtime's servers and flushes.
-- [ ] Protocol changes recorded in `plan/protocol-changes.md`; the extension's four frozen commands
+- [x] `SIGTERM` on the host stops every runtime's servers and flushes.
+      **MET 2026-09-22** — `tests/integration/workspaceHostSignal.integration.test.ts` calls
+      `runWorkspaceHost()` and then invokes **the listener it actually registered**, discovered by diffing
+      `process.listeners("SIGTERM")` across the call. (Calling a hand-rolled `shutdown()` would assert a
+      function nobody ships; `process.emit("SIGTERM")` would also fire every unrelated listener in the
+      worker.) `process.exit` is stubbed, or the teardown would end the worker mid-case. Asserts `143` for
+      `SIGTERM` and `130` for `SIGINT` — distinct numbers, because an implementation hardcoding one would
+      satisfy either test alone — that a second signal is ignored, and that the runtimes' ports are free
+      afterwards **by real binds**. **Mutation-verified: dropping the `host.stop()` call fails the port
+      assertion, so the guard covers the teardown and not merely the exit code.** The *flush* half is **not**
+      asserted here: it is `WorkspaceRuntime.stop()`'s own contract and is covered by the runtime suite, and
+      restating it through a signal would be a second, weaker copy. Named rather than quietly skipped.
+- [x] Protocol changes recorded in `plan/protocol-changes.md`; the extension's four frozen commands
       asserted unchanged **by name**.
-- [ ] Fixtures re-derived after the schema change, not trusted.
-- [ ] Baseline delta accounted for **by naming its mechanism** (2 tests per command in
+- [x] Fixtures re-derived after the schema change, not trusted.
+      **MET 2026-09-22** — the four `blob.*` `invalid` payloads were run through their schemas and their
+      **issue paths measured**, not read off:
+
+      | command | invalid payload | issue path | code |
+      |---|---|---|---|
+      | `blob.put` | no `filename` | `filename` | `invalid_type` |
+      | `blob.stat` | only `workspaceId` | `blobId` | `invalid_type` |
+      | `blob.read` | `offset: -1` | `offset` | `too_small` |
+      | `blob.release` | only `workspaceId` | `blobId` | `invalid_type` |
+
+      Two of the four were **non-discriminating constants**: `blob.stat` and `blob.release` used `{}`, which
+      is invalid *before and after* the change and therefore could not have detected it — a fixture that
+      cannot fail for the change it exists to guard. They now carry the payload this plan itself named as the
+      hazard, the newly-added optional field and nothing else. The **reason** is pinned in
+      `packages/protocol/src/commands/index.test.ts` (one issue, on the named path, with the named code), plus
+      a **near-miss** case that is the only assertion a `{}` fixture fails — **mutation-verified: reverting
+      `blob.stat` to `{}` leaves every other assertion in that block passing and fails only the near-miss
+      one.**
+- [x] Baseline delta accounted for **by naming its mechanism** (2 tests per command in
       `packages/protocol/src/commands/index.test.ts`), not by waving at the number.
+
+**Checkbox state corrected 2026-09-22.** Eight rows — 11, 12, 13, 14, 15, 17, 19 and 21 — were recorded
+**✅ met** in the audit table below but their checkboxes had never been ticked, so the list and the table
+disagreed about eight criteria. All eight were **re-verified against the tree before ticking** rather than
+trusted from the table, because the same audit also produced one false verdict: `blobRoot(workspaceId)` really
+is `<dataDir>/blobs/<wsId>/`; `tests/blob/store.test.ts:583` really is the per-workspace sweep case; the three
+`workspaceCommandScope` cases really do name the asked-about workspace; `hostStartup` really does assert the
+companion port is never bound; `packages/client/tests/surface.test.ts` exists; and
+`tests/companion/allowedActions.test.ts:22` really does pin the four frozen commands **by name**. **A checkbox
+and a table cell are two copies of one claim, and they drifted** — which is the `TRAPS.md` rule about a count
+written into prose, one layer down.
+### Audit 2026-09-22 — each criterion re-derived from the tree, not read off the checkboxes
+
+Prompted by criterion 1 turning out to be **falsely believed met**, so the other twenty were re-derived rather
+than trusted. Every row names the instrument; a row with no instrument is not met, whatever the code does.
+
+**Result of that audit: 12 met · 3 partial or mechanism-unverified (3, 7, 18) · 5 unmet (5, 6, 8, 10, 16) ·
+1 unverified (20).** P14 was **not** closeable, and the unmet set was almost entirely *missing instruments*
+rather than missing code — the one exception worth attention being **18**, where the mechanism existed and
+nothing proved it ran.
+
+**All twenty-one were reported as met (2026-09-22) — and that count was wrong; see the correction under the
+table.** **Twenty are met and one (6b) is open.** The table is the original audit, kept because it is the record
+of what was wrong; the closure note on each row says what changed.
+
+| # | Verdict at audit | Evidence, and what changed |
+| --- | --- | --- |
+| 1 | ✅ met | `workspaceDispatchScope.integration.test.ts` — both directions + control |
+| 2 | ✅ met | `portAllocator.test.ts` — `:205` scans upward for **both** ranges, `:167` contiguously, `:358` base 80/8080, `:364` the increment survives an env override |
+| 3 | ⚠️ partial | `:358` asserted the two values; **nothing asserted the invariant half**. **CLOSED** — three fresh-module loads under a faked platform, plus a **count** of `process.platform` reads and `IS_WINDOWS` uses. Mutation: a second read fails exactly that one case |
+| 4 | ✅ met | `:238` (proxy) and `:260` (webhook) name the next free port; `:374` malformed override fails loudly |
+| 5 | ❌ unmet | No allocator `EACCES` case. **CLOSED** — injected `EACCES` on the **base** (advances) and on a **per-workspace override** (still throws); the criterion's wording corrected first. Mutation: treating only `EADDRINUSE` as unavailable fails exactly those two |
+| 6 | ❌ unmet — **the criterion contradicts the contract** | `workspaceHost.integration.test.ts:331` asserts `host.start()` after `stop()` **rejects**, so "stop the host … start again" is impossible **by design**. **RE-OPENED, then CLOSED PROPERLY.** The first rewording fixed the *mechanism* and quietly **weakened the claim** from D16's stickiness to mere reproducibility — so the criterion went green while a recorded decision stayed unimplemented, and the instrument built for it pinned the **deviation**. Split into **6a** (reproducibility — met) and **6b** (stickiness — **not met, measured**: base freed ⇒ the workspace moved back to it). **6b is now met** by a product change: a soft `remembered*` source on `allocatePorts`. See lesson 3 |
+| 7 | ⚠️ partial | Reservations covered generally; the named pair was not. **CLOSED** — `9271` / `9102` / `9103` asserted, holding the ports *below* the reserved one so the scan genuinely wants it |
+| 8 | ❌ unmet — **and this was a false negative** | The audit searched `tests/integration/` and missed `tests/startup.test.ts:87`, a five-case suite covering exactly this. **It was met all along.** See lesson 1 |
+| 9 | ✅ met | `workspaceRuntime.integration.test.ts:187-194` |
+| 10 | ❌ unmet | No `(workspaceId, urlSuffix)` test. **CLOSED** — `webhookWorkspaceScope.integration.test.ts`, both directions + the per-workspace budget. Mutation: the pre-WI-7 facade shape fails both cases |
+| 11 | ✅ met | `tests/blob/*` + `importExportBlob.integration.test.ts`; the root is `<dataDir>/blobs/<wsId>/` |
+| 12 | ✅ met | `tests/blob/store.test.ts:583` |
+| 13 | ✅ met | `workspaceCommandScope.integration.test.ts:193`, `:239`, `:260` |
+| 14 | ✅ met | `hostStartup.integration.test.ts:101` + `workspaceHost.integration.test.ts:202` |
+| 15 | ✅ met | `workspaceRuntime.integration.test.ts:187-194` |
+| 16 | ❌ unmet | **No test mentioned `_dataRootOverride`.** **CLOSED** — `singleDataRoot.test.ts`: engine-wide declaration count by path, `bundle: false`, and the sharing shown behaviourally. Mutations: a second declaration fails the structural case, `bundle: true` fails the config case |
+| 17 | ✅ met | `packages/client/tests/surface.test.ts` + the e2e run (11 specs / 46 tests) + `facadeBinding.integration.test.ts` |
+| 18 | ⚠️ implemented, unverified | Nothing drove `runWorkspaceHost` through a signal; the cited `tests/shutdown.test.ts` exercises `shutdownEngine()`. **CLOSED** — `workspaceHostSignal.integration.test.ts`. Mutation: dropping the `host.stop()` call fails the port assertion |
+| 19 | ✅ met | `plan/protocol-changes.md` + `tests/companion/allowedActions.test.ts` (the four frozen commands pinned **by name**) |
+| 20 | ❓ unverified | The `blob.*` `invalid` fixtures. **CLOSED** — issue paths measured; two were non-discriminating `{}` constants and now carry the hazard this plan named. Mutation: reverting to `{}` fails only the near-miss case |
+| 21 | ✅ met | Recorded in WI 8 above and `TESTING.md` |
+
+**Verdict now: 21 met · 0 open.** Six new instruments, one rewording and two corrections to criteria that were
+themselves defective — and, in the end, **one product change**: D16's remembered-port source, which the audit
+found specified and unimplemented. Nothing else required product code; the only other non-test edit is two
+`blob.*` fixtures (test data).
+
+**⚠ This paragraph claimed "21 met · 0 open" twice while that was wrong, and both ways it was wrong are the most
+useful thing in this section.** The first time it counted the criteria the **code** satisfied rather than the
+ones **D16** requires, because criterion 6 had been reworded onto a weaker claim (lesson 3). The second time it
+was true only after 6b was genuinely implemented. **A gate's verdict is an instrument too**, and the honest
+version names what it was measured against.
+Every load-bearing guard was mutation-checked, and in three cases the mutation was *narrowed* until it moved
+exactly the intended assertion: **the coarse mutation proves a guard is sensitive, not that it is sensitive to
+the right thing.** One mutation also had to be discarded as malformed — `Promise.resolve().stop()` throws, so
+that run measured the mutation rather than the product, and a mutation you cannot attribute is not evidence.
+
+**Two lessons, and they are mirror images of each other.**
+
+1. **The audit's own lesson, which then caught the audit.** Criterion 1 read as met because a *liveness*
+   assertion stood in for a *content* one; criterion 18 read as met because a *unit test of one entry point*
+   stood in for a *signal test of another*. **Neither was a lie — both were an instrument answering a
+   neighbouring question.** But criterion 8 was recorded as **unmet** for the same class of reason in reverse:
+   the audit searched `tests/integration/` only, and the instrument was in `tests/startup.test.ts`.
+   **Searching one directory is the same error as counting the files that mention a thing.** A *negative*
+   verdict is a claim too, and it needs the same instrument-naming discipline as a positive one — "I did not
+   find it" is not "it is not there".
+2. **A criterion can be wrong, and the honest response is to say so rather than to write a test that agrees
+   with it.** Two of the twenty-one were defective: **6** was unsatisfiable as written (it contradicted a
+   contract another test pins), and **5** used "override" for two different D16 sources while describing only
+   one of them. Both were reworded first and instrumented second. A test written to satisfy a defective
+   criterion would have locked the defect in and called it green.
+
+3. **Rewording a defective criterion can *weaken its claim* — and then the instrument agrees with the code
+   instead of the decision.** This is lesson 2's own failure mode one step further along, and it happened to
+   criterion 6 in this very section. The original was genuinely defective: it named a mechanism ("stop the host
+   … start again") that another test proves impossible. But the defect was in the *mechanism*, not in the
+   *claim* — and the claim was D16's stickiness rule **verbatim** ("still on its incremented port" = "keeps 81
+   after 80 frees up"). The rewording replaced the mechanism **and the claim**, substituting reproducibility
+   ("a new host lands on the same ports") for stickiness. The code satisfies the substitute and **violates the
+   original**, so the criterion went green while a **recorded decision** stayed unimplemented. Three guards,
+   all cheap:
+   - **Quote the decision in the criterion.** Had criterion 6 carried D16's sentence, the substitution would
+     have been visible on the page.
+   - **A reworded criterion needs its *old* claim re-tested, not retired.** The original claim *was* testable —
+     with a **new** host rather than a restarted one, which is exactly what the rewording had already
+     established. The rewording found the right instrument and aimed it at the wrong question.
+   - **A discriminating test is evidence for whichever side it points at.** `portRestartStability`'s second
+     case is a *good* test: it separates the two mechanisms cleanly. It was filed as evidence that the
+     criterion holds, when what it proves is that the **mechanism D16 specifies is absent**. The test did not
+     change between those two readings; only the authority it was measured against did.
+   And the meta-lesson, which is why this is written down rather than quietly fixed: **the audit that found
+   12 met / 3 partial / 5 unmet was right to distrust the checkboxes, and then trusted its own rewording.** An
+   instrument can answer a neighbouring question; so can a criterion.
+
+   **Resolution, and what it cost.** The owner chose to implement D16 rather than amend it, and the fix was
+   small — a soft third source on `allocatePorts`, a few lines in `host.ts`, one new flag pair. What made it
+   small was that the re-opening had been *precise*: the probe pinned the mechanism, the test file's second
+   case already separated "remembered" from "re-derived", and D16's own text supplied the resolution order. A
+   re-opening that says only "this looks wrong" would have cost far more. **So the rewording was not a wasted
+   step — it was a step taken with the wrong authority in hand.** Keep the instrument; re-check what it is
+   measured against.
 
 ---
 
@@ -1136,7 +1557,11 @@ The phase is additive at every step, which is what makes it safe:
   `packages/engine/src/transport/legacyCompanion.ts`; it is simply only ever *started* by the app runtime.
 - **Does not build the CLI** (D15).
 - **Does not extract a second process for the desktop** (D14).
-- **Does not remove `registerIpcHandlers()`** — that is P6 step 3 and is still outstanding.
+- **Does not remove `registerIpcHandlers()`** — *true when this was written; no longer true.* P6 step 3
+  landed afterwards (the nine-group reduction, `plan/07` §5b-duodecies … §5b-vicendecies): the three
+  all-dead files are deleted and `src/` holds **18 real `ipcMain.handle(` sites, all keepers**
+  (16 `clientHandlers`, 1 `systemHandlers`, 1 the RPC bridge). `registerIpcHandlers()` itself remains, as
+  the dispatcher over those — so this bullet is now a *historical* statement, not a scope exclusion.
 - **Does not change the extension's four frozen commands** — the extension is an external client on its own
   release cycle (`README.md` → Protocol compatibility).
 - **Does not touch the renderer.** Any renderer change is P7 by non-negotiable #1/#3.

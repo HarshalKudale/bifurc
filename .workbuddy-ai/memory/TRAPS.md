@@ -1676,3 +1676,170 @@ this a one-line bug with a 30-second symptom.**
    `onManage` closing it (`TitleBar.tsx:163-166`).
 3. **"The helper works" and "the test fails" are compatible.** A shared helper can be correct in isolation
    and still fail in a sequence, because its preconditions were established by earlier steps.
+
+## A proxy reads one workspace's rules and then filters them by a *different* one
+
+**Symptom.** A `WorkspaceRuntime` created for workspace B serves nothing, while one created for the active
+workspace serves normally. No error, no log — the request simply falls through to passthrough.
+
+**Cause.** `proxy/server.ts` has two notions of "which workspace" and only one of them was severed in WI 4:
+
+- `servedWorkspaceId()` → `workspaceId ?? cfg.activeWorkspaceId` — **the instance's**, correct. `start()` /
+  `reloadConfig()` use it to load `fullRules` and `enabledSets`.
+- `serverUtils.ts:35-44`'s `workspaceCfg()` → `const wsId = cfg.activeWorkspaceId` — **the config's
+  pointer**, never the instance's. Both dispatch call sites (`server.ts:242,354`) pass
+  `currentConfig ?? loadConfig()`.
+
+So for an instance with `workspaceId: "B"` while `activeWorkspaceId` is `"A"`: `fullRules` holds B's rules
+and `workspaceCfg` filters them by `"A"`, keeping none. **The state read is per-instance; the dispatch
+filter is per-config.**
+
+**And the two halves cancel rather than cross-talk** — the detail that makes the symptom look like something
+else. `cfg.mocks` / `cfg.mappings` come from **A** (`loadConfig()` reads the active workspace by
+construction, `config.ts:68,80-82`) while `enabledSets` comes from **B**
+(`loadEnabledSets(servedWorkspaceId())`). So A's entities are filtered out by *B's* enabled set and B's are
+missing from `cfg` entirely. Measured, only the active pointer differing: with the pointer on A, B's own
+mock is **404** and B's own rule is **502** with zero upstream hits; with the pointer on B, both are **200**.
+**Nothing leaks and nothing works** — so "it must be cross-talk" is the wrong first guess, and a probe that
+only looked for the other workspace's data would have found nothing wrong.
+
+**Why the suite is blind to it.** `tests/integration/workspaceRuntime.integration.test.ts`'s "both
+genuinely serve" step asserts `getHomePage(port)` — the proxy's own UI page, which is served regardless of
+rules, mocks or mappings. §8's criterion says *"each serving its own rules"* and the instrument chosen
+cannot see a rule. **The instrument was right for ports and readiness, and for content it was chosen for
+convenience.**
+
+**Fixed 2026-09-22 — and the fix is a loader, not a filter.** The obvious repair ("pass the instance's
+workspace id into `workspaceCfg()`") **cannot work**, because `cfg.mocks` / `cfg.mappings` *are* the active
+workspace's entities — no id recovers data that was never loaded. `store/config.ts` gained
+`loadWorkspaceDispatchSlice(wsId)`, `workspaceCfg()` takes that slice and reads the id from it, and the proxy
+loads it beside `fullRules` / `enabledSets`. Guards:
+`tests/integration/workspaceDispatchScope.integration.test.ts` (4 cases: both directions plus a control) and
+the rewritten `workspaceCfg()` unit cases. Reverting the id source fails exactly **3** — and **the control
+correctly survives**, because for the active workspace the two ids coincide. That asymmetry is what makes it
+a control rather than a guard.
+
+**Rules.**
+1. **When a subsystem is "de-globalised", grep for the global's name afterwards** — not just at the
+   construction site. WI 4 changed the reads and missed the filter, and the two are 100 lines apart.
+2. **Assert the criterion's own noun.** A criterion about *content* ("each serving its own rules") is not
+   satisfied by an assertion about *liveness* (a page loads). "Both are up" and "both serve what they
+   should" are different claims, and the first is much easier to write.
+3. **A test that has to be made *discriminating* is where this class surfaces.** The gap was invisible
+   until a test was rewritten to make "which instance?" observable — the same way `plan/07`'s fixture defect
+   was invisible until something read the fixture back through the real loader.
+4. **When the diagnosis is "the filter uses the wrong id", check whether the *data was ever loaded* before
+   writing the fix.** This was written down as a one-id change and was not: the entities came from a loader
+   that only ever read one workspace. **A filter cannot recover an absent input.**
+5. **Adding an export to a module breaks every `vi.mock` of it** — 82 failures, one file, all reading
+   `No "loadWorkspaceDispatchSlice" export is defined on the mock`. Widening a module's surface is the class
+   `Schemas: accepts ≠ preserves, and widening invalidates fixtures` records one layer up. **And write the
+   *derived* mock:** `tests/proxy/server.test.ts` computes the slice from `loadConfig.mock.results` rather
+   than calling `loadConfig()`, because several cases assert `toHaveBeenCalledOnce()` on it — an instrument
+   that adds a call breaks assertions about a *different* mechanism, which is this file's recurring shape.
+
+## Auditing a gate: the verdict is an instrument too, and a criterion can be wrong
+
+Recorded 2026-09-22, closing `plan/14` §8's twenty-one acceptance criteria. The audit that started it was
+right about eighteen rows and wrong about one, and two of the criteria turned out to be defective rather than
+unmet. All three failures share a cause: **the audit treated its own output as an observation rather than as a
+claim needing an instrument.**
+
+### A negative verdict is a claim too
+
+Criterion 8 — "`preflight()` does not fail on a busy *base* port and does fail on a busy *per-workspace
+override*" — was recorded **unmet**: *"No busy-base-vs-busy-override pair. `engineSmoke.integration.test.ts:212`
+only asserts a clean temp dir yields no findings."* Both halves of that sentence are true and the conclusion is
+false. `tests/startup.test.ts:87` is a five-case suite covering exactly the criterion, including both cases in
+a single run (`:131`). The audit searched `tests/integration/` and stopped.
+
+This is the **inverse** of the entry above about retired tests, and the same error: there, "does anything else
+test X?" was answered by counting files that mention X; here, "is X tested?" was answered by searching one
+directory. **"I did not find it" is not "it is not there."** A negative row in an audit needs the same
+instrument-naming discipline as a positive one — name where you looked, and make the search cover the whole
+tree, or the verdict is a statement about your search rather than about the code. The cheapest fix is the one
+that would have caught it: `grep -rn` over `tests/` and `packages/`, never a single subdirectory.
+
+### A criterion can be defective, and a test written to satisfy it locks the defect in
+
+Two of the twenty-one could not be satisfied by any honest test:
+
+- **6** said *"stop the host, free the base port, start again, and confirm the workspace that had incremented
+  is still on its incremented port."* But `workspaceHost.integration.test.ts:331` asserts `host.start()` after
+  `stop()` **rejects** (`already been stopped`) — restarting a *stopped* host is impossible **by design**. The
+  criterion contradicted a contract another test pins. Reworded to *a **new** host*, which is the claim that
+  matters.
+- **5** said *"set an override below 1024 … and confirm the runtime still comes up."* D16's table has **two**
+  sources and the word "override" names both: a per-workspace override, which must **throw** when taken, and
+  an override of the *environment base*, where the scan advances. The sentence describes the second and the
+  parenthetical points at the first. Reworded to say which.
+
+**The rule: when a criterion cannot be satisfied, suspect the criterion before writing a test that agrees with
+it.** A test bent to fit a defective criterion is worse than no test — it converts the defect into a green
+check, and green checks are what later audits trust. Reword first, instrument second.
+
+### A count is the right instrument when the claim *is* a count
+
+`MEMORY.md` says *"for any generated / looped / `it.each` suite, NEVER count by hand"* — the point being that a
+hand count of a generated set is unreliable. Criterion 3's invariant half is the exception that proves it:
+*"nothing else in the allocation path branches on platform"* **is a statement about how many platform reads
+exist**, so the honest instrument is to read the source and assert the count — one `process.platform`, one
+`IS_WINDOWS` use. No behavioural test can express it without enumerating every output of the module and
+proving each platform-invariant, which is unbounded and silently stops covering new outputs.
+
+The distinction is *what the claim is about*. A count of a **generated set** is a claim about the runner and
+belongs to the runner (`--reporter=json`). A count of **occurrences in a source file** is a claim about the
+code, and reading the file is the direct instrument. What must not happen is counting the second kind by eye.
+
+### A mutation you cannot attribute is not evidence
+
+Mutation-testing the new guards produced one run where the mutation itself was malformed — the replacement
+`Promise.resolve().stop()` throws, so the failure measured the mutation rather than the product, and it
+happened to look like a clean two-test failure. It was caught only because the *second* test failed too, in a
+case that had nothing to do with the change.
+
+**Check that the mutation is well-formed before reading anything into its result**, and prefer a **narrow**
+mutation to a broad one: reverting a whole mechanism fails twenty tests and tells you the tests are sensitive,
+not that they are sensitive to the right thing. The mutations that carried information here were the ones that
+moved *exactly* the intended assertion — `EADDRINUSE`-only error handling failing two cases out of thirty; a
+second `process.platform` read failing one out of thirty; `resolvedProxyPort` fed back as a preference failing
+one case out of two while correctly leaving its sibling passing.
+
+## Rewording a defective criterion is how a defect gets locked in green
+
+**The failure:** a criterion is found defective, is reworded, and the *rewording quietly replaces its claim*
+with a weaker one the code already satisfies. The instrument written for it then passes — and it passes
+**because** the code is wrong. Nothing in the suite can see it, because the only document that said what was
+required has been edited to agree with the code.
+
+**The instance — P14 §8 criterion 6, 2026-09-22.** The criterion read: *"stop the host, free the base port,
+start again, and confirm the workspace that had incremented is **still** on its incremented port."* That is
+D16's stickiness rule **verbatim**. It was marked unsatisfiable — correctly, for the **mechanism** it named
+(`workspaceHost.integration.test.ts:331` pins that a stopped host refuses to restart). But the rewording
+replaced the mechanism **and the claim**, landing on *"a new host lands on the same ports"* — which the scan
+satisfies and which is a **different requirement**. The code violates D16, the criterion was green, and the
+instrument built for it pinned the deviation.
+
+**How to tell you are doing it:**
+- The new wording is *easier to satisfy* than the old one, and nothing else changed.
+- The decision the criterion came from is not quoted **inside** the criterion. Quote it — the substitution
+  becomes visible on the page.
+- You are about to retire the old claim rather than re-test it. A mechanism can be unsatisfiable while the
+  claim is perfectly testable; here the *rewording itself* established the instrument that would have tested
+  the original claim (a **new** host, not a restarted one).
+
+**The related trap: a discriminating test is evidence for whichever side it points at.** The test in question
+was genuinely good — it separated "remembered" from "re-derived" cleanly. It was filed as proof the criterion
+held, when what it proves is that the mechanism the decision specifies is **absent**. The test never changed;
+only the authority it was measured against did. **Before filing a green test as evidence, name the document
+that says the behaviour is required — and check the test points at that document, not at the code.**
+
+**Corollary — a field that is written and never read is a decision that was not implemented.**
+`resolvedProxyPort` is written by `recordResolvedPorts()` into `runtime.json` and read by **no product code
+path** (two tests read it). Grep for a field's **readers**, not its writers, and treat "written, never read" as
+an open decision rather than as a dead field: D16 says that value must decide the next start, so the omission
+is the *feature* that is missing, not cruft to delete.
+
+**And the meta-lesson, because it is the second time in two batches:** the audit was right to distrust the
+checkboxes, and then trusted its own rewording. An instrument can answer a neighbouring question — **so can a
+criterion.**

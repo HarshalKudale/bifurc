@@ -4,7 +4,10 @@ import { registerIpcHandlers } from "@/ipc/handlers";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 import { loadConfig } from "@bifurc/engine/store/config";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
-import { startServer } from "@bifurc/engine/proxy/server";
+import { startServer, bindProxyInstance } from "@bifurc/engine/proxy/server";
+import { bindWebhookInstance } from "@bifurc/engine/proxy/webhookServer";
+import { createWorkspaceRuntime } from "@bifurc/engine/runtime/workspaceRuntime";
+import { registerRuntime } from "@bifurc/engine/runtime/runtimeRegistry";
 import { startCompanionServer } from "@bifurc/engine/transport/legacyCompanion";
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@bifurc/engine/eventBus";
@@ -305,7 +308,36 @@ if (!gotTheLock) {
     createWindow();
     createTray();
 
+    // P14 work item 7 — the desktop adopts a `WorkspaceRuntime`, and the module facades are **bound** to
+    // it rather than replaced. That distinction is the whole of the work item: 23 engine modules import
+    // `reloadConfig()` from `proxy/server.ts`, so removing the facade would leave them updating a lazily
+    // created *phantom* instance whose config the running proxy never sees. Binding keeps the facade
+    // meaning "the active workspace's server, wherever it lives" and changes nothing for those callers.
+    //
+    // The binding names no workspace on purpose. WI 4 made the desktop's active pointer independent of its
+    // running servers (`workspace.setActive` no longer calls `reloadConfig()`), so a facade that resolved
+    // by `activeWorkspaceId` would look up the wrong workspace after a switch and fall back to an instance
+    // that is not listening. `proxy/server.ts`'s `bindProxyInstance()` docblock carries the full argument.
     const cfg = loadConfig();
+    const runtime = createWorkspaceRuntime({
+      workspaceId: cfg.activeWorkspaceId,
+      proxyPort: cfg.port,
+      // Required by the runtime, but **not bound below**. The webhook receiver has always been started by
+      // the user — `WebhooksPanel` → `window.api.startWebhookServer()` → the `webhookServer.start` command
+      // — so opening it at boot would add a listening port this product has never had, which §8's
+      // "one proxy port" criterion and P6's zero-visible-change rule both forbid. The value here is what
+      // the receiver *would* use, and it matches the preflight fallback above.
+      webhookPort: cfg.webhookPort ?? 9101,
+      // The single-runtime case, and therefore the pre-P14 behaviour: this proxy unloads the
+      // process-global TLS CA on `stop()`. A host member passes `false` and unloads once itself.
+      ownsCA: true,
+    });
+    registerRuntime(runtime);
+    bindProxyInstance(runtime.proxy);
+    bindWebhookInstance(runtime.webhook);
+
+    // Unchanged lines, now delegating: `startServer()` acts on the instance bound above. Note this is
+    // **not** `runtime.start()`, which would bind both servers and open the webhook port discussed above.
     startServer(cfg.port);
     startCompanionServer(cfg.companionPort ?? 9271);
   });

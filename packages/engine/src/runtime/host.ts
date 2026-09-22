@@ -219,13 +219,24 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       let ports;
       try {
         ports = await allocatePorts({
-          // The override is the user's explicit choice — D16's fail-loudly path. The *resolved* port from a
-          // previous run is deliberately **not** passed as a preference: it is a remembered outcome, not a
-          // request, so a workspace that landed on 81 last time keeps 81 only while 81 is free, and the scan
-          // from the base is what decides otherwise. Passing it as an override would turn a busy remembered
-          // port into a hard startup failure, which is exactly the "refused to start" mode D16 forbids.
+          // D16's three sources, in order. The override is the user's explicit choice — the fail-loudly path.
           preferredProxyPort: entry.preferredProxyPort ?? null,
           preferredWebhookPort: entry.preferredWebhookPort ?? null,
+          /**
+           * **D16's stickiness**, passed as its own input rather than as a preference — and that distinction
+           * is the whole point. A workspace that landed on 81 because 80 was busy **keeps 81** once 80 frees
+           * up, because a stable proxy URL is worth more to the browser-proxy workflow than reclaiming the
+           * base.
+           *
+           * The remembered port is a *record of what happened*, not a request, so `allocatePorts` treats it
+           * **softly**: it is taken when free and skipped when not. Passing it as a `preferred*` value would
+           * turn a port some other process has since taken into a hard startup failure — the "refused to
+           * start" mode D16 forbids. Until 2026-09-22 the allocator had no soft input, so the only way to
+           * pass this was as a preference, and this call passed nothing instead; that is what `plan/14` §8
+           * criterion 6b records.
+           */
+          rememberedProxyPort: entry.resolvedProxyPort ?? null,
+          rememberedWebhookPort: entry.resolvedWebhookPort ?? null,
           reserved,
         });
       } catch (err) {

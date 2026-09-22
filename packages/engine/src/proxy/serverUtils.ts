@@ -1,4 +1,4 @@
-import { AppConfig, Environment } from "../store/config";
+import { AppConfig, Environment, type WorkspaceDispatchSlice } from "../store/config";
 import { readEnabledSet, bootstrapEnabledSet } from "../store/workspaceFs";
 
 export interface EnabledSets {
@@ -32,13 +32,42 @@ export function activeEnv(cfg: AppConfig): Environment | null {
   return { id: "merged", name: "merged", variables: [...map.values()], createdAt: 0, workspaceId: "" };
 }
 
-export function workspaceCfg(cfg: AppConfig, fullRules: import('../store/config').ProxyRule[], enabledSets: EnabledSets): AppConfig {
-  const wsId = cfg.activeWorkspaceId;
-  if (!wsId) return cfg;
+/**
+ * The config proxy dispatch should use: `cfg`'s global settings, with the three entity kinds replaced by
+ * **one workspace's**. (P14 WI 4's gap, closed 2026-09-22.)
+ *
+ * ## The fix, and why it is a parameter rather than a lookup
+ *
+ * This used to read `cfg.activeWorkspaceId` and filter `cfg.mocks` / `cfg.mappings` by it. That is the wrong
+ * id, and it was the visible half of the defect: `cfg` comes from `loadConfig()`, which is
+ * active-workspace-only, while `fullRules` and `enabledSets` come from the instance's own workspace. The two
+ * halves were then cross-filtered — the active workspace's entities tested against the instance's enabled
+ * sets — so a host member matched nothing and served nothing, silently. `loadWorkspaceDispatchSlice(wsId)`
+ * supplies the matching half; its docblock carries the measurement.
+ *
+ * `activeWorkspaceId` and `activeEnvironmentId` are overridden as well, so that everything downstream —
+ * `activeEnv()`, script and variable resolution, the `pages.ts` mapping list — agrees with the entities
+ * above instead of pointing back at the active pointer's workspace.
+ *
+ * The `!m.workspaceId ||` guard is the same one `proxyRules` has always used: an entity whose own
+ * `workspaceId` disagrees with the directory it was found in is a stale file, and dropping it is the
+ * conservative reading. `loadConfig()` injects `workspaceId ?? wsId` for mappings, so in practice only
+ * hand-written or migrated files can reach the guard at all.
+ */
+export function workspaceCfg(
+  cfg: AppConfig,
+  fullRules: import('../store/config').ProxyRule[],
+  enabledSets: EnabledSets,
+  slice: WorkspaceDispatchSlice,
+): AppConfig {
+  const wsId = slice.workspaceId;
   return {
     ...cfg,
-    mappings: cfg.mappings.filter((m) => m.workspaceId === wsId && enabledSets.mappings.has(m.id)),
+    activeWorkspaceId: wsId,
+    activeEnvironmentId: slice.activeEnvironmentId,
+    environments: slice.environments,
+    mappings: slice.mappings.filter((m) => (!m.workspaceId || m.workspaceId === wsId) && enabledSets.mappings.has(m.id)),
     proxyRules: fullRules.filter((r) => (!r.workspaceId || r.workspaceId === wsId) && enabledSets.rules.has(r.id)),
-    mocks: cfg.mocks.filter((m) => m.workspaceId === wsId && enabledSets.mocks.has(m.id)),
+    mocks: slice.mocks.filter((m) => (!m.workspaceId || m.workspaceId === wsId) && enabledSets.mocks.has(m.id)),
   };
 }
