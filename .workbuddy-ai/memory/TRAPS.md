@@ -2094,3 +2094,27 @@ The rule: **"is this a good test?" and "does this test guard the line I just cha
 questions, and only the second is answered by a mutation.** Run the mutation before claiming the guard — and
 when it does not fire, name the instrument that does, rather than strengthening the assertion until it looks
 like it might have.
+
+## `npm run test:coverage` cannot finish in this sandbox unless the reports directory is fresh
+
+Measured 2026-09-22. A coverage run calls vitest's `V8CoverageProvider.clean` **before** the suite and
+`cleanAfterRun` **after** it, and both `fs.rm` the reports directory. The sandbox's safe-delete shim
+intercepts that `rm` and routes it to a trash binary that times out —
+`spawnSync …genie-trash\win32-x64.exe ETIMEDOUT` — and unsetting `CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR` does
+**not** help, because this is the shim's trash path rather than the bulk-confirm guard. The pre-run failure
+aborts everything in 12 s with no coverage output at all.
+
+Point it at a directory that does not exist yet, so both cleans are no-ops:
+
+```
+npx vitest run --coverage --coverage.reportsDirectory=/tmp/bifurc-cov-<fresh>
+```
+
+Two things to read correctly when it does run: the suite is green and every threshold is met, but the process
+still **exits 1** from `cleanAfterRun`. So `$?` here is evidence about the sandbox, not about the suite — read
+the `Coverage summary` block and any `ERROR: Coverage for …` lines instead.
+
+And a related trap: **coverage from a subset run is not a smaller version of the full figure.** Running one
+test file reported `packages/web-client/src` at 0% and looked like a real gap; the full run puts it at 91.92%
+statements, because the package's *own* tests import `../src` while `apps/web` imports the built package. The
+0% was an artefact of which file ran, not a fact about the code.
