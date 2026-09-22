@@ -63,6 +63,64 @@ export function generateId(): string {
 
 // ── Adapter: assemble flat AppConfig from folder-based store ──────────────────
 
+/**
+ * The three entity kinds proxy dispatch reads, scoped to **one** workspace, plus that workspace's selected
+ * environment. See `loadWorkspaceDispatchSlice()`.
+ */
+export interface WorkspaceDispatchSlice {
+  workspaceId: string;
+  mocks: MockRule[];
+  mappings: LocalMapping[];
+  environments: Environment[];
+  activeEnvironmentId: string | null;
+}
+
+/**
+ * Build the workspace-scoped slice of `AppConfig` that proxy dispatch reads — for **any** workspace id,
+ * not just the active one. (P14 WI 4's gap, closed 2026-09-22.)
+ *
+ * ## Why this exists
+ *
+ * `loadConfig()` is active-workspace-only **by construction**: every read in it is keyed on
+ * `settings.activeWorkspaceId`. That is right for the desktop, where the config *is* "whatever the user has
+ * selected", and wrong for a workspace host, where a `WorkspaceRuntime` serves a fixed workspace that is
+ * usually **not** the active pointer.
+ *
+ * A proxy instance was therefore reading from two places at once — `fullRules` and `enabledSets` through
+ * `servedWorkspaceId()` (the instance's own workspace), and `mocks` / `mappings` / `environments` through
+ * `loadConfig()` (the active one). `workspaceCfg()` then filtered the *active* workspace's entities by the
+ * *instance's* enabled sets, so nothing matched. Measured with only `activeWorkspaceId` differing: a runtime
+ * serving B returned **404** for B's own mock and **502** for B's own rule with the upstream never
+ * contacted — and A's data did not leak either. **Nothing worked and nothing failed loudly.**
+ *
+ * ## Two deliberate omissions
+ *
+ * - **No `autoSyncFsDirectories()`.** Those repair a workspace's `index.json` folder ordering, which dispatch
+ *   never reads; calling them here would make a *read* mutate a workspace the caller may not be looking at.
+ * - **No global-environment auto-creation.** `loadConfig()` creates `__global__` for the active workspace
+ *   because the UI needs it there. A read that writes is the wrong shape for a host member's config load,
+ *   and a host bootstraps its workspaces explicitly through `bootstrapWorkspaces()`.
+ */
+export function loadWorkspaceDispatchSlice(wsId: string): WorkspaceDispatchSlice {
+  const mockEnabledSet = readEnabledSet(wsId, "mocks") ?? bootstrapEnabledSet(wsId, "mocks");
+  const mappingEnabledSet = readEnabledSet(wsId, "mappings") ?? bootstrapEnabledSet(wsId, "mappings");
+
+  return {
+    workspaceId: wsId,
+    // `enabled` lives in `enabled.json`, not on the entity — injected exactly as `loadConfig()` does.
+    mocks: readAllEntities<MockRule>(wsId, "mocks").map((m) => ({ ...m, enabled: mockEnabledSet.has(m.id) })),
+    mappings: readAllEntities<LocalMapping>(wsId, "mappings").map((m) => ({
+      ...m,
+      workspaceId: m.workspaceId ?? wsId,
+      enabled: mappingEnabledSet.has(m.id),
+    })),
+    environments: readAllEntities<Environment>(wsId, "environments"),
+    // Read from settings rather than from the slice's own entities: the pointer is a *settings* field, and
+    // for the active workspace this is exactly what `loadConfig()` resolves at line 108.
+    activeEnvironmentId: loadSettings().workspaces.find((w) => w.id === wsId)?.activeEnvironmentId ?? null,
+  };
+}
+
 export function loadConfig(): AppConfig {
   const settings = loadSettings();
   const wsId = settings.activeWorkspaceId;

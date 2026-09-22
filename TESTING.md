@@ -1,6 +1,7 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-16 · suite: **1617 tests / 70 files** (1 known failure — see §7)_
+_Last reviewed: 2026-09-22 · suite: **2,632 tests / 113 files — 2,592 passed, 40 skipped, 0 failed** (no
+known failure: the standing `soap.execute` flake was retired with the P0 spike on 2026-09-21 — see §7)_
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read
@@ -43,6 +44,15 @@ so there is no `cd bifurc` any more.)
 > tests/integration/…`) are **wrong in this environment**; drop the `--project` flag, or run the whole
 > project. The `npm run test:unit` / `test:integration` scripts are unaffected — they carry no path
 > filter.
+>
+> **▶ 2026-09-22 — this no longer reproduces, and the warning is kept as history rather than as advice.**
+> The combination was used **twelve times** in one session (`--project unit` and `--project integration`,
+> against root `tests/**` and `packages/protocol/**` alike, plus single-file and whole-project runs) and
+> every invocation collected and ran normally. Nothing here says the failure was never real — it was
+> recorded as *verified* at the time — but a note that tells you to avoid a working command costs a
+> session's worth of convenience, so the observation is recorded next to it. **Re-verify before acting on
+> either version.** The general rule this is an instance of is in `TRAPS.md`: a count or a warning written
+> into prose is never re-derived, so it drifts.
 
 > **Note on coverage in restricted environments:** Vitest deletes its `coverage/` directory
 > before and after each run. In sandboxes that block bulk deletes this fails with
@@ -1264,6 +1274,17 @@ JSONC, unlike `tsc`. Comments are fine in `tsup.config.ts` (transpiled) but fata
   deterministic cleanup through `window.api`.
 - `app.spec.ts` had a genuine bug: `const window = await electronApp.firstWindow()` shadowed
   the DOM `window`, so `window.evaluate(() => window.innerWidth)` threw at runtime. Fixed.
+- **The suite passes in full as of 2026-09-22: 11 specs / 46 tests — 46 expected, 0 unexpected, 0 flaky,
+  0 skipped** (owner-run; real Electron). **Read the result from the run's own artifacts before asking for
+  a re-run** — `playwright-report/index.html` embeds `report.json`, whose `stats` carries the counts and
+  `ok`. `screenshot: "only-on-failure"` + `trace: "on-first-retry"` mean a failure leaves
+  `test-results/<spec>-<test>-electron/error-context.md` — the error **plus a full accessibility snapshot
+  of the page** — and `test-failed-1.png`. **All seven** failures that stood between this and the
+  `46 failed / 0 passed` first attempt were diagnosed from those files alone. **That first number was an
+  agent-shell constant, not a measurement:** Electron cannot start its GPU process in a sandboxed shell,
+  so every spec dies at `firstWindow()` in ~850 ms. Two more consequences worth knowing: the tree row is a
+  `<div title=…>` (role `generic`, name from `title`), and `Ctrl+T` opens the **protocol chooser**, not the
+  request form. Details: `.workbuddy-ai/memory/TRAPS.md`.
 
 ### Renderer type fixes (prerequisites for `typecheck:e2e` passing)
 - `renderer/types/window.ts` and `renderer/types/ipc.ts` imported `Workspace` from

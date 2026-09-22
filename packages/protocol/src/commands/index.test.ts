@@ -119,4 +119,81 @@ describe("@bifurc/protocol command schemas", () => {
       expect(COMMANDS["services.discover"].params.safeParse({ workspaceId: "ws1" }).success).toBe(false);
     });
   });
+
+  /**
+   * P14 §8 criterion 20 — "fixtures re-derived after the schema change, not trusted".
+   *
+   * ## Why the generic pair above cannot carry this
+   *
+   * It asserts `safeParse(fixture.invalid).success === false`, which is satisfied by a payload rejected for
+   * **any** reason. After WI 1 merged an optional `workspaceId` into the four `blob.*` schemas, the failure
+   * mode to rule out is exactly a *reason* failure: a payload that reads as invalid because `workspaceId`
+   * is unknown, or because some unrelated field is missing, while the field the fixture exists to exercise
+   * is never reached. That is this phase's recurring shape — an instrument answering a neighbouring
+   * question — so the reason is asserted, not the boolean.
+   *
+   * ## What was derived (measured 2026-09-22, not read off the schemas)
+   *
+   * | command | invalid payload | issue path | code |
+   * |---|---|---|---|
+   * | `blob.put` | no `filename` | `filename` | `invalid_type` |
+   * | `blob.stat` | only `workspaceId` | `blobId` | `invalid_type` |
+   * | `blob.read` | `offset: -1` | `offset` | `too_small` |
+   * | `blob.release` | only `workspaceId` | `blobId` | `invalid_type` |
+   *
+   * Two rows changed as a result. `blob.stat` and `blob.release` had `{}`, which is invalid before *and*
+   * after the change and therefore could not have detected it — a fixture that cannot fail for the change
+   * it exists to guard. They now carry the payload the plan itself named as the hazard: the newly-added
+   * optional field and nothing else.
+   */
+  describe("blob.* invalid fixtures fail for the reason they exist for (P14 §8 criterion 20)", () => {
+    const CASES: { action: CommandAction; path: string; code: string }[] = [
+      { action: "blob.put", path: "filename", code: "invalid_type" },
+      { action: "blob.stat", path: "blobId", code: "invalid_type" },
+      { action: "blob.read", path: "offset", code: "too_small" },
+      { action: "blob.release", path: "blobId", code: "invalid_type" },
+    ];
+
+    it.each(CASES)("$action is rejected on `$path`, and nowhere else", ({ action, path, code }) => {
+      const result = COMMANDS[action].params.safeParse(COMMAND_FIXTURES[action].invalid);
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      // `toHaveLength(1)` is load-bearing, not tidiness: it is what rules out the payload being invalid
+      // for an *additional* reason on top of the one the fixture was written for.
+      expect(result.error.issues).toHaveLength(1);
+      expect(result.error.issues[0].path).toEqual([path]);
+      expect(result.error.issues[0].code).toBe(code);
+    });
+
+    /**
+     * The converse, and the half that makes the rows above meaningful rather than merely green. If the
+     * fixture is invalid *because of* `blobId`, then repairing `blobId` while keeping `workspaceId` must
+     * make it **valid**. Without this, a payload that had become invalid because the schema stopped
+     * accepting `workspaceId` at all would sail through the block above.
+     */
+    it.each(["blob.stat", "blob.release"] as const)(
+      "%s's invalid payload becomes valid once `blobId` is supplied — so `workspaceId` is not the cause",
+      (action) => {
+        const repaired = { ...(COMMAND_FIXTURES[action].invalid as object), blobId: "b1" };
+        const result = COMMANDS[action].params.safeParse(repaired);
+        expect(result.success, result.success ? "" : JSON.stringify(result.error?.issues)).toBe(true);
+      },
+    );
+
+    /**
+     * **The near-miss rule, and it is the only assertion here that a `{}` fixture fails.**
+     *
+     * This file's own header sets the standard for an `invalid` payload: *"a payload that is otherwise
+     * well-formed"*. `{}` is not — it fails every schema for reasons that have nothing to do with the
+     * command, which is the same objection the header raises against `null`. Two of the four `blob.*` rows
+     * used `{}` before this pass, so they could not have detected the schema change at all: `{}` is invalid
+     * before *and* after, and `{ workspaceId: "ws1" }` is rejected on exactly the same path with exactly the
+     * same code. **Measured, not assumed** — reverting `blob.stat` to `{}` leaves every other assertion in
+     * this block passing, which is precisely why this one exists.
+     */
+    it.each(CASES)("$action's invalid payload is a near-miss, not a total rejection", ({ action }) => {
+      const invalid = COMMAND_FIXTURES[action].invalid as Record<string, unknown>;
+      expect(Object.keys(invalid).length).toBeGreaterThan(0);
+    });
+  });
 });

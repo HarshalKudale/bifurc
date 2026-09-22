@@ -15,6 +15,8 @@
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import * as net from "net";
+import * as fs from "fs";
+import * as path from "path";
 
 import {
   allocatePorts,
@@ -235,6 +237,120 @@ describe("allocatePorts() — D16's resolution order", () => {
     expect(out.webhookPortWasPreferred).toBe(true);
   });
 
+  /**
+   * D16's **stickiness** — the third source, added 2026-09-22 after the acceptance audit found the rule was
+   * specified and unimplemented (`plan/14` §8 criteria 6a/6b).
+   *
+   * Every case here asserts the **provenance flag**, not just the port. That is not belt-and-braces: on a
+   * quiet machine the remembered port and the scan can produce the same number, so `expect(out.proxyPort)
+   * .toBe(remembered)` can pass while the remembered input is ignored entirely. The flag cannot. (The same
+   * reasoning as the `IS_WINDOWS` count in §8 criterion 3: when the claim is about *which mechanism ran*,
+   * assert the mechanism.)
+   */
+  it("honours a remembered port when it is free — and says so via the flag", async () => {
+    const remembered = await freePort();
+    let base = await freePort();
+    for (let i = 0; i < 5 && base === remembered; i += 1) base = await freePort();
+    expect(base).not.toBe(remembered);
+    expect(await portIsFree(remembered)).toBe(true);
+
+    const out = await allocatePorts({
+      proxyBase: base,
+      webhookBase: await freePort(),
+      rememberedProxyPort: remembered,
+    });
+
+    expect(out.proxyPort).toBe(remembered);
+    expect(out.proxyPortWasRemembered).toBe(true);
+    expect(out.proxyPortWasPreferred).toBe(false);
+  });
+
+  it("FALLS THROUGH to the base scan when the remembered port is taken — never throws", async () => {
+    const base = await freePort();
+    const remembered = await holdPort();
+    expect(remembered).not.toBe(base);
+
+    const out = await allocatePorts({
+      proxyBase: base,
+      webhookBase: await freePort(),
+      rememberedProxyPort: remembered,
+    });
+
+    // This is the assertion that separates "soft" from "an override": a taken remembered port must land the
+    // workspace on the scan's own first choice, not throw `PortUnavailableError` and not skip the workspace.
+    expect(out.proxyPort).toBe(base);
+    expect(out.proxyPortWasRemembered).toBe(false);
+    expect(out.proxyPortWasPreferred).toBe(false);
+  });
+
+  it("the override beats the remembered port, and the remembered port beats the base", async () => {
+    const base = await freePort();
+    const remembered = await freePort();
+    const preferred = await freePort();
+
+    const out = await allocatePorts({
+      proxyBase: base,
+      webhookBase: await freePort(),
+      rememberedProxyPort: remembered,
+      preferredProxyPort: preferred,
+    });
+
+    // D16's source 1 outranks source 2 — a remembered outcome must never shadow a choice the user made.
+    expect(out.proxyPort).toBe(preferred);
+    expect(out.proxyPortWasPreferred).toBe(true);
+    expect(out.proxyPortWasRemembered).toBe(false);
+  });
+
+  it("skips a remembered port the host has already reserved", async () => {
+    const base = await freePort();
+    const remembered = base + 5;
+    expect(await portIsFree(remembered), "the fixture needs base + 5 free").toBe(true);
+
+    /**
+     * **The contrast is what makes this case falsifiable, and it was missing in the first version.**
+     *
+     * `expect(out.proxyPort).toBe(base)` alone cannot fail for its own reason: with the remembered path
+     * removed altogether the scan takes `base` too, so the case passed for the wrong reason and guarded
+     * nothing. Showing that the *same* fixture takes `remembered` when it is unreserved is what isolates the
+     * reservation as the cause — and it is the half that breaks if the reserved check is dropped.
+     */
+    const unreserved = await allocatePorts({
+      proxyBase: base,
+      webhookBase: await freePort(),
+      rememberedProxyPort: remembered,
+    });
+    expect(unreserved.proxyPort).toBe(remembered);
+    expect(unreserved.proxyPortWasRemembered).toBe(true);
+
+    const out = await allocatePorts({
+      proxyBase: base,
+      webhookBase: await freePort(),
+      rememberedProxyPort: remembered,
+      // Something the host is about to bind itself — the RPC endpoint, or a sibling already placed.
+      reserved: [remembered],
+    });
+
+    expect(out.proxyPort).toBe(base);
+    expect(out.proxyPortWasRemembered).toBe(false);
+  });
+
+  it("applies the same soft rule to the remembered webhook port", async () => {
+    const remembered = await freePort();
+    let webhookBase = await freePort();
+    for (let i = 0; i < 5 && webhookBase === remembered; i += 1) webhookBase = await freePort();
+    expect(webhookBase).not.toBe(remembered);
+
+    const out = await allocatePorts({
+      proxyBase: await freePort(),
+      webhookBase,
+      rememberedWebhookPort: remembered,
+    });
+
+    expect(out.webhookPort).toBe(remembered);
+    expect(out.webhookPortWasRemembered).toBe(true);
+    expect(out.webhookPortWasPreferred).toBe(false);
+  });
+
   it("THROWS on a taken proxy override, naming the next free port — never silently increments", async () => {
     const taken = await holdPort();
     const nextFree = await holdPort(taken + 1);
@@ -381,5 +497,218 @@ describe("proxyBasePort() — the per-environment base (D16)", () => {
 
   it("uses the webhook base 9101 on every platform", () => {
     expect(WEBHOOK_BASE_PORT).toBe(9101);
+  });
+});
+
+/**
+ * P14 §8 criterion 5 — "`EACCES` advances rather than killing the runtime".
+ *
+ * ## Which "override" the criterion means, and why that matters
+ *
+ * D16's table has **two** sources and the word "override" names both: the per-workspace override (a port the
+ * user chose) and an override of the *environment base* (`BIFURC_PROXY_BASE_PORT`). The criterion's own
+ * parenthetical — "the default path never attempts a privileged port, so this guards the override case
+ * only" — is only true of the second: the defaults are `80` on win32 and `8080` elsewhere, and `8080` needs
+ * no privilege, so the case that reaches a privileged port is an operator who set the base to one. That
+ * reading is also the only one consistent with D16, because a *per-workspace* override that cannot be bound
+ * must **throw**, not advance. Both halves are asserted below, and the pair is the content of the rule.
+ */
+describe("a bind failure that is not EADDRINUSE (P14 §8 criterion 5)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * Make a bind on `port` fail the way a privileged port fails on a platform that forbids it.
+   *
+   * `EACCES` cannot be produced for real on win32 — an unprivileged process may bind below 1024 there — so
+   * the failure is injected. That is the honest instrument rather than a compromise: the claim under test is
+   * the allocator's *response* to a failed bind, which is platform-independent, and the OS's reason for
+   * refusing is not what is being asserted.
+   *
+   * The error is emitted **asynchronously, on `nextTick`**, not thrown from `listen()`. That is how a real
+   * bind failure arrives, and it exercises `tryBind`'s `server.once("error", …)` path rather than its
+   * `try/catch` — a synchronous throw would test the wrong half of the function.
+   */
+  function failBindWithEacces(port: number): void {
+    const realListen = net.Server.prototype.listen;
+    vi.spyOn(net.Server.prototype, "listen").mockImplementation(function (
+      this: net.Server,
+      ...args: unknown[]
+    ) {
+      if (args[0] === port) {
+        process.nextTick(() => {
+          const err = new Error(`listen EACCES: permission denied 127.0.0.1:${port}`) as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          this.emit("error", err);
+        });
+        return this;
+      }
+      return (realListen as unknown as (...a: unknown[]) => net.Server).apply(this, args);
+    } as unknown as typeof net.Server.prototype.listen);
+  }
+
+  it("advances past a BASE port whose bind fails, rather than killing the runtime", async () => {
+    const base = await freePort();
+    failBindWithEacces(base);
+
+    const got = await findFreePortFrom(base);
+
+    // The runtime comes up: an unbindable base is not fatal, it is what the scan exists for.
+    expect(got).not.toBeNull();
+    // It did not hand back the port whose bind failed...
+    expect(got).not.toBe(base);
+    // ...it moved upward, and what it settled on is genuinely bindable.
+    expect(got!).toBeGreaterThan(base);
+    expect(await portIsFree(got!)).toBe(true);
+  });
+
+  it("still fails LOUDLY when it is a per-workspace OVERRIDE that cannot be bound", async () => {
+    const blocked = await freePort();
+    failBindWithEacces(blocked);
+
+    // The same failure, the other rule. An allocator that advanced here would be silently moving a port
+    // the user explicitly chose, which is the one thing D16 says must never happen.
+    await expect(allocatePorts({ preferredProxyPort: blocked })).rejects.toBeInstanceOf(PortUnavailableError);
+  });
+});
+
+/**
+ * P14 §8 criterion 3 — "the platform branch is one constant".
+ *
+ * The audit found the first half met (`:358` asserts the two values) and the invariant half unguarded. Both
+ * halves are here, and the second is a **structural** assertion rather than a behavioural one, deliberately:
+ * "nothing else in the allocation path branches on platform" is a statement about how *many* platform reads
+ * exist, and no behavioural test can express a count — it would have to enumerate every output of the module
+ * and show each is platform-invariant, which is unbounded and would silently stop covering new outputs.
+ * Asserting the count covers the whole file including code that has no test yet.
+ */
+describe("the platform branch is one constant (P14 §8 criterion 3)", () => {
+  const realPlatform = process.platform;
+
+  /**
+   * Load a **fresh** module instance with `process.platform` faked.
+   *
+   * `IS_WINDOWS` is computed at module load (`export const IS_WINDOWS = process.platform === "win32"`), so
+   * stubbing the platform after import would change nothing and both cases below would pass vacuously —
+   * they would be asserting the *real* platform twice.
+   */
+  async function loadUnder(platform: NodeJS.Platform) {
+    vi.resetModules();
+    Object.defineProperty(process, "platform", { value: platform, configurable: true });
+    return import("@bifurc/engine/runtime/portAllocator");
+  }
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform, configurable: true });
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("yields base 80 under a simulated win32", async () => {
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", "");
+    const mod = await loadUnder("win32");
+    expect(mod.IS_WINDOWS).toBe(true);
+    expect(mod.proxyBasePort()).toBe(80);
+  });
+
+  it("yields base 8080 under a simulated linux — the half this machine never exercises", async () => {
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", "");
+    const mod = await loadUnder("linux");
+    expect(mod.IS_WINDOWS).toBe(false);
+    expect(mod.proxyBasePort()).toBe(8080);
+  });
+
+  it("treats darwin as 'not win32' rather than as a third case", async () => {
+    vi.stubEnv("BIFURC_PROXY_BASE_PORT", "");
+    const mod = await loadUnder("darwin");
+    expect(mod.proxyBasePort()).toBe(8080);
+  });
+
+  it("reads `process.platform` exactly once in the whole module, and uses the constant once", () => {
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), "packages/engine/src/runtime/portAllocator.ts"),
+      "utf-8",
+    );
+    // The one read *is* the `IS_WINDOWS` definition — not merely a read that happens to be there.
+    expect(src.match(/process\.platform/g) ?? []).toHaveLength(1);
+    expect(src).toMatch(/export const IS_WINDOWS = process\.platform === "win32";/);
+
+    /**
+     * **Counted over the module's *code*, not over its text** — and that distinction is the difference
+     * between this instrument working and this instrument lying.
+     *
+     * The first version counted `src` directly, and it broke on a **documentation** edit: a docblock added on
+     * 2026-09-22 that merely *names* `IS_WINDOWS` (while explaining the soft remembered-port path) took the
+     * count to 3 and failed the case. A comment is not a branch on platform, so counting raw text had made
+     * the criterion sensitive to prose — and the tempting "fix" would have been to delete a useful
+     * explanation to satisfy a test. **A count is only the right instrument if it counts the right thing.**
+     *
+     * Comment-only lines are dropped, which is sufficient here: every docblock line in this module begins with
+     * `*`, `//` or `/*` once trimmed. A trailing comment on a *code* line is deliberately left in place, so a
+     * real second use cannot hide behind one.
+     */
+    const code = src
+      .split("\n")
+      .filter((line) => {
+        const t = line.trim();
+        return !(t.startsWith("*") || t.startsWith("//") || t.startsWith("/*"));
+      })
+      .join("\n");
+
+    // Declaration plus one use. A third occurrence **in code** is a second branch on platform, which is the
+    // thing the criterion forbids — and it is the *use* count, not the read count, that catches a branch
+    // written against the already-computed constant.
+    expect(code.match(/\bIS_WINDOWS\b/g) ?? []).toHaveLength(2);
+  });
+
+  // The webhook base has no platform split at all (`WEBHOOK_BASE_PORT === 9101`, asserted above), so there
+  // is nothing to simulate for it — the criterion's "assert it for both bases" is satisfied by the base
+  // cases here plus that constant.
+});
+
+/**
+ * P14 §8 criterion 7 — the *named* reservations, and the webhook interaction.
+ *
+ * The audit's complaint was that reservations were covered only in general (`:184`, `:314`, `:328`) and that
+ * the specific pair the criterion names was asserted nowhere. The numbers below are real constants
+ * elsewhere in the tree — `store/appSettings.ts:85` (`companionPort: 9271`) and `store/config.ts:293`
+ * (`grpcMockServerPort: 9102`) — and they are **written out rather than imported on purpose**: the claim is
+ * that the allocator is *told* them by the host and never derives them, so importing them would let this
+ * keep passing after a host stopped passing them.
+ *
+ * Each case holds the ports *below* the reserved one, so the scan genuinely wants it. Without that the
+ * reservation would never be consulted and the case would pass whether or not it worked.
+ */
+describe("the named reservations — companion 9271 and the gRPC placeholder 9102 (P14 §8 criterion 7)", () => {
+  const COMPANION = 9271;
+  const GRPC_PLACEHOLDER = 9102;
+
+  /**
+   * These are fixed ports in Bifurc's own ranges, so a concurrent integration run could hold one. The
+   * preconditions are asserted rather than assumed so that such a collision reports *which* port was
+   * unavailable instead of surfacing as a raw `EADDRINUSE` from `holdPort` — a failure that reads like an
+   * allocator defect when it is an environment collision.
+   */
+  it("skips the companion port when the scan reaches it", async () => {
+    expect(await portIsFree(9270), "9270 must be free for this case to be decisive").toBe(true);
+    expect(await portIsFree(9272), "9272 must be free for this case to be decisive").toBe(true);
+    await holdPort(9270);
+    expect(await findFreePortFrom(9270, "proxy", new Set([COMPANION, GRPC_PLACEHOLDER]))).toBe(9272);
+  });
+
+  it("skips the gRPC placeholder when the proxy scan reaches it", async () => {
+    expect(await portIsFree(9100), "9100 must be free for this case to be decisive").toBe(true);
+    expect(await portIsFree(9103), "9103 must be free for this case to be decisive").toBe(true);
+    await holdPort(9100);
+    await holdPort(9101);
+    // 9100 and 9101 are held, so the next candidate is the reserved 9102 — the only port the scan can be
+    // pushed onto, which is what makes this discriminating rather than incidental.
+    expect(await findFreePortFrom(9100, "proxy", new Set([COMPANION, GRPC_PLACEHOLDER]))).toBe(9103);
+  });
+
+  it("the second workspace's webhook skips 9102 and lands on 9103 — the case the criterion names", async () => {
+    expect(await portIsFree(9101), "9101 must be free for this case to be decisive").toBe(true);
+    expect(await portIsFree(9103), "9103 must be free for this case to be decisive").toBe(true);
+    await holdPort(9101);
+    expect(await findFreePortFrom(9101, "webhook", new Set([COMPANION, GRPC_PLACEHOLDER]))).toBe(9103);
   });
 });

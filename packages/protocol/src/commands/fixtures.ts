@@ -183,17 +183,31 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   // it would keep passing while testing nothing about the new field — harmless here, but exactly
   // the pattern that silently stops testing rejection when the newly-allowed key is the one under
   // test. Each `invalid` below still fails on a *required or typed* field, never on scope.
+  // P14 WI 1 (D17) — the four `blob.*` rows were **re-derived**, not trusted, when the optional
+  // `workspaceId` was merged in. The hazard the plan anticipated is real but narrow: with `.strict()`,
+  // adding a field turns a payload that was invalid *because it carried that field* into a **valid** one,
+  // so an `invalid` fixture can silently stop being invalid. None of the four did, and the reason each is
+  // still invalid is pinned in `index.test.ts`'s "the reason, not just the rejection" block — asserting
+  // `success === false` alone cannot tell "rejected for the intended reason" from "rejected for any reason".
   "blob.put": {
     valid: { filename: "export.json", mimeType: "application/json", size: 2, data: "e30=", workspaceId: "ws1" },
-    // missing filename
+    // missing `filename` — a required field, not the optional one
     invalid: { mimeType: "application/json", size: 2, data: "e30=" },
   },
-  "blob.stat": { valid: { blobId: "b1", workspaceId: "ws1" }, invalid: {} },
+  // `{}` was the original invalid payload for these two, and it is a **constant**: an empty object fails
+  // every schema before and after the change, so it could not have detected the change at all. It is
+  // replaced by the plan's own named hazard — a payload carrying *only* the newly-added optional field.
+  // This one is discriminating: it is otherwise well-formed, it carries `workspaceId`, and it is rejected
+  // solely because `blobId` is required. Under `.strict()` a non-optional `workspaceId` would have made
+  // it valid, so this row is what turns the D17 compatibility claim into an assertion.
+  "blob.stat": { valid: { blobId: "b1", workspaceId: "ws1" }, invalid: { workspaceId: "ws1" } },
   "blob.read": {
     valid: { blobId: "b1", offset: 0, length: 1024, workspaceId: "ws1" },
+    // a negative `offset` — the strongest of the four, because the payload is complete apart from the
+    // one field under test and the rejection is a range check rather than a missing-field check
     invalid: { blobId: "b1", offset: -1, workspaceId: "ws1" },
   },
-  "blob.release": { valid: { blobId: "b1", workspaceId: "ws1" }, invalid: {} },
+  "blob.release": { valid: { blobId: "b1", workspaceId: "ws1" }, invalid: { workspaceId: "ws1" } },
 
   "script.execute": { valid: { script: "1+1", context: "pre", envVars: {} }, invalid: { script: "1+1", context: "bogus", envVars: {} } },
   "request.replay": { valid: { method: "GET", url: "http://x", headers: {}, body: "" }, invalid: { method: "GET", url: "http://x" } },
