@@ -1760,6 +1760,20 @@ instrument-naming discipline as a positive one — name where you looked, and ma
 tree, or the verdict is a statement about your search rather than about the code. The cheapest fix is the one
 that would have caught it: `grep -rn` over `tests/` and `packages/`, never a single subdirectory.
 
+**The same error recurred on 2026-09-22, one layer up — a negative verdict produced by a *badly-formed*
+instrument.** Consolidating `MEMORY.md` meant deciding whether nine measurement rules were already recorded
+elsewhere, and the check run for it returned **0 hits in both `TRAPS.md` and `TESTING.md`** — which would have
+made cutting them a *deletion* rather than a move, and stopped the work. Re-running the same question with
+concept-shaped patterns instead of one remembered phrase returned, in `TRAPS.md` alone: `standing failure` 2,
+`mutation` 17, `baseline` 8, `re-measur` 10, `negative verdict` 1, `count by hand` 2 — and `:912` carries the
+counting rule **verbatim**, while `:1748` is the heading of this very section. The rules had homes all along.
+
+**A grep that finds nothing is evidence about the *pattern*, not about the file.** Before acting on a zero,
+re-ask the question in the shape of the **concept** (`grep -ci` over several stems) rather than the shape of one
+sentence you happen to remember writing. The answer here was also neither "cut all" nor "keep all": two of the
+nine really *were* unique to `MEMORY.md` (`name the mechanism` 0, `able to fail` 0), and only a well-formed
+instrument could tell the two groups apart. **A zero and a zero are not the same zero.**
+
 ### A criterion can be defective, and a test written to satisfy it locks the defect in
 
 Two of the twenty-one could not be satisfied by any honest test:
