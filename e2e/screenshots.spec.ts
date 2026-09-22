@@ -94,13 +94,49 @@ async function clickNavItem(page: import("@playwright/test").Page, label: string
 }
 
 async function openPanel(page: import("@playwright/test").Page, panel: PanelDef) {
+    /**
+     * Guard: dismiss any dropdown the previous panel left open.
+     *
+     * Both titlebar dropdowns render a full-screen backdrop — `<div class="fixed inset-0 z-40">`
+     * (`WorkspaceDropdown.tsx:76`, `EnvSelector.tsx:48`) — whose whole job is to swallow the next click.
+     * Because this tour navigates with `evaluate(el.click())`, which bypasses hit-testing, a leftover
+     * backdrop is invisible to every step except the one real click (panel 11's
+     * `openEnvironmentsManager`) — which is how the 30 s "intercepts pointer events" timeout happened.
+     *
+     * Scope, stated honestly: Escape closes the workspace dropdown (`WorkspaceSelector.tsx:75`) and is a
+     * no-op when nothing is open. `EnvSelector` has no Escape handler, but its dropdown cannot be left
+     * open — `onManage` closes it (`TitleBar.tsx:163-166`) — so Escape covers the reachable case. A
+     * future panel whose dropdown closes only on a backdrop click will need that click here instead.
+     */
+    await page.keyboard.press("Escape");
+
     if (panel.trigger === "environments") {
         await openEnvironmentsManager(page);
         return;
     }
 
     if (panel.trigger === "titlebar") {
-        const btn = page.getByRole("button", { name: new RegExp(escapeRegex(panel.label), "i") }).nth(panel.occurrence ?? 0);
+        /**
+         * **Anchored, and the anchoring is load-bearing.** Unanchored, `/Workspace/i` matched the
+         * workspace *switcher* first — its accessible name is `"SW Sample Workspace"` — so `.nth(0)`
+         * clicked that instead of the Workspace *panel* button (`aria-label` is exactly `"Workspace"`,
+         * `TitleBar.tsx:113` → `setPanel("workspace")`, `App.tsx:292`). Two consequences, the second
+         * fatal:
+         *
+         *   1. `10-workspace.png` was a screenshot of the switcher dropdown, not the Workspace panel.
+         *   2. That dropdown renders a full-screen backdrop — `<div class="fixed inset-0 z-40">`
+         *      (`WorkspaceDropdown.tsx:76`) — whose whole job is to swallow the next click. Every other
+         *      navigation click in this tour runs inside `evaluate(el.click())`, which bypasses
+         *      hit-testing, so the backdrop was invisible to all of them **except the one real click in
+         *      the tour**: panel 11's `openEnvironmentsManager`. That click then timed out for 30 s with
+         *      `<div class="fixed inset-0 z-40"></div> ... intercepts pointer events`, and the failure
+         *      snapshot showed `button "SW Sample Workspace" [expanded]` with its "Search workspaces…"
+         *      box open.
+         *
+         * `app.spec.ts`'s environments test passes because it goes straight there with nothing else
+         * open — which is why "the helper works" was the right clue and not the whole answer.
+         */
+        const btn = page.getByRole("button", { name: new RegExp(`^${escapeRegex(panel.label)}$`, "i") }).nth(panel.occurrence ?? 0);
         await btn.waitFor({ state: "visible", timeout: 5000 });
         await btn.evaluate((el: Element) => {
             (el as HTMLElement).scrollIntoView({ block: "center" });
