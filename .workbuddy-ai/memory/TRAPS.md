@@ -1882,3 +1882,44 @@ steps, and only the first had been done.)
 narratives — treat it as a merge artefact and **find its provenance before fixing it**
 (`git show HEAD~1:<file>`): the duplicate may be the *older* text, in which case deleting the wrong copy
 throws away the newer account.
+
+## A guard no test can observe is not a defect — but a comment calling it load-bearing is
+
+Found 2026-09-22, mutation-checking the new browser transport's eight cases. Three of four mutations were
+caught by a *named* case: silencing `onclose` failed two, making `isReady()` always true failed two, silencing
+`onerror` failed one — and that last one only after a case was **added**, because the connect-failure path had
+been untested and the wiring was therefore decoration. The fourth was not caught, and the interesting part is
+why.
+
+`dispose()` detaches the socket's four handlers before closing it, and the comment said the reason was that a
+handler still attached "would report a caller-initiated shutdown as a fatal fault". **That is false.**
+`session.ts` sets its own `closed` flag *before* it calls `dispose()`, so a `close` arriving with the handlers
+still attached finds the teardown already done and reports nothing. The detach is **defensive** — it stops this
+file depending on that ordering, and it stops a queued `message` being handed to a finished session — but it is
+not observable, and no test can be written that guards it.
+
+**The rule:** when a mutation is not caught, the question is not "how do I write a test for this" but **"is
+this load-bearing at all?"** Three answers are possible and they need three different responses: the test is
+missing (add one), the guard is genuinely unobservable (say so *in the code* and stop claiming otherwise), or
+the guard is dead (delete it). **A comment that overstates a guard's role is a defect even when the guard is
+fine** — it is what will mislead the next reader into hunting for the test that cannot exist.
+
+## The third copy was already there — moving a shared module is what made it visible
+
+Found 2026-09-22, the same afternoon. `session.ts` exists because `stdio.ts` and `ws.ts` had each grown a copy
+of the same ~150-line client state machine, and its own header says a third copy is "where *similar* becomes
+*drifted*". The extraction was done and `socket.ts` was converted to use it — and **`ws.ts` was not.** Its
+client still carries its own `pending` / `control` / `listeners` / `teardown` / `deliver`, and nothing said so,
+because nothing was looking: the file compiles, its tests pass, and a duplicated state machine is invisible
+from the outside.
+
+It became visible only when `session.ts` was **moved** to another package for P7, so "who imports this?" had
+to be answered. `socket.ts` and one test appeared; `ws.ts` did not — and its absence from that list *was* the
+finding.
+
+**The rule:** an extraction is not finished when the new module works, it is finished when the old copies are
+**gone**, and the way to check is to ask who imports the shared module rather than to assume the refactor
+swept. **A file that should import something and does not is invisible to every instrument that only reads
+what is there** — the same shape as `"nothing else reads it"` needing a grep of `packages/` and not only
+`src/`. Recorded as a **known open item** rather than a suspicion: whoever next touches `ws.ts` should convert
+its client to `createClientSession`.
