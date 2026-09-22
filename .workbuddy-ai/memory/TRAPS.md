@@ -1626,3 +1626,53 @@ original.
 **Rule: one `Edit` per file per message.** If several are unavoidable, re-read or re-measure the file
 afterwards — the tool's success message is about the write, not about the file's final state. This applies
 to any tool that rewrites a whole file from a read-then-write cycle.
+
+## Synthetic clicks hide occlusion, so a suite using them fails only where it uses a real one
+
+`locator.click()` refuses to click an element that is covered — it retries and then times out with
+`<div class="…"></div> … intercepts pointer events`. `element.click()` inside `page.evaluate()` does not:
+it dispatches straight to the node and **never hit-tests**. A suite that navigates with the second form is
+therefore blind to anything overlaying the page, and will fail at exactly the one place it uses the first —
+**so the failure's location is a property of the test's click style, not of the bug's location.**
+
+That is how the Bifurc screenshot tour failed on 2026-09-22. Panels 1–10 all navigate with
+`evaluate(el.click())`. Panel 10's titlebar step matched the wrong button and left a full-screen backdrop
+open; nothing noticed, because a synthetic click does not care. Panel 11 is the tour's **only** real click
+(`openEnvironmentsManager`), and it timed out for 30 s. **The bug was introduced at panel 10 and surfaced at
+panel 11**, which is why reading the failing step as "the environments helper is broken" was wrong — and why
+the user's observation that `app.spec.ts`'s environments test *passes* was the decisive clue.
+
+**Reading the error.** The two halves of the message are what identify this:
+
+```
+- waiting for getByTitle('Switch environment').first()
+  - locator resolved to <button … aria-expanded="false" title="Switch environment" …>
+  - <div class="fixed inset-0 z-40"></div> from <div class="relative flex-shrink-0">…</div> subtree intercepts pointer events
+```
+
+`locator resolved to` means the target exists, is visible, is enabled, and is stable — **the locator is
+fine**. `intercepts pointer events` means something else is on top. So: do not debug the locator; find the
+topmost element. Note also that `aria-expanded="false"` on the resolved toggle proved the backdrop was *not*
+its own dropdown's — an attribute on the target can rule out the obvious suspect. The page snapshot then
+named the real owner directly: `button "SW Sample Workspace" [expanded]` with its `Search workspaces…` box
+open.
+
+**How the backdrop got there.** The titlebar branch built `new RegExp(escapeRegex(panel.label), "i")` —
+**unanchored** — so `/Workspace/i` matched both `button "SW Sample Workspace"` (the workspace *switcher*)
+and `button "Workspace"` (the Workspace *panel*), and `.nth(0)` took the switcher. Clicking it opened a
+dropdown whose backdrop is `<div class="fixed inset-0 z-40">` (`WorkspaceDropdown.tsx:76`; `EnvSelector.tsx:48`
+is byte-identical), and the tour never closed it. The `bottom` branch of the same function already anchored
+its regex (`^Settings$`) — **one branch of a nav helper was anchored and the other was not, which is what made
+this a one-line bug with a 30-second symptom.**
+
+**Rules.**
+1. **Anchor nav-label regexes** (`^…$`) and treat `.nth(k)` / `.last()` over an unanchored label as a silent
+   mis-click, not a tie-breaker. A partial-name match will eventually hit a *different* control that happens
+   to contain the word.
+2. **When a suite navigates synthetically, any step that opens an overlay must close it**, or the next real
+   click dies far from the cause. Prefer dismissing before each step (Escape, or a backdrop click) over
+   remembering to clean up after each one — and check which mechanism actually closes each overlay, since
+   they differ: `WorkspaceSelector.tsx:75` handles Escape, `EnvSelector` has no Escape handler and relies on
+   `onManage` closing it (`TitleBar.tsx:163-166`).
+3. **"The helper works" and "the test fails" are compatible.** A shared helper can be correct in isolation
+   and still fail in a sequence, because its preconditions were established by earlier steps.
