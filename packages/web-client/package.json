@@ -27,12 +27,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@bifurc/client": "*",
     "@bifurc/protocol": "*"
   },
   "devDependencies": {
-    "@bifurc/client": "*",
     "@bifurc/engine": "*",
     "@types/node": "^20.0.0",
+    "jsdom": "^26.0.0",
     "tsup": "^8.5.1",
     "typescript": "^5.4.0"
   }
