@@ -5,23 +5,26 @@
   "license": "SEE LICENSE IN LICENSE",
   "main": "dist/main.js",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "author": {
     "name": "Harshal Kudale"
   },
   "scripts": {
-    "build:packages": "npm run build --workspace @bifurc/protocol && npm run build --workspace @bifurc/engine && npm run build --workspace @bifurc/client",
+    "build:packages": "npm run build --workspace @bifurc/protocol && npm run build --workspace @bifurc/engine && npm run build --workspace @bifurc/client && npm run build --workspace @bifurc/web-client",
     "prepare": "npm run build:packages",
     "clean:main": "node scripts/clean-main-dist.mjs",
     "build:main": "npm run clean:main && npm run build:packages && tsc && tsc-alias && npm run build:preload",
     "build:preload": "node scripts/build-preload.mjs",
     "build:renderer": "vite build",
+    "build:web": "npm run build --workspace @bifurc/web",
+    "typecheck:web": "npm run typecheck --workspace @bifurc/web",
     "assert:dist": "node scripts/assert-dist.mjs",
     "build": "npm run build:main && npm run build:renderer",
     "dev": "npm run build && electron .",
     "start": "electron .",
-    "typecheck:packages": "npm run typecheck --workspace @bifurc/protocol && npm run typecheck --workspace @bifurc/engine && npm run typecheck --workspace @bifurc/client",
+    "typecheck:packages": "npm run typecheck --workspace @bifurc/protocol && npm run typecheck --workspace @bifurc/engine && npm run typecheck --workspace @bifurc/client && npm run typecheck --workspace @bifurc/web-client",
     "typecheck": "npm run build:packages && npm run typecheck:packages && tsc --noEmit",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",

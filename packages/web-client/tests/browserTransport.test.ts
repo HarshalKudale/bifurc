@@ -28,6 +28,8 @@
  * entered) or uses `vi.waitFor`, which retries until a condition holds rather than assuming a
  * duration. Nothing here asserts on *how long* anything takes.
  */
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
 import { EngineEventBus } from "@bifurc/engine/eventBus";
@@ -211,11 +213,108 @@ describe("browser transport — a peer that goes away", () => {
     await probe.close();
 
     const fatals: Error[] = [];
-    const transport = createBrowserTransport({ url: deadUrl, onFatal: (e) => fatals.push(e) });
+    const transport = createBrowserTransport({
+      url: deadUrl,
+      // Short, and not because this case is in a hurry. A released port is not a *guaranteed* refusal:
+      // under the full suite another file's listener can take it in the gap, and if that listener
+      // accepts without answering, the connect ends on the timeout rather than on a refusal. Both are
+      // connect failures and both are what this case is about — the bound keeps the second one well
+      // inside the test timeout, so the assertion is what decides rather than the clock.
+      connectTimeoutMs: 2_000,
+      onFatal: (e) => fatals.push(e),
+    });
     transports.push(transport);
 
     await expect(transport.request("config.get", {})).rejects.toBeInstanceOf(Error);
     await vi.waitFor(() => expect(fatals).toHaveLength(1));
-    expect(fatals[0].message).toMatch(/Could not connect/);
+    // Assert the shape that carries the distinction rather than one spelling of it: the engine was
+    // never reached, said one of the two ways that can happen — and never as "the session you had is
+    // gone", which is the message the UI answers with "reconnect".
+    expect(fatals[0].message).toMatch(/Could not connect|Timed out after/);
+    expect(fatals[0].message).not.toMatch(/Session closed/);
+  });
+
+  it("gives up on a peer that accepts the socket and then never answers", async () => {
+    // The third way a connect can end, and the one the socket itself never reports: a listener that
+    // completes the TCP handshake and then says nothing produces neither `open` nor `close`. Without a
+    // timer `ensureReady()` never settles and the request waits forever — which is how this case first
+    // failed on 2026-09-22, as a 15 s test timeout rather than a failed assertion, when a released
+    // ephemeral port in the case above had been re-bound by another file's listener.
+    //
+    // A bare `node:net` server rather than a WebSocket one, because the point is a peer that speaks
+    // TCP and nothing else: that is deterministic, where racing a released port is not. Before the
+    // timeout existed this case hung; the assertion below is the thing that would catch its removal.
+    const held: Socket[] = [];
+    const silent = createTcpServer((socket) => {
+      // Deliberately never write: the connection stays open and the upgrade is never answered.
+      // Held so teardown can end it — `close()` alone waits for its connections to end, and this one is
+      // designed not to.
+      held.push(socket);
+    });
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", () => resolve()));
+    const port = (silent.address() as AddressInfo).port;
+
+    const fatals: Error[] = [];
+    const transport = createBrowserTransport({
+      url: `ws://127.0.0.1:${port}`,
+      connectTimeoutMs: 250,
+      onFatal: (e) => fatals.push(e),
+    });
+    transports.push(transport);
+
+    try {
+      // The whole claim is that it *settles*, and that it settles as a connect failure.
+      await expect(transport.request("config.get", {})).rejects.toThrow(/Timed out after 250ms/);
+      await vi.waitFor(() => expect(fatals).toHaveLength(1));
+      expect(fatals[0].message).toMatch(/Timed out after 250ms connecting to ws:\/\//);
+    } finally {
+      for (const socket of held) socket.destroy();
+      await new Promise<void>((resolve) => silent.close(() => resolve()));
+    }
+  });
+
+  it("reports a handshake the peer refuses as a connect failure", async () => {
+    // The other half of `open === false`, and the half a *released* port cannot be relied on to
+    // produce: something **is** listening, it just is not an engine. On a busy machine that is how a
+    // wrong port usually looks — a different service on the number the user typed — and it has to be
+    // reported as "the engine was never reached", never as a lost session, because that is the message
+    // work item 2's UI answers with "reconnect".
+    //
+    // A plain HTTP server is the deterministic form of it: the upgrade is answered with a non-101
+    // response, so the handshake fails without the socket ever opening. The case above passes on the
+    // timeout branch on this machine, so without this one the "Could not connect" wording would have no
+    // deterministic coverage at all.
+    const notAnEngine = createHttpServer();
+    /**
+     * The refusal is written by hand, and that is **measured rather than assumed**.
+     *
+     * An `http.Server` with no `'upgrade'` listener neither answers an upgrade request nor closes it —
+     * the socket is left in limbo. This case was first written with an ordinary `'request'` handler and
+     * it failed on the **10 s connect timeout**, i.e. it reproduced the very hang the case above is
+     * about instead of the refusal it was meant to pin. Only writing the non-101 response makes
+     * "listening, but not an engine" deterministic.
+     */
+    notAnEngine.on("upgrade", (_req, socket) => {
+      socket.write("HTTP/1.1 426 Upgrade Required\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+      socket.end();
+    });
+    await new Promise<void>((resolve) => notAnEngine.listen(0, "127.0.0.1", () => resolve()));
+    const port = (notAnEngine.address() as AddressInfo).port;
+
+    const fatals: Error[] = [];
+    const transport = createBrowserTransport({
+      url: `ws://127.0.0.1:${port}`,
+      onFatal: (e) => fatals.push(e),
+    });
+    transports.push(transport);
+
+    try {
+      await expect(transport.request("config.get", {})).rejects.toThrow(/Could not connect/);
+      await vi.waitFor(() => expect(fatals).toHaveLength(1));
+      expect(fatals[0].message).toMatch(/Could not connect to ws:\/\//);
+    } finally {
+      notAnEngine.closeAllConnections();
+      await new Promise<void>((resolve) => notAnEngine.close(() => resolve()));
+    }
   });
 });
