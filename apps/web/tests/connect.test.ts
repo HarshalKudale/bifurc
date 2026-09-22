@@ -102,8 +102,14 @@ describe("the web target's one job — connect a page to an engine", () => {
 
     await server.close();
     await vi.waitFor(() => expect(fatals).toHaveLength(1));
-    // Work item 2 gives "lost the engine" and "could not connect" different UI copy, so the message has
-    // to be about the connection rather than a generic failure.
-    expect(fatals[0]!.message).toMatch(/closed|connection/i);
+    // Work item 2 gives "lost the engine" and "could not connect" different UI copy, so this has to be the
+    // *dropped* message and not the connect-failure one: `Could not connect` tells the user to check the
+    // address, which is the wrong instruction for an engine that was answering a moment ago.
+    expect(fatals[0]!.message).toMatch(/^Session closed/);
+    expect(fatals[0]!.message).not.toMatch(/Could not connect/);
+    // That is precision, not coverage — measured rather than assumed. Deleting the `open` guard in
+    // `channel.ts` (mutation M10) leaves this case **passing**, because an engine's `close()` never reaches
+    // the `error` path on this host. The guard itself is pinned in `browserTransport.test.ts`; see TRAPS.md,
+    // "A case can be sound and still guard nothing about the line you changed".
   });
 });

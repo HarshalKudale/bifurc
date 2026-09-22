@@ -2071,3 +2071,26 @@ server.on("upgrade", (_req, socket) => {
 
 A bare `node:net` server is the other deterministic option and needs no HTTP parsing at all: destroy the socket
 on arrival for a refusal, or hold it and never write for silence.
+
+## A case can be sound and still guard nothing about the line you changed
+
+Two mutations on the same fix, and the *pair* is the lesson.
+
+**The disjunction.** The browser transport's dead-address case asserted `/Could not connect|Timed out after/` —
+both spellings mean "the engine was never reached", so the disjunction looked like the generous choice.
+Silencing `onerror` (**M9**) left it **passing**, because the connect timeout then produced the other branch.
+A case that accepts two outcomes cannot distinguish them, and the outcome it did not check was the one under
+test. The third case — a listener that refuses the upgrade — is what caught M9, and it exists *because* of
+this.
+
+**The unreachable path.** The `apps/web` dropped-engine case asserts the fatal is the *dropped* message
+(`/^Session closed/`) rather than the connect-failure one, and rejects `Could not connect` outright — a real
+distinction, since the wrong copy sends the user to "check the address". Deleting the `open` guard in
+`channel.ts` (**M10**) leaves it **passing**: the scenario closes the engine cleanly, which never reaches the
+`error` path on this host, so the guard is never exercised. The assertion is sound and worth keeping; it is
+simply not the instrument for that guard, and `browserTransport.test.ts` is.
+
+The rule: **"is this a good test?" and "does this test guard the line I just changed?" are different
+questions, and only the second is answered by a mutation.** Run the mutation before claiming the guard — and
+when it does not fire, name the instrument that does, rather than strengthening the assertion until it looks
+like it might have.
