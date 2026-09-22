@@ -9,6 +9,7 @@
  */
 
 import { test } from "./fixtures/electronApp";
+import { openEnvironmentsManager } from "./helpers";
 import path from "path";
 import fs from "fs";
 
@@ -24,8 +25,16 @@ interface PanelDef {
     name: string;
     /** Exact visible label / aria-label */
     label: string;
-    /** Where to find the panel trigger */
-    trigger: "sidebar" | "titlebar" | "bottom";
+    /**
+     * Where to find the panel trigger.
+     *
+     * `environments` is separate from `titlebar` because its label is **not on screen at rest**: the
+     * titlebar renders the environment *selector* (`EnvSelector.tsx`), and "Manage Environments…" is
+     * rendered only while that dropdown is open — `{open && (...)}` at `EnvSelector.tsx:46`. A locator
+     * for the label therefore matches nothing until the dropdown is opened, which is exactly how this
+     * tour failed at panel 11. `openEnvironmentsManager` in `./helpers` performs the two real steps.
+     */
+    trigger: "sidebar" | "titlebar" | "bottom" | "environments";
     /** For duplicated labels like REST/SOAP/gRPC, which visible match to use */
     occurrence?: number;
     /** Opens a new draft tab after navigating (for tab-based panels) */
@@ -43,7 +52,7 @@ const PANELS: PanelDef[] = [
     { name: "08-websocket", label: "WebSocket", trigger: "sidebar", openNewTab: true },
     { name: "09-webhooks", label: "Webhooks", trigger: "sidebar", openNewTab: true },
     { name: "10-workspace", label: "Workspace", trigger: "titlebar" },
-    { name: "11-environments", label: "Manage Environments", trigger: "titlebar" },
+    { name: "11-environments", label: "Manage Environments", trigger: "environments" },
     { name: "12-settings", label: "Settings", trigger: "bottom" },
 ];
 
@@ -85,6 +94,11 @@ async function clickNavItem(page: import("@playwright/test").Page, label: string
 }
 
 async function openPanel(page: import("@playwright/test").Page, panel: PanelDef) {
+    if (panel.trigger === "environments") {
+        await openEnvironmentsManager(page);
+        return;
+    }
+
     if (panel.trigger === "titlebar") {
         const btn = page.getByRole("button", { name: new RegExp(escapeRegex(panel.label), "i") }).nth(panel.occurrence ?? 0);
         await btn.waitFor({ state: "visible", timeout: 5000 });

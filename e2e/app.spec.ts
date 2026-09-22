@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openPanel, openEnvironmentsManager } from "./helpers";
+import { openPanel, openEnvironmentsManager, chooseProtocol } from "./helpers";
 
 test.describe("Application Launch", () => {
     test("window opens with correct title", async ({ page }) => {
@@ -67,28 +67,48 @@ test.describe("Navigation", () => {
 
     test("common tab keybinds work on tabbed panels", async ({ page }) => {
         /**
-         * **This used to be `getByRole("button", { name: /^REST 3$/i }).nth(1)` — a label nothing in the
-         * tree produces.** A repo-wide grep for `REST 3` over the e2e, renderer, src, package-src and
-         * tests trees returns this one line and nothing else, and `git log -S '"REST 3"' --
-         * e2e/fixtures/sampleData.ts` shows it was never a seeded name either. Tab labels come from the
-         * entity's **name** (`useRequestsPanelState.ts`'s `tabLabel`: `item.name`, else
-         * `item.summary || "Request"`), and the fixture seeds `Get All Users` / `Create New User` /
-         * `Update User` — so the locator could only ever time out.
+         * Every step of this test had to be re-derived from the code, because **nothing it did touched
+         * the UI it claimed to**:
          *
-         * A **saved** request is what this test needs, not a draft: after `Ctrl+S` it asserts
-         * `Update Request`, which only a saved tab offers. So open one from the sidebar by its seeded
-         * name. The sidebar item and its tab share that name, which is presumably what the original
-         * `.nth(1)` was reaching for.
+         * 1. It began with `getByRole("button", { name: /^REST 3$/i }).nth(1)`. That label has never
+         *    existed — `git log -S "REST 3" -- e2e/app.spec.ts` shows it was written here in bae3732
+         *    (2026-09-14) and appears nowhere else in the tree — so it could only ever time out.
+         * 2. The next attempt clicked the seeded request by name. **The tree row is not a button**:
+         *    `FolderTreeItemNode.tsx:28` renders a plain `<div title={item.name} onClick={...}>`, so its
+         *    role is `generic` and its accessible name comes from `title`. `getByRole("button", ...)`
+         *    matched nothing. It was also the wrong idea even had it matched — a seeded row opens a
+         *    *second* tab, and the last assertion is `No requests open`, which needs the panel to end
+         *    with **zero** tabs.
+         * 3. `Ctrl+T` was assumed to open the request form. It does not: `openNewTabInFolder`
+         *    (`useRequestsPanelState.ts:94`) sets `draftProtocols[tabId] = null`, so a new tab opens on
+         *    the **protocol chooser** and the form only exists once a protocol is picked. That missing
+         *    `chooseProtocol` step is why the `fill` below had nothing to fill.
+         *
+         * What each keybind is asserted against, and why each assertion can actually fail:
+         *
+         *   Ctrl+T — the chooser's heading, `Select Request Protocol`, which exists nowhere else. The
+         *            original asserted `getByText("New Request")`, which *also* matches the panel's own
+         *            "New request" button, so it passed whether or not the keybind did anything.
+         *   Ctrl+S — the save button's label. `RestTab.tsx:271` selects `Save Request` while
+         *            `draftTabId` is set and `Update Request` once it is cleared, so the label flipping
+         *            is precisely the evidence that a save happened.
+         *   Ctrl+W — the panel's empty state, reachable only by closing the one tab this test opens.
+         *
+         * A request needs only a URL to be saveable: `RestTab.tsx:162-163` gates on `state.url.trim()`
+         * for `tabType === "request"` — the response-body rule is the mock branch. The name is filled
+         * because it is what the tree and the tab label display, not because it is required.
          */
         await openPanel(page, "Requests");
-        await page.getByRole("button", { name: /^Update User$/i }).first().click();
-        await page.waitForTimeout(400);
 
         await page.keyboard.press("ControlOrMeta+T");
-        await expect(page.getByText("New Request").first()).toBeVisible();
+        await expect(page.getByText("Select Request Protocol").first()).toBeVisible();
+        await chooseProtocol(page, /REST Request/i);
 
-        await page.getByRole("textbox", { name: /Request name \(optional\)/i }).fill("Keyboard Save Test");
-        await page.getByPlaceholder("https://example.localhost/endpoint").fill("https://example.localhost/keybind-save-test");
+        await page.getByPlaceholder("Request name (optional)").fill("Keyboard Save Test");
+        await page
+            .getByPlaceholder("https://example.localhost/endpoint")
+            .fill("https://example.localhost/keybind-save-test");
+
         await page.keyboard.press("ControlOrMeta+S");
         await expect(page.getByRole("button", { name: /Update Request/i })).toBeVisible();
 
