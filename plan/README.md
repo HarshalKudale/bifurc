@@ -123,7 +123,8 @@ files and holds **18 real `ipcMain.handle(` sites, all keepers**. (A bare `grep`
 is a comment in `rpcBridge.ts` and another *is* the RPC bridge — **count the tree, then read what you
 counted**.) `registerIpcHandlers()` remains, as the dispatcher over those: **reduced, not deleted**, which is
 why this was dead-code removal inside a phase that had already shipped, not a phase-completion item. Suite
-baseline **113 files / 2,638 tests — 2,598 passed, 40 skipped, 0 failed** (2026-09-22). The standing
+baseline **113 files / 2,638 tests — 2,598 passed, 40 skipped, 0 failed** (2026-09-22; *historical — the
+live count is in `TESTING.md`*). The standing
 `soap.execute` failure went with the P0 spike on 2026-09-21, so a run containing a failure is now always the
 load-induced `gitStore`/`gitOps` pair.
 
