@@ -2127,3 +2127,43 @@ And a related trap: **coverage from a subset run is not a smaller version of the
 test file reported `packages/web-client/src` at 0% and looked like a real gap; the full run puts it at 91.92%
 statements, because the package's *own* tests import `../src` while `apps/web` imports the built package. The
 0% was an artefact of which file ran, not a fact about the code.
+
+## The number of call sites is not the size of the change — the *shape of the boundary* is
+
+Measured 2026-09-22, while sizing P7's shared-UI extraction (D18).
+
+The owner asked for one UI imported by both the Electron and the browser app, with only the communication
+module varying. The first measurement — **240 `window.api` reads across 43 files, with no indirection
+module** — reads like a rewrite, and I began sizing it as one: introduce an interface, thread it through
+`renderer/lib/`, `hooks/`, `panels/`, `components/`, 240 edits.
+
+**The framing was wrong, and four lines of the tree say so.** Those 240 reads are all *property reads on one
+injected global*. `renderer/types/window.ts` ends in
+`declare global { interface Window { api: BifurcApi } }` — the UI **names** the shape and never constructs
+it. Both hosts already construct it, from the *same* call:
+
+| Host | Construction |
+|---|---|
+| Electron | `src/preload.ts:61` → `createClient(createIpcTransport(), { local })` → `contextBridge.exposeInMainWorld("api", { ...client })` |
+| Browser | `apps/web/src/connect.ts` → `createClient(createBrowserTransport({ url }), { local: createBrowserLocal() })` |
+
+**So "only the communication mode will change" was already true of the code** — it is literally the
+`Transport` argument to `createClient`, and both transports already exist and are already tested. The 240 call
+sites need **zero** edits. What has to change is that the UI is not a *package*: the root `vite.config.ts`
+hardcodes `root: "renderer"`. **The blast radius is the build** — two Vite configs, the `workspaces` glob, the
+coverage `include`, CI — not the code.
+
+**240 reads of one injected global is a small change. 240 reads of 240 different imports would have been a
+large one. The count is identical; only the boundary differs.** So before sizing a change by counting call
+sites, ask what the call sites are reading:
+
+- **One injected value** — a global, a context, a provider, a single factory's return → **the seam already
+  exists.** The cost is wherever that value is *constructed*, and there are as many of those as there are
+  hosts. Here: two.
+- **N distinct modules or symbols** → the cost really is N, and the count was meaningful.
+
+A cheap instrument: **grep the reads and look at what precedes the dot.** 240 × `window.api.` collapsing to a
+single `declare global` *is* the finding. And grep for what the tree does **not** import — here, **0**
+occurrences of `electron`, `node:` or `@bifurc/*` anywhere under `renderer/`, which is what makes the UI
+portable at all and is not something a call-site count would ever have surfaced.
+
