@@ -2104,15 +2104,24 @@ intercepts that `rm` and routes it to a trash binary that times out —
 **not** help, because this is the shim's trash path rather than the bulk-confirm guard. The pre-run failure
 aborts everything in 12 s with no coverage output at all.
 
-Point it at a directory that does not exist yet, so both cleans are no-ops:
+**The fix is one environment variable, and the repo's own script names it.** `scripts/assert-dist.mjs`'s
+failure text ends with `CODEBUDDY_SAFE_DELETE_ENABLED=0 env -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR -u
+CODEBUDDY_TOOL_CALL_ID npm run build` — that first variable disables the shim, and it works for coverage too:
+
+```
+CODEBUDDY_SAFE_DELETE_ENABLED=0 npm run test:coverage
+```
+
+Verified end to end 2026-09-22: **exit 0**, 116 files / 2,669 tests green, thresholds met. Note that under that
+setting deletes are *suppressed* rather than performed — a file placed in the reports directory survives — so
+when the directory must genuinely be emptied, point at a fresh path instead:
 
 ```
 npx vitest run --coverage --coverage.reportsDirectory=/tmp/bifurc-cov-<fresh>
 ```
 
-Two things to read correctly when it does run: the suite is green and every threshold is met, but the process
-still **exits 1** from `cleanAfterRun`. So `$?` here is evidence about the sandbox, not about the suite — read
-the `Coverage summary` block and any `ERROR: Coverage for …` lines instead.
+Without either, read the summary and never `$?`: the run still **exits 1** from `cleanAfterRun`, and the pre-run
+`clean` aborts everything in 12 s with no coverage output at all.
 
 And a related trap: **coverage from a subset run is not a smaller version of the full figure.** Running one
 test file reported `packages/web-client/src` at 0% and looked like a real gap; the full run puts it at 91.92%

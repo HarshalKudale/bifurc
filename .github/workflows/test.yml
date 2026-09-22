@@ -33,6 +33,14 @@ jobs:
       - name: Typecheck E2E specs
         run: npm run typecheck:e2e
 
+      # The web target (P7) is its own workspace app, so the step above does not reach it: `npm run
+      # typecheck` is `build:packages` + `typecheck:packages` + the root `tsc`, and `apps/web` is neither
+      # a package nor under `src/`. Its *tests* do run, in the job below (`test:ci` includes
+      # `apps/**/*.test.ts`) — so without this step a type error in `apps/web` would ship green, which is
+      # the exact gap TESTING.md section 2.3 records for the renderer.
+      - name: Typecheck the web target (apps/web)
+        run: npm run typecheck:web
+
   # ── Unit + integration ──────────────────────────────────────────────────────
   # `test:ci` runs every Vitest project (unit and integration) with coverage and
   # enforces the thresholds declared in vitest.config.ts. A coverage regression
