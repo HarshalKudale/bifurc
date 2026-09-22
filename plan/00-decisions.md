@@ -134,6 +134,38 @@ Answer each one in the "Decision" column and date it. Do not begin P0 with any o
 > recorded for the first `apps/web` landing on the same day. That reasoning described a *framework-free probe
 > page* — which `apps/web` still is — and was never a statement about the phase's target.
 
+### The shape, as decided (2026-09-22)
+
+Asked how the UI reaches its communication module and who builds it, the owner answered:
+
+> "keep `window.api` — just that `window.api` uses IPC in electron app and proper communication channel in
+> browser UI. so that UI itself will be same and call the same `window.api` but implementation of `window.api`
+> will be decided by the UI being used using preload and such"
+>
+> "there will be **packages/gui** package which exports the `<App />` which has the UI, platform independent
+> references `window.API` for external calls. Electron app and WebUI both import this `<App/>` and inject it
+> with `window.api` (as per respective transports) so the code remains the same. As for the building part both
+> build processes will be separate — webdist will have the built version of webUI (extra UI stuff + imported
+> packages/gui) and electron can have its own build artifacts and folders"
+
+| | |
+| --- | --- |
+| **Package** | `packages/gui` — exports `<App />`; platform-independent; reads `window.api` for every external call |
+| **Seam** | **`window.api` stays the interface.** Electron fills it from the preload (`contextBridge`); the browser fills it from its own bootstrap over `createBrowserTransport`. **No call site changes** — 0 of 240 |
+| **Builds** | **Two, separate.** Electron keeps its own artifacts (`dist/renderer`); the web build emits the web UI (its own extra UI + the imported `packages/gui`) to its own folder |
+| **Host-local UI** | The web UI hides host-local affordances and adds remote-host selection, so `<App />` needs one small host descriptor — see below |
+
+**Why this is cheap — measured:** the renderer's internal imports are **647 `@/`-aliased imports across 165
+files** against only **116** relative ones. The alias is the whole reason the move is a config change:
+repoint `@` from `renderer/` to `packages/gui/src/` and **not one import statement needs editing** — the
+subtree keeps its shape.
+
+**Deliberately still open, and not decided here:** how the shared `<App />` learns *which host it is in*, so
+the web build can hide host-local affordances and add remote-host selection. Three candidates — reuse
+`window.api.platform` (declared, currently never read), add a `hostKind` key to the surface, or pass a prop
+(`<App host="web" />`). It is a one-line decision, but if it goes the second way it is a **surface** decision,
+so it belongs with work item 2 rather than here.
+
 ---
 
 ## Decision log
@@ -159,7 +191,7 @@ Append a row each time a decision is made or revisited.
 | 2026-09-20 | D15 | **CLI deferred — P8 parked.** Two shapes recorded (in-app executable / npm package), decided after P14 | `14-workspace-runtime.md` §7 |
 | 2026-09-20 | D16 | **A workspace's proxy takes a per-environment base port — `80` on Windows, `8080` on Linux/macOS/Docker — then counts up from it.** A per-workspace override fails loudly instead of moving; the webhook port follows the same shape from `9101` | `14-workspace-runtime.md` §3, D16 |
 | 2026-09-20 | D17 | **Blob staging is namespaced per workspace** — `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, `workspaceId` added to the four `blob.*` params, the sweeper becomes per-runtime | `14-workspace-runtime.md` §12.1. Owner's call, made after the reconciliation found §2.2's "already per-workspace" claim false. Lands with WI 1 / WI 8 |
-| 2026-09-22 | D18 | **The renderer becomes a shared UI package; only the communication module varies.** Electron and browser import the same UI; the browser hides host-local affordances and adds remote-host selection | Owner's direction. `08-phase-7-web-ui.md` §"The architecture this phase targets". Supersedes that document's "no React, must not resolve the renderer's components" reasoning, which described the framework-free probe page and not the phase's target |
+| 2026-09-22 | D18 | **The renderer becomes a shared UI package; only the communication module varies.** Electron and browser import the same UI; the browser hides host-local affordances and adds remote-host selection. Shape: **`packages/gui` exports `<App />`**, `window.api` stays the seam and each host fills it, and the two builds stay separate | Owner's direction. `08-phase-7-web-ui.md` §"The architecture this phase targets". Supersedes that document's "no React, must not resolve the renderer's components" reasoning, which described the framework-free probe page and not the phase's target. Cheap by measurement: 647 `@/`-aliased imports across 165 files mean the move repoints one alias and edits no import |
 
 > **D10–D17 are recorded in full in [`14-workspace-runtime.md`](14-workspace-runtime.md) §3 and §12.1**,
 > not duplicated here, so there is one authority for the reasoning and one place to correct it. This table

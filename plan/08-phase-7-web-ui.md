@@ -63,6 +63,22 @@ not yet a package — it is a directory the root Vite config hardcodes as its `r
 > **The blast radius is the build, not the code.** The 240 call sites do not change. Two Vite configs, the
 > `workspaces` glob, the coverage `include`, CI, and `renderer/types/window.ts`'s global declaration do.
 
+### The shape, decided 2026-09-22
+
+**`packages/gui` exports `<App />`.** It is platform-independent and reads `window.api` for every external
+call; both hosts import `<App />` and fill `window.api` from their own transport — Electron from the preload
+via `contextBridge`, the browser from its own bootstrap over `createBrowserTransport`. **The two builds stay
+separate:** Electron keeps its own artifacts (`dist/renderer`), the web build emits the web UI — its own extra
+UI plus the imported `packages/gui` — to its own folder. The decision table is in
+[`00-decisions.md`](00-decisions.md) D18.
+
+**Why the move is a config change and not a rewrite — measured:** the renderer's internal imports are **647
+`@/`-aliased imports across 165 files** against only **116** relative ones. Repoint `@` from `renderer/` to
+`packages/gui/src/` and **not one import statement needs editing**.
+
+That also settles what stays behind in `renderer/`: **`index.html` and `main.tsx` are the host's entry, not
+the UI's** — `main.tsx` already reads `import App from "@/App"`, so it needs no edit either.
+
 ---
 
 ## Preconditions
