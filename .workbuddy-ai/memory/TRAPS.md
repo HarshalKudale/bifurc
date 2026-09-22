@@ -1575,3 +1575,54 @@ engine read the developer's real profile. The fix is to set `process.env.LOCALAP
 fixture. In each case the real cause was one resolver consulting a *different* override — and in each case the
 wrong attribution was plausible enough to act on. **When a path-dependent check finds nothing, verify the
 resolution inputs before verifying the thing you are checking.**
+
+## A locator can match the right *name* and still be the wrong *role* — and a label can live inside a dropdown
+
+Three different defects produce the **identical** error. `TimeoutError: locator.click` says only that the
+locator never resolved; it cannot tell you *why*. The `error-context.md` that `screenshot: "only-on-failure"`
+writes alongside it contains a full accessibility snapshot of the page, and **that is what separates them**:
+
+| What the snapshot shows | What it means | The fix |
+|---|---|---|
+| `generic "Update User" [cursor=pointer]` | the element is there and named right, but its **role** is not `button` | change the locator, not the target |
+| the toggle (`button "Development"`) and **no** `Manage Environments` anywhere | the label is rendered only **while a menu is open** | make it a two-step action |
+| nothing resembling the target at all | the label does not exist | find out what the real label is |
+
+**Case 1 — `e2e/app.spec.ts:68`, the Requests tree.** `getByRole("button", { name: /^Update User$/i })`
+timed out while the snapshot showed the panel open and the row present as `generic "Update User"`.
+`FolderTreeItemNode.tsx:28` renders `<div title={item.name} onClick={…}>` — **a plain div with no role**, so
+Playwright reports it as `generic`; its accessible name matches only because the accname algorithm falls
+back to the `title` attribute. **A `getByRole` call that matches the right name is not evidence that the
+role is right**, and it is not evidence the locator is near-correct — it is evidence about the *name* only.
+Read the component, or locate by the attribute the name came from (`getByTitle`).
+
+**Case 2 — `e2e/screenshots.spec.ts:117`, the environments tour.** `getByRole("button", { name: /Manage
+Environments/i })` timed out because `EnvSelector.tsx:46` renders that item inside `{open && …}` — it exists
+**only while the titlebar dropdown is open**, and the snapshot confirms the dropdown was closed (the toggle,
+`button "Development"`, is there and the item is not). A locator for it is not a lookup; it is a *sequence*.
+The repo already had the sequence — `openEnvironmentsManager` in `e2e/helpers/index.ts` — and the tour
+never used it.
+
+**The pattern behind both: a fix that lands in one spec and not its siblings.** `Manage Environments` was
+already fixed in `app.spec.ts` and left broken in `happy-path-workflows.spec.ts` (2026-09-22) and in the
+screenshots tour (same day). When you fix a stale locator, **grep the whole `e2e/` tree for the pattern**,
+not the file you found it in.
+
+**And the corollary that outlives both: an assertion that cannot fail is worse than no assertion.** The same
+test asserted `getByText("New Request")` to prove `Ctrl+T` worked — but the panel's own "New request" button
+matches that text and is always on screen, so the assertion passed with the keybind doing nothing. When you
+repair a test, **check that the replacement can still fail**; the repo's earlier `if (await
+locator.isVisible())` guards are the same defect in a different costume.
+
+## Two `Edit` calls to the same file in one message silently revert each other
+
+Both report `Successfully edited file`. The second read a snapshot taken **before** the first edit, applied
+its own change to that snapshot, and wrote the whole file back — so the first edit is gone.
+
+Caught by **measuring instead of trusting the success message**: the two edits should have removed ~430
+bytes and the file shrank by **2**. Reading the region back confirmed the first edit's text was still the
+original.
+
+**Rule: one `Edit` per file per message.** If several are unavoidable, re-read or re-measure the file
+afterwards — the tool's success message is about the write, not about the file's final state. This applies
+to any tool that rewrites a whole file from a read-then-write cycle.
