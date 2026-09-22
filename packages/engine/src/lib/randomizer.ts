@@ -1,6 +1,6 @@
 /**
  * Randomizer token resolver — Node.js (main process) version.
- * Mirror of renderer/lib/randomizer.ts — kept in sync manually.
+ * Mirror of packages/gui/src/lib/randomizer.ts — kept in sync manually.
  */
 
 // ── Static data pools ────────────────────────────────────────────────────────

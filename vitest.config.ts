@@ -4,17 +4,21 @@ import path from "path";
 import fs from "fs";
 
 /**
- * Custom resolve plugin: @/ resolves to src/ first, then renderer/ as fallback.
- * This allows test files to import from both src/ and renderer/ using @/ alias.
+ * Custom resolve plugin: `@/` resolves to the shell's `src/` first, then to `packages/gui/src`.
+ *
+ * Those two roots are the two things `@/` has ever meant. It began as "the renderer", which is why test
+ * files can import from both `src/` and the UI under one alias; since D18 the renderer's UI lives in
+ * `packages/gui`, so the second root moved with it and nothing else did — the UI's own 647 `@/…` imports
+ * resolve through this same branch.
  *
  * A directory must NOT be returned as a resolved id — Vite cannot load one. Without the
- * `isDirectory()` guards, `@/lib/strings` matched `renderer/lib/strings/` on the empty
+ * `isDirectory()` guards, `@/lib/strings` matched the `lib/strings/` **directory** on the empty
  * extension and shadowed the `index.ts` fallback below, so any module importing the
  * `strings` barrel was untestable.
  */
 function dualAliasPlugin() {
   const srcDir = path.resolve(__dirname, "src");
-  const rendererDir = path.resolve(__dirname, "renderer");
+  const guiDir = path.resolve(__dirname, "packages/gui/src");
   const isDir = (p: string): boolean => {
     try { return fs.statSync(p).isDirectory(); } catch { return false; }
   };
@@ -30,9 +34,9 @@ function dualAliasPlugin() {
         if (ext === "" && isDir(full)) break;
         if (fs.existsSync(full)) return full;
       }
-      // Try renderer/ second
+      // Try packages/gui/src second
       for (const ext of extensions) {
-        const full = path.join(rendererDir, rel + ext);
+        const full = path.join(guiDir, rel + ext);
         if (ext === "" && isDir(full)) break;
         if (fs.existsSync(full)) return full;
       }
@@ -42,7 +46,7 @@ function dualAliasPlugin() {
         if (fs.existsSync(full)) return full;
       }
       for (const ext of extensions) {
-        const full = path.join(rendererDir, rel, "index" + ext);
+        const full = path.join(guiDir, rel, "index" + ext);
         if (fs.existsSync(full)) return full;
       }
       return null;
@@ -123,10 +127,11 @@ export default defineConfig({
             "tests/**/*.test.ts",
             "tests/**/*.test.tsx",
             "packages/**/*.test.ts",
-            // The web target's own suite (P7 work item 5). It sits outside `packages/` because it is an
-            // app rather than a library, so without this entry its tests would never run — and a glob
+            // The browser host's own suite (P7 work item 5). It sits outside `packages/` because it is a
+            // host rather than a library, so without this entry its tests would never run — and a glob
             // that looks like it covers everything is exactly how a suite goes silently unexecuted.
-            "apps/**/*.test.ts",
+            // It moved from `apps/web` to `web/` under D18, and this glob moved with it.
+            "web/**/*.test.ts",
           ],
           // Integration tests live under tests/integration and bind real ports.
           exclude: ["tests/integration/**"],
@@ -165,24 +170,30 @@ export default defineConfig({
         // easiest to forget because the package is new: without it `channel.ts` and `local.ts` are
         // exercised by two suites and still reported as uncovered — §4.8's mistake in a new costume.
         "packages/web-client/src/**/*.ts",
-        // The web target's own source. `connect.ts` is covered by `apps/web/tests/connect.test.ts`; its
-        // DOM half is excluded below, for the same reason as `src/main.ts`.
-        "apps/web/src/**/*.ts",
-        "renderer/lib/**/*.ts",
+        // The browser host's own source. `connect.ts` is covered by `web/tests/connect.test.ts` and
+        // `api.ts` by `web/tests/api.test.ts`; the DOM entry is excluded below, for the same reason as
+        // `src/main.ts`.
+        "web/**/*.ts",
+        // The shared UI (D18). Same reasoning as the engine, client and web-client entries above: it is
+        // exercised through source in tests, so omitting it would report all 211 files as uncovered.
+        // These three globs are the same three that pointed at `renderer/` before the move — **the scope
+        // did not change, only the path**, which is what keeps the measured figure below comparable.
+        "packages/gui/src/lib/**/*.ts",
         // Both extensions: the capture/search/tab-reducer logic lives in `.ts` files under
-        // renderer/components, and matching only `.tsx` hid it from the report entirely —
+        // `components`, and matching only `.tsx` hid it from the report entirely —
         // even modules that already had passing tests.
-        "renderer/components/**/*.ts",
-        "renderer/components/**/*.tsx",
-        "renderer/panels/**/*.tsx",
+        "packages/gui/src/components/**/*.ts",
+        "packages/gui/src/components/**/*.tsx",
+        "packages/gui/src/panels/**/*.tsx",
       ],
       exclude: [
         // Process entry points — exercised by launching the app, not by unit tests.
         "src/main.ts",
         "src/preload.ts",
-        // The web target's DOM half, for the same reason: `main.ts` renders the page and is exercised by
-        // loading it. `connect.ts` beside it holds the composition and no DOM, and is covered.
-        "apps/web/src/main.ts",
+        // The browser host's DOM entry, for the same reason: `main.tsx` renders the page and is
+        // exercised by loading it. `connect.ts` and `api.ts` beside it hold the composition and no DOM,
+        // and both are covered.
+        "web/main.tsx",
         // Type-only modules.
         "**/*.d.ts",
         "packages/engine/src/store/types.ts",
@@ -195,14 +206,14 @@ export default defineConfig({
         // `RUN_CONFIG_TYPE_ICONS` as real runtime values. The old `src/applications/types.ts` entry
         // was excluding live code from the report purely on the strength of its filename. It is
         // loaded by `applicationHandlers.ts`, so it reports as covered.
-        "renderer/components/modals/import-export/types.ts",
-        "renderer/components/search/searchTypes.ts",
-        "renderer/components/sidebar/FolderTree.types.ts",
+        "packages/gui/src/components/modals/import-export/types.ts",
+        "packages/gui/src/components/search/searchTypes.ts",
+        "packages/gui/src/components/sidebar/FolderTree.types.ts",
         // Barrel file with no logic.
-        "renderer/components/ui/index.ts",
+        "packages/gui/src/components/ui/index.ts",
         // Pure constant / presentational modules with no logic worth asserting.
-        "renderer/lib/strings/**",
-        "renderer/lib/icons.tsx",
+        "packages/gui/src/lib/strings/**",
+        "packages/gui/src/lib/icons.tsx",
       ],
       /**
        * Coverage thresholds act as a ratchet: they are set just below the level the

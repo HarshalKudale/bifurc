@@ -43,7 +43,7 @@ already done, and not by us:**
 | --- | --- |
 | The renderer is shell-free | **0** imports of `electron`, `node:` or `@bifurc/*`. Its only non-relative imports are `react`, `react-dom/client`, `react-resizable-panels`, `react-complex-tree`, `lucide-react`, `@radix-ui/react-switch`, `@lezer/highlight` and the CodeMirror packages |
 | It has exactly one shell seam | `window.api` — **240** references across **43** files, **234** of them method calls (the other 6 pass the object itself). That is WI 0's *"119 methods across 234 call sites"* counted the other way round, and the two agree; every other `window.*` is standard DOM: `addEventListener` 11, `removeEventListener` 11, `dispatchEvent` 6, `innerWidth` / `innerHeight` 1 each |
-| That seam is already *injected*, not imported | `renderer/types/window.ts` ends in `declare global { interface Window { api: BifurcApi } }` — the UI names the shape and never constructs it |
+| That seam is already *injected*, not imported | `packages/gui/src/types/window.ts` ends in `declare global { interface Window { api: BifurcApi } }` — the UI names the shape and never constructs it |
 | Both shells already fill it the same way | `src/preload.ts:61` → `createClient(createIpcTransport(), { local })` → `contextBridge.exposeInMainWorld("api", { ...client })`. `apps/web/src/connect.ts` → `createClient(createBrowserTransport({ url }), { local: createBrowserLocal() })` |
 
 **So the communication module the two hosts differ in is not something this phase must invent.** It is the
@@ -61,7 +61,7 @@ not yet a package — it is a directory the root Vite config hardcodes as its `r
   extraction touches both Vite configs and the coverage `include` set.
 
 > **The blast radius is the build, not the code.** The 240 call sites do not change. Two Vite configs, the
-> `workspaces` glob, the coverage `include`, CI, and `renderer/types/window.ts`'s global declaration do.
+> `workspaces` glob, the coverage `include`, CI, and `packages/gui/src/types/window.ts`'s global declaration do.
 
 ### The shape, decided 2026-09-22
 
@@ -78,6 +78,39 @@ UI plus the imported `packages/gui` — to its own folder. The decision table is
 
 That also settles what stays behind in `renderer/`: **`index.html` and `main.tsx` are the host's entry, not
 the UI's** — `main.tsx` already reads `import App from "@/App"`, so it needs no edit either.
+
+### What landed (2026-09-22)
+
+| | |
+| --- | --- |
+| `packages/gui/src/` | **211 files** — `App.tsx`, `components/` 115, `panels/` 46, `lib/` 27, `hooks/` 13, `types/` 4, plus `types.ts`, `styles.css`, `tokens.css`, `env.d.ts`, `icon.png`, and a new `index.ts` exporting `<App />` |
+| `renderer/` | `index.html` + `main.tsx` — the Electron host's entry, and nothing else |
+| `web/` | the browser host, sibling of `renderer/`: `index.html`, `main.tsx`, `api.ts` (the `window.api` bootstrap), `connect.ts`, `tests/`, `vite.config.ts`, `tsconfig.json`. **`apps/` is gone** |
+| Config | `@` repointed in `vite.config.ts`, `web/vite.config.ts`, `tsconfig.renderer.json`, `web/tsconfig.json`, `vitest.config.ts`, `e2e/tsconfig.json` — plus `packages/client/{src,tests}` and `tests/renderer`, which reached the moved type by relative path |
+
+**Not one import statement changed.** The 647 `@/…` specifiers carried the whole move, which is the
+measurement above paying off exactly as predicted.
+
+**Verified:** full suite **117 files / 2,674 tests, 0 failed** (+1 file, +5 tests over the 2,669 baseline —
+the new `web/tests/api.test.ts`); `build:renderer`, `build:web`, `build:main`, `typecheck:packages`,
+`typecheck:e2e` and `assert:dist` all exit 0. `dist/renderer/index.html` still exists at the path
+`src/main.ts:187` loads and four scripts depend on.
+
+**Two things the move exposed, neither of them caused by it:**
+
+1. **The shared UI has 152 pre-existing type errors, and no gate has ever covered it.** Proven pre-existing
+   rather than assumed: 211 of the 212 moved files are `R100` (byte-identical), and the post-move run reports
+   **0 `TS2307`** — no resolution error at all, only content errors that were already there. 105 are one root
+   cause: `useProtocolEditor` is generic, but both call sites pass `as any` for its config functions, so
+   TypeScript cannot infer `State` and falls back to `unknown`. Consequence: any typecheck that covers a host
+   inherits all 152, so **CI's `typecheck:web` step is `continue-on-error`** — a visible report rather than a
+   red gate that everyone learns to ignore.
+2. **`dist/web` is a second Vite bundle, and four scripts assumed there was one.**
+   `assert-dist.mjs`, `assert-packaged.mjs`, `clean-main-dist.mjs` and `pkg-check-reachability.mjs` each
+   special-cased `dist/renderer`; every one needed `dist/web` added, or the browser bundle would have been
+   walked as a Node module graph and produced a false positive. This is the **third** appearance of one
+   failure mode in this phase — a hand-written enumeration of "the trees" that a new target was not added to
+   (`build:packages`, then `assert:dist`'s `TREES`, now these four).
 
 ---
 

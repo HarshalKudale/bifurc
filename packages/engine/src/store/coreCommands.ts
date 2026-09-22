@@ -30,7 +30,7 @@
  *
  * The channel that owned it is gone: the reduction's sixth group deleted all seventeen of
  * `coreHandlers.ts`'s channels and the file became `coreKinds.ts` (`plan/07` §5b-septendecies). The
- * guard is **client-facing behaviour** (`renderer/types/window.ts:41` declares
+ * guard is **client-facing behaviour** (`packages/gui/src/types/window.ts:41` declares
  * `Promise<{ok: boolean; error?: string}>`, and this file's own note said it "stays where the channel
  * is"), so it had to land somewhere the client can reach before the channel could go — and
  * **non-negotiable #1 forbids touching the renderer**. It now lives in

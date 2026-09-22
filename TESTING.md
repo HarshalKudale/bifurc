@@ -1,6 +1,6 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-22 · suite: **2,669 tests / 116 files — 2,629 passed, 40 skipped, 0 failed** (no
+_Last reviewed: 2026-09-22 · suite: **2,674 tests / 117 files — 2,634 passed, 40 skipped, 0 failed** (no
 known failure: the standing `soap.execute` flake was retired with the P0 spike on 2026-09-21 — see §7)_
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
@@ -219,7 +219,7 @@ end to end, immediately found that ZIP export had been throwing on every call (�
 | Functions | 17.11% | **37.26%** | +20.2 pts |
 | Lines | 25.49% | **51.52%** | +26.0 pts |
 
-¹ Both columns use the *widened* `include` scope (which adds `renderer/panels/**/*.tsx`, ~0%
+¹ Both columns use the *widened* `include` scope (which adds `packages/gui/src/panels/**/*.tsx`, ~0%
 covered), so the comparison is apples-to-apples. The original narrow-scope baseline was
 27.71% statements; the widened scope *lowered* the headline to 24.16% at the time, and the
 current 49.07% is a real gain on top of that larger denominator.
@@ -548,7 +548,7 @@ Both halves are now covered — the emitter against real traffic, and the conver
 
 | File | Statements before | Statements after |
 |---|---:|---:|
-| `renderer/components/capture/captureUtils.ts` | not measured | **100.0%** |
+| `packages/gui/src/components/capture/captureUtils.ts` | not measured | **100.0%** |
 | `renderer/components` (area) | 1.8% | **13.5%** |
 | `packages/engine/src/proxy/server.ts` (the emit sites) | 75.5% | **90.3%** |
 
@@ -566,10 +566,10 @@ server is the browser extension's only write path into the workspace.
 | `packages/engine/src/proxy/tlsIntercept.ts` | 0.0% | **88.5%** (100% of lines) |
 | `packages/engine/src/proxy/tlsCert.ts` | 71.0% | **90.3%** |
 | `packages/engine/src/companion/companionServer.ts` | 0.0% | **94.0%** |
-| `renderer/lib/createTabReducer.ts` | 100.0% | **100.0%** |
-| `renderer/components/graphql/graphqlTabReducer.ts` | 0.0% | **92.9%** |
-| `renderer/components/grpc/grpcTabReducer.ts` | 0.0% | **88.9%** |
-| `renderer/components/soap/soapTabReducer.ts` | 0.0% | **83.1%** |
+| `packages/gui/src/lib/createTabReducer.ts` | 100.0% | **100.0%** |
+| `packages/gui/src/components/graphql/graphqlTabReducer.ts` | 0.0% | **92.9%** |
+| `packages/gui/src/components/grpc/grpcTabReducer.ts` | 0.0% | **88.9%** |
+| `packages/gui/src/components/soap/soapTabReducer.ts` | 0.0% | **83.1%** |
 | **`src/companion` area** | **0.8%** | **94.1%** |
 
 > **Path note (P4 work item 1, 2026-09-18).** The two rows above record a P2-era measurement, and the
@@ -727,7 +727,7 @@ Two things this test caught that a unit test could not:
 
 **The barrel is no longer 0% — and that was the point of not excluding it.** `packages/engine/src/index.ts`
 is the package's public entry point. While it only re-exported namespaces nothing imported it, so it
-sat at 0%. It was deliberately *not* excluded (unlike `renderer/components/ui/index.ts`, a barrel of
+sat at 0%. It was deliberately *not* excluded (unlike `packages/gui/src/components/ui/index.ts`, a barrel of
 presentational re-exports), on the grounds that it becomes the real engine API and should then be
 covered rather than hidden. `createEngine()` now lives there, the new
 `tests/integration/engineSmoke.integration.test.ts` exercises it, and it reports **90.7% statements /
@@ -1221,13 +1221,35 @@ members, written DOM-optional (`storage()` returns `undefined` rather than throw
 back to `"unknown"`, `applyZoom()` swallows a missing `document`), which is what lets the suite below run in
 the **node** environment rather than jsdom.
 
-**`apps/web/tests/connect.test.ts` (3) — the composition, against a real engine over a real socket.** The
+**`web/tests/connect.test.ts` (3) — the composition, against a real engine over a real socket.** The
 first suite that can exercise the whole web path, because `createClient` **requires** a `local` and there is
 no Electron shell here to supply one: a real round trip, a client-local operation over the same instance, and
 the dropped-engine path through `onFatal`. It runs in node deliberately — under jsdom the first `open` event
 throws, because jsdom's `WebSocket` is undici's and builds its `Event` objects from a different realm than
 the `EventTarget` it dispatches them to (measured, and recorded in the file's header). What it pins is the
 *wiring*: a real `WebSocket` in a real page is work item 6's Playwright job.
+
+**`web/tests/api.test.ts` (5) — the browser's `window.api`, which is the D18 seam itself.** The shared UI
+reads one injected global, and the two hosts differ only in what fills it: the Electron preload does
+`contextBridge.exposeInMainWorld("api", { ...client })`, and `web/api.ts` does
+`(globalThis as …).api = { ...connection.client }` — **the same line, without the bridge**. This suite is what
+stops the browser's half from drifting. Three cases, all against a real engine: the assigned `window.api`
+actually answers a command (not merely exists — a structural assertion would pass on a blank screen); its
+enumerable keys are the client's surface and do **not** include `close` (which is non-enumerable on the client
+so that `Object.keys(client)` matches `window.api`, and which is why the host gets a separate teardown
+handle); and a lost engine reaches `onFatal` as the *dropped* message rather than the connect-failure one.
+Two more pin `?engine=` parsing, including the loopback default — if that default ever moved, the symptom
+would be a page that reaches a remote engine and not a local one.
+
+> **A gap this section has to name: nothing typechecks the shared UI.** `packages/gui` carries **152
+> pre-existing type errors** — measured, not estimated, and pre-existing rather than introduced by the D18
+> move (211 of the 212 moved files are `R100`, byte-identical, and the post-move run reports **0** `TS2307`).
+> 105 of them are one root cause: `useProtocolEditor` is generic, but both call sites pass `as any` for its
+> config functions, so TypeScript cannot infer `State` and falls back to `unknown` (`SoapTab.tsx` 58,
+> `GraphQLTab.tsx` 47). Because `web/` and `renderer/` both import the UI, every typecheck that covers either
+> host now inherits all 152 — so CI's web step is `continue-on-error` until they are fixed, and
+> `typecheck:renderer` has never run in CI at all. This is §2.3's finding ("type checking never covered the
+> renderer") finally given a number.
 
 **A note on what that third case does *not* guard.** It asserts the fatal is the *dropped* message
 (`/^Session closed/`) and rejects `Could not connect` outright, but deleting the `open` guard in `channel.ts`
@@ -1249,11 +1271,11 @@ nothing about the line you changed".
   `branches` alone on purpose: 2 pts below the 32.66% actual is 30, and ratcheting *down* is the
   thing the policy forbids.
 - Reporters expanded to `text`, `text-summary`, `html`, `json-summary`, `lcov`.
-- `include` widened to `renderer/panels/**`, then to `renderer/components/**/*.ts` (the glob
+- `include` widened to `packages/gui/src/panels/**`, then to `packages/gui/src/components/**/*.ts` (the glob
   had matched only `.tsx`, hiding 17 files — see §4.2). Type-only and pure-constant modules
   excluded.
 - **`dualAliasPlugin` no longer resolves to a directory.** The `""` extension matched
-  `renderer/lib/strings/` before the `index.ts` fallback could run, so Vite was handed a
+  `packages/gui/src/lib/strings/` before the `index.ts` fallback could run, so Vite was handed a
   directory id and any module importing the `strings` barrel was untestable.
 - **2026-09-15 — `@bifurc/engine/*` is aliased to engine *source*.** Two things about this are
   easy to get wrong:
@@ -1302,7 +1324,7 @@ nothing about the line you changed".
 - `setup-node` npm cache enabled for both lockfiles.
 
 ### `e2e/`
-- `e2e/tsconfig.json` fixed (`rootDir` override + `renderer/types/window.ts` included) —
+- `e2e/tsconfig.json` fixed (`rootDir` override + `packages/gui/src/types/window.ts` included) —
   E2E type-checking now actually works and is part of CI.
 - `e2e/helpers/index.ts` rewritten. It now **asserts** (`openPanel` fails if the panel is
   missing) instead of silently skipping. Added `uniqueName`, `pause`, `chooseProtocol`,
@@ -1325,7 +1347,7 @@ nothing about the line you changed".
   request form. Details: `.workbuddy-ai/memory/TRAPS.md`.
 
 ### Renderer type fixes (prerequisites for `typecheck:e2e` passing)
-- `renderer/types/window.ts` and `renderer/types/ipc.ts` imported `Workspace` from
+- `packages/gui/src/types/window.ts` and `packages/gui/src/types/ipc.ts` imported `Workspace` from
   `./entities`, where it does not exist. `Workspace` lives in `./config`. Fixed.
 
 ---
@@ -1345,7 +1367,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > (`protocolExecution.integration` — REST replay, GraphQL execute/introspect, SOAP
 > execute/fetchWsdl, Health Bar polling), **folder management** and **workspace CRUD**
 > (`foldersAndWorkspaces.integration`), **the collection runner and its reporting**
-> (`collectionRunner.test`, `runnerStorage.integration` — `renderer/lib/collectionRunner.ts`
+> (`collectionRunner.test`, `runnerStorage.integration` — `packages/gui/src/lib/collectionRunner.ts`
 > 96%, `runnerReport.ts` 100%), **git publish and git sync**
 > (`gitSync.integration`, `gitRemote.integration` — `publishService` 85%, `syncHandlers`
 > 75%, `syncManager` 80%), **capture** (`capture.integration`, `captureUtils.test` —
@@ -1371,7 +1393,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
    configured" and the mock server is a stub. The handlers are now covered *as stubs*, so
    this is a product gap rather than a testing gap: there is nothing to exercise until the
    runtime is wired up.
-3. **`renderer/components/rest/{useCollectionRunner,useRestActions}.ts` (0%)** — React hooks.
+3. **`packages/gui/src/components/rest/{useCollectionRunner,useRestActions}.ts` (0%)** — React hooks.
    The runner's *engine* is covered, but these hooks (which wire it to the panel) are not;
    they need a DOM environment or extraction of their pure parts.
 4. **Search / command palette** — `searchUtils`/`searchHelpers`/`searchModules` are now
@@ -1393,7 +1415,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
    the panels. E2E territory.
 
 ### Lower — UI surface
-9. **`renderer/panels/**` (0%)** — the panels are covered only by the Playwright E2E suite,
+9. **`packages/gui/src/panels/**` (0%)** — the panels are covered only by the Playwright E2E suite,
    which cannot run in this environment. `renderer/components` is now *measured* at 13.5%
    after the scope fix, but that is still the weakest area.
 
@@ -1432,12 +1454,12 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 | A **blank GraphQL mock is never reported as an empty draft** | `isDraftEmpty(state, "mock")` tests `!state.responseBody`, but the default body is the non-empty `{ data: {} }` envelope; SOAP avoids this by comparing against its default envelope | **Open (cosmetic)** — `useDraftPersist` uses the predicate only to skip its debounced save, and it saves on mount and unmount regardless |
 | E2E `tsconfig.json` never worked | inherited `rootDir: ./src` → `TS6059` for every spec | **Fixed** |
 | `app.spec.ts` shadowed `window` | `const window = await electronApp.firstWindow()` | **Fixed** |
-| `Workspace` imported from wrong module | `renderer/types/{window,ipc}.ts` | **Fixed** |
+| `Workspace` imported from wrong module | `packages/gui/src/types/{window,ipc}.ts` | **Fixed** |
 | `expect(body).toBeTruthy()` used as an assertion | 8 E2E spec files | **Partially fixed** — 5 files converted, 5 remain (item 9) |
 | E2E could not launch on CI | no Electron system libs installed | **Fixed** |
 | Coverage had no gate | no `thresholds` in `vitest.config.ts` | **Fixed** — ratchet added |
-| Coverage **under-reported** the renderer | `include` listed only `renderer/components/**/*.tsx`, hiding 17 `.ts` files — three of which already had passing tests | **Fixed** — `.ts` added; type-only/barrel files excluded. See §4.2 |
-| `dualAliasPlugin` resolved to a **directory** | the `""` extension matched `renderer/lib/strings/` before the `index.ts` fallback, so Vite got a directory id and any module importing the `strings` barrel failed to load | **Fixed** — skip directories, fall through to the index lookup |
+| Coverage **under-reported** the renderer | `include` listed only `packages/gui/src/components/**/*.tsx`, hiding 17 `.ts` files — three of which already had passing tests | **Fixed** — `.ts` added; type-only/barrel files excluded. See §4.2 |
+| `dualAliasPlugin` resolved to a **directory** | the `""` extension matched `packages/gui/src/lib/strings/` before the `index.ts` fallback, so Vite got a directory id and any module importing the `strings` barrel failed to load | **Fixed** — skip directories, fall through to the index lookup |
 | **Engine tests ran against built `dist/`, not source** — all 14 engine files reported 0% while the suite passed 1615/1616 | `@bifurc/engine` is a real npm workspace package, so Vitest externalized it and native `import()` loaded `packages/engine/dist/*.mjs`. Proof: a source-only export marker read `false`; a `resolveId` probe never fired; a deliberately **bogus** alias target was ignored and the suite still passed | **Fixed** — `resolve.alias` → engine source, redeclared inside each `test.projects` entry. The worst case this hid: a source edit that was never rebuilt was **silently untested**. See §4.8 and §5 |
 | A fresh clone could not `npm run typecheck` | `dist/` is gitignored repo-wide and CI ran only `npm ci`, so `@bifurc/protocol` had no build output → 10× `TS2307: Cannot find module '@bifurc/protocol'` | **Fixed** — see the *Build-robustness fixes* table below |
 | Dead code in `src/sync` | `fetchRemoteHead()` / `performGitClone()` have zero call sites; `getRemoteHead()` re-implements the former, `setRemote()` the latter | **Open** (item 9) |
@@ -1473,7 +1495,7 @@ is why neither could be found by reading the code, only by asserting on the data
 | A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/sync/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/sync/statusTracker.ts` and shared |
 | Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/store/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
 | The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `packages/engine/src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
-| **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `renderer/lib/createTabReducer.ts`, `renderer/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
+| **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `packages/gui/src/lib/createTabReducer.ts`, `packages/gui/src/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
 | **Adding, editing or deleting a mock/mapping/rule/request/websocket/webhook did not take effect on the running proxy until something else reloaded the config.** `entityCrudFactory` called `saveConfig(cfg)` then `reloadConfig()` **before** writing the entity file and **before** `syncEnabledSet()`. `reloadConfig()` snapshots the enabled-sets out of `enabled.json`, so `workspaceCfg()` filtered the new entity straight back out of routing — a mock you just added was not served, and a mock you just **deleted kept being served**, until an unrelated action (a settings save, a workspace switch, an app restart) happened to reload. A test that only inspects the handler's return value cannot see this: the config object is correct, the *running server* is stale | `src/ipc/handlers/entityCrudFactory.ts` (`add`, `update`, `delete`) | move `reloadConfig()` to **after** every on-disk write in all three handlers, so the reload sees both the entity file and the updated enabled-set. Proven by mutation: restoring the old ordering makes "stops serving a mock deleted through mock:delete" fail with `expected { from: 'mock' } to deeply equal { upstream: true, … }` |
 | **`workspace-zip` export threw on every call.** The file opened with `import archiver from "archiver"` and called `archiver("zip", …)` — the **v5–v7** API. `archiver` 8 is pure ESM with **no default export** (`require("archiver").default` is `undefined`, so the call was `undefined(...)`), and its README's quick start is `new ZipArchive({ zlib: { level: 9 } })`. Nothing caught it: `@types/archiver` was pinned at **7**, so the declarations described the default-export API and `tsc` was satisfied, and no test had ever executed the exporter. Exports of a workspace as a ZIP — the one format that streams, and the only one that can be hundreds of megabytes — simply never worked | `packages/engine/src/importExport/exporters/workspace-zip.ts`; root `package.json` | `import { ZipArchive } from "archiver"` + `new ZipArchive({ zlib: { level: 6 } })`, **and** `@types/archiver` bumped `^7.0.0` → `^8.0.0`. The two halves must move together: fixing only the import leaves the compiler endorsing a call shape the runtime rejects, which is exactly how this stayed hidden |
 | **A YAML OpenAPI spec was previewed with a fabricated item count, and a malformed file was offered as importable.** `importers/requests-openapi.ts` had two parsers: `run()` used `loadSpec()`, which picked JSON vs YAML and parsed properly, while `preflight()` tried `JSON.parse` and — on failure — returned `Math.floor(lines containing ":" / 3)` as `itemCount`. So a YAML spec's count was fiction, and *any* text that failed `JSON.parse` came back `ok: true`. `loadSpec()` was `async` (it used `await import("js-yaml")`) and `preflight` is a **synchronous** method on `ImporterFn`, which is why the two had drifted apart | `packages/engine/src/importExport/importers/requests-openapi.ts` | static `import * as yaml from "js-yaml"`, `loadSpec()` made synchronous and **shared by both halves**, and the line-count branch deleted. This is what `ImporterFn`'s contract already said they were — "preflight is a dry run against the same bytes `run` will consume" |
@@ -1595,7 +1617,7 @@ npx vitest run --project integration tests/integration/capture.integration.test.
 #       serialize the promise again), then:
 npx vitest run --project integration tests/integration/companionServer.integration.test.ts
 #    → "tells the renderer to refresh, and reports the new entity as dirty" fails. Revert.
-#    i) In renderer/lib/createTabReducer.ts, change `if (!options.init)` to `if (options.init)`
+#    i) In packages/gui/src/lib/createTabReducer.ts, change `if (!options.init)` to `if (options.init)`
 #       so the shared layer always delegates, then:
 npx vitest run --project unit tests/renderer/protocolTabReducers.test.ts
 #    → 7 REFRESH/LOAD tests fail. Revert.

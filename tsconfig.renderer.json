@@ -13,10 +13,16 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./renderer/*"]
+      "@/*": ["./packages/gui/src/*"],
+      "@bifurc/gui": ["./packages/gui/src/index.ts"]
     },
     "types": ["node"]
   },
-  "include": ["renderer/**/*.ts", "renderer/**/*.tsx"],
+  "include": [
+    "renderer/**/*.ts",
+    "renderer/**/*.tsx",
+    "packages/gui/src/**/*.ts",
+    "packages/gui/src/**/*.tsx"
+  ],
   "exclude": ["node_modules", "dist"]
 }

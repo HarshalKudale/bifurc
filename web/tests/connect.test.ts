@@ -33,7 +33,7 @@ import { CommandRegistry } from "@bifurc/engine/commands/registry";
 import { EngineEventBus } from "@bifurc/engine/eventBus";
 import { EventLog } from "@bifurc/engine/transport/eventLog";
 import { createWsServer, type WsServer } from "@bifurc/engine/transport/ws";
-import { connectToEngine, type Connection } from "../src/connect";
+import { connectToEngine, type Connection } from "../connect";
 
 const servers: WsServer[] = [];
 const connections: Connection[] = [];

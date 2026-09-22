@@ -178,7 +178,7 @@ checking the call against the nearest doc would have confirmed it. Two lessons:
 **Corollary — "latent" is a claim about the *caller*, not about the defect, so go and find the caller.**
 The audit first filed `tls:removeCert` as latent alongside `tls:certStatus`, on the reasoning that P7 is
 what renders the tls fields. That is true of `tls:certStatus` and false of `tls:removeCert`, which loses
-an *action* rather than a field: `renderer/panels/settings/TlsSettingsSection.tsx:57` calls it today, so
+an *action* rather than a field: `packages/gui/src/panels/settings/TlsSettingsSection.tsx:57` calls it today, so
 the "remove certificate" button deletes the engine's keypair and leaves the OS trust store trusting the
 CA — exactly what `certLifecycle.ts`'s docblock says the two-sided design exists to prevent. One grep for
 the key in `renderer/` moved it from "P7's problem" to "live". **File severity only after following the
@@ -957,7 +957,7 @@ Found 2026-09-21 starting the P6 reduction on `tlsHandlers.ts`. Two mechanisms, 
 **The bug.** `window.api` is `{ ...client }`, so `window.api.tlsGenerate()` is the *client's* method. It was
 `() => call("tlsGenerate", {}) as ReturnType<BifurcApi["tlsGenerate"]>`. The engine answers `{ok, fingerprint}`
 and deliberately reports no path (`File_Ops_Protocol.md` §8), while
-`renderer/panels/settings/TlsSettingsSection.tsx:67` requires one:
+`packages/gui/src/panels/settings/TlsSettingsSection.tsx:67` requires one:
 `if (result.ok && result.certPath && result.keyPath)`. So the guard failed, `handleGlobalChange` never ran,
 `config.tlsCaCertPath` stayed null, and the panel kept saying "not configured" — **the Generate button was a
 no-op from the user's side, with the CA sitting on disk.** `tlsImportCert` / `tlsImportKey` had the same hole
@@ -966,7 +966,7 @@ pre-routing form was `ipcRenderer.invoke("tls:generate")`, the channel that comp
 
 **Mechanism 1 — the cast.** `call()` returns `unknown`, so a cast is unavoidable *at that call site*. The
 mistake is casting the **whole returned object** to the declared type: `as ReturnType<BifurcApi["tlsGenerate"]>`
-is not a check, it is an assertion that silences the check. `renderer/types/window.ts:185` declares
+is not a check, it is an assertion that silences the check. `packages/gui/src/types/window.ts:185` declares
 `certPath` / `keyPath`; the compiler was willing to enforce that; the cast told it not to. **Cast the `unknown`
 from the boundary, never the object you build on top of it** — then the declared type does the work.
 
@@ -990,7 +990,7 @@ behaviour — it destroys the record of one the live path had already lost.
 
 **The audit that finds these without reading every channel:** for each `window.api` result the renderer
 destructures, find the client method that must supply it and check the method's *actual* return shape against
-`renderer/types/window.ts`. Grep the renderer for `result.<field>`, then trace the field to its producer.
+`packages/gui/src/types/window.ts`. Grep the renderer for `result.<field>`, then trace the field to its producer.
 
 ## `git rm` deletes the whole `src/` tree in this repo — use `rm` + `git add`
 
@@ -2135,10 +2135,10 @@ Measured 2026-09-22, while sizing P7's shared-UI extraction (D18).
 The owner asked for one UI imported by both the Electron and the browser app, with only the communication
 module varying. The first measurement — **240 `window.api` reads across 43 files, with no indirection
 module** — reads like a rewrite, and I began sizing it as one: introduce an interface, thread it through
-`renderer/lib/`, `hooks/`, `panels/`, `components/`, 240 edits.
+`packages/gui/src/lib/`, `hooks/`, `panels/`, `components/`, 240 edits.
 
 **The framing was wrong, and four lines of the tree say so.** Those 240 reads are all *property reads on one
-injected global*. `renderer/types/window.ts` ends in
+injected global*. `packages/gui/src/types/window.ts` ends in
 `declare global { interface Window { api: BifurcApi } }` — the UI **names** the shape and never constructs
 it. Both hosts already construct it, from the *same* call:
 
@@ -2164,6 +2164,66 @@ sites, ask what the call sites are reading:
 
 A cheap instrument: **grep the reads and look at what precedes the dot.** 240 × `window.api.` collapsing to a
 single `declare global` *is* the finding. And grep for what the tree does **not** import — here, **0**
-occurrences of `electron`, `node:` or `@bifurc/*` anywhere under `renderer/`, which is what makes the UI
+occurrences of `electron`, `node:` or `@bifurc/*` anywhere under the UI tree, which is what makes the UI
 portable at all and is not something a call-site count would ever have surfaced.
+
+## An `as any` on a generic's *inputs* silently disables inference for every use of its output
+
+Measured 2026-09-22, in `packages/gui/src/hooks/useProtocolEditor.ts`.
+
+The hook is generic over `<State, Action, Draft, SavePayload, Entity>`. Both call sites pass `as any` for
+several of its config callbacks — `stateToDraft: soapStateToDraft as any`, `stateToSavePayload: … as any`,
+and so on. With nothing left to infer `State` from, TypeScript falls back to **`unknown`**, and every use of
+`state` inside the hook and at the call site becomes an error: **105 of them**, in exactly two files
+(`SoapTab.tsx` 58, `GraphQLTab.tsx` 47), all reading `'state' is of type 'unknown'`.
+
+**How to find this class quickly:** group the errors by *message* before reading them one at a time. A
+single `sort | uniq -c` over the text after `error TS…` collapsed 152 errors into a handful of shapes and
+pointed straight at the two files. Reading them in order would have taken far longer to notice they were the
+same error.
+
+**The generalisable form:** `as any` on an *input* is not a local escape hatch — it removes the evidence the
+compiler needed, and the damage surfaces somewhere else, as `unknown`. `as any` on a *result* is contained;
+`as any` on an argument to a generic function is not.
+
+## This sandbox blocks **directory** renames — `git mv` a file works, a directory does not
+
+Measured 2026-09-22, during the D18 extraction.
+
+    git mv renderer/components packages/gui/src/components
+    # fatal: renaming 'renderer/components' failed: Permission denied
+    mv      renderer/components packages/gui/src/components
+    # mv: cannot move 'renderer/components' …: Permission denied
+    git mv renderer/components/layout/TitleBar.tsx packages/gui/src/components/layout/TitleBar.tsx
+    # exit 0
+
+Both `git mv` and plain `mv` refuse a **directory**; both accept a **file**. So a whole-tree move has to be
+done file by file.
+
+Two practical notes:
+
+- **A 200-file `git mv` loop hits the 120 s default timeout** — one process per file. It died twice (after
+  94, then after 112 more using plain `mv`) and finished only with an explicit longer timeout. Re-running
+  the loop is safe if it re-`find`s, because it picks up whatever is left.
+- **Rename detection still works.** `git diff -M` afterwards reported **211 `R100`** (byte-identical) for
+  the moved files plus one `R082` (an edited config). That clean a rename set is what made "did the move
+  break anything?" answerable — see the next trap.
+
+## "My filter found 0 matches" and "my filter is wrong" look identical — check the separator first
+
+Measured 2026-09-22, and caught one step before it reached the records.
+
+Checking a coverage report for whether the moved tree was instrumented:
+`Object.keys(summary).filter(k => k.includes("packages/gui"))` → **0 files.**
+
+That reads as *"the shared UI is entirely absent from coverage"* — a serious finding, and exactly the
+failure mode a moved tree is known to produce. It was false: **the keys are Windows paths with
+backslashes** (`packages\gui\src\…`), so the pattern could never match. Normalising the separator gave
+**172 files**.
+
+**The generalisable form:** a zero result is ambiguous between *the thing is absent* and *the pattern is
+wrong*, and those have opposite meanings. Disambiguate cheaply — print the total key count, or print one
+key — before concluding anything. Same shape as a test timeout being different evidence from a failed
+assertion: the instrument reported something, and what it reported was about the instrument.
+
 

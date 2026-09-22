@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { generateRandom, resolveRandomizers, RANDOMIZER_TOKENS } from "../../renderer/lib/randomizer";
+import { generateRandom, resolveRandomizers, RANDOMIZER_TOKENS } from "../../packages/gui/src/lib/randomizer";
 
 describe("generateRandom()", () => {
     it("generates a full name for random.name", () => {

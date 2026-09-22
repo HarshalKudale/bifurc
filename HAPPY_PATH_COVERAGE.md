@@ -94,7 +94,7 @@ These are real features with **no** basic-workflow test. Ordered by risk.
 | **gRPC (a product gap, not a test gap)** | `grpc:execute`, `grpc:reflect` and `grpc:startMockServer` all return "not yet configured" | The handlers *are* covered — as stubs. There is nothing to exercise until the runtime is implemented. |
 | **Search / command palette** | Type a query, open a result, land on the right entity | `searchUtils`/`searchHelpers`/`searchModules` are measured (58–85%), but `searchPanelUtils.ts` is 14% and nothing types a query end to end |
 | **UI delete paths** | Click Delete → confirm dialog → row disappears | Every cleanup uses IPC, so the delete buttons/confirm dialogs are unverified. The IPC handlers themselves *are* covered (`mock:delete` is asserted to stop the proxy serving the mock) |
-| **The panels themselves** | Any real click-through of a panel | `renderer/panels/**` is 0% in the unit/integration suite; the Playwright E2E suite covers them but cannot run in this environment (§4.1) |
+| **The panels themselves** | Any real click-through of a panel | `packages/gui/src/panels/**` is 0% in the unit/integration suite; the Playwright E2E suite covers them but cannot run in this environment (§4.1) |
 
 ## 4. Caveats you should know about
 
@@ -120,7 +120,7 @@ These are real features with **no** basic-workflow test. Ordered by risk.
 
 ## 5. Recommended next steps
 
-1. **The panel hooks** (`renderer/components/rest/{useCollectionRunner,useRestActions}.ts`,
+1. **The panel hooks** (`packages/gui/src/components/rest/{useCollectionRunner,useRestActions}.ts`,
    0%). The runner's *engine* is covered but the hooks that wire it to the panel are not;
    they need a DOM environment, or their pure parts extracted. This is now the highest-value
    remaining gap: it is the last piece of *logic* (as opposed to markup) with no test.
@@ -128,7 +128,7 @@ These are real features with **no** basic-workflow test. Ordered by risk.
    lands on the right entity.
 3. Split `happy-path-workflows.spec.ts` into one spec per screen so failures are
    attributable (mechanical, low risk). The E2E suite is now the only coverage for
-   `renderer/panels/**`.
+   `packages/gui/src/panels/**`.
 4. Add UI delete coverage (click Delete → confirm → assert the row is gone) for one
    entity type, then reuse the pattern.
 5. Fix the WebSocket/Webhook E2E steps to drive the edit form instead of `window.api`.

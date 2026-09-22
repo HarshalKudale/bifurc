@@ -119,10 +119,10 @@ const distFiles = [];
 (function walk(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
-    // `dist/renderer` is Vite's bundle: a browser bundle, not Node, so its requires are
+    // `dist/renderer` and `dist/web` are Vite bundles: browser bundles, not Node, so their requires are
     // resolved by Vite at build time and are not this check's business.
     if (e.isDirectory()) {
-      if (e.name !== "renderer") walk(p);
+      if (e.name !== "renderer" && e.name !== "web") walk(p);
     } else if (e.name.endsWith(".js") && !e.name.endsWith(".map")) {
       distFiles.push(p);
     }

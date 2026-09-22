@@ -10,7 +10,7 @@
  *
  * The ratchet called that narrowing "**latent, not live**", on the grounds that no renderer code calls
  * `listAudit`. **That was wrong, and the way it was wrong is worth keeping.** The check was a grep for
- * the *method name*; `renderer/panels/AuditLogPanel.tsx:61–62` reaches the same command through
+ * the *method name*; `packages/gui/src/panels/AuditLogPanel.tsx:61–62` reaches the same command through
  * `window.api` and sets `fromTs`/`toTs` whenever its date filter is used. Routing this command before
  * widening the schema would have broken the audit panel's date filter — a user-visible regression
  * that every unit test would have passed through, because the tests drive the *handler*, not the
