@@ -120,6 +120,22 @@ Answer each one in the "Decision" column and date it. Do not begin P0 with any o
 
 ---
 
+## D18 — The renderer is a shared UI package; only the communication module varies
+
+| | |
+| --- | --- |
+| **Options** | (a) two UIs — the Electron renderer, plus a separate browser UI sharing only the client · (b) **one shared UI package consumed by both shells**, differing only in the implementation of the injected `window.api` |
+| **Recommendation** | **(b)**, on the owner's direction (2026-09-22) |
+| **Why** | The seam a shared UI needs **already exists and is already the only difference between the two hosts.** Measured: the renderer imports no `electron`, no `node:` and no `@bifurc/*` — its only non-relative imports are browser libraries — and it reads its *entire* shell surface through one global, `window.api` (240 references across 43 files, 234 of them method calls, typed by a `declare global` in `renderer/types/window.ts`). Both shells already build that global from the **same** `createClient` call: `src/preload.ts:61` with the IPC transport, then `contextBridge.exposeInMainWorld("api", { ...client })`; `apps/web/src/connect.ts` with the browser transport. A second UI would duplicate 209 files to re-derive a boundary the code already draws. |
+| **Blocks** | P7 work items 2 and 5 |
+| **Decision** | **(b)** — the renderer becomes a package both shells import; the browser hides host-local affordances and adds remote-host selection. Measurement and consequences: [`08-phase-7-web-ui.md`](08-phase-7-web-ui.md) §"The architecture this phase targets". |
+
+> **This supersedes the "no React, must not resolve the renderer's components" reasoning** that `plan/08`
+> recorded for the first `apps/web` landing on the same day. That reasoning described a *framework-free probe
+> page* — which `apps/web` still is — and was never a statement about the phase's target.
+
+---
+
 ## Decision log
 
 Append a row each time a decision is made or revisited.
@@ -143,6 +159,7 @@ Append a row each time a decision is made or revisited.
 | 2026-09-20 | D15 | **CLI deferred — P8 parked.** Two shapes recorded (in-app executable / npm package), decided after P14 | `14-workspace-runtime.md` §7 |
 | 2026-09-20 | D16 | **A workspace's proxy takes a per-environment base port — `80` on Windows, `8080` on Linux/macOS/Docker — then counts up from it.** A per-workspace override fails loudly instead of moving; the webhook port follows the same shape from `9101` | `14-workspace-runtime.md` §3, D16 |
 | 2026-09-20 | D17 | **Blob staging is namespaced per workspace** — `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, `workspaceId` added to the four `blob.*` params, the sweeper becomes per-runtime | `14-workspace-runtime.md` §12.1. Owner's call, made after the reconciliation found §2.2's "already per-workspace" claim false. Lands with WI 1 / WI 8 |
+| 2026-09-22 | D18 | **The renderer becomes a shared UI package; only the communication module varies.** Electron and browser import the same UI; the browser hides host-local affordances and adds remote-host selection | Owner's direction. `08-phase-7-web-ui.md` §"The architecture this phase targets". Supersedes that document's "no React, must not resolve the renderer's components" reasoning, which described the framework-free probe page and not the phase's target |
 
 > **D10–D17 are recorded in full in [`14-workspace-runtime.md`](14-workspace-runtime.md) §3 and §12.1**,
 > not duplicated here, so there is one authority for the reasoning and one place to correct it. This table
