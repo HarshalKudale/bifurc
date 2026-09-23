@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { MockRule, SavedRequest, Folder, SyncStatus } from "@/types";
 import { mergeEnvVars } from "@/lib/resolveVars";
 import { CaptureStats } from "@/panels/CapturePanel";
@@ -20,6 +20,37 @@ import { useWorkspaceView } from "@/hooks/useWorkspaceView";
 import { usePublishHandlers } from "@/hooks/usePublishHandlers";
 
 /**
+ * The host's live session, when the host owns connecting and reconnecting.
+ *
+ * ## Why a prop and not a second global
+ *
+ * `window.api` is the **communication** seam, and D18's premise is that it is the only thing that varies
+ * between the two hosts. A UI that also read an injected `window.hostKind` would have two seams to keep
+ * honest, and nothing would notice one of them drifting. So anything the UI must *know* arrives as a prop.
+ *
+ * ## What each field is for
+ *
+ * - `url` and `engineVersion` are identity — `plan/08`'s "Connected" row asks the footer to show both.
+ * - `generation` increments on every successful connection. A **change** is the UI's signal to re-fetch,
+ *   and it is deliberately an increment rather than a boolean: two reconnects in a row must both trigger,
+ *   and a boolean would collapse them into one.
+ * - `resyncRequired` is the engine saying it could not replay the events missed while the client was away
+ *   (`plan/05` work item 3). It means the same thing to the UI as a reconnect does — re-fetch, do not wait
+ *   for events that will never arrive — but it is surfaced separately because the *cause* differs and
+ *   `plan/05` is explicit that a client which ignores it is *"permanently wrong in a way nobody can
+ *   reproduce"*.
+ */
+export interface AppSession {
+  url: string;
+  /** The engine's build, if it reported one. Absent for an endpoint with no handshake. */
+  engineVersion?: string;
+  /** Increments on every successful connection. A change means "re-fetch". */
+  generation: number;
+  /** The engine could not replay missed events, so authoritative state must be re-read. */
+  resyncRequired: boolean;
+}
+
+/**
  * What a **host** supplies. Every field is optional, so `<App />` means what it always meant.
  *
  * ## Why this channel exists at all
@@ -29,31 +60,27 @@ import { usePublishHandlers } from "@/hooks/usePublishHandlers";
  *
  * - **which host mounted it.** The browser has no native dialogs, no tray and no titlebar controls, so
  *   the UI has to be able to leave out affordances that would do nothing.
- * - **the endpoint**, when the host chose it at runtime — the browser's connection form is where it is
- *   entered, so the UI cannot know it otherwise.
- *
- * Deliberately a **prop and not a second global.** `window.api` is the communication seam, and D18's
- * premise is that it is the *only* thing that varies between the hosts. A UI that also read an injected
- * `window.hostKind` would have two seams to keep honest, and nothing would notice one of them drifting.
+ * - **the session**, when the host owns connecting and reconnecting — the browser's connection form is
+ *   where the endpoint is entered and where a drop is noticed, so the UI cannot know either otherwise.
  */
 export interface AppProps {
   /** Which host mounted this UI. Defaults to `"electron"`. */
   host?: "electron" | "web";
-  /** The endpoint this UI is connected to, when the host chose it at runtime. */
-  connection?: { url: string };
+  /** The host's live session. Absent in the Electron shell, which has no connection to manage. */
+  session?: AppSession;
 }
 
-export default function App({ host = "electron", connection }: AppProps = {}) {
+export default function App({ host = "electron", session }: AppProps = {}) {
   const [tosAccepted, setTosAccepted] = usePersistedState<boolean>("app:tos-accepted", false);
 
   if (!tosAccepted) {
     return <TermsAcceptanceScreen onAccept={() => setTosAccepted(true)} />;
   }
 
-  return <AppShell host={host} connection={connection} />;
+  return <AppShell host={host} session={session} />;
 }
 
-function AppShell({ host = "electron", connection }: AppProps = {}) {
+function AppShell({ host = "electron", session }: AppProps = {}) {
   /**
    * `h-screen` when this UI **is** the window (Electron); `h-full` when a host has wrapped it in chrome
    * of its own (the browser container's connection bar).
@@ -81,6 +108,33 @@ function AppShell({ host = "electron", connection }: AppProps = {}) {
     refreshConfig,
     clearWorkspaceContext: baseClearContext,
   } = useAppConfigSync();
+
+  /**
+   * Re-fetch authoritative state when the host reconnects.
+   *
+   * `plan/08`'s criterion is *"disconnect/reconnect works; the UI never silently freezes"* — and a
+   * reconnection that leaves the UI holding pre-outage state is a silent freeze with a green dot beside it.
+   * Both signals below mean the same thing here, *what you are holding may be stale*:
+   *
+   * - **`generation` changes** on every successful (re)connection. An increment rather than a boolean, so
+   *   two reconnects in a row both trigger; a boolean would collapse them into one.
+   * - **`resyncRequired`** is the engine saying it could not replay the events missed while the client was
+   *   away (`plan/05` work item 3), so the gap can never be filled by waiting for them.
+   *
+   * The **first** value is skipped, because the mount already loads — `useAppConfigSync`'s own effect does
+   * it — and a duplicate round trip on every page load is a cost with no benefit. That is also why this is
+   * a ref rather than state: it records what has been *handled*, and recording it must not re-render.
+   */
+  const handledGeneration = useRef<number | null>(null);
+  useEffect(() => {
+    if (session === undefined) return;
+    if (handledGeneration.current === session.generation) return;
+    const first = handledGeneration.current === null;
+    handledGeneration.current = session.generation;
+    if (first) return;
+    void refreshConfig();
+    void refreshServices();
+  }, [session, refreshConfig, refreshServices]);
 
   const wsId = config.activeWorkspaceId;
   const wsConfig = useWorkspaceView(config, wsId);
@@ -367,10 +421,17 @@ function AppShell({ host = "electron", connection }: AppProps = {}) {
            * knowing what a host is.
            */
           <>
-            {connection !== undefined && (
+            {session !== undefined && (
               <span className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-signal" aria-hidden="true" />
-                <span className="font-mono">{connection.url}</span>
+                <span className="font-mono">{session.url}</span>
+                {/*
+                  The engine's build — `plan/08`'s "Connected: show engine identity + version" row. It was
+                  already in the `hello` response and was being discarded before `connect.ts` kept it.
+                */}
+                {session.engineVersion !== undefined && (
+                  <span className="opacity-60">engine {session.engineVersion}</span>
+                )}
               </span>
             )}
             {footerRightContent}
