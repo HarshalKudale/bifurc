@@ -397,11 +397,32 @@ the session died on the first request, so there was no state to show. It is now 
 | Unauthorised | ✅ `{ failure: "unauthorized" }`, and the copy distinguishes **no token** from **wrong token** — including that the token is regenerated on every host start, which is the single most likely cause |
 | Connected | ✅ the app renders, and the footer shows the endpoint **and the engine's build** — `hello`'s `engineVersion`, which was parsed for validity and then discarded |
 | Disconnected | ✅ a banner with a backoff loop (1s → 30s, capped, never gives up), and **the UI stays mounted** so open tabs and drafts survive the outage. A **rotated token** stops the loop rather than retrying forever — see below |
-| `resyncRequired` | 🟡 sent and handled: `lastSeq` rides on every reconnect, `replayedFrom`/`resyncRequired` are kept from the response, and either one triggers a re-fetch plus a footer note. No dedicated indicator, and the *replay path itself* is untested — nothing has yet overrun the engine's buffer on purpose |
+| `resyncRequired` | ✅ sent and handled: `lastSeq` rides on every reconnect, `replayedFrom`/`resyncRequired` are kept from the response, and either one triggers a re-fetch plus a footer note. Both branches and the **delivery** are now tested — see below. No dedicated indicator, and nothing has yet overrun the engine's buffer on purpose, so the *pruned* arm of `replayFrom` is still only covered by the engine's own suite |
 
 **All three of the 2026-09-23 gaps are closed**, and the last two turned out to be one piece of work: a
 reconnect that leaves the UI holding pre-outage state is a silent freeze with a green dot next to it, so
 `lastSeq` and the re-fetch belong together.
+
+### Replay — the branch that had never executed (2026-09-23)
+
+`lastSeq` was sent and the outcome was handled, but nothing had ever *forced* either branch, so
+`replayedFrom` and `resyncRequired` were shapes no client could have observed. `web/tests/connect.test.ts`
+now drives all of it against a real engine over a real socket: no `lastSeq` on a first connection (neither
+field present), a `lastSeq` in range (→ `replayedFrom`), a `lastSeq` **ahead** of anything the engine ever
+sent (→ `resyncRequired`, because an empty replay would leave the client believing it was up to date — a
+silent staleness bug rather than a visible one), and — the half a shape assertion cannot reach — **the
+replayed event actually arriving**, on a subscription opened *after* the handshake, which is what a real
+client does since the UI subscribes when it mounts.
+
+Removing `lastSeq` from the `hello` fails **exactly those two** cases and leaves the other nine untouched,
+so the assertions are load-bearing rather than incidental.
+
+**One engine property worth knowing, found by getting it wrong:** retention attaches on the **first
+subscription to a name**, not on the first emit. `eventLog.ts` is explicit — *"a bus listener for an event is
+attached the first time anything subscribes to that event and is held until `close()`"* — so an emit before
+anybody has ever subscribed is neither numbered nor buffered. The first version of that case emitted first
+and asserted against a log that had recorded nothing. It is a property rather than a bug: an event nobody
+could have wanted does not need retaining.
 
 ### Reconnect — and the four defects the check found in code written minutes earlier (2026-09-23)
 

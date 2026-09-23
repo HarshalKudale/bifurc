@@ -25,8 +25,10 @@
 - **An assertion must be able to fail — one mutation is not enough.** Prefer a NARROW mutation and **judge it
   by exit code, not by failure count.** **Check `HEAD` before committing.**
 
-**Current: 2,698 tests / 118 files — 2,658 passed, 40 skipped, 0 failed.** e2e: 11 specs, 46/46 owner-run.
-**A running headless host holds 80/8080/9101/9271** — port-dependent suites then fail, and say so.
+**Current: 2,702 tests / 118 files — 2,660 passed, 40 skipped, 0 failed.** e2e: 11 specs, 46/46 owner-run.
+Two ways a full run reports failures that are **not** ones: a headless host holding 80/8080/9101/9271, and the
+safe-delete shim's `EBUSY` on a real-git suite's temp dir. **Both pass in isolation — run the file alone
+before changing anything.**
 
 ## Phase state
 
