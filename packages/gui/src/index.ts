@@ -25,4 +25,5 @@
  * does it explicitly in `web/bootstrap.ts`, and the ordering is why that file is imported first.
  */
 export { default as App } from "./App";
+export type { AppProps, AppSession } from "./App";
 export type { BifurcApi } from "./types/window";

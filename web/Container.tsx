@@ -1,43 +1,62 @@
 /**
- * The web host's outer container — the connection screen, and the chrome around the shared UI.
+ * The web host's outer container — the connection screen, the reconnect loop, and the chrome.
  *
  * ## What this is, and why it exists
  *
  * `web/` is a **container** for `packages/gui`, not a mount point. It shows a connection form first, and
- * only renders `<App />` once the handshake has succeeded. That ordering is not a preference: the
- * browser has to authenticate before its first real request (`connect.ts` explains why), and `<App />`
- * reads `window.api` during mount. Rendering first and connecting after is exactly the order that
- * produced *"the first request must be hello"* and a UI that died on arrival.
+ * only renders `<App />` once the handshake has succeeded. That ordering is not a preference: the browser
+ * has to authenticate before its first real request (`connect.ts` explains why), and `<App />` reads
+ * `window.api` during mount. Rendering first and connecting after is exactly the order that produced
+ * *"the first request must be hello"* and a UI that died on arrival.
  *
- * ## Why the connection settings are handed to `<App />`
+ * ## Reconnection, and the one thing that makes it cheap
  *
- * Because the UI is the same UI in both hosts, so anything that *differs* has to be told to it rather
- * than discovered by it. `<App host="web" connection={{ url }} />` is that channel — see `AppProps` in
- * `packages/gui/src/App.tsx`. It is deliberately a **prop and not a second global**: `window.api` is the
- * communication seam, and D18's whole premise is that it is the *only* thing that varies. A UI that read
- * a second injected global would have two seams to keep honest.
+ * `plan/08`'s criterion is *"disconnect/reconnect works; the UI never silently freezes"*. When the session
+ * dies this container **reassigns `window.api`** and keeps the UI mounted — no remount, no state loss, and
+ * no change to any of the UI's 240 call sites, because each one reads the global at the moment it calls.
+ * The alternative, threading a client through React context, would have meant editing all 240 for a
+ * capability the seam already provides.
  *
- * ## The two things this file must not do
+ * Two things the reconnect owes the engine, both from `plan/05` work item 3:
  *
- * It must not leave a **stale screen** when the host dies: `onFatal` tears the session down and returns
- * to the form, because a page with no process boundary has nothing else to notice that the engine is
- * gone — `plan/08`'s "the UI never silently freezes" criterion.
+ * - **`lastSeq`.** A reconnect sends the highest event `seq` already seen, so the engine can replay what
+ *   was missed instead of leaving a hole. Without it a brief blip loses log entries and leaves the UI
+ *   showing stale state forever — the plan calls that *"the single most likely source of 'works locally,
+ *   broken remotely' bugs"*.
+ * - **`resyncRequired`.** When the engine *cannot* replay — the buffer overran — it says so, and the
+ *   client must re-fetch authoritative state rather than wait for events that will never arrive. `plan/05`:
+ *   *"silently ignoring it produces a UI that is permanently wrong in a way nobody can reproduce."* So it
+ *   is surfaced, not swallowed.
  *
- * And it must not show a **generic** error. `plan/08`'s criterion is that *"handshake failure, auth
- * failure and version mismatch all produce actionable UI, not generic errors"*, which is why the failure
- * kind survives as data from `connect.ts` all the way to the heading below.
+ * ## Why the loop never gives up
+ *
+ * A tab left open overnight should recover on its own, so the backoff caps rather than terminates. That
+ * makes "stop trying" a user action, which is why the banner carries a **Cancel** that returns to the form
+ * — a state the user can leave is different from one they are stuck in.
  */
-import { useCallback, useState, type FormEvent } from "react";
-import { App } from "@bifurc/gui";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { App, type AppSession } from "@bifurc/gui";
 
 import { connectAndInstall, uninstallWindowApi, type InstalledApi } from "./api";
 import { ConnectError, type ConnectFailure } from "./connect";
 import { fromUrl, loadSettings, saveSettings, toUrl, type HostSettings } from "./settings";
 
+/**
+ * Reconnect delays, then the last value repeats.
+ *
+ * Starts at 1 s because the common case is a host being restarted, and caps at 30 s so a long outage does
+ * not become a request storm from every open tab.
+ */
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+
+const delayFor = (attempt: number): number =>
+  RECONNECT_DELAYS_MS[Math.min(attempt - 1, RECONNECT_DELAYS_MS.length - 1)]!;
+
 type Phase =
   | { kind: "form"; error: ConnectError | null }
   | { kind: "connecting" }
-  | { kind: "connected"; session: InstalledApi; settings: HostSettings };
+  | { kind: "connected" }
+  | { kind: "reconnecting"; attempt: number; reason: string; delayMs: number };
 
 /**
  * A scannable heading per failure, so the user reads *what kind* of problem it is before the sentence.
@@ -75,65 +94,212 @@ function asConnectError(error: unknown): ConnectError {
 export function Container() {
   const [phase, setPhase] = useState<Phase>({ kind: "form", error: null });
   const [settings, setSettings] = useState<HostSettings>(initialSettings);
+  /**
+   * Bumped on every successful connection. A change is the UI's signal to re-fetch — which is how the
+   * *reconnect* case is handled, and also how `resyncRequired` is honoured, since both mean the same
+   * thing to the UI: "what you are holding may be stale".
+   */
+  const [generation, setGeneration] = useState(0);
+  const [resyncRequired, setResyncRequired] = useState(false);
+  const [engineVersion, setEngineVersion] = useState<string | undefined>(undefined);
 
-  const handleConnect = useCallback(async (next: HostSettings) => {
-    setPhase({ kind: "connecting" });
-    try {
-      const session = await connectAndInstall({
-        url: toUrl(next),
-        // Empty means "this endpoint has no auth boundary" rather than "an empty token" — see
-        // `connect.ts`. A blank field is the honest way to express that.
-        token: next.token === "" ? undefined : next.token,
-        clientVersion: __APP_VERSION__,
-        onFatal: (error) => {
-          // Tear the global down before unmounting: leaving a `window.api` whose transport is closed
-          // means the next render calls a client that rejects everything.
-          uninstallWindowApi();
-          setPhase({
-            kind: "form",
-            error: new ConnectError("unreachable", `Lost the host: ${error.message}`, error),
-          });
-        },
-      });
-      saveSettings(next);
-      setSettings(next);
-      setPhase({ kind: "connected", session, settings: next });
-    } catch (error) {
-      setPhase({ kind: "form", error: asConnectError(error) });
-    }
+  /**
+   * The live session and the last-known settings, both as refs.
+   *
+   * Refs rather than state because `onFatal` fires from a socket handler — outside React's render, with no
+   * guarantee about which render's closure it sees. Reading state there would read whatever was captured
+   * when the handler was created, which for a long-lived connection is the *first* render's values.
+   */
+  const sessionRef = useRef<InstalledApi | null>(null);
+  const settingsRef = useRef<HostSettings>(settings);
+  /**
+   * The highest event `seq` seen, carried **across** reconnects so the engine can replay the gap. Read
+   * from the dying session before it is replaced, which is the only moment the value is still available.
+   */
+  const lastSeqRef = useRef(0);
+
+  const handleFatal = useCallback((error: Error) => {
+    // Capture the sequence first: after this the client is unreachable, and `lastSeq` is the one thing
+    // the *next* connection cannot reconstruct.
+    lastSeqRef.current = sessionRef.current?.lastSeq() ?? lastSeqRef.current;
+    sessionRef.current = null;
+    /**
+     * **`window.api` is deliberately left installed.**
+     *
+     * Uninstalling it looks tidier and is strictly worse: the UI is still mounted, so its next call reads
+     * `window.api.getConfig` on `undefined` and throws a `TypeError`. Measured — the reconnect check
+     * produced exactly that, twice: `Cannot read properties of undefined (reading 'getConfig')`. Left in
+     * place, the same call **rejects** with the client's own "this session ended", which the UI already
+     * catches. A rejection is a state the UI can render; a `TypeError` is a crash.
+     */
+    setPhase({
+      kind: "reconnecting",
+      attempt: 1,
+      reason: error.message,
+      delayMs: delayFor(1),
+    });
   }, []);
 
+  /** One connection attempt. Shared by the form and the reconnect loop so they cannot drift. */
+  const attemptConnect = useCallback(
+    async (next: HostSettings, lastSeq: number | undefined): Promise<InstalledApi> => {
+      const session = await connectAndInstall({
+        url: toUrl(next),
+        // Empty means "this endpoint has no auth boundary" rather than "an empty token".
+        token: next.token === "" ? undefined : next.token,
+        clientVersion: __APP_VERSION__,
+        ...(lastSeq === undefined ? {} : { lastSeq }),
+        onFatal: handleFatal,
+      });
+      sessionRef.current = session;
+      settingsRef.current = next;
+      lastSeqRef.current = session.lastSeq();
+      setEngineVersion(session.hello?.engineVersion);
+      // `hello.resyncRequired` is the engine saying replay was impossible, so a re-fetch is mandatory
+      // rather than merely prudent. Defaulted to `false` for an endpoint with no handshake at all, where
+      // there is no replay to lose.
+      setResyncRequired(session.hello?.resyncRequired ?? false);
+      return session;
+    },
+    [handleFatal],
+  );
+
+  const handleConnect = useCallback(
+    async (next: HostSettings) => {
+      setPhase({ kind: "connecting" });
+      try {
+        // No `lastSeq` on a user-initiated connect: this is a fresh session, and the form is not a
+        // reconnect. Sending one would ask the engine to replay into a UI that has just been reset.
+        await attemptConnect(next, undefined);
+        saveSettings(next);
+        setSettings(next);
+        setGeneration((g) => g + 1);
+        setPhase({ kind: "connected" });
+      } catch (error) {
+        setPhase({ kind: "form", error: asConnectError(error) });
+      }
+    },
+    [attemptConnect],
+  );
+
+  /**
+   * Drive the reconnect when the phase says so.
+   *
+   * The attempt is scheduled by the phase, and each outcome *replaces* the phase — which is what makes the
+   * loop self-driving without a recursive timer: success moves to `connected`, failure re-enters
+   * `reconnecting` with the next delay, and the effect re-runs on that change.
+   */
+  useEffect(() => {
+    if (phase.kind !== "reconnecting") return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          await attemptConnect(settingsRef.current, lastSeqRef.current);
+          if (cancelled) return;
+          setGeneration((g) => g + 1);
+          setPhase({ kind: "connected" });
+        } catch (error) {
+          if (cancelled) return;
+          const failure = asConnectError(error);
+
+          /**
+           * **Two failures are not transient, and retrying them is worse than giving up.**
+           *
+           * The token rotates on every host start — `ensureEngineToken` generates rather than reuses, so a
+           * token that survives a restart would be a credential that survives a restart. That makes
+           * `unauthorized` after a host restart the *expected* outcome, not an error: the reconnect loop
+           * would spin forever against a token that can never work again, and the user would see a banner
+           * saying "reconnecting" for a problem that needs them to read a new token.
+           *
+           * A protocol major mismatch is the same shape: no amount of waiting changes it.
+           *
+           * Everything else — a refused socket, a host that has not finished booting — is genuinely worth
+           * retrying, which is why the loop exists at all.
+           */
+          if (failure.failure === "unauthorized" || failure.failure === "version") {
+            sessionRef.current = null;
+            setPhase({ kind: "form", error: failure });
+            return;
+          }
+
+          const attempt = phase.attempt + 1;
+          setPhase({
+            kind: "reconnecting",
+            attempt,
+            reason: failure.message,
+            delayMs: delayFor(attempt),
+          });
+        }
+      })();
+    }, phase.delayMs);
+
+    return () => {
+      // A phase change (or an unmount) must not leave a timer that fires into a dead component.
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [phase, attemptConnect]);
+
   const handleDisconnect = useCallback(async () => {
-    if (phase.kind !== "connected") return;
+    const session = sessionRef.current;
+    sessionRef.current = null;
     // Order matters: stop new calls, unmount the UI that makes them, then close the transport.
     uninstallWindowApi();
     setPhase({ kind: "form", error: null });
-    await phase.session.close();
-  }, [phase]);
+    await session?.close();
+  }, []);
 
-  if (phase.kind === "connected") {
-    const url = toUrl(phase.settings);
+  const handleCancelReconnect = useCallback(async () => {
+    setPhase({ kind: "form", error: null });
+    // Nothing to close — a reconnect that is still pending has no session — but a *previous* one may have
+    // been captured by the fatal handler.
+    await sessionRef.current?.close();
+    sessionRef.current = null;
+  }, []);
+
+  if (phase.kind === "connected" || phase.kind === "reconnecting") {
+    const url = toUrl(settingsRef.current);
+    const lost = phase.kind === "reconnecting" ? phase : null;
+    const session: AppSession = {
+      url,
+      generation,
+      resyncRequired,
+      ...(engineVersion === undefined ? {} : { engineVersion }),
+    };
     return (
       <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-1.5 text-xs flex-shrink-0">
-          <span className="h-2 w-2 rounded-full bg-signal flex-shrink-0" aria-hidden="true" />
-          <span className="text-muted-foreground">Connected to</span>
-          <span className="font-mono text-foreground">{url}</span>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={() => void handleDisconnect()}
-            className="rounded-sm border border-border px-2 py-0.5 text-muted-foreground hover:text-foreground"
-          >
-            Disconnect
-          </button>
-        </div>
+        <HostBar
+          url={url}
+          engineVersion={engineVersion}
+          tone={lost === null ? "ok" : "lost"}
+          note={
+            lost !== null
+              ? `Lost the host — reconnecting (attempt ${lost.attempt}, next in ${Math.round(
+                  lost.delayMs / 1000,
+                )}s). ${lost.reason}`
+              : resyncRequired
+                ? "The engine could not replay missed events — refreshing."
+                : undefined
+          }
+          action={
+            lost === null
+              ? { label: "Disconnect", onClick: () => void handleDisconnect() }
+              : { label: "Cancel", onClick: () => void handleCancelReconnect() }
+          }
+        />
         {/*
-          `min-h-0` so the flex child may actually shrink — without it the UI's own `h-full` resolves
-          against a content-sized box and the panel pushes the bar off-screen.
+          `min-h-0` so the flex child may shrink; without it the UI's own height pushes the bar off-screen.
+
+          **`<App />` is rendered in both phases, and that is the whole point of merging these branches.**
+          An earlier version rendered a replacement tree while reconnecting, which unmounted the UI and
+          discarded every open tab and draft for an outage the user may not have noticed — while the comment
+          right there claimed the opposite. Measured: `nav` was `0` during the outage *and* after recovery.
+          `plan/08` asks for a **banner**, not a teardown.
         */}
         <div className="flex-1 min-h-0">
-          <App host="web" connection={{ url }} />
+          <App host="web" session={session} />
         </div>
       </div>
     );
@@ -154,7 +320,7 @@ export function Container() {
         <div className="flex flex-col gap-1">
           <h1 className="text-sm font-medium">Connect to a workspace host</h1>
           <p className="text-xs text-muted-foreground">
-            The host prints its RPC endpoint on startup. The token is in{" "}
+            The host prints its RPC endpoint and token path on startup. The token is in{" "}
             <code className="font-mono">engine.token</code> inside the host&rsquo;s data directory.
           </p>
         </div>
@@ -216,6 +382,48 @@ export function Container() {
           {connecting ? "Connecting…" : "Connect"}
         </button>
       </form>
+    </div>
+  );
+}
+
+/** The strip above the UI: which host, which engine, and the one action that applies. */
+function HostBar({
+  url,
+  engineVersion,
+  tone,
+  note,
+  action,
+}: {
+  url: string;
+  engineVersion?: string;
+  tone: "ok" | "lost";
+  note?: string;
+  action: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="flex items-center gap-3 border-b border-border bg-surface px-3 py-1.5 text-xs flex-shrink-0">
+      <span
+        className={`h-2 w-2 rounded-full flex-shrink-0 ${tone === "ok" ? "bg-signal" : "bg-destructive"}`}
+        aria-hidden="true"
+      />
+      <span className="text-muted-foreground">{tone === "ok" ? "Connected to" : "Lost"}</span>
+      <span className="font-mono text-foreground">{url}</span>
+      {engineVersion !== undefined && (
+        <span className="text-subtle-text">engine {engineVersion}</span>
+      )}
+      {note !== undefined && (
+        <span className="text-destructive truncate" title={note}>
+          {note}
+        </span>
+      )}
+      <span className="flex-1" />
+      <button
+        type="button"
+        onClick={action.onClick}
+        className="rounded-sm border border-border px-2 py-0.5 text-muted-foreground hover:text-foreground"
+      >
+        {action.label}
+      </button>
     </div>
   );
 }

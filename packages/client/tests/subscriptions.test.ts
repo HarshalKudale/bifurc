@@ -37,10 +37,17 @@ function makeFakeTransport() {
     transport,
     /** How many subscriptions the hub actually opened on the transport. */
     openCount: () => subs.size,
-    /** Deliver an event to every open subscription that asked for it. */
-    emit(event: string, payload: unknown) {
+    /**
+     * Deliver an event to every open subscription that asked for it.
+     *
+     * `seq` is a parameter because it is **engine-scoped**: a session subscribed to a subset of events
+     * still sees gaps, since events it did not ask for consume numbers too. A fake that could only emit
+     * `seq: 1` could not tell a high-water mark from a count, which is the whole distinction `lastSeq()`
+     * rests on.
+     */
+    emit(event: string, payload: unknown, seq = 1) {
       for (const { events, cb } of [...subs.values()]) {
-        if (events.includes(event)) cb({ event: event as EngineEvent["event"], seq: 1, payload });
+        if (events.includes(event)) cb({ event: event as EngineEvent["event"], seq, payload });
       }
     },
   };
@@ -189,5 +196,76 @@ describe("createSubscriptionHub", () => {
     expect(fake.openCount()).toBe(0);
 
     expect(() => hub.close()).not.toThrow();
+  });
+});
+
+/**
+ * `lastSeq()` — what a reconnect sends as `hello.lastSeq`.
+ *
+ * The value has to be a **high-water mark over the engine's numbering**, not a count of what arrived,
+ * because `seq` is engine-scoped: a session subscribed to a subset of events sees gaps, since events it
+ * did not ask for consume numbers too (`wire/session.ts`). Sending a count would name a point the engine
+ * does not recognise, and the failure is silent — the engine would replay from the wrong place rather
+ * than refuse.
+ */
+describe("createSubscriptionHub — lastSeq()", () => {
+  it("is 0 before anything has been delivered", () => {
+    const fake = makeFakeTransport();
+    const hub = createSubscriptionHub(fake.transport);
+    hub.subscribe("event.log.entry", vi.fn());
+    expect(hub.lastSeq()).toBe(0);
+  });
+
+  it("reports the highest seq seen, not the most recent one", () => {
+    const fake = makeFakeTransport();
+    const hub = createSubscriptionHub(fake.transport);
+    hub.subscribe("event.log.entry", vi.fn());
+
+    fake.emit("event.log.entry", { a: 1 }, 4);
+    fake.emit("event.log.entry", { a: 2 }, 9);
+    // Out of order on purpose: a reconnect resumes from the furthest point reached, and a lower seq
+    // arriving late must not move the mark backwards.
+    fake.emit("event.log.entry", { a: 3 }, 7);
+
+    expect(hub.lastSeq()).toBe(9);
+  });
+
+  it("ignores gaps, because the engine numbers events the client never asked for", () => {
+    const fake = makeFakeTransport();
+    const hub = createSubscriptionHub(fake.transport);
+    hub.subscribe("event.log.entry", vi.fn());
+
+    // 1, then 5: the engine numbered 2–4 for other events. The client's answer is 5, not 2 — the gap is
+    // the point, and it is why the value cannot be derived from a count of deliveries.
+    fake.emit("event.log.entry", { a: 1 }, 1);
+    fake.emit("event.log.entry", { a: 2 }, 5);
+
+    expect(hub.lastSeq()).toBe(5);
+  });
+
+  it("advances even when a listener throws, because the event did arrive", () => {
+    const fake = makeFakeTransport();
+    const hub = createSubscriptionHub(fake.transport);
+    hub.subscribe("event.log.entry", () => {
+      throw new Error("listener blew up");
+    });
+
+    fake.emit("event.log.entry", { a: 1 }, 3);
+
+    // Recorded before dispatch. Recording after would leave the mark behind an event that was in fact
+    // delivered, and the reconnect would ask for it a second time.
+    expect(hub.lastSeq()).toBe(3);
+  });
+
+  it("survives close(), because closing is what a reconnect follows", () => {
+    const fake = makeFakeTransport();
+    const hub = createSubscriptionHub(fake.transport);
+    hub.subscribe("event.log.entry", vi.fn());
+    fake.emit("event.log.entry", { a: 1 }, 6);
+
+    hub.close();
+
+    // Clearing it here would send `lastSeq: 0` on the reconnect that most needs a real value.
+    expect(hub.lastSeq()).toBe(6);
   });
 });
