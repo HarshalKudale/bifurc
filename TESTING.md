@@ -1,11 +1,20 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-23 · suite: **2,698 tests / 118 files** — 2,658 passed, 40 skipped, 0 failed._
+_Last reviewed: 2026-09-23 · suite: **2,702 tests / 118 files** — 2,660 passed, 40 skipped, 0 failed._
 > Earlier the same day it reported **5 failures** — all port conflicts from a headless host left running
 > (`80`, `8080`, `9101`, `9271`). Each one **said so** — *"9101 must be free for this case to be decisive"*,
 > or a preflight `[ 'port-in-use' ]` the case asserts is empty — so the suite reports the conflict rather
 > than a misleading result. **Stop the host before measuring: the count is not the finding, the mechanism
 > is.** (No known failure otherwise — see §7.)
+>
+> **And a second caution, about a failure that is not one.** In the same session the **full** run twice
+> reported `gitStore.test.ts` and `gitOps.test.ts` failing with
+> `EBUSY: resource busy or locked, rmdir '…\lp-gitops-test-…'` inside the sandbox's safe-delete shim — while
+> **both pass in isolation** (28 tests, exit 0, shim enabled *and* disabled), and the full-run count moved
+> between consecutive runs (`3 failed` → `2 failed`). Under a parallel run a real `git` child still holds its
+> temp directory when the shim tries to remove it, and Windows refuses an `rmdir` on an open handle.
+> **A failure that disappears in isolation is evidence about the *pack*, not about the file — run it alone
+> before changing anything.**
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read
@@ -1225,7 +1234,7 @@ members, written DOM-optional (`storage()` returns `undefined` rather than throw
 back to `"unknown"`, `applyZoom()` swallows a missing `document`), which is what lets the suite below run in
 the **node** environment rather than jsdom.
 
-**`web/tests/connect.test.ts` (8) — the composition, against a real engine over a real socket.** The
+**`web/tests/connect.test.ts` (12) — the composition, against a real engine over a real socket.** The
 first suite that can exercise the whole web path, because `createClient` **requires** a `local` and there is
 no Electron shell here to supply one: a real round trip, a client-local operation over the same instance, and
 the dropped-engine path through `onFatal`. It runs in node deliberately — under jsdom the first `open` event
@@ -1243,6 +1252,22 @@ measured rather than asserted: disabling the handshake condition makes **exactly
 while the other six pass untouched. The remaining three pin the classification — missing token, wrong token,
 and a bare unwrapped endpoint where the handshake must be **skipped**, because `hello` is deliberately not a
 registry command and would come back `UNKNOWN_COMMAND`.
+
+**Four more are the replay contract**, and they exist because the branch had **never executed**: `lastSeq`
+was sent and the outcome handled, but nothing had forced either arm, so `replayedFrom` and `resyncRequired`
+were shapes no client could have observed. Against a real engine: no `lastSeq` on a first connection (neither
+field), a `lastSeq` in range (→ `replayedFrom`), a `lastSeq` **ahead** of anything the engine ever sent
+(→ `resyncRequired` — an empty replay would leave the client believing it was up to date, which is the silent
+staleness `plan/05` warns about), and **the replayed event actually arriving** on a subscription opened
+*after* the handshake, which is what a real client does since the UI subscribes when it mounts. Removing
+`lastSeq` from the `hello` fails **exactly the last two** and leaves the other ten untouched.
+
+> **One engine property worth knowing, found by getting it wrong:** retention attaches on the **first
+> subscription to a name**, not on the first emit — *"a bus listener for an event is attached the first time
+> anything subscribes to that event and is held until `close()`"* (`eventLog.ts`). So an emit before anybody
+> has ever subscribed is neither numbered nor buffered. The first version of that case emitted first and
+> asserted against a log that had recorded nothing. A property, not a bug: an event nobody could have wanted
+> does not need retaining.
 
 **`web/tests/api.test.ts` (6) — the browser's `window.api`, which is the D18 seam itself.** The shared UI
 reads one injected global, and the two hosts differ only in what fills it: the Electron preload does
