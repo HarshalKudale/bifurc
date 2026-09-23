@@ -1,5 +1,10 @@
 import React, { forwardRef, useImperativeHandle, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { SavedWebhook, Folder, WebhookPayload } from '@/types';
+/**
+ * Type-only, so the panel's import of this file back is erased rather than a runtime cycle — and see the
+ * note on the interface itself: it had no definition anywhere in the repository until it was added.
+ */
+import type { WebhookDraft } from '@/panels/WebhooksPanel';
 import { loadDraft, useDraftPersist } from '@/hooks/useDraftPersist';
 import { Webhook } from '@/lib/icons';
 import { strings } from '@/lib/strings';

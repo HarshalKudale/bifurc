@@ -9,6 +9,26 @@ import WebhookTabContent from "./webhooks/WebhookTabContent";
 import WebhooksSidebar from "./webhooks/WebhooksSidebar";
 import { useWebhooksPanelState } from "./webhooks/useWebhooksPanelState";
 
+/**
+ * The shape a new-but-unsaved webhook is persisted as.
+ *
+ * **It did not exist before this.** `WebhookEditor.tsx` referenced `WebhookDraft` in two places —
+ * `loadDraft<WebhookDraft>(tabId)` and `satisfies WebhookDraft` — with no definition and no import anywhere
+ * in the repository, so both were unresolved names and the editor's draft was silently untyped. The `as
+ * SavedWebhook | null` casts two lines further down are the symptom: they exist because the value had no
+ * shape to narrow.
+ *
+ * It lives here because `WsDraft` lives in `WebSocketsPanel` and because this panel owns the drafts — the
+ * editor writes them through `useDraftPersist`, and this is the shape it writes. The fields are read off the
+ * editor's own state (`name`, `urlSuffix`, `folderId`), which is the only evidence available for a type that
+ * had gone missing.
+ */
+export interface WebhookDraft {
+  name: string;
+  urlSuffix: string;
+  folderId: string | null;
+}
+
 interface Props {
   config: AppConfig;
   onConfigChange: (cfg: AppConfig) => Promise<void>;

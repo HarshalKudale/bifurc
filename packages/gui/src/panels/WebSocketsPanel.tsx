@@ -36,7 +36,7 @@ const WS_METHODS = ["WS"];
 
 // -- Draft type -------------------------------------------------------------
 
-interface WsDraft {
+export interface WsDraft {
   name: string;
   url: string;
   folderId: string | null;
@@ -80,6 +80,7 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
     openTab,
     openNewTab,
     closeTab,
+    replaceTab,
     reorderTabs: handleReorderTabs,
   } = useEntityTabs<SavedWsConnection>({
     storageKey: `sockets:${config.activeWorkspaceId}`,
@@ -117,11 +118,21 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
   const handleNewSave = useCallback(async (tabId: string, data: Omit<SavedWsConnection, "id" | "createdAt" | "workspaceId">) => {
     const created = await window.api.addWsConnection(data);
     await reloadConnections();
-    setOpenTabs((prev) => [...prev.filter((id) => id !== tabId), created.id]);
-    setActiveTab(created.id);
+    /**
+     * `replaceTab`, not a hand-rolled `setOpenTabs`.
+     *
+     * **This was a live bug.** `setOpenTabs` was never destructured from `useEntityTabs` — the compiler
+     * said so as `TS2552: Cannot find name 'setOpenTabs'. Did you mean 'openTabs'?` — so saving a new
+     * WebSocket threw `ReferenceError: setOpenTabs is not defined` in a panel `panelFactory` renders.
+     *
+     * The two lines that were here were a partial copy of `replaceTab`'s body, which does the same thing
+     * plus the `clearDraft` and `tabRefs` cleanup they had forgotten. The type error was the whole warning
+     * and it was being ignored; see `TESTING.md` on the pre-existing error count.
+     */
+    replaceTab(tabId, created.id);
     onAfterSave?.();
     return created;
-  }, [reloadConnections, onAfterSave]);
+  }, [reloadConnections, onAfterSave, replaceTab]);
 
   const handleTabSave = useCallback(async (tabId: string, data: Omit<SavedWsConnection, "id" | "createdAt" | "workspaceId">) => {
     const conn = loadedEntities[tabId] ?? connections.find((c) => c.id === tabId);
