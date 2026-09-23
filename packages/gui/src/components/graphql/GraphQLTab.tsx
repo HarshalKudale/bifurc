@@ -7,7 +7,7 @@ import { BottomBar, TabStrip } from "@/components/editor/RequestTab";
 import {
     graphqlTabReducer, initGraphQLState, stateToRequestPayload, stateToMockPayload,
     stateToDraft, isDraftEmpty,
-    GraphQLTabType, GraphQLTabState,
+    GraphQLTabType, GraphQLTabState, GraphQLTabAction,
     GraphQLRequestDraft, GraphQLMockDraft,
 } from "@/components/graphql/graphqlTabReducer";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
@@ -67,17 +67,30 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         handleSyncClick,
         handleRevertClick,
         hasLocalChanges
-    } = useProtocolEditor({
+    /* All six spelled out — see the note in `SoapTab.tsx`; TypeScript cannot infer `TabType`, and a partial
+       list is rejected outright ("Expected 5-6 type arguments"), so it is all six or the casts this replaced. */
+    } = useProtocolEditor<
+        GraphQLTabState,
+        GraphQLTabAction,
+        GraphQLRequestDraft | GraphQLMockDraft,
+        | Omit<SavedGraphQLRequest, "id" | "createdAt" | "workspaceId">
+        | Omit<SavedGraphQLMock, "id" | "createdAt" | "workspaceId">,
+        | SavedGraphQLRequest
+        | SavedGraphQLMock
+        | Partial<SavedGraphQLRequest>
+        | Partial<SavedGraphQLMock>,
+        GraphQLTabType
+    >({
         tabType,
         tabId,
         draftTabId,
-        initial: initial as any,
-        reducer: graphqlTabReducer as any,
-        initState: initGraphQLState as any,
-        stateToDraft: stateToDraft as any,
-        isDraftEmpty: isDraftEmpty as any,
+        initial,
+        reducer: graphqlTabReducer,
+        initState: initGraphQLState,
+        stateToDraft,
+        isDraftEmpty,
         stateToSavePayload: (s, t) => t === "request" ? stateToRequestPayload(s) : stateToMockPayload(s),
-        onSave: onSave as any,
+        onSave,
         onSync,
         onRevert,
         syncStatus,
