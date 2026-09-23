@@ -57,7 +57,7 @@ export function useWebhooksPanelState({
     openNewTab,
     closeTab,
     reorderTabs,
-    setOpenTabs,
+    replaceTab,
   } = tabs;
 
   const wrappedCloseTab = useCallback((tabId: string) => {
@@ -68,12 +68,18 @@ export function useWebhooksPanelState({
   const handleNewSave = useCallback(async (tabId: string, data: Omit<SavedWebhook, "id" | "createdAt" | "workspaceId">) => {
     const created = await window.api.addWebhook(data);
     await reloadWebhooks();
-    setOpenTabs((prev) => [...prev.filter((id) => id !== tabId), created.id]);
-    setActiveTab(created.id);
-    if (isDraftId(tabId)) clearDraft(tabId);
+    /**
+     * `replaceTab`, not a hand-rolled `setOpenTabs` — **this was a live bug**, the same one as in
+     * `WebSocketsPanel`. `EntityTabsResult` has no `setOpenTabs`, so the call was `undefined(…)`:
+     * `TypeError: setOpenTabs is not a function` on saving a new webhook.
+     *
+     * The two lines it replaces were a partial copy of `replaceTab`'s body, which also clears the draft and
+     * the tab ref — so the explicit `clearDraft` below is gone rather than duplicated.
+     */
+    replaceTab(tabId, created.id);
     onAfterSave?.();
     return created;
-  }, [reloadWebhooks, onAfterSave, setOpenTabs, setActiveTab]);
+  }, [reloadWebhooks, onAfterSave, replaceTab]);
 
   const handleTabSave = useCallback(async (tabId: string, data: Omit<SavedWebhook, "id" | "createdAt" | "workspaceId">) => {
     const hook = loadedEntities[tabId] ?? webhooks.find((h) => h.id === tabId);
