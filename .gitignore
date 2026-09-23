@@ -36,6 +36,14 @@ userData/
 *.asar
 *.asar.unpacked/
 .vite/
+# The engine's data root when a host is run locally (`--data-dir ./data`). It holds
+# `engine.token` — a **live session secret**, regenerated on every host start — plus
+# `runtime.json` and the workspace's own state.
+#
+# Added 2026-09-23, when the headless host first became something a person runs by hand.
+# It was never ignored because nothing in the repo had ever referenced it, so no rule was
+# ever needed; the first `git add -A` after running the host staged the token.
+data/
 
 # ===== Environment Files =====
 .env

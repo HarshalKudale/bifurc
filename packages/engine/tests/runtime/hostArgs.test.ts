@@ -34,7 +34,7 @@ afterEach(() => {
 describe("parseHostArgs", () => {
   it("reads --data-dir in the space-separated form", () => {
     const res = parseHostArgs(["--data-dir", "/data"]);
-    expect(res).toEqual({ kind: "args", args: { dataDir: "/data", rpcSocket: undefined, tokenFile: undefined, workspaceIds: undefined } });
+    expect(res).toEqual({ kind: "args", args: { dataDir: "/data", rpcSocket: undefined, wsHost: undefined, wsPort: undefined, tokenFile: undefined, workspaceIds: undefined } });
   });
 
   it("reads --data-dir in the = form, which is what a path with spaces invites", () => {
@@ -140,6 +140,40 @@ describe("parseHostArgs", () => {
     }
   });
 
+  it("passes --ws-host and --ws-port through", () => {
+    const res = parseHostArgs([
+      "--data-dir", "/data",
+      "--ws-host", "127.0.0.1",
+      "--ws-port", "9272",
+    ]);
+    expect(res.kind).toBe("args");
+    if (res.kind === "args") {
+      expect(res.args.wsHost).toBe("127.0.0.1");
+      expect(res.args.wsPort).toBe(9272);
+    }
+  });
+
+  it("accepts --ws-port without --ws-host", () => {
+    const res = parseHostArgs(["--data-dir", "/data", "--ws-port", "0"]);
+    expect(res.kind).toBe("args");
+    if (res.kind === "args") {
+      expect(res.args.wsPort).toBe(0);
+      expect(res.args.wsHost).toBeUndefined();
+    }
+  });
+
+  it("fails on an invalid --ws-port", () => {
+    const res = parseHostArgs(["--data-dir", "/data", "--ws-port", "not-a-port"]);
+    expect(res.kind).toBe("error");
+    if (res.kind === "error") expect(res.message).toMatch(/--ws-port must be an integer from 0 to 65535/);
+  });
+
+  it("fails when socket and ws flags are mixed", () => {
+    const res = parseHostArgs(["--data-dir", "/data", "--rpc-socket", "/run/b.sock", "--ws-port", "9272"]);
+    expect(res.kind).toBe("error");
+    if (res.kind === "error") expect(res.message).toMatch(/--rpc-socket cannot be combined with --ws-host\/--ws-port/);
+  });
+
   it("accepts the flags in any order", () => {
     // A container's CMD is hand-written and the order is arbitrary; nothing here is positional.
     const res = parseHostArgs(["--token-file", "/run/token", "--data-dir", "/data", "--rpc-socket", "/run/s.sock"]);
@@ -154,7 +188,7 @@ describe("parseHostArgs", () => {
   it("documents every flag it accepts, and every env var it reads", () => {
     // A usage text that has drifted from the parser is worse than none: it is the operator's only
     // documentation, and `--help` is what they reach for when the container will not start.
-    for (const flag of ["--data-dir", "--rpc-socket", "--token-file", "--workspace", "--help"]) {
+    for (const flag of ["--data-dir", "--rpc-socket", "--ws-host", "--ws-port", "--token-file", "--workspace", "--help"]) {
       expect(HOST_USAGE).toContain(flag);
     }
     for (const env of ["BIFURC_ENGINE_TOKEN", "BIFURC_PROXY_BASE_PORT", "BIFURC_DATA_DIR"]) {

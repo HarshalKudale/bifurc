@@ -383,6 +383,37 @@ Docker instance). This is the main capability the web UI has that Electron does 
 tools against a remote backend is a UI that silently stops updating. Wire connection state into the
 existing global footer component.
 
+### What landed (2026-09-23) — four of the seven states, and the blocker they were behind
+
+The `hello` handshake was **not wired into any browser client**, which made this whole table unreachable:
+the session died on the first request, so there was no state to show. It is now implemented in
+`web/connect.ts`, and `web/Container.tsx` renders four of the seven rows.
+
+| State | Status |
+|---|---|
+| No engine configured | ✅ the connection form, with `?engine=` as a prefill |
+| Connecting | ✅ a disabled form and "Connecting…" |
+| Version mismatch | ✅ `ConnectError { failure: "version" }` → *"This engine speaks a different protocol major"* |
+| Unauthorised | ✅ `{ failure: "unauthorized" }`, and the copy distinguishes **no token** from **wrong token** — including that the token is regenerated on every host start, which is the single most likely cause |
+| Connected | 🟡 the app renders and the footer shows the endpoint; **engine identity and version are not shown**, because the `hello` response's `engineVersion` and `capabilities` are parsed for validity and then discarded |
+| Disconnected | 🟡 it returns to the form with the reason rather than freezing; **no automatic reconnect with backoff** |
+| `resyncRequired` | ❌ not handled — `hello` sends no `lastSeq`, so the engine has nothing to replay against and cannot set it |
+
+**Two of the gaps are cheap and one is not.** Showing the engine's identity means *keeping* the
+`HelloResponse` rather than discarding it — it is already parsed. Reconnect-with-backoff is a loop around
+`connectToEngine` plus a `lastSeq` the client has to track. `resyncRequired` needs that same `lastSeq` before
+it can ever be true.
+
+**The failure kinds are data, not strings.** `ConnectError.failure` is a union
+(`unreachable` | `unauthorized` | `version` | `refused`), so the criterion above — *"clear, actionable error
+— never a generic failure"* — is met by the **type** rather than by remembering to write four different
+messages at the call site.
+
+**Multi-engine is now structural, not aspirational.** The container's form is the multi-profile surface: the
+settings are remembered in `localStorage` and the endpoint is chosen per connection, so "local, staging, a
+colleague's Docker instance" is a list of saved profiles rather than a new capability. What is missing is the
+*list* — saving more than the last one.
+
 ---
 
 ## Work item 3 — Replace native dialogs with blob flows
