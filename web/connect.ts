@@ -83,6 +83,15 @@ export interface ConnectOptions {
   /** Reported in the engine's log. Defaults to `UNKNOWN_CLIENT_VERSION`. */
   clientVersion?: string;
   /**
+   * The highest event `seq` already seen, for a **reconnect** — `plan/05` work item 3.
+   *
+   * Absent means "send me only live events", which is what a *first* connection wants. A reconnect always
+   * has a value, even `0`. Getting this wrong is silent in both directions: omit it and a brief network
+   * blip loses log entries and leaves the UI stale forever; send a value the engine cannot serve and it
+   * answers `resyncRequired` rather than refusing.
+   */
+  lastSeq?: number;
+  /**
    * Notified when the session dies for a reason the caller did not ask for. A page needs this more than
    * the desktop does: there is no process boundary to notice the engine is gone, so without it a dropped
    * engine leaves the UI showing a stale screen forever — the "silently freezes" risk work item 2's
@@ -91,13 +100,54 @@ export interface ConnectOptions {
   onFatal?: (error: Error) => void;
 }
 
+/**
+ * What the engine answered in `hello`, in the three fields a host acts on.
+ *
+ * The whole response is parsed for validity (see `handshake`), but only these survive — `capabilities`
+ * is a list nothing consults yet, and forwarding it would invite a caller to depend on a shape no test
+ * pins.
+ */
+export interface HelloOutcome {
+  sessionId: string;
+  /** The engine's build, for the footer. `plan/08`'s "Connected" row asks for engine identity. */
+  engineVersion: string;
+  /**
+   * Present **only** when this was a reconnect whose `lastSeq` the engine could serve: it has retained
+   * every event after that point and will deliver them once the client subscribes.
+   */
+  replayedFrom?: number;
+  /**
+   * The reconnect asked to be caught up from a `lastSeq` the engine **cannot** serve — the events in
+   * between were dropped. `plan/05`: *"`resyncRequired` **must** be handled by every client. Silently
+   * ignoring it produces a UI that is permanently wrong in a way nobody can reproduce."* So the host has
+   * to re-fetch authoritative state with ordinary commands rather than wait for events that will never
+   * arrive.
+   */
+  resyncRequired: boolean;
+}
+
 export interface Connection {
   /** The typed client. `close()` on it is the whole teardown — it closes the transport too. */
   client: BifurcClient;
+  /**
+   * What the engine said in `hello` — identity, and whether replay happened.
+   *
+   * Optional because an endpoint with **no auth boundary** has no handshake at all: `hello` is not a
+   * registry command, so sending it to an unwrapped server is an `UNKNOWN_COMMAND`. Fabricating a
+   * `sessionId` for that case would be a lie the caller could not detect.
+   */
+  hello?: HelloOutcome;
   /** A real round trip, so "connected" means the engine answered rather than the socket opened. */
   probe(): Promise<unknown>;
   /** Tear the session down. The UI's surface deliberately does not carry this — see `web/api.ts`. */
   close(): Promise<void>;
+  /**
+   * The highest event `seq` this connection has seen — what the **next** reconnect sends as `lastSeq`.
+   *
+   * Read from the client rather than tracked here, so there is one high-water mark rather than two that
+   * can drift. Non-enumerable on the client, which is why it is reachable here and not from the UI.
+   */
+  lastSeq(): number;
 }
 
 /**
@@ -111,14 +161,16 @@ export async function connectToEngine(opts: ConnectOptions): Promise<Connection>
   const transport = createBrowserTransport({ url: opts.url, onFatal: opts.onFatal });
 
   try {
-    // Before `createClient()`, per `plan/06` — and only when the endpoint has an auth boundary.
-    if (opts.token !== undefined && opts.token !== "") {
-      await handshake(transport, opts);
-    }
+    // Before `createClient()`, per `plan/06` — and only when the endpoint has an auth boundary. An
+    // unwrapped endpoint has no handshake at all, which is why the outcome is optional rather than
+    // invented: a fabricated `sessionId` would be a lie a caller could not detect.
+    const hello =
+      opts.token !== undefined && opts.token !== "" ? await handshake(transport, opts) : undefined;
 
     const client = createClient(transport, { local: createBrowserLocal() });
     const connection: Connection = {
       client,
+      ...(hello === undefined ? {} : { hello }),
       /**
        * `config.get` rather than a second handshake: now that the session is authenticated this is an
        * ordinary command, and going through `client` rather than the transport is deliberate — it
@@ -126,6 +178,7 @@ export async function connectToEngine(opts: ConnectOptions): Promise<Connection>
        */
       probe: () => client.getConfig(),
       close: () => client.close(),
+      lastSeq: () => client.lastSeq(),
     };
 
     /**
@@ -165,7 +218,7 @@ export async function connectToEngine(opts: ConnectOptions): Promise<Connection>
 async function handshake(
   transport: ReturnType<typeof createBrowserTransport>,
   opts: ConnectOptions,
-): Promise<void> {
+): Promise<HelloOutcome> {
   // No `try`/`catch`: `connectToEngine` owns the single place a failure becomes a `ConnectError` and the
   // single place the transport is closed. Classifying here too would be a second copy of both, and the
   // two would drift the moment one of them learned about a new code.
@@ -173,9 +226,32 @@ async function handshake(
     protocolVersion: PROTOCOL_VERSION,
     clientName: WEB_CLIENT_NAME,
     clientVersion: opts.clientVersion ?? UNKNOWN_CLIENT_VERSION,
-    token: opts.token,
+    // Spread rather than assigned: both are optional, and `undefined` is not the same as absent —
+    // `exactOptionalPropertyTypes` rejects the assignment, and the engine branches on whether `lastSeq`
+    // is *present* when deciding whether this is a reconnect or a first connection.
+    ...(opts.token === undefined ? {} : { token: opts.token }),
+    ...(opts.lastSeq === undefined ? {} : { lastSeq: opts.lastSeq }),
   });
-  HelloResponseSchema.parse(raw);
+
+  const parsed = HelloResponseSchema.parse(raw);
+
+  /**
+   * Three fields kept, out of a response that is otherwise validated and dropped.
+   *
+   * `sessionId` and `engineVersion` are identity — `plan/08`'s "Connected" row asks the footer to show
+   * engine identity, and it was being thrown away here. `replayedFrom` and `resyncRequired` are the
+   * *outcome* of a reconnect, and `plan/05` is explicit that the second must be handled by every client:
+   * *"silently ignoring it produces a UI that is permanently wrong in a way nobody can reproduce."*
+   *
+   * `capabilities` is deliberately not forwarded. Nothing consults it yet, and a caller that started to
+   * would be depending on a shape no test pins.
+   */
+  return {
+    sessionId: parsed.sessionId,
+    engineVersion: parsed.engineVersion,
+    ...(parsed.replayedFrom === undefined ? {} : { replayedFrom: parsed.replayedFrom }),
+    resyncRequired: parsed.resyncRequired ?? false,
+  };
 }
 
 /**

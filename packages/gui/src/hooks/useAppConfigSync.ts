@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { AppConfig, ServiceInfo, SyncStatus } from "@/types";
 
 export const EMPTY_CONFIG: AppConfig = {
@@ -64,6 +64,18 @@ export function useAppConfigSync() {
    */
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  /**
+   * Whether a load has ever succeeded — which makes `loadError` a **first-load** failure, not a refresh
+   * one.
+   *
+   * The distinction is load-bearing once a host can reconnect. A refresh can fail for reasons that are not
+   * the user's to fix, and a host being restarted is the obvious one: blanking the whole UI for that would
+   * discard every open tab and draft for an outage the user may not even have noticed. Measured in the
+   * reconnect check — the refresh triggered by a failed reconnect was enough to replace the shell with the
+   * error screen, while the banner above it said "reconnecting".
+   */
+  const loadedOnce = useRef(false);
+
   const loadConfig = useCallback(async (loadingMsg = "Loading workspace…") => {
     setWsLoading(loadingMsg);
     setLoadError(null);
@@ -73,10 +85,17 @@ export function useAppConfigSync() {
       const status = await window.api.serverStatus();
       setServerRunning(status.running);
       setServerError(status.error);
+      loadedOnce.current = true;
     } catch (error) {
       // Recorded, not rethrown: the caller is a `useEffect` with no handler, so rethrowing turns a state
       // change into an unhandled rejection.
-      setLoadError(error instanceof Error ? error.message : String(error));
+      //
+      // Only a *first* failure is surfaced. After that the UI is already showing a workspace, and replacing
+      // it with an error screen loses more than it explains — a reconnect's own banner is the right place
+      // for "the host is away".
+      if (!loadedOnce.current) {
+        setLoadError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
       setWsLoading(null);
     }
@@ -141,9 +160,27 @@ export function useAppConfigSync() {
     refreshEntitySyncStatus(next.activeWorkspaceId);
   }, [refreshEntitySyncStatus]);
 
+  /**
+   * Re-read the config after something changed.
+   *
+   * **It swallows its own failure, and that is the point.** Every caller is a *background* refresh — an
+   * effect reacting to a reconnect, an event handler — so none of them can act on a rejection, and the
+   * alternative is an unhandled one. Measured: `void refreshConfig()` after a reconnect produced
+   * `Uncaught (in promise) EngineError: Cannot request(): this session ended` in the browser console —
+   * exactly the class of noise this work exists to remove, and exactly the shape of the original bug
+   * report. Note that `void promise` does **not** catch: it discards the promise, rejection and all.
+   *
+   * `loadConfig` deliberately does **not** swallow. It is the *first* load, and its failure has somewhere
+   * to go — `loadError`, which `App` renders.
+   */
   const refreshConfig = useCallback(async () => {
-    const cfg = await window.api.getConfig();
-    setConfig(cfg);
+    try {
+      const cfg = await window.api.getConfig();
+      setConfig(cfg);
+    } catch {
+      // Silent by design — see the note above. The UI is already showing a workspace; a failed *refresh*
+      // is not a reason to replace it with an error, and the reconnect banner already says the host is away.
+    }
   }, []);
 
   const handleWsConfigChange = useCallback(async (next: AppConfig, wsId: string) => {

@@ -42,12 +42,34 @@ export interface SubscriptionHub {
   subscribe(event: string, listener: Listener): () => void;
   /** How many transport subscriptions are currently open. One per event with ≥1 listener. */
   transportSubscriptionCount(): number;
+  /**
+   * The highest event `seq` this hub has delivered, or `0` if it has delivered none.
+   *
+   * This is what a **reconnect** sends as `lastSeq`, so the engine can replay what was missed
+   * (`plan/05` work item 3). Two properties make the maximum the right answer rather than a count:
+   *
+   * - **`seq` is engine-scoped, not per-subscription.** `wire/session.ts` says it plainly — *"a session
+   *   subscribed to a subset of events sees gaps; events it did not subscribe to still consume a
+   *   number"* — so a client-side tally would number events by *arrival* rather than by *origin* and
+   *   produce a `lastSeq` the engine does not recognise. The gaps are the point: the client never
+   *   wanted those events, so resuming after the highest one it did see loses nothing.
+   * - **It is a high-water mark, so a duplicate delivery cannot lower it.** Re-subscribing after a
+   *   reconnect re-delivers replayed events, and each one only ever raises this value.
+   */
+  lastSeq(): number;
   /** Tear every subscription down. Idempotent. Used by `createClient().close()`. */
   close(): void;
 }
 
 export function createSubscriptionHub(transport: Transport): SubscriptionHub {
   const slots = new Map<string, Slot>();
+
+  /**
+   * The high-water mark behind `lastSeq()`. Deliberately **not** reset by `close()`: a caller that
+   * closes and reconnects is exactly the case this exists for, and clearing it there would send
+   * `lastSeq: 0` on the reconnect that most needs a real value.
+   */
+  let highestSeq = 0;
 
   const subscribe: SubscriptionHub["subscribe"] = (event, listener) => {
     let slot = slots.get(event);
@@ -60,6 +82,13 @@ export function createSubscriptionHub(transport: Transport): SubscriptionHub {
        * iteration is live, so removing the current element silently skips the next one.
        */
       const unsubscribe = transport.subscribe([event], (e) => {
+        /**
+         * Recorded **before** dispatch, not after. The event has arrived either way, and a listener
+         * that throws is swallowed below — so recording afterwards would leave the mark behind an
+         * event that was in fact delivered, and the reconnect would ask for it a second time.
+         */
+        if (typeof e.seq === "number" && e.seq > highestSeq) highestSeq = e.seq;
+
         for (const l of [...listeners]) {
           try {
             l(e.payload);
@@ -109,5 +138,6 @@ export function createSubscriptionHub(transport: Transport): SubscriptionHub {
     subscribe,
     close,
     transportSubscriptionCount: () => slots.size,
+    lastSeq: () => highestSeq,
   };
 }

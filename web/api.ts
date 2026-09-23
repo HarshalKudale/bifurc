@@ -29,7 +29,7 @@
  */
 import type { BifurcApi } from "@bifurc/gui";
 
-import { connectToEngine, type ConnectOptions, type Connection } from "./connect";
+import { connectToEngine, type ConnectOptions, type Connection, type HelloOutcome } from "./connect";
 
 /**
  * The endpoint is **not** derived here.
@@ -47,10 +47,17 @@ import { connectToEngine, type ConnectOptions, type Connection } from "./connect
 export interface InstalledApi {
   /** The engine this page is pointed at. */
   url: string;
+  /**
+   * What the engine answered in `hello` — its identity, and whether a reconnect got its replay.
+   * Absent for an endpoint with no auth boundary, which has no handshake at all.
+   */
+  hello?: HelloOutcome;
   /** A real round trip, so "connected" means the engine answered rather than the socket opened. */
   probe(): Promise<unknown>;
   /** Tear the session down — it closes the transport too. */
   close(): Promise<void>;
+  /** The highest event `seq` seen, for the **next** reconnect's `lastSeq`. */
+  lastSeq(): number;
 }
 
 /**
@@ -60,13 +67,25 @@ export interface InstalledApi {
  * — the same reason `connect.ts` has no DOM in it. Returns the handles the host still needs; throws a
  * `ConnectError` (see `connect.ts`) if the handshake fails, so the caller can render *why* rather than a
  * generic failure.
+ *
+ * **Reassigning this global is the whole reconnect mechanism**, and that is not a trick. Every one of the
+ * UI's 240 call sites reads `window.api` at the moment it calls, so replacing the global swaps the
+ * transport underneath a mounted UI without a remount and without the UI knowing. The alternative —
+ * threading a client through React context — would have meant editing all 240 sites for a capability the
+ * seam already provides.
  */
 export async function connectAndInstall(opts: ConnectOptions): Promise<InstalledApi> {
   const connection: Connection = await connectToEngine(opts);
 
   (globalThis as { api?: BifurcApi }).api = { ...connection.client };
 
-  return { url: opts.url, probe: connection.probe, close: connection.close };
+  return {
+    url: opts.url,
+    ...(connection.hello === undefined ? {} : { hello: connection.hello }),
+    probe: connection.probe,
+    close: connection.close,
+    lastSeq: connection.lastSeq,
+  };
 }
 
 /**

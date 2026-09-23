@@ -82,6 +82,19 @@ export type BifurcApiFull = BifurcApi &
 export interface BifurcClient extends BifurcApiFull {
   /** Tear down every subscription this client opened. Idempotent. */
   close(): Promise<void>;
+  /**
+   * The highest event `seq` this client has seen, to be sent as `lastSeq` on a reconnect's `hello`.
+   *
+   * Declared here and made **non-enumerable** below, exactly like `close` and for the same reason:
+   * `Object.keys(client)` must equal `window.api`'s keys, because that equality is the plan's own
+   * regression signal for the whole critical path. The shell and the browser host hold this object
+   * directly; the renderer only ever sees what `contextBridge` copies, and that walk follows enumerable
+   * own properties — so the value is reachable by the two callers that reconnect and invisible to the UI.
+   *
+   * `0` means "I have seen nothing", which the schema accepts and which the engine reads as a first
+   * connection. See `subscriptions.ts` for why the maximum is the right number rather than a count.
+   */
+  lastSeq(): number;
 }
 
 export interface CreateClientOptions {
@@ -996,6 +1009,11 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       hub.close();
       await transport.close();
     },
+    /**
+     * Read through the hub rather than from a counter here, because the hub is where delivery happens —
+     * a second counter would have to be updated at the same moment and could drift from it.
+     */
+    lastSeq: () => hub.lastSeq(),
   };
 
   /**
@@ -1020,6 +1038,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
    * shape test — no cast is needed to hide a property from a type.
    */
   Object.defineProperty(api, "close", { enumerable: false });
+  Object.defineProperty(api, "lastSeq", { enumerable: false });
 
   return api;
 }
