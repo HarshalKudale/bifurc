@@ -1,0 +1,54 @@
+# ===== Docker build context =====
+#
+# The context is the repo root, and almost none of it belongs in an image. Without this file the
+# context is ~20k files of `node_modules` plus five coverage report trees, which makes the build slow
+# and the cache useless.
+
+# Dependencies and build output are produced *inside* the image, never copied in — a host's
+# `node_modules` is platform- and arch-specific, and `dist/` may be stale.
+node_modules/
+packages/*/node_modules/
+packages/*/dist/
+dist/
+release/
+out/
+
+# The image is built from source, so the coverage trees and test artifacts are dead weight.
+# `coverage-run*` are the alternates TESTING.md §1 describes.
+coverage/
+coverage-*/
+coverage-baseline/
+test-results/
+playwright-report/
+e2e/
+
+# Runtime data. `data/` holds `engine.token` — a live secret — and must never enter an image.
+data/
+screenshots/
+*.log
+
+# VCS and editor state.
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+
+# Docs and planning. Useful to a human, irrelevant to `node_modules` and `dist`.
+plan/
+*.md
+!README.md
+
+# Platform binaries that would poison a Linux image if they ever appeared.
+build/
+*.exe
+*.dll
+*.dylib
+*.node
+
+# The Docker files themselves: changing them should not invalidate the source layers.
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose*.yml
