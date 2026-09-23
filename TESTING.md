@@ -1,11 +1,11 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-23 · suite: **2,693 tests / 118 files** — 2,648 passed, 40 skipped, **5 failed**, and
-**all five failures are port conflicts caused by a headless host left running on the machine** (`80`,
-`8080`, `9101`, `9271`). Each one names its own precondition — *"9101 must be free for this case to be
-decisive"*, or a preflight `[ 'port-in-use' ]` that the case asserts is empty — so the suite reports the
-conflict instead of producing a misleading result. **Stop the host and re-run.** Otherwise there is no known
-failure: the standing `soap.execute` flake was retired with the P0 spike on 2026-09-21 — see §7)_
+_Last reviewed: 2026-09-23 · suite: **2,693 tests / 118 files** — 2,653 passed, 40 skipped, 0 failed._
+> Earlier the same day it reported **5 failures** — all port conflicts from a headless host left running
+> (`80`, `8080`, `9101`, `9271`). Each one **said so** — *"9101 must be free for this case to be decisive"*,
+> or a preflight `[ 'port-in-use' ]` the case asserts is empty — so the suite reports the conflict rather
+> than a misleading result. **Stop the host before measuring: the count is not the finding, the mechanism
+> is.** (No known failure otherwise — see §7.)
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read

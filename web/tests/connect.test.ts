@@ -41,7 +41,13 @@
  * `browserTransport.test.ts` does, and `webSocketFactory` stays unused.
  *
  * What it still cannot cover is a real `WebSocket` in a real page on a real browser: that is work item
- * 6's Playwright job, and the owner runs it. This file pins the *wiring*, not the browser.
+ * 6's Playwright job. This file pins the *wiring*, not the browser.
+ *
+ * **That job is not the owner's alone, and saying so was wrong for two days.** The project's own Playwright
+ * is installed and Chromium is already in the cache — at revision 1243, while Playwright 1.60 expects 1223,
+ * so one `executablePath` is the whole difference. A headless browser runs from the agent shell without an
+ * interactive session, and `plan/08` work item 6 records the recipe. Do not repeat "the owner runs it"
+ * without re-measuring: a constraint written into a comment outlives the constraint.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CommandRegistry } from "@bifurc/engine/commands/registry";

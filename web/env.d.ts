@@ -8,3 +8,14 @@
  * one host's config silently starts defining another's.
  */
 declare const __APP_VERSION__: string;
+
+/**
+ * Vite turns an imported image into the URL of the emitted asset.
+ *
+ * Declared here rather than inherited from `packages/gui/src/env.d.ts`, for the same reason
+ * `__APP_VERSION__` is: that file is the *UI's* declaration, and this host's tsconfig does not include it.
+ */
+declare module "*.png" {
+  const src: string;
+  export default src;
+}
