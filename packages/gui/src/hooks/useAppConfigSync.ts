@@ -50,23 +50,46 @@ export function useAppConfigSync() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [entitySyncStatus, setEntitySyncStatus] = useState<Record<string, "clean" | "modified" | "new" | "deleted">>({});
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  /**
+   * Why the initial load failed, if it did.
+   *
+   * Added for a **console** defect rather than a visible one: `loadConfig` had `try/finally` and **no
+   * `catch`**, so a rejected `config.get` propagated out of the callback and the effect's `.then()` had
+   * nothing to catch it with. A browser saw `Uncaught (in promise) EngineError: Cannot request(): this
+   * session ended`, and the UI sat on "Loading workspace…" forever — which is the same screen a slow
+   * engine shows, so the two are indistinguishable to a user.
+   *
+   * Catching is not enough on its own, though: a caught error nobody renders is a silent failure. `App`
+   * renders this where the loading message was.
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadConfig = useCallback(async (loadingMsg = "Loading workspace…") => {
     setWsLoading(loadingMsg);
+    setLoadError(null);
     try {
       const cfg = await window.api.getConfig();
       setConfig(cfg);
       const status = await window.api.serverStatus();
       setServerRunning(status.running);
       setServerError(status.error);
+    } catch (error) {
+      // Recorded, not rethrown: the caller is a `useEffect` with no handler, so rethrowing turns a state
+      // change into an unhandled rejection.
+      setLoadError(error instanceof Error ? error.message : String(error));
     } finally {
       setWsLoading(null);
     }
   }, []);
 
   const refreshServices = useCallback(async () => {
-    const svcs = await window.api.discoverServices();
-    setServices(svcs);
+    try {
+      setServices(await window.api.discoverServices());
+    } catch {
+      // Secondary. A host that cannot answer `discoverServices` is already reported by `loadConfig`, and
+      // letting this reject would be the same console error wearing a different name.
+      setServices([]);
+    }
   }, []);
 
   const refreshEntitySyncStatus = useCallback((wsId: string) => {
@@ -159,6 +182,7 @@ export function useAppConfigSync() {
   return {
     config, setConfig,
     wsLoading, setWsLoading,
+    loadError,
     services, refreshServices,
     serverRunning, setServerRunning,
     serverError, setServerError,

@@ -15,8 +15,8 @@
 - **App runs `packages/*/dist/`; tests run `src/`** → `npm run build:packages` after ANY package edit. Only
   `@bifurc/engine/*` aliases to `src`; the others resolve to `dist/`, so an un-rebuilt edit is **silently
   untested**. The dts leg can fail *after* "Build success" — grep `error TS`. Guard bypass and the coverage
-  fix are both `CODEBUDDY_SAFE_DELETE_ENABLED=0`. **Directory renames are blocked in this sandbox** —
-  `git mv` a *file* works, a *directory* gives "Permission denied"; move files individually.
+  fix are both `CODEBUDDY_SAFE_DELETE_ENABLED=0`. **Directory renames are blocked here** — `git mv` a
+  *file* works, a *directory* gives "Permission denied".
 - **One `Edit` per file per message** — two same-file edits silently revert each other.
 
 ## Measuring the suite
@@ -27,17 +27,21 @@
 - **An assertion must be able to fail — one mutation is not enough.** Prefer a NARROW mutation, check it is
   well-formed first, and **judge it by exit code, not by failure count.** **Check `HEAD` before committing.**
 
-**Current: 2,674 tests / 117 files — 2,634 passed, 40 skipped, 0 failed.** e2e: 11 specs, 46/46 owner-run.
+**Current: 2,693 tests / 118 files.** e2e: 11 specs, 46/46 owner-run. **A running headless host holds
+80/8080/9101/9271**, so port-dependent suites fail against it — and their own precondition guards say so.
 
 ## Phase state
 
 - **P0–P6 done** (P6 criterion 2 owner-run 46/46); P4 8/10; P3 item 5 open as *UI* → P7. **P14 CLOSED.**
-- **P7 is live** (`plan/08`): `@bifurc/protocol/src/wire/`; **`@bifurc/web-client`**; **`packages/gui`** —
-  the shared UI, exporting `<App />` — with hosts **`renderer/`** (Electron) and **`web/`** (browser), both
-  importing it. **Run `tsc` after any type-level change — vitest does not typecheck.**
+- **P7 is live** (`plan/08`): **`packages/gui`** — the shared UI, exporting `<App />` — with hosts
+  **`renderer/`** (Electron) and **`web/`**, which is now a **container**: connection form → handshake →
+  `<App host="web" />`. **Run `tsc` after any type-level change — vitest does not typecheck.**
 - **D18 (2026-09-22, LANDED): the renderer became `packages/gui`; only the communication module varies.**
   `window.api` stays the seam and each host fills it. **The UI carries 152 pre-existing type errors**, so no
   typecheck covers a host green — CI's web step is `continue-on-error`.
+- **The browser's transport is auth-wrapped; Electron's is not** (`in-process`, never wrapped). So
+  `web/connect.ts` does `hello` on the **raw** transport *before* `createClient` (`plan/06`), then probes
+  before returning. **`HELLO_ACTION` lives in `@bifurc/protocol`**, beside its schemas.
 - **Not in the plans:** **P5's spec is `packages/client/src/surface.ts` (144 keys)**; `src/preload.ts` is the
   authority, not `packages/gui/src/types/window.ts`.
 - **`build:main` is required after any `src/preload.ts` change** (`e8e535f`). Open gaps live in `plan/08`.
