@@ -20,8 +20,23 @@ import "@fontsource/space-grotesk/500.css";
 import "@fontsource/space-grotesk/600.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@/styles.css";
+import iconUrl from "@/icon.png";
 
 import { Container } from "./Container";
+
+/**
+ * The tab icon, taken from the shared UI rather than shipped as a second copy.
+ *
+ * Set from script because `index.html` cannot reference it: Vite resolves an `href` in the HTML relative to
+ * the host's root, and this file lives in `packages/gui`. Without it the browser requests `/favicon.ico`,
+ * which does not exist — and a **404 is a console error**, which is precisely the class of noise this host
+ * was cleaned up to remove. Measured: it was the only one left.
+ */
+const favicon = document.createElement("link");
+favicon.rel = "icon";
+favicon.type = "image/png";
+favicon.href = iconUrl;
+document.head.appendChild(favicon);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
