@@ -1,6 +1,6 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-23 · suite: **2,693 tests / 118 files** — 2,653 passed, 40 skipped, 0 failed._
+_Last reviewed: 2026-09-23 · suite: **2,698 tests / 118 files** — 2,658 passed, 40 skipped, 0 failed._
 > Earlier the same day it reported **5 failures** — all port conflicts from a headless host left running
 > (`80`, `8080`, `9101`, `9271`). Each one **said so** — *"9101 must be free for this case to be decisive"*,
 > or a preflight `[ 'port-in-use' ]` the case asserts is empty — so the suite reports the conflict rather
@@ -1266,6 +1266,28 @@ load/save round trip, and the defaults. Split from the form so it runs in **node
 arrives as a number or a `port` that arrives as an object has to become the default rather than reach
 `new URL()` and throw from inside a connection attempt, where it would read as a network failure and send
 someone debugging the wrong thing.
+
+**Beyond the suites: two browser checks, and they are the only instruments for the class of defect below.**
+Neither is part of `npm test` — both need a running host and a served app, so they are commands rather than
+specs. Work item 6 still owes Chromium/Firefox/WebKit and the blob flows.
+
+| Command | What it asserts |
+|---|---|
+| `npm run verify:web` | the form renders, Connect succeeds, the shell mounts, and **0 console errors / 0 uncaught page errors / 0 warnings** |
+| `npm run verify:web:reconnect` | the host dies → banner with the **UI still mounted**; restart with the same token → automatic recovery; restart with a **rotated** token → the loop stops with the actionable message |
+
+They exist because of what they found. `verify:web` caught a favicon 404 that `page.on("response")` could not
+see, because Chromium requests `/favicon.ico` outside the page's network context. `verify:web:reconnect`
+caught **four defects in code written minutes earlier and passing 471 tests**:
+
+1. the UI **unmounting during an outage** while the comment beside that code claimed it stayed mounted;
+2. two `TypeError`s from uninstalling `window.api` under a mounted UI — a dead client rejects, whereas
+   `undefined` throws;
+3. an error screen replacing the shell for a **refresh** failure, while the banner above it said "reconnecting";
+4. `void refreshConfig()` producing `Uncaught (in promise) EngineError: Cannot request(): this session
+   ended` — **`void promise` does not catch**, it discards the promise and its rejection alike.
+
+**None of the four was visible to `tsc` or to the suite**, which is the whole argument for having them.
 
 > **A gap this section has to name: nothing typechecks the shared UI.** `packages/gui` carries **152
 > pre-existing type errors** — measured, not estimated, and pre-existing rather than introduced by the D18
