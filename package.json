@@ -20,6 +20,7 @@
     "build:web": "vite build --config web/vite.config.ts",
     "typecheck:web": "tsc -p web/tsconfig.json",
     "assert:dist": "node scripts/assert-dist.mjs",
+    "verify:web": "node scripts/verify-web-ui.mjs",
     "build": "npm run build:main && npm run build:renderer",
     "dev": "npm run build && electron .",
     "dev:web": "vite --config web/vite.config.ts",
