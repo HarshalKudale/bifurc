@@ -560,9 +560,12 @@ runs it.
 > structurally cannot see — a rejected promise inside a React effect never reaches the suite, which is
 > exactly how the `loadConfig` defect survived until it was run.
 >
-> **So the browser half of this item is testable by the agent.** The scope is otherwise unchanged — the
-> command still needs Chromium, Firefox and WebKit — but *"the owner must run it"* should not be repeated
-> without re-measuring. A constraint stated in a comment outlives the constraint.
+> **So the browser half of this item is testable by the agent**, and `npm run verify:web` is that check:
+> `scripts/verify-web-ui.mjs` starts nothing itself — point it at a running host and the dev server
+> (`--data-dir ./data --port 8080`) and it drives the form, waits for the shell, and **fails on any console
+> error or uncaught page error**. It is a smoke check, not this item: Chromium, Firefox and WebKit plus the
+> blob and reconnect flows are still owed. The scope is otherwise unchanged, but *"the owner must run it"*
+> should not be repeated without re-measuring. A constraint stated in a comment outlives the constraint.
 >
 > Two instrument traps found while doing it, both worth keeping: a **404 the `response` listener cannot see**
 > (Chromium requests `/favicon.ico` itself, outside the page's network context — use
