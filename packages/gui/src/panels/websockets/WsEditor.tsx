@@ -1,5 +1,14 @@
 import React, { forwardRef, useImperativeHandle, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { SavedWsConnection, Folder as FolderType, Environment } from '@/types';
+/**
+ * The draft shape, imported from the panel that owns it.
+ *
+ * **Type-only**, so the fact that `WebSocketsPanel` imports this file back is erased at compile time rather
+ * than being a runtime cycle. Imported rather than redeclared because the panel is where the draft is
+ * written through `useDraftPersist` — a second copy here would drift from the one actually persisted, and
+ * nothing would notice until a draft failed to restore.
+ */
+import type { WsDraft } from '@/panels/WebSocketsPanel';
 import EditorTitleBar from '@/components/editor/EditorTitleBar';
 import { TabStrip, BottomBar, UrlBar } from '@/components/editor/RequestTab';
 import HeaderTable from '@/components/common/HeaderTable';
