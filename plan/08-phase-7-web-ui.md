@@ -395,14 +395,42 @@ the session died on the first request, so there was no state to show. It is now 
 | Connecting | ✅ a disabled form and "Connecting…" |
 | Version mismatch | ✅ `ConnectError { failure: "version" }` → *"This engine speaks a different protocol major"* |
 | Unauthorised | ✅ `{ failure: "unauthorized" }`, and the copy distinguishes **no token** from **wrong token** — including that the token is regenerated on every host start, which is the single most likely cause |
-| Connected | 🟡 the app renders and the footer shows the endpoint; **engine identity and version are not shown**, because the `hello` response's `engineVersion` and `capabilities` are parsed for validity and then discarded |
-| Disconnected | 🟡 it returns to the form with the reason rather than freezing; **no automatic reconnect with backoff** |
-| `resyncRequired` | ❌ not handled — `hello` sends no `lastSeq`, so the engine has nothing to replay against and cannot set it |
+| Connected | ✅ the app renders, and the footer shows the endpoint **and the engine's build** — `hello`'s `engineVersion`, which was parsed for validity and then discarded |
+| Disconnected | ✅ a banner with a backoff loop (1s → 30s, capped, never gives up), and **the UI stays mounted** so open tabs and drafts survive the outage. A **rotated token** stops the loop rather than retrying forever — see below |
+| `resyncRequired` | 🟡 sent and handled: `lastSeq` rides on every reconnect, `replayedFrom`/`resyncRequired` are kept from the response, and either one triggers a re-fetch plus a footer note. No dedicated indicator, and the *replay path itself* is untested — nothing has yet overrun the engine's buffer on purpose |
 
-**Two of the gaps are cheap and one is not.** Showing the engine's identity means *keeping* the
-`HelloResponse` rather than discarding it — it is already parsed. Reconnect-with-backoff is a loop around
-`connectToEngine` plus a `lastSeq` the client has to track. `resyncRequired` needs that same `lastSeq` before
-it can ever be true.
+**All three of the 2026-09-23 gaps are closed**, and the last two turned out to be one piece of work: a
+reconnect that leaves the UI holding pre-outage state is a silent freeze with a green dot next to it, so
+`lastSeq` and the re-fetch belong together.
+
+### Reconnect — and the four defects the check found in code written minutes earlier (2026-09-23)
+
+The mechanism is small and worth stating because it is why nothing in `packages/gui` had to change for it:
+**the container reassigns `window.api`.** Every one of the UI's 240 call sites reads that global at the
+moment it calls, so a reconnect swaps the transport underneath a mounted UI — no remount, no state loss, no
+edits. `App` is told through `AppProps.session`, whose `generation` increments on every successful
+connection (an increment, not a boolean, so two reconnects in a row both trigger).
+
+**Then it was run, and the check found four defects that `tsc` and 471 passing tests could not see:**
+
+1. **The UI was unmounting during the outage**, while the comment beside that code said it stayed mounted —
+   the container rendered a replacement tree. `nav` was `0` during the outage *and* after recovery. Merged
+   the branches so the banner varies above a constant `<App />`.
+2. **Uninstalling `window.api` on the drop is a `TypeError`, not a graceful stop** —
+   `Cannot read properties of undefined (reading 'getConfig')`, twice. A *dead client* is better than *no*
+   client: the call then rejects with "this session ended", which the UI already renders.
+3. **`loadError` was any-load**, so a refresh failing mid-outage replaced the shell with "Could not load this
+   workspace" *while the banner above it said "reconnecting"*. It is a first-load failure now.
+4. **`void refreshConfig()` — and `void promise` does not catch.** It discards the promise, rejection and
+   all, so the console showed `Uncaught (in promise) EngineError: Cannot request(): this session ended`,
+   the exact error class this work exists to remove.
+
+**The token rotation is a constraint, not an edge case.** `ensureEngineToken()` generates on every host start,
+so a restarted host is unreachable with the old token and a blind loop would spin forever. The loop separates
+**transient** from **terminal**: `unauthorized` and `version` return to the form with the actionable message.
+
+`npm run verify:web:reconnect` asserts both halves and the survival of the shell. **PASS**, 0 uncaught page
+errors.
 
 **The failure kinds are data, not strings.** `ConnectError.failure` is a union
 (`unreachable` | `unauthorized` | `version` | `refused`), so the criterion above — *"clear, actionable error

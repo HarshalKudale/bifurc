@@ -2290,5 +2290,48 @@ accommodate an incomplete double is backwards.
 absent, `!== null` and `!== undefined` and truthiness are three different predicates, and only one of them
 matches what the type says.
 
+## A comment beside code is a claim about the code — and it is the claim that is usually wrong
+
+Measured 2026-09-23, **twice in one afternoon, in the same file**.
+
+`web/Container.tsx` rendered a **replacement tree** while reconnecting, so `<App />` unmounted and every open
+tab and draft was discarded for an outage the user might not even have noticed. The comment immediately above
+that code read:
+
+> *"The UI stays mounted while reconnecting, deliberately."*
+
+**The prose described the intent; the code did the opposite.** Nothing caught it — not `tsc`, not 471 passing
+tests — because a wrong comment is not a type error and an unmount is not an assertion failure. What caught it
+was a browser check that asserts `nav` survives the outage, which printed `0`.
+
+Same afternoon, same file: another comment said *"`window.api` is uninstalled, so its calls reject"* — and
+uninstalling it made the next call read `undefined.getConfig` and **throw** a `TypeError`. Two uncaught
+errors, from a comment describing a mechanism that was not there.
+
+**The generalisable form:** a comment is a claim, and it belongs in the same category as a measurement — it
+can be *wrong*. When a comment and the code beside it disagree, the comment is the likelier culprit, because
+it was written once and the code was edited since. And claims of the form *"X stays mounted"*, *"this
+rejects"*, *"this is idempotent"* are only checkable by **asserting** them — which is why the browser check
+has an explicit `UI still mounted` case rather than trusting the paragraph above it.
+
+## `void promise` does not catch — and a *dead* client beats *no* client
+
+Measured 2026-09-23, both from the same reconnect check.
+
+**`void refreshConfig()` discards the promise, rejection and all.** `void` is an operator that throws away a
+value; it is not a rejection handler. The console showed
+`Uncaught (in promise) EngineError: Cannot request(): this session ended` — precisely the error class the work
+existed to remove. Use `.catch(() => {})` when the intent is fire-and-forget, or make the callee swallow its
+own failure.
+
+**And when a connection dies under a mounted UI, deleting the client is worse than keeping it.**
+`delete globalThis.api` looks tidy and produces `TypeError: Cannot read properties of undefined (reading
+'getConfig')` from the next call — a *crash*. Leaving the dead client installed makes the same call
+**reject** with the client's own "this session ended", which the UI already catches — a *state*. Measured:
+two `TypeError`s before, zero uncaught errors after.
+
+**The generalisable form:** `undefined` has no behaviour. A stale-but-real object fails in a way its callers
+were written to handle; removing it converts every one of those handled failures into an unhandled throw.
+
 
 
