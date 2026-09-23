@@ -49,6 +49,7 @@ import {
   checkVersionCompatibility,
   COMMANDS,
   EngineError,
+  HELLO_ACTION,
   HelloRequestSchema,
   HelloResponseSchema,
   PROTOCOL_VERSION,
@@ -66,16 +67,19 @@ import { commandIsAllowed, requiredScopeFor, SHELL_SCOPES, type Scope } from "./
 import { verifyToken } from "./token";
 
 /**
- * The bare action name of the handshake.
- *
- * Bare — no `.` — like `stdio`'s `subscribe`/`unsubscribe`, because every real command is namespaced.
- * It is **not** a registry command: `createAuthenticatedTransport` intercepts it, and a `hello`
- * command in the protocol would be shadowed rather than served. The guard below makes that a
- * load-time failure instead of a silent one, which is the same treatment `stdio.ts` gives its own
- * reserved names.
+ * The handshake's action name now lives in `@bifurc/protocol`, beside its schemas — see the note there
+ * for why. Re-exported so the engine's own callers and tests keep a single import site.
  */
-export const HELLO_ACTION = "hello";
+export { HELLO_ACTION };
 
+/**
+ * The guard below makes a name collision a load-time failure instead of a silent one, which is the same
+ * treatment `stdio.ts` gives its own reserved names.
+ *
+ * It stays in the engine rather than moving to the protocol with the constant, because the
+ * *interception* is the engine's — "a command would be shadowed" is only a true statement where the
+ * interceptor lives, and a browser that imported the constant needs no guard at all.
+ */
 if (HELLO_ACTION in COMMANDS) {
   throw new Error(
     `@bifurc/protocol has a command named "${HELLO_ACTION}", which collides with the P4 handshake. ` +

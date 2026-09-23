@@ -107,6 +107,19 @@ export interface WorkspaceHostStatus {
   dataDir: string;
   /** The RPC endpoint's address: the socket path, or the `ws://` URL. */
   rpcAddress: string;
+  /**
+   * Where this run's token was written, or `undefined` when there is no file to point at.
+   *
+   * **The path, never the token.** An operator has to *find* the secret to hand it to a client — which is
+   * the whole difficulty of connecting a browser, since a page cannot read a file — and a log is the wrong
+   * place for the value itself. Absent in two cases, both of which mean "look somewhere you already
+   * control": the token came from `BIFURC_ENGINE_TOKEN`, or the caller supplied one (`--token-file`).
+   *
+   * Without this, `ensureEngineToken()`'s `path` was computed and thrown away, so the only way to find the
+   * token was to know the filename by heart and guess the directory. Measured: that is exactly what the
+   * first headless run did.
+   */
+  tokenPath?: string;
   /** The workspace runtimes the host owns, in start order. */
   runtimes: WorkspaceRuntimeStatus[];
   /**
@@ -136,6 +149,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   let rpc: SocketServer | WsServer | null = null;
   let skipped: { workspaceId: string; reason: string }[] = [];
   let rpcAddress = "";
+  let tokenPath: string | undefined;
   let startPromise: Promise<WorkspaceHostStatus> | null = null;
   let stopped = false;
 
@@ -143,6 +157,9 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     return {
       dataDir: dataDir(),
       rpcAddress,
+      // Spread rather than assigned: `tokenPath` is optional and `undefined` is not the same as absent
+      // under `exactOptionalPropertyTypes`. See the field's note on why it can be absent at all.
+      ...(tokenPath === undefined ? {} : { tokenPath }),
       runtimes: [...runtimes.values()].map((r) => r.status()),
       skipped,
     };
@@ -209,7 +226,23 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
 
     // ── 3. the runtime registry, and the token ───────────────────────────────
     const runtimeRegistry: RuntimeRegistry = loadRuntimeRegistry();
-    const token = opts.token ?? (await ensureEngineToken(dataDir())).token;
+    /**
+     * `ensureEngineToken()` runs **only when the caller supplied no token**.
+     *
+     * That is the token module's own rule, and it was already the effect of the previous `??` — spelled
+     * out here because the two branches now differ in more than their value: only the generated one has a
+     * `path`, and only a generated one should be reported. An operator who mounted their own secret does
+     * not also want one written into the data dir, and does not need to be told where the file they
+     * supplied lives.
+     */
+    let token: string;
+    if (opts.token === undefined) {
+      const generated = await ensureEngineToken(dataDir());
+      token = generated.token;
+      tokenPath = generated.path;
+    } else {
+      token = opts.token;
+    }
 
     // ── 4. one runtime per workspace, allocated and started in sequence ──────
     const reserved = new Set<number>();
@@ -329,6 +362,17 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       rpcAddress = rpc.url;
     }
     notice(`rpc endpoint: ${rpcAddress}`);
+    if (tokenPath !== undefined) {
+      /*
+       * The path, never the value.
+       *
+       * A log is read by more people than a `0600` file in a data directory is, and a token pasted into an
+       * issue tracker is a credential in an issue tracker. The path is what an operator actually needs:
+       * a client has to be handed the secret, and — for a browser, which cannot read a file at all —
+       * finding it is the step that costs the most.
+       */
+      notice(`engine token: ${tokenPath}`);
+    }
 
     return status();
   }

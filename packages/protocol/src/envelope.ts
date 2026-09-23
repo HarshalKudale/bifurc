@@ -62,6 +62,22 @@ export const ClientNameSchema = z.enum([
   "bifurc-extension", // the externally-released companion extension — see work item 7 exception
 ]);
 
+/**
+ * The bare action name of the handshake.
+ *
+ * Bare — no `.` — like `stdio`'s `subscribe`/`unsubscribe`, because every real command is namespaced.
+ * It is **not** a registry command: `createAuthenticatedTransport` intercepts it, and a `hello`
+ * command in the protocol would be shadowed rather than served.
+ *
+ * **Why it lives here, beside the schemas, and not in the engine that intercepts it.** The action name
+ * is part of the wire contract — a client has to send it — and `plan/06` is explicit that the handshake
+ * is *"a plain `request("hello", …)` on the raw transport before `createClient()`"*. A client that
+ * reached for the engine's copy would pull the engine into a browser bundle to learn a string.
+ * `transport/auth/authenticated.ts` imports it from here and keeps its own load-time guard that no
+ * *command* has taken the name.
+ */
+export const HELLO_ACTION = "hello";
+
 export const HelloRequestSchema = z.object({
   protocolVersion: z.string(),
   clientName: ClientNameSchema,
