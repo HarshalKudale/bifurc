@@ -543,6 +543,33 @@ runs it.
 - Test on Chromium, Firefox and WebKit. Firefox matters here for a second reason: it does not use the OS
   trust store, so proxy testing through the UI will behave differently.
 
+> **2026-09-23 — a headless browser IS reachable from the agent shell, and that was assumed otherwise.**
+>
+> For two days this phase's files, tests and records said *"a real `WebSocket` in a real page … the owner
+> runs it"*. It is not true. `agent-browser` is not installed, but the project's own **Playwright** is, and
+> Chromium is already in the cache — at revision **1243**, while Playwright 1.60 expects **1223**, so one
+> `executablePath` is the whole gap:
+>
+> ```js
+> chromium.launch({ headless: true, executablePath: `${LOCALAPPDATA}/ms-playwright/chromium-1243/chrome-win64/chrome.exe` })
+> ```
+>
+> **Measured**, against a real headless host on a real socket: the connection form renders, Connect succeeds,
+> the shared UI mounts, accepting the terms reaches the shell (nav, main, **73 buttons**), and the console
+> shows **0 errors, 0 uncaught page errors, 0 warnings**. The last two are the numbers a unit test
+> structurally cannot see — a rejected promise inside a React effect never reaches the suite, which is
+> exactly how the `loadConfig` defect survived until it was run.
+>
+> **So the browser half of this item is testable by the agent.** The scope is otherwise unchanged — the
+> command still needs Chromium, Firefox and WebKit — but *"the owner must run it"* should not be repeated
+> without re-measuring. A constraint stated in a comment outlives the constraint.
+>
+> Two instrument traps found while doing it, both worth keeping: a **404 the `response` listener cannot see**
+> (Chromium requests `/favicon.ico` itself, outside the page's network context — use
+> `consoleMessage.location()` for the URL), and a **fixed `waitForTimeout`** that reported a broken shell
+> when the app was merely slower than the sleep (use `waitForSelector`; a selector either appears or it does
+> not, and a duration cannot tell you which).
+
 ---
 
 ## Acceptance criteria
