@@ -176,6 +176,7 @@ after it is additive and independently schedulable.
 | [11](11-phase-10-binary-and-11-tauri.md)        | **P11 — Tauri shell**       | P5, P10            |     3–4 w | ⏸ **PARKED** (D1/D4/D5)                                  |
 | [12](12-phase-12-packaging-and-13-hardening.md) | **P12 — Packaging**         | P6, P9             |     2–3 w | NSIS + APPX + AppImage + Docker publish from CI          |
 | [12](12-phase-12-packaging-and-13-hardening.md) | **P13 — Hardening**         | P6                 |     2–3 w | Auth, audit, docs, perf budgets signed off               |
+| [15](15-unified-ports-and-mapping.md)            | **P15 — Unified ports**     | P14, P4, P7, P9    |     2–3 w | ⚠ **proposed 2026-09-23** — one host edge port carrying the GUI, the reverse proxy and the companion; a per-workspace forward-proxy port that mocks apply to; subdomain mapping for a remote engine. **Revises P14 §4's port table and P9 work item 4's exposure table.** |
 | [13](13-checklist.md)                           | **Master checklist**        | —                  |         — | Literal ordered task list                                |
 
 ---
