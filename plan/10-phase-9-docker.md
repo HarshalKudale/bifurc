@@ -22,6 +22,45 @@
 >
 > Read "the engine" below as "the workspace host" throughout.
 
+> ## ⚠ **Corrected 2026-09-23 — the image exists now (`Dockerfile`, `DOCKER.md`), and four things below
+> ## were stale**
+>
+> Measured while building it. Everything here is a correction to *this document*, not a change of plan.
+>
+> 1. **§Work item 2's `ENTRYPOINT` is wrong.** It names `engine/runtime/host.js`, which is a **library** —
+>    it exports `createWorkspaceHost` and, by its own header, *"nothing imports it"* is why `hostCli.js`
+>    exists. Running it as an executable does nothing. The executable is `runtime/hostCli.js`.
+> 2. **The env vars in §Work item 2 and §Work item 5 do not exist.** `BIFURC_RPC_HOST`, `BIFURC_RPC_PORT`,
+>    `BIFURC_RPC_TOKEN` and `BIFURC_RPC_TOKEN_FILE` are not read by anything. The CLI reads
+>    `BIFURC_DATA_DIR`, `BIFURC_ENGINE_TOKEN` and `BIFURC_PROXY_BASE_PORT`, and takes `--ws-host`,
+>    `--ws-port`, `--token-file` and `--workspace` as flags. The names below were written before the CLI.
+> 3. **§Work item 2's dependency table is incomplete.** It says "exactly four packages"; it is seven, plus
+>    `zod` behind the protocol: `@bifurc/protocol`, `archiver`, `js-yaml`, `mkcert`, `simple-git`,
+>    `unzipper`, `ws`. The build closes this with a two-stage image rather than either of the two
+>    compromises the note weighs — the build stage installs and builds from source, the runtime stage copies
+>    `node_modules` after `npm prune --omit=dev`.
+> 4. **§Work item 4's exposure table cannot be satisfied as written, and this is the significant one.**
+>    The table says to publish the proxy port. **Nothing the host binds is reachable through `-p`:**
+>
+>    - the proxy hardcodes `server.listen(port, "127.0.0.1")` (`proxy/server.ts:208`) and `store/config.ts`
+>      has no bind-host setting;
+>    - the RPC guard refuses a non-loopback bind, and `transport/ws.ts` records that *"nothing in the
+>      programme sets `allowNonLoopback`"* — the opt-in exists, is enforced against TLS, and **no entry
+>      point exposes it**, `hostCli.js` included.
+>
+>    Measured: `hostCli.js --ws-host 0.0.0.0` fails with *"Refusing to bind 0.0.0.0 … Pass
+>    allowNonLoopback: true to accept the exposure."* So the image runs, serves and authenticates — verified
+>    by assembling its exact runtime layout and completing a `hello` + `config.get` against it — but it is a
+>    **same-machine** deployment, reached with `--network=host`, a sidecar or an SSH tunnel, which is what
+>    §Work item 4's own recommendation says. Publishing it needs two code changes, both product decisions
+>    rather than wiring: a `--ws-allow-non-loopback` flag, and a configurable proxy bind host. `DOCKER.md`
+>    §"What would make it publishable" carries the detail.
+>
+> **Still accurate and unchanged:** git as a hard requirement, non-root, `/data` holding both the config
+> store and the blob staging directory, no companion server, `BIFURC_PROXY_BASE_PORT` stating the Linux base
+> rather than inferring it, and every acceptance criterion — the ones that depend on being reachable are the
+> ones blocked by (4).
+
 **Goal:** a container image that runs a **workspace host** headlessly, survives restarts, authenticates
 clients, and can be attached to from the web UI or CLI.
 

@@ -1,0 +1,50 @@
+# The compose form of the `docker run` in DOCKER.md. Phase 9, work item 6.
+#
+# ## Why `network_mode: host` and not `ports:`
+#
+# Both of the host's sockets bind **loopback**, and that is deliberate rather than an oversight:
+#
+#   - the proxy hardcodes `server.listen(port, "127.0.0.1")` and has no setting for it;
+#   - the RPC guard refuses a non-loopback bind, and `transport/ws.ts` records that *"nothing in the
+#     programme sets `allowNonLoopback`"* — the opt-in exists but no entry point exposes it.
+#
+# So a `ports:` mapping would publish a host port onto a container port nothing is listening on, and the
+# connection would be refused. Sharing the host's network namespace puts the container's loopback on the
+# host's loopback, which is what makes the host reachable at all. `plan/10` work item 4 recommends exactly
+# this — *"reach it via docker exec, a sidecar, or an SSH tunnel"*.
+#
+# The consequence to be aware of: this is a **same-machine** deployment. Reaching it from elsewhere needs
+# either an SSH tunnel to 9271 or the two code changes DOCKER.md describes.
+
+services:
+  bifurc:
+    build: .
+    image: bifurc:latest
+    container_name: bifurc
+
+    # See the header. Do not replace this with `ports:` without reading DOCKER.md first.
+    network_mode: host
+
+    volumes:
+      - bifurc-data:/data
+
+    environment:
+      # **Required, and compose enforces it.** Without a token the host generates one and writes it to
+      # `/data/engine.token` on every start — so every restart would invalidate every connected client.
+      # The `:?` form makes compose fail with that message rather than starting a host nobody can reach.
+      #
+      # Generate one with: openssl rand -base64 32
+      BIFURC_ENGINE_TOKEN: ${BIFURC_ENGINE_TOKEN:?set BIFURC_ENGINE_TOKEN — a generated token rotates on every start, which invalidates every client}
+
+      # The proxy *base* port (D16). Stated rather than left to `process.platform`, which resolves to 80 on
+      # Windows and 8080 elsewhere. Each further workspace counts up from it.
+      BIFURC_PROXY_BASE_PORT: "8080"
+
+    restart: unless-stopped
+
+    # The host handles SIGTERM itself and exits `128 + signo`; this is how long compose waits for it to
+    # finish stopping the proxy and closing its RPC connections before sending SIGKILL.
+    stop_grace_period: 20s
+
+volumes:
+  bifurc-data:
