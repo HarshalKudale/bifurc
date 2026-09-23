@@ -8,7 +8,7 @@ import CodeEditor from "@/components/common/CodeEditor";
 import HeaderTable from "@/components/common/HeaderTable";
 import {
     soapTabReducer, initSoapState, soapStateToSavePayload, soapStateToDraft, isSoapDraftEmpty,
-    SoapTabType, SoapTabState, SoapRequestDraft, SoapMockDraft,
+    SoapTabType, SoapTabState, SoapTabAction, SoapRequestDraft, SoapMockDraft,
 } from "@/components/soap/soapTabReducer";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
@@ -66,17 +66,37 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
         handleSyncClick,
         handleRevertClick,
         hasLocalChanges
-    } = useProtocolEditor({
+    /*
+     * All six type arguments are spelled out, and that is deliberate rather than laziness.
+     *
+     * TypeScript will not infer `TabType` here. Removing the default and letting it try produced **more**
+     * errors, not fewer (123 against 50), because a failed inference falls back to the constraint — so the
+     * only options are "all six" or "none", and "none" is what produced the `as any` casts this replaces.
+     * An explicit argument list is checked; a cast is not. The five that *could* be inferred are listed for
+     * the sixth's sake.
+     */
+    } = useProtocolEditor<
+        SoapTabState,
+        SoapTabAction,
+        SoapRequestDraft | SoapMockDraft,
+        | Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId">
+        | Omit<SavedSoapMock, "id" | "createdAt" | "workspaceId">,
+        | SavedSoapRequest
+        | SavedSoapMock
+        | Partial<SavedSoapRequest>
+        | Partial<SavedSoapMock>,
+        SoapTabType
+    >({
         tabType,
         tabId,
         draftTabId,
-        initial: initial as any,
-        reducer: soapTabReducer as any,
-        initState: initSoapState as any,
-        stateToDraft: soapStateToDraft as any,
-        isDraftEmpty: isSoapDraftEmpty as any,
-        stateToSavePayload: soapStateToSavePayload as any,
-        onSave: onSave as any,
+        initial,
+        reducer: soapTabReducer,
+        initState: initSoapState,
+        stateToDraft: soapStateToDraft,
+        isDraftEmpty: isSoapDraftEmpty,
+        stateToSavePayload: soapStateToSavePayload,
+        onSave,
         onSync,
         onRevert,
         syncStatus,

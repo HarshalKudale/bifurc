@@ -38,7 +38,8 @@ before changing anything.**
   **`renderer/`** (Electron) and **`web/`**, a **container**: form → handshake → reconnect → `<App />`.
   **Run `tsc` after any type-level change — vitest does not typecheck.**
 - **D18 (2026-09-22, LANDED)**: the renderer became `packages/gui`; `window.api` stays the seam and each host
-  fills it. **The UI carries 152 pre-existing type errors**, so no typecheck covers a host green.
+  fills it. **The UI carries 43 pre-existing type errors** (was 152 — 105 of them were one omitted type
+  argument in `useProtocolEditor`), so no typecheck covers a host green.
 - **The browser's transport is auth-wrapped; Electron's is not.** `hello` goes on the **raw** transport
   *before* `createClient` (`plan/06`), then a probe. **`HELLO_ACTION` is in `@bifurc/protocol`.**
 - **Reconnect works by reassigning `window.api`** — every call site reads the global when it calls, so the
