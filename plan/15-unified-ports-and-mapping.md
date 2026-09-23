@@ -1,8 +1,27 @@
 # 15 — Unified ports, the edge router, and platform-aware features
 
-**Status:** **proposed 2026-09-23.** Design only; nothing here is built.
+**Status:** **proposed 2026-09-23**, revised the same day after review. Design only; nothing here is built.
 **Depends on:** P4 (transport + auth), P14 (workspace runtime), P7 (web UI), P9 (Docker).
 **Revises:** `plan/14` §4's port table, and `plan/10` work item 4's exposure table.
+
+> ## Revision note — 2026-09-23, after review
+>
+> Two decisions in the first draft were wrong, and both made the plan bigger than it needs to be.
+>
+> 1. **The companion moves to the edge outright.** The first draft treated the released extension's hardcoded
+>    port 9271 as a compatibility constraint and proposed keeping a deprecated listener for a release cycle.
+>    **The extension can be updated**, so there is no constraint to work around: the companion binds the edge
+>    port, the extension changes with it, and §6.1's two-listener dance is gone.
+> 2. **The edge resolves mappings from the *active workspace*, not from a host-level aggregate.** The first
+>    draft built a host-wide table keyed `domain ⇒ { workspaceId, target }` and made the request's `Host`
+>    select the workspace. That is not the model. **The reverse proxy is host-level by *port* and
+>    active-workspace-scoped by *content*** — the edge is one port shared by every workspace, and it resolves
+>    against the active workspace's `mappings`, exactly as the workspace proxy does today. Everything else
+>    already has its own per-workspace port, so every workspace runs at the same time regardless.
+>
+> What that removes: the host-level routing table (work item 4), the duplicate-domain collision, and the
+> extension-compatibility risk. §3.3 and §7 are rewritten accordingly, and §8 and §9 lose the criteria and
+> risks that belonged to the deleted design.
 
 ---
 
@@ -24,9 +43,10 @@ Three problems fall out of that, and they are the subject of this plan:
    (`bifurc.localhost` → `localhost:8080`) works because the browser and the engine share a loopback. Point a
    browser at an engine on another machine and the name resolves to *the browser's* loopback, where nothing
    is listening. The remote engine has to map **subdomains** to LAN addresses instead.
-2. **The port model is the wrong shape.** Ports that belong to a host are allocated per workspace and vice
-   versa, and the two jobs the proxy does — reverse and forward — share one socket, so a mock cannot be
-   applied to forward-proxied traffic without also affecting reverse-proxied traffic.
+2. **The ports are scoped wrong.** The two jobs the proxy does — reverse and forward — share one socket, so a
+   mock cannot be applied to forward-proxied traffic without also affecting reverse-proxied traffic. And the
+   surfaces that belong to a *host* (the GUI, the reverse proxy, the companion) have no host-level port at
+   all, while the surfaces that belong to a *workspace* are the ones that do.
 3. **The UI shows every feature everywhere.** A browser pointed at a remote engine is offered localhost
    mapping, native file pickers and a tray. None can work.
 
@@ -75,6 +95,10 @@ through**; **base → scan upward**.
 So the split the user is asking for is a **split of one server into two**, and the routing table for the
 reverse half is already a `domain → target` lookup.
 
+**Branch 2 is the one that moves, and it moves unchanged.** Its `cfg` is the workspace's config, and the edge
+resolves the same way against the *active* workspace's config (§3.3) — so the lookup itself is not rewritten,
+it is relocated.
+
 ### 2.4 `LocalMapping` already has the right shape
 
 `{ domain, target, label, id, workspaceId, enabled }`, where `target` is a `host:port` string — the user's own
@@ -82,12 +106,14 @@ config holds `{ domain: "bifurc.localhost", target: "localhost:8080" }`. **Nothi
 prevents a subdomain or a LAN address**; the only thing standing in the way is the `.localhost` gate on
 branch 2. `target: "192.168.1.50:3000"` would flow through `proxyToUpstream` unchanged.
 
-### 2.5 The companion is the compatibility trap
+### 2.5 The companion's port is free to move
 
-`legacyCompanion.ts` is a **WebSocket bridge** on `127.0.0.1:9271` whose whole reason for existing is that a
-**released browser extension** talks to it — *"it stays byte-compatible and keeps serving port 9271."* The
-extension hardcodes the port, so **moving the companion onto the edge port breaks every installed
-extension.** That is a product decision, not a refactor.
+`legacyCompanion.ts` is a **WebSocket bridge** on `127.0.0.1:9271` whose header says it *"stays
+byte-compatible and keeps serving port 9271"* — but that is a statement about the *released* extension, not a
+constraint. **The extension can be updated**, so the companion moves to the edge port and the extension ships
+the matching change. There is no deprecation window to manage and no second listener to keep.
+
+The wire format does not change; only the port it is reached on.
 
 ### 2.6 Nothing is reachable from outside
 
@@ -106,63 +132,67 @@ The rule that produces everything else: **a port belongs to the thing that has t
 
 | Tier | Port | Carries | Scope | Default |
 |---|---|---|---|---|
-| **Host** | the **edge port** | the web GUI · the reverse proxy (subdomain mapping) · the companion | **per host**, shared by every workspace | `80`, or `443` with TLS |
+| **Host** | the **edge port** | the web GUI · the reverse proxy (subdomain mapping) · the companion | **per host**, one port for every workspace | `80`, or `443` with TLS |
 | **Workspace** | the **forward-proxy port** | the forward proxy · **mocks and rules for forward-proxied traffic** | per workspace | base `8080` (unchanged) |
 | **Workspace** | the **webhook port** | the webhook receiver | per workspace, **user-settable** | base `9101` |
 | **Workspace** | the **socket port** | the WebSocket mock server | per workspace, **user-settable** | base `9103` |
 | **Host** | the **RPC endpoint** | the client protocol (CLI, GUI, web) | per host | loopback / a socket — **never published by default** |
 
-Two rows are new; one is a relocation; one changes owner.
+Three rows are new or relocated; one changes owner.
 
 - **The edge port is new as a *concept*** — today there is no host-level listener for product traffic at all.
-  The reverse proxy is per-workspace and loopback.
 - **The forward proxy moves to its own port**, which is what lets mocks apply to forward-proxied traffic
   without touching the reverse path.
-- **The webhook port gains an override**, which the allocator already supports as its first resolution
-  source — it is a config field today and a *user-settable* one only in the sense that the settings UI could
-  write it.
-- **The companion relocates** onto the edge port, with a compatibility story (§6.1).
+- **The webhook and socket ports gain overrides**, which the allocator already supports as its first
+  resolution source.
+- **The companion relocates** onto the edge port, with the extension.
+
+**Every workspace keeps running at the same time.** Only the *edge* is shared, and only the reverse proxy
+reads it; the forward, webhook and socket servers are per-workspace and each has its own port, so nothing
+serialises behind the active workspace except which mappings resolve.
 
 ### 3.2 Why one edge port rather than three
 
-Because a browser gives you one origin per `host:port`, and the user's requirement is that the reverse proxy,
-the GUI and the extension all be reachable at the same origin. Three ports would mean three origins, three
-TLS certificates, and a CORS boundary between the GUI and the proxy — none of which is a real constraint for
-a tool whose whole job is to be in the middle of the traffic.
+Because a browser gives you one origin per `host:port`, and the requirement is that the reverse proxy, the GUI
+and the extension all be reachable at the same origin. Three ports would mean three origins, three TLS
+certificates, and a CORS boundary between the GUI and the proxy — none of which is a real constraint for a
+tool whose whole job is to be in the middle of the traffic.
 
 It also collapses the Docker exposure problem: **one published port** instead of one per workspace per
 purpose.
 
-### 3.3 The edge router
+### 3.3 The edge router — host-level by port, active-workspace by content
 
 One `http`/`https` server, one `upgrade` handler. Routing, in order:
 
 | # | Condition | Result |
 |---|---|---|
 | 1 | the `upgrade` event, path matches the companion's | the companion bridge |
-| 2 | `Host` matches a mapping in **any** workspace on this host | reverse proxy to that mapping's `target` |
+| 2 | `Host` matches a mapping in the **active workspace's** config | reverse proxy to that mapping's `target` |
 | 3 | `Host` is the engine's own hostname | the **web GUI** (static assets) |
 | 4 | `Host` is a bare IP or `localhost`, and the path is not `/` | the GUI |
-| 5 | otherwise | the **home page** — the directory of this host's mappings, which is today's `localhost` page |
+| 5 | otherwise | the **home page** — the directory of the active workspace's mappings, today's `localhost` page |
 
-**The routing table is host-level and is built by aggregating every workspace's `mappings`.** That is the
-substantive change: today `cfg.mappings` is the *active* workspace's list — `proxy/server.ts` says so in its
-own comment, *"for a host member it holds the active workspace's mocks and mappings"*. A host-level router
-cannot work that way, and the fix is not to widen the active workspace but to key the table:
+**Branch 2 is today's branch 2, moved.** The lookup is
+`activeConfig.mappings.find((m) => m.enabled && m.domain.toLowerCase() === host)`, with
+`matchMock(activeConfig.mocks, …)` applied first — the same code against the same config, on a host-level
+port instead of a workspace-level one. **There is no aggregate table and no cross-workspace routing**: the
+edge is one port, and the active workspace's mappings are what it serves.
 
-```
-host → mapping.domain  ⇒  { workspaceId, target, enabled }
-```
+**How the edge learns which workspace is active.** The host already owns both halves: `app.json` holds
+`activeWorkspaceId`, and the host holds `runtimes: Map<workspaceId, WorkspaceRuntime>` (P14 §4). So the edge
+resolves `activeWorkspaceId` → that runtime's config → its `mappings`, re-resolved per request (a map lookup)
+rather than cached, which also means a `workspace.setActive` needs no invalidation step.
 
-The `workspaceId` is what makes the rest fall out: **the request's `Host` selects the workspace**, and that
-workspace's mocks, rules and environments apply to it. Today the mock lookup on the reverse path uses the
-*active* workspace's mocks, which is wrong the moment two workspaces both publish mappings.
+**The consequence, stated plainly because it is the one thing this design trades away:** switching the active
+workspace switches which domains the edge serves. Workspace A's mappings resolve while A is active; B's
+return the not-mapped page until B is active. That is the behaviour the workspace proxy has today, now on a
+shared port — and it is what "the reverse proxy uses the current active workspace's mapping" means. The other
+per-workspace surfaces are unaffected, because they have their own ports.
 
-**Two collisions to resolve explicitly**, because they are the only ways this design can be wrong:
-
-- **Two workspaces claim the same domain.** Reject at write time — `mappings` is a create/update command, so
-  the validation belongs there, and the error should name the workspace that holds it.
-- **A mapping's domain equals the engine's own hostname.** Refuse it, or the GUI becomes unreachable.
+**One collision still has to be rejected at write time:** a mapping whose `domain` is the engine's own
+hostname, which would shadow the GUI and make the admin surface unreachable. Duplicate domains *across*
+workspaces are not a collision under this model, because only the active workspace's list is consulted.
 
 ### 3.4 The forward-proxy port
 
@@ -171,8 +201,8 @@ loses only the reverse branch, which moves to the edge. Its port is the existing
 (D16's base and scan unchanged), so **a browser configured to proxy through `127.0.0.1:8080` keeps working**;
 what changes is that it can now also be mocked, because mocks no longer share a socket with the reverse path.
 
-That is the user's *"so any middle data can be mocked while using forward proxy"*, and it is a consequence of
-the split rather than a feature to build.
+That is *"any middle data can be mocked while using forward proxy"*, and it is a consequence of the split
+rather than a feature to build.
 
 ---
 
@@ -241,17 +271,15 @@ mean the port you publish to serve a web GUI is also the port that runs code.
 
 ## 6. Compatibility and migration
 
-### 6.1 The companion's port, and the released extension
+### 6.1 The companion's port
 
-`legacyCompanion.ts`'s stated contract is to *"keep serving port 9271"* for an extension that is already
-released. Moving it to the edge port is a **breaking change for every installed extension**, so:
+The companion moves from 9271 to the edge port, and **the extension ships the matching change**. No
+deprecation listener, no compatibility window — the two are released together, which is the whole reason
+`hello.clientVersion` is mandatory in the protocol: it lets the engine see which build is talking to it.
 
-- **Recommended:** bind the companion handler on the edge port *and* keep a deprecated listener on 9271 that
-  dispatches into the same handler. Old extensions keep working; new ones use the edge; the compatibility
-  listener is deleted when the extension's next release is the floor. This is a two-listener cost for one
-  release cycle, and it is the only option that does not break users mid-upgrade.
-- **Rejected:** moving it outright. It breaks a released artifact, and the extension cannot be updated
-  atomically — which is the reason `hello.clientVersion` is mandatory in the first place.
+The one thing to get right is that the extension's connection string is derived from the engine's host rather
+than hardcoded, so the same extension works against a local engine and a remote one. That is a change in the
+extension, not here, and it should land before the companion's port moves.
 
 ### 6.2 Existing `*.localhost` mappings
 
@@ -268,6 +296,12 @@ user-chosen port that is taken must **fail loudly** rather than move), while the
 `runtime.json`. The UI currently shows one number and it is the resolved one; after this it has to show both,
 or a user who sets 9101 and gets 9102 will not know which they are looking at.
 
+### 6.4 The companion's config field
+
+`AppConfig.companionPort` becomes meaningless once the companion shares the edge — it should be removed
+rather than left as a setting nothing reads, and removing a config field means a migration for anyone whose
+`app.json` still carries it. Small, but it is the kind of field that otherwise lingers for years.
+
 ---
 
 ## 7. Work items
@@ -280,28 +314,26 @@ Ordered so each is independently verifiable, and so nothing depends on something
 2. **A configurable proxy bind host.** `server.listen(port, "127.0.0.1")` becomes a setting, defaulting to
    loopback. Larger exposure than (1) — a proxy that forwards into a private network — so it should require
    the same explicit opt-in.
-3. **Split the proxy.** Two servers from one codebase: the edge router (§3.3) and the per-workspace forward
-   proxy (§3.4). The forward half is a subtraction; the edge is new.
-4. **The host-level routing table.** Aggregate `mappings` across every workspace, keyed by domain, with the
-   two collisions in §3.3 rejected at write time. This is what makes the reverse proxy correct for more than
-   one workspace, independently of subdomains.
-5. **Subdomain routing.** Relax the `.localhost` gate on branch 2 so any configured domain routes, and make
+3. **Split the proxy.** The edge router (§3.3) and the per-workspace forward proxy (§3.4) from one codebase.
+   The forward half is a subtraction; the edge is the reverse branch moved.
+4. **Subdomain routing.** Relax the `.localhost` gate on branch 2 so any configured domain routes, and make
    the mapping editor's suggestions depend on the host's own domain.
-6. **The GUI on the edge.** Serve `packages/gui`'s built bundle from the edge's branch 3. This is what turns
+5. **The GUI on the edge.** Serve `packages/gui`'s built bundle from the edge's branch 3. This is what turns
    "a headless engine" into "a hosted Bifurc".
-7. **The companion on the edge**, with the deprecated 9271 listener of §6.1.
-8. **Capability negotiation.** `hostKind` and the capability list in `hello`; the UI reads it and hides.
-9. **Per-workspace port overrides** for webhook and socket, surfaced in the settings UI with the
-   preference/outcome distinction of §6.3.
+6. **The companion on the edge**, with the extension's connection string derived from the engine's host rather
+   than hardcoded. Extension first, engine second.
+7. **Capability negotiation.** `hostKind` and the capability list in `hello`; the UI reads it and hides.
+8. **Per-workspace port overrides** for webhook and socket, surfaced in the settings UI with the
+   preference/outcome distinction of §6.3, and `companionPort` retired (§6.4).
 
 ### How to start — the first three things
 
 1. **Work item 1 alone**, verified against the container: `docker run -p 9271:9271` then a `hello` from the
    host machine. If that does not work, nothing else in this plan can be tested.
-2. **Work item 4 alone**, against two workspaces with mappings on different domains, driven by `curl -H
-   "Host: …"`. It is pure routing and needs no new port.
-3. **Work item 3's forward half alone** — delete the reverse branch from the workspace proxy and confirm
+2. **Work item 3's forward half alone** — delete the reverse branch from the workspace proxy and confirm
    `*.localhost` still works *through the edge*. That ordering proves the split before the edge is complete.
+3. **Work item 4 alone**, driven by `curl -H "Host: app.example.com" http://<engine>/` from a machine that is
+   not the engine's. It is pure routing and needs no new port.
 
 ---
 
@@ -312,12 +344,16 @@ Ordered so each is independently verifiable, and so nothing depends on something
 - [ ] `curl -H "Host: app.example.com" http://<engine>/` reaches the mapping's `target`, from a machine that
       is not the engine's.
 - [ ] A mapping's `target` may be a LAN `host:port`, not only `localhost`.
-- [ ] Two workspaces' mappings coexist; a duplicate domain is rejected at write time naming the holder.
+- [ ] The edge serves the **active** workspace's mappings, and `workspace.setActive` changes which domains
+      resolve without restarting anything.
+- [ ] Every workspace's forward proxy, webhook receiver and socket server run simultaneously, each on its own
+      port, regardless of which workspace is active.
 - [ ] A forward-proxied request can be mocked, and a reverse-proxied request is unaffected by that mock.
 - [ ] Webhook and socket ports are user-settable per workspace, and a taken override fails loudly naming a
       free port (D16, unchanged).
+- [ ] A mapping whose domain is the engine's own hostname is refused at write time.
 - [ ] The UI does not offer `*.localhost` mapping, native dialogs or a tray against a remote engine.
-- [ ] The released extension still works on 9271 during the deprecation window.
+- [ ] The extension connects to a local and a remote engine with no change to its own code.
 - [ ] The RPC endpoint is not published by default, and refuses to start unauthenticated on a public bind.
 - [ ] Electron's embedded engine is unchanged: IPC, no address, all features.
 
@@ -327,12 +363,12 @@ Ordered so each is independently verifiable, and so nothing depends on something
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| Breaking the released extension by moving 9271 | **High** | The deprecated listener in §6.1; do not delete it until the extension's floor moves |
 | A published forward-proxy port forwarding into a private network | **High** | Same explicit opt-in as the RPC bind; document it as the larger exposure of the two |
 | The edge router's `Host` routing used as an SSRF vector | **High** | A mapping's `target` is user-configured and workspace-scoped; refuse loopback/link-local targets on a *remote* engine, and never route by an unvalidated `Host` to an arbitrary address |
-| Two workspaces claiming one domain | Medium | Reject at write time (§3.3); the failure is otherwise a silently wrong target |
-| The GUI and a mapping colliding on one hostname | Medium | Refuse a mapping whose domain is the engine's own hostname |
+| The GUI and a mapping colliding on one hostname | Medium | Refuse a mapping whose domain is the engine's own hostname (§3.3) |
+| **Only the active workspace's mappings resolve**, so switching workspaces silently changes which domains work | **High** | Accepted by design, but it has to be *visible*: the GUI's footer already carries connection state, and the home page should name the active workspace and its mappings |
 | `AppConfig`'s port fields drifting from `runtime.json` | Medium | §6.3 — show both, and keep user choices on the preference side only |
+| The extension shipping out of step with the companion's port | Medium | Extension first, engine second (work item 6) — a new extension against an old engine degrades, the reverse breaks |
 | This plan landing half-done, leaving two port models | **High** | Work item 3 is the commit point: the split either lands whole or the reverse path stays where it is |
 
 ---
@@ -342,6 +378,7 @@ Ordered so each is independently verifiable, and so nothing depends on something
 - **It does not change the client protocol.** `hello`, the command surface and `window.api` are unchanged;
   the additions are capability fields in an existing response.
 - **It does not merge the RPC endpoint with the edge port.** §5 gives the reason.
-- **It does not touch the companion's wire format.** §6.1 moves the port, not the protocol.
-- **It does not decide the extension's future.** If the extension is being retired, §6.1's deprecated
-  listener can be dropped and this plan gets simpler — but that is a product call, not a design one.
+- **It does not touch the companion's wire format.** Only the port it is reached on.
+- **It does not aggregate mappings across workspaces.** The edge is one port; the active workspace's mappings
+  are what it serves (§3.3).
+- **It does not change the forward proxy's behaviour**, only its socket.
