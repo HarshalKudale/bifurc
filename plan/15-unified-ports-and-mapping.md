@@ -6,7 +6,7 @@
 
 > ## Revision note — 2026-09-23, after review
 >
-> Two decisions in the first draft were wrong, and both made the plan bigger than it needs to be.
+> Three decisions in the first two drafts were wrong, and each made the plan bigger than it needs to be.
 >
 > 1. **The companion moves to the edge outright.** The first draft treated the released extension's hardcoded
 >    port 9271 as a compatibility constraint and proposed keeping a deprecated listener for a release cycle.
@@ -22,6 +22,20 @@
 > What that removes: the host-level routing table (work item 4), the duplicate-domain collision, and the
 > extension-compatibility risk. §3.3 and §7 are rewritten accordingly, and §8 and §9 lose the criteria and
 > risks that belonged to the deleted design.
+>
+> 3. **The active-workspace scope is the design, not a trade-off to mitigate.** The second revision still
+>    framed it as the one thing the design gives up, and put *"make it visible"* into the risk table. It is
+>    neither. The switch already exists — `workspace.setActive` (`store/coreCommands.ts`) writes
+>    `activeWorkspaceId` and returns the new config, and deliberately does not call `reloadConfig()`, because
+>    *"the port is owned by the workspace, not by which one is selected"* — and **a user changing the active
+>    workspace is taken to know that the new workspace's mappings are the ones that now apply.** Informing
+>    them is a later refinement, not a prerequisite: the risk row is deleted, and *"the home page should name
+>    the active workspace"* is explicitly **not** an acceptance criterion.
+>
+> The same handler records the other half as the intended D10 outcome: *"after switching workspace in the UI,
+> the old workspace's proxy keeps answering on its port."* So "every workspace runs at the same time, and only
+> the reverse proxy follows the active pointer" is not a new behaviour this plan introduces — it is the
+> behaviour the engine already documents.
 
 ---
 
@@ -184,11 +198,22 @@ edge is one port, and the active workspace's mappings are what it serves.
 resolves `activeWorkspaceId` → that runtime's config → its `mappings`, re-resolved per request (a map lookup)
 rather than cached, which also means a `workspace.setActive` needs no invalidation step.
 
-**The consequence, stated plainly because it is the one thing this design trades away:** switching the active
-workspace switches which domains the edge serves. Workspace A's mappings resolve while A is active; B's
-return the not-mapped page until B is active. That is the behaviour the workspace proxy has today, now on a
-shared port — and it is what "the reverse proxy uses the current active workspace's mapping" means. The other
-per-workspace surfaces are unaffected, because they have their own ports.
+**Switching the active workspace switches which domains the edge serves — and that is the design, not a cost
+to be mitigated.** The switch already exists: `workspace.setActive` (`store/coreCommands.ts`) writes
+`activeWorkspaceId` and returns the new config, and it deliberately does **not** call `reloadConfig()`,
+because a port is owned by its workspace rather than by which one is selected. So this needs no new command,
+and the edge needs no invalidation step — it resolves `activeWorkspaceId` per request, so the next request
+after a switch serves the new workspace's mappings.
+
+**The user changing the workspace is taken to know that the new active workspace's mappings are the ones that
+now apply.** An affordance that *says* so — a tooltip, a line on the home page — is a later refinement, not a
+prerequisite, and is deliberately not an acceptance criterion below.
+
+The other per-workspace surfaces are unaffected, because they have their own ports: every workspace's forward
+proxy, webhook receiver and socket server keep running regardless of which is active. That too is existing,
+documented behaviour — the same handler records it as the intended D10 outcome: *"after switching workspace
+in the UI, the old workspace's proxy keeps answering on its port. That is the intended D10 behaviour, not a
+leak — the port is owned by the workspace, not by which one is selected."*
 
 **One collision still has to be rejected at write time:** a mapping whose `domain` is the engine's own
 hostname, which would shadow the GUI and make the admin surface unreachable. Duplicate domains *across*
@@ -366,7 +391,6 @@ Ordered so each is independently verifiable, and so nothing depends on something
 | A published forward-proxy port forwarding into a private network | **High** | Same explicit opt-in as the RPC bind; document it as the larger exposure of the two |
 | The edge router's `Host` routing used as an SSRF vector | **High** | A mapping's `target` is user-configured and workspace-scoped; refuse loopback/link-local targets on a *remote* engine, and never route by an unvalidated `Host` to an arbitrary address |
 | The GUI and a mapping colliding on one hostname | Medium | Refuse a mapping whose domain is the engine's own hostname (§3.3) |
-| **Only the active workspace's mappings resolve**, so switching workspaces silently changes which domains work | **High** | Accepted by design, but it has to be *visible*: the GUI's footer already carries connection state, and the home page should name the active workspace and its mappings |
 | `AppConfig`'s port fields drifting from `runtime.json` | Medium | §6.3 — show both, and keep user choices on the preference side only |
 | The extension shipping out of step with the companion's port | Medium | Extension first, engine second (work item 6) — a new extension against an old engine degrades, the reverse breaks |
 | This plan landing half-done, leaving two port models | **High** | Work item 3 is the commit point: the split either lands whole or the reverse path stays where it is |
