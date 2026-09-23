@@ -35,6 +35,10 @@ export interface HostArgs {
   workspaceIds?: string[];
   /** The RPC socket path. Absent → `defaultSocketPath()` (a named pipe on Windows, a `0600` unix socket). */
   rpcSocket?: string;
+  /** The WebSocket bind host. When present, the CLI starts the host in `ws` mode instead of `socket`. */
+  wsHost?: string;
+  /** The WebSocket bind port. When present, the CLI starts the host in `ws` mode instead of `socket`. */
+  wsPort?: number;
   /** Read the engine token from this file — for a container that mounts a secret. Absent → `ensureEngineToken()`. */
   tokenFile?: string;
 }
@@ -57,6 +61,10 @@ Required
 Options
   --rpc-socket <path>     The RPC endpoint's path. Defaults to the platform's standard location
                           (a named pipe on Windows, a 0600 unix socket elsewhere).
+  --ws-host <host>        Start the RPC endpoint in WebSocket mode, bound to this host.
+                          Defaults to loopback when only --ws-port is given.
+  --ws-port <port>        Start the RPC endpoint in WebSocket mode, bound to this port.
+                          Use 0 for an ephemeral port.
   --token-file <path>     Read the engine token from this file instead of generating one.
                           For a container that mounts the token as a secret.
   --workspace <id>        Serve only this workspace. Repeatable, and the order is preserved.
@@ -74,7 +82,7 @@ N workspaces per host is supported but not recommended — one per volume makes 
 and the lifecycle line up.`;
 
 /** Flags that take a value. Kept as a table so "does this flag need an argument?" has one answer. */
-const VALUE_FLAGS = new Set(["--data-dir", "--rpc-socket", "--token-file", "--workspace"]);
+const VALUE_FLAGS = new Set(["--data-dir", "--rpc-socket", "--ws-host", "--ws-port", "--token-file", "--workspace"]);
 
 /**
  * Parse `argv` (already sliced past `node` and the script path).
@@ -86,6 +94,8 @@ const VALUE_FLAGS = new Set(["--data-dir", "--rpc-socket", "--token-file", "--wo
 export function parseHostArgs(argv: readonly string[]): HostArgsResult {
   let dataDir: string | undefined = process.env.BIFURC_DATA_DIR;
   let rpcSocket: string | undefined;
+  let wsHost: string | undefined;
+  let wsPort: number | undefined;
   let tokenFile: string | undefined;
   const workspaceIds: string[] = [];
 
@@ -132,6 +142,17 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       case "--rpc-socket":
         rpcSocket = value;
         break;
+      case "--ws-host":
+        wsHost = value;
+        break;
+      case "--ws-port": {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+          return { kind: "error", message: `--ws-port must be an integer from 0 to 65535.\n\n${HOST_USAGE}` };
+        }
+        wsPort = parsed;
+        break;
+      }
       case "--token-file":
         tokenFile = value;
         break;
@@ -147,12 +168,20 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       message: `--data-dir is required (or set BIFURC_DATA_DIR).\n\n${HOST_USAGE}`,
     };
   }
+  if (rpcSocket !== undefined && (wsHost !== undefined || wsPort !== undefined)) {
+    return {
+      kind: "error",
+      message: `--rpc-socket cannot be combined with --ws-host/--ws-port.\n\n${HOST_USAGE}`,
+    };
+  }
 
   return {
     kind: "args",
     args: {
       dataDir,
       rpcSocket,
+      wsHost,
+      wsPort,
       tokenFile,
       // Omitted rather than empty when nothing was passed, so the host's own default applies and
       // "serve every workspace" is not expressed as an empty list — which the host would read as

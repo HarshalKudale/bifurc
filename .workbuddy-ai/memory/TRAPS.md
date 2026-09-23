@@ -2226,4 +2226,69 @@ wrong*, and those have opposite meanings. Disambiguate cheaply — print the tot
 key — before concluding anything. Same shape as a test timeout being different evidence from a failed
 assertion: the instrument reported something, and what it reported was about the instrument.
 
+## An auth-wrapped transport **closes the session**, so a client that skips the handshake looks unreachable
+
+Measured 2026-09-23, against the real headless host.
+
+A host wraps its socket in `createAuthenticatedTransport`, which requires `hello` as the **first** request
+and — per the plan's own rule, *"auth failure returns `UNAUTHORIZED` and closes. Never fall back to
+unauthenticated"* — **closes the session** when it is not. A browser client that went straight to
+`createClient` and called `config.get` therefore saw:
+
+```
+main.tsx  Bifurc: no engine at ws://127.0.0.1:8080 — the first request must be "hello"…
+main.tsx  Bifurc: lost the engine … Session closed: the engine closed the connection…
+session.ts  Uncaught (in promise) EngineError: Cannot request(): this session ended.
+```
+
+Reproduced in three lines against the real host, which is what made it a measurement rather than a theory:
+
+```
+config.get, no handshake  ->  ERROR UNAUTHORIZED, and socket state 3 (CLOSED)
+hello, real token         ->  ok, sessionId=f3c1611b-…
+config.get after hello    ->  ok, and socket state 1 (OPEN)
+```
+
+**Four things generalise from this:**
+
+1. **"Could not connect" and "connected, then refused" are different failures, and the client sees the
+   second one.** The socket *did* open. Anything that reports a handshake failure as a reachability problem
+   sends the reader to check an address that is correct.
+2. **The engine's message describes the engine's rule, not the user's problem.** *"the first request must be
+   `hello`"* is true, precise, and useless to someone who typed a token wrong. Classify on the error
+   **code** and write the human sentence at the client.
+3. **A client-side handshake must be conditional, and the condition needs a probe.** `HelloRequest.token`
+   is optional in the schema because `in-process`/`stdio` have no boundary — so "no token" has to mean
+   "skip the handshake", and sending `hello` to an unwrapped server is an `UNKNOWN_COMMAND`. That makes
+   *silently skipping* possible, so the connect must then **prove** the session works: otherwise connecting
+   with no token to an endpoint that requires one succeeds, and the UI mounts before anything fails.
+4. **A host that authenticates is not reachable from a browser without the token, and a browser cannot read
+   a file.** The operator has to be told where the secret is — which is why the CLI now reports the token's
+   *path* (never its value) rather than discarding it.
+
+**Before writing a client, grep the plan for the mechanism.** The fix here was to copy an existing, tested
+nine-line call from `packages/client/tests/transports.test.ts` — the design was already written down in
+`plan/06` (*"a plain `request("hello", …)` on the raw transport before `createClient()`"*). Reading the
+failing code first cost more than grepping `plan/` would have.
+
+## An untyped test double goes stale silently, and `undefined !== null` is **true**
+
+Measured 2026-09-23.
+
+`App` gained a branch on `loadError !== null`. `tests/renderer/App.test.tsx` mocks the hook with a
+`vi.mock` factory that returns an object literal, which did not include the new field — so it was
+`undefined`, `undefined !== null` was **true**, the failure screen rendered, and both cases failed looking
+for a title bar.
+
+**The mock was wrong, not the guard**, and the reasoning matters: a `vi.mock` factory is an untyped literal,
+so TypeScript cannot see that it no longer matches the hook's return shape. The only thing that notices is a
+consumer *reading the field* — which is why this surfaced as two unrelated-looking failures rather than as a
+type error. Fixing it means adding the field to the mock; loosening production code (`if (loadError)`) to
+accommodate an incomplete double is backwards.
+
+**The generalisable form:** a nullish check is a claim about a *three*-valued world. When a field can be
+absent, `!== null` and `!== undefined` and truthiness are three different predicates, and only one of them
+matches what the type says.
+
+
 

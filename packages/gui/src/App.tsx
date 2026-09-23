@@ -19,17 +19,50 @@ import { useAppConfigSync } from "@/hooks/useAppConfigSync";
 import { useWorkspaceView } from "@/hooks/useWorkspaceView";
 import { usePublishHandlers } from "@/hooks/usePublishHandlers";
 
-export default function App() {
+/**
+ * What a **host** supplies. Every field is optional, so `<App />` means what it always meant.
+ *
+ * ## Why this channel exists at all
+ *
+ * D18 makes the UI one artifact shared by two hosts, so anything that *differs* between them has to be
+ * told to it rather than discovered by it. Two things differ today:
+ *
+ * - **which host mounted it.** The browser has no native dialogs, no tray and no titlebar controls, so
+ *   the UI has to be able to leave out affordances that would do nothing.
+ * - **the endpoint**, when the host chose it at runtime — the browser's connection form is where it is
+ *   entered, so the UI cannot know it otherwise.
+ *
+ * Deliberately a **prop and not a second global.** `window.api` is the communication seam, and D18's
+ * premise is that it is the *only* thing that varies between the hosts. A UI that also read an injected
+ * `window.hostKind` would have two seams to keep honest, and nothing would notice one of them drifting.
+ */
+export interface AppProps {
+  /** Which host mounted this UI. Defaults to `"electron"`. */
+  host?: "electron" | "web";
+  /** The endpoint this UI is connected to, when the host chose it at runtime. */
+  connection?: { url: string };
+}
+
+export default function App({ host = "electron", connection }: AppProps = {}) {
   const [tosAccepted, setTosAccepted] = usePersistedState<boolean>("app:tos-accepted", false);
 
   if (!tosAccepted) {
     return <TermsAcceptanceScreen onAccept={() => setTosAccepted(true)} />;
   }
 
-  return <AppShell />;
+  return <AppShell host={host} connection={connection} />;
 }
 
-function AppShell() {
+function AppShell({ host = "electron", connection }: AppProps = {}) {
+  /**
+   * `h-screen` when this UI **is** the window (Electron); `h-full` when a host has wrapped it in chrome
+   * of its own (the browser container's connection bar).
+   *
+   * Not a style preference — it is a layout bug if it is wrong. `h-screen` inside a flex column makes the
+   * UI 100vh tall regardless of the bar above it, which pushes the bar off-screen.
+   */
+  const rootHeight = host === "web" ? "h-full" : "h-screen";
+
   const [colorMode, setColorMode] = useColorMode();
   const [panel, setPanel] = usePersistedState<Panel>("app:active-panel", "services");
   const { visibility, setPanelVisible, isPanelVisible } = useSidebarVisibility();
@@ -37,6 +70,7 @@ function AppShell() {
   const {
     config, setConfig,
     wsLoading, setWsLoading,
+    loadError,
     services, refreshServices,
     serverRunning, setServerRunning,
     serverError, setServerError,
@@ -247,16 +281,33 @@ function AppShell() {
     handleOpenMockEditor, handleOpenInRequests, publishHandlers, visibility, setPanelVisible,
   ]);
 
+  /**
+   * A failed load is shown **where the loading message was**, rather than as a toast or a console error.
+   *
+   * The distinction matters because the two states used to be identical: "Loading workspace…" that never
+   * resolves is the same screen whether the engine is slow or gone. `plan/08`'s risk table names exactly
+   * this — *"Silent UI freeze on disconnect"* — and the mitigation it gives is connection state in the
+   * footer, which `AppProps.connection` now supplies for the browser host.
+   */
+  if (loadError !== null) {
+    return (
+      <div className={`flex flex-col ${rootHeight} bg-background text-foreground overflow-hidden items-center justify-center gap-3`}>
+        <div className="text-destructive text-sm font-medium">Could not load this workspace</div>
+        <div className="text-muted-foreground text-xs font-mono max-w-md text-center">{loadError}</div>
+      </div>
+    );
+  }
+
   if (wsLoading) {
     return (
-      <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden items-center justify-center gap-3">
+      <div className={`flex flex-col ${rootHeight} bg-background text-foreground overflow-hidden items-center justify-center gap-3`}>
         <div className="text-muted-foreground text-sm animate-pulse">{wsLoading}</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+    <div className={`flex flex-col ${rootHeight} bg-background text-foreground overflow-hidden`}>
       <TitleBar
         config={config} serverRunning={serverRunning} serverError={serverError} helpText={PANEL_HELP[panel]}
         onServerStart={async () => {
@@ -299,7 +350,33 @@ function AppShell() {
         <main className="flex-1 overflow-hidden flex flex-col min-w-0">{renderPanel(panel, panelRenderCtx)}</main>
         <HistorySidebar filePath={openedEntityPath} workspaceId={wsId} onClose={closeHistory} open={historyOpen} reloadKey={historyReloadKey} />
       </div>
-      <GlobalFooter panel={panel} workspace={currentWorkspace} entitySyncStatus={entitySyncStatus} syncStatus={syncStatus} onPublishPanel={publishHandlers.handlePublishPanel} rightContent={footerRightContent} />
+      <GlobalFooter
+        panel={panel}
+        workspace={currentWorkspace}
+        entitySyncStatus={entitySyncStatus}
+        syncStatus={syncStatus}
+        onPublishPanel={publishHandlers.handlePublishPanel}
+        rightContent={
+          /*
+           * The endpoint, shown only when a host chose it at runtime.
+           *
+           * `plan/08`'s risk table puts connection state in the global footer, and the reason is that a
+           * browser has no process boundary to notice the engine is gone — so "which host am I on" has
+           * to be visible rather than inferred. Composed into the footer's existing `rightContent` slot
+           * rather than by editing the footer, because the footer is about git sync and has no business
+           * knowing what a host is.
+           */
+          <>
+            {connection !== undefined && (
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-signal" aria-hidden="true" />
+                <span className="font-mono">{connection.url}</span>
+              </span>
+            )}
+            {footerRightContent}
+          </>
+        }
+      />
       <SearchModal
         open={searchModalOpen} initialMode={searchModalMode} activePanel={panel} config={wsConfig} services={services}
         onClose={() => setSearchModalOpen(false)} onSelectTab={handleSearchSelectTab} onOpenEntity={handleSearchOpenEntity}

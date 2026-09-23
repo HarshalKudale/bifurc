@@ -1,6 +1,16 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./renderer/**/*.{html,tsx,ts}"],
+  content: [
+    // The Electron host's entry. It holds `index.html` and `main.tsx` and nothing else — the UI itself
+    // is in `packages/gui`, so this glob is kept for the entry's own markup.
+    "./renderer/**/*.{html,tsx,ts}",
+    // The shared UI (D18) and every package's own sources.
+    "./packages/**/*.{html,tsx,ts}",
+    // The browser host's container. Its connection form is deliberately styled with the same tokens as
+    // the UI it wraps, so its classes have to be scanned too — without this the form renders unstyled,
+    // because Tailwind purges anything it cannot see.
+    "./web/**/*.{html,tsx,ts}",
+  ],
   darkMode: "class",
   theme: {
     extend: {

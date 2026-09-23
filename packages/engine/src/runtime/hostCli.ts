@@ -31,6 +31,7 @@
  */
 import * as fs from "fs";
 import { runWorkspaceHost, type WorkspaceHostOptions, type HostTransport } from "./host";
+import { DEFAULT_WS_HOST } from "../transport/ws";
 import { HOST_USAGE, parseHostArgs } from "./hostArgs";
 
 /**
@@ -69,7 +70,10 @@ async function main(argv: readonly string[]): Promise<void> {
 
   const { args } = parsed;
 
-  const transport: HostTransport = { kind: "socket", path: args.rpcSocket };
+  const transport: HostTransport =
+    args.wsHost !== undefined || args.wsPort !== undefined
+      ? { kind: "ws", host: args.wsHost ?? DEFAULT_WS_HOST, port: args.wsPort }
+      : { kind: "socket", path: args.rpcSocket };
   const opts: WorkspaceHostOptions = {
     dataDir: args.dataDir,
     transport,

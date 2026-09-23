@@ -1,10 +1,25 @@
 /**
  * The composition, against a **real** engine over a **real** socket.
  *
- * This is the first test that can exercise the whole web path — the browser transport, the sixteen
- * `RequiredClientLocal` members, and the client's own correlation and retry layer on top of both —
- * because `createClient` requires a `local` and there is no Electron shell here to supply one. A
- * mocked `WebSocket` could assert none of it; it would only prove this file agrees with itself.
+ * This is the first suite that can exercise the whole web path — the browser transport, the sixteen
+ * `RequiredClientLocal` members, the `hello` handshake, and the client's own correlation and retry layer
+ * on top of all three — because `createClient` requires a `local` and there is no Electron shell here to
+ * supply one. A mocked `WebSocket` could assert none of it; it would only prove this file agrees with
+ * itself.
+ *
+ * ## Why the handshake cases are the important ones
+ *
+ * The browser shipped without a handshake, and the symptom was a connection that **died immediately**:
+ * the engine's `createAuthenticatedTransport` requires `hello` as the first request, answers
+ * `UNAUTHORIZED` and closes the session, so the page's first `config.get` came back on a socket that was
+ * already gone. Electron never hit it — its transport is `in-process` and is never wrapped — which is why
+ * the gap survived P6 and had to be found by running the thing.
+ *
+ * So the cases below are written to fail if the handshake is removed, not merely to pass while it is
+ * present. `connectToEngine` with the right token must succeed against an auth-wrapped server; with no
+ * token and with a wrong token it must fail as `"unauthorized"`; and a major mismatch must fail as
+ * `"version"`. The third of those is also the one that proves the *classification* works, which is what
+ * `plan/08` means by "actionable UI, not generic errors".
  *
  * ## Why the **node** environment, not jsdom
  *
@@ -13,7 +28,7 @@
  * back to `"unknown"`, `applyZoom()` swallows a missing `document`, and `pickOneFile()` returns `null`.
  * So nothing here needs a document — and reaching for jsdom would actively break the half that matters.
  *
- * Measured, not assumed: under the jsdom environment all three cases fail with
+ * Measured, not assumed: under the jsdom environment the connection cases fail with
  *
  *     TypeError: The "event" argument must be an instance of Event. Received an instance of Event
  *     ❯ WebSocket.dispatchEvent  node:internal/event_target
@@ -21,8 +36,8 @@
  *
  * jsdom's `WebSocket` is undici's, and it builds its `Event` objects from a different realm than the
  * `EventTarget` it dispatches them to, so the first `open` event throws. The node environment gives
- * Node's own global `WebSocket`, which is the **production default** on any host that provides one —
- * so this suite drives the real code path rather than an injected stand-in, exactly as
+ * Node's own global `WebSocket`, which is the **production default** on any host that provides one — so
+ * this suite drives the real code path rather than an injected stand-in, exactly as
  * `browserTransport.test.ts` does, and `webSocketFactory` stays unused.
  *
  * What it still cannot cover is a real `WebSocket` in a real page on a real browser: that is work item
@@ -33,7 +48,10 @@ import { CommandRegistry } from "@bifurc/engine/commands/registry";
 import { EngineEventBus } from "@bifurc/engine/eventBus";
 import { EventLog } from "@bifurc/engine/transport/eventLog";
 import { createWsServer, type WsServer } from "@bifurc/engine/transport/ws";
-import { connectToEngine, type Connection } from "../connect";
+
+import { ConnectError, connectToEngine, type Connection } from "../connect";
+
+const TOKEN = "web-connect-test-token";
 
 const servers: WsServer[] = [];
 const connections: Connection[] = [];
@@ -45,35 +63,59 @@ function makeRegistry(): CommandRegistry {
   return registry;
 }
 
+interface ServeOptions {
+  /** Omit for an **unauthenticated** server — the shape a bare `ws` endpoint has. */
+  token?: string;
+  /** Drive the major-mismatch path: the server claims a different protocol major. */
+  protocolVersion?: string;
+}
+
 /**
- * Bind a real engine and connect a page to it.
+ * Bind a real engine.
  *
- * An `EventLog` per pair, for the reason the conformance suite gives: Vitest shares a module registry,
+ * An `EventLog` per server, for the reason the conformance suite gives: Vitest shares a module registry,
  * so asserting against the process-wide singleton would make one test's leak look like the next test's
  * bug.
  */
-async function connect(onFatal?: (error: Error) => void) {
+async function serve(opts: ServeOptions = {}): Promise<WsServer> {
   const bus = new EngineEventBus();
   const log = new EventLog({ bus });
-  const server = await createWsServer({ registry: makeRegistry(), bus, log });
+  const server = await createWsServer({
+    registry: makeRegistry(),
+    bus,
+    log,
+    ...(opts.token === undefined
+      ? {}
+      : {
+          auth: {
+            token: opts.token,
+            engineVersion: "0.0.0-web-test",
+            ...(opts.protocolVersion === undefined ? {} : { protocolVersion: opts.protocolVersion }),
+          },
+        }),
+  });
   servers.push(server);
+  return server;
+}
 
-  const connection = connectToEngine({ url: server.url, onFatal });
+async function connect(opts: { url: string; token?: string; onFatal?: (e: Error) => void }) {
+  const connection = await connectToEngine(opts);
   connections.push(connection);
-  return { server, connection };
+  return connection;
 }
 
 afterEach(async () => {
-  // `client.close()` is the whole teardown — it closes the hub and the transport — and it is
-  // non-enumerable on the client so that `Object.keys(client)` matches `window.api`. It is still
-  // reachable by name, which is what the shell (and this suite) relies on.
-  for (const c of connections.splice(0)) await c.client.close();
+  // `close()` is the whole teardown — it closes the hub and the transport — and it is non-enumerable on
+  // the client so that `Object.keys(client)` matches `window.api`. `web/connect.ts` exposes it for
+  // exactly this reason.
+  for (const c of connections.splice(0)) await c.close();
   for (const s of servers.splice(0)) await s.close();
 });
 
 describe("the web target's one job — connect a page to an engine", () => {
   it("opens a real socket, issues a real command, and returns the engine's answer", async () => {
-    const { connection } = await connect();
+    const server = await serve();
+    const connection = await connect({ url: server.url });
 
     // The engine's own value, through the entire path: native WebSocket -> ClientChannel ->
     // createClientSession -> the typed surface method a screen would call.
@@ -81,12 +123,13 @@ describe("the web target's one job — connect a page to an engine", () => {
   });
 
   it("proves the client-local half is wired, not merely present", async () => {
-    const { connection } = await connect();
+    const server = await serve();
+    const connection = await connect({ url: server.url });
 
     // `createBrowserLocal` is passed to `createClient` as `local`. If it were absent or incomplete the
     // construction would throw before any of this ran — so reaching the engine is itself the evidence
-    // that the sixteen members satisfy `RequiredClientLocal`. This case asserts the stronger thing:
-    // that a *client-side* operation also works in a page, over the same instance.
+    // that the sixteen members satisfy `RequiredClientLocal`. This case asserts the stronger thing: that
+    // a *client-side* operation also works in a page, over the same instance.
     await connection.probe();
     const level = await connection.client.setZoomLevel(3);
     expect(level).toEqual({ ok: true });
@@ -94,7 +137,8 @@ describe("the web target's one job — connect a page to an engine", () => {
 
   it("reports a lost engine through onFatal rather than leaving the page waiting", async () => {
     const fatals: Error[] = [];
-    const { server, connection } = await connect((error) => fatals.push(error));
+    const server = await serve();
+    const connection = await connect({ url: server.url, onFatal: (error) => fatals.push(error) });
 
     // Connected first, so this is about a session dying rather than one that never opened.
     await connection.probe();
@@ -102,14 +146,64 @@ describe("the web target's one job — connect a page to an engine", () => {
 
     await server.close();
     await vi.waitFor(() => expect(fatals).toHaveLength(1));
-    // Work item 2 gives "lost the engine" and "could not connect" different UI copy, so this has to be the
-    // *dropped* message and not the connect-failure one: `Could not connect` tells the user to check the
-    // address, which is the wrong instruction for an engine that was answering a moment ago.
+    // Work item 2 gives "lost the engine" and "could not connect" different UI copy, so this has to be
+    // the *dropped* message and not the connect-failure one: `Could not connect` tells the user to check
+    // the address, which is the wrong instruction for an engine that was answering a moment ago.
     expect(fatals[0]!.message).toMatch(/^Session closed/);
     expect(fatals[0]!.message).not.toMatch(/Could not connect/);
     // That is precision, not coverage — measured rather than assumed. Deleting the `open` guard in
-    // `channel.ts` (mutation M10) leaves this case **passing**, because an engine's `close()` never reaches
-    // the `error` path on this host. The guard itself is pinned in `browserTransport.test.ts`; see TRAPS.md,
-    // "A case can be sound and still guard nothing about the line you changed".
+    // `channel.ts` (mutation M10) leaves this case **passing**, because an engine's `close()` never
+    // reaches the `error` path on this host. The guard itself is pinned in `browserTransport.test.ts`;
+    // see TRAPS.md, "A case can be sound and still guard nothing about the line you changed".
+  });
+});
+
+describe("the hello handshake — the defect that made the browser's connection die on arrival", () => {
+  it("authenticates before the first real request, so the session survives", async () => {
+    const server = await serve({ token: TOKEN });
+
+    // Without the handshake this is the case that fails: `connectToEngine` probes `config.get`, the
+    // decorator refuses it, and the engine closes the session.
+    const connection = await connect({ url: server.url, token: TOKEN });
+
+    // Still usable afterwards — a handshake that authenticated and then dropped the session would pass
+    // the connect above and fail here.
+    await expect(connection.probe()).resolves.toMatchObject({ port: 8080 });
+  });
+
+  it("classifies a missing token as `unauthorized`, not as an unreachable host", async () => {
+    const server = await serve({ token: TOKEN });
+
+    // The user-visible bug in one case: the address is *correct*, and the engine's own message
+    // ("the first request must be hello") describes the engine's rule rather than the user's problem.
+    await expect(connect({ url: server.url })).rejects.toMatchObject({ failure: "unauthorized" });
+  });
+
+  it("classifies a wrong token as `unauthorized`, and says the token is rotated", async () => {
+    const server = await serve({ token: TOKEN });
+
+    const error = await connect({ url: server.url, token: "not-the-token" }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectError);
+    expect((error as ConnectError).failure).toBe("unauthorized");
+    // The actionable half: `ensureEngineToken` generates a token per start, so a token from a previous
+    // run is the single most likely cause of this failure and the message has to say so.
+    expect((error as ConnectError).message).toMatch(/regenerated/);
+  });
+
+  it("classifies a protocol major mismatch as `version`", async () => {
+    // The server claims a different major, which is the one thing `checkVersionCompatibility` refuses.
+    const server = await serve({ token: TOKEN, protocolVersion: "99.0.0" });
+
+    const error = await connect({ url: server.url, token: TOKEN }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectError);
+    expect((error as ConnectError).failure).toBe("version");
+  });
+
+  it("skips the handshake when no token is given, so a bare ws endpoint still works", async () => {
+    // `hello` is deliberately not a registry command, so sending it to an unwrapped server would be an
+    // `UNKNOWN_COMMAND` — which is why the handshake is conditional rather than unconditional.
+    const server = await serve();
+    const connection = await connect({ url: server.url });
+    await expect(connection.probe()).resolves.toMatchObject({ port: 8080 });
   });
 });

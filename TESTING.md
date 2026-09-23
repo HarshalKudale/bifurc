@@ -1,7 +1,11 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-22 · suite: **2,674 tests / 117 files — 2,634 passed, 40 skipped, 0 failed** (no
-known failure: the standing `soap.execute` flake was retired with the P0 spike on 2026-09-21 — see §7)_
+_Last reviewed: 2026-09-23 · suite: **2,693 tests / 118 files** — 2,648 passed, 40 skipped, **5 failed**, and
+**all five failures are port conflicts caused by a headless host left running on the machine** (`80`,
+`8080`, `9101`, `9271`). Each one names its own precondition — *"9101 must be free for this case to be
+decisive"*, or a preflight `[ 'port-in-use' ]` that the case asserts is empty — so the suite reports the
+conflict instead of producing a misleading result. **Stop the host and re-run.** Otherwise there is no known
+failure: the standing `soap.execute` flake was retired with the P0 spike on 2026-09-21 — see §7)_
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read
@@ -1221,7 +1225,7 @@ members, written DOM-optional (`storage()` returns `undefined` rather than throw
 back to `"unknown"`, `applyZoom()` swallows a missing `document`), which is what lets the suite below run in
 the **node** environment rather than jsdom.
 
-**`web/tests/connect.test.ts` (3) — the composition, against a real engine over a real socket.** The
+**`web/tests/connect.test.ts` (8) — the composition, against a real engine over a real socket.** The
 first suite that can exercise the whole web path, because `createClient` **requires** a `local` and there is
 no Electron shell here to supply one: a real round trip, a client-local operation over the same instance, and
 the dropped-engine path through `onFatal`. It runs in node deliberately — under jsdom the first `open` event
@@ -1229,17 +1233,39 @@ throws, because jsdom's `WebSocket` is undici's and builds its `Event` objects f
 the `EventTarget` it dispatches them to (measured, and recorded in the file's header). What it pins is the
 *wiring*: a real `WebSocket` in a real page is work item 6's Playwright job.
 
-**`web/tests/api.test.ts` (5) — the browser's `window.api`, which is the D18 seam itself.** The shared UI
+**Five of the eight are the `hello` handshake**, and they exist because its absence was a shipped defect: the
+host wraps its socket in `createAuthenticatedTransport`, which requires `hello` first and **closes the
+session** when it is not, so the browser's connection died on arrival and the engine logged `the first request
+must be "hello"` once per attempt. Electron never hit it — its transport is `in-process`, never wrapped —
+which is why the gap survived P6. The cases are written to **fail if the handshake is removed**, and that was
+measured rather than asserted: disabling the handshake condition makes **exactly two** of them fail
+(*"authenticates before the first real request"* and *"classifies a protocol major mismatch as `version`"*)
+while the other six pass untouched. The remaining three pin the classification — missing token, wrong token,
+and a bare unwrapped endpoint where the handshake must be **skipped**, because `hello` is deliberately not a
+registry command and would come back `UNKNOWN_COMMAND`.
+
+**`web/tests/api.test.ts` (6) — the browser's `window.api`, which is the D18 seam itself.** The shared UI
 reads one injected global, and the two hosts differ only in what fills it: the Electron preload does
 `contextBridge.exposeInMainWorld("api", { ...client })`, and `web/api.ts` does
 `(globalThis as …).api = { ...connection.client }` — **the same line, without the bridge**. This suite is what
-stops the browser's half from drifting. Three cases, all against a real engine: the assigned `window.api`
-actually answers a command (not merely exists — a structural assertion would pass on a blank screen); its
-enumerable keys are the client's surface and do **not** include `close` (which is non-enumerable on the client
-so that `Object.keys(client)` matches `window.api`, and which is why the host gets a separate teardown
-handle); and a lost engine reaches `onFatal` as the *dropped* message rather than the connect-failure one.
-Two more pin `?engine=` parsing, including the loopback default — if that default ever moved, the symptom
-would be a page that reaches a remote engine and not a local one.
+stops the browser's half from drifting. Against a real engine: the assigned `window.api` actually answers a
+command (not merely exists — a structural assertion would pass on a blank screen); its enumerable keys are the
+client's surface and do **not** include `close` (non-enumerable on the client so that `Object.keys(client)`
+matches `window.api`, which is why the host gets a separate teardown handle); a lost engine reaches `onFatal`
+as the *dropped* message rather than the connect-failure one; and `uninstallWindowApi` really removes the
+global, because a stale one leaves the UI calling a client whose transport is closed.
+
+**And one case is about *ordering*, which is the reason `web/` is a container at all**: installing with a bad
+token must reject **and leave `window.api` undefined**. An installer that assigned first and authenticated
+second would hand the UI a client the engine had already disconnected — the original defect's exact shape.
+
+**`web/tests/settings.test.ts` (9) — the connection form's pure half.** `toUrl`/`fromUrl`, the
+load/save round trip, and the defaults. Split from the form so it runs in **node** with no DOM and no
+`localStorage`, and the cases that matter are the ones about **untrusted input**: these settings come from
+`localStorage` (hand-editable in devtools) and from `?engine=` (anyone can put anything in it). A `host` that
+arrives as a number or a `port` that arrives as an object has to become the default rather than reach
+`new URL()` and throw from inside a connection attempt, where it would read as a network failure and send
+someone debugging the wrong thing.
 
 > **A gap this section has to name: nothing typechecks the shared UI.** `packages/gui` carries **152
 > pre-existing type errors** — measured, not estimated, and pre-existing rather than introduced by the D18
