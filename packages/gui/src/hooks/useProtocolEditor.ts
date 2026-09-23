@@ -1,16 +1,42 @@
 import { useReducer, useRef, useEffect, useCallback, useState } from "react";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 
-export interface ProtocolEditorConfig<State, Action, Draft, SavePayload, Entity> {
-    tabType: string;
+export interface ProtocolEditorConfig<
+    State,
+    Action,
+    Draft,
+    SavePayload,
+    Entity,
+    TabType extends string = string,
+> {
+    /**
+     * Which kind of tab this is — `"request"` or `"mock"` for SOAP, and so on.
+     *
+     * **Generic rather than `string`, and that is not decoration.** Every callback below receives it, and the
+     * implementations narrow it (`SoapTabType`, `GraphQLTabType`). A function whose parameter is the *narrow*
+     * union is **not** assignable to one taking `string`, because the hook could hand it a value it cannot
+     * handle — so every one of these arguments was rejected and every one was silenced with `as any`. With
+     * nothing left to infer `State` from, TypeScript fell back to `unknown`, which is the whole of the UI's
+     * 105 `'state' is of type 'unknown'` errors: **one variance mismatch, 105 consequences.**
+     *
+     * Parameterising it lets the narrow type flow through instead, and the casts can go.
+     */
+    tabType: TabType;
     tabId: string;
     draftTabId?: string | null;
-    initial: Entity | null;
+    /**
+     * Optional, because every call site's own prop is optional and therefore `Entity | null | undefined`.
+     * The hook already normalises it — `initState(initial ?? null, …)` — so accepting `undefined` here
+     * states what the code does. Leaving it required was enough on its own to make TypeScript abandon
+     * inference for the whole call and fall back to the parameter defaults, which is why `TabType` came out
+     * as `string` and every `tabType` argument was rejected again.
+     */
+    initial?: Entity | null;
     reducer: React.Reducer<State, Action>;
-    initState: (initial: Entity | null, draft: Draft | null, tabType: string) => State;
-    stateToDraft: (state: State, tabType: string) => Draft;
-    isDraftEmpty: (state: State, tabType: string) => boolean;
-    stateToSavePayload: (state: State, tabType: string) => SavePayload;
+    initState: (initial: Entity | null, draft: Draft | null, tabType: TabType) => State;
+    stateToDraft: (state: State, tabType: TabType) => Draft;
+    isDraftEmpty: (state: State, tabType: TabType) => boolean;
+    stateToSavePayload: (state: State, tabType: TabType) => SavePayload;
     onSave: (payload: SavePayload) => Promise<any>;
     onSync?: (savedId?: string) => Promise<void>;
     onRevert?: () => Promise<void>;
@@ -18,7 +44,14 @@ export interface ProtocolEditorConfig<State, Action, Draft, SavePayload, Entity>
     onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function useProtocolEditor<State, Action, Draft, SavePayload, Entity>({
+export function useProtocolEditor<
+    State,
+    Action,
+    Draft,
+    SavePayload,
+    Entity,
+    TabType extends string = string,
+>({
     tabType,
     tabId,
     draftTabId,
@@ -33,7 +66,7 @@ export function useProtocolEditor<State, Action, Draft, SavePayload, Entity>({
     onRevert,
     syncStatus,
     onDirtyChange,
-}: ProtocolEditorConfig<State, Action, Draft, SavePayload, Entity>) {
+}: ProtocolEditorConfig<State, Action, Draft, SavePayload, Entity, TabType>) {
     const draft = draftTabId ? loadDraft<Draft>(draftTabId) : null;
 
     const [state, dispatch] = useReducer(
