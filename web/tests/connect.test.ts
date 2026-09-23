@@ -104,7 +104,12 @@ async function serve(opts: ServeOptions = {}): Promise<WsServer> {
   return server;
 }
 
-async function connect(opts: { url: string; token?: string; onFatal?: (e: Error) => void }) {
+async function connect(opts: {
+  url: string;
+  token?: string;
+  lastSeq?: number;
+  onFatal?: (e: Error) => void;
+}) {
   const connection = await connectToEngine(opts);
   connections.push(connection);
   return connection;
@@ -211,5 +216,93 @@ describe("the hello handshake — the defect that made the browser's connection 
     const server = await serve();
     const connection = await connect({ url: server.url });
     await expect(connection.probe()).resolves.toMatchObject({ port: 8080 });
+  });
+});
+
+/**
+ * Replay — what a reconnect tells the engine, and what comes back.
+ *
+ * `plan/05` work item 3 exists because *"a brief network blip silently loses log entries and leaves the UI
+ * showing stale state forever"*, which the plan calls the most likely source of "works locally, broken
+ * remotely" bugs. The decision lives in `eventLog.replayFrom()`, and these cases pin the **client's half**:
+ * that `connectToEngine` sends `lastSeq` at all, and that it keeps the answer instead of discarding it.
+ *
+ * The engine's own suite covers the buffer arithmetic. What was never executed before this — and is the
+ * reason these exist — is the *branching* on this side: `lastSeq` was being parsed for validity and thrown
+ * away, so `replayedFrom` and `resyncRequired` could not have been observed by any client.
+ */
+describe("replay — the outcome of a reconnect", () => {
+  it("sends no lastSeq on a first connection, so nothing is replayed", async () => {
+    const server = await serve({ token: TOKEN });
+    const connection = await connect({ url: server.url, token: TOKEN });
+
+    // Absence means "send me only live events", which is what a first connection wants — the schema says
+    // so, and the engine branches on `lastSeq` being *present* rather than on its value.
+    expect(connection.hello?.replayedFrom).toBeUndefined();
+    expect(connection.hello?.resyncRequired).toBe(false);
+  });
+
+  it("replays from a lastSeq the engine can serve", async () => {
+    const server = await serve({ token: TOKEN });
+    // A fresh engine has numbered nothing, so `0` — the honest "I have seen nothing" — is exactly in range
+    // (`eventLog.replayFrom`: `oldest === undefined` and `lastSeq === this.seq`).
+    const connection = await connect({ url: server.url, token: TOKEN, lastSeq: 0 });
+
+    expect(connection.hello?.replayedFrom).toBe(0);
+    expect(connection.hello?.resyncRequired).toBe(false);
+  });
+
+  it("asks for a resync when the lastSeq is ahead of anything the engine ever sent", async () => {
+    const server = await serve({ token: TOKEN });
+    const connection = await connect({ url: server.url, token: TOKEN, lastSeq: 9999 });
+
+    // The engine's rule: a client claiming to have seen events it never sent must **not** get an empty
+    // replay, because that would leave it believing it is up to date — a silent staleness bug rather than a
+    // visible one. So it is a resync, and `plan/05` requires every client to honour it: *"silently ignoring
+    // it produces a UI that is permanently wrong in a way nobody can reproduce."*
+    expect(connection.hello?.resyncRequired).toBe(true);
+    expect(connection.hello?.replayedFrom).toBeUndefined();
+  });
+
+  it("delivers the events it replayed, not just the promise of them", async () => {
+    const bus = new EngineEventBus();
+    const log = new EventLog({ bus });
+    const server = await createWsServer({
+      registry: makeRegistry(),
+      bus,
+      log,
+      auth: { token: TOKEN, engineVersion: "0.0.0-web-test" },
+    });
+    servers.push(server);
+
+    /**
+     * A first connection that subscribes and then leaves — because **retention attaches on the first
+     * subscription, not on the first emit.** `eventLog.ts`: *"a bus listener for an event is attached the
+     * first time anything subscribes to that event and is held until `close()`"*. So an emit before anybody
+     * has ever subscribed is neither numbered nor buffered, and a version of this case that emitted first
+     * was asserting against a log that had recorded nothing. That is a property of the engine, not a bug:
+     * an event nobody could have wanted does not need retaining.
+     */
+    const first = await connect({ url: server.url, token: TOKEN });
+    first.client.onServerError(() => {});
+    await first.probe();
+    const lastSeq = first.lastSeq();
+    await first.close();
+
+    // The client is away and the engine keeps going. This is the event replay exists for.
+    bus.emitTyped("server.error", "missed-while-away");
+
+    const second = await connect({ url: server.url, token: TOKEN, lastSeq });
+    expect(second.hello?.replayedFrom).toBe(lastSeq);
+
+    // The half a shape assertion cannot reach: **the event actually arrives**, on a subscription
+    // established *after* the handshake — which is what a real client does, since the UI subscribes when it
+    // mounts, long after `hello`. A replay that only reached a subscription opened before the handshake
+    // would be no replay at all.
+    const seen: unknown[] = [];
+    second.client.onServerError((err) => seen.push(err));
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0), { timeout: 5000 });
+
+    expect(seen).toContain("missed-while-away");
   });
 });

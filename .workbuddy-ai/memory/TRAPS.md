@@ -2333,5 +2333,33 @@ two `TypeError`s before, zero uncaught errors after.
 **The generalisable form:** `undefined` has no behaviour. A stale-but-real object fails in a way its callers
 were written to handle; removing it converts every one of those handled failures into an unhandled throw.
 
+## A green isolated run and a red full run can both be right — the shim's `rmdir` fails under load
+
+Measured 2026-09-23.
+
+`tests/store/gitStore.test.ts` and `tests/sync/gitOps.test.ts` failed in the **full** suite with:
+
+```
+Error: EBUSY: resource busy or locked, rmdir 'C:\Users\…\Temp\lp-gitops-test-…\ws-gitops-test'
+ ❯ …/node-safe-delete-shim.cjs:616
+```
+
+Both **pass in isolation** — 28 tests, exit 0, with the shim enabled *and* disabled. And the full-suite count
+moved between consecutive runs (`3 failed` → `2 failed`), which is the signature of contention rather than of
+a defect.
+
+**The mechanism:** the sandbox's safe-delete shim intercepts `rmdir`, and under a full parallel run a real
+`git` child process still holds its temp directory when the shim tries to remove it. Windows refuses a
+`rmdir` on an open handle. Nothing about the tests or the code under test is wrong.
+
+**How to attribute this class rather than "fix" it:** run the failing file **alone**. If it passes alone and
+fails only in the full run, the difference is the *environment the run creates* — concurrency, open handles,
+port contention — not the code. Note that `CODEBUDDY_SAFE_DELETE_ENABLED=0` does **not** help here; that it
+still fails in the pack with the shim disabled is itself the evidence that this is contention rather than the
+shim alone.
+
+**The generalisable form:** a failure that disappears in isolation is evidence about the *pack*, not about
+the file. Do not "fix" the file.
+
 
 
