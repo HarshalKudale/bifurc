@@ -10,6 +10,11 @@
  * `host` that arrives as a number or a `port` that arrives as an object must become the default rather
  * than reach `new URL()` and throw from inside a connection attempt, where it would read as a network
  * failure and send someone debugging the wrong thing.
+ *
+ * **There is no `token` field any more** (2026-09-25) — see `settings.ts`'s header. The stored shape is
+ * `{ host, port }`, and a record written by an older build is *degraded* rather than rejected: the extra
+ * key is ignored on read and gone on the next write. That is pinned below, because it is the difference
+ * between a user's existing settings surviving the upgrade and their form resetting to defaults.
  */
 import { describe, expect, it } from "vitest";
 
@@ -63,13 +68,13 @@ describe("loadSettings", () => {
     // when the form became the place an endpoint is chosen, and it is worth pinning: if it ever changed,
     // the symptom would be a form that cannot reach a *local* host while a remote one works.
     expect(loadSettings(store())).toEqual(DEFAULT_SETTINGS);
-    expect(DEFAULT_SETTINGS).toEqual({ host: DEFAULT_HOST, port: DEFAULT_PORT, token: "" });
+    expect(DEFAULT_SETTINGS).toEqual({ host: DEFAULT_HOST, port: DEFAULT_PORT });
     expect(toUrl(DEFAULT_SETTINGS)).toBe("ws://127.0.0.1:8080");
   });
 
   it("round-trips what saveSettings wrote", () => {
     const s = store();
-    const settings = { host: "10.0.0.5", port: "9000", token: "secret" };
+    const settings = { host: "10.0.0.5", port: "9000" };
     saveSettings(settings, s);
     expect(loadSettings(s)).toEqual(settings);
   });
@@ -81,14 +86,29 @@ describe("loadSettings", () => {
 
   it("replaces a field of the wrong type rather than trusting it", () => {
     const s = store({
-      "bifurc.host-settings": JSON.stringify({ host: 42, port: { a: 1 }, token: null }),
+      "bifurc.host-settings": JSON.stringify({ host: 42, port: { a: 1 } }),
     });
     expect(loadSettings(s)).toEqual(DEFAULT_SETTINGS);
   });
 
   it("keeps a valid field while defaulting a broken one", () => {
     const s = store({ "bifurc.host-settings": JSON.stringify({ host: "10.0.0.5", port: "" }) });
-    expect(loadSettings(s)).toEqual({ host: "10.0.0.5", port: DEFAULT_PORT, token: "" });
+    expect(loadSettings(s)).toEqual({ host: "10.0.0.5", port: DEFAULT_PORT });
+  });
+
+  it("ignores a stored `token`, and drops it on the next save", () => {
+    // A user who ran a build before 2026-09-25 still has this key in `localStorage`, and nothing migrates
+    // it. Both halves matter: the read must not treat it as a corrupt *record* (which would reset a valid
+    // host/port to the defaults), and the write must not carry it forward — otherwise a secret that no
+    // longer guards anything would sit in the browser's storage indefinitely.
+    const s = store({
+      "bifurc.host-settings": JSON.stringify({ host: "10.0.0.5", port: "9000", token: "stale-secret" }),
+    });
+    const loaded = loadSettings(s);
+    expect(loaded).toEqual({ host: "10.0.0.5", port: "9000" });
+
+    saveSettings(loaded, s);
+    expect(JSON.parse(s.data["bifurc.host-settings"]!)).toEqual({ host: "10.0.0.5", port: "9000" });
   });
 
   it("does not throw when there is no storage at all", () => {

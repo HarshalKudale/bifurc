@@ -15,9 +15,22 @@ export interface HostSettings {
    * form cannot represent "the user is halfway through typing", which is a real state.
    */
   port: string;
-  /** The host's per-start secret. Empty means "this endpoint has no auth boundary". */
-  token: string;
 }
+
+/**
+ * ## There was a third field, `token`, and it went on 2026-09-25
+ *
+ * It held the engine's per-start secret, typed into the form and remembered alongside the address. It is
+ * gone with the token itself: the engine binds loopback and refuses every other address, so there is no
+ * boundary for a credential to guard, and a browser is by construction on the machine the engine is on.
+ * See `packages/engine/src/transport/ws.ts`'s header for the bind rule and
+ * `packages/engine/src/lib/net.ts#isAllowedOrigin` for the check that replaced it.
+ *
+ * **A stored-shape change, and it degrades rather than breaks.** `loadSettings()` below validates field by
+ * field and ignores what it does not know, so a `localStorage` value written by the previous build still
+ * loads — the stale `token` key is simply never read, and `saveSettings()` rewrites the object without it
+ * on the next connect.
+ */
 
 /** `plan/14` D16's loopback port for a host's RPC endpoint. */
 export const DEFAULT_HOST = "127.0.0.1";
@@ -26,7 +39,6 @@ export const DEFAULT_PORT = "8080";
 export const DEFAULT_SETTINGS: HostSettings = {
   host: DEFAULT_HOST,
   port: DEFAULT_PORT,
-  token: "",
 };
 
 /** Where the last-used settings are remembered. */
@@ -78,7 +90,6 @@ export function loadSettings(store: SettingsStore | undefined = defaultStorage()
     return {
       host: typeof record.host === "string" && record.host !== "" ? record.host : DEFAULT_HOST,
       port: typeof record.port === "string" && record.port !== "" ? record.port : DEFAULT_PORT,
-      token: typeof record.token === "string" ? record.token : "",
     };
   } catch {
     // A corrupt value is not worth reporting: the defaults are correct and the form is right there.
@@ -89,12 +100,9 @@ export function loadSettings(store: SettingsStore | undefined = defaultStorage()
 /**
  * Remember the settings for next time.
  *
- * **The token is stored too, and that is a deliberate trade.** It is a *session* secret that rotates on
- * every host start (`ensureEngineToken` generates rather than reuses), so a stale one fails cleanly
- * rather than granting anything — and it lives on the user's own machine, in the origin that is already
- * talking to the engine. The alternative is retyping 43 characters on every reload, which is how a
- * security measure gets worked around rather than respected. It is **not** put in the URL, where it
- * would leak into history, referrers and proxy logs.
+ * Nothing here is secret any more. The address was always harmless, and the token that used to ride along
+ * with it is gone — see the note on `HostSettings`. `JSON.stringify(settings)` therefore writes exactly the
+ * two fields above, which is also how a value left by the previous build is tidied up.
  */
 export function saveSettings(
   settings: HostSettings,
