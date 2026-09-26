@@ -54,23 +54,24 @@ const TREES = [
 ];
 
 /**
- * Subtrees to skip, and **the two Vite bundles are the important ones**.
+ * Subtrees to skip — `dist/renderer` is the one that matters.
  *
- * `dist/renderer` and `dist/web` are **Vite bundles**, not module graphs: their relative specifiers were
- * resolved by Vite at build time and each emitted file is a single self-contained chunk. Walking one
- * produced a *false positive* on a tree the user had just confirmed worked (`npm run dev` started fine) —
- * which is the worst thing a build guard can do, because it invites "fixes" to code that was never broken.
+ * `dist/renderer` is a **Vite bundle**, not a module graph: its relative specifiers were resolved by Vite
+ * at build time and each emitted file is a single self-contained chunk. Walking it produced a *false
+ * positive* on a tree the user had just confirmed worked (`npm run dev` started fine) — which is the worst
+ * thing a build guard can do, because it invites "fixes" to code that was never broken.
  *
- * `dist/web` was added under D18, when the browser host became a second Vite build. It is the *same*
- * omission `packages/web-client/dist` had in `TREES` above, one hand-written enumeration further along:
- * a new target that nobody added to the list.
+ * ⚠ **`dist/web` was the second entry here until 2026-09-26**, when the browser host was decommissioned and
+ * `build:web` went with it. It is recorded rather than silently dropped because the entry was the *same*
+ * omission `packages/web-client/dist` had in `TREES` above, one hand-written enumeration further along: a
+ * new target that nobody added to the list. This list has to be found by hand in **both** directions.
  *
  * So this check is scoped to the trees that **are** module graphs: the packages' `dist/` (tsup,
- * `bundle: false`, one file per source file) and the app's own `dist/` minus the two bundles (plain
+ * `bundle: false`, one file per source file) and the app's own `dist/` minus the bundle (plain
  * `tsc`). That is exactly where the observed failure lived —
  * `packages/engine/dist/store/config.js` requiring a sibling that had not been written.
  */
-const SKIP_DIRS = [path.join("dist", "renderer"), path.join("dist", "web")];
+const SKIP_DIRS = [path.join("dist", "renderer")];
 
 /** Extensions Node would try, in order, for a relative specifier without one. */
 const RESOLVE_EXTENSIONS = [".js", ".cjs", ".mjs", ".json", ".node"];
@@ -80,9 +81,9 @@ const REQUIRED_ENTRIES = [
   ["dist/main.js", "the Electron main entry (package.json's `main`)"],
   ["dist/preload.js", "the preload — bundled by `build:preload`"],
   ["dist/renderer/index.html", "the renderer bundle — produced by `build:renderer`"],
-  // Deliberately NOT `dist/web/index.html`. `build:web` sits outside `npm run build` by decision — the
-  // desktop build should not build the browser target — so requiring it would fail this check on a clean
-  // checkout. It is skipped when present (SKIP_DIRS) and never demanded.
+  // `dist/web/index.html` was deliberately never listed here — `build:web` sat outside `npm run build` by
+  // decision, so requiring it would have failed this check on a clean checkout. The bundle itself is gone as
+  // of 2026-09-26, so the distinction no longer has a subject; the rule it protected does.
 ];
 
 /** Every file under `dir` with one of `exts`, as paths relative to `dir`, skipping `SKIP_DIRS`. */
