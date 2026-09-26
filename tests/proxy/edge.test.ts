@@ -225,12 +225,11 @@ describe("@bifurc/engine/proxy/edge", () => {
    * Boot the edge with the given config. `http.createServer` is mocked, so nothing actually binds — the
    * `request` handler is captured from the mocked factory instead.
    *
-   * `edgeOpts` carries the two options that are **not** per-request state — `guiTarget` and `hostDomain` —
-   * because both are properties of the deployment rather than of a request, and the router reads them once
-   * (see `createEdgeRouter`'s note). Defaulted to absent, which is the state every case written before
-   * `plan/15` work item 5 was written against.
+   * **The second parameter is gone.** It carried the edge's `hostDomain` — the one option that was a property
+   * of the *deployment* rather than of a request — until 2026-09-26, when the edge stopped taking its own name
+   * (see `EdgeRouterOptions`). `resolveConfig` is now the only thing `createEdgeRouter` is given.
    */
-  function setupEdge(cfg: any = baseConfig, edgeOpts: { guiTarget?: string; hostDomain?: string } = {}) {
+  function setupEdge(cfg: any = baseConfig) {
     const wsId = cfg.activeWorkspaceId ?? "default";
     const normalizedCfg = {
       ...cfg,
@@ -251,7 +250,7 @@ describe("@bifurc/engine/proxy/edge", () => {
       return srv;
     });
 
-    edge = createEdgeRouter({ resolveConfig: () => resolved, ...edgeOpts });
+    edge = createEdgeRouter({ resolveConfig: () => resolved });
     edge.start(cfg.port ?? 8080);
   }
 
@@ -561,155 +560,4 @@ describe("@bifurc/engine/proxy/edge", () => {
     });
   });
 
-  // ── the GUI's global mapping (plan/15 work item 5) ────────────────────────
-
-  /**
-   * The owner's model, and the reason this is a *mapping* rather than a feature the router owns: *"the web
-   * UI starts as usual on some different server like 5753 or any other port. Our edge port reverse proxy
-   * will forward base domain requests to this web UI port, so that this base domain → webUI port becomes the
-   * global mapping in reverse proxy config."*
-   *
-   * So every case here asserts a **`proxyToUpstream` call**, which is the same machinery branch 2 uses. That
-   * is the property worth pinning: if this ever grew its own file-serving path, these cases would still pass
-   * while the design claim quietly stopped being true — which is why the assertion is on `http.request`'s
-   * arguments rather than on the socket's bytes.
-   */
-  describe("the GUI's global mapping — the base domain → the web UI's port", () => {
-    const GUI_TARGET = "127.0.0.1:5753";
-    const HOME_PAGE = "Local proxy is active";
-
-    /** The `http.request` options the edge used, so a case can say *where* a request went. */
-    const lastUpstream = () => vi.mocked(http.request as any).mock.calls.at(-1)?.[0];
-
-    it("is INERT when no guiTarget is configured — the base domain still shows the home page", () => {
-      // The regression guard for the whole work item: an engine with no GUI configured must behave exactly
-      // as it did before. This is the desktop's normal state, so a change here would be user-visible.
-      setupEdge();
-      const socket = dispatch("GET", "/", "localhost");
-
-      expect(written(socket)).toContain(HOME_PAGE);
-      expect(http.request).not.toHaveBeenCalled();
-    });
-
-    it("proxies the engine's OWN domain to the GUI's port", () => {
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET, hostDomain: "engine.test" });
-
-      dispatch("GET", "/", "engine.test");
-
-      expect(lastUpstream()).toMatchObject({ hostname: "127.0.0.1", port: 5753, path: "/" });
-    });
-
-    it("proxies `localhost` to the GUI's port", () => {
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET });
-
-      dispatch("GET", "/", "localhost");
-
-      expect(lastUpstream()).toMatchObject({ hostname: "127.0.0.1", port: 5753 });
-    });
-
-    it("proxies a bare IPv4 literal — `isLocalAddress`, not `isLoopbackHost`", () => {
-      // Any IP, not only 127.0.0.1: an edge bound to a LAN address is reached at 192.168.x.x, which is not
-      // loopback and *is* the machine. §3.3's row is "the GUI, by bare IP or localhost".
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET });
-
-      dispatch("GET", "/", "192.168.1.9:8080");
-
-      expect(lastUpstream()).toMatchObject({ hostname: "127.0.0.1", port: 5753 });
-    });
-
-    it("proxies an IPv6 literal — and this is what `hostnameOf()` exists for", () => {
-      /**
-       * `Host: [::1]:80` used to be split on `:` and yield `"["`, so the host never matched anything and a
-       * user reaching the engine at `http://[::1]/` got the home page with no way to tell why. The assertion
-       * is on the *routing*, not on the helper, so the fix is pinned where it matters.
-       */
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET });
-
-      dispatch("GET", "/", "[::1]:80");
-
-      expect(lastUpstream()).toMatchObject({ hostname: "127.0.0.1", port: 5753 });
-    });
-
-    it("forwards the request's own path, not `/`", () => {
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET });
-
-      dispatch("GET", "/assets/index-BReTkzh5.js", "localhost");
-
-      expect(lastUpstream()).toMatchObject({ path: "/assets/index-BReTkzh5.js" });
-    });
-
-    it("does NOT claim a *.localhost subdomain — that is still a workspace mapping", () => {
-      // The bare name is the machine; a subdomain is a name someone claimed. `"localhost".endsWith(".localhost")`
-      // is false, which is what makes the two separable at all.
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(
-        { ...baseConfig, mappings: [{ id: "m1", domain: "api.localhost", target: "127.0.0.1:3001", enabled: true }] },
-        { guiTarget: GUI_TARGET },
-      );
-
-      dispatch("GET", "/thing", "api.localhost");
-
-      expect(lastUpstream()).toMatchObject({ hostname: "127.0.0.1", port: 3001 });
-    });
-
-    it("WINS over a workspace mapping for the same host — it is the global one", () => {
-      /**
-       * The precedence, and it is a decision rather than an accident: the `Host` this engine answers as is a
-       * *deployment* fact and the mapping table is a *workspace* one, so the deployment wins. The other order
-       * would make the GUI disappear the moment anyone mapped its name — which reads as a bug for a long time
-       * before it reads as a rule.
-       */
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(
-        { ...baseConfig, mappings: [{ id: "m1", domain: "localhost", target: "127.0.0.1:3001", enabled: true }] },
-        { guiTarget: GUI_TARGET },
-      );
-
-      dispatch("GET", "/", "localhost");
-
-      expect(lastUpstream()).toMatchObject({ port: 5753 });
-      expect(lastUpstream()).not.toMatchObject({ port: 3001 });
-    });
-
-    it("leaves an unrelated, unmapped host on the home page", () => {
-      // The GUI claims *this machine's* addresses, not every address the edge sees. A host nobody mapped and
-      // that is not this engine's own name still gets the directory page.
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET, hostDomain: "engine.test" });
-
-      const socket = dispatch("GET", "/", "somewhere.else");
-
-      expect(written(socket)).toContain(HOME_PAGE);
-      expect(http.request).not.toHaveBeenCalled();
-    });
-
-    it("logs the request as a mapping, naming the GUI's port as the target", async () => {
-      /**
-       * `via: "mapping"` rather than a new value, because that is what it is — the request genuinely went
-       * through a target, and `target` names where. That is how an operator sees the base domain pointing at
-       * the GUI's port. A distinct label would need the protocol's `via` union widened and the UI's badge
-       * taught, which correctness here does not require.
-       */
-      const { mockRes } = wireUpstream();
-      setupEdge(baseConfig, { guiTarget: GUI_TARGET });
-
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-      dispatch("GET", "/", "localhost");
-      await new Promise((r) => setTimeout(r, 0));
-
-      mockRes.emitData();
-      mockRes.emitEnd();
-      await new Promise((r) => setTimeout(r, 10));
-
-      expect(emitted[0]?.via).toBe("mapping");
-      expect(emitted[0]?.target).toBe(GUI_TARGET);
-      logEmitter.removeAllListeners("request");
-    });
-  });
 });

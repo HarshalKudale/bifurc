@@ -13,14 +13,13 @@
  * test adapted to a function that is gone would be a test of nothing, and the project's own rule is that an
  * assertion has to be able to fail.
  *
- * ## What is left, and the two shapes it has to cover
+ * ## What is left, and the one shape it has to cover
  *
- * `plan/17` §1's port table has exactly two shapes of listener that need *finding*:
+ * `plan/17` §1's port table has exactly one shape of listener that needs *finding*:
  *
  * | Finder | For |
  * |---|---|
- * | `findFreePortFrom` | a single port — Electron's companion, which has no GUI neighbour |
- * | `findPortPair` | the companion **and** the web GUI, which must be adjacent |
+ * | `findFreePortFrom` | a single port — the companion |
  *
  * The three ports that are **bound rather than found** — the edge, the forward proxy and the webhook — have
  * no finder to test. What they do have is a *failure* rule (fail loudly, do not move), and that is asserted
@@ -40,10 +39,8 @@ import * as net from "net";
 
 import {
   findFreePortFrom,
-  findPortPair,
   nextFreePortAbove,
   tryBind,
-  webGuiPortFor,
 } from "@bifurc/engine/runtime/portAllocator";
 
 /** Ports this file holds open, released in `afterEach` so a failure cannot leak into the next case. */
@@ -142,11 +139,11 @@ async function holdBaseWithFreeSuccessors(successors: number): Promise<number> {
 }
 
 /**
- * The mirror of `holdBaseWithFreeSuccessors()` for the **pair** finder, which needs its `base` to be *free*
- * rather than held: a port that is free together with `successors` free ports above it.
+ * The mirror of `holdBaseWithFreeSuccessors()` for the cases that need their `base` to be *free* rather than
+ * held: a port that is free together with `successors` free ports above it.
  *
- * It cannot use `holdPort()` for the base, because holding it is exactly what `findPortPair` is supposed to
- * walk past — and that would turn *"the pair starts at the base"* into an untestable assertion. So it takes
+ * It cannot use `holdPort()` for the base, because holding it is exactly what a finder is supposed to walk
+ * past — and that would turn *"the finder returns the base itself"* into an untestable assertion. So it takes
  * the same check-then-use bargain, on the same terms and with the same residual window.
  */
 async function freeBaseWithFreeSuccessors(successors: number): Promise<number> {
@@ -218,70 +215,6 @@ describe("findFreePortFrom() — the single-port finder (Electron's companion)",
     // about to take would be a race against itself.
     const base = await holdBaseWithFreeSuccessors(2);
     expect(await findFreePortFrom(base, new Set<number>([base + 1]))).toBe(base + 2);
-  });
-});
-
-describe("findPortPair() — the companion and the web GUI, which must be adjacent", () => {
-  it("returns the base pair when both halves are free", async () => {
-    const base = await freeBaseWithFreeSuccessors(1);
-    expect(await findPortPair(base)).toEqual({ companionPort: base, webGuiPort: base + 1 });
-  });
-
-  /**
-   * **The load-bearing case, and the reason this finder exists at all.**
-   *
-   * `plan/17` §1: *"`n` free with `n + 1` taken is a **failed** start, not a usable one."* A finder that
-   * checked one port at a time would return `{ companionPort: base }` here and leave the GUI with nowhere to
-   * live — and the GUI is what the edge's global mapping points at, so the failure would surface as a dead
-   * base domain rather than as a port error.
-   */
-  it("skips a candidate whose successor is taken, rather than returning half a pair", async () => {
-    const base = await freeBaseWithFreeSuccessors(3);
-    await holdPort(base + 1);
-
-    // `base` is free, but `base + 1` is not — so the pair is `base + 2` / `base + 3`, not `base` / taken.
-    expect(await findPortPair(base)).toEqual({ companionPort: base + 2, webGuiPort: base + 3 });
-  });
-
-  it("skips a pair whose first half is reserved", async () => {
-    const base = await freeBaseWithFreeSuccessors(2);
-    expect(await findPortPair(base, new Set<number>([base]))).toEqual({
-      companionPort: base + 1,
-      webGuiPort: base + 2,
-    });
-  });
-
-  it("skips a pair whose second half is reserved", async () => {
-    // The `reserved` set is honoured for **both** halves, so a pair cannot straddle a port the caller is
-    // about to bind. Reserving only the first half would be the narrower guard and the wrong one: the GUI's
-    // port is as much the caller's as the companion's.
-    const base = await freeBaseWithFreeSuccessors(3);
-    expect(await findPortPair(base, new Set<number>([base + 1]))).toEqual({
-      companionPort: base + 2,
-      webGuiPort: base + 3,
-    });
-  });
-
-  it("returns null when the range cannot hold a pair", async () => {
-    // Hold the last two ports, so no adjacent pair exists at the top of the space.
-    await holdPort(65534);
-    await holdPort(65535);
-    expect(await findPortPair(65534)).toBeNull();
-  });
-});
-
-describe("webGuiPortFor() — derived from the companion, never a second setting", () => {
-  it("is the companion's port plus one", () => {
-    expect(webGuiPortFor(4747)).toBe(4748);
-  });
-
-  it("is a pure function of its argument, so the pair cannot be configured apart", () => {
-    // The property that matters is not the arithmetic but the *absence of a second input*: the GUI port is
-    // served **with** the companion's port handed to it, so an independently settable GUI port would be a
-    // way to configure the pair into a state where the GUI looks for the companion somewhere it is not.
-    // Asserted as a function of two different bases so it cannot pass by returning a constant.
-    expect(webGuiPortFor(1000)).toBe(1001);
-    expect(webGuiPortFor(65533)).toBe(65534);
   });
 });
 

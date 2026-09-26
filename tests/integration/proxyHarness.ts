@@ -425,13 +425,12 @@ export interface RunningProxy {
  * Two free ports are requested up front (and re-requested if they collide, which they can under parallel
  * load) because `getFreePort()` is bind-then-close: the port is a reservation, not a guarantee.
  *
- * `opts` carries the edge options that describe a **deployment** rather than a request — `plan/15` work item
- * 5's `guiTarget` and `plan/15` work item 9's `hostDomain`. Both are absent by default, which is the state
- * every suite written before work item 5 was written against, so adding them here moved no existing case.
+ * **It takes no options, and that is new.** It carried `plan/15` work item 9's `hostDomain` until 2026-09-26,
+ * when the edge stopped taking its own name — that option went with the web GUI's global mapping, which was
+ * its only reader. No caller ever passed anything else, so the parameter is gone rather than left as an empty
+ * object every call site has to type.
  */
-export async function startProxy(
-  opts: { guiTarget?: string; hostDomain?: string } = {},
-): Promise<RunningProxy> {
+export async function startProxy(): Promise<RunningProxy> {
   const port = await getFreePort();
   let edgePort = await getFreePort();
   while (edgePort === port) edgePort = await getFreePort();
@@ -449,8 +448,6 @@ export async function startProxy(
   // switches the active workspace mid-test is answered correctly on the next request.
   const edge: EdgeRouterInstance = createEdgeRouter({
     resolveConfig: () => instance.dispatchConfig(),
-    guiTarget: opts.guiTarget,
-    hostDomain: opts.hostDomain,
   });
   edge.start(edgePort);
 

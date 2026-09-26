@@ -82,12 +82,10 @@ import {
   bindWebhookInstance,
   type WebhookServerInstance,
 } from "../proxy/webhookServer";
-// The **pair** finder, its derived-port helper, and its bound: the companion and the web GUI are one
-// decision (`plan/17` §1), so a host that starts them uses `findPortPair` and takes the GUI port from
-// `webGuiPortFor()` rather than writing `+ 1` a second time — a rule with two homes is a rule that drifts.
-// `findFreePortFrom` — the *single*-port finder — belongs to Electron, which has no GUI port to pair with,
-// and is deliberately not imported here.
-import { findPortPair, nextFreePortAbove, webGuiPortFor, SCAN_LIMIT } from "./portAllocator";
+// The **single**-port finder and the bound on its scan. The companion is the one listener whose port is
+// *found* rather than bound (`plan/17` §1): the host scans upward from `settings.companionPort`, skipping the
+// ports it has already bound, so the port a client is told to connect to is one that is really free.
+import { findFreePortFrom, nextFreePortAbove, SCAN_LIMIT } from "./portAllocator";
 
 /**
  * How the RPC endpoint is exposed. D13: **one** endpoint per host, not one per workspace.
@@ -133,19 +131,6 @@ export interface WorkspaceHostOptions {
    * answer.
    */
   edgePort?: number;
-  /**
-   * Where the **web GUI** is served — `plan/15` work item 5's `--gui-target`. `host:port`, or a bare port
-   * meaning loopback. Omitted → no GUI mapping, and the base domain falls through to the home page.
-   *
-   * The edge reverse-proxies its own domain (and `localhost`, and a bare IP) to this target, so the GUI is
-   * *"just another reverse-proxy mapping"* — the same machinery as any workspace mapping, and a GUI served
-   * by nginx or `vite preview` is indistinguishable from one this repository built.
-   *
-   * **No default, deliberately.** A plausible-looking default would forward the base domain to a dead port
-   * and answer **502** on a fresh install — worse than the home page, and misleading because it looks like a
-   * bug rather than an unconfigured feature.
-   */
-  guiTarget?: string;
   /** Reported to clients in `hello`. Defaults to the `@bifurc/protocol` version, as the transports do. */
   engineVersion?: string;
   bus?: EngineEventBus;
@@ -208,15 +193,12 @@ export interface WorkspaceHostStatus {
   /** Whatever the webhook receiver reported on a failed bind, if anything. */
   webhookError: string | null;
   /**
-   * The **companion** — the RPC endpoint over WebSocket that the extension and the web GUI connect to — and
-   * the web GUI's port, which is **derived** as `companionPort + 1`.
+   * The **companion** — the RPC endpoint over WebSocket that the browser extension connects to.
    *
-   * Both are `null` when this host runs no companion, which is the default: a `--ws-host`/`--ws-port` host
-   * has one, and a socket-transport host does not.
+   * `null` when this host runs no companion, which is the default: a `--ws-port` host has one, and a
+   * socket-transport host does not.
    */
   companionPort: number | null;
-  /** The derived GUI port, reported so the image's entrypoint can serve the GUI on it. Never a setting. */
-  webGuiPort: number | null;
   /**
    * The workspaces this host serves, in start order.
    *
@@ -309,9 +291,8 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   let edge: EdgeRouterInstance | null = null;
   /** The edge's URL. Set when the edge is created, and read only while it is running. */
   let edgeUrl = "";
-  /** The resolved companion port and its derived GUI neighbour — `plan/17` §5 work item 4. */
+  /** The resolved companion port — `plan/17` §5 work item 4. */
   let companionPort: number | null = null;
-  let webGuiPort: number | null = null;
   /** What `status()` lists as served. Config scope only — see `WorkspaceHostStatus.workspaces`. */
   let served: { workspaceId: string; name: string; active: boolean }[] = [];
   let rpcAddress = "";
@@ -337,7 +318,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       webhookPort: webhook !== null && webhook.isRunning() ? webhook.getPort() : null,
       webhookError: webhook?.getError() ?? null,
       companionPort,
-      webGuiPort,
       workspaces: served,
     };
   }
@@ -577,24 +557,9 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     const edgePortWanted = opts.edgePort ?? settings.port;
     edge = createEdgeRouter({
       bindHost: edgeBindHost,
-      /**
-       * Branch G's first gate — `plan/15` work item 5. `domain` is the host's own name, `localhost` since the
-       * `--domain` flag was removed (2026-09-24), and already advertised to clients as `hello`'s
-       * `hostDomain`; this is the second reader, and §3.3 predicted it. Passing it is what makes the base
-       * domain serve the GUI.
-       */
-      hostDomain: domain,
-      /**
-       * `plan/15` work item 5 — the **global mapping** from this host's own domain (and `localhost`, and a
-       * bare IP literal) to the port the web GUI is served on. `--gui-target` or `BIFURC_GUI_TARGET`,
-       * resolved by `hostArgs.ts`; **absent means no GUI mapping**, and the base domain falls through to the
-       * home page exactly as it did before this work item.
-       *
-       * **This is the flag a container sets.** `plan/16` Proposal A is one image carrying both halves, and
-       * the GUI's own server is a separate process that image starts — which is why this names a *target*
-       * rather than a directory the engine would have to serve itself.
-       */
-      guiTarget: opts.guiTarget,
+      // No `hostDomain` — the edge stopped taking its own name on 2026-09-26, with the web GUI's global
+      // mapping (`EdgeRouterOptions` carries the reasoning). `domain` is still composed and still reaches
+      // clients as `hello`'s `hostDomain`; that is the transport's field, and a different thing.
       resolveConfig: () => {
         const activeId = loadSettings().activeWorkspaceId;
         /**
@@ -730,49 +695,44 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       rpcAddress = path;
     } else {
       /**
-       * ## The companion and the web GUI are one decision — `plan/17` §5 work item 4
+       * ## The companion's port is **found**, not bound — `plan/17` §5 work item 4
        *
-       * `plan/17` §1: *"The companion starts **first**; the GUI starts second **with the companion's port
-       * passed to it**, so it knows where to connect without being told. A **base** port is the starting
-       * point and the search walks upward **in pairs** — `n` and `n + 1` must **both** be free, because `n`
-       * free with `n + 1` taken is a **failed** start, not a usable one."*
+       * `plan/17` §1: *"Electron has no GUI port, so it checks only the companion's `n` — requiring `n + 1`
+       * to be free there would refuse a port for a neighbour it is never going to use."* So when the transport
+       * carries **no** explicit port, the host scans upward from `settings.companionPort` for a single free
+       * port.
        *
-       * So the port is no longer `transport.port ?? 0`. **`0` was the one value a companion must never
-       * take:** it means "the OS picks", and a client — the extension, the web GUI — has to be *told* where
-       * to connect, so a port that moves cannot be found. This is `plan/15` §3.1's own rule (*a port belongs
-       * to the thing that has to be addressed once*) applied to the second thing that has two addresses.
+       * **`0` was the one value a companion must never take:** it means "the OS picks", and a client — the
+       * extension — has to be *told* where to connect, so a port that moves cannot be found. This is
+       * `plan/15` §3.1's own rule (*a port belongs to the thing that has to be addressed once*) applied to the
+       * second thing that has an address.
        *
-       * `reserved` is what keeps the scan off the ports this host already bound. Without it the pair finder
-       * could hand back `80` (the edge) or `8080` (the forward proxy) as the companion's port, and the
-       * failure would surface as a `listen()` that fails *after* the host had reported the port it
-       * "resolved" — the same TOCTOU shape `portAllocator.ts`'s header warns about, one layer up.
+       * `reserved` is what keeps the scan off the ports this host already bound. Without it the finder could
+       * hand back `80` (the edge) or `8080` (the forward proxy) as the companion's port, and the failure would
+       * surface as a `listen()` that fails *after* the host had reported the port it "resolved" — the same
+       * TOCTOU shape `portAllocator.ts`'s header warns about, one layer up.
        */
       const reserved = new Set<number>([edgePortWanted, forwardProxyPortWanted]);
       if (transport.port === undefined || transport.port === 0) {
-        const pair = await findPortPair(settings.companionPort, reserved);
-        if (pair === null) {
+        const found = await findFreePortFrom(settings.companionPort, reserved);
+        if (found === null) {
           /**
-           * `plan/17` §1 says the pair search **"never fails"**, and that is true of a real machine — a free
-           * adjacent pair is eventually found. This is the bound on "eventually": `SCAN_LIMIT` ports above
-           * the base. Throwing names the base rather than reporting a port that could not be bound, which is
-           * the failure `webGuiPortFor()`'s own docblock exists to prevent.
+           * `plan/17` §1's search **"never fails"** on a real machine — a free port is eventually found. This
+           * is the bound on "eventually": `SCAN_LIMIT` ports above the base. Throwing names the base rather
+           * than reporting a port that could not be bound.
            */
           throw new Error(
-            `No free companion/GUI port pair within ${SCAN_LIMIT} of ${settings.companionPort} — the ` +
-              `companion needs two adjacent free ports. Set a different base in Settings → Ports.`,
+            `No free companion port within ${SCAN_LIMIT} of ${settings.companionPort} — ` +
+              `set a different base in Settings → Ports.`,
           );
         }
-        companionPort = pair.companionPort;
-        webGuiPort = pair.webGuiPort;
+        companionPort = found;
       } else {
         // An explicit port is the operator's choice and is honoured as-is — the same rule the edge follows,
         // and for the same reason: a companion that moved would be one no client could find.
         companionPort = transport.port;
-        webGuiPort = webGuiPortFor(transport.port);
       }
-      notice(
-        `companion: ${companionPort} — the web GUI belongs on ${webGuiPort} (derived, companion + 1)`,
-      );
+      notice(`companion: ${companionPort}`);
 
       rpc = await createWsServer({
         registry,

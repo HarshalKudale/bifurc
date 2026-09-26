@@ -62,12 +62,9 @@ export interface AppSettings {
   /** The forward proxy. Host-level since 2026-09-25 — the port a browser's proxy setting names. */
   forwardProxyPort: number;
   /**
-   * The **companion** endpoint — the engine's RPC over WebSocket, which the extension and the web GUI connect
-   * to. **The only port whose change needs a restart**, and the restart is manual: the UI shows the new value
-   * as *"applicable on next restart"* rather than acting on it.
-   *
-   * The web GUI's port is **derived** as this `+ 1` and is deliberately not a setting — see
-   * `webGuiPortFor()`.
+   * The **companion** endpoint — the engine's RPC over WebSocket, which the browser extension connects to.
+   * **The only port whose change needs a restart**, and the restart is manual: the UI shows the new value as
+   * *"applicable on next restart"* rather than acting on it.
    */
   companionPort: number;
   minimizeToTray: boolean;
@@ -103,11 +100,11 @@ export const DEFAULT_FORWARD_PROXY_PORT = 8080;
 
 /**
  * The companion endpoint's default — **deliberately non-standard**, because it is the one port a client (the
- * extension, the web GUI) has to be pointed at, so it must not be a number another app is likely to want.
+ * browser extension) has to be pointed at, so it must not be a number another app is likely to want.
  *
- * It is also the **base the pair scan starts from** (`plan/17` §1): the companion binds `n`, the web GUI
- * binds `n + 1`, and the search walks upward until both are free. The base is therefore a **published
- * protocol fact** — the extension scans from the same number — not an implementation detail.
+ * It is also the **base the port scan starts from** (`plan/17` §1): the search walks upward from here until it
+ * finds a free port. The base is therefore a **published protocol fact** — the extension scans from the same
+ * number — not an implementation detail.
  */
 export const DEFAULT_COMPANION_PORT = 4747;
 

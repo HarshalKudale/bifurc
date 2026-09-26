@@ -42,7 +42,7 @@ import { startServer, isRunning, getPort, getServerError } from "./proxy/server"
 // module-level binding here rather than being found through it — which is what lets `config.save` re-bind it
 // when `settings.port` changes.
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./proxy/edge";
-import { DEFAULT_HOST_DOMAIN } from "./lib/net";
+// `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
 import { loadConfig } from "./store/config";
 import { bus, wireLogEventsToBus } from "./eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
@@ -86,16 +86,6 @@ export interface EngineOptions {
    * *blocking* is an open product decision, recorded in `plan/03`.
    */
   onPreflightWarning?: (check: StartupCheck) => void;
-  /**
-   * `plan/15` work item 5 — where the **web GUI** is served, so the edge can carry a global mapping from
-   * this engine's own address to it. `host:port`, or a bare port meaning loopback.
-   *
-   * **Optional with no default, and the absence is meaningful**: the desktop's own window *is* the GUI, so
-   * an engine that invented a port would forward `localhost:80` to nothing and answer 502. Set this only
-   * when something is really serving the bundle — `npm run dev:web` (5199), `vite preview`, nginx, or any
-   * other static server. See `EdgeRouterOptions.guiTarget`.
-   */
-  guiTarget?: string;
 }
 
 export interface EngineStatus {
@@ -299,29 +289,9 @@ export function createEngine(opts: EngineOptions): Engine {
      */
     edge = createEdgeRouter({
       resolveConfig: () => loadConfig(),
-      /**
-       * `localhost`, and since 2026-09-24 that is the only value any engine has: the `--domain` flag is gone
-       * because the engine is no longer deployable in the cloud (`runtime/hostArgs.ts`'s header records why),
-       * and `runtime/host.ts` composes this same constant for a headless host. So the desktop and the container
-       * agree here by construction rather than by a default that happens to match.
-       *
-       * This is branch G's first gate, so getting it wrong here would send the base domain to the home page
-       * instead of the GUI.
-       */
-      hostDomain: DEFAULT_HOST_DOMAIN,
-      /**
-       * `plan/15` work item 5 — the **global mapping** from this engine's own address to the web GUI's own
-       * port. `undefined` by default.
-       *
-       * **No default, deliberately.** The desktop's own window *is* the GUI, so an engine that invented a
-       * port here would forward `localhost:80` to nothing and answer **502** — a worse failure than the home
-       * page it replaced, and a misleading one, because it looks like a bug rather than an unconfigured
-       * feature. A shell that wants the browser GUI on the base domain sets `EngineOptions.guiTarget`; a
-       * headless host sets `--gui-target` or `BIFURC_GUI_TARGET`.
-       *
-       * See `EdgeRouterOptions.guiTarget` for why this is a *target* rather than a directory.
-       */
-      guiTarget: opts.guiTarget,
+      // No `hostDomain`: the edge stopped taking its own name on 2026-09-26, when the web GUI's global
+      // mapping went. `EdgeRouterOptions` carries the reasoning — the only branch that asked the question was
+      // the one this removal deleted.
     });
     /**
      * ## `plan/17` §5 work item 7 — the edge is *named* to the module-level binding
@@ -561,9 +531,7 @@ export { registerAllEngineCommands, registerAllEngineKinds } from "./registerAll
 // `plan/17` §5 work item 2 — what is left of D16's allocator: **finding** ports, not allocating them per
 // workspace. The per-workspace machinery (`allocatePorts`, `PortUnavailableError`,
 // `PortRangeExhaustedError`, `AllocatedPorts` and its provenance flags) was deleted along with the model that
-// needed it. Two finders remain, because the port table has two shapes of listener: `findFreePortFrom` for a
-// single port (Electron's companion, which has no GUI neighbour) and `findPortPair` for the companion + web
-// GUI pair.
+// needed it. One finder remains — `findFreePortFrom`, for the single companion port (Electron's path).
 export * as ports from "./runtime/portAllocator";
 export * as sync from "./sync/syncManager";
 export * as applications from "./applications/processSpawner";
