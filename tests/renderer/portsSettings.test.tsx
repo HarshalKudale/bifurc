@@ -43,20 +43,15 @@ describe("PortsSettingsSection", () => {
     expect(valueOf(strings.settings.companionPort)).toBe("4747");
   });
 
-  it("offers exactly four ports — the web GUI's derived port is not a setting", () => {
+  it("offers exactly four ports — one per host-level port", () => {
     render(<PortsSettingsSection config={cfg()} onConfigChange={vi.fn()} />);
 
     const inputs = screen.getAllByRole("spinbutton");
     expect(inputs).toHaveLength(4);
-    for (const input of inputs) {
-      expect(input.getAttribute("aria-label") ?? "").not.toMatch(/gui/i);
-    }
-  });
-
-  it("states that the web GUI's port is derived", () => {
-    render(<PortsSettingsSection config={cfg()} onConfigChange={vi.fn()} />);
-
-    expect(screen.getByText(strings.settings.portsDerivedNote)).toBeInTheDocument();
+    // This case also asserted that no input carried a `gui` label, because a *fifth*, derived port — the web
+    // GUI's, `companionPort + 1` — was the thing that must never become a setting. The browser host was
+    // decommissioned on 2026-09-26 and that port does not exist any more, so the guard lost its subject and
+    // the count is the whole assertion.
   });
 
   it("commits a new forward proxy port on blur, carrying every other field through", () => {

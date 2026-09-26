@@ -61,10 +61,9 @@
  *    a capability that rots.
  *
  * **What read it now reads the constant.** `plan/15` §3.3's routing table still needs to know which `Host` is
- * the engine's own before serving the GUI (work item 5) and §4.3's mapping editor still needs the suffix to
- * suggest (work item 7) — both get `localhost`, and the client still learns it from `hello`'s `hostDomain`
- * rather than guessing it, because §4.1 is explicit that the client does not guess this. See
- * `lib/net.ts#DEFAULT_HOST_DOMAIN`.
+ * the engine's own, and §4.3's mapping editor still needs the suffix to suggest (work item 7) — both get
+ * `localhost`, and the client still learns it from `hello`'s `hostDomain` rather than guessing it, because
+ * §4.1 is explicit that the client does not guess this. See `lib/net.ts#DEFAULT_HOST_DOMAIN`.
  */
 
 /** The parsed command line. `dataDir` is the one required field — see `parseHostArgs`. */
@@ -97,18 +96,6 @@ export interface HostArgs {
    * container's volume.
    */
   edgePort?: number;
-  /**
-   * Where the **web GUI** is served — `plan/15` work item 5. `host:port`, or a bare port meaning loopback.
-   * Omitted → no GUI mapping, and the base domain falls through to the home page.
-   *
-   * Carried as a *target* rather than a directory because the edge reverse-proxies to it: the GUI is then
-   * *"just another reverse-proxy mapping"*, served by the same machinery as any workspace mapping, and a GUI
-   * run by nginx or `vite preview` is indistinguishable from one this repository built.
-   *
-   * Set by `--gui-target` or `BIFURC_GUI_TARGET`; the flag wins, so a one-off run can override an image's
-   * default.
-   */
-  guiTarget?: string;
 }
 
 export type HostArgsResult =
@@ -125,8 +112,7 @@ A workspace host: N workspaces behind ONE RPC endpoint, no app-level singleton s
 
 Every listener binds loopback and there is no way to change that: the engine is not deployable in the
 cloud, so every client is on this machine. It answers as "localhost" — a subdomain of it
-(<sub>.localhost) is a reverse-proxy mapping, the base domain itself serves the web GUI when
---gui-target is given, and the mapping directory otherwise.
+(<sub>.localhost) is a reverse-proxy mapping, and the base domain itself serves the mapping directory.
 
 Required
   --data-dir <path>       The data root. Holds app.json, the workspaces and the blob store.
@@ -143,70 +129,26 @@ Options
                           for the whole host (plan/15 §3.1). Defaults to the port in app.json (80),
                           which is the port existing *.localhost mappings already point at, so no
                           existing mapping has to change.
-  --gui-target <host:port>
-                          Serve the web GUI on the base domain — localhost, and any bare IP. The edge
-                          reverse-proxies those hosts here, so the GUI is just
-                          another reverse-proxy mapping — run it with npm run dev:web, vite preview,
-                          nginx, or anything else that serves dist/web. A bare port means
-                          127.0.0.1:<port>, so "--gui-target 5753" is the short form.
-                          Omitted: no GUI mapping, and the base domain shows the home page. There is
-                          no default port on purpose — a wrong one would answer 502 on a fresh
-                          install, which reads as a bug rather than as an unconfigured feature.
   -h, --help              Print this.
 
 Environment
   BIFURC_PROXY_BASE_PORT   Moves the proxy base port (D16). The base is 80 on Windows and 8080
                            elsewhere; each further workspace counts up from it.
   BIFURC_DATA_DIR          The data root, if not passed via --data-dir.
-  BIFURC_GUI_TARGET        The web GUI's address, if not passed via --gui-target. The flag wins.
 
 Documented deployment: one container = one workspace, one volume = that workspace's data/ + blobs/.
 N workspaces per host is supported but not recommended — one per volume makes the volume, the ports
 and the lifecycle line up.`;
 
 /**
- * `host:port` → itself; a bare port → `127.0.0.1:<port>`; anything else → `null`.
- *
- * ## Why a bare port is accepted
- *
- * Because that is how the owner described it — *"some different server like 5753 or any other port"* — and
- * requiring `127.0.0.1:` in front of a number would be ceremony for what is the common case: a GUI on this
- * machine. **The rule is unambiguous, which is what makes the convenience safe: all digits means a port.** No
- * value can be read two ways, so there is no guessing and no precedence to document.
- *
- * ## Why the address is not validated
- *
- * `--proxy-bind-host`'s old rule, which is the rule this file still applies to every *address*: the only
- * question asked here is whether the value parses as a *target*, which is a fact about the string; whether
- * the host resolves is a fact about the network, and checking it at startup would be a second opinion taken
- * at the wrong moment — `proxyToUpstream()` is the module that acts on it, and a dead target there is a
- * **502**, which is the honest answer and the one an operator can act on.
- *
- * The bracketed IPv6 form is accepted (`[::1]:5753`) because `proxyToUpstream()` consumes `host:port` and an
- * IPv6 host cannot be written any other way.
+ * Flags that take a value. Kept as a table so "does this flag need an argument?" has one answer.
  */
-function normalizeGuiTarget(value: string): string | null {
-  const trimmed = value.trim();
-
-  if (/^\d+$/.test(trimmed)) {
-    const port = Number(trimmed);
-    return port <= 65535 ? `127.0.0.1:${port}` : null;
-  }
-
-  const match = /^(\[[^\]]+\]|[^\s:]+):(\d+)$/.exec(trimmed);
-  if (match === null) return null;
-  const port = Number(match[2]);
-  return port <= 65535 ? `${match[1]}:${port}` : null;
-}
-
-/** Flags that take a value. Kept as a table so "does this flag need an argument?" has one answer. */
 const VALUE_FLAGS = new Set([
   "--data-dir",
   "--rpc-socket",
   "--ws-port",
   "--workspace",
   "--edge-port",
-  "--gui-target",
 ]);
 
 /**
@@ -250,7 +192,6 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
   let rpcSocket: string | undefined;
   let wsPort: number | undefined;
   let edgePort: number | undefined;
-  let guiTarget: string | undefined;
   const workspaceIds: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -332,29 +273,6 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
         edgePort = parsed;
         break;
       }
-      case "--gui-target": {
-        /**
-         * A `host:port` target, or a bare port meaning loopback.
-         *
-         * **The shape is validated, the address is not** — the split `--domain` used to draw, and the reason
-         * the bind hosts deliberately never did. The shape is what `proxyToUpstream()` consumes, so a bare
-         * `example.com` would reach it as a target with no port and fail **at request time** rather than at
-         * startup; that is a fact this parser can be certain about. Whether the host resolves is not, and
-         * checking it here would be a second opinion taken at the wrong moment.
-         */
-        const normalized = normalizeGuiTarget(value);
-        if (normalized === null) {
-          return {
-            kind: "error",
-            message:
-              `--gui-target must be "host:port" or a bare port (got ${JSON.stringify(value)}). ` +
-              `Use "127.0.0.1:5753" for a GUI on this machine, or "gui.internal:8080" for one elsewhere.` +
-              `\n\n${HOST_USAGE}`,
-          };
-        }
-        guiTarget = normalized;
-        break;
-      }
     }
   }
 
@@ -363,33 +281,6 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       kind: "error",
       message: `--data-dir is required (or set BIFURC_DATA_DIR).\n\n${HOST_USAGE}`,
     };
-  }
-
-  /**
-   * ## `BIFURC_GUI_TARGET` — the container's spelling of `--gui-target`
-   *
-   * The flag wins when both are given, so a one-off run can override an image's default. The env var exists
-   * because that is how this repo's other deployment settings are carried (`BIFURC_DATA_DIR`,
-   * `BIFURC_PROXY_BASE_PORT`) and because `plan/16` Proposal A's single image is the intended consumer.
-   *
-   * **A malformed value is an error rather than ignored.** This is a *deployment* setting, and a typo that
-   * silently dropped the GUI mapping would be indistinguishable from having configured none — which is the
-   * failure mode this whole option's "no default" reasoning is about, arriving through a different door.
-   */
-  if (guiTarget === undefined) {
-    const fromEnv = process.env.BIFURC_GUI_TARGET;
-    if (fromEnv !== undefined && fromEnv.trim() !== "") {
-      const normalized = normalizeGuiTarget(fromEnv.trim());
-      if (normalized === null) {
-        return {
-          kind: "error",
-          message:
-            `BIFURC_GUI_TARGET must be "host:port" or a bare port (got ${JSON.stringify(fromEnv)}).` +
-            `\n\n${HOST_USAGE}`,
-        };
-      }
-      guiTarget = normalized;
-    }
   }
 
   /**
@@ -425,7 +316,6 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       // Left `undefined` when absent so the host applies its own default — `app.json`'s `port` — rather
       // than the parser inventing one here, which would put the migration decision in a second place.
       edgePort,
-      guiTarget,
     },
   };
 }

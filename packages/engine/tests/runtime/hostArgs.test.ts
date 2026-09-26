@@ -55,7 +55,6 @@ const DOCUMENTED_FLAGS = [
   "--ws-port",
   "--workspace",
   "--edge-port",
-  "--gui-target",
   "--help",
 ];
 
@@ -64,7 +63,8 @@ describe("parseHostArgs", () => {
     const res = parseHostArgs(["--data-dir", "/data"]);
     // The whole shape, so a field that is parsed but never surfaced (or surfaced but never parsed) shows up
     // here. It used to be longer: `wsHost` and `tokenFile` went with the bind opt-ins and the engine token
-    // on 2026-09-25, leaving the six fields below — `dataDir` plus the five optional ones.
+    // on 2026-09-25, and the web-GUI target went when the web UI host was decommissioned — leaving `dataDir`
+    // plus the four optional ones below.
     expect(res).toEqual({
       kind: "args",
       args: {
@@ -73,7 +73,6 @@ describe("parseHostArgs", () => {
         wsPort: undefined,
         workspaceIds: undefined,
         edgePort: undefined,
-        guiTarget: undefined,
       },
     });
   });
@@ -231,16 +230,13 @@ describe("parseHostArgs", () => {
   });
 
   it("accepts the flags in any order", () => {
-    // A container's CMD is hand-written and the order is arbitrary; nothing here is positional. `--gui-target`
-    // stands in for the `--token-file` that used to be the leading flag of this case, and it is a better
-    // choice: it is the one option whose value is *rewritten* rather than passed through, so it also proves
-    // the rewriting does not depend on where in the line the flag appears.
-    const res = parseHostArgs(["--gui-target", "5753", "--data-dir", "/data", "--rpc-socket", "/run/s.sock"]);
+    // A container's CMD is hand-written and the order is arbitrary; nothing here is positional.
+    const res = parseHostArgs(["--edge-port", "8080", "--data-dir", "/data", "--rpc-socket", "/run/s.sock"]);
     expect(res.kind).toBe("args");
     if (res.kind === "args") {
       expect(res.args.dataDir).toBe("/data");
       expect(res.args.rpcSocket).toBe("/run/s.sock");
-      expect(res.args.guiTarget).toBe("127.0.0.1:5753");
+      expect(res.args.edgePort).toBe(8080);
     }
   });
 
@@ -256,7 +252,7 @@ describe("parseHostArgs", () => {
     for (const flag of DOCUMENTED_FLAGS) {
       expect(HOST_USAGE).toContain(flag);
     }
-    for (const env of ["BIFURC_PROXY_BASE_PORT", "BIFURC_DATA_DIR", "BIFURC_GUI_TARGET"]) {
+    for (const env of ["BIFURC_PROXY_BASE_PORT", "BIFURC_DATA_DIR"]) {
       expect(HOST_USAGE).toContain(env);
     }
   });
@@ -267,9 +263,8 @@ describe("parseHostArgs", () => {
     // an operator meets at the worst possible moment — mid-deployment, with no way to tell a typo from a version.
     //
     // `"x"` is passed as every value, which is why the assertion is "not an error that means the flag was
-    // *unknown*" rather than "parses". `--ws-port x` and `--edge-port x` fail their integer check and
-    // `--gui-target x` fails its shape check, each naming itself — **all of which prove the flag was
-    // recognised**, which is the entire question being asked here.
+    // *unknown*" rather than "parses". `--ws-port x` and `--edge-port x` fail their integer check, each
+    // naming itself — which proves the flag was **recognised**, the entire question being asked here.
     const documented = [...new Set(HOST_USAGE.match(/--[a-z][a-z-]*/g) ?? [])].filter((f) => f !== "--help");
     // Without this, a regex that silently matched nothing would make the loop below assert nothing at all — a
     // green test that cannot fail, which is worse than no test. Pinning the *set* rather than a count is what
@@ -431,83 +426,5 @@ describe("parseHostArgs — --edge-port (plan/15 work item 3)", () => {
       expect(res.args.rpcSocket).toBe("/run/bifurc.sock");
       expect(res.args.edgePort).toBe(8080);
     }
-  });
-});
-
-describe("parseHostArgs — --gui-target (plan/15 work item 5)", () => {
-  const withFlag = (...args: string[]) => parseHostArgs(["--data-dir", "/data", ...args]);
-
-  const guiTargetOf = (res: ReturnType<typeof parseHostArgs>): string | undefined => {
-    if (res.kind !== "args") throw new Error(`expected args, got ${res.kind}`);
-    return res.args.guiTarget;
-  };
-
-  it("expands a bare port to loopback — the short form the owner asked for", () => {
-    // The owner's own phrasing was *"some different server like 5753"* — a number, not an address — so
-    // requiring `127.0.0.1:` in front of it would be ceremony for the common case. The rule is unambiguous:
-    // all digits means a port.
-    expect(guiTargetOf(withFlag("--gui-target", "5753"))).toBe("127.0.0.1:5753");
-  });
-
-  it("passes a host:port through unchanged", () => {
-    expect(guiTargetOf(withFlag("--gui-target", "gui.internal:8080"))).toBe("gui.internal:8080");
-  });
-
-  it("accepts the bracketed IPv6 form, because proxyToUpstream needs one", () => {
-    // An IPv6 host cannot be written as `host:port` any other way, and `proxyToUpstream()` splits on the
-    // *last* colon — so `[::1]:5753` survives it intact and a bare `::1:5753` would not.
-    expect(guiTargetOf(withFlag("--gui-target", "[::1]:5753"))).toBe("[::1]:5753");
-  });
-
-  it("refuses a host with no port — the shape proxyToUpstream cannot consume", () => {
-    // A bare `example.com` would reach `proxyToUpstream()` as a target with no port and fail at *request*
-    // time. That is a fact about the string, so it is checked here rather than discovered in production.
-    const res = withFlag("--gui-target", "example.com");
-    expect(res.kind).toBe("error");
-    if (res.kind === "error") expect(res.message).toContain("--gui-target must be");
-  });
-
-  it("refuses a non-numeric port", () => {
-    expect(withFlag("--gui-target", "127.0.0.1:http").kind).toBe("error");
-  });
-
-  it("refuses a port above 65535 — in both forms", () => {
-    expect(withFlag("--gui-target", "70000").kind).toBe("error");
-    expect(withFlag("--gui-target", "127.0.0.1:70000").kind).toBe("error");
-  });
-
-  it("is undefined when neither the flag nor the env var is given", () => {
-    // `undefined` is the state that leaves the GUI mapping inert, which is the desktop's normal case — so it
-    // is asserted rather than assumed.
-    expect(guiTargetOf(withFlag())).toBeUndefined();
-  });
-
-  it("reads BIFURC_GUI_TARGET when the flag is absent — the container's spelling", () => {
-    vi.stubEnv("BIFURC_GUI_TARGET", "5753");
-    expect(guiTargetOf(withFlag())).toBe("127.0.0.1:5753");
-  });
-
-  it("lets the flag win over the env var, so a one-off run can override an image", () => {
-    vi.stubEnv("BIFURC_GUI_TARGET", "5753");
-    expect(guiTargetOf(withFlag("--gui-target", "gui.internal:8080"))).toBe("gui.internal:8080");
-  });
-
-  it("refuses a malformed env var rather than ignoring it", () => {
-    /**
-     * **The failure this guards is the one the whole option's "no default" reasoning is about**, arriving
-     * through a different door: a typo'd deployment setting that silently dropped the GUI mapping would be
-     * indistinguishable from having configured none. So it is loud.
-     */
-    vi.stubEnv("BIFURC_GUI_TARGET", "not-a-target");
-    const res = withFlag();
-    expect(res.kind).toBe("error");
-    if (res.kind === "error") expect(res.message).toContain("BIFURC_GUI_TARGET must be");
-  });
-
-  it("treats an empty env var as absent, not as an error", () => {
-    // A `BIFURC_GUI_TARGET=` line in a compose file is a way to clear the setting, and reading it as a
-    // malformed target would make "no GUI" impossible to express.
-    vi.stubEnv("BIFURC_GUI_TARGET", "   ");
-    expect(guiTargetOf(withFlag())).toBeUndefined();
   });
 });
