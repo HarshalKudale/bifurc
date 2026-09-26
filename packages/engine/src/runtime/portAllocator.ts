@@ -14,13 +14,12 @@
  * does workspace N get?"* — a question the new model does not ask. They are **deleted, not deprecated**:
  * leaving them behind would keep a second, contradictory answer to a question the host now answers once.
  *
- * What survives is finding, and there are exactly **two** kinds because the plan's port table has exactly
- * two shapes of listener:
+ * What survives is finding, and there is exactly **one** kind — the companion port, which a client has to be
+ * told:
  *
  * | Finder | For | Why this shape |
  * |---|---|---|
- * | `findFreePortFrom` | the **companion** on a host with no GUI (Electron) | one port, no neighbour to reserve |
- * | `findPortPair` | the **companion + web GUI** pair | `n` free with `n + 1` taken is a *failed* start, not a usable one |
+ * | `findFreePortFrom` | the **companion** | one port, no neighbour to reserve |
  *
  * Three ports are deliberately **not** found here, because they are bound rather than discovered — a port
  * that has to be *addressed* cannot move without breaking whoever addresses it:
@@ -92,10 +91,9 @@ export function tryBind(port: number, host = "127.0.0.1"): Promise<boolean> {
 /**
  * The first bindable port at or above `base`, or `null` if the whole range is taken.
  *
- * **The single-port finder** — for a listener with no neighbour it has to reserve. Its one caller is
- * Electron's companion port (`plan/17` §1: *"Electron has no GUI port, so it checks only the companion's
- * `n` — requiring `n + 1` to be free there would refuse a port for a neighbour it is never going to
- * use"*). The host's companion, which does have a GUI neighbour, uses `findPortPair` instead.
+ * **The single-port finder** — for a listener with no neighbour it has to reserve. Its one caller is the
+ * companion port (`plan/17` §1: *"Electron has no GUI port, so it checks only the companion's `n` — requiring
+ * `n + 1` to be free there would refuse a port for a neighbour it is never going to use"*).
  *
  * `reserved` ports are skipped **without binding them**. Skipping rather than binding matters for a port the
  * caller is about to take itself: binding one to test it would be a probe of a port already spoken for, and
@@ -112,45 +110,6 @@ export async function findFreePortFrom(
     // eslint-disable-next-line no-await-in-loop -- the scan is inherently sequential: each candidate must be
     // bound before the next is tried, or two starters scanning at once could both see the same port free.
     if (await tryBind(candidate)) return candidate;
-  }
-  return null;
-}
-
-/**
- * The web GUI's port, **derived** from the companion's.
- *
- * A function rather than a second setting, because the two are one decision: the GUI is served *with* the
- * companion's port handed to it, so an independently settable GUI port would be a way to configure the pair
- * into a state where the GUI looks for the companion somewhere it is not.
- */
-export function webGuiPortFor(companionPort: number): number {
-  return companionPort + 1;
-}
-
-/**
- * The first `n >= base` where **both** `n` and `n + 1` are free, or `null` if the range holds no such pair.
- *
- * The pair is the reason this is not `findFreePortFrom`: the companion and the GUI are started **together**,
- * the GUI is handed the companion's port, and the edge's global mapping points at the GUI — so `n` free with
- * `n + 1` taken is a **failed** start rather than a usable one. Checking the two one at a time would hand
- * back a companion port whose GUI has nowhere to live. The scan steps by **one** rather than two so a run of
- * adjacent free ports is used densely.
- *
- * `reserved` is honoured for both halves, so a pair cannot straddle a port the caller is about to bind.
- */
-export async function findPortPair(
-  base: number,
-  reserved: ReadonlySet<number> = new Set<number>(),
-): Promise<{ companionPort: number; webGuiPort: number } | null> {
-  for (let offset = 0; offset < SCAN_LIMIT; offset += 1) {
-    const companionPort = base + offset;
-    if (companionPort + 1 > 65535) return null;
-    if (reserved.has(companionPort) || reserved.has(companionPort + 1)) continue;
-    // eslint-disable-next-line no-await-in-loop -- sequential: the pair must be proven free before the next
-    // candidate is tried, or two starters scanning at once could both see the same pair free.
-    if ((await tryBind(companionPort)) && (await tryBind(companionPort + 1))) {
-      return { companionPort, webGuiPort: companionPort + 1 };
-    }
   }
   return null;
 }
