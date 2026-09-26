@@ -51,12 +51,9 @@ function usePortDraft(saved: number, commit: (port: number) => void) {
  * the GUI cannot verify. It becomes a conditional badge the day a command reports the live port, and not
  * before.
  *
- * **The web GUI has no row and no input.** Its port is derived as `companionPort + 1` and handed to the GUI at
- * start, so an independently settable GUI port would be a way to configure the pair into a state where the GUI
- * looks for the companion somewhere it is not. It is stated in the note below rather than shown as a number,
- * for two reasons: the arithmetic lives in the engine (`webGuiPortFor`), a Node module the browser bundle must
- * not pull in; and **Electron has no GUI port at all** — only the web host does — so a number here would be
- * wrong in the desktop app, where this same panel renders.
+ * **There is no GUI port, so there is no GUI row.** The web UI host was decommissioned — the desktop app is the
+ * single build target — so nothing serves a separate browser bundle and there is no companion-adjacent port to
+ * state. `plan/17` §1's pair (companion plus a GUI neighbour) is gone; the companion stands alone.
  */
 export default function PortsSettingsSection({ config, onConfigChange }: PortsSettingsSectionProps) {
   const edge = usePortDraft(config.port, (port) => onConfigChange({ ...config, port }));
@@ -137,10 +134,6 @@ export default function PortsSettingsSection({ config, onConfigChange }: PortsSe
           </div>
         </SettingsRow>
       </SectionCard>
-
-      <div className="mt-3 px-4 py-3 rounded border border-border bg-surface-2/40 text-xs text-muted-foreground leading-relaxed">
-        {strings.settings.portsDerivedNote}
-      </div>
     </section>
   );
 }

@@ -25,16 +25,14 @@
  * ## It is an `http.Server`, and it deliberately never touches `res`
  *
  * §3.3 specifies an `http`/`https` server and one `upgrade` handler, and that is what this is: the request
- * path carries a **global mapping from the base domain to the web GUI's own port** — `plan/15` **work item
- * 5, built 2026-09-24**, and *"just another reverse-proxy mapping"* rather than a feature this module owns
- * — and the `upgrade` event is where a WebSocket arrival will land (**work item 6, still reserved**). One of
- * the two is real now and the other has no placeholder, because a branch that returns "not built yet" would
- * be a routing decision nobody made.
+ * path routes a `Host` to a mapping or to the home page, and the `upgrade` event is where a WebSocket
+ * arrival will land (**work item 6, still reserved**). The request path is real now and the upgrade branch
+ * has no placeholder, because a branch that returns "not built yet" would be a routing decision nobody made.
  *
  * **The `upgrade` half used to say "the companion bridge", and that reader is now gone.** The companion
  * server was retired outright while implementing `plan/16` — it was a v1 frozen bridge the extension
  * connected to on its own port, never a client of this listener — so nothing upgrades here today. The
- * hook stays because §3.3 still reserves the branch; the arrival it will carry is the GUI's own socket.
+ * hook stays because §3.3 still reserves the branch.
  *
  * The reverse branch must hand a request to `proxyToUpstream()` / `serveMock()`, which write raw bytes
  * to a **socket**, and it cannot buffer instead: `handleProxyResponse()` streams, so buffering would
@@ -100,7 +98,6 @@ import {
 import { proxyToUpstream, fetchUpstreamResponse } from "./proxyHandler";
 import { RequestLogEntry, logEmitter, emitLog } from "./logEmitter";
 import { mkId, activeEnv, hostnameOf } from "./serverUtils";
-import { DEFAULT_HOST_DOMAIN, normalizeHostname } from "../lib/net";
 
 export interface EdgeRouterOptions {
   /**
@@ -131,52 +128,18 @@ export interface EdgeRouterOptions {
    */
   bindHost?: string;
   /**
-   * The **global mapping** the edge forwards base-domain requests to — the host and port the web GUI is
-   * served on (`plan/15` work item 5).
+   * ⚠ **`hostDomain` was an option here until 2026-09-26 and is gone.** Its only reader was the routing
+   * table's row G — *"`Host` is the engine's own domain, `localhost`, or a bare IP literal, **and a
+   * `guiTarget` is configured**"* → reverse-proxy to the web GUI. The browser host was decommissioned and
+   * `guiTarget` went with it, so the question this name answered — *"is this request addressed to me, or to
+   * one of my mappings?"* — has no branch left that asks it. A request for the engine's own domain now falls
+   * through to the home page, which is what the desktop already did whenever no `guiTarget` was set.
    *
-   * ## Why a target rather than a directory
-   *
-   * This is the owner's model, and it is the smaller one: *"the web UI starts as usual on some different
-   * server like 5753 or any other port. Our edge port reverse proxy will forward base domain requests to
-   * this web UI port, so that this base domain → webUI port becomes the global mapping in reverse proxy
-   * config."*
-   *
-   * Serving the bundle from this listener instead would mean teaching a **router** about MIME types, cache
-   * headers, path traversal and Vite's `assetsDir` convention — none of which belong in a module whose whole
-   * job is *"route a `Host` to a target"*. As a target, the GUI is answered by machinery that already exists
-   * (`proxyToUpstream`), and **a GUI served by nginx, `vite preview`, `serve`, or anything else works
-   * identically** — which is the property that makes it *"just another reverse-proxy mapping"* rather than a
-   * feature the engine has to own.
-   *
-   * ## Absent is the default, and there is deliberately no default port
-   *
-   * `undefined` means no GUI mapping, so the base domain falls through to the home page exactly as it did
-   * before this work item. A plausible-looking default (`5753`) would forward the base domain to a dead port
-   * and answer **502** on a fresh install — a worse failure than the home page, and a much worse one than
-   * saying nothing, because it looks like a bug rather than an unconfigured feature.
-   *
-   * Format is `host:port` — the same shape as `LocalMapping.target`, so the two are read by the same
-   * machinery — or a bare port, which means loopback.
+   * Named rather than silently dropped, because `createEngine()` and `runtime/host.ts` both composed the
+   * value and a reader who finds the removal in *those* would otherwise conclude the edge still reads it.
+   * `hello`'s `hostDomain` is a different thing and stays: it is the wire field a client derives a mapping's
+   * suffix from, and it never came through this option.
    */
-  guiTarget?: string;
-  /**
-   * The hostname this engine answers as — `localhost`, and **not configurable** since `--domain` was removed
-   * on 2026-09-24 (`runtime/hostArgs.ts`'s header records why). The parameter stays because the edge takes its
-   * own address as an input, exactly as it takes `bindHost`: this module is created *for* a deployment and does
-   * not import that deployment's constants. The host composes it from `lib/net.ts#DEFAULT_HOST_DOMAIN`, which
-   * is its only source.
-   *
-   * **This is branch G's first gate, and it is the reason the option exists here at all.** Before work item 5
-   * the edge had no idea what its own name was, so "is this request addressed to *me*, or to one of my
-   * mappings?" was unanswerable. The name was already threaded to the host (`hello`'s `hostDomain`) and
-   * canonicalised with `normalizeHostname`; this is the second reader, and `plan/15` §3.3 predicted it —
-   * the same value the mapping editor derives its suggestion from is the one the router compares against.
-   *
-   * **Canonicalised here as well as at the caller**, because a comparison is only as good as its two
-   * spellings and `normalizeHostname` is idempotent. Validated nowhere, for the reason `host.ts` records:
-   * a second validation would be a second opinion about what is acceptable.
-   */
-  hostDomain?: string;
 }
 
 /** The address the edge binds when its caller names none. Loopback, like every other listener. */
@@ -204,49 +167,8 @@ export interface EdgeRouterInstance {
  * an unfinished edge: this server holds no workspace-scoped state at all. It reads which workspace is
  * active from `resolveConfig` on each request and keeps nothing between them.
  */
-/**
- * The global mapping's second gate: is this request addressed to **this machine** rather than to a name?
- *
- * (The first gate is `host === hostDomain`, the engine's own configured name.)
- *
- * ## Why this is not `isLoopbackHost`
- *
- * `lib/net.ts` already has a loopback test, and reusing it here would be wrong. That one answers *"may a
- * listener bind here?"* — a property of an interface. This answers *"did the client type this machine's
- * address?"* — a property of the request, and an edge bound to a LAN address is reached at `192.168.1.9`,
- * which is **not** loopback and **is** the machine. So every IP literal qualifies, not just `127.0.0.1`.
- * §3.3's row says *"the GUI, by bare IP or `localhost`"* for exactly that reason.
- *
- * ## `localhost` is not `*.localhost`
- *
- * The bare name is here; the suffix belongs to the workspace mappings. `host === "localhost"` deliberately
- * does not use `endsWith(".localhost")` and cannot: `"localhost".endsWith(".localhost")` is **false**, which
- * is why the bare name has always fallen past the reverse half — to the home page before work item 5, to the
- * GUI now. Anything under the suffix still routes to its mapping, or 404s.
- *
- * ## The IPv6 arm, and why it is cheap
- *
- * `hostnameOf()` has already removed the port, so a remaining `:` can only be an IPv6 literal's own. The
- * character class is belt-and-braces: a hostname cannot contain a colon after the port is stripped, so
- * `^[0-9a-f:]+$` cannot reject a name that should have matched.
- */
-const IPV4_LITERAL = /^\d{1,3}(\.\d{1,3}){3}$/;
-
-function isLocalAddress(host: string): boolean {
-  if (host === "localhost") return true;
-  if (IPV4_LITERAL.test(host)) return true;
-  return host.includes(":") && /^[0-9a-f:]+$/.test(host);
-}
-
 export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
   const bindHost = opts.bindHost ?? DEFAULT_EDGE_BIND_HOST;
-  /**
-   * Branch 3's gate, and branch 4's. Read once rather than per request, because neither can change while
-   * this listener is bound: a deployment's own name is a property of the deployment, and the GUI directory
-   * is a property of the installation.
-   */
-  const hostDomain = normalizeHostname(opts.hostDomain ?? DEFAULT_HOST_DOMAIN);
-  const guiTarget = opts.guiTarget;
 
   /**
    * ## The bind guard — now unconditional
@@ -290,20 +212,14 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
    * | # | Condition | Result |
    * |---|---|---|
    * | 0 | `resolveConfig()` returned `null` | 503 — this host serves no workspace |
-   * | G | `Host` is the engine's own domain, `localhost`, or a bare IP literal, **and a `guiTarget` is configured** | reverse proxy to the GUI's port — the **global mapping** |
    * | 2 | `Host` matches a mapping in the **active workspace's** config | reverse proxy to that `target` |
    * | 5 | otherwise | the **home page** |
    *
-   * **`G` is checked first, and it is not one of §3.3's numbered rows.** That table describes the *router's*
-   * jobs (1 = the upgrade arrival, 2 = a mapping, 3/4 = the GUI, 5 = the home page); the GUI is a mapping —
-   * a **global** one — so it takes the position a global mapping takes, ahead of the per-workspace table.
    * Reading the code top to bottom gives precedence, which is why the order of the `if`s below is the
    * authority and this table only names them.
    *
    * Branch **1** (the `upgrade` arrival) is **work item 6** and is still reserved: it is not in the request
-   * path at all, which is why it has no row here beyond this note. §3.3's rows 3 and 4 are what `G`
-   * implements, and their *inert* state — no `guiTarget` configured — falls through to row 5 rather than
-   * answering on its own.
+   * path at all, which is why it has no row here beyond this note.
    */
   function route(
     socket: net.Socket,
@@ -336,41 +252,6 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
     // active workspace's mappings and there are none to show.
     if (cfg === null) {
       sendHtml(socket, 503, buildUnservedPage());
-      return;
-    }
-
-    // ── the GUI's global mapping: the base domain → the web UI's own port ───
-    //
-    // `plan/15` work item 5, built 2026-09-24 to the owner's model: *"the web UI starts as usual on some
-    // different server like 5753 or any other port. Our edge port reverse proxy will forward base domain
-    // requests to this web UI port, so that this base domain → webUI port becomes the global mapping in
-    // reverse proxy config."*
-    //
-    // **It is a mapping, not a branch with a payload.** The action is `proxyToUpstream` — the very call
-    // branch 2 makes — so the GUI is served by machinery that already exists, and a GUI run by nginx,
-    // `vite preview` or anything else is indistinguishable from one this repository built. That is what
-    // makes it *"just another reverse-proxy mapping"* rather than a feature the router has to own.
-    //
-    // **Checked before the workspace mappings, because it is the global one.** The `Host` this engine
-    // answers as is a *deployment* fact; the mapping table is a *workspace* one. The deployment wins, so a
-    // user who happens to have mapped `localhost` or the host's own domain still gets the GUI. The other
-    // ordering would make the GUI vanish the moment anyone mapped its name — an interaction that reads as a
-    // bug for a long time before it reads as a precedence rule.
-    //
-    // **`localhost` is not `*.localhost`.** `"localhost".endsWith(".localhost")` is false, so the bare name
-    // has always fallen past the reverse half — to the home page before this change, to the GUI now. A
-    // subdomain of it (`api.localhost`) still routes to its mapping or 404s. That asymmetry is RFC 6761's
-    // rather than a special case invented here: the bare name is the machine, a subdomain is a name someone
-    // claimed.
-    //
-    // **Logged, unlike the home page, and the label is `mapping` — because that is what it is.** The request
-    // genuinely went through a target, so it belongs in the log, and `target` names where it went: that is
-    // how an operator sees the base domain pointing at the GUI's port. A distinct `via` value would need the
-    // protocol's union widened and the UI's badge taught, which correctness here does not require.
-    if (guiTarget !== undefined && (host === hostDomain || isLocalAddress(host))) {
-      proxyToUpstream(socket, method, guiTarget, reqPath, headers, bodyBuf, (status, dur, resH, resB) => {
-        emitLog({ ...baseEntry, status, via: "mapping", target: guiTarget, durationMs: dur, resHeaders: resH, resBody: resB, resStatus: status });
-      }, baseEntry.id);
       return;
     }
 
@@ -589,8 +470,8 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
  * ## Bound-only, and why there is no lazy default here
  *
  * `proxy/server.ts` and `proxy/webhookServer.ts` both fall back to a lazily created default. This one
- * deliberately does not: an edge needs a `resolveConfig` callback (plus a `hostDomain`, and a `guiTarget` if
- * there is one), and there is no honest default for any of them. A lazily created edge would have to answer
+ * deliberately does not: an edge needs a `resolveConfig` callback and there is no honest default for one.
+ * A lazily created edge would have to answer
  * **503 for every request** — which is a *worse* outcome than doing nothing, because it replaces a working
  * home page with a plausible-looking "this host serves no workspace", and the user would read that as a bug
  * rather than as an unbound handle.

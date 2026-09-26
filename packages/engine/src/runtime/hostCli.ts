@@ -3,7 +3,7 @@
  *
  * ```bash
  * node <engine>/dist/runtime/hostCli.js --data-dir /data --rpc-socket /run/bifurc.sock
- * node <engine>/dist/runtime/hostCli.js --data-dir /data --ws-port 4747 --gui-target 4748
+ * node <engine>/dist/runtime/hostCli.js --data-dir /data --ws-port 4747
  * ```
  *
  * Documented deployment: **one container = one workspace**, one volume = that workspace's `data/` +
@@ -92,10 +92,6 @@ async function main(argv: readonly string[]): Promise<void> {
     // not have to change), and an operator whose machine already has something on 80 needs a way to say so
     // without editing JSON inside a volume.
     edgePort: args.edgePort,
-    // `plan/15` work item 5 — the global mapping from this host's own domain to the web GUI's port. Carried
-    // as a target rather than a directory: the edge reverse-proxies to it, so the GUI is served by whatever
-    // the operator runs and the engine learns nothing about bundles, MIME types or cache headers.
-    guiTarget: args.guiTarget,
   };
 
   const host = await runWorkspaceHost(opts);
@@ -156,10 +152,7 @@ async function main(argv: readonly string[]): Promise<void> {
     console.log(`[host] webhook receiver ${status.webhookPort}`);
   }
   if (status.companionPort !== null) {
-    console.log(
-      `[host] companion ${status.companionPort}` +
-        (status.webGuiPort === null ? "" : ` — the web GUI belongs on ${status.webGuiPort}`),
-    );
+    console.log(`[host] companion ${status.companionPort}`);
   }
   console.log(
     `[host] serving ${status.workspaces.length} workspace(s): ` +
@@ -169,7 +162,7 @@ async function main(argv: readonly string[]): Promise<void> {
 
 void main(process.argv.slice(2)).catch((err: unknown) => {
   // A startup failure is the container's problem to surface, so it goes to stderr with a non-zero code. A
-  // socket that cannot bind, and the pair search running out of room for the companion, both land here.
+  // socket that cannot bind, and the companion scan running out of room, both land here.
   const reason = err instanceof Error ? err.message : String(err);
   console.error(`[host] failed to start: ${reason}`);
   process.exitCode = 1;
