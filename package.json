@@ -18,7 +18,6 @@
     "build:preload": "node scripts/build-preload.mjs",
     "build:renderer": "vite build",
     "assert:dist": "node scripts/assert-dist.mjs",
-    "verify:docker-entrypoint": "node scripts/verify-docker-entrypoint.mjs",
     "build": "npm run build:main && npm run build:renderer",
     "dev": "npm run build && electron .",
     "start": "electron .",
