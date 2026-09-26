@@ -8,7 +8,7 @@
 > target.
 >
 > **The headless host this phase packages still exists** — `runtime/hostCli.ts`, `hostArgs.ts`,
-> `--ws-host`/`--ws-port` and the companion (RPC-over-WebSocket) server are engine code and stay, because the
+> `--ws-port` / `--rpc-socket` and the companion (RPC-over-WebSocket) server are engine code and stay, because the
 > browser extension will connect to the companion. What was retired is the *image*, not the ability to run a
 > host.
 >
