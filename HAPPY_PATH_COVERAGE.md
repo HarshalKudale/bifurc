@@ -40,13 +40,13 @@ Legend:
 | 4 | **Proxy Rules** | Create → update → see row | ✅ ⚠️ | `happy-path-workflows.spec.ts`, `e2e/proxy-rules.spec.ts` | Delete goes through IPC, not the UI |
 | 5 | **Capture** | Open, see captured requests | ✅ 🔒 | `capture.integration.test.ts`, `captureUtils.test.ts`, `happy-path-workflows.spec.ts` | **A real proxied request is now asserted to land in the capture stream** (all five `via` values, bodies, the 512 KB cap) and to convert into a mock/saved request. The panel itself is still ⚠️ unvisited |
 | 6 | **Requests** | Create → update → **send** for REST / GraphQL / SOAP / gRPC | ✅ 🔒 | `protocolExecution.integration.test.ts`, `happy-path-workflows.spec.ts`, `requests-rest.spec.ts`, `protocols.spec.ts` | **Sending is now really tested** for REST, GraphQL and SOAP against live servers. gRPC send is ❌ — but because the runtime is unimplemented, not because it is untested (see §3) |
-| 7 | **Mocks** | Create → update for REST / GraphQL / SOAP / gRPC | ✅ ⚠️ | `happy-path-workflows.spec.ts`, `mocks-rest.spec.ts`, `protocols.spec.ts` | ✅ The *serving* side is now really tested (see §2) |
+| 7 | **Mocks** | Create → update for **REST only** | ✅ ⚠️ | `happy-path-workflows.spec.ts`, `mocks-rest.spec.ts`, `protocols.spec.ts` | ✅ The *serving* side is now really tested (see §2). **The other three protocols' mock workflows were deleted 2026-09-25** (`plan/17` WI 8 made mocks REST-only, and `ProtocolSelectorTab` now offers the REST card alone in mock mode), so the `protocols.spec.ts` link here is now about *requests* only |
 | 8 | **WebSocket** | Create a connection | 🟡 ⚠️ | `happy-path-workflows.spec.ts`, `capture-ws-webhooks.spec.ts` | **Update bypasses the UI** via `window.api` — the edit form is untested |
 | 9 | **Webhooks** | Create a webhook | 🟡 ⚠️ | `happy-path-workflows.spec.ts` | **Update bypasses the UI** via `window.api` |
 | 10 | **Environments** | Create → rename → add variable | ✅ ⚠️ | `happy-path-workflows.spec.ts`, `environments.spec.ts` | Delete goes through IPC |
 | 11 | **Workspace** | Open workspace settings, create/rename/delete/switch a workspace | ✅ 🔒 | `tests/integration/foldersAndWorkspaces.integration.test.ts` | **Create/rename/delete/switch is now covered against real directories** (incl. "promotes another workspace when the active one is deleted"). The panel itself is still ⚠️ unvisited |
 | 12 | **Audit Log** | Commit a change → list → filter → diff | ✅ 🔒 **NEW** | `tests/integration/auditLog.integration.test.ts` | Was ❌ completely untested. Screen itself still ⚠️ unvisited |
-| 13 | **Settings** | Open, see server controls | 🟡 ⚠️ | `happy-path-workflows.spec.ts`, `settings.spec.ts` | Changing the port / theme / data dir is not exercised |
+| 13 | **Settings** | Open, see server controls | 🟡 ✅ ⚠️ | `happy-path-workflows.spec.ts`, `settings.spec.ts`, `tests/renderer/portsSettings.test.tsx` | **The Ports section is covered at the renderer level** (`plan/17` WI 6): the four inputs, the commit shape, the companion's restart badge, and that the panel actually mounts the section. Changing the **theme** / **data dir** is still not exercised |
 | 14 | **Applications** (run configs) | Save → run → see logs → stop → debug | ✅ 🔒 **NEW** | `tests/integration/applications.integration.test.ts` | Was ❌ **entirely untested** — panel, handlers and process spawner |
 
 ## 2. Core engine workflows (no screen of their own)
@@ -91,7 +91,7 @@ These are real features with **no** basic-workflow test. Ordered by risk.
 
 | Feature | What a happy-path test would do | Why it matters |
 |---|---|---|
-| **gRPC (a product gap, not a test gap)** | `grpc:execute`, `grpc:reflect` and `grpc:startMockServer` all return "not yet configured" | The handlers *are* covered — as stubs. There is nothing to exercise until the runtime is implemented. |
+| **gRPC (a product gap, not a test gap)** | `grpc:execute` and `grpc:reflect` both return "not yet configured" | The handlers *are* covered — as stubs. There is nothing to exercise until the runtime is implemented. `grpc:startMockServer` / `:stopMockServer` / `:mockServerStatus` were deleted 2026-09-25 (`plan/17` WI 8) rather than left as stubs, so the gRPC *mock* server is no longer part of this gap. |
 | **Search / command palette** | Type a query, open a result, land on the right entity | `searchUtils`/`searchHelpers`/`searchModules` are measured (58–85%), but `searchPanelUtils.ts` is 14% and nothing types a query end to end |
 | **UI delete paths** | Click Delete → confirm dialog → row disappears | Every cleanup uses IPC, so the delete buttons/confirm dialogs are unverified. The IPC handlers themselves *are* covered (`mock:delete` is asserted to stop the proxy serving the mock) |
 | **The panels themselves** | Any real click-through of a panel | `packages/gui/src/panels/**` is 0% in the unit/integration suite; the Playwright E2E suite covers them but cannot run in this environment (§4.1) |

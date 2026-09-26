@@ -56,6 +56,21 @@
 >    rather than wiring: a `--ws-allow-non-loopback` flag, and a configurable proxy bind host. `DOCKER.md`
 >    §"What would make it publishable" carries the detail.
 >
+>    **▶ 2026-09-23 — the first of the two landed, and it turned out to be three pieces.** `plan/15` work
+>    item 1: `--ws-allow-non-loopback` **plus** `--ws-tls-cert`/`--ws-tls-key` through `hostArgs.ts` →
+>    `hostCli.ts` → `HostTransport` → `createWsServer`, and the fail-closed rule of work item 5 below — a
+>    non-loopback bind **refuses to start** unless the token came from `--token-file` or
+>    `BIFURC_ENGINE_TOKEN`, rather than one the host generated and reported once on stdout. **The flag alone
+>    would have delivered nothing**: `ws.ts`'s second guard refuses a non-loopback bind without TLS, and
+>    nothing in the programme produced any — so the TLS pair is not scope creep, it is the difference between
+>    a wired flag and a reachable endpoint. The material is the operator's to supply (PEM paths); nothing
+>    generates one for this endpoint, which is also why **the verification step below is runnable but not yet
+>    run** — a container has no certs until someone mounts some.
+>
+>    **Still open: the proxy bind host.** `server.listen(port, "127.0.0.1")` is still a literal, so work item
+>    4's exposure table remains **half**-satisfiable — the RPC endpoint can be published, the proxy cannot.
+>    Evidence for the half that landed: `plan/15`'s 2026-09-23 block.
+>
 > **Still accurate and unchanged:** git as a hard requirement, non-root, `/data` holding both the config
 > store and the blob staging directory, no companion server, `BIFURC_PROXY_BASE_PORT` stating the Linux base
 > rather than inferring it, and every acceptance criterion — the ones that depend on being reachable are the
