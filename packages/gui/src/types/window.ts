@@ -5,14 +5,11 @@ import type {
   LocalMapping,
   MockRule,
   ProxyRule,
-  SavedGraphQLMock,
   SavedGraphQLRequest,
   SavedGraphQLSchema,
-  SavedGrpcMock,
   SavedGrpcRequest,
   SavedProtoFile,
   SavedRequest,
-  SavedSoapMock,
   SavedSoapRequest,
   SavedWebhook,
   SavedWsConnection,
@@ -60,10 +57,10 @@ export interface BifurcApi {
   addWsConnection(conn: Omit<SavedWsConnection, "id" | "createdAt" | "workspaceId">): Promise<SavedWsConnection>;
   updateWsConnection(conn: SavedWsConnection): Promise<{ ok: boolean }>;
   deleteWsConnection(id: string): Promise<{ ok: boolean }>;
-  addFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock", folder: Omit<Folder, "id" | "createdAt" | "workspaceId">): Promise<Folder>;
-  renameFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock", id: string, name: string): Promise<{ ok: boolean }>;
-  moveFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock", id: string, parentId: string | null): Promise<{ ok: boolean }>;
-  deleteFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock", id: string): Promise<{ ok: boolean }>;
+  addFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", folder: Omit<Folder, "id" | "createdAt" | "workspaceId">): Promise<Folder>;
+  renameFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string, name: string): Promise<{ ok: boolean }>;
+  moveFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string, parentId: string | null): Promise<{ ok: boolean }>;
+  deleteFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string): Promise<{ ok: boolean }>;
   addEnvironment(env: Omit<Environment, "id" | "createdAt" | "workspaceId">): Promise<Environment>;
   updateEnvironment(env: Environment): Promise<{ ok: boolean }>;
   deleteEnvironment(id: string): Promise<{ ok: boolean }>;
@@ -144,9 +141,6 @@ export interface BifurcApi {
   addSoapRequest(req: Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedSoapRequest>;
   updateSoapRequest(req: SavedSoapRequest): Promise<{ ok: boolean }>;
   deleteSoapRequest(id: string): Promise<{ ok: boolean }>;
-  addSoapMock(mock: Omit<SavedSoapMock, "id" | "createdAt" | "workspaceId">): Promise<SavedSoapMock>;
-  updateSoapMock(mock: SavedSoapMock): Promise<{ ok: boolean }>;
-  deleteSoapMock(id: string): Promise<{ ok: boolean }>;
   addWsdl(wsdl: Omit<SavedWsdl, "id" | "createdAt" | "workspaceId">): Promise<SavedWsdl>;
   deleteWsdl(id: string): Promise<{ ok: boolean }>;
   listWsdls(): Promise<SavedWsdl[]>;
@@ -156,9 +150,6 @@ export interface BifurcApi {
   addGraphQLRequest(req: Omit<SavedGraphQLRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedGraphQLRequest>;
   updateGraphQLRequest(req: SavedGraphQLRequest): Promise<{ ok: boolean }>;
   deleteGraphQLRequest(id: string): Promise<{ ok: boolean }>;
-  addGraphQLMock(mock: Omit<SavedGraphQLMock, "id" | "createdAt" | "workspaceId">): Promise<SavedGraphQLMock>;
-  updateGraphQLMock(mock: SavedGraphQLMock): Promise<{ ok: boolean }>;
-  deleteGraphQLMock(id: string): Promise<{ ok: boolean }>;
   addGraphQLSchema(schema: Omit<SavedGraphQLSchema, "id" | "createdAt" | "workspaceId">): Promise<SavedGraphQLSchema>;
   deleteGraphQLSchema(id: string): Promise<{ ok: boolean }>;
   listGraphQLSchemas(): Promise<SavedGraphQLSchema[]>;
@@ -168,17 +159,11 @@ export interface BifurcApi {
   addGrpcRequest(req: Omit<SavedGrpcRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedGrpcRequest>;
   updateGrpcRequest(req: SavedGrpcRequest): Promise<{ ok: boolean }>;
   deleteGrpcRequest(id: string): Promise<{ ok: boolean }>;
-  addGrpcMock(mock: Omit<SavedGrpcMock, "id" | "createdAt" | "workspaceId">): Promise<SavedGrpcMock>;
-  updateGrpcMock(mock: SavedGrpcMock): Promise<{ ok: boolean }>;
-  deleteGrpcMock(id: string): Promise<{ ok: boolean }>;
   addProtoFile(proto: Omit<SavedProtoFile, "id" | "createdAt" | "workspaceId">): Promise<SavedProtoFile>;
   deleteProtoFile(id: string): Promise<{ ok: boolean }>;
   listProtoFiles(): Promise<SavedProtoFile[]>;
   grpcExecute(serverAddress: string, serviceName: string, methodName: string, requestBody: string, metadata: Record<string, string>, protoFileId: string | null, useReflection: boolean): Promise<{ ok: boolean; responses?: string[]; metadata?: Record<string, string>; status?: number; statusMessage?: string; durationMs?: number; error?: string }>;
   grpcReflect(serverAddress: string): Promise<{ ok: boolean; services?: { name: string; methods: { name: string; inputType: string; outputType: string; clientStreaming: boolean; serverStreaming: boolean }[] }[]; error?: string }>;
-  grpcMockServerStatus(): Promise<{ running: boolean; port: number }>;
-  grpcStartMockServer(): Promise<{ ok: boolean; error?: string }>;
-  grpcStopMockServer(): Promise<{ ok: boolean }>;
   tlsImportCert(): Promise<{ ok: boolean; path?: string }>;
   tlsImportKey(): Promise<{ ok: boolean; path?: string }>;
   tlsRemoveCert(): Promise<{ ok: boolean }>;

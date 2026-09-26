@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { AppConfig } from "@/types";
 import { strings } from "@/lib/strings";
 import { ColorMode } from "@/hooks/useTheme";
-import { Button, Input, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
+import { Button, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
 
 interface ServerSettingsSectionProps {
   config: AppConfig;
@@ -14,6 +14,13 @@ interface ServerSettingsSectionProps {
   onColorModeChange: (m: ColorMode) => void;
 }
 
+/**
+ * The server as a **process**: its status, its lifecycle, and window behaviour.
+ *
+ * The four ports it listens on moved to `PortsSettingsSection` in `plan/17` work item 6. A port is host-level
+ * infrastructure with one specific consumer, so the four belong side by side; what is left here is everything
+ * that is not a port.
+ */
 export default function ServerSettingsSection({
   config,
   serverRunning,
@@ -23,48 +30,10 @@ export default function ServerSettingsSection({
   colorMode,
   onColorModeChange,
 }: ServerSettingsSectionProps) {
-  const [portInput, setPortInput] = useState(String(config.port));
-  const [webhookPortInput, setWebhookPortInput] = useState(String(config.webhookPort ?? 9101));
-  const [companionPortInput, setCompanionPortInput] = useState(String(config.companionPort ?? 9271));
   const [restarting, setRestarting] = useState(false);
 
-  useEffect(() => {
-    setPortInput(String(config.port));
-    setWebhookPortInput(String(config.webhookPort ?? 9101));
-    setCompanionPortInput(String(config.companionPort ?? 9271));
-  }, [config.port, config.webhookPort, config.companionPort]);
-
-  const handleGlobalChange = (
-    patch: Partial<Pick<AppConfig, "port" | "minimizeToTray" | "webhookPort" | "companionPort">>
-  ) => {
+  const handleGlobalChange = (patch: Partial<Pick<AppConfig, "minimizeToTray">>) => {
     onConfigChange({ ...config, ...patch });
-  };
-
-  const handlePortCommit = () => {
-    const port = parseInt(portInput, 10);
-    if (port >= 1 && port <= 65535) {
-      if (port !== config.port) handleGlobalChange({ port });
-    } else {
-      setPortInput(String(config.port));
-    }
-  };
-
-  const handleWebhookPortCommit = () => {
-    const port = parseInt(webhookPortInput, 10);
-    if (port >= 1 && port <= 65535) {
-      if (port !== (config.webhookPort ?? 9101)) handleGlobalChange({ webhookPort: port });
-    } else {
-      setWebhookPortInput(String(config.webhookPort ?? 9101));
-    }
-  };
-
-  const handleCompanionPortCommit = () => {
-    const port = parseInt(companionPortInput, 10);
-    if (port >= 1 && port <= 65535) {
-      if (port !== (config.companionPort ?? 9271)) handleGlobalChange({ companionPort: port });
-    } else {
-      setCompanionPortInput(String(config.companionPort ?? 9271));
-    }
   };
 
   const handleRestart = async () => {
@@ -110,63 +79,15 @@ export default function ServerSettingsSection({
         </p>
         <p>
           <span className="text-signal font-semibold">{strings.settings.proxyHint}</span>{" "}
-          Optionally set <code className="font-mono bg-surface-2 px-1 py-0.5 rounded text-foreground">127.0.0.1:{config.port}</code> as your HTTP proxy. Proxy rules then apply to all HTTP traffic.{" "}
+          {/* The **forward proxy** port, not `config.port`. Those were the same number before `plan/17` split
+              the reverse proxy (the edge) from the forward proxy, and this line kept naming the edge — which is
+              the port `*.localhost` mappings point at, not the one a browser's proxy setting wants. */}
+          Optionally set <code className="font-mono bg-surface-2 px-1 py-0.5 rounded text-foreground">127.0.0.1:{config.forwardProxyPort}</code> as your HTTP proxy. Proxy rules then apply to all HTTP traffic.{" "}
           {config.tlsEnabled ? strings.settings.httpsIntercepted : strings.settings.httpsTunnel}
         </p>
       </div>
 
       <SectionCard>
-        <SettingsRow
-          title={strings.settings.serverPort}
-          desc={strings.settings.serverPortDesc.replace("{hint}", portHint)}
-        >
-          <Input
-            aria-label={strings.settings.serverPort}
-            type="number"
-            className="w-24 text-right font-mono"
-            min={1}
-            max={65535}
-            value={portInput}
-            onChange={(e) => setPortInput(e.target.value)}
-            onBlur={handlePortCommit}
-            onKeyDown={(e) => { if (e.key === "Enter") handlePortCommit(); }}
-          />
-        </SettingsRow>
-
-        <SettingsRow
-          title={strings.settings.webhookServerPort}
-          desc={`${strings.settings.webhookServerPortDesc} ${strings.settings.currentlyLabel} localhost:${config.webhookPort ?? 9101}/bifurc/webhooks/`}
-        >
-          <Input
-            aria-label={strings.settings.webhookServerPort}
-            type="number"
-            className="w-24 text-right font-mono"
-            min={1}
-            max={65535}
-            value={webhookPortInput}
-            onChange={(e) => setWebhookPortInput(e.target.value)}
-            onBlur={handleWebhookPortCommit}
-            onKeyDown={(e) => { if (e.key === "Enter") handleWebhookPortCommit(); }}
-          />
-        </SettingsRow>
-
-        <SettingsRow
-          title={strings.settings.companionPort}
-          desc={strings.settings.companionPortDesc}
-        >
-          <Input
-            aria-label={strings.settings.companionPort}
-            type="number"
-            className="w-24 text-right font-mono"
-            min={1}
-            max={65535}
-            value={companionPortInput}
-            onChange={(e) => setCompanionPortInput(e.target.value)}
-            onBlur={handleCompanionPortCommit}
-            onKeyDown={(e) => { if (e.key === "Enter") handleCompanionPortCommit(); }}
-          />
-        </SettingsRow>
-
         <SettingsRow
           title={strings.settings.minimizeToTray}
           desc={strings.settings.minimizeToTrayDesc}

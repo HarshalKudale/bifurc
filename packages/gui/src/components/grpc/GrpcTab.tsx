@@ -1,6 +1,6 @@
 import React, { forwardRef, useImperativeHandle, useReducer, useCallback, useEffect, useState } from "react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
-import { SavedGrpcRequest, SavedGrpcMock, Folder, Environment } from "@/types";
+import { SavedGrpcRequest, Folder, Environment } from "@/types";
 import CodeEditor from "@/components/common/CodeEditor";
 import HeaderTable from "@/components/common/HeaderTable";
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
@@ -12,29 +12,29 @@ import { cn } from "@/components/ui/cn";
 import { strings } from "@/lib/strings";
 import {
     GrpcTabState, GrpcTabType, GrpcAction,
-    grpcTabReducer, initGrpcRequestState, initGrpcMockState,
-    stateToRequestDraft, stateToMockDraft, requestToSaveData, mockToSaveData,
-    GrpcRequestDraft, GrpcMockDraft,
+    grpcTabReducer, initGrpcRequestState,
+    stateToRequestDraft, requestToSaveData,
+    GrpcRequestDraft,
 } from "@/components/grpc/grpcTabReducer";
 import { useProtocolEditor } from "@/hooks/useProtocolEditor";
-import { GrpcLeftPane, ReqSubTab, MockSubTab } from "./GrpcLeftPane";
+import { GrpcLeftPane, ReqSubTab } from "./GrpcLeftPane";
 import { GrpcResponsePane, ResSubTab } from "./GrpcResponsePane";
 
 // -- Props ------------------------------------------------------------------
 
 export interface GrpcTabHandle {
     save(): Promise<any> | void;
-    refresh?(entity: SavedGrpcRequest | SavedGrpcMock): void;
+    refresh?(entity: SavedGrpcRequest): void;
 }
 
 interface Props {
     tabType: GrpcTabType;
     tabId: string;
     draftTabId: string | null;
-    initial: SavedGrpcRequest | SavedGrpcMock | null;
+    initial: SavedGrpcRequest | null;
     folders: Folder[];
     activeEnv?: Environment | null;
-    onSave: (data: Omit<SavedGrpcRequest, "id" | "createdAt" | "workspaceId"> | Omit<SavedGrpcMock, "id" | "createdAt" | "workspaceId">) => Promise<any>;
+    onSave: (data: Omit<SavedGrpcRequest, "id" | "createdAt" | "workspaceId">) => Promise<any>;
     onClose: () => void;
     onSync?: (savedId?: string) => Promise<void>;
     onRevert?: () => Promise<void>;
@@ -90,17 +90,13 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         draftTabId,
         initial,
         reducer: grpcTabReducer as any,
-        initState: (init, draft, type) => {
-            if (draft) {
-                if (type === "request") return { ...initGrpcRequestState(), ...(draft as GrpcRequestDraft) };
-                return { ...initGrpcMockState(), ...(draft as GrpcMockDraft) };
-            }
-            if (type === "request") return initGrpcRequestState(init as SavedGrpcRequest);
-            return initGrpcMockState(init as SavedGrpcMock);
+        initState: (init, draft) => {
+            if (draft) return { ...initGrpcRequestState(), ...(draft as GrpcRequestDraft) };
+            return initGrpcRequestState(init as SavedGrpcRequest);
         },
-        stateToDraft: (s, t) => t === "request" ? stateToRequestDraft(s) : stateToMockDraft(s),
-        isDraftEmpty: (s, t) => t === "request" ? (!s.serverAddress && !s.serviceName && !s.methodName) : (!s.serviceName && !s.methodName),
-        stateToSavePayload: (s, t) => t === "request" ? requestToSaveData(s) : mockToSaveData(s),
+        stateToDraft: stateToRequestDraft,
+        isDraftEmpty: (s) => !s.serverAddress && !s.serviceName && !s.methodName,
+        stateToSavePayload: requestToSaveData,
         onSave: onSave as any,
         onSync,
         onRevert,
@@ -109,20 +105,14 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
 
     const [reqTab, setReqTab] = useState<ReqSubTab>("message");
     const [resTab, setResTab] = useState<ResSubTab>("response");
-    const [mockTab, setMockTab] = useState<MockSubTab>("response");
 
     // KV rows for metadata editing
     const [metaRows, setMetaRows] = useState<KVRow[]>(() => metadataToRows(state.metadata));
-    const [resMetaRows, setResMetaRows] = useState<KVRow[]>(() => metadataToRows(state.responseMetadata));
 
     // Sync metadata changes
     useEffect(() => {
         dispatch({ type: "SET_METADATA", metadata: rowsToMetadata(metaRows) });
     }, [metaRows]);
-
-    useEffect(() => {
-        dispatch({ type: "SET_RESPONSE_METADATA", metadata: rowsToMetadata(resMetaRows) });
-    }, [resMetaRows]);
 
     // Send gRPC request
     const handleSend = useCallback(async () => {
@@ -162,19 +152,12 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         save() {
             return handleSave();
         },
-        refresh(entity: SavedGrpcRequest | SavedGrpcMock) {
+        refresh(entity: SavedGrpcRequest) {
             handleRefresh(entity);
-            if (tabType === "request") {
-                const freshState = initGrpcRequestState(entity as SavedGrpcRequest);
-                setMetaRows(metadataToRows(freshState.metadata));
-                setResMetaRows(metadataToRows(freshState.responseMetadata));
-            } else {
-                const freshState = initGrpcMockState(entity as SavedGrpcMock);
-                setMetaRows(metadataToRows(freshState.metadata));
-                setResMetaRows(metadataToRows(freshState.responseMetadata));
-            }
+            const freshState = initGrpcRequestState(entity);
+            setMetaRows(metadataToRows(freshState.metadata));
         },
-    }), [handleSave, handleRefresh, tabType]);
+    }), [handleSave, handleRefresh]);
 
     const canSave = Boolean(state.serviceName && state.methodName);
     const syncDisabled = !hasLocalChanges || (!canSave && state.dirty) || syncing;
@@ -190,8 +173,8 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         <div className="flex flex-col h-full overflow-hidden">
             {/* Title bar */}
             <EditorTitleBar
-                label={tabType === "request" ? "GRPC" : "GRPC MOCK"}
-                namePlaceholder={tabType === "request" ? strings.grpc.requestNamePlaceholder : strings.grpc.mockNamePlaceholder}
+                label="GRPC"
+                namePlaceholder={strings.grpc.requestNamePlaceholder}
                 name={state.name}
                 onNameChange={(v) => set("name")(v)}
                 onClose={onClose}
@@ -200,18 +183,16 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
 
             {/* Connection bar */}
             <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-background/30">
-                {tabType === "request" && (
-                    <input
-                        className="flex-1 bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground"
-                        placeholder="localhost:50051"
-                        value={state.serverAddress}
-                        onChange={(e) => set("serverAddress")(e.target.value)}
-                    />
-                )}
+                <input
+                    className="flex-1 bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground"
+                    placeholder="localhost:50051"
+                    value={state.serverAddress}
+                    onChange={(e) => set("serverAddress")(e.target.value)}
+                />
                 <input
                     className={cn(
                         "bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground",
-                        tabType === "request" ? "w-48" : "flex-1"
+                        "w-48"
                     )}
                     placeholder="ServiceName"
                     value={state.serviceName}
@@ -220,7 +201,7 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                 <input
                     className={cn(
                         "bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground",
-                        tabType === "request" ? "w-48" : "flex-1"
+                        "w-48"
                     )}
                     placeholder="MethodName"
                     value={state.methodName}
@@ -229,17 +210,15 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                 <span className="text-[10px] font-semibold px-2 py-1 rounded bg-surface-2 text-muted-foreground whitespace-nowrap">
                     {STREAMING_BADGES[state.streamingType] ?? strings.grpc.streamUnary}
                 </span>
-                {tabType === "request" && (
-                    <button
-                        onClick={handleSend}
-                        disabled={state.sending || !state.serverAddress || !state.serviceName || !state.methodName}
-                        className="px-4 py-1.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                        {state.sending ? (
-                            <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        ) : strings.server.send}
-                    </button>
-                )}
+                <button
+                    onClick={handleSend}
+                    disabled={state.sending || !state.serverAddress || !state.serviceName || !state.methodName}
+                    className="px-4 py-1.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                    {state.sending ? (
+                        <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : strings.server.send}
+                </button>
             </div>
 
             {/* Streaming type + reflection toggle */}
@@ -257,64 +236,41 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                         <option value="bidi">{strings.grpc.streamBidirectional}</option>
                     </select>
                 </label>
-                {tabType === "request" && (
-                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={state.useReflection}
-                            onChange={(e) => set("useReflection")(e.target.checked)}
-                            className="accent-signal"
-                        />
-                        {strings.grpc.useReflection}
-                    </label>
-                )}
-                {tabType === "mock" && (
-                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={state.enabled}
-                            onChange={(e) => set("enabled")(e.target.checked)}
-                            className="accent-signal"
-                        />
-                        {strings.grpc.enabled}
-                    </label>
-                )}
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={state.useReflection}
+                        onChange={(e) => set("useReflection")(e.target.checked)}
+                        className="accent-signal"
+                    />
+                    {strings.grpc.useReflection}
+                </label>
             </div>
 
             {/* Split pane */}
             <div className="flex-1 min-h-0 overflow-hidden">
                 <PanelGroup orientation="horizontal" className="h-full">
                     {/* Left panel: request body / metadata / scripts */}
-                    <Panel defaultSize={tabType === "request" ? 50 : 100} minSize={30}>
+                    <Panel defaultSize={50} minSize={30}>
                         <GrpcLeftPane
-                            tabType={tabType}
                             state={state}
                             dispatch={dispatch}
                             set={set}
                             reqTab={reqTab}
                             setReqTab={setReqTab}
-                            mockTab={mockTab}
-                            setMockTab={setMockTab}
                             metaRows={metaRows}
                             setMetaRows={setMetaRows}
-                            resMetaRows={resMetaRows}
-                            setResMetaRows={setResMetaRows}
                         />
                     </Panel>
 
-                    {/* Only show right panel for request mode */}
-                    {tabType === "request" && (
-                        <>
-                            <PanelResizeHandle className="w-px bg-border hover:bg-signal/50 transition-colors cursor-col-resize" />
-                            <Panel defaultSize={50} minSize={25}>
-                                <GrpcResponsePane
-                                    state={state}
-                                    resTab={resTab}
-                                    onResTabChange={setResTab}
-                                />
-                            </Panel>
-                        </>
-                    )}
+                    <PanelResizeHandle className="w-px bg-border hover:bg-signal/50 transition-colors cursor-col-resize" />
+                    <Panel defaultSize={50} minSize={25}>
+                        <GrpcResponsePane
+                            state={state}
+                            resTab={resTab}
+                            onResTabChange={setResTab}
+                        />
+                    </Panel>
                 </PanelGroup>
             </div>
 
@@ -326,7 +282,7 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                 onCancel={onClose}
                 onSave={handleSave}
                 saveLabel={isNew ? strings.common.save : strings.grpc.update}
-                saveDisabled={tabType === "request" ? (!state.serviceName || !state.methodName) : (!state.serviceName || !state.methodName)}
+                saveDisabled={!state.serviceName || !state.methodName}
                 saving={state.saving}
                 savingLabel={strings.server.saving}
                 onSync={onSync ? handleSyncClick : undefined}

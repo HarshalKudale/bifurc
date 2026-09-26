@@ -63,7 +63,7 @@ export function useMocksPanelState({
   const tabs = useEntityTabs<any>({
     storageKey: "mocks",
     draftPrefix: DRAFT_PREFIX,
-    extraDraftPrefixes: ["prefill-", "gql-mock-draft-", "grpc-mock-draft-", "soap-mock-draft-"],
+    extraDraftPrefixes: ["prefill-"],
     workspaceId: config.activeWorkspaceId,
     entityKind: "mocks",
     resolveEntityKind,
@@ -222,9 +222,6 @@ export function useMocksPanelState({
         try { const u = new URL(draft.urlPattern); const last = u.pathname.split("/").filter(Boolean).pop() ?? u.host; return `${draft.method ?? "GET"} /${last}`; }
         catch { return `${draft.method ?? "GET"} ${(draft.urlPattern ?? "").slice(0, 18)}`; }
       }
-      if (proto === "graphql") return draft?.operationName || "New GraphQL Mock";
-      if (proto === "grpc") return draft?.methodName ? `${draft.serviceName || ""}/${draft.methodName}` : "New gRPC Mock";
-      if (proto === "soap") return draft?.operationName || "New SOAP Mock";
       return `New ${proto.toUpperCase()} Mock`;
     }
     const item = allItemsMap.get(tabId);
@@ -237,9 +234,6 @@ export function useMocksPanelState({
     if (isDraft(tabId)) {
       const proto = draftProtocols[tabId];
       if (!proto) return "+";
-      if (proto === "graphql") return "GQL";
-      if (proto === "grpc") return "gRPC";
-      if (proto === "soap") return "SOAP";
       return "REST";
     }
     const item = allItemsMap.get(tabId);
