@@ -1,6 +1,6 @@
 /**
  * Remove the app's *compiled* output before `tsc` re-emits it — everything under `dist/`
- * except `dist/renderer/` and `dist/web/`, which belong to Vite (`build:renderer`, `build:web`).
+ * except `dist/renderer/`, which belongs to Vite (`build:renderer`).
  *
  * ## Why this exists
  *
@@ -15,9 +15,9 @@
  *
  *  1. **They drift.** `dist/shutdown.js` — the pre-move copy of what is now
  *     `packages/engine/src/shutdown.ts` — requires `@bifurc/engine/companion/companionServer`,
- *     a module that no longer exists under any name (the companion server is now
- *     `packages/engine/src/transport/legacyCompanion.ts`). A packaged build ships a file
- *     whose imports cannot resolve.
+ *     a module that no longer exists under any name: the companion server is now
+ *     `packages/engine/src/transport/ws.ts`, and the legacy bridge it replaced was deleted
+ *     outright on 2026-09-23. A packaged build ships a file whose imports cannot resolve.
  *  2. **They are the hazard `bundle: false` exists to prevent.** The engine does not bundle
  *     because `store/paths.ts` holds the data root as module-level state; a second copy of
  *     that module means a `setDataRoot()` one copy never sees. Nothing reaches the stale
@@ -26,20 +26,23 @@
  * Deleting them is the fix; re-emitting is what `tsc` does next. This runs on every
  * `build:main`, so the condition cannot come back.
  *
- * ## Why the two Vite bundles are excluded
+ * ## Why the Vite bundle is excluded
  *
- * Vite emits content-hashed bundles there with `emptyOutDir: true`, and it owns those
- * directories. They are *not* tsc output — their files have no `src/` counterpart, so any
- * "delete what has no source" heuristic would classify a whole bundle as stale and delete
- * the app's UI. `build:main` must not touch what `build:renderer` or `build:web` owns.
+ * Vite emits content-hashed bundles there with `emptyOutDir: true`, and it owns that
+ * directory. It is *not* tsc output — its files have no `src/` counterpart, so any
+ * "delete what has no source" heuristic would classify the whole bundle as stale and delete
+ * the app's UI. `build:main` must not touch what `build:renderer` owns.
  *
- * `web` joined `renderer` here under D18, when the browser host became a second Vite build.
+ * ⚠ `web` was a second entry in `KEEP` until 2026-09-26, when the browser host was
+ * decommissioned along with `build:web`. Named rather than silently dropped, because the
+ * exclusion is a coupling: a *second* Vite target needs the same treatment, and this comment
+ * and `assert-dist.mjs`'s `SKIP_DIRS` are the two places that say so.
  */
 import fs from "node:fs";
 import path from "node:path";
 
 const DIST = path.resolve("dist");
-const KEEP = new Set(["renderer", "web"]);
+const KEEP = new Set(["renderer"]);
 
 if (!fs.existsSync(DIST)) {
   console.log("[clean:main] no dist/ yet — nothing to do");
