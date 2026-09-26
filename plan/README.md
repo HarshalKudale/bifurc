@@ -7,6 +7,34 @@ interchangeable clients (Electron shell → web UI → CLI → Docker).
 
 ---
 
+## ⚠ 2026-09-26 — the programme was cut back to a single target
+
+**There is one build target: the Electron desktop app.** Two of the clients this roadmap set out to add have
+been deleted, and their phases with them.
+
+| Phase | Product | What happened |
+| --- | --- | --- |
+| **P7 — Web UI** | `web/`, the browser host | **Deleted.** `packages/gui` survives — it was always the *shared* UI, and the renderer is now its only consumer. `packages/web-client` survives too, because the extension is a browser context and will need a browser transport. |
+| **P9 — Docker** | the container image | **Deleted**, with `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `DOCKER.md`, the entrypoint, the static server, the healthcheck and both of their suites. |
+| **P16 — GUI backend** | a per-GUI relay | **Never built** — it was plan-only — and it is now moot. |
+
+**Why:** keeping two targets working had stopped paying for itself, and the flexibility the packages give is
+worth keeping on its own terms. So the engine stays a package, the shared UI stays a package, and the desktop
+is the only thing that builds.
+
+**What survives, deliberately:** `@bifurc/engine` (the shared library both runtimes composed),
+`@bifurc/gui`, `@bifurc/protocol`, `@bifurc/client`, `@bifurc/web-client` — and the **headless host**
+(`runtime/hostCli.ts`, `hostArgs.ts`, `--ws-host`/`--ws-port`, and the companion RPC-over-WebSocket server),
+which is what the browser extension will connect to when its half is written. **What was retired is the
+packaging and the browser host, not the ability to run a host.**
+
+**The phase rows below are the record of what each phase did.** P7, P9 and P16's rows describe products that
+no longer exist; they are left in place rather than rewritten, because the reasoning in them is what the
+surviving code was built on. **`plan/17` remains the authority on any port**, and `plan/15` on the edge and
+the mapping model.
+
+---
+
 ## Repo scope
 
 This repository contains **the Electron desktop app only**. It was flattened on 2026-09-14 — the app  
@@ -183,15 +211,15 @@ after it is additive and independently schedulable.
 | [06](06-phase-5-client.md)                      | **P5 — Typed RPC client**   | P4                 |   1.5–2 w | Client satisfies `window.api` type-check                 |
 | [07](07-phase-6-shell-seam.md)                  | **P6 — Shell seam ✅ SHIP**  | P5                 |     2–3 w | 35 unit + 11 e2e green; ships with no visible change     |
 | [14](14-workspace-runtime.md)                   | **P14 — Workspace runtime** | P6                 |     3–4 w | **NEW 2026-09-20.** Servers become per-workspace; a workspace can be hosted headlessly (D10–D15) |
-| [08](08-phase-7-web-ui.md)                      | **P7 — Web UI**             | P14                |     3–4 w | Inspection + light editing in a browser (D8); connects to a **host** |
+| [08](08-phase-7-web-ui.md)                      | **P7 — Web UI**             | P14                |     3–4 w | ⛔ **DECOMMISSIONED 2026-09-26** — `web/` deleted; the desktop is the single build target. `packages/gui` and `packages/web-client` survive. See the note at the top. |
 | [09](09-phase-8-cli.md)                         | **P8 — CLI**                | P14 (later)        |       3 w | ⏸ **PARKED (D15)** — two shapes recorded in `plan/14` §7  |
-| [10](10-phase-9-docker.md)                      | **P9 — Docker**             | P14, P3, P4        |     1–2 w | ⚠ **rewritten:** a **workspace host** in a container, not the engine |
+| [10](10-phase-9-docker.md)                      | **P9 — Docker**             | P14, P3, P4        |     1–2 w | ⛔ **DECOMMISSIONED 2026-09-26** — the image, its entrypoint and both suites deleted. The headless host itself survives. |
 | [11](11-phase-10-binary-and-11-tauri.md)        | **P10 — Standalone binary** | P2                 |     1–2 w | ⏸ **de-prioritised** (D2/D4)                             |
 | [11](11-phase-10-binary-and-11-tauri.md)        | **P11 — Tauri shell**       | P5, P10            |     3–4 w | ⏸ **PARKED** (D1/D4/D5)                                  |
 | [12](12-phase-12-packaging-and-13-hardening.md) | **P12 — Packaging**         | P6, P9             |     2–3 w | NSIS + APPX + AppImage + Docker publish from CI          |
 | [12](12-phase-12-packaging-and-13-hardening.md) | **P13 — Hardening**         | P6                 |     2–3 w | Auth, audit, docs, perf budgets signed off               |
 | [15](15-unified-ports-and-mapping.md)            | **P15 — Unified ports**     | P14, P4, P7, P9    |     2–3 w | 🟡 **in progress — work items 1–3 landed 2026-09-23.** One host edge port carrying the GUI, the reverse proxy and the companion; a per-workspace forward-proxy port that mocks apply to; subdomain mapping for a remote engine. **The split is built**: the reverse half lives on the new host-level edge router, and the forward proxy keeps its own port and its job. **Revises P14 §4's port table and P9 work item 4's exposure table.** |
-| [16](16-gui-backend-wrapper.md)                  | **P16 — GUI backend**       | P15 item 5, P7     |     2–3 w | 📝 **PLAN ONLY, 2026-09-23 — nothing built.** Each GUI gets its own thin backend: the web UI stops talking to the engine directly and talks to a same-origin relay that holds the token and serves the bundle; one Docker image carries engine + GUI, and the GUI is exposed **by the engine** at its own domain, its own port unpublished. **The plan's central constraint is that the relay adds transport, credentials and static files — and no commands**, or the two hosts stop being the same shape. Blocked on P15 item 5 (the GUI on the edge) and item 7 (`hostKind`). |
+| [16](16-gui-backend-wrapper.md)                  | **P16 — GUI backend**       | P15 item 5, P7     |     2–3 w | ⛔ **MOOT 2026-09-26 — never built, and both halves are gone** (the browser host and the container image). 📝 Original status: **PLAN ONLY, 2026-09-23 — nothing built.** Each GUI gets its own thin backend: the web UI stops talking to the engine directly and talks to a same-origin relay that holds the token and serves the bundle; one Docker image carries engine + GUI, and the GUI is exposed **by the engine** at its own domain, its own port unpublished. **The plan's central constraint is that the relay adds transport, credentials and static files — and no commands**, or the two hosts stop being the same shape. Blocked on P15 item 5 (the GUI on the edge) and item 7 (`hostKind`). |
 | [13](13-checklist.md)                           | **Master checklist**        | —                  |         — | Literal ordered task list                                |
 
 ---

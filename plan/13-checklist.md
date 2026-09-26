@@ -1284,11 +1284,13 @@ the companion server stays app-level.
 > `data/` + `blobs/`**. The port table in `plan/10` §4 needs N rows (one proxy port per hosted workspace),
 > not 2. Effort is roughly unchanged; the artifact and the volume layout are not. **Depends on P14.**
 >
-> The list below is still the right checklist for the *host* — read "the engine" as "the workspace host"
-> throughout.
+> ⚠ **2026-09-26 — the container image was decommissioned, so this list is now a checklist for the *host*
+> rather than for an image.** The *host* items still hold and still matter: `runtime/hostCli.ts` survives, and
+> it is the browser extension's future endpoint. The *image* items do not. Read "the engine" as "the workspace
+> host" throughout, as before.
 
 - [ ] Run the engine headlessly on the host first
-- [ ] Dockerfile: node:22-slim + git + ca-certificates, non-root
+- [x] ~~Dockerfile: node:22-slim + git + ca-certificates, non-root~~ — **cancelled 2026-09-26**: the image is gone
 - [ ] `/data` volume: config, workspaces, **blobs**
 - [ ] Test: blob staging is under the volume
 - [ ] `SIGTERM` graceful shutdown

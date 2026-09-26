@@ -1,10 +1,13 @@
 # Bifurc — Project Memory
 
 **Read `TRAPS.md` first** (**111** failure modes — `grep -c '^## '`). Authorities: state → `plan/README.md`
-§Status · live phase → `plan/08` · decisions → `plan/00-decisions.md` · suites → `TESTING.md` · ledgers →
-`plan/07` · **port model → `plan/17`** (supersedes the per-workspace half of `plan/15`) · procedures → the
-`bifurc-*` skills. **A pointer, not a record** — long-form reasoning lives in `plan/`.
+§Status · decisions → `plan/00-decisions.md` · suites → `TESTING.md` · **port model → `plan/17`** ·
+edge/mapping → `plan/15` · procedures → the `bifurc-*` skills. **A pointer, not a record.**
 
+> **⚠ ONE BUILD TARGET SINCE 2026-09-26: the Electron desktop app.** The browser host (`web/`) and the
+> container image are **deleted** — P7 and P9 are decommissioned, P16 was never built. `plan/README.md`'s
+> 2026-09-26 block is the authority; the phase rows below it are the record.
+>
 > **Electron/GUI commands are the user's to run** (`npm run dev`, `test:e2e`) — an agent-shell failure is
 > evidence about the shell, not the product.
 
@@ -12,18 +15,21 @@
 
 - **Flat repo — the app IS the root.** Git root is the PARENT dir; branch `standalone-engine`. **`git rm`,
   `git stash` and `git checkout -- <file>` are ALL destructive** — `cp` to `/tmp` before any rollback.
+  **⚠ In this sandbox `rm` is a shim function and `git rm` under `scripts/` wipes the whole directory** — use
+  `python -c "import os; os.remove(...)"`, in small batches, verifying each. See `~/.workbuddy-ai/MEMORY.md`.
 - **App runs `packages/*/dist/`; tests run `src/`** → `npm run build:packages` after a package edit (only
   `@bifurc/engine/*` aliases to `src`; the rest resolve `dist/`, so an un-rebuilt edit is **silently untested**).
   Every package build needs `CODEBUDDY_SAFE_DELETE_ENABLED=0`. **Directory renames are blocked**; a *file*
   `git mv` works. **One `Edit` per file per message** — two same-file edits revert each other.
-- **⚠ `build:packages` omits `@bifurc/gui`** — the GUI has no `dist`; `build:renderer` / `build:web` bundle its
-  `src` **as source**, so `build:packages` passing says nothing about a GUI edit. **Vitest resolves `@/…` through
-  its own alias plugin, not the bundlers'** — a green test is not proof the bundle resolves. Build it.
+- **⚠ `build:packages` omits `@bifurc/gui`** — the GUI has no `dist`; `build:renderer` bundles its `src` **as
+  source**, so `build:packages` passing says nothing about a GUI edit. **Vitest resolves `@/…` through its own
+  alias plugin, not the bundler's** — a green test is not proof the bundle resolves. Build it.
 - **No tsconfig covers `tests/`** — `npm run typecheck` is green while test files are broken. Run the suite.
-- **⚠ A `Dockerfile` copying one manifest per workspace is coupled to `package-lock.json`** — `npm ci` validates
-  that set and fails **both** ways: a manifest the lockfile lacks (`EUSAGE: Missing: … from lock file`) and a
-  lockfile entry whose directory is gone (npm follows the link and asks the **public registry**, 404). Check with
-  `npm ci --dry-run` in a temp context, never by reasoning. Reconciling a stale one cost **0 version changes**.
+  **Reproduced 2026-09-26:** a deleted string left its assertion behind, `tsc` exited 0, the suite found it.
+- **⚠ `package-lock.json`'s workspace set is a coupling** — `npm ci` validates it and fails **both** ways: a
+  manifest the lockfile lacks (`EUSAGE: Missing: … from lock file`) and a lockfile entry whose directory is gone
+  (npm follows the link and asks the **public registry**, 404). Check with `npm ci --dry-run` in a temp context,
+  never by reasoning. It broke the Dockerfile first; it breaks a fresh clone and CI just the same.
 
 ## Measuring the suite
 
@@ -35,44 +41,35 @@
   **⚠ A new suite that binds ports degrades every "the scan lands on `base + N`" assertion** — remedy: the shared
   `holdBaseWithFreeSuccessors()`.
 
-**Current: 2,739 tests / 120 files — 2,699 passed, 0 failures of any kind, 40 skipped (2026-09-26).** Unit
-**2,264 / 89**, integration **475 / 31** (both measured). e2e: 11 specs, 46/46 owner-run.
+**Current: 2,638 tests / 115 files — 2,598 passed, 0 failures of any kind, 40 skipped (2026-09-26).** Unit
+**2,178 / 85**, integration **460 / 30** (both measured). e2e: 11 specs, 46/46 owner-run.
 
 ## Phase state
 
-**Live: P15, P16, P17.** `plan/17` WI 1/2/3/5/6/7/8/9 landed 2026-09-25/26; **only item 4's Electron half is
-open** — and item 5 does **not** depend on it, because the entrypoint pins the companion port so no scan runs.
-P7 live: `packages/gui` exports `<App />`; hosts `renderer/` (Electron) and `web/`. **P0–P6 done; P14 CLOSED.**
+**Live: P17** — only item 4's Electron half open. **P0–P6 and P14 done. P7, P9 and P16 DECOMMISSIONED
+2026-09-26.** `packages/gui` still exports `<App />`, and `renderer/` is now its only consumer.
 
 ### Invariants worth not re-deriving
 
-- **Every port is ENGINE/host-level — read `plan/17` §1, not a summary of it.** Edge `80` **bound, not scanned**;
+- **Every port is ENGINE/host-level — read `plan/17` §1, not a summary.** Edge `80` **bound, not scanned**;
   forward proxy `settings.forwardProxyPort` **bound, never scanned, fails loudly naming the port**; webhook
-  random, **off by default**; companion `4747` **restart-only**; GUI = companion `+ 1`, **derived**. **WI 7: a
+  random, **off by default**; companion `4747` **restart-only**, now found as a **single port** — the
+  GUI-neighbour *pair* went with the browser host, so a taken neighbour no longer refuses a start. **WI 7: a
   `config.save` re-binds the edge, proxy and webhook** — `start(newPort)` *is* the rebind; `bindEdgeInstance()`
   has **no lazy default** (unbound → **503**). **Three compositions bind the edge** — `createEngine()`,
   `runtime/host.ts`, and **`src/main.ts`, which never calls `createEngine()`**; grep the **factory**, not the
   entry point.
-- **WI 5: the image's `ENTRYPOINT` is `scripts/docker-entrypoint.mjs`**, and the GUI port is derived **there**,
-  once. `CMD` is `--ws-host 127.0.0.1` with **no `--ws-port`** — a flag would **shadow `BIFURC_COMPANION_PORT`**.
-  The healthcheck reads the port the entrypoint **bound** from `/tmp/bifurc/companion-port`, so probe and
-  listener agree by construction. `npm run verify:docker-entrypoint` is the owner-run end-to-end (it binds
-  80/8080/4747/4748). **The `docker build` itself is still unrun** — Docker Desktop was not up.
-- **WI 6: one global Ports section** (`panels/settings/PortsSettingsSection.tsx` ← `SettingsPanel`). Its companion
-  badge is **static on purpose** — `companionPort` is on **no protocol command** (`serverStatus` is the edge's),
-  so "changed vs running" is unverifiable in the renderer. **No web-GUI row**: derived, and **Electron has no GUI
-  port**.
-- **Since 2026-09-24 the engine is NOT cloud-deployable: `--domain` is REMOVED**, and is a **fatal unrecognised
-  flag**. Three survivors are deliberate: the bind opt-ins, `hello`'s `hostDomain`, `EdgeRouterOptions.hostDomain`.
-- **WI 8: mocks are REST-only.** The GraphQL/SOAP/gRPC mock kinds, their folder kinds and the three
-  `grpc.*MockServer` commands are **gone**; the four *request* kinds and their schemas all stay. **The client
-  surface is 132 keys, not 144** (`surface.ts` is the spec; `BifurcApi` declares 128 — the gap stays 4).
+- **The edge takes NO `hostDomain`** (removed 2026-09-26 — its only reader was the GUI mapping's row G), and its
+  routing table is rows **0 / 2 / 5**: no workspace → **503**, a mapped domain → reverse proxy, otherwise the
+  **home page**. **`hello`'s `hostDomain` is the wire field and stays.**
+- **Since 2026-09-24 the engine is NOT cloud-deployable: `--domain` is REMOVED**, and is a fatal unrecognised
+  flag. Survivors: the bind opt-ins and `hello`'s `hostDomain`.
+- **Mocks are REST-only**; the four *request* kinds and their schemas all stay. **The client surface is 132 keys**
+  (`surface.ts` is the spec; `BifurcApi` declares 128 — the gap stays 4).
 - **`packages/gui` is NOT in `npm run typecheck`.** Sole runner: `npm run typecheck --workspace @bifurc/gui`
-  (**34 pre-existing errors**). **The instrument is not the count but *which files*.** **`tsc` after any
-  type-level change — vitest does not typecheck.**
-- **The browser's transport is auth-wrapped; Electron's is not.** Reconnect **reassigns `window.api`**; a token
-  rotates per host start, so a rotated-token reconnect is *terminal*.
-- **A headless browser DOES run from the agent shell.** `verify:web` / `verify:web:reconnect` found four defects
-  in code that passed 471 tests; **neither is self-contained**. **`build:main` after any `src/preload.ts` change.**
-- **The companion is RETIRED**; the extension becomes an ordinary authenticated client — **engine half DONE,
-  extension half deliberately NOT**. **`onCompanionRefresh` was KEPT** — misleadingly named but *live*.
+  (**34 pre-existing errors**), now the CI step that replaced `typecheck:web`. **The instrument is not the count
+  but *which files*.** **`tsc` after any type-level change — vitest does not typecheck.**
+- **The browser's transport is auth-wrapped; Electron's is not** — `hello` is mandatory before the first real
+  request. `packages/web-client` survives for the extension. **`build:main` after any `src/preload.ts` change.**
+- **The companion is RETIRED as a bridge**; the extension becomes an ordinary authenticated client — engine half
+  DONE, extension half deliberately NOT. **`onCompanionRefresh` was KEPT** — misleadingly named but *live*.
