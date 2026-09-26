@@ -140,11 +140,12 @@ export function randomWebhookPort(): number {
  * because a browser's proxy setting names the port and a silently moved one breaks the browser — so there is
  * no base left for this variable to move. It now sets the port **outright**.
  *
- * The variable is **not renamed**, and that is a decision rather than an oversight: it is documented in
- * `Dockerfile`, `docker-compose.yml` and `DOCKER.md` as the way a container pins the published proxy port,
- * and that is still exactly what it does. Renaming it would break every deployment that already sets it in
- * exchange for a shorter name. `plan/17` §6 asks only that the repurposing not be **silent** — so the three
- * documents are updated, and this comment is the fourth place it is stated.
+ * The variable is **not renamed**, and that is a decision rather than an oversight: it is the way a container
+ * pins the published proxy port — `Dockerfile`, `docker-compose.yml` and `DOCKER.md` documented it until the
+ * container image was decommissioned on 2026-09-26 — and that is still exactly what it does. Renaming it
+ * would break every deployment that already sets it in exchange for a shorter name. `plan/17` §6 asks only
+ * that the repurposing not be **silent**; the three documents are gone now, so this comment and an operator's
+ * own compose file are what is left to state it.
  *
  * Returns `null` when the variable is unset or empty, so a caller can tell "no override" from "override to
  * the default". A malformed value **throws**: a container that set the variable meant it, and falling back
