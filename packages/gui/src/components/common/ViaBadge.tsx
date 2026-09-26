@@ -5,6 +5,7 @@ type Via = RequestLogEntry["via"];
 
 export const VIA_LABEL: Record<Via, string> = {
   rfc6761: "RFC 6761",
+  mapping: "Mapping",
   proxy: "Proxy",
   rule: "Rule",
   mock: "Mock",
@@ -13,6 +14,7 @@ export const VIA_LABEL: Record<Via, string> = {
 
 const VIA_COLOR: Record<Via, string> = {
   rfc6761: "text-signal",
+  mapping: "text-signal",
   proxy: "text-signal",
   rule: "text-amber",
   mock: "text-violet",

@@ -18,10 +18,7 @@ import { useMocksPanelState } from "./mocks/useMocksPanelState";
 const DRAFT_PREFIX = "mock-draft-";
 const isDraft = (id: string) =>
   id.startsWith(DRAFT_PREFIX) ||
-  id.startsWith("prefill-") ||
-  id.startsWith("gql-mock-draft-") ||
-  id.startsWith("grpc-mock-draft-") ||
-  id.startsWith("soap-mock-draft-");
+  id.startsWith("prefill-");
 
 // -- Props ------------------------------------------------------------------
 

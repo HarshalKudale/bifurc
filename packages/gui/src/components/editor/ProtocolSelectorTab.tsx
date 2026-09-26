@@ -102,7 +102,14 @@ export default function ProtocolSelectorTab({ mode, onSelect }: Props) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
-        {cards.map((card) => (
+        {/*
+          `mode === "mock"` shows the REST card **only**. Mocks became REST-only in `plan/17` work
+          item 8, so a GraphQL/gRPC/SOAP mock is no longer a creatable thing — `onSelect("graphql")`
+          in mock mode would ask for a kind that does not exist. The three cards' `mode === "mock"`
+          copy below is therefore unreachable; it is left in place because this filter is the guard,
+          and deleting the copy would make re-adding the cards look like the whole change.
+        */}
+        {cards.filter((card) => mode === "request" || card.id === "rest").map((card) => (
           <button
             key={card.id}
             type="button"

@@ -116,8 +116,12 @@ export function deriveType(entry: RequestLogEntry): CaptureType {
 export function fulfilledBy(via: RequestLogEntry["via"]): string {
   switch (via) {
     case "proxy": return strings.capture.fulfilledExternal;
+    // One label for all three: a proxy rule, an RFC 6761 mapping and any other configured domain are
+    // all "served by the proxy" from the user's side. They differ only in how the request was
+    // addressed, which is what `ViaBadge`'s badge says — see `logEmitter`'s note on `via`.
     case "rule":
-    case "rfc6761": return strings.capture.fulfilledProxy;
+    case "rfc6761":
+    case "mapping": return strings.capture.fulfilledProxy;
     case "mock": return strings.capture.fulfilledMock;
     case "error": return strings.capture.fulfilledError;
   }
@@ -127,7 +131,8 @@ export function fulfilledColor(via: RequestLogEntry["via"]): string {
   switch (via) {
     case "proxy": return "text-signal";
     case "rule":
-    case "rfc6761": return "text-signal";
+    case "rfc6761":
+    case "mapping": return "text-signal";
     case "mock": return "text-amber";
     case "error": return "text-destructive";
   }

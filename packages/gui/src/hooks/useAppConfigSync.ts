@@ -3,7 +3,10 @@ import { AppConfig, ServiceInfo, SyncStatus } from "@/types";
 
 export const EMPTY_CONFIG: AppConfig = {
   port: 80,
-  companionPort: 9271,
+  // Literals rather than imports: this is the browser bundle, and `@bifurc/engine` is not its dependency. The
+  // engine is the authority for these numbers — see `store/appSettings.ts`'s `DEFAULT_*` constants.
+  forwardProxyPort: 8080,
+  companionPort: 4747,
   minimizeToTray: true,
   tlsEnabled: false,
   tlsCaCertPath: null,
@@ -22,21 +25,14 @@ export const EMPTY_CONFIG: AppConfig = {
   webhooks: [],
   webhookFolders: [],
   graphqlRequests: [],
-  graphqlMocks: [],
   graphqlSchemas: [],
   graphqlRequestFolders: [],
-  graphqlMockFolders: [],
   grpcRequests: [],
-  grpcMocks: [],
   protoFiles: [],
   grpcRequestFolders: [],
-  grpcMockFolders: [],
-  grpcMockServerPort: 9102,
   soapRequests: [],
-  soapMocks: [],
   savedWsdls: [],
   soapRequestFolders: [],
-  soapMockFolders: [],
   webhookPort: 9101,
   environments: [],
   activeEnvironmentId: null,

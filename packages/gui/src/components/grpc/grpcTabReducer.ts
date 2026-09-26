@@ -1,8 +1,8 @@
-import { SavedGrpcRequest, SavedGrpcMock } from "@/types";
+import { SavedGrpcRequest } from "@/types";
 
 // -- State ------------------------------------------------------------------
 
-export type GrpcTabType = "request" | "mock";
+export type GrpcTabType = "request";
 
 export interface GrpcTabState {
     tabType: GrpcTabType;
@@ -16,14 +16,6 @@ export interface GrpcTabState {
     streamingType: "unary" | "server" | "client" | "bidi";
     preScript: string;
     postScript: string;
-    // Mock-specific
-    responseBody: string;
-    responseMetadata: Record<string, string>;
-    responseDelay: number;
-    streamingResponses: string[];
-    errorCode: number;
-    errorMessage: string;
-    enabled: boolean;
     // Response state
     sending: boolean;
     responses: string[];
@@ -56,32 +48,16 @@ export interface GrpcRequestDraft {
     folderId: string | null;
 }
 
-export interface GrpcMockDraft {
-    name: string;
-    serviceName: string;
-    methodName: string;
-    responseBody: string;
-    responseMetadata: Record<string, string>;
-    responseDelay: number;
-    streamingResponses: string[];
-    errorCode: number;
-    errorMessage: string;
-    protoFileId: string | null;
-    enabled: boolean;
-    folderId: string | null;
-}
-
 // -- Actions ----------------------------------------------------------------
 
 import { createTabReducer, CommonTabAction } from "@/lib/createTabReducer";
 
 export type GrpcAction =
     | { type: "SET_METADATA"; metadata: Record<string, string> }
-    | { type: "SET_RESPONSE_METADATA"; metadata: Record<string, string> }
     | { type: "SEND_START" }
     | { type: "SEND_SUCCESS"; responses: string[]; metadata: Record<string, string>; status: number; statusMessage: string; durationMs: number }
     | { type: "LOAD"; state: Partial<GrpcTabState> }
-    | CommonTabAction<GrpcTabState, any, any>;
+    | CommonTabAction<GrpcTabState, SavedGrpcRequest, GrpcRequestDraft>;
 
 // -- Initial state factory --------------------------------------------------
 
@@ -100,52 +76,7 @@ export function initGrpcRequestState(req?: SavedGrpcRequest | null): GrpcTabStat
         streamingType: req?.streamingType ?? "unary",
         preScript: req?.preScript ?? "",
         postScript: req?.postScript ?? "",
-        // Mock-specific (unused in request mode)
-        responseBody: "",
-        responseMetadata: {},
-        responseDelay: 0,
-        streamingResponses: [],
-        errorCode: 0,
-        errorMessage: "",
-        enabled: true,
         // Response state
-        sending: false,
-        responses: [],
-        resMetadata: {},
-        resStatus: null,
-        resStatusMessage: "",
-        resDuration: null,
-        resError: null,
-        // Save
-        saving: false,
-        dirty: false,
-    };
-}
-
-export function initGrpcMockState(mock?: SavedGrpcMock | null): GrpcTabState {
-    return {
-        tabType: "mock",
-        name: mock?.name ?? "",
-        folderId: mock?.folderId ?? null,
-        serverAddress: "",
-        serviceName: mock?.serviceName ?? "",
-        methodName: mock?.methodName ?? "",
-        requestBody: "",
-        metadata: {},
-        protoFileId: mock?.protoFileId ?? null,
-        useReflection: false,
-        streamingType: "unary",
-        preScript: "",
-        postScript: "",
-        // Mock-specific
-        responseBody: mock?.responseBody ?? "{}",
-        responseMetadata: mock?.responseMetadata ?? {},
-        responseDelay: mock?.responseDelay ?? 0,
-        streamingResponses: mock?.streamingResponses ?? [],
-        errorCode: mock?.errorCode ?? 0,
-        errorMessage: mock?.errorMessage ?? "",
-        enabled: mock?.enabled ?? true,
-        // Response state (unused in mock mode)
         sending: false,
         responses: [],
         resMetadata: {},
@@ -165,8 +96,6 @@ const baseGrpcTabReducer = (state: GrpcTabState, action: GrpcAction): GrpcTabSta
     switch (action.type) {
         case "SET_METADATA":
             return { ...state, metadata: action.metadata, dirty: true };
-        case "SET_RESPONSE_METADATA":
-            return { ...state, responseMetadata: action.metadata, dirty: true };
         case "SEND_START":
             return { ...state, sending: true, resError: null, responses: [], resMetadata: {}, resStatus: null, resStatusMessage: "", resDuration: null };
         case "SEND_SUCCESS":
@@ -178,21 +107,14 @@ const baseGrpcTabReducer = (state: GrpcTabState, action: GrpcAction): GrpcTabSta
     }
 };
 
-export const grpcTabReducer = createTabReducer<GrpcTabState, GrpcAction, any, any>(
+export const grpcTabReducer = createTabReducer<GrpcTabState, GrpcAction, SavedGrpcRequest, GrpcRequestDraft>(
     {
-        // gRPC has two different state factories, so the shared LOAD_ENTITY / LOAD_DRAFT /
-        // REFRESH handling in createTabReducer has to be told which one to use. Without this
-        // `init`, `REFRESH` (dispatched when the user discards changes) was a no-op and the
-        // editor kept showing the discarded edits. Mirrors `initState` in GrpcTab.tsx.
-        init: (entity: any, draft: any, tabType: any) => {
-            if (draft) {
-                return tabType === "request"
-                    ? { ...initGrpcRequestState(), ...(draft as GrpcRequestDraft) }
-                    : { ...initGrpcMockState(), ...(draft as GrpcMockDraft) };
-            }
-            return tabType === "request"
-                ? initGrpcRequestState(entity as SavedGrpcRequest | null)
-                : initGrpcMockState(entity as SavedGrpcMock | null);
+        // The gRPC tab's state factory is spelled out here so the shared LOAD_ENTITY / LOAD_DRAFT /
+        // REFRESH handling in createTabReducer knows how to rebuild the editor. Mirrors `initState`
+        // in GrpcTab.tsx.
+        init: (entity: SavedGrpcRequest | null, draft: GrpcRequestDraft | null) => {
+            if (draft) return { ...initGrpcRequestState(), ...draft };
+            return initGrpcRequestState(entity);
         },
     },
     baseGrpcTabReducer,
@@ -217,23 +139,6 @@ export function stateToRequestDraft(s: GrpcTabState): GrpcRequestDraft {
     };
 }
 
-export function stateToMockDraft(s: GrpcTabState): GrpcMockDraft {
-    return {
-        name: s.name,
-        serviceName: s.serviceName,
-        methodName: s.methodName,
-        responseBody: s.responseBody,
-        responseMetadata: s.responseMetadata,
-        responseDelay: s.responseDelay,
-        streamingResponses: s.streamingResponses,
-        errorCode: s.errorCode,
-        errorMessage: s.errorMessage,
-        protoFileId: s.protoFileId,
-        enabled: s.enabled,
-        folderId: s.folderId,
-    };
-}
-
 export function requestToSaveData(s: GrpcTabState): Omit<SavedGrpcRequest, "id" | "createdAt" | "workspaceId"> {
     return {
         name: s.name,
@@ -247,23 +152,6 @@ export function requestToSaveData(s: GrpcTabState): Omit<SavedGrpcRequest, "id" 
         streamingType: s.streamingType,
         preScript: s.preScript,
         postScript: s.postScript,
-        folderId: s.folderId,
-    };
-}
-
-export function mockToSaveData(s: GrpcTabState): Omit<SavedGrpcMock, "id" | "createdAt" | "workspaceId"> {
-    return {
-        name: s.name,
-        enabled: s.enabled,
-        serviceName: s.serviceName,
-        methodName: s.methodName,
-        responseBody: s.responseBody,
-        responseMetadata: s.responseMetadata,
-        responseDelay: s.responseDelay,
-        streamingResponses: s.streamingResponses,
-        errorCode: s.errorCode,
-        errorMessage: s.errorMessage,
-        protoFileId: s.protoFileId ?? "",
         folderId: s.folderId,
     };
 }

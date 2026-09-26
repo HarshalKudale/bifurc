@@ -5,14 +5,11 @@ import type {
   LocalMapping,
   MockRule,
   ProxyRule,
-  SavedGraphQLMock,
   SavedGraphQLRequest,
   SavedGraphQLSchema,
-  SavedGrpcMock,
   SavedGrpcRequest,
   SavedProtoFile,
   SavedRequest,
-  SavedSoapMock,
   SavedSoapRequest,
   SavedWebhook,
   SavedWsConnection,
@@ -41,7 +38,13 @@ export interface RequestLogEntry {
   url: string;
   host: string;
   status: number | null;
-  via: "rfc6761" | "proxy" | "rule" | "mock" | "error";
+  /**
+   * Mirrors `RequestLogEntry["via"]` in `@bifurc/engine/proxy/logEmitter.ts`, by hand — that file is
+   * the source of truth and carries the note on what each value means and why the union is
+   * engine-local. Widen it there first; this copy is what makes a forgotten `VIA_LABEL` /
+   * `fulfilledBy` case a compile error instead of a badge that renders blank.
+   */
+  via: "rfc6761" | "mapping" | "proxy" | "rule" | "mock" | "error";
   target: string | null;
   durationMs: number | null;
   reqHeaders: Record<string, string>;
