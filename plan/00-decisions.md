@@ -168,6 +168,44 @@ so it belongs with work item 2 rather than here.
 
 ---
 
+## D19 — Publish the backlog before the enterprise work starts
+
+| | |
+| --- | --- |
+| **Options** | (a) push the 128 unpublished commits **now**, before any enterprise code exists · (b) leave the remote behind and push later |
+| **Recommendation** | **(a)**, put to the owner 2026-09-26 and chosen |
+| **Why** | Measured: `origin/standalone-engine` was at `614bb03` (2026-09-18) while local `HEAD` was `73ef3ad` (2026-09-26) — **128 commits, 494 files, +47,810 / −10,929** — and `614bb03` is an **ancestor** of `HEAD`, so the remote was stale rather than diverged. The ordering argument is the real one: **the public repo was still clean of enterprise code, and that is a property to capture deliberately rather than by accident.** Once the enterprise package exists, "what gets pushed" becomes a live question with a wrong answer available; before it, publishing is a no-op. The range was scanned for credential patterns and for `enterprise\|sso\|saml\|oauth` paths **before** it was published — both clean — because the repository is public. |
+| **Blocks** | Nothing — it is a precondition, not a dependency |
+| **Decision** | **(a)** — executed the same evening: `614bb03..73ef3ad standalone-engine -> standalone-engine`, and the remote tip verified equal to local `HEAD` by `git ls-remote`. |
+
+---
+
+## D20 — The enterprise package is a sibling repository
+
+| | |
+| --- | --- |
+| **Options** | (a) a **sibling private repository**, consumed as a `file:` dependency · (b) an in-repo `packages/enterprise/` directory, gitignored · (c) a private npm registry |
+| **Recommendation** | **(a)**, put to the owner 2026-09-26 and chosen |
+| **Why** | The brief requires the package to be "**never** pushed to the public repo". Only (a) is **structurally** safe: a `.gitignore` does not survive `git add -A` or a force-add, so (b) needs a second line of defence and is one mistake away from publishing SSO code. (a) also matches the repository's existing shape — `bifurc-extension` and `bifurc-studio` are already siblings. (c) is the strongest isolation, but it adds publishing infrastructure and a release step for every change while the contract is still a mock. |
+| **Cost, recorded rather than hidden** | A second repository to keep in sync, and the app cannot build without the sibling checked out. And a `file:` dependency changes `package-lock.json`, which `npm ci` validates — see `TRAPS.md`, "`npm ci` validates the workspace set against the lockfile", which **fails in both directions** and only on a fresh clone or in CI. |
+| **Blocks** | P18 WI 4, and the package boundary of WI 1 (which must stay enterprise-free) |
+| **Decision** | **(a)** — `../bifurc-enterprise`, package name `@bifurc/enterprise`, consumed only by the Electron app. The public packages must never import it; a grep guard asserts that. |
+
+---
+
+## D21 — Permissions gate remote-affecting operations and visibility only
+
+| | |
+| --- | --- |
+| **Options** | (a) gate **remote-affecting operations and visibility only**; local CRUD on an org workspace is never gated · (b) a full vocabulary where every CRUD action is an allow-list entry, so an absent permission disables the action outright · (c) a full vocabulary with local edit granted by default — a deny-list |
+| **Recommendation** | **(a)**, put to the owner 2026-09-26 and chosen |
+| **Why** | The brief says two things that pull apart: *"only the allowed CRUD actions are enabled"* (all CRUD gated) and *"on org repos the user can make local changes freely; permissions take effect on git operations that could change the remote version of the workspace"*. (a) is the second sentence, and it is also the least disruptive: it leaves the engine's behaviour for every non-remote command untouched, which is what makes WI 1's claim — *every existing suite is byte-identical* — available at all. (b) would let the backend make an org workspace read-only, a larger product surface than the brief describes. (c) is (b) with a different default, and is the natural next step if the backend later needs to tighten without a client change: **recorded as the migration path, not foreclosed.** |
+| **Consequence** | The vocabulary is **six permissions, not one per command**. Two entries are **judgement calls, flagged rather than silently decided** (see [`18-enterprise-sso.md`](18-enterprise-sso.md) §4.1): `org.remote.pull` does not change the remote — it rewrites local *from* the remote, the same trust boundary, so it is included; and `git.discard` is destructive but purely local, so it is **not** gated, per (a). |
+| **Blocks** | P18 WI 1's `PermissionContext` shape, and WI 3 |
+| **Decision** | **(a)** |
+
+---
+
 ## Decision log
 
 Append a row each time a decision is made or revisited.
@@ -192,11 +230,18 @@ Append a row each time a decision is made or revisited.
 | 2026-09-20 | D16 | **A workspace's proxy takes a per-environment base port — `80` on Windows, `8080` on Linux/macOS/Docker — then counts up from it.** A per-workspace override fails loudly instead of moving; the webhook port follows the same shape from `9101` | `14-workspace-runtime.md` §3, D16 |
 | 2026-09-20 | D17 | **Blob staging is namespaced per workspace** — `blobRoot(wsId)` = `<dataDir>/blobs/<wsId>/`, `workspaceId` added to the four `blob.*` params, the sweeper becomes per-runtime | `14-workspace-runtime.md` §12.1. Owner's call, made after the reconciliation found §2.2's "already per-workspace" claim false. Lands with WI 1 / WI 8 |
 | 2026-09-22 | D18 | **The renderer becomes a shared UI package; only the communication module varies.** Electron and browser import the same UI; the browser hides host-local affordances and adds remote-host selection. Shape: **`packages/gui` exports `<App />`**, `window.api` stays the seam and each host fills it, and the two builds stay separate | Owner's direction. `08-phase-7-web-ui.md` §"The architecture this phase targets". Supersedes that document's "no React, must not resolve the renderer's components" reasoning, which described the framework-free probe page and not the phase's target. Cheap by measurement: 647 `@/`-aliased imports across 165 files mean the move repoints one alias and edits no import |
+| 2026-09-26 | D19 | **(a) Publish the backlog before the enterprise work starts** — the public repo was 8 days / 494 files / 128 commits behind, and was brought current while still clean of enterprise code | Owner's call. Range scanned for credential patterns and for enterprise paths first, both clean. `614bb03..73ef3ad standalone-engine` |
+| 2026-09-26 | D20 | **(a) The enterprise package is a sibling private repository** — `../bifurc-enterprise`, `@bifurc/enterprise`, consumed as a `file:` dependency | Owner's call. Only a separate repository is structurally safe against `git add -A`; matches the `bifurc-extension` / `bifurc-studio` pattern. Recorded cost: `package-lock.json` coupling, which `npm ci` validates and only a fresh clone reproduces |
+| 2026-09-26 | D21 | **(a) Permissions gate remote-affecting operations and visibility only** — local CRUD on an org workspace is never gated. Six permissions; two flagged judgement calls | Owner's call. Resolves the brief's internal tension. Full-vocabulary-with-deny-list (c) is recorded as the migration path, not foreclosed. Reasoning: [`18-enterprise-sso.md`](18-enterprise-sso.md) §4 |
 
 > **D10–D17 are recorded in full in [`14-workspace-runtime.md`](14-workspace-runtime.md) §3 and §12.1**,
 > not duplicated here, so there is one authority for the reasoning and one place to correct it. This table
 > is the index. **Nothing from this pivot is still open** — D17 was the last, opened by the §12
 > reconciliation the same day and closed by the owner's decision.
+
+> **D19–D21 are the enterprise pivot (2026-09-26)** and are recorded in full **above**, not in `plan/18`,
+> because each one binds work that already exists (D19's push, D20's package boundary, D21's vocabulary
+> shape). `plan/18` is the authority for the *how*; these three are the authority for the *what*.
 
 ---
 
