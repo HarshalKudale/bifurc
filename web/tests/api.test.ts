@@ -14,8 +14,19 @@
  *
  * A `window.api` that merely *existed* would pass every structural assertion and still leave a blank
  * screen, so the first case asserts the object the UI will call is the object the engine answers. And
- * because the installer now performs the `hello` handshake before assigning, the last case here is the
- * one that pins the *ordering*: the global is not installed unless the session actually authenticated.
+ * because the installer performs the `hello` handshake before assigning, the case about a *failure* is the
+ * one that pins the **ordering**: the global is not installed unless the session actually established.
+ *
+ * ## The pair that collapsed on 2026-09-25
+ *
+ * There used to be two success cases and two failure cases, split by **token** — one pair with a token and
+ * one without — because the token was what decided whether `connectAndInstall` would authenticate at all.
+ * The token is gone and the handshake is now unconditional, so the no-token pair *is* the with-token pair;
+ * one of each was deleted rather than left in place as a duplicate that reads like a distinct mode.
+ *
+ * The failure case is retargeted at a **protocol major mismatch**. That is still a genuine handshake
+ * failure, it still arrives as a `ConnectError` raised before the global is assigned, and it needs no token
+ * to produce — which is exactly the property the old case lost.
  *
  * ## Why the **node** environment, and why a real engine
  *
@@ -32,8 +43,6 @@ import { createWsServer, type WsServer } from "@bifurc/engine/transport/ws";
 import { connectAndInstall, uninstallWindowApi, type InstalledApi } from "../api";
 import { ConnectError } from "../connect";
 
-const TOKEN = "web-api-test-token";
-
 const servers: WsServer[] = [];
 const installed: InstalledApi[] = [];
 
@@ -44,14 +53,34 @@ function makeRegistry(): CommandRegistry {
   return registry;
 }
 
-async function serve(token?: string): Promise<WsServer> {
+interface ServeOptions {
+  /** Build the server **without** the handshake — see `connect.test.ts`'s `ServeOptions.bare`. */
+  bare?: boolean;
+  /** Drive the major-mismatch path: the server claims a different protocol major. */
+  protocolVersion?: string;
+}
+
+/**
+ * Bind a real engine, **handshake included by default**.
+ *
+ * It used to take a `token` and attach `auth` only when one was passed, because the token was what made the
+ * client authenticate. Every server here is host-shaped now unless a case asks for `bare`.
+ */
+async function serve(opts: ServeOptions = {}): Promise<WsServer> {
   const bus = new EngineEventBus();
   const log = new EventLog({ bus });
   const server = await createWsServer({
     registry: makeRegistry(),
     bus,
     log,
-    ...(token === undefined ? {} : { auth: { token, engineVersion: "0.0.0-web-api-test" } }),
+    ...(opts.bare === true
+      ? {}
+      : {
+          auth: {
+            engineVersion: "0.0.0-web-api-test",
+            ...(opts.protocolVersion === undefined ? {} : { protocolVersion: opts.protocolVersion }),
+          },
+        }),
   });
   servers.push(server);
   return server;
@@ -92,24 +121,17 @@ describe("connectAndInstall — the browser's half of the D18 seam", () => {
   });
 
   it("installs nothing when the handshake fails — the UI is never mounted against a dead session", async () => {
-    const server = await serve(TOKEN);
+    // A protocol major mismatch, because it is the one handshake failure that needs no credential to
+    // produce: the engine answers `UNSUPPORTED`, the decorator closes the session, and `connectAndInstall`
+    // must have raised before it assigned anything.
+    const server = await serve({ protocolVersion: "99.0.0" });
 
     // The ordering guarantee, and the reason this file has a case about a *failure*. An installer that
     // assigned first and authenticated second would leave `window.api` pointing at a client whose
     // transport the engine had already closed, so the container would render the whole UI and then every
     // call would reject — which is exactly the shape of the original bug.
-    await expect(connectAndInstall({ url: server.url, token: "wrong" })).rejects.toBeInstanceOf(
-      ConnectError,
-    );
+    await expect(connectAndInstall({ url: server.url })).rejects.toBeInstanceOf(ConnectError);
     expect((globalThis as { api?: unknown }).api).toBeUndefined();
-  });
-
-  it("installs a working global when the handshake succeeds", async () => {
-    const server = await serve(TOKEN);
-    installed.push(await connectAndInstall({ url: server.url, token: TOKEN }));
-
-    const api = (globalThis as { api?: { getConfig(): Promise<unknown> } }).api;
-    await expect(api!.getConfig()).resolves.toMatchObject({ port: 8080 });
   });
 
   it("reports a lost engine through onFatal rather than leaving the page on a stale screen", async () => {

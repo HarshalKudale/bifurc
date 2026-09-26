@@ -4,16 +4,22 @@
  * `plan/08`'s criterion — *"disconnect/reconnect works; the UI never silently freezes"* — and the one thing
  * a unit suite cannot reach: the container's own loop, driven by a socket dying under a mounted UI.
  *
- * ## The token rotation is why this has two halves
+ * ## There used to be a second half, and the token took it with it
  *
- * `ensureEngineToken()` generates a token on **every** host start rather than reusing one — a token that
- * survives a restart is a credential that survives a restart. So a restarted host is *unreachable with the
- * old token*, and that is the expected case rather than an error. Both halves are worth checking:
+ * This check ran **two** scenarios, because `ensureEngineToken()` generated a token on **every** host start
+ * rather than reusing one — so a restarted host was *unreachable with the old token*, and that was the
+ * expected case rather than an error. Both halves were worth driving:
  *
- *   1. host dies, restarts with the **same** token (the `BIFURC_ENGINE_TOKEN` / mounted-secret path) →
- *      the UI must recover on its own, with the shell still mounted;
+ *   1. host dies, restarts with the **same** token → the UI must recover on its own, shell still mounted;
  *   2. host dies, restarts with a **new** token → the loop must **stop** and say so, rather than spinning
  *      forever against a token that can never work again.
+ *
+ * **There is no token any more** (2026-09-25), so scenario 2 has no way to be produced: a restart cannot
+ * invalidate anything, and the reconnect either succeeds or fails for an ordinary availability reason. The
+ * loop still gives up on a *non-transient* failure — `unauthorized`, and a protocol major mismatch — and
+ * that is pinned in `web/tests/connect.test.ts`, where it belongs: it needs a fake endpoint that answers
+ * `UNAUTHORIZED`, not a dead host. What is left here is the scenario nothing else can reach, because it
+ * needs a **real** socket dying under a **mounted** UI.
  *
  * ## Usage
  *
@@ -57,9 +63,6 @@ const APP_URL = arg("url", "http://localhost:5199/");
 const PORT = arg("port", "8099");
 const DATA_DIR = path.resolve(REPO, arg("data-dir", ".tmp-reconnect-check"));
 
-/** Fixed on purpose: half of this check is a restart with the *same* token. */
-const FIXED_TOKEN = "verify-web-reconnect-token";
-
 const say = (label, value) => console.log("  " + String(label).padEnd(30) + value);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,12 +82,21 @@ function findChromium(explicit) {
 }
 
 /** Start a host and resolve once it reports its RPC endpoint. */
-function startHost(token) {
+function startHost() {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
+      // **No `--domain`.** It was a required flag until 2026-09-24 and is now removed — the engine is not
+      // deployable in the cloud, so it always answers as `localhost` (the host composes that itself). This
+      // script's whole subject is a browser on *this* machine talking to an engine on it, which is exactly the
+      // case `*.localhost` resolves for, so `localhost` was the honest value to pass and is now the only one.
+      // **A stale `--domain` here is loud rather than silent** — the parser refuses an unrecognised flag — which
+      // is what the host's own `Dockerfile` relies on too.
+      //
+      // **No environment variable either.** `BIFURC_ENGINE_TOKEN` used to be set here to *pin* the token, so
+      // that a restart reused it and scenario 1 above was reachable at all. There is no token to pin.
       ["packages/engine/dist/runtime/hostCli.js", "--data-dir", DATA_DIR, "--ws-port", PORT],
-      { cwd: REPO, env: { ...process.env, BIFURC_ENGINE_TOKEN: token } },
+      { cwd: REPO },
     );
     let out = "";
     const timer = setTimeout(() => reject(new Error("host never reported ready:\n" + out)), 30000);
@@ -130,15 +142,16 @@ const check = (label, ok, detail) => {
 
 let host;
 try {
-  host = await startHost(FIXED_TOKEN);
+  host = await startHost();
 
   console.log("=== connect ===");
   await page.goto(APP_URL, { waitUntil: "load" });
   await page.waitForSelector("form");
+  // Two fields: host and port. The third used to be the token, and it is gone — see the header. Filling by
+  // index rather than by label is deliberate: it is what makes a *returned* token field fail this check.
   const inputs = page.locator("input");
   await inputs.nth(0).fill("127.0.0.1");
   await inputs.nth(1).fill(PORT);
-  await inputs.nth(2).fill(FIXED_TOKEN);
   await page.getByRole("button", { name: /connect/i }).click();
   await page.waitForSelector("form", { state: "detached", timeout: 20000 });
 
@@ -157,20 +170,12 @@ try {
   // may not have noticed.
   check("UI still mounted", (await page.locator("nav").count()) === 1);
 
-  console.log("=== restart with the SAME token — it must recover on its own ===");
-  host = await startHost(FIXED_TOKEN);
+  console.log("=== restart it — the UI must recover on its own ===");
+  host = await startHost();
   await page.waitForSelector("text=/reconnecting/i", { state: "detached", timeout: 45000 });
   check("banner gone", true);
   check("shell still there", (await page.locator("nav").count()) === 1);
   check("footer endpoint", (await page.getByText(`ws://127.0.0.1:${PORT}`).count()) > 0);
-
-  console.log("=== restart with a NEW token — it must STOP and say so ===");
-  await stopHost(host);
-  host = await startHost(FIXED_TOKEN + "-rotated");
-  await page.waitForSelector("form", { timeout: 45000 });
-  check("returned to the form", true);
-  const alert = (await page.locator('[role="alert"]').first().textContent()) ?? "";
-  check("token message is actionable", /regenerated/.test(alert));
 
   console.log("=== console health ===");
   check("uncaught page errors", pageErrors.length === 0, pageErrors.length);

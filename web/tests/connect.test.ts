@@ -16,10 +16,18 @@
  * the gap survived P6 and had to be found by running the thing.
  *
  * So the cases below are written to fail if the handshake is removed, not merely to pass while it is
- * present. `connectToEngine` with the right token must succeed against an auth-wrapped server; with no
- * token and with a wrong token it must fail as `"unauthorized"`; and a major mismatch must fail as
- * `"version"`. The third of those is also the one that proves the *classification* works, which is what
- * `plan/08` means by "actionable UI, not generic errors".
+ * present. `connectToEngine` sends `hello` **unconditionally** and must succeed against a hand-wrapped
+ * server; a major mismatch must fail as `"version"`; and an endpoint with no handshake at all — where
+ * `hello` is answered `UNKNOWN_COMMAND` — must fail as `"refused"`. The last two are what prove the
+ * *classification* works, which is what `plan/08` means by "actionable UI, not generic errors".
+ *
+ * **Two cases went on 2026-09-25, and their absence is the change.** `"classifies a missing token as
+ * unauthorized"` and `"classifies a wrong token as unauthorized"` are no longer producible: the token *was*
+ * the discriminator that decided whether to send `hello` at all, so with it gone this client's first request
+ * is always a well-formed `hello` — which is exactly what the decorator accepts. The `unauthorized` arm of
+ * `classify()` survives and is still reachable, by a second client on the same socket or a proxy that
+ * rewrote the first frame; it is simply not reachable *from here*, and a case that cannot be produced
+ * asserts nothing. The engine's own half is pinned in `packages/engine/tests/transport/auth.test.ts`.
  *
  * ## Why the **node** environment, not jsdom
  *
@@ -57,8 +65,6 @@ import { createWsServer, type WsServer } from "@bifurc/engine/transport/ws";
 
 import { ConnectError, connectToEngine, type Connection } from "../connect";
 
-const TOKEN = "web-connect-test-token";
-
 const servers: WsServer[] = [];
 const connections: Connection[] = [];
 
@@ -70,8 +76,16 @@ function makeRegistry(): CommandRegistry {
 }
 
 interface ServeOptions {
-  /** Omit for an **unauthenticated** server — the shape a bare `ws` endpoint has. */
-  token?: string;
+  /**
+   * Build the server **without** the handshake, so `hello` reaches the registry and comes back
+   * `UNKNOWN_COMMAND`.
+   *
+   * That is the shape a bare `ws` endpoint has, and it is legal for the same reason it always was —
+   * `plan/05`'s threat is an unauthenticated *remote* RPC surface, and the loopback bind plus the origin
+   * guard keep this one out of it. `runtime/host.ts` always configures a handshake; this flag exists so the
+   * suite can pin what the client does when it meets something that is not a Bifurc engine.
+   */
+  bare?: boolean;
   /** Drive the major-mismatch path: the server claims a different protocol major. */
   protocolVersion?: string;
 }
@@ -82,6 +96,10 @@ interface ServeOptions {
  * An `EventLog` per server, for the reason the conformance suite gives: Vitest shares a module registry,
  * so asserting against the process-wide singleton would make one test's leak look like the next test's
  * bug.
+ *
+ * **The handshake is configured by default**, which it was not before 2026-09-25 — it used to be attached
+ * only when a token was passed, because the token was what decided whether the client would authenticate.
+ * Every server this suite builds is now a real host-shaped one unless a case asks for `bare`.
  */
 async function serve(opts: ServeOptions = {}): Promise<WsServer> {
   const bus = new EngineEventBus();
@@ -90,11 +108,10 @@ async function serve(opts: ServeOptions = {}): Promise<WsServer> {
     registry: makeRegistry(),
     bus,
     log,
-    ...(opts.token === undefined
+    ...(opts.bare === true
       ? {}
       : {
           auth: {
-            token: opts.token,
             engineVersion: "0.0.0-web-test",
             ...(opts.protocolVersion === undefined ? {} : { protocolVersion: opts.protocolVersion }),
           },
@@ -104,12 +121,7 @@ async function serve(opts: ServeOptions = {}): Promise<WsServer> {
   return server;
 }
 
-async function connect(opts: {
-  url: string;
-  token?: string;
-  lastSeq?: number;
-  onFatal?: (e: Error) => void;
-}) {
+async function connect(opts: { url: string; lastSeq?: number; onFatal?: (e: Error) => void }) {
   const connection = await connectToEngine(opts);
   connections.push(connection);
   return connection;
@@ -170,52 +182,43 @@ describe("the web target's one job — connect a page to an engine", () => {
 });
 
 describe("the hello handshake — the defect that made the browser's connection die on arrival", () => {
-  it("authenticates before the first real request, so the session survives", async () => {
-    const server = await serve({ token: TOKEN });
+  it("sends the handshake before the first real request, so the session survives", async () => {
+    const server = await serve();
 
     // Without the handshake this is the case that fails: `connectToEngine` probes `config.get`, the
     // decorator refuses it, and the engine closes the session.
-    const connection = await connect({ url: server.url, token: TOKEN });
+    const connection = await connect({ url: server.url });
 
     // Still usable afterwards — a handshake that authenticated and then dropped the session would pass
     // the connect above and fail here.
     await expect(connection.probe()).resolves.toMatchObject({ port: 8080 });
   });
 
-  it("classifies a missing token as `unauthorized`, not as an unreachable host", async () => {
-    const server = await serve({ token: TOKEN });
-
-    // The user-visible bug in one case: the address is *correct*, and the engine's own message
-    // ("the first request must be hello") describes the engine's rule rather than the user's problem.
-    await expect(connect({ url: server.url })).rejects.toMatchObject({ failure: "unauthorized" });
-  });
-
-  it("classifies a wrong token as `unauthorized`, and says the token is rotated", async () => {
-    const server = await serve({ token: TOKEN });
-
-    const error = await connect({ url: server.url, token: "not-the-token" }).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ConnectError);
-    expect((error as ConnectError).failure).toBe("unauthorized");
-    // The actionable half: `ensureEngineToken` generates a token per start, so a token from a previous
-    // run is the single most likely cause of this failure and the message has to say so.
-    expect((error as ConnectError).message).toMatch(/regenerated/);
-  });
-
   it("classifies a protocol major mismatch as `version`", async () => {
     // The server claims a different major, which is the one thing `checkVersionCompatibility` refuses.
-    const server = await serve({ token: TOKEN, protocolVersion: "99.0.0" });
+    const server = await serve({ protocolVersion: "99.0.0" });
 
-    const error = await connect({ url: server.url, token: TOKEN }).catch((e: unknown) => e);
+    const error = await connect({ url: server.url }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConnectError);
     expect((error as ConnectError).failure).toBe("version");
   });
 
-  it("skips the handshake when no token is given, so a bare ws endpoint still works", async () => {
-    // `hello` is deliberately not a registry command, so sending it to an unwrapped server would be an
-    // `UNKNOWN_COMMAND` — which is why the handshake is conditional rather than unconditional.
-    const server = await serve();
-    const connection = await connect({ url: server.url });
-    await expect(connection.probe()).resolves.toMatchObject({ port: 8080 });
+  it("classifies an endpoint that is not a Bifurc engine as `refused`", async () => {
+    /**
+     * A server built without `auth` passes every request straight to the registry, so the client's
+     * unconditional `hello` comes back `UNKNOWN_COMMAND` — the honest signal that whatever is listening is
+     * not this engine.
+     *
+     * **This is the case that keeps the handshake's cost visible**, and it is why the alternatives recorded
+     * in `connect.ts`'s header were rejected: a `try`/`catch` probe for `hello` support would fold this into
+     * `"unreachable"`, and a `?token=`-style opt-out would never send the handshake and so never learn it.
+     * `"refused"` is the one classification that says "something answered, and it is not what you think".
+     */
+    const server = await serve({ bare: true });
+
+    const error = await connect({ url: server.url }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectError);
+    expect((error as ConnectError).failure).toBe("refused");
   });
 });
 
@@ -233,35 +236,35 @@ describe("the hello handshake — the defect that made the browser's connection 
  */
 describe("replay — the outcome of a reconnect", () => {
   it("sends no lastSeq on a first connection, so nothing is replayed", async () => {
-    const server = await serve({ token: TOKEN });
-    const connection = await connect({ url: server.url, token: TOKEN });
+    const server = await serve();
+    const connection = await connect({ url: server.url });
 
     // Absence means "send me only live events", which is what a first connection wants — the schema says
     // so, and the engine branches on `lastSeq` being *present* rather than on its value.
-    expect(connection.hello?.replayedFrom).toBeUndefined();
-    expect(connection.hello?.resyncRequired).toBe(false);
+    expect(connection.hello.replayedFrom).toBeUndefined();
+    expect(connection.hello.resyncRequired).toBe(false);
   });
 
   it("replays from a lastSeq the engine can serve", async () => {
-    const server = await serve({ token: TOKEN });
+    const server = await serve();
     // A fresh engine has numbered nothing, so `0` — the honest "I have seen nothing" — is exactly in range
     // (`eventLog.replayFrom`: `oldest === undefined` and `lastSeq === this.seq`).
-    const connection = await connect({ url: server.url, token: TOKEN, lastSeq: 0 });
+    const connection = await connect({ url: server.url, lastSeq: 0 });
 
-    expect(connection.hello?.replayedFrom).toBe(0);
-    expect(connection.hello?.resyncRequired).toBe(false);
+    expect(connection.hello.replayedFrom).toBe(0);
+    expect(connection.hello.resyncRequired).toBe(false);
   });
 
   it("asks for a resync when the lastSeq is ahead of anything the engine ever sent", async () => {
-    const server = await serve({ token: TOKEN });
-    const connection = await connect({ url: server.url, token: TOKEN, lastSeq: 9999 });
+    const server = await serve();
+    const connection = await connect({ url: server.url, lastSeq: 9999 });
 
     // The engine's rule: a client claiming to have seen events it never sent must **not** get an empty
     // replay, because that would leave it believing it is up to date — a silent staleness bug rather than a
     // visible one. So it is a resync, and `plan/05` requires every client to honour it: *"silently ignoring
     // it produces a UI that is permanently wrong in a way nobody can reproduce."*
-    expect(connection.hello?.resyncRequired).toBe(true);
-    expect(connection.hello?.replayedFrom).toBeUndefined();
+    expect(connection.hello.resyncRequired).toBe(true);
+    expect(connection.hello.replayedFrom).toBeUndefined();
   });
 
   it("delivers the events it replayed, not just the promise of them", async () => {
@@ -271,7 +274,7 @@ describe("replay — the outcome of a reconnect", () => {
       registry: makeRegistry(),
       bus,
       log,
-      auth: { token: TOKEN, engineVersion: "0.0.0-web-test" },
+      auth: { engineVersion: "0.0.0-web-test" },
     });
     servers.push(server);
 
@@ -283,7 +286,7 @@ describe("replay — the outcome of a reconnect", () => {
      * was asserting against a log that had recorded nothing. That is a property of the engine, not a bug:
      * an event nobody could have wanted does not need retaining.
      */
-    const first = await connect({ url: server.url, token: TOKEN });
+    const first = await connect({ url: server.url });
     first.client.onServerError(() => {});
     await first.probe();
     const lastSeq = first.lastSeq();
@@ -292,8 +295,8 @@ describe("replay — the outcome of a reconnect", () => {
     // The client is away and the engine keeps going. This is the event replay exists for.
     bus.emitTyped("server.error", "missed-while-away");
 
-    const second = await connect({ url: server.url, token: TOKEN, lastSeq });
-    expect(second.hello?.replayedFrom).toBe(lastSeq);
+    const second = await connect({ url: server.url, lastSeq });
+    expect(second.hello.replayedFrom).toBe(lastSeq);
 
     // The half a shape assertion cannot reach: **the event actually arrives**, on a subscription
     // established *after* the handshake — which is what a real client does, since the UI subscribes when it
