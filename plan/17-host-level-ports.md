@@ -4,6 +4,28 @@
 the only one left.** The blocker in §7 was **stale**; it is resolved and replaced with the measured record.
 **Item 5 does not depend on item 4** — see the note in its record in §5.
 
+> ## ⚠ 2026-09-26 — the companion's GUI *neighbour* is gone, and the pair rule with it
+>
+> **The browser host was decommissioned and the desktop is the single build target** (`plan/README.md`'s
+> 2026-09-26 block). Three things this file specifies were removed with it:
+>
+> - **`webGuiPortFor(companionPort)` and `findPortPair(base)`** — deleted from `portAllocator.ts`, whose surface
+>   is now `SCAN_LIMIT`, `tryBind`, `findFreePortFrom`, `nextFreePortAbove`.
+> - **`WorkspaceHostStatus.webGuiPort`**, and the `--gui-target` / `BIFURC_GUI_TARGET` pair that named the GUI's
+>   address.
+> - The **Ports section's** web-GUI sentence, and the `portsDerivedNote` string behind it.
+>
+> **The host's companion is now found with `findFreePortFrom(settings.companionPort, reserved)`** — a *single*
+> port, which is Electron's own path. That is a **behaviour change, not a rename**: the pair finder required
+> `n` **and** `n + 1` to be free, so a base port whose neighbour happened to be taken was a **refused start**.
+> With no GUI neighbour left to reserve, the refusal lost its reason and a host that used to fail now starts.
+>
+> **§1's port table is otherwise unchanged and this file is still the authority on every port** — the edge, the
+> forward proxy, the webhook, and the companion's *restart-only* rule all hold exactly as written. **Four
+> places below still name the removed pair as current** (§4's `portAllocator.ts` row; §5's item-2 row and its
+> record; the Ports-section paragraph; §7's extension-discovery note). They are the 2026-09-25 record and are
+> left in place, marked where a reader could act on them. **Read this note first.**
+
 This supersedes the per-workspace half of `plan/15` §3.1 and D16's scan-and-remember rule for the forward
 proxy and the webhook. `plan/15` remains the authority on the **edge** and on the mapping model; where the two
 disagree about a *port*, this file wins.
@@ -168,6 +190,11 @@ collapsed entirely, so `serverCommands.ts` / `webhookCommands.ts` became direct 
 `IS_WINDOWS`. Kept: `SCAN_LIMIT`, `tryBind`, `findFreePortFrom` (signature changed — the `kind` parameter is
 gone), `webGuiPortFor`, `findPortPair`, `nextFreePortAbove`.
 
+**⚠ Superseded 2026-09-26 — of that kept list, `webGuiPortFor` and `findPortPair` went too** (see the note at
+the head of this file). **The module's surface is now four exports: `SCAN_LIMIT`, `tryBind`,
+`findFreePortFrom`, `nextFreePortAbove`** — the single-port finder is the only one the host needs, now that the
+companion has no GUI neighbour to reserve.
+
 **3 — the forward proxy and the webhook are host-level.** `host.ts` step 3b creates one forward proxy with
 `workspaceId: null` (which *is* "follow the active workspace" — `createProxyServer()` falls back to
 `loadConfig().activeWorkspaceId` per call) and binds it on `settings.forwardProxyPort`; step 3c creates the
@@ -327,6 +354,12 @@ already answered.**
   arithmetic lives in `webGuiPortFor()`, in a **Node-only** engine module the browser bundle must not pull in;
   and **Electron has no GUI port at all** — only the web host does — so a number would be wrong in the desktop
   app, where this same panel renders.
+
+  **⚠ Superseded 2026-09-26 — the conclusion survives and both reasons do not.** There is no GUI port at all
+  now, so the row is absent for a simpler reason: nothing serves a separate browser bundle. The sentence that
+  used to sit under the companion row (`portsDerivedNote`) and the `webGuiPortFor()` it cited are both deleted.
+  **A panel rendering this section should offer exactly four ports and no GUI row** — which is what
+  `PortsSettingsSection` does, and what `tests/renderer/portsSettings.test.tsx` pins.
 
 **The delta is `+11` tests and `+1` file, and the new file is the whole of it:**
 
