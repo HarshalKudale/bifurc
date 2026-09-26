@@ -1,5 +1,26 @@
 # 10 — Phase 9: Docker ⚠ **REWRITTEN 2026-09-20 — see [`14-workspace-runtime.md`](14-workspace-runtime.md)**
 
+> ## ⚠ DECOMMISSIONED 2026-09-26 — the container image was deleted
+>
+> `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `DOCKER.md`, the four container scripts
+> (`docker-entrypoint.mjs`, `docker-healthcheck.mjs`, `gui-static-server.mjs`,
+> `verify-docker-entrypoint.mjs`) and both of their suites are gone. The desktop app is the single build
+> target.
+>
+> **The headless host this phase packages still exists** — `runtime/hostCli.ts`, `hostArgs.ts`,
+> `--ws-host`/`--ws-port` and the companion (RPC-over-WebSocket) server are engine code and stay, because the
+> browser extension will connect to the companion. What was retired is the *image*, not the ability to run a
+> host.
+>
+> **Read this as the record, not as a plan.** Two findings outlived it:
+>
+> - **`docker run <image> <args>` *replaces* the `CMD`; it does not append to it.** That is how the image's
+>   `--ws-port 4747` came to shadow an operator's `BIFURC_COMPANION_PORT` while the healthcheck probed `4747`
+>   anyway. Any future packaging starts from that.
+> - **The image was never actually built.** `docker build` was never run, so this phase's product was
+>   *reviewed rather than exercised* — `DOCKER.md` said so about itself, and it is the reason retiring it cost
+>   nothing that worked.
+
 > ## ⚠ This phase no longer ships "the engine"
 >
 > Per **D10** (`plan/14` §3), the deployable unit is a **workspace**, not the engine. What this image

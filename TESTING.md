@@ -1,6 +1,28 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-26 · suite: **2,739 tests / 120 files** — 2,699 passed, **0 failures of any kind**, 40
+_Last reviewed: 2026-09-26 · suite: **2,638 tests / 115 files** — 2,598 passed, **0 failures of any kind**, 40
+skipped. Unit **2,178 / 85 files**, integration **460 / 30 files** (`2,178 + 460 = 2,638` ✓, both halves
+measured separately, not derived).
+
+**The last move was the decommission of the browser host and the container image, the same day.** The desktop
+app is now the single build target, so three suites went with their subjects — `web/tests/*` (27 cases: 12 + 6
++ 9), `tests/docker/entrypoint.test.ts` (11) and `tests/integration/guiStaticServer.integration.test.ts` (14) —
+plus the cases whose subject the engine's own removal deleted. **`120 → 115` files and `2,739 → 2,638` is
+`−5` files and `−101` tests**, and the split is **unit `−4 / −86`** (`89 / 2,264` → `85 / 2,178`) and
+**integration `−1 / −15`** (`31 / 475` → `30 / 460`). Integration moving is the load-bearing part: it says the
+cut reached the browser half, which is where the 14 static-server cases lived. **The reconciliation is
+`27 + 49 + 25 = 101`**, one term per commit, and no term is inferred from the other half.
+
+---
+
+### Pre-decommission record — `plan/17` work items 1–9, 2026-09-25/26
+
+**Kept in full, because the reasoning below is what the surviving code was built on.** The port model, the
+`WorkspaceRuntime` deletion, the REST-only mocks and the 144 → 132 client-surface change all still hold. Two
+things in it do not: **the Docker image and the browser host it describes are gone**, and the commands it names
+for them (`verify:web*`, `verify:docker-entrypoint`) are gone from `package.json`.
+
+_Last reviewed (then): 2026-09-26 · suite: **2,739 tests / 120 files** — 2,699 passed, **0 failures of any kind**, 40
 skipped. Unit **2,264 / 89 files**, integration **475 / 31 files** (`2,264 + 475 = 2,739` ✓, both halves
 measured, not derived). **The last move was `plan/17` work item 5 on 2026-09-25/26** — the web GUI is bundled
 into the Docker image and served by an entrypoint that derives its port, so `tests/docker/entrypoint.test.ts`
@@ -1381,6 +1403,18 @@ members, written DOM-optional (`storage()` returns `undefined` rather than throw
 back to `"unknown"`, `applyZoom()` swallows a missing `document`), which is what lets the suite below run in
 the **node** environment rather than jsdom.
 
+> ## ⚠ The `web/tests/*` sections below describe suites that were DELETED on 2026-09-26
+>
+> `web/tests/connect.test.ts` (12), `web/tests/api.test.ts` (6) and `web/tests/settings.test.ts` (9) went with
+> the browser host, along with `npm run verify:web` and `verify:web:reconnect`. **The findings are kept,
+> because most of them were about the engine rather than about the browser** — the `hello` handshake the host
+> requires before the first real request, the replay contract (`lastSeq` → `replayedFrom` / `resyncRequired`),
+> and the retention rule that attaches on the first *subscription* rather than the first emit. Read them as
+> engine facts a browser happened to discover, which is how the extension will meet them too.
+>
+> The `packages/web-client` section above is **not** affected: that package survives, because the extension is
+> a browser context and will need a browser `Transport`.
+
 **`web/tests/connect.test.ts` (12) — the composition, against a real engine over a real socket.** The
 first suite that can exercise the whole web path, because `createClient` **requires** a `local` and there is
 no Electron shell here to supply one: a real round trip, a client-local operation over the same instance, and
@@ -1439,16 +1473,28 @@ arrives as a number or a `port` that arrives as an object has to become the defa
 `new URL()` and throw from inside a connection attempt, where it would read as a network failure and send
 someone debugging the wrong thing.
 
-**Beyond the suites: three commands that are not specs, and they are the only instruments for the classes of
-defect below.** None is part of `npm test` — the two browser checks need a running host and a served app, and the
-Docker one needs the real entrypoint plus four ports. Work item 6 still owes Chromium/Firefox/WebKit and the
-blob flows.
+> ## ⚠ All three commands below were DELETED on 2026-09-26
+>
+> `verify:web`, `verify:web:reconnect` and `verify:docker-entrypoint` are gone from `package.json`, along with
+> the browser host and the container image they exercised. **Nothing replaced them, and that is worth stating
+> rather than leaving implicit:** `npm test` is now the whole automated instrument for the desktop app, and
+> `npm run test:e2e` (owner-run, 11 specs) is what covers the app itself.
+>
+> **The findings are kept, because the lesson outlived the scripts.** These three were the only instruments for
+> a class of defect no suite sees — a *wiring* gap in code every unit test passes — and they found five of
+> them, four in code written minutes earlier that was passing 471 tests. Two of those four are generic: **a UI
+> that unmounts during an outage while the comment beside it claims it stays mounted**, and **`void promise`
+> does not catch** — it discards the promise and its rejection alike.
 
-| Command | What it asserts |
+**Beyond the suites: three commands that were not specs, and they were the only instruments for the classes of
+defect below.** None was part of `npm test` — the two browser checks needed a running host and a served app, and the
+Docker one needed the real entrypoint plus four ports.
+
+| Command (deleted) | What it asserted |
 |---|---|
 | `npm run verify:web` | the form renders, Connect succeeds, the shell mounts, and **0 console errors / 0 uncaught page errors / 0 warnings** |
 | `npm run verify:web:reconnect` | the host dies → banner with the **UI still mounted**; restart with the same token → automatic recovery; restart with a **rotated** token → the loop stops with the actionable message |
-| `npm run verify:docker-entrypoint` | `plan/17` §5 item 5's **three-way agreement**, which no unit test can see: the static server binds `companion + 1`, the host is told `--gui-target` on that same port, and the healthcheck reads that port from `/tmp/bifurc/companion-port` — plus the SPA fallback, a 404 for a missing asset, and the edge routing the base domain to the GUI. It starts the **real** entrypoint, so it binds `80`, `8080` and the `4747`/`4748` pair — which is exactly why it is owner-run rather than a spec. |
+| `npm run verify:docker-entrypoint` | `plan/17` §5 item 5's **three-way agreement**, which no unit test can see: the static server binds `companion + 1`, the host is told `--gui-target` on that same port, and the healthcheck reads that port from `/tmp/bifurc/companion-port` — plus the SPA fallback, a 404 for a missing asset, and the edge routing the base domain to the GUI. It started the **real** entrypoint, so it bound `80`, `8080` and the `4747`/`4748` pair — which is exactly why it was owner-run rather than a spec. |
 
 They exist because of what they found. `verify:web` caught a favicon 404 that `page.on("response")` could not
 see, because Chromium requests `/favicon.ico` outside the page's network context. `verify:web:reconnect`

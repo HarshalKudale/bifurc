@@ -1,5 +1,18 @@
 # 16 — The GUI's own backend, and the single-image deployment
 
+> ## ⚠ MOOT 2026-09-26 — both halves of what this proposed are gone
+>
+> **Nothing in this document was ever built** — the status line below says so, and it stayed true. Both of its
+> proposals were then overtaken: **Proposal A** (one image carrying engine + GUI) died with the container
+> image, and **Proposal B** (a per-GUI backend wrapper) has no subject, because the browser host it was for
+> is deleted and the desktop is the single build target.
+>
+> Kept rather than deleted, because it is the record of a decision that was made and then overtaken — and
+> because **its central constraint is still a good argument**: a wrapper that adds transport, credentials and
+> static files but **no commands**, or the two hosts stop being the same shape. That constraint is why the
+> surviving `packages/gui` is still imported by both hosts through the same `window.api` seam rather than
+> being given a backend of its own.
+
 > **Status: PLAN, 2026-09-23. Nothing in this document is built.** It was written on the owner's instruction,
 > as a *plan* — the request was explicitly *"can you write up a plan for this"*, not "build it". Every claim
 > about the existing tree below is measured and cites a file; every claim about the *proposed* tree is

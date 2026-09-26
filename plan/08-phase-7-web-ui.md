@@ -1,5 +1,24 @@
 # 08 — Phase 7: Web UI
 
+> ## ⚠ DECOMMISSIONED 2026-09-26 — the browser host was deleted
+>
+> This phase's product was `web/`, and it no longer exists. The repository has **one build target, the
+> Electron desktop app**. Every command named below — `build:web`, `dev:web`, `typecheck:web`, `verify:web`,
+> `verify:web:reconnect` — is gone from `package.json`.
+>
+> **Read this as the record of what was built and why, not as a plan to follow.** `plan/README.md` carries
+> the decommission note and the reason.
+>
+> **Two things outlived the host and are worth keeping in view:**
+>
+> - **Work item 0's measurement that the browser's `Transport` could not be the engine's** — `createWsTransport`
+>   imports `node:crypto`, `node:http` and `node:net`, so a page cannot load it. That is why
+>   `@bifurc/web-client` exists, and it is the part of this phase the extension inherits.
+> - **The `hello` handshake, and why Electron never hit its absence.** The host wraps its socket in
+>   `createAuthenticatedTransport`, which requires `hello` first and closes the session when it is not;
+>   Electron's transport is `in-process` and is never wrapped, which is why the gap survived P6. The lesson
+>   generalises to any new client, and the extension is a new client.
+
 > **Updated 2026-09-20 by [`14-workspace-runtime.md`](14-workspace-runtime.md) (D10–D13).** Effort is
 > unchanged, but the thing the browser connects to is now a **workspace host**, and the workspace is a
 > *selected* resource rather than an implicit global. Two consequences for the items below:
