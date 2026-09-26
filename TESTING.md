@@ -1,20 +1,152 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-23 · suite: **2,702 tests / 118 files** — 2,660 passed, 40 skipped, 0 failed._
-> Earlier the same day it reported **5 failures** — all port conflicts from a headless host left running
-> (`80`, `8080`, `9101`, `9271`). Each one **said so** — *"9101 must be free for this case to be decisive"*,
-> or a preflight `[ 'port-in-use' ]` the case asserts is empty — so the suite reports the conflict rather
-> than a misleading result. **Stop the host before measuring: the count is not the finding, the mechanism
-> is.** (No known failure otherwise — see §7.)
+_Last reviewed: 2026-09-26 · suite: **2,739 tests / 120 files** — 2,699 passed, **0 failures of any kind**, 40
+skipped. Unit **2,264 / 89 files**, integration **475 / 31 files** (`2,264 + 475 = 2,739` ✓, both halves
+measured, not derived). **The last move was `plan/17` work item 5 on 2026-09-25/26** — the web GUI is bundled
+into the Docker image and served by an entrypoint that derives its port, so `tests/docker/entrypoint.test.ts`
+(11 cases, unit) and `tests/integration/guiStaticServer.integration.test.ts` (14 cases, integration) are its
+coverage. `2,714 → 2,739` is **`+25` tests and `+2` files, and each new file is entirely within its own half**
+— unit `2,253 → 2,264`, integration `461 → 475` — which is what says no existing case changed behaviour. The
+same item also found that **`npm ci` was broken repo-wide**, so the image could never have built: the lockfile
+still described `apps/web` (gone) and did not describe `packages/gui`, so it failed under either manifest set.
+Fixed with zero version changes. **Before it, work item 6 the same day** — the four host-level ports
+now live in one global Ports section, and `tests/renderer/portsSettings.test.tsx` is its first coverage.
+`2,703 → 2,714` is **`+11` tests and `+1` file, and the new file is the whole delta**: unit moved
+`2,242 → 2,253` while integration stayed at `461 / 30`, which is what says no existing case changed behaviour.
+Two of its eleven cases were checked by a narrow mutation — a fifth input fails the count case, an unmounted
+section fails the wiring case, and each run failed **exactly one** case. **Before it, work item 8 the same
+day** — mocks became REST-only, so
+the GraphQL / SOAP / gRPC mock kinds, their folder kinds and the three `grpc.*MockServer` commands were removed.
+`2,745 → 2,703`: **`−42` tests and `−1` file, every unit named in `plan/17` §5's table** rather than inferred —
+the deleted `protocolMockHandler` suite alone is `−23`. **The client surface went 144 → 132 keys**, a recorded
+contract change rather than a re-baseline (`packages/client/src/surface.ts`'s header; the declared type went
+140 → 128, so the four-key gap is unchanged). Before it, work item 7 landed the same day: a save now re-binds the
+edge, the forward proxy and the webhook, so **two cases were inverted and two new ones took their place:
+`0` tests, `0` files, and each new case was checked by a narrow mutation** (§5's table). Before that, work items
+1, 2, 3 and 9 landed the same day: every port became engine-level, so the per-workspace allocation suite and
+`WorkspaceRuntime` itself went with the mechanism — `2,766 → 2,745`, **`−21`, every unit named in `plan/17`
+§5's table**. **The `gitOps` safe-delete-shim `EBUSY` flake did not reproduce in any of the three post-WI-8 runs**
+(the full run, the unit half, the integration half), which is the point: a run that reports it is reporting the
+environment, not a defect. When it does appear it passes alone (4/4, zero diff).
+**The failure mass is closed: 66 → 0.** It was one
+mechanism, and it was never the test's: `plan/15` **work item 3 moved `proxy/server.ts`'s reverse half — and
+the home page with it — onto the edge** (`proxy/edge.ts`), so every case that asked `startServer()`'s port for
+a `*.localhost` mapping or for `/` got a deliberate **400** instead of the mapping. `server.ts` says so at its
+own line 384 (*"The reverse half is no longer here… served by `proxy/edge.ts` on the host-level **edge**
+port"*), and this file's §3.3 mechanism list is the place that decision lives. **The reason it took a session
+to attribute is worth more than the number, and it is the part to read before trusting any figure here:**
+`plan/15` records WI 3's and WI 4's test files as **written** and **neither existed** — `tests/proxy/edge.test.ts`
+(*"40 cases"*) and `tests/integration/edgeSplit.integration.test.ts` (*"14 cases… the plan's own verification
+step"*). So the reverse half's cases were never moved out of `server.test.ts`, none of the eight *"migrated"*
+suites called `edgeRequest`, and the *"eight mutations"* were unverifiable. **A plan's "done" is a claim about
+the tree until the tree says otherwise.** The `PRODUCT` half of WI 3/4 was real and trustworthy throughout;
+the `INSTRUMENT` half was owed, and is now paid.
+> **The migration, and what each suite actually needed — because "migrate onto `edgeRequest()`" was wrong for
+> most of them.** Re-pointing the request seam was the fix in only two files; the rest needed their *premise*
+> re-read against the split.
+> - **`tests/proxy/edge.test.ts` — written (28 cases).** The 17 reverse-half cases moved out of
+>   `server.test.ts` (which is now the forward half, 78 cases). Mock-based on purpose; the real-I/O half is
+>   `edgeSplit.integration.test.ts`.
+> - **`tests/integration/edgeSplit.integration.test.ts` — written (18 cases).** The plan's own verification
+>   step, and it **supersedes `harnessSplit.integration.test.ts`** (deleted; its 8 cases are folded in, which
+>   its own header asked for). It pins what only real sockets can: two listeners answering **the same URL
+>   differently** (edge `200` / forward `400`), the edge's raw-bytes-to-`req.socket` handler, and
+>   `resolveConfig` **per request**.
+> - **`settingsMutations` — 28 → 0, and it was not a re-point.** Its `bootOnConfiguredPort()` started only the
+>   forward proxy while `fetchHello()` asked a `*.localhost` host; it now boots **both** listeners the way
+>   `index.ts` does (edge on `settings.port` first, proxy on a resolved port). Its subject also had to change:
+>   *"changing the proxy port moves the live server"* is **superseded** — `settings.port` is the **edge's**, so
+>   `config.save` keeps the proxy on its resolved port (`getPort() || incoming.port`) and the setting is a
+>   preference for the *edge's* next boot. 28 → 31 cases, because the P14 pair split into two honest halves.
+> - **`workspaceCommandScope` — 1 → 0, and the assertion was inverted.** `portIsFree(configPort)` was false
+>   because the **host binds the edge** on `settings.port` (`host.ts:493`). The port is *correctly* occupied;
+>   what must not happen is a third *proxy* taking it, so the case now asserts the edge holds it and that
+>   neither runtime's proxy is on it.
+> - **`workspaceDispatchScope` — 3 → 0.** Relative targets to a `*.localhost` host are refused by the forward
+>   half; the mocks are matched on the **absolute** URL, so the targets became absolute-form. Its fixture mock
+>   also needed `mockedResponseHeaders` — without it the mock is a *partial* overlay that still calls an
+>   upstream, and the cases failed **502**, measuring the upstream instead of the dispatch scope.
+> - **`workspaceRuntime` — 1 → 0.** The home page is the edge's now, so the *liveness* probe became the
+>   forward proxy's own documented refusal. The case's own comment had already said the home page was the
+>   wrong instrument for content; the split simply removed it for liveness too.
+> - **`entityConflictScope`, `foldersAndWorkspaces`, `protocolExecution` — 3 load errors → 0.** Stale
+>   `@/ipc/handlers/*Kinds` imports repointed at `@bifurc/engine/store/kinds/` — the **WI 10** move these
+>   files had been missed by. (Their 69 cases were `skipped`, which is why the skip count fell 109 → 40.)
+> - **`ipc/handlers.test.ts` — 1 → 0.** Three `toHaveBeenCalledWith(<config port>)` assertions became the
+>   **resolved** port: `server.start` / `server.restart` / `config.save` all read `getPort()` first, because
+>   the port `app.json` names is the edge's.
+> - **Mutations, each judged by exit code.** Harness collapse (`edge.start(edgePort)` → `edge.start(port)`):
+>   **EXIT=1**, 11 of 18 red. Product regression (`sendHtml(socket, 400…)` → `200`): **EXIT=1**, exactly the
+>   3 boundary cases. The edge caching `resolveConfig`: **EXIT=1**, the two edge-follows cases. Collapsing the
+>   two listeners in `settingsMutations`: **EXIT=1**, 8 red. `portAllocator`'s base-skip
+>   (`findFreePortFrom(proxyBase + 2)`): **EXIT=1**, 6 red. Every mutated source was verified byte-identical
+>   to its pre-mutation backup afterwards.
+> - **The split closes against the run's own total.** `2,289 + 464 = 2,753` · `88 + 31 = 119` (the figures as
+>   the migration landed; work item 5 moved them to `2,310 + 465 = 2,775`, see the note below). Note the naive
+>   reading is wrong by exactly the skip count (the per-project command lists non-skipped tests only), and
+>   **a single-project run is not the same measurement as the full run** — integration alone read `454` before
+>   the harness file was folded into `edgeSplit` and `464` after, which is `454 − 8 + 18` exactly.
+> - **A flake was found and fixed rather than tolerated, and it was mine to fix.** `portAllocator` asserts on
+>   an *ephemeral* base's **successors** (`base + 1`, `base + 2`), and this suite's extra listeners landed on
+>   them: three cases failed in one full run (`expected 49529 to be 49528`, `expected 50235 to be 50234`, and
+>   a `nextFreePortAbove` miss) while passing **35/35 isolated**. This is the **same mechanism**
+>   `allocateFromUncontendedBases`' header already records for `workspaceCommandScope` (2026-09-21), arriving
+>   through a third suite — so the remedy is now a shared `holdBaseWithFreeSuccessors()` used by every
+>   successor-asserting case, and **the regression it guards still fails** (`EXIT=1`, 6 red). Two consecutive
+>   full runs are green afterwards.
+> - **`gitStore.test.ts` failed once during this session's measurements, and it is the documented shim
+>   flake** — not a new finding: `STACK_TRACE_ERROR` in `beforeEach`, **24/24 alone**, and
+>   `git diff HEAD --numstat` returns **no rows** for it. The caution further down this block stands.
+> **The harness split is done and proven.** `proxyHarness` boots both listeners (`RunningProxy = { port,
+> edgePort, instance, stop }`), `edgeRequest()` names the edge, and the edge's `resolveConfig` is the same
+> `instance.dispatchConfig()` composition `runtime/host.ts` uses. **Measured additive** at the time it landed:
+> **+8 tests, +1 file, 0 failures** (2,713/117 → 2,721/118, same 11 files red at the same per-file counts).
+> **The 66, attributed — because a failure you cannot attribute is a question, not a finding.**
+> - **44 in five files with _zero_ diff from the companion removal** (`proxy/server.test.ts` 17,
+>   `integration/mocks` 12, `integration/capture` 7, `integration/mappingsAndRules` 7, `ipc/handlers` 1).
+> - **22 in six files whose entire diff was the deletion of one `companionPort` token.** Their failures
+>   carried the same signatures as the 44 — `expected 400 to be 200`, `Unexpected token '<'`,
+>   `ECONNREFUSED` on a `127.0.0.1` home-page fetch, `port … did not become open/closed within 5000ms`, and
+>   `toHaveBeenCalledWith(80)`.
+> - **Each was run alone before being labelled** — so they were real failures, not pack-only flakes, and real
+>   failures of **prior work's** uncommitted change. **Every one of them is now closed**, and the fix for most
+>   was not the request seam but the premise: see the list above.
+> The figure above replaces **2,815 / 123** as of the **companion removal** (`plan/15` §6.4, `plan/16`), then
+> **2,721 / 118** after the harness split. The companion removal's own reconciliation (−102 tests / −6 files;
+> two suites deleted = 27 tests, the other 75 leaving as *assertions inside cases* and `it.each` rows, which
+> `grep -c "^\s*it("` cannot see) is unchanged and still not decomposable further — quoted as measured. **A
+> delta is the signal, and it is re-measured rather than carried forward.**
+> **Earlier the same day it reported 5 failures** — all port conflicts from a headless host left running
+> (`80`, `8080`, `9101`). Each one **said so** — *"9101 must be free for this case to be decisive"*, or a
+> preflight `[ 'port-in-use' ]` the case asserts is empty — so the suite reports the conflict rather than a
+> misleading result. **Stop the host before measuring: the count is not the finding, the mechanism is.**
+> (**`9271` was on this list and is not any more** — the companion server was retired outright, so nothing
+> in the product binds it. A case still probes it, in `workspaceHost.integration.test.ts`, but *to assert the
+> host has not re-grown one*, and it holds its own probe so a busy `9271` cannot make it indecisive.)
 >
-> **And a second caution, about a failure that is not one.** In the same session the **full** run twice
-> reported `gitStore.test.ts` and `gitOps.test.ts` failing with
-> `EBUSY: resource busy or locked, rmdir '…\lp-gitops-test-…'` inside the sandbox's safe-delete shim — while
-> **both pass in isolation** (28 tests, exit 0, shim enabled *and* disabled), and the full-run count moved
-> between consecutive runs (`3 failed` → `2 failed`). Under a parallel run a real `git` child still holds its
-> temp directory when the shim tries to remove it, and Windows refuses an `rmdir` on an open handle.
+> **And a second caution, about a failure that is not one.** The **full** run has reported `gitStore.test.ts`
+> and `gitOps.test.ts` failing with `EBUSY: resource busy or locked, rmdir '…\lp-gitops-test-…'` inside the
+> sandbox's safe-delete shim — while **both pass in isolation** (exit 0, shim enabled *and* disabled), and the
+> full-run count moves between consecutive runs. Under a parallel run a real `git` child still holds its temp
+> directory when the shim tries to remove it, and Windows refuses an `rmdir` on an open handle. **Observed
+> again 2026-09-24** (`gitStore.test.ts`, `STACK_TRACE_ERROR` in `beforeEach`, 24/24 alone, zero diff).
 > **A failure that disappears in isolation is evidence about the *pack*, not about the file — run it alone
 > before changing anything.**
+>
+> **▶ Later on 2026-09-24 — `plan/15` work item 5, the GUI on the edge, and the numbers above include it.**
+> `+22 tests` (`2,753 → 2,775`), `+0 files`, `0 failures`, reconciling exactly as `+21` unit
+> (`tests/proxy/edge.test.ts` `+10`, `packages/engine/tests/runtime/hostArgs.test.ts` `+11`) and `+1`
+> integration (`tests/integration/edgeSplit.integration.test.ts`). **Nothing was deleted, so the file count is
+> unmoved** — which is the case most likely to go unreconciled, because there is no new filename to notice.
+> The feature is a *global reverse-proxy mapping* rather than a static-file server (see `plan/15` §3.3's `G`
+> row), so the tests are the ordinary kind — a mocked `http.request` assertion in the unit suite, and a **real
+> GUI server on a real socket** in the integration suite, which is what makes the design claim checkable:
+> `index.html`, a hashed asset path and a query string all reach the GUI server unchanged, while
+> `mapped.localhost` still goes to its mapping on the same listener. **Three mutations, each judged by exit
+> code, each caught by exactly the right case:** the precedence inverted so a workspace mapping wins
+> (`EXIT=1`, 1 case); `isLocalAddress` widened to accept every host (`EXIT=1`, 2 cases); the IPv6 arm of
+> `hostnameOf()` removed (`EXIT=1`, 1 case). Every mutated source was restored byte-identically, and the
+> engine's own `hostnameOf()` fix is pinned by the IPv6 routing case rather than by a test of the helper.
 
 This document is both the **how-to for running tests** and the **coverage/regression report**
 produced by the test-suite review. Read the top section for commands; read
@@ -183,11 +315,14 @@ collection runner, and the git publish/sync pipeline. A fifth pass closed **capt
 last data workflow — and fixed a coverage-scope bug that had hidden 17 renderer files.
 A sixth pass took the two highest-risk remaining 0% files — **TLS interception** and the
 **companion WebSocket server** — plus the three **protocol tab reducers**, and found two
-more production bugs doing it. A seventh pass closed **settings mutations**: the last
-behaviour that changed live state with nothing behind it (and it found a third bug — see §7).
-An eighth pass converted the import/export tree to the content-based interface for P3 and
-added the blob-layer suite — which, being the first test ever to execute `workspace-zip`
-end to end, immediately found that ZIP export had been throwing on every call (§7).
+more production bugs doing it. (**The companion server was later retired outright**, so its
+two suites are gone; the TLS and reducer findings stand, and the sixth pass's remaining value
+is the *method* — it took the two 0% files and found bugs in both.) A seventh pass closed
+**settings mutations**: the last behaviour that changed live state with nothing behind it
+(and it found a third bug — see §7). An eighth pass converted the import/export tree to the
+content-based interface for P3 and added the blob-layer suite — which, being the first test
+ever to execute `workspace-zip` end to end, immediately found that ZIP export had been
+throwing on every call (§7).
 
 | Suite | Tests | Covers |
 |---|---:|---|
@@ -204,7 +339,6 @@ end to end, immediately found that ZIP export had been throwing on every call (�
 | `tests/applications/commandGenerator.test.ts` | 54 | Every run-config type (node/npm/python/java/maven/gradle/dotnet/go/docker/compose/spring-boot) plus its debug variant. |
 | `tests/applications/portUtils.test.ts` | 7 | Real port occupancy checks. |
 | `tests/ipc/importExport/registry.test.ts` | 15 | Import/Export registry invariants — most importantly that no format claims support without an implementation, and that only `workspace-zip` uses the path-shaped slots. |
-| `tests/companion/allowedActions.test.ts` | 7 | The companion extension's IPC allowlist (a security boundary) — pinned exactly. |
 | `tests/subscription/entityCount.test.ts` | 8 | The licensing gate stubs, pinned so adding a real limit is a deliberate change. |
 | `tests/integration/protocolExecution.integration.test.ts` | 44 | **The "hit Send" path** — `request:replay` (REST), `graphql:execute` + `graphql:introspect`, `soap:execute` + `soap:fetchWsdl`, and `healthbar:checkUrl`, all against real local servers. Also pins the (unimplemented) gRPC contract and the protocol-entity CRUD round trips. |
 | `tests/integration/gitSync.integration.test.ts` | 29 | **Git publish, locally** — `entity:publish` / `git:sync` / `folder:publish` against a real repo: the commit *subject format* the Audit Log parses (`create mock Name`), the bundled folder form, explicit messages, the no-op case, `git:diff` for clean/modified/new/deleted, `git:discard` + `entity:restore` (incl. the `names.json` re-sync), `git:history` / `history:list` / `history:diff`, and `sync:getEntityStatus` dirty markers. |
@@ -213,11 +347,13 @@ end to end, immediately found that ZIP export had been throwing on every call (�
 | `tests/renderer/collectionRunner.test.ts` | 30 | **The Run button's engine** — `runCollection` against the *real* `executeIpcScript` sandbox (only `replayRequest` stubbed): per-request orchestration, `{{var}}` resolution, start/done callbacks, cancellation, error isolation, pre/post/test scripts, and `generateHtmlReport`. |
 | `tests/integration/runnerStorage.integration.test.ts` | 17 | **Runner persistence** — `runner:saveReport/getHistory/saveConfig/loadConfig/listFolderIds/exportReport` against a real workspace, asserting the files that land in `requests/.runs/`. |
 | `tests/integration/capture.integration.test.ts` | 20 | **The capture half of capture-and-replay** — real traffic through the real proxy, asserting the emitted `RequestLogEntry`: method/url/host/status, all five `via` values (`rfc6761`/`mock`/`rule`/`proxy`/`error`), target, duration, header capture with hop-by-hop stripped, base64 request/response bodies (incl. multi-byte UTF-8), the **512 KB response-body cap**, "no capture for the home page", and `capture:shareJson` write/cancel. |
-| `tests/renderer/captureUtils.test.ts` | 26 | **Capture → mock / saved-request conversion** — `buildMockInitial` (status defaulting, binary-vs-text body encoding, `{}` fallback, raw capture preserved for byte-exact replay), `reqToHeadersBody` (decodes the body, strips `host`/`connection`/`content-length`/…), `deriveType` (content-type first, extension fallback, `other`), plus the table formatters and base64 plumbing. |
+| `tests/renderer/captureUtils.test.ts` | 26 | **Capture → mock / saved-request conversion** — `buildMockInitial` (status defaulting, binary-vs-text body encoding, `{}` fallback, raw capture preserved for byte-exact replay), `reqToHeadersBody` (decodes the body, strips `host`/`connection`/`content-length`/…), `deriveType` (content-type first, extension fallback, `other`), plus the table formatters and base64 plumbing. The `via` table is **enumerated** rather than sampled — every member of the union is asserted to have a label and a colour, which is what makes a new member's absence a failure here and a blank badge in the app. `mapping` (work item 4) shares `rfc6761`'s label and colour, because both are "served by the proxy" from the user's side. |
 | `tests/integration/tlsIntercept.integration.test.ts` | 11 | **TLS interception** — generates a **real CA** with mkcert (`createCA`, not mocked), boots the real proxy with TLS on, and speaks real TLS through a real `CONNECT` tunnel. The decisive assertion is a handshake with `rejectUnauthorized: true` against the generated CA: only a leaf genuinely signed by our CA *and* valid for the requested hostname can pass. Also covers the negative control (a cert for host A must not validate for host B), the cert cache, routing over the decrypted stream (mock + proxy rule), passthrough to a real HTTPS upstream, capture of the decrypted request, the blind-tunnel fallback when `tlsEnabled` is false, and the 502 path when the CA is unusable. |
-| `tests/integration/companionServer.integration.test.ts` | 20 | **The companion WebSocket server** — the browser extension's only write path into the workspace. Real `ws` clients against the real server: lifecycle (start/restart/stop, 1001 on close), `config:get`/`mock:add`/`request:add`/`folder:add` asserted against the **files on disk** (`enabled.json`, `names.json`, `index.json`, the sanitised folder directory), the validation errors, malformed JSON, missing id/action, and — most importantly — that **every action off the allowlist is refused and writes nothing**. |
+| `tests/integration/workspaceHost.integration.test.ts` | — | **`plan/14` WI 3's criterion, in its post-companion form.** The companion was retired outright (`plan/15` §6.4), so the criterion is asserted in the only surviving falsifiable shape: two **real bind attempts**. Direction 1 — the host **holds** its edge port (`runtime/host.ts` composes the edge deliberately, so a `listen()` must FAIL). Direction 2 — the host has not *re-grown* a companion, probed against the retired `9271` and compared to the pre-start reading, so a busy port cannot make the case indecisive. Both proven fail-able by mutation. |
 | `tests/renderer/protocolTabReducers.test.ts` | 45 | **The GraphQL / SOAP / gRPC tab state machines** — init from entity and from draft, the send lifecycle, `SET_FIELD`/dirty, the save lifecycle, and the serialization helpers (`stateToMockPayload`'s `operationNameMatch` round trip and `responseDelay \|\| undefined`, SOAP's default-envelope fallback and always-enabled mock payload, gRPC's `LOAD` merge and `protoFileId ?? ""`). Includes the regression guard for the `REFRESH` bug (see §7). |
-| `tests/integration/settingsMutations.integration.test.ts` | 30 | **The Settings screen, measured on the running app** — changing the proxy port moves the live server (the old port stops answering, the new one serves the same mock), the new port is persisted and reported by `server:status`, an unchanged port does not take the server down, `server:restart`/`stop`/`start`, toggling TLS reloads the CA, changing the companion port moves the real WebSocket server, theme and zoom persist and clamp, and — the part that caught a bug — a **live config mutation (`mock:add`/`update`/`delete`, workspace switch) reaches the running proxy with no restart**. Registers the real `config:save`/`server:*`/`theme:*`/`zoom:*` handlers; only Electron and `@/main` are mocked. |
+| `tests/integration/settingsMutations.integration.test.ts` | 28 | **The Settings screen, measured on the running app** — what a user changes in Settings actually reaching the *running* app. **Inverted 2026-09-23 by the proxy split** (`plan/15` work item 3): the port in Settings is the **edge's** now, so a save no longer moves the forward proxy — it keeps the port it resolved (D16's *remembered resolved port → fall through*), and `server:status` reports that port rather than the settings one. Also `server:restart`/`stop`/`start` reusing the resolved port, toggling TLS reloading the CA, theme and zoom persisting and clamping, and — the part that caught a bug — a **live config mutation (`mock:add`/`update`/`delete`, workspace switch) reaching the running proxy with no restart**, sent as **absolute-form** requests so they exercise the forward proxy's mock path rather than the edge's. Registers the real `config:save`/`server:*`/`theme:*`/`zoom:*` handlers; only Electron and `@/main` are mocked. **15 of its 28 are red as of the companion removal** — all the WI 3 mechanism, not this suite's own subject: 10 are the home-page/`*.localhost`-against-`startServer()` 400, and 5 wait on the *edge's* port after booting only the forward proxy. |
+| `tests/proxy/edge.test.ts` | 47 | **The edge router** (`proxy/edge.ts`, `plan/15` work items 3 and 4) — the reverse half, on the host-level listener. Drives the real `http.Server` by capturing `http.createServer`'s handler: proxying a mapped `*.localhost` to its target, mocks applied **ahead** of mappings, hop-by-hop filtering, array-valued headers, mid-stream errors, the 512 KB log slice, the home page (**including that it never writes through `res`** — the measured basis for the whole design), the unmapped-domain 404, **re-resolving the active workspace per request**, the bind guard, `listen` called **exactly once** (D16: bound, not scanned), and lifecycle. **Work item 4:** any configured domain routes — a mapped `app.example.com` proxies and logs `via=mapping`, a mock applies to it, a LAN `target` reaches the upstream call verbatim, the two `via` labels are asserted **as a pair**, and the **negative** that matters: a host that is neither mapped nor `*.localhost` gets the home page and is neither proxied nor logged. |
+| `tests/integration/edgeSplit.integration.test.ts` | 18 | **The split itself, end to end** — two listeners with two jobs, real I/O. A `*.localhost` request reaches its mapped target **through the edge**; the forward proxy refuses a relative request **naming the edge**; and the assertion no other suite can make — **the same `Host` and path answered on each port gives two different answers**, because that difference *is* `plan/15` work item 3. Plus §3.4's headline: a forward-proxied request can now be **mocked**, with no upstream contacted. **Work item 4:** a mapped non-`.localhost` domain forwards to its target, a mock applies to it, an unmapped one gets the home page **without the upstream being contacted**, and an unmapped `*.localhost` still gets its 404. The request is made from the same machine — the *"from a machine that is not the engine's"* half of that work item's verification step is the deployment half, and is not claimed here. |
 
 ---
 
@@ -572,7 +708,10 @@ Both halves are now covered — the emitter against real traffic, and the conver
 
 The two highest-risk files still at 0% after the fifth pass. `tlsIntercept.ts` is the code
 that terminates TLS for every `https://` request a user routes through Bifurc; the companion
-server is the browser extension's only write path into the workspace.
+server was the browser extension's only write path into the workspace — **and it has since
+been retired outright** (`plan/15` §6.4, 2026-09-23), so its rows below are a **historical
+measurement**, not a current one. They are kept because the sixth pass's finding is the
+method, and because the retired code's 94% is part of the record.
 
 | File | Statements before | Statements after |
 |---|---:|---:|
@@ -690,9 +829,14 @@ than carry a wrong exclusion to the new path, the entry was **removed**; the fil
 lines at 100%, which is why the denominator grew by exactly 3 statements (11,443 → 11,446) and the
 numerator by exactly 3.
 
-**Layer 3's structural note:** `companion/allowedActions.ts` is the frozen API surface for the
-external `bifurc-extension` client. It moved with everything else, but its *contents* must not
+**Layer 3's structural note:** `companion/allowedActions.ts` was the frozen API surface for the
+external `bifurc-extension` client. It moved with everything else, but its *contents* were not to
 change — the extension is a released client that cannot be updated atomically with the engine.
+**That constraint is now history:** the companion was retired outright on 2026-09-23 (`plan/15`
+§6.4), so the file and its allowlist are gone, and the extension's migration is a **protocol change**
+onto `transport/ws.ts`, not a port swap. The *reason* the note existed is still the reason the
+extension was not aliased onto `config.get`/`entity.create` while it lived — recorded in
+`ws.ts`'s header.
 
 #### Layer 4 — `startup.ts`, `shutdown.ts`
 
@@ -720,7 +864,7 @@ The extraction's end state is the package's public entry point, and it is covere
 | Assertion | Why it matters |
 |---|---|
 | `status().running` is `false` before `start()`, `true` after | `status()` is documented as safe pre-start |
-| `status().proxyPort` / `.companionPort` match the configured ports | the engine bound what it was told to |
+| `status().proxyPort` / `.edgePort` match the configured ports | the engine bound what it was told to |
 | a real HTTP request through the proxy returns 200 | it actually serves, not merely listens |
 | `status().settings.activeWorkspaceId` is set | `bootstrapWorkspaces()` ran and produced a workspace |
 | a second `start()` does not re-bind | `start()` is idempotent |
@@ -730,10 +874,11 @@ The extraction's end state is the package's public entry point, and it is covere
 
 Two things this test caught that a unit test could not:
 
-1. **`start()` resolved before the engine was listening.** `startServer()` and
-   `startCompanionServer()` are fire-and-forget — both hand off to an async `listen()` and return
-   immediately — so `isRunning()` is still false on the next line. `start()` now waits for readiness
-   (bounded), because otherwise the single promise a caller awaits would mean nothing.
+1. **`start()` resolved before the engine was listening.** `startServer()` and the companion
+   server's `startCompanionServer()` — the latter since **retired** — were fire-and-forget: both
+   handed off to an async `listen()` and returned immediately, so `isRunning()` was still false on
+   the next line. `start()` now waits for readiness (bounded), because otherwise the single promise
+   a caller awaits would mean nothing.
 2. **`registry.list()` is empty.** `createEngine()` deliberately registers no commands: the ~112
    commands are registered by the *consumer* — today the shell's in-process layer, which P6 replaces
    with the RPC client. The test asserts registry *identity*, not population.
@@ -979,7 +1124,7 @@ new case can shift five runners rather than one.
 | `transport/framing.test.ts` | 17 | the length-prefixed codec — it has no `Transport` to run against |
 | `transport/session.test.ts` | 17 | the shared **client core**, over a fake channel — the one place its contract is testable as a contract |
 | `transport/stdio.test.ts` | 17 | pipe-lifecycle cases the shared suite cannot express |
-| `transport/auth.test.ts` | 60 | scopes, token, decorator, **the session identity**, and the scopes the gate will enforce |
+| `transport/auth.test.ts` | 62 | scopes, token, decorator, **the session identity**, the scopes the gate will enforce, and **the host's own domain as a wire field** (`plan/15` work item 9 — **the flag behind it was removed 2026-09-24**, so the value a host supplies is now always `localhost`; the *transport option* stays optional, so these cases still pin the field reported when the host was told one and **absent** when it was not — asserted with `"hostDomain" in response`, because `toBeUndefined()` cannot tell an absent key from a present-but-`undefined` one, and the in-process transport passes objects by reference) |
 | `transport/eventLog.test.ts` | 30 | the ring buffer: both bounds, lazy retention, the replay windows |
 | `transport/eventPump.test.ts` | 24 | the coalescing pump, driven synchronously against an **injected clock** |
 | `transport/ws.test.ts` | 14 | socket-specific cases: bind guards, TLS refusal, close codes, payload ceiling, and the `peer` address |
@@ -1036,7 +1181,9 @@ workspace and reads **real disk** through `loadConfig()` — which is exactly ho
 `onAddConflict` had never persisted anything (`writeEntity()` strips `enabled`; it lives in
 `enabled.json`, and only `syncEnabledSet` writes it). It asserts the incoming mock is always stored in all
 three contexts, that the sibling is disabled for the engine's caller *and* for a shell session, that it
-**stays enabled for the companion** (the additive-only guarantee), and that the gate is inert for a kind
+**stayed enabled for the companion** (the additive-only guarantee — the companion has since been retired,
+so the case now pins the guarantee for the **engine's own caller and a shell session**, which are the two
+contexts that still exist), and that the gate is inert for a kind
 with no conflict rule. **Assert against disk, not a mocked config object, or you will re-ship that bug** —
 `tests/ipc/handlers.test.ts`'s equivalent case could not see it for precisely that reason.
 
@@ -1292,14 +1439,16 @@ arrives as a number or a `port` that arrives as an object has to become the defa
 `new URL()` and throw from inside a connection attempt, where it would read as a network failure and send
 someone debugging the wrong thing.
 
-**Beyond the suites: two browser checks, and they are the only instruments for the class of defect below.**
-Neither is part of `npm test` — both need a running host and a served app, so they are commands rather than
-specs. Work item 6 still owes Chromium/Firefox/WebKit and the blob flows.
+**Beyond the suites: three commands that are not specs, and they are the only instruments for the classes of
+defect below.** None is part of `npm test` — the two browser checks need a running host and a served app, and the
+Docker one needs the real entrypoint plus four ports. Work item 6 still owes Chromium/Firefox/WebKit and the
+blob flows.
 
 | Command | What it asserts |
 |---|---|
 | `npm run verify:web` | the form renders, Connect succeeds, the shell mounts, and **0 console errors / 0 uncaught page errors / 0 warnings** |
 | `npm run verify:web:reconnect` | the host dies → banner with the **UI still mounted**; restart with the same token → automatic recovery; restart with a **rotated** token → the loop stops with the actionable message |
+| `npm run verify:docker-entrypoint` | `plan/17` §5 item 5's **three-way agreement**, which no unit test can see: the static server binds `companion + 1`, the host is told `--gui-target` on that same port, and the healthcheck reads that port from `/tmp/bifurc/companion-port` — plus the SPA fallback, a 404 for a missing asset, and the edge routing the base domain to the GUI. It starts the **real** entrypoint, so it binds `80`, `8080` and the `4747`/`4748` pair — which is exactly why it is owner-run rather than a spec. |
 
 They exist because of what they found. `verify:web` caught a favicon 404 that `page.on("response")` could not
 see, because Chromium requests `/favicon.ico` outside the page's network context. `verify:web:reconnect`
@@ -1446,20 +1595,26 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > 75%, `syncManager` 80%), **capture** (`capture.integration`, `captureUtils.test` —
 > `captureUtils.ts` 100%, all five `via` paths, the 512 KB cap, the export handler),
 > **TLS interception** (`tlsIntercept.integration` — real CA, real handshake,
-> `tlsIntercept.ts` 0% → 88%), **the companion server** (`companionServer.integration` —
-> `companionServer.ts` 0% → 94%, and the allowlist proven to be enforced, not just listed),
-> **the protocol tab reducers** (`protocolTabReducers.test` — `graphql` 93%, `grpc` 89%,
-> `soap` 83%), and **settings mutations** (`settingsMutations.integration` — the port change
-> moves the live server, TLS toggling reloads the CA, the companion port moves the socket,
-> theme/zoom persist, and a live CRUD mutation reaches routing with no restart).
+> `tlsIntercept.ts` 0% → 88%), **the protocol tab reducers** (`protocolTabReducers.test` — `graphql` 93%,
+> `grpc` 89%, `soap` 83%), and **settings mutations** (`settingsMutations.integration` — the port change
+> moves the live server, TLS toggling reloads the CA, theme/zoom persist, and a live CRUD mutation reaches
+> routing with no restart). **The companion server was also covered here (`companionServer.integration`,
+> `companionServer.ts` 0% → 94%, allowlist proven enforced) — and that coverage left with the code when the
+> companion was retired on 2026-09-23.**
 > Twelve production bugs and two harness/reporting bugs were fixed along the way. What
 > remains is listed here.
 
 ### High — security / correctness
-1. **`packages/engine/src/companion/companionServer.ts` has no authentication.** It binds to `127.0.0.1`,
-   which is the whole of its access control. `ALLOWED_ACTIONS` is now proven to be *enforced*
-   (a forbidden action is refused and writes nothing), but any local process can still open a
-   socket and call the four allowed actions. Worth a deliberate decision, not a test.
+1. ~~**`packages/engine/src/companion/companionServer.ts` has no authentication.**~~ **RESOLVED
+   2026-09-23 by removal.** The finding was real and deliberate to state: the server bound to
+   `127.0.0.1`, which was the whole of its access control, and `ALLOWED_ACTIONS` was proven *enforced*
+   (a forbidden action was refused and wrote nothing) — but any local process could still open a socket
+   and call the four allowed actions. The companion was **retired outright** (`plan/15` §6.4) rather
+   than hardened, so there is nothing left to authenticate. **The successor must not re-open it:** the
+   in-process/WebSocket transport (`transport/ws.ts`) carries the *same* write paths and **does**
+   authenticate — it has a fail-closed token guard at `host.ts` step **−1** and a `hello` handshake.
+   Any future extension client speaks that contract, which is why the extension's migration is a
+   protocol change and not a port swap.
 
 ### Medium — features users depend on
 2. **gRPC is not implemented** — `grpc:execute` and `grpc:reflect` return "runtime not yet
@@ -1644,18 +1799,24 @@ npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=cov
 
 # 2. Per project
 npm run test:unit
-#    → Test Files 2 failed | 78 passed (80) · Tests 2 failed | 2077 passed | 40 skipped (2119)
-#      (both failures are the load-induced gitStore/gitOps pair; isolated they are 28/28)
+#    → Test Files 88 · Tests 2241 passed | 40 skipped (2281)
+#      (the 40 skipped are platform-conditional — POSIX-only socket cases and the like)
 npm run test:integration
-#    → the four flaky-family members live here; expect them on a host that intercepts refused
-#      connections and expect them absent otherwise. §4.1 has the roster.
+#    → Test Files 30 · Tests 464 passed (464)
+#      (Both figures are the **full run's own per-project subtotals**, summed from its per-file lines
+#       rather than from two separate single-project runs — re-measured 2026-09-25 after `plan/17`
+#       WI 1-3 and 9, where every port became engine-level, so `WorkspaceRuntime` and the
+#       per-workspace allocation suite are gone. `2281 + 464 = 2745` · `88 + 30 = 118`, which is the
+#       full run's own total. A single-project run is **not** the same measurement — see the note
+#       this block used to carry.)
 #
-#    NOTE (2026-09-21): the unit figures above are current. The numbers this block used to carry
-#    (55 files / 1381 tests) were from 2026-09-17 and had gone stale by ~700 cases; they were also
-#    the block that said "the failure is the spike's soap.execute", which stopped being true when the
-#    P0 spike was retired. **The unit project now has no standing failure at all** — so a failure here
-#    is always a flake to isolate, never the known one, and `--reporter=json --outputFile` is how you
-#    name it rather than assuming. See plan/baseline.md for the full-suite figure.
+#    NOTE (2026-09-24): the unit project has **no standing failure** — a failure here is always a
+#    flake to isolate, never a known one. The one this block's figures used to invite is the
+#    load-induced `gitStore` / `gitOps` pair from the sandbox's safe-delete shim: it fails only
+#    under a parallel run (`EBUSY … rmdir`, or a `STACK_TRACE_ERROR` in `beforeEach`), passes in
+#    isolation, and `git diff HEAD --numstat` shows no rows for it. **Run it alone before changing
+#    anything** — `--reporter=json --outputFile` is how you name the flake rather than assume it.
+#    See plan/baseline.md for the full-suite figure.
 
 # 3. Confirm the engine really is tested from source, not from a stale build.
 #    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).
