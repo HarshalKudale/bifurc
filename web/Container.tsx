@@ -61,12 +61,16 @@ type Phase =
 /**
  * A scannable heading per failure, so the user reads *what kind* of problem it is before the sentence.
  *
- * The four are genuinely different instructions: check the address, find the token, upgrade one side, or
- * read the engine's own reason.
+ * The four are genuinely different instructions: check the address, check what else is using the endpoint,
+ * upgrade one side, or read the engine's own reason.
+ *
+ * `unauthorized`'s heading used to read *"The host rejected the token"*. There is no token, so the heading
+ * names the state rather than a cause the user could fix by retyping something — `connect.ts`'s
+ * `classify()` carries what reaching it now means.
  */
 const FAILURE_TITLE: Record<ConnectFailure, string> = {
   unreachable: "Could not reach a host",
-  unauthorized: "The host rejected the token",
+  unauthorized: "The host refused the session",
   version: "Protocol version mismatch",
   refused: "The host refused the connection",
 };
@@ -145,8 +149,6 @@ export function Container() {
     async (next: HostSettings, lastSeq: number | undefined): Promise<InstalledApi> => {
       const session = await connectAndInstall({
         url: toUrl(next),
-        // Empty means "this endpoint has no auth boundary" rather than "an empty token".
-        token: next.token === "" ? undefined : next.token,
         clientVersion: __APP_VERSION__,
         ...(lastSeq === undefined ? {} : { lastSeq }),
         onFatal: handleFatal,
@@ -154,11 +156,11 @@ export function Container() {
       sessionRef.current = session;
       settingsRef.current = next;
       lastSeqRef.current = session.lastSeq();
-      setEngineVersion(session.hello?.engineVersion);
+      setEngineVersion(session.hello.engineVersion);
       // `hello.resyncRequired` is the engine saying replay was impossible, so a re-fetch is mandatory
-      // rather than merely prudent. Defaulted to `false` for an endpoint with no handshake at all, where
-      // there is no replay to lose.
-      setResyncRequired(session.hello?.resyncRequired ?? false);
+      // rather than merely prudent. It is no longer defaulted: the handshake is unconditional, so there is
+      // always an answer to read — see `connect.ts`'s header.
+      setResyncRequired(session.hello.resyncRequired);
       return session;
     },
     [handleFatal],
@@ -207,11 +209,13 @@ export function Container() {
           /**
            * **Two failures are not transient, and retrying them is worse than giving up.**
            *
-           * The token rotates on every host start — `ensureEngineToken` generates rather than reuses, so a
-           * token that survives a restart would be a credential that survives a restart. That makes
-           * `unauthorized` after a host restart the *expected* outcome, not an error: the reconnect loop
-           * would spin forever against a token that can never work again, and the user would see a banner
-           * saying "reconnecting" for a problem that needs them to read a new token.
+           * `unauthorized` used to be the *expected* outcome of a host restart: the engine token rotated
+           * on every start, so a reconnect could never succeed against one, and the loop would have spun
+           * forever behind a banner telling the user to go and read a new token. That reason went with the
+           * token (2026-09-25). The decision stands on a narrower one — this client always sends `hello`
+           * as its first request, so an `UNAUTHORIZED` means the endpoint is answering somebody else, and
+           * `connect.ts`'s `classify()` names the two shapes that produces. That is not a host to wait
+           * for; it is a condition the user has to see, and a backoff loop would hide it.
            *
            * A protocol major mismatch is the same shape: no amount of waiting changes it.
            *
@@ -319,9 +323,15 @@ export function Container() {
       >
         <div className="flex flex-col gap-1">
           <h1 className="text-sm font-medium">Connect to a workspace host</h1>
+          {/*
+            This paragraph used to send the user to `engine.token` in the host's data directory. There is no
+            token (2026-09-25), so it now states the two facts that decide whether a connection is allowed:
+            where the listener is, and which page the engine will answer.
+          */}
           <p className="text-xs text-muted-foreground">
-            The host prints its RPC endpoint and token path on startup. The token is in{" "}
-            <code className="font-mono">engine.token</code> inside the host&rsquo;s data directory.
+            The host prints its RPC endpoint on startup. Every listener binds loopback, so this reaches a
+            host on this device only. The engine answers a browser only when its page is served from
+            loopback or a <code className="font-mono">*.localhost</code> name.
           </p>
         </div>
 
@@ -349,20 +359,6 @@ export function Container() {
             />
           </label>
         </div>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">
-            Token <span className="text-subtle-text">— leave blank if the host has no auth</span>
-          </span>
-          <input
-            className="rounded-sm border border-border bg-background px-2 py-1 font-mono text-xs"
-            value={settings.token}
-            disabled={connecting}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setSettings({ ...settings, token: event.target.value })}
-          />
-        </label>
 
         {error !== null && (
           <div
