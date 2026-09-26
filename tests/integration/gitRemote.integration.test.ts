@@ -116,7 +116,6 @@ function makeRoot(wsId: string, name: string): RootFixture {
             {
                 port: 8080,
                 webhookPort: 9101,
-                companionPort: 9271,
                 minimizeToTray: true,
                 tlsEnabled: false,
                 tlsCaCertPath: null,

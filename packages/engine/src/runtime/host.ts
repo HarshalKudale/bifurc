@@ -5,7 +5,8 @@
  *
  * `plan/14` D10/D11 move the deployable unit from the engine to the **workspace**. An `Engine` owns a data
  * root, bootstraps workspaces and binds one proxy; a **host** owns N `WorkspaceRuntime`s, binds *one* RPC
- * endpoint for all of them (D13) and never binds the companion server at all. The engine is unchanged and
+ * endpoint for all of them (D13). It binds no app-level singleton server of its own — see the criterion
+ * note below. The engine is unchanged and
  * stays a library — this file is a new *entry point* that composes the pieces WI 2 and WI 3 built, which is
  * why it introduces no new abstraction and owns almost no state.
  *
@@ -26,17 +27,19 @@
  * 3. For each workspace, `allocatePorts()` (D16, honouring the registry's remembered ports and overriding
  *    with its `preferred*` values) then `createWorkspaceRuntime(...)`, started **one at a time** — the
  *    allocation is a real bind, so two concurrent allocators could both see the same port free.
- * 4. One `createSocketServer()` (or `createWsServer()`) over the engine's registry, with auth from
- *    `transport/auth/` — `ensureEngineToken()` supplies the token and `ENGINE_TOKEN_ENV_VAR` lets a
- *    container mount its own.
+ * 4. One `createSocketServer()` (or `createWsServer()`) over the engine's registry, with the **identity**
+ *    half of `transport/auth/` — the `hello` handshake, per-session scopes and the replay decision. **Not a
+ *    token:** it was deleted on 2026-09-25 with the remote deployment it guarded, and the loopback bind plus
+ *    `transport/ws.ts`'s `Origin` check are what stand in its place. The step that refused a published bind
+ *    went with it, for the same reason — there is no longer a published bind to refuse (step -1 below).
  * 5. `SIGTERM` / `SIGINT`: stop every runtime, close the RPC endpoint, remove the socket, exit.
  *
  * ## Two things it deliberately does not do
  *
- * - **It never starts the companion server.** That is `plan/14` WI 3's acceptance criterion, and the
- *   reason `EngineOptions.startCompanion` exists. A host that bound the companion would make N
- *   per-workspace runtimes fight over one app-level port — the companion is a module-level singleton by
- *   design, so the host simply does not reach it.
+ * - **It never starts an app-level singleton server.** That is `plan/14` WI 3's acceptance criterion, and
+ *   today the singleton in question is the **edge router** (`plan/15` §3.3): it is host-level and
+ *   module-level by design, so N per-workspace runtimes reaching it would have N owners of one listener.
+ *   The host composes runtimes, which are per-workspace and own exactly their own two ports.
  * - **It never calls `createEngine()`.** The engine's lifecycle owns the proxy through a facade over one
  *   default instance (`proxy/server.ts`), so an engine *and* N runtimes in one process would have two
  *   authorities over the same servers. The host uses the factories directly and leaves the engine's
@@ -50,27 +53,54 @@
  * five-line wrapper, so the composition stays testable without a signal ever being raised.
  */
 import { createSocketServer, defaultSocketPath, type SocketServer } from "../transport/socket";
-import { createWsServer, DEFAULT_WS_HOST, type WsServer } from "../transport/ws";
+// The host's own name: the value an engine that was not told one answers as. Taken from `lib/net` rather than
+// from `../transport/ws` so that "what is this hostname?" does not read as a transport question. Same
+// reasoning `hostArgs.ts` records.
+//
+// `DEFAULT_WS_HOST` and `isLoopbackHost` were imported here too, for the step -1 bind guard that read them;
+// both went with that guard on 2026-09-25 — see `doStart`'s note and `transport/ws.ts`'s header.
+import { DEFAULT_HOST_DOMAIN } from "../lib/net";
+import { createWsServer, type WsServer } from "../transport/ws";
 import { commandRegistry, type CommandRegistry } from "../commands/registry";
 import { registerAllEngineCommands } from "../registerAll";
 import { bus as defaultBus, type EngineEventBus } from "../eventBus";
-import { ensureEngineToken } from "../transport/auth/token";
 import { loadSettings, appDataDir, type AppSettings } from "../store/appSettings";
 import { bootstrapWorkspaces } from "../startup";
 import { setDataRoot, dataDir } from "../store/paths";
 import { EventLog } from "../transport/eventLog";
-import { createWorkspaceRuntime, type WorkspaceRuntime, type WorkspaceRuntimeStatus } from "./workspaceRuntime";
-import { clearRuntimes, registerRuntime } from "./runtimeRegistry";
-import { allocatePorts, PortUnavailableError, PortRangeExhaustedError } from "./portAllocator";
+// `DEFAULT_EDGE_BIND_HOST` is imported rather than defaulted to a literal here: the host needs the same
+// value `createEdgeRouter()` will apply, to report the edge's address, and a second copy of `"127.0.0.1"`
+// in this module is a rule with two homes.
+//
+// `bindEdgeInstance` is `plan/17` §5 work item 7 — the same treatment the forward proxy and the webhook
+// already get below, one port over: the host *names* its edge to the module-level binding so `config.save`
+// can re-bind it when `settings.port` changes.
+import { bindEdgeInstance, createEdgeRouter, DEFAULT_EDGE_BIND_HOST, type EdgeRouterInstance } from "../proxy/edge";
+import { createProxyServer, bindProxyInstance, type ProxyServerInstance } from "../proxy/server";
 import {
-  loadRuntimeRegistry,
-  saveRuntimeRegistry,
-  entryFor,
-  recordResolvedPorts,
-  type RuntimeRegistry,
-} from "./hostRegistry";
+  createWebhookServer,
+  bindWebhookInstance,
+  type WebhookServerInstance,
+} from "../proxy/webhookServer";
+// The **pair** finder, its derived-port helper, and its bound: the companion and the web GUI are one
+// decision (`plan/17` §1), so a host that starts them uses `findPortPair` and takes the GUI port from
+// `webGuiPortFor()` rather than writing `+ 1` a second time — a rule with two homes is a rule that drifts.
+// `findFreePortFrom` — the *single*-port finder — belongs to Electron, which has no GUI port to pair with,
+// and is deliberately not imported here.
+import { findPortPair, nextFreePortAbove, webGuiPortFor, SCAN_LIMIT } from "./portAllocator";
 
-/** How the RPC endpoint is exposed. D13: **one** endpoint per host, not one per workspace. */
+/**
+ * How the RPC endpoint is exposed. D13: **one** endpoint per host, not one per workspace.
+ *
+ * ## Three fields were removed on 2026-09-25: `host`, `allowNonLoopback`, `tls`
+ *
+ * `plan/15` work item 1 added all three so that a deployable host could be **published** — the bind host to
+ * name the interface, the opt-in to acknowledge it, and the TLS pair because `plan/05` requires TLS on an RPC
+ * channel beyond loopback. The programme has since decided the engine is never deployed remotely, so
+ * `transport/ws.ts` accepts loopback and nothing else, and the three fields became a way to pass through a
+ * value with exactly one legal setting. Their removal is what makes the image's loopback guarantee structural
+ * rather than a property of the command line an operator happened to use.
+ */
 export type HostTransport =
   | {
       kind: "socket";
@@ -79,9 +109,7 @@ export type HostTransport =
     }
   | {
       kind: "ws";
-      /** Defaults to `DEFAULT_WS_HOST` (loopback). A non-loopback bind additionally needs `tls` +
-       * `allowNonLoopback` — `ws.ts`'s own guards, which this host does not weaken or bypass. */
-      host?: string;
+      /** Defaults to `0` — an ephemeral port, so two hosts on one machine cannot collide. */
       port?: number;
     };
 
@@ -92,9 +120,32 @@ export interface WorkspaceHostOptions {
   workspaceIds?: string[];
   /** How to expose RPC. Defaults to `{ kind: "socket" }` — D3's decided desktop transport. */
   transport?: HostTransport;
-  /** An explicit token, for a caller that already has one. Defaults to `ensureEngineToken(dataDir)`,
-   * which honours `BIFURC_ENGINE_TOKEN` and otherwise generates and writes a fresh one. */
-  token?: string;
+  /**
+   * The port the **edge router** binds — `plan/15` §3.1's host tier, work item 3. Omitted → the port in
+   * `app.json` (`settings.port`, default `80`), which is the port every existing `*.localhost` mapping
+   * already points at.
+   *
+   * **The default is the settings port rather than a new constant, and that is the migration.** Before
+   * the split, `settings.port` was the single socket that served both halves, so a mapping's URL was
+   * `*.localhost:<settings.port>`. Handing the edge that same port is what keeps every existing mapping
+   * working — §6.2's promise — with no edit to any of them. `BIFURC_PROXY_BASE_PORT` is deliberately not
+   * consulted here: it moves the *forward* proxy's base, which is a different question with a different
+   * answer.
+   */
+  edgePort?: number;
+  /**
+   * Where the **web GUI** is served — `plan/15` work item 5's `--gui-target`. `host:port`, or a bare port
+   * meaning loopback. Omitted → no GUI mapping, and the base domain falls through to the home page.
+   *
+   * The edge reverse-proxies its own domain (and `localhost`, and a bare IP) to this target, so the GUI is
+   * *"just another reverse-proxy mapping"* — the same machinery as any workspace mapping, and a GUI served
+   * by nginx or `vite preview` is indistinguishable from one this repository built.
+   *
+   * **No default, deliberately.** A plausible-looking default would forward the base domain to a dead port
+   * and answer **502** on a fresh install — worse than the home page, and misleading because it looks like a
+   * bug rather than an unconfigured feature.
+   */
+  guiTarget?: string;
   /** Reported to clients in `hello`. Defaults to the `@bifurc/protocol` version, as the transports do. */
   engineVersion?: string;
   bus?: EngineEventBus;
@@ -105,63 +156,189 @@ export interface WorkspaceHostOptions {
 
 export interface WorkspaceHostStatus {
   dataDir: string;
+  /**
+   * The hostname this engine answers as — `localhost`, and not configurable.
+   *
+   * **It was `plan/15`'s `--domain`, and it stopped being an option on 2026-09-24** (`hostArgs.ts`'s header
+   * records the removal). The engine is no longer deployable in the cloud, so every deployment is on the
+   * machine the client is on and the name is a fact rather than a choice; a setting that can hold one value
+   * is not a setting.
+   *
+   * Reported rather than left to the caller's own copy of the constant, because a log line that said
+   * something else than the value `hello` advertises would be a log line about a different host.
+   */
+  domain: string;
   /** The RPC endpoint's address: the socket path, or the `ws://` URL. */
   rpcAddress: string;
   /**
-   * Where this run's token was written, or `undefined` when there is no file to point at.
+   * Where the edge router is serving — `http://<host>:<port>` — or `null` when it is not running.
    *
-   * **The path, never the token.** An operator has to *find* the secret to hand it to a client — which is
-   * the whole difficulty of connecting a browser, since a page cannot read a file — and a log is the wrong
-   * place for the value itself. Absent in two cases, both of which mean "look somewhere you already
-   * control": the token came from `BIFURC_ENGINE_TOKEN`, or the caller supplied one (`--token-file`).
-   *
-   * Without this, `ensureEngineToken()`'s `path` was computed and thrown away, so the only way to find the
-   * token was to know the filename by heart and guess the directory. Measured: that is exactly what the
-   * first headless run did.
+   * Reported once for the whole host rather than per workspace, because the edge *is* one listener for the
+   * whole host (`plan/15` §3.1).
    */
-  tokenPath?: string;
-  /** The workspace runtimes the host owns, in start order. */
-  runtimes: WorkspaceRuntimeStatus[];
+  edgeAddress: string | null;
+  /** The port the edge actually bound, or `null`. */
+  edgePort: number | null;
   /**
-   * Workspaces in the settings list that the host did **not** start, with the reason. A workspace whose
-   * override port is taken lands here rather than stopping the host — see `startAll()`.
+   * Whatever the edge reported on a failed bind, if anything.
+   *
+   * Surfaced rather than thrown for the same reason the proxy's is: a busy port has always been tolerated
+   * by this engine, and a host that refused to start would turn one taken port into an outage for every
+   * workspace. The difference in *consequence* is worth stating, though — a host whose edge is down is
+   * serving nothing on the reverse path, so the CLI prints this and does not treat it as routine.
    */
-  skipped: { workspaceId: string; reason: string }[];
+  edgeError: string | null;
+  /**
+   * The **forward proxy** — host-level since `plan/17` §1, one listener for every workspace.
+   *
+   * It has no `running` field of its own because it is bound at start and its failure mode is the *bind*:
+   * `forwardProxyError` non-null is the thing a caller acts on, and a `running: false` beside it would be a
+   * second way to say the same thing that could disagree.
+   */
+  forwardProxyPort: number | null;
+  /** Whatever the forward proxy reported on a failed bind, if anything. */
+  forwardProxyError: string | null;
+  /**
+   * The **webhook receiver** — host-level, and **off by default** (`plan/17` §1).
+   *
+   * `null` is therefore the ordinary value: the receiver is a *feature*, not infrastructure, and it is the
+   * user who starts it. A non-null port means it is listening.
+   */
+  webhookPort: number | null;
+  /** Whatever the webhook receiver reported on a failed bind, if anything. */
+  webhookError: string | null;
+  /**
+   * The **companion** — the RPC endpoint over WebSocket that the extension and the web GUI connect to — and
+   * the web GUI's port, which is **derived** as `companionPort + 1`.
+   *
+   * Both are `null` when this host runs no companion, which is the default: a `--ws-host`/`--ws-port` host
+   * has one, and a socket-transport host does not.
+   */
+  companionPort: number | null;
+  /** The derived GUI port, reported so the image's entrypoint can serve the GUI on it. Never a setting. */
+  webGuiPort: number | null;
+  /**
+   * The workspaces this host serves, in start order.
+   *
+   * **Config scope only — no port is per workspace any more.** This field replaced a `runtimes:
+   * WorkspaceRuntimeStatus[]` array whose `proxyPort` / `webhookPort` were the whole reason it existed; with
+   * one listener per port for the whole host (`plan/17` §1), those numbers were the same for every entry, so
+   * the array was N copies of one fact. What is genuinely per workspace is which **config** is in force, and
+   * that is what is listed.
+   */
+  workspaces: { workspaceId: string; name: string; active: boolean }[];
 }
 
 export interface WorkspaceHost {
   start(): Promise<WorkspaceHostStatus>;
-  /** Stop every runtime and close the RPC endpoint. Idempotent. */
+  /** Stop every listener and close the RPC endpoint. Idempotent. */
   stop(): Promise<void>;
   status(): WorkspaceHostStatus;
-  /** The runtimes, keyed by workspace id — so a caller can reach one workspace's proxy (WI 4, WI 7). */
-  readonly runtimes: ReadonlyMap<string, WorkspaceRuntime>;
+  /**
+   * The one forward proxy for this host, or `null` before `start()`.
+   *
+   * Exposed because a test asserting the split needs the proxy's own `isRunning()` / `getPort()` rather than
+   * the host's summary of them — the same reason `rpc` and `edge` are.
+   */
+  readonly forwardProxy: ProxyServerInstance | null;
+  /** The one webhook receiver for this host, or `null` before `start()`. */
+  readonly webhook: WebhookServerInstance | null;
   /** The one RPC endpoint for this host. `null` before `start()`. */
   readonly rpc: SocketServer | WsServer | null;
+  /**
+   * The one edge router for this host. `null` before `start()`.
+   *
+   * Exposed for the same reason `rpc` is — a caller that has to ask "is it up?" should not have to
+   * re-derive it from `status()` — and because a test asserting the split needs the edge's own
+   * `isRunning()` / `getPort()` rather than the host's summary of them.
+   */
+  readonly edge: EdgeRouterInstance | null;
+}
+
+/**
+ * Poll until a fire-and-forget server reports ready, or reports an error, or the deadline passes.
+ *
+ * ## Why this exists here, and what it restores
+ *
+ * `forwardProxy.start()` and `edge.start()` each hand off to an **async** `listen()` and return, so the
+ * only readiness signal either publishes is the predicate passed here — neither exposes its `net.Server`.
+ * (The same helper lives in `index.ts`, unexported, for the same two listeners; duplicated rather than
+ * shared because this module must not depend on the engine's lifecycle module — `host.ts`'s header records
+ * that a host must never call `createEngine()`.)
+ *
+ * **This was lost when `WorkspaceRuntime` was deleted** (`plan/17` §5 work item 1, 2026-09-25), and the
+ * loss was a real behaviour change rather than a tidy-up. `WorkspaceRuntime.doStart()` awaited readiness of
+ * both its servers before resolving, and `host.ts` read `st.proxyPort` off that resolved value — so every
+ * caller of `host.start()` was entitled to a **bound** listener. Without the wait, `start()` resolves while
+ * the proxy is still binding, and `status()` reads the port through `isRunning()` (i.e. `server.listening`),
+ * so it reports `forwardProxyPort: null` for a proxy that comes up milliseconds later. Measured, not
+ * deduced: it is what the host suite caught the moment the class was gone.
+ *
+ * The deadline exists so a hung bind cannot hang `start()` forever; 10 ms is well below the cost of a
+ * socket bind, so a successful one returns on the first or second poll.
+ */
+async function waitUntilReady(
+  isReady: () => boolean,
+  getError: () => string | null,
+  timeoutMs = 5000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (isReady() || getError()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   const bus = opts.bus ?? defaultBus;
   const registry = opts.registry ?? commandRegistry;
   const notice = opts.onNotice ?? ((message: string) => console.log(`[host] ${message}`));
+  /**
+   * The host's own name — `localhost`, composed here rather than taken from an option.
+   *
+   * One local rather than the constant repeated at each of its readers (`status()`, the RPC's `auth` and the
+   * edge), on this module's own rule: a value with two homes is a value that can disagree with itself. It was
+   * `plan/15`'s `--domain` until 2026-09-24 — `hostArgs.ts`'s header records why the flag went, and
+   * `lib/net.ts#DEFAULT_HOST_DOMAIN` is the single source now.
+   */
+  const domain = DEFAULT_HOST_DOMAIN;
 
-  const runtimes = new Map<string, WorkspaceRuntime>();
+  let forwardProxy: ProxyServerInstance | null = null;
+  let webhook: WebhookServerInstance | null = null;
   let rpc: SocketServer | WsServer | null = null;
-  let skipped: { workspaceId: string; reason: string }[] = [];
+  let edge: EdgeRouterInstance | null = null;
+  /** The edge's URL. Set when the edge is created, and read only while it is running. */
+  let edgeUrl = "";
+  /** The resolved companion port and its derived GUI neighbour — `plan/17` §5 work item 4. */
+  let companionPort: number | null = null;
+  let webGuiPort: number | null = null;
+  /** What `status()` lists as served. Config scope only — see `WorkspaceHostStatus.workspaces`. */
+  let served: { workspaceId: string; name: string; active: boolean }[] = [];
   let rpcAddress = "";
-  let tokenPath: string | undefined;
   let startPromise: Promise<WorkspaceHostStatus> | null = null;
   let stopped = false;
 
   function status(): WorkspaceHostStatus {
     return {
       dataDir: dataDir(),
+      // The resolved name, not `opts.domain` — see `WorkspaceHostStatus.domain` for why the two can differ.
+      domain,
       rpcAddress,
-      // Spread rather than assigned: `tokenPath` is optional and `undefined` is not the same as absent
-      // under `exactOptionalPropertyTypes`. See the field's note on why it can be absent at all.
-      ...(tokenPath === undefined ? {} : { tokenPath }),
-      runtimes: [...runtimes.values()].map((r) => r.status()),
-      skipped,
+      // Every listener follows one rule rather than five: a **port** is reported only while the server is
+      // answering on it, so a caller cannot read a port for something that is down. The **error** is
+      // reported whenever there is one — that is the case where the port matters most and is least
+      // available.
+      edgeAddress: edge !== null && edge.isRunning() ? edgeUrl : null,
+      edgePort: edge !== null && edge.isRunning() ? edge.getPort() : null,
+      edgeError: edge?.getError() ?? null,
+      forwardProxyPort: forwardProxy !== null && forwardProxy.isRunning() ? forwardProxy.getPort() : null,
+      forwardProxyError: forwardProxy?.getError() ?? null,
+      // `null` is the ordinary value here: the webhook is off by default (`plan/17` §1).
+      webhookPort: webhook !== null && webhook.isRunning() ? webhook.getPort() : null,
+      webhookError: webhook?.getError() ?? null,
+      companionPort,
+      webGuiPort,
+      workspaces: served,
     };
   }
 
@@ -170,6 +347,30 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   const log = new EventLog({ bus });
 
   async function doStart(): Promise<WorkspaceHostStatus> {
+    /**
+     * ## Step -1 was the bind policy, and there is no longer a policy to state
+     *
+     * `plan/10` work item 5 required the host to *"refuse to start with a clear message"* if the RPC port was
+     * bound to anything other than loopback, and `plan/15` work item 1 carried that forward as the second half
+     * of the bind opt-in: a wide bind also demanded a token the operator had **seen**, because
+     * `ensureEngineToken()` would otherwise generate one, write it into the data root and report it once on
+     * stdout — a credential nobody chose and no client was given.
+     *
+     * Both halves are gone as of **2026-09-25**, and the guard went with its subject. A wide bind is no longer
+     * possible at all: `createWsServer`, `createProxyServer` and `createEdgeRouter` each refuse a non-loopback
+     * address unconditionally from their own factories, and the CLI can no longer express one. So there is no
+     * configuration left for a host to fail closed *on*, and a guard that cannot fire is one the next reader
+     * deletes — worse than absent, because it would look like the rule is still enforced here rather than one
+     * layer down, where it actually is.
+     *
+     * **What this costs, stated plainly:** the refusal now happens inside the transport, so it is no longer
+     * ordered before the data root is touched. That is a real loss of the "a startup guard should leave no
+     * trace" property, and it is accepted because nothing the CLI can be given reaches that throw — see
+     * `hostArgs.ts`'s `REMOVED_FLAGS`. A programmatic caller could not do it either: `host`, `allowNonLoopback`
+     * and `tls` are no longer fields of `HostTransport`.
+     */
+    const transport = opts.transport ?? { kind: "socket" };
+
     // ── 0. register the command surface, before anything can be asked to serve it ─
     /**
      * **The step this file's first integration run proved was missing.**
@@ -224,124 +425,301 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     const boot = await bootstrapWorkspaces(settings);
     settings = boot.settings;
 
-    // ── 3. the runtime registry, and the token ───────────────────────────────
-    const runtimeRegistry: RuntimeRegistry = loadRuntimeRegistry();
+    // ── 3. the token step, deleted 2026-09-25 ───────────────────────────────
     /**
-     * `ensureEngineToken()` runs **only when the caller supplied no token**.
+     * **There is no token, and this is a tombstone rather than a placeholder.**
      *
-     * That is the token module's own rule, and it was already the effect of the previous `??` — spelled
-     * out here because the two branches now differ in more than their value: only the generated one has a
-     * `path`, and only a generated one should be reported. An operator who mounted their own secret does
-     * not also want one written into the data dir, and does not need to be told where the file they
-     * supplied lives.
+     * What stood here was `ensureEngineToken()`: generate a token, write it to `<dataDir>/engine.token`,
+     * report the path once on stdout, and hand the value to the RPC endpoint's wrapper. It was the second
+     * half of `plan/10` work item 5's fail-closed rule — a non-loopback bind refused to start on a token
+     * nobody had *seen* — and it went in the same order as the rest of the remote-deployment work: the bind
+     * half first (step -1 above), then the token itself, because the RPC surface can no longer be reached
+     * from anywhere but this machine.
+     *
+     * **What replaced it is not a secret, and that is the point.** A token guards a boundary; the boundary
+     * is now the loopback bind plus an `Origin` check in `transport/ws.ts`, and neither is a credential. The
+     * bind answers *"can this packet arrive?"*; the `Origin` check answers *"is the page that sent it served
+     * from this machine?"* — a question the token could not be *asked*, because a web page runs on the same
+     * machine as the engine and its connection to `127.0.0.1` is a genuine loopback connection.
+     * `lib/net.ts`'s `isAllowedOrigin` header works through both halves of that argument.
+     *
+     * **`plan/17` §5 work item 9 is a different removal that also happened to live in this step.** The
+     * host-local `runtime.json` registry remembered *which port each workspace landed on* — D16's stickiness
+     * rule, so a workspace that took 81 because 80 was busy kept 81 and a browser configured for it did not
+     * break. With one host-level listener per port there is nothing per workspace to remember: the forward
+     * proxy's port is a **setting** the user owns and sees, and the companion pair is re-scanned from its
+     * base at every start.
      */
-    let token: string;
-    if (opts.token === undefined) {
-      const generated = await ensureEngineToken(dataDir());
-      token = generated.token;
-      tokenPath = generated.path;
+
+    // ── 3b. the forward proxy — host-level, one listener for every workspace ─
+    /**
+     * ## `plan/17` §5 work item 3: this used to be one proxy *per workspace*
+     *
+     * `plan/14` D10/D11 made the workspace the deployable unit, so the host allocated each workspace a port
+     * (D16's base-and-scan) and composed a `WorkspaceRuntime` around it. `plan/17` §1 replaces that model: a
+     * workspace is a **project**, so switching workspaces changes the **context** — which rules, mocks and
+     * webhook endpoints are in force — while the ports stay put. There is now **one** forward proxy for the
+     * whole host, and `WorkspaceRuntime` is **deleted** rather than hollowed (owner decision, 2026-09-25):
+     * with no listener of its own it had no subject left.
+     *
+     * ## `workspaceId: null` is the whole of "follow the active workspace"
+     *
+     * `createProxyServer()` reads its own `workspaceId` and falls back to `loadConfig().activeWorkspaceId`
+     * **per call** when none was supplied. That fallback is exactly what a host-level proxy means — *"which
+     * workspace am I looking at?"* — and it is why this passes nothing.
+     *
+     * ## Why it binds rather than scans, and what "fails" means
+     *
+     * `plan/17` §1: *"the forward proxy does NOT scan. It binds `8080` and **fails if occupied**, naming the
+     * port, so the user enters a working one instead of the app silently incrementing."* A browser's proxy
+     * setting names this port, so a silently moved one is a broken browser — D16's scan-upward rule was for
+     * a port **nobody addressed**, which this one is not.
+     *
+     * "Fails" here means **the bind fails**, not "the host refuses to start". That distinction is the
+     * engine's oldest bind contract: a busy port has always been tolerated and reported through `getError()`,
+     * and the edge below records the same reasoning. A host that exited because another program held 8080
+     * would turn one taken port into an outage for every workspace — strictly worse than a proxy that is down
+     * and says so. What `plan/17` forbids is **silence**, and the notice in step 5 is not silent.
+     */
+    forwardProxy = createProxyServer({
+      // No `workspaceId`: the forward proxy serves whichever workspace is active. See the block above.
+      workspaceId: null,
+      // **No bind host, and no opt-in to acknowledge one** (both removed 2026-09-25). `plan/15` work item 2
+      // let an operator name the interface here and acknowledge it with a second flag; `createProxyServer()`
+      // now refuses any non-loopback address unconditionally, so the pair became a way to pass through a
+      // value with exactly one legal setting. The refusal still throws **from the factory** — deliberately,
+      // because it is a configuration error with nothing to retry — which is why this call site needs no
+      // guard of its own. See `proxy/server.ts`'s `DEFAULT_PROXY_BIND_HOST` docblock.
+    });
+    const forwardProxyPortWanted = settings.forwardProxyPort;
+    const proxyListener = forwardProxy;
+    proxyListener.start(forwardProxyPortWanted);
+
+    /**
+     * **Wait for the bind, so `start()` means what it says.** See `waitUntilReady`'s docblock: `start()`
+     * returns before `listen()` completes, and `status()` reads the port through `isRunning()`.
+     *
+     * A **bind failure is not thrown** — `getError()` ends the wait, and the failure is reported by the
+     * notice in step 5 and by `status().forwardProxyError`. That is the engine's oldest bind contract: a busy
+     * port has always been tolerated and reported, never fatal. A host that exited because another program
+     * held 8080 would turn one taken port into an outage for every workspace.
+     */
+    await waitUntilReady(() => proxyListener.isRunning(), () => proxyListener.getError());
+
+    // ── 3c. the webhook receiver — host-level, and OFF by default ────────────
+    /**
+     * `plan/17` §1: *"the webhook does NOT scan either. It is a **feature, not infrastructure**: it is **off
+     * by default**, the user starts it, and the user owns the port."* So this is **created and not started**
+     * — the `webhookServer.start` command is what binds it, exactly as the desktop has always done
+     * (`WebhooksPanel` → `window.api.startWebhookServer()`).
+     *
+     * Creating it here rather than leaving it lazy is what makes `webhookServer.status` answerable before any
+     * tab has opened, and it is what the binding below needs: the facade must point at *this* instance, not
+     * at a lazily-created default that would become a second, competing authority.
+     *
+     * **Known gap, stated rather than implied.** The receiver's *active* set — the suffixes it will accept a
+     * POST for — is registered by the UI when a webhook tab opens, and it is not keyed by workspace. So
+     * switching workspace does not by itself retire the previous workspace's active webhooks. `plan/17` §1
+     * lists *"which webhook endpoints are in force"* among the things a switch changes; this host makes the
+     * **port** host-level but not yet the **active set**, because `createWebhookServer()`'s active maps are
+     * not workspace-keyed. Recorded here so it is a known limit rather than a surprise.
+     */
+    webhook = createWebhookServer({ workspaceId: null });
+
+    /**
+     * ## Binding the facade is what makes a command reach these two
+     *
+     * `proxy/server.ts` and `proxy/webhookServer.ts` each keep a module-level **facade** over a lazily created
+     * default instance, and the `server.*` / `webhookServer.*` commands go through it. `bindProxyInstance()` /
+     * `bindWebhookInstance()` point that facade at an instance the caller owns — the desktop has always used
+     * them, and this host now uses the same mechanism.
+     *
+     * **This replaces `runtimeRegistry.ts`.** That module existed because a host had N runtimes and a command
+     * had to resolve *which* one a `workspaceId` named, so it carried a three-way union (`runtime` /
+     * `facade` / `absent`) plus a `runtimeServerOps.ts` to drive it. With one listener per port there is
+     * nothing to resolve — the facade **is** the host's server — so the union, the registry and its scope
+     * plumbing are all deleted, and the commands become direct facade calls. That is the honest reading of
+     * `plan/17` §3: the routing *collapses*.
+     */
+    bindProxyInstance(forwardProxy);
+    bindWebhookInstance(webhook);
+
+    // ── 3d. the edge router — one listener for the whole host (`plan/15` §3.3) ─
+    /**
+     * ## Why it is not allocated
+     *
+     * Its port comes from `settings.port` — the port every existing `*.localhost` mapping already points at —
+     * so it is **chosen**, not discovered, and it is bound exactly as chosen. A silently moved edge would be
+     * a proxy whose mappings answer somewhere other than where the user typed them, which is a worse failure
+     * than not starting. `plan/17` §1 keeps this rule unchanged: *"the edge is bound, not scanned."*
+     *
+     * **A failed edge bind is reported, not thrown.** A bind failure has always been tolerated here and
+     * reported through `getError()`, because the shell has always tolerated a busy port. The consequence is
+     * larger for the edge than for the proxy — a host whose edge is down serves nothing on the reverse path
+     * — so it gets its own notice below, stated as a failure rather than as routine.
+     *
+     * `resolveConfig` is read **per request**, and that is what makes `workspace.setActive` need no
+     * invalidation step *on the edge*: the next request re-reads which workspace is active and asks the
+     * forward proxy for the config it dispatches with.
+     *
+     * **The forward proxy is deliberately not per-request.** It caches its config at `start()` and swaps it
+     * on `reloadConfig()` — `plan/17` §5 work item 3: *"loads the active workspace's rules and mocks **at
+     * start** and **swaps its in-memory config when the active workspace changes** — not per-request
+     * resolution."* So the edge follows the pointer for free, while the proxy is re-pointed by
+     * `workspace.setActive` calling `reloadConfig()` (`store/coreCommands.ts`).
+     */
+    // **The bind host is a constant, not an option** (the option was removed 2026-09-25). `plan/15` work
+    // item 3 let an operator name the interface here and acknowledge it with a second flag;
+    // `createEdgeRouter()` now refuses any non-loopback address unconditionally, so there is one legal value
+    // and passing it through would be a field with a single setting. It is still read as a local rather than
+    // inlined, because `edgeUrl` below is built from the same value and the host reports it.
+    const edgeBindHost = DEFAULT_EDGE_BIND_HOST;
+    const edgePortWanted = opts.edgePort ?? settings.port;
+    edge = createEdgeRouter({
+      bindHost: edgeBindHost,
+      /**
+       * Branch G's first gate — `plan/15` work item 5. `domain` is the host's own name, `localhost` since the
+       * `--domain` flag was removed (2026-09-24), and already advertised to clients as `hello`'s
+       * `hostDomain`; this is the second reader, and §3.3 predicted it. Passing it is what makes the base
+       * domain serve the GUI.
+       */
+      hostDomain: domain,
+      /**
+       * `plan/15` work item 5 — the **global mapping** from this host's own domain (and `localhost`, and a
+       * bare IP literal) to the port the web GUI is served on. `--gui-target` or `BIFURC_GUI_TARGET`,
+       * resolved by `hostArgs.ts`; **absent means no GUI mapping**, and the base domain falls through to the
+       * home page exactly as it did before this work item.
+       *
+       * **This is the flag a container sets.** `plan/16` Proposal A is one image carrying both halves, and
+       * the GUI's own server is a separate process that image starts — which is why this names a *target*
+       * rather than a directory the engine would have to serve itself.
+       */
+      guiTarget: opts.guiTarget,
+      resolveConfig: () => {
+        const activeId = loadSettings().activeWorkspaceId;
+        /**
+         * `null` when the active workspace is **not served by this host** — `--workspace` filtered it out.
+         * Returning another workspace's config here would be a wrong-target answer, and returning a
+         * synthetic empty config would render "No mappings yet" for a workspace that has plenty. `null` lets
+         * the edge say what is actually true.
+         *
+         * Read from `served`, which step 4 fills: before it runs this is an empty list and every request
+         * answers `null`, which is correct — the host is not serving anything yet.
+         */
+        if (!served.some((s) => s.workspaceId === activeId)) return null;
+        return forwardProxy === null ? null : forwardProxy.dispatchConfig();
+      },
+    });
+    edgeUrl = `http://${edgeBindHost}:${edgePortWanted}`;
+    const edgeListener = edge;
+    /**
+     * ## `plan/17` §5 work item 7 — the edge joins the two facades bound in step 3b
+     *
+     * `bindProxyInstance()` / `bindWebhookInstance()` above are what let the `server.*` / `webhookServer.*`
+     * commands reach this host's listeners. The edge had no such handle, so its port was the one runtime port a
+     * `config.save` could not move — the gap work item 7 closes. `bindEdgeInstance()` is the same mechanism,
+     * and the same obligation comes with it: `stop()` unbinds all three.
+     *
+     * **Bound before `start()`.** The engine's own composition does the same, for the same reason: a save
+     * arriving in the boot window should find the instance rather than silently skip the re-bind.
+     */
+    bindEdgeInstance(edgeListener);
+    edgeListener.start(edgePortWanted);
+
+    // The same contract as the forward proxy above, and the same loss when `WorkspaceRuntime` went: the edge
+    // binds asynchronously, so without this `status().edgePort` would be `null` for a listener that is up
+    // microseconds later. `index.ts` waits on its own edge for exactly this reason.
+    await waitUntilReady(() => edgeListener.isRunning(), () => edgeListener.getError());
+
+    // ── 4. what this host serves, as config ─────────────────────────────────
+    /**
+     * **This used to be a loop that allocated a port and started a `WorkspaceRuntime` per workspace.** It is
+     * now a list, because there is nothing left to start: both listeners are above, and what remains per
+     * workspace is *which config is in force* — `plan/17` §1, *a workspace is a project, not a listener*.
+     *
+     * `served` is also the guard `resolveConfig` reads, so a `--workspace` filter that excludes the active
+     * workspace makes the edge answer `null` rather than serving a workspace this host was not asked to
+     * serve. That is the surviving half of the check `runtimeRegistry.ts`'s `absent` case used to provide,
+     * and it survives because the *question* survives: "is the active workspace one of ours?"
+     */
+    served = settings.workspaces.map((ws) => ({
+      workspaceId: ws.id,
+      name: ws.name,
+      active: ws.id === settings.activeWorkspaceId,
+    }));
+
+    // No `runtime.json` write any more — see step 3. There is no resolved port to remember: the forward
+    // proxy's port is the setting the user chose, and the companion pair is re-scanned from its base at
+    // every start (`plan/17` §5 work item 9).
+
+    /**
+     * The edge's own line, and it is **not** routine when it failed.
+     *
+     * Before `plan/17` this comment said the edge was special because it was "not one of N" while the
+     * per-workspace proxies were. There is no N any more — the host owns one listener per port — so the
+     * reason is now about *consequence* rather than about arithmetic: the edge is the reverse path itself,
+     * and a host whose edge is down is answering for no mapping at all. So the failure is stated as a
+     * failure, naming what it costs, and `status().edgeError` carries it to the CLI and to `server.status`.
+     *
+     * Read through a local because `edge` is declared `| null` for `status()`'s sake; `stop()` and this
+     * block are the only readers that know it cannot be null by now.
+     */
+    const edgeRouter = edge;
+    if (edgeRouter === null) throw new Error("[host] internal: the edge was not created");
+    if (edgeRouter.getError() !== null) {
+      notice(`edge on ${edgeUrl} FAILED to bind: ${edgeRouter.getError()} — no *.localhost mapping will resolve`);
     } else {
-      token = opts.token;
+      notice(`edge: ${edgeUrl} — reverse proxy and home page for the active workspace`);
     }
 
-    // ── 4. one runtime per workspace, allocated and started in sequence ──────
-    const reserved = new Set<number>();
-    skipped = [];
-    for (const ws of settings.workspaces) {
-      const entry = entryFor(runtimeRegistry, ws.id);
-      let ports;
-      try {
-        ports = await allocatePorts({
-          // D16's three sources, in order. The override is the user's explicit choice — the fail-loudly path.
-          preferredProxyPort: entry.preferredProxyPort ?? null,
-          preferredWebhookPort: entry.preferredWebhookPort ?? null,
-          /**
-           * **D16's stickiness**, passed as its own input rather than as a preference — and that distinction
-           * is the whole point. A workspace that landed on 81 because 80 was busy **keeps 81** once 80 frees
-           * up, because a stable proxy URL is worth more to the browser-proxy workflow than reclaiming the
-           * base.
-           *
-           * The remembered port is a *record of what happened*, not a request, so `allocatePorts` treats it
-           * **softly**: it is taken when free and skipped when not. Passing it as a `preferred*` value would
-           * turn a port some other process has since taken into a hard startup failure — the "refused to
-           * start" mode D16 forbids. Until 2026-09-22 the allocator had no soft input, so the only way to
-           * pass this was as a preference, and this call passed nothing instead; that is what `plan/14` §8
-           * criterion 6b records.
-           */
-          rememberedProxyPort: entry.resolvedProxyPort ?? null,
-          rememberedWebhookPort: entry.resolvedWebhookPort ?? null,
-          reserved,
-        });
-      } catch (err) {
-        /**
-         * A workspace the host cannot place is **skipped, not fatal** — with one exception.
-         *
-         * `PortUnavailableError` means a *user's override* was taken. D16 says that fails loudly, so it does:
-         * loudly, by name, and for that workspace. It does not stop the other workspaces from serving, because
-         * a host that refuses to start at all turns one workspace's bad setting into an outage for every
-         * other one. `PortRangeExhaustedError` is different in kind — the whole range is gone, so no
-         * workspace after this one can be placed either, and it is re-thrown.
-         */
-        if (err instanceof PortRangeExhaustedError) throw err;
-        const reason = err instanceof PortUnavailableError ? err.message : String(err);
-        skipped.push({ workspaceId: ws.id, reason });
-        notice(`workspace "${ws.name}" (${ws.id}) was not started: ${reason}`, ws.id);
-        continue;
-      }
-
-      reserved.add(ports.proxyPort);
-      reserved.add(ports.webhookPort);
-
-      const runtime = createWorkspaceRuntime({
-        workspaceId: ws.id,
-        proxyPort: ports.proxyPort,
-        webhookPort: ports.webhookPort,
-        // The CA is one mkcert root for the whole machine and outlives any single runtime — so no member of a
-        // multi-workspace host unloads it. See `createProxyServer()`'s header.
-        ownsCA: false,
-      });
-      runtimes.set(ws.id, runtime);
-      /**
-       * Register **before** `start()`, deliberately. A command that arrives while this runtime is still
-       * binding must resolve to *this* instance rather than fall through to the facade — otherwise the
-       * window between `runtimes.set` and `start()` is one where `server.status` would report the active
-       * workspace's server instead of this one, which is the exact class of wrong-target answer WI 7
-       * removes. The registry is a lookup, not a health check: `isRunning()` is how a caller asks whether
-       * it has come up.
-       */
-      registerRuntime(runtime);
-
-      const st = await runtime.start();
-      recordResolvedPorts(runtimeRegistry, ws.id, {
-        proxyPort: st.proxyPort,
-        webhookPort: st.webhookPort,
-      });
-
-      /**
-       * Landing on `base + 1` is **the designed path, not a degradation** — `plan/14` §4 is explicit that it
-       * must not be warned about as if something failed. So this is informational and names the workspace;
-       * the LOUD case (an override that could not be honoured) already happened above, where it became a
-       * `skipped` entry.
-       */
+    /**
+     * The forward proxy's line — a **failure** when it failed, and the same shape of argument as the edge's.
+     *
+     * `plan/17` §1 refuses to scan this port precisely so that the user always knows what their browser must
+     * be pointed at, which means a proxy that is not on that port is a *broken browser setting* rather than a
+     * degraded mode. It still does not stop the host — see step 3b for why — so the notice carries the whole
+     * weight of telling the user.
+     *
+     * The next free port is **named**, because `plan/17`'s instruction to the user is *"enter a working one
+     * instead of the app silently incrementing"*, and that instruction is only followable if a working port is
+     * on screen. `nextFreePortAbove()` exists for exactly this and nothing else — it never picks the port.
+     */
+    const proxyErr = forwardProxy.getError();
+    if (proxyErr !== null) {
+      const nextFree = await nextFreePortAbove(forwardProxyPortWanted + 1);
       notice(
-        `workspace "${ws.name}" is serving: proxy ${ports.proxyPort}, webhook ${ports.webhookPort}`,
-        ws.id,
+        `forward proxy FAILED to bind ${forwardProxyPortWanted}: ${proxyErr} — your browser's proxy setting ` +
+          `points at this port, so it has to be one that works. ` +
+          (nextFree === null
+            ? `No free port was found above it — free ${forwardProxyPortWanted}, or choose another in Settings.`
+            : `Port ${nextFree} is free: set it in Settings → Ports, or free ${forwardProxyPortWanted}.`),
+      );
+    } else {
+      notice(
+        `forward proxy: ${forwardProxyPortWanted} — point your browser's proxy setting at this port`,
       );
     }
 
-    // One write for the whole start, after every runtime has reported — so a crash mid-start cannot record a
-    // port for a workspace that never bound.
-    saveRuntimeRegistry(runtimeRegistry);
-
-    // ── 5. the one RPC endpoint, for every runtime (D13) ─────────────────────
-    const transport = opts.transport ?? { kind: "socket" };
+    // ── 5. the one RPC endpoint, for every workspace (D13) ───────────────────
+    // `transport` is resolved at step -1, because the bind policy has to be decided before the data root
+    // is touched. See the guard there.
     const auth = {
-      token,
       engineVersion: opts.engineVersion ?? "0.0.0",
+      // The host's own name, so a client can derive a mapping's suffix instead of hardcoding it (`plan/15`
+      // §4.3). Read from the resolved local above rather than re-derived here from the transport or the bind
+      // address: §4.1's rule is that the *host* decides this and the client does not guess, and an engine
+      // bound to `0.0.0.0` is still reached by **name** — and since 2026-09-24 that name is `localhost`,
+      // because the engine is no longer deployable in the cloud.
+      hostDomain: domain,
       // Reported so an operator can see *why* a host refused a session, which over a plain socket is otherwise
       // unattributable: `socket.ts` has no peer address to record, and a refused client is disconnected with
-      // nothing but the `UNAUTHORIZED` reply to go on. The `hello` is included because a token mismatch and a
-      // protocol mismatch are the same code and different problems.
+      // nothing but the `UNAUTHORIZED` reply to go on. The `hello` is included because a client that is not
+      // sending the handshake at all and a protocol mismatch are the same code and different problems.
+      //
+      // **`token` was the first field of this object** until 2026-09-25, and it is what this notice's
+      // `UNAUTHORIZED` case used to be about. It went with the token itself. What can still reach this is a
+      // client that is not speaking the handshake first — and since this client always does, that now means
+      // something else is driving the endpoint (`transport/auth/authenticated.ts`).
       onAuthFailure: (error: { code: string; message: string }, hello: { clientName?: string }) =>
         notice(`rpc session refused (${error.code}) from "${hello.clientName ?? "unnamed"}": ${error.message}`),
     };
@@ -351,28 +729,77 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       rpc = await createSocketServer({ path, registry, bus, log, auth });
       rpcAddress = path;
     } else {
+      /**
+       * ## The companion and the web GUI are one decision — `plan/17` §5 work item 4
+       *
+       * `plan/17` §1: *"The companion starts **first**; the GUI starts second **with the companion's port
+       * passed to it**, so it knows where to connect without being told. A **base** port is the starting
+       * point and the search walks upward **in pairs** — `n` and `n + 1` must **both** be free, because `n`
+       * free with `n + 1` taken is a **failed** start, not a usable one."*
+       *
+       * So the port is no longer `transport.port ?? 0`. **`0` was the one value a companion must never
+       * take:** it means "the OS picks", and a client — the extension, the web GUI — has to be *told* where
+       * to connect, so a port that moves cannot be found. This is `plan/15` §3.1's own rule (*a port belongs
+       * to the thing that has to be addressed once*) applied to the second thing that has two addresses.
+       *
+       * `reserved` is what keeps the scan off the ports this host already bound. Without it the pair finder
+       * could hand back `80` (the edge) or `8080` (the forward proxy) as the companion's port, and the
+       * failure would surface as a `listen()` that fails *after* the host had reported the port it
+       * "resolved" — the same TOCTOU shape `portAllocator.ts`'s header warns about, one layer up.
+       */
+      const reserved = new Set<number>([edgePortWanted, forwardProxyPortWanted]);
+      if (transport.port === undefined || transport.port === 0) {
+        const pair = await findPortPair(settings.companionPort, reserved);
+        if (pair === null) {
+          /**
+           * `plan/17` §1 says the pair search **"never fails"**, and that is true of a real machine — a free
+           * adjacent pair is eventually found. This is the bound on "eventually": `SCAN_LIMIT` ports above
+           * the base. Throwing names the base rather than reporting a port that could not be bound, which is
+           * the failure `webGuiPortFor()`'s own docblock exists to prevent.
+           */
+          throw new Error(
+            `No free companion/GUI port pair within ${SCAN_LIMIT} of ${settings.companionPort} — the ` +
+              `companion needs two adjacent free ports. Set a different base in Settings → Ports.`,
+          );
+        }
+        companionPort = pair.companionPort;
+        webGuiPort = pair.webGuiPort;
+      } else {
+        // An explicit port is the operator's choice and is honoured as-is — the same rule the edge follows,
+        // and for the same reason: a companion that moved would be one no client could find.
+        companionPort = transport.port;
+        webGuiPort = webGuiPortFor(transport.port);
+      }
+      notice(
+        `companion: ${companionPort} — the web GUI belongs on ${webGuiPort} (derived, companion + 1)`,
+      );
+
       rpc = await createWsServer({
         registry,
         bus,
         log,
         auth,
-        host: transport.host ?? DEFAULT_WS_HOST,
-        port: transport.port ?? 0,
+        // **No `host`, no `allowNonLoopback`, no `tls`** — all three were passed here until 2026-09-25.
+        // `ws.ts` defaults the bind to `DEFAULT_WS_HOST` and refuses anything that is not a loopback
+        // spelling, so the address is not a caller's choice and there is nothing to acknowledge; the TLS
+        // pair existed only to make a non-loopback channel safe, and there is no non-loopback channel.
+        // Omitting all three is the whole of "this listener is on this machine".
+        port: companionPort,
       });
       rpcAddress = rpc.url;
     }
     notice(`rpc endpoint: ${rpcAddress}`);
-    if (tokenPath !== undefined) {
-      /*
-       * The path, never the value.
-       *
-       * A log is read by more people than a `0600` file in a data directory is, and a token pasted into an
-       * issue tracker is a credential in an issue tracker. The path is what an operator actually needs:
-       * a client has to be handed the secret, and — for a browser, which cannot read a file at all —
-       * finding it is the step that costs the most.
-       */
-      notice(`engine token: ${tokenPath}`);
-    }
+
+    /**
+     * **The `engine token: <path>` line was here**, and there is nothing left to report — the token step
+     * above is a tombstone.
+     *
+     * Worth recording what was lost with it, because the line was doing real work: it printed the *path*
+     * and never the value, on the reasoning that a log is read by more people than a `0600` file is, and
+     * that the path is what an operator actually needs. The client that needed it most was the browser,
+     * which cannot read a file at all. That client now authenticates with an `Origin` it already has, so the
+     * loss is affordable rather than merely accepted.
+     */
 
     return status();
   }
@@ -392,7 +819,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       if (stopped) return;
       stopped = true;
       // The endpoint first: closing it stops new sessions before the servers behind it go away, so a client
-      // cannot get a request in against a runtime that is mid-teardown.
+      // cannot get a request in against a listener that is mid-teardown.
       if (rpc !== null) {
         try {
           await rpc.close();
@@ -400,24 +827,68 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
           // Best-effort — a socket file that another process already removed must not block the shutdown.
         }
       }
-      // Then every runtime. Sequential rather than `Promise.all`: each `stop()` closes its servers, and a
-      // burst of concurrent closes buys nothing while making an error in one harder to attribute.
-      for (const runtime of runtimes.values()) {
-        await runtime.stop();
-      }
-      runtimes.clear();
-      // And the command layer's lookup, or a stopped host would leave `server.status` answering for
-      // workspaces it no longer serves — a stale answer of the same kind `currentPort` surviving `stop()`
-      // produces one layer down (`proxy/server.ts`'s recorded trap).
-      clearRuntimes();
+      // The edge **before** the proxy it routes to. A request arriving mid-teardown should find either a
+      // working mapping or a closed edge, never a live edge in front of a stopped proxy — the same ordering
+      // argument as the RPC endpoint above, approached from the other end.
+      //
+      // This order is *reversed* from the pre-`plan/17` version, and the change is the point: there used to
+      // be N per-workspace proxies, so the edge was stopped last because it outlived its routing targets.
+      // With one proxy, "stop the thing that routes, then the thing it routes to" is the only order that
+      // never exposes a live front end to a dead back end.
+      edge?.stop();
+      // Then the two listeners. Both are null-guarded internally, so a host that never reached them tears
+      // down cleanly.
+      forwardProxy?.stop();
+      webhook?.stop();
+      /**
+       * **The facade binding is undone here, because `start()` made it.**
+       *
+       * `bindProxyInstance()` / `bindWebhookInstance()` are **process-global** — they set module-level state in
+       * `proxy/server.ts` and `proxy/webhookServer.ts`, and every module function in those files acts on
+       * whatever is bound. So a host that binds and does not unbind leaves the *next* consumer in the same
+       * process talking to **this** host's stopped instances: `startServer()` would resurrect them rather than
+       * build a fresh one, and `server.status` would keep reporting a dead instance's last error forever.
+       *
+       * That is not a hypothetical in this tree. `facadeBinding.integration.test.ts`'s own teardown records the
+       * rule — *"Unbind before releasing the overrides: a leak here would redirect every later integration test
+       * in this worker"* — and `tests/integration/settingsMutations.integration.test.ts` drives the module
+       * facade directly, in the same project. One host per process is the design, so the leak is invisible to
+       * the CLI; it is the **test worker** and any future second lifecycle that pays for it.
+       *
+       * The earlier draft of this comment argued the opposite — that a stopped instance answers `isRunning()`
+       * with `false` and a truthful error, so leaving it bound was the more informative choice. That is true
+       * and it is not worth the global state: "informative" here means one command can describe a host that
+       * another part of the process has already torn down, which is exactly the *"second, competing
+       * authority"* this file's header warns about — just pointing the other way.
+       *
+       * `null` restores the lazy default, which is the state a process that never ran a host is in.
+       */
+      bindProxyInstance(null);
+      bindWebhookInstance(null);
+      // The edge's binding is released with the other two, and for the same reason — see the block above. It
+      // was added by `plan/17` §5 work item 7, and the obligation came with the mechanism rather than later.
+      bindEdgeInstance(null);
+      // The **served list** is what has to be forgotten, and it is read by `status()` and by the edge's
+      // `resolveConfig`. `clearRuntimes()` used to be called here as well, because a registry of N runtimes
+      // could hold workspaces this host no longer served; there is no N and no registry now (`plan/17` §5 work
+      // item 9), so this list is the whole of the stale state.
+      served = [];
       // The host owns the log (one authority for `seq`), so it closes it.
       log.close();
     },
 
     status,
-    runtimes,
+    get forwardProxy(): ProxyServerInstance | null {
+      return forwardProxy;
+    },
+    get webhook(): WebhookServerInstance | null {
+      return webhook;
+    },
     get rpc(): SocketServer | WsServer | null {
       return rpc;
+    },
+    get edge(): EdgeRouterInstance | null {
+      return edge;
     },
   };
 }

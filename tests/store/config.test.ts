@@ -3,7 +3,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // config.ts is now an adapter over appSettings + workspaceFs.
 // We mock those two dependencies so tests don't touch the filesystem.
 
-vi.mock("@bifurc/engine/store/appSettings", () => ({
+// **Partial, not total.** The intent is "do not touch the filesystem", which is `loadSettings` /
+// `saveSettings` — but a bare object literal replaces the *whole* module, so every other export disappears.
+// That is not hypothetical: `config.ts` reads `DEFAULT_WEBHOOK_PORT` / `DEFAULT_FORWARD_PROXY_PORT` /
+// `DEFAULT_COMPANION_PORT` from here, and when those were added (2026-09-25) all ten cases in this file
+// died at `loadConfig()` with `No "DEFAULT_WEBHOOK_PORT" export is defined on the ... mock`. Spreading the
+// real module means a *future* constant cannot break this file the same way.
+vi.mock("@bifurc/engine/store/appSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/store/appSettings")>()),
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));

@@ -4,7 +4,7 @@
  * P5 exists to protect exactly one property (plan/README "Non-negotiables" #3):
  * `window.api` stays **byte-identical** through P5–P6. That property is the regression
  * signal for the whole critical path, so the surface is written down here as data rather
- * than left implicit in 144 hand-written methods.
+ * than left implicit in 132 hand-written methods.
  *
  * ## Why this file exists at all
  *
@@ -14,8 +14,15 @@
  *
  * | source | keys |
  * |---|---|
- * | `src/preload.ts` — what `window.api` actually **is** at runtime | **144** |
- * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 140 |
+ * | `src/preload.ts` — what `window.api` actually **is** at runtime | **132** |
+ * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 128 |
+ *
+ * **`plan/17` work item 8 reduced both by twelve** — 144 → 132 and 140 → 128. Mocks became REST-only,
+ * so the nine mock CRUD methods (`graphqlMocks` / `grpcMocks` / `soapMocks` × add/update/delete) and
+ * the three `grpc*MockServer` transport methods left the surface. The gap between the two rows is
+ * still exactly four, which is the property the table exists to show: the change was a *drop*, not a
+ * reclassification, and a drop that the runtime and the declared type took together is the one kind
+ * that cannot hide a fourth discrepancy.
  *
  * The type under-declares the runtime by four keys, and every one of them is a method the
  * renderer can call today:
@@ -49,7 +56,7 @@
  * ## The four kinds of entry
  *
  * - **`transport`** — a 1:1 mapping onto a protocol command. The easy majority.
- * - **`entity`** — the CRUD collapse. Sixteen kinds × `add`/`update`/`delete`(/`list`) become
+ * - **`entity`** — the CRUD collapse. Thirteen kinds × `add`/`update`/`delete`(/`list`) become
  *   `entity.create`/`update`/`delete`/`list` with a `kind` injected. This is where the
  *   signature drift risk lives, so it is data rather than code.
  * - **`shim`** — a genuine multi-step or transformed mapping (`exportData` is
@@ -141,7 +148,10 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   importData: s("import.commit", "three-step: blob.put the content, then import.commit with the blobId"),
   discoverServices: t("services.discover"),
 
-  // ── the CRUD collapse: 16 kinds × add/update/delete(/list) = 48 methods ───
+  // ── the CRUD collapse: the remaining kinds × add/update/delete(/list) ────
+  // `plan/17` work item 8 removed the three protocol MOCK kinds (`graphqlMocks`, `grpcMocks`,
+  // `soapMocks`), so nine methods left with them. The four request kinds and their
+  // schema/proto/wsdl companions are untouched.
   addMapping: e("mappings", "create"),
   updateMapping: e("mappings", "update"),
   deleteMapping: e("mappings", "delete"),
@@ -163,27 +173,18 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   addGraphQLRequest: e("graphqlRequests", "create"),
   updateGraphQLRequest: e("graphqlRequests", "update"),
   deleteGraphQLRequest: e("graphqlRequests", "delete"),
-  addGraphQLMock: e("graphqlMocks", "create"),
-  updateGraphQLMock: e("graphqlMocks", "update"),
-  deleteGraphQLMock: e("graphqlMocks", "delete"),
   addGraphQLSchema: e("graphqlSchemas", "create"),
   deleteGraphQLSchema: e("graphqlSchemas", "delete"),
   listGraphQLSchemas: e("graphqlSchemas", "list", true),
   addGrpcRequest: e("grpcRequests", "create"),
   updateGrpcRequest: e("grpcRequests", "update"),
   deleteGrpcRequest: e("grpcRequests", "delete"),
-  addGrpcMock: e("grpcMocks", "create"),
-  updateGrpcMock: e("grpcMocks", "update"),
-  deleteGrpcMock: e("grpcMocks", "delete"),
   addProtoFile: e("protoFiles", "create"),
   deleteProtoFile: e("protoFiles", "delete"),
   listProtoFiles: e("protoFiles", "list", true),
   addSoapRequest: e("soapRequests", "create"),
   updateSoapRequest: e("soapRequests", "update"),
   deleteSoapRequest: e("soapRequests", "delete"),
-  addSoapMock: e("soapMocks", "create"),
-  updateSoapMock: e("soapMocks", "update"),
-  deleteSoapMock: e("soapMocks", "delete"),
   addWsdl: e("wsdls", "create"),
   deleteWsdl: e("wsdls", "delete"),
   listWsdls: e("wsdls", "list", true),
@@ -283,9 +284,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   graphqlExecute: t("graphql.execute"),
   grpcExecute: t("grpc.execute"),
   grpcReflect: t("grpc.reflect"),
-  grpcMockServerStatus: t("grpc.mockServerStatus"),
-  grpcStartMockServer: t("grpc.startMockServer"),
-  grpcStopMockServer: t("grpc.stopMockServer"),
 
   // ── TLS / certificates ───────────────────────────────────────────────────
   //
@@ -336,12 +334,20 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   onServerError: sub("event.server.error"),
   onWebhookPayload: sub("event.webhook.payload"),
   /**
-   * A shim in disguise. The renderer only wants *a signal* that config changed; the legacy
+   * A shim in disguise, and **the name is a fossil — it does not mean the companion**.
+   *
+   * The renderer only wants *a signal* that config changed; the legacy
    * `companion:refresh` channel carried exactly that, and the shell's `eventBridge.ts` used to
    * degrade the richer bus event back down to it. The wire event is `event.entity.changed` — the
    * protocol's own comment records the rename ("`companion:refresh` becomes `entity.changed`") — so
    * the client subscribes to the payload-carrying event and **discards the payload**, which is what
    * the legacy channel's consumers already did.
+   *
+   * **Do not remove this with the companion server (2026-09-23).** It was checked when the v1 bridge
+   * was deleted and it is **live**: `event.entity.changed` is emitted by `entityCrudCommands` and
+   * `folderCommands` on the ordinary CRUD path, `useAppConfigSync` re-reads the config on it, and it
+   * is one of the 132 keys `shape.test-d.ts` pins. Only the *name* is historical. A rename would be a
+   * change to the frozen client surface, which is a separate decision from this one.
    */
   onCompanionRefresh: sub("event.entity.changed", "payload discarded; the renderer only wants the signal"),
 };

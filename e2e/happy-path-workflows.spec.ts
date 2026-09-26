@@ -115,17 +115,11 @@ async function cleanupCreatedEntities(page: Page, names: Record<string, string>)
             await window.api.deleteGrpcRequest(req.id);
         }
 
+        // REST mocks only. `plan/17` work item 8 removed the GraphQL / SOAP / gRPC mock kinds, so the
+        // three loops that used to follow this one — and the `deleteGraphQLMock` / `deleteSoapMock` /
+        // `deleteGrpcMock` methods they called — are gone with them.
         for (const mock of (cfg.mocks ?? []).filter((m) => m.name === created.restMock || m.name === created.restMockUpdated)) {
             await window.api.deleteMock(mock.id);
-        }
-        for (const mock of (cfg.graphqlMocks ?? []).filter((m) => m.name === created.graphqlMock || m.name === created.graphqlMockUpdated)) {
-            await window.api.deleteGraphQLMock(mock.id);
-        }
-        for (const mock of (cfg.soapMocks ?? []).filter((m) => m.name === created.soapMock || m.name === created.soapMockUpdated)) {
-            await window.api.deleteSoapMock(mock.id);
-        }
-        for (const mock of (cfg.grpcMocks ?? []).filter((m) => m.name === created.grpcMock || m.name === created.grpcMockUpdated)) {
-            await window.api.deleteGrpcMock(mock.id);
         }
 
         const healthServices = await window.api.healthbarGetServices(cfg.activeWorkspaceId);
@@ -161,12 +155,6 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         grpcRequestUpdated: uniqueName("gRPC Request Updated"),
         restMock: uniqueName("REST Mock"),
         restMockUpdated: uniqueName("REST Mock Updated"),
-        graphqlMock: uniqueName("GraphQL Mock"),
-        graphqlMockUpdated: uniqueName("GraphQL Mock Updated"),
-        soapMock: uniqueName("SOAP Mock"),
-        soapMockUpdated: uniqueName("SOAP Mock Updated"),
-        grpcMock: uniqueName("gRPC Mock"),
-        grpcMockUpdated: uniqueName("gRPC Mock Updated"),
         healthService: uniqueName("Health Service"),
         healthServiceUpdated: uniqueName("Health Service Updated"),
     };
@@ -255,7 +243,12 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E.Updated");
         await clickSave(page, /Update/i);
 
-        // Mocks CRUD across protocols
+        // Mocks CRUD — REST only.
+        //
+        // This block used to run four times, once per protocol. `plan/17` work item 8 made mocks
+        // REST-only, and `ProtocolSelectorTab` now renders the REST card alone when `mode === "mock"`,
+        // so the GraphQL / SOAP / gRPC sub-workflows had no card left to click. Their *request* halves
+        // are still covered above, where the selector is unchanged.
         await clickSidebar(page, "Mocks");
 
         await clickNewTab(page, "New mock", /^New Mock$/i);
@@ -267,33 +260,6 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         await expect(page.locator("body")).toContainText(created.restMock);
         await page.getByPlaceholder("Mock name (optional)").fill(created.restMockUpdated);
         await clickSave(page, /Update Mock/i);
-
-        await clickNewTab(page, "New mock", /^New Mock$/i);
-        await chooseProtocol(page, /GraphQL Mock/i);
-        await page.getByPlaceholder("Mock name…").last().fill(created.graphqlMock);
-        await page.getByPlaceholder("/graphql or regex pattern…").fill("/graphql");
-        await page.getByPlaceholder("Match operation name (leave empty to match all)").fill("GetDashboard");
-        await clickSave(page, /^Save$/i);
-        await page.getByPlaceholder("Mock name…").last().fill(created.graphqlMockUpdated);
-        await clickSave(page, /Update/i);
-
-        await clickNewTab(page, "New mock", /^New Mock$/i);
-        await chooseProtocol(page, /SOAP Mock/i);
-        await page.getByPlaceholder("Untitled Mock").fill(created.soapMock);
-        await page.getByPlaceholder("/ws/service").fill("/soap/orders");
-        await page.getByPlaceholder("*").fill("CreateOrder");
-        await clickSave(page, /^Save$/i);
-        await page.getByPlaceholder("Untitled Mock").fill(created.soapMockUpdated);
-        await clickSave(page, /Update/i);
-
-        await clickNewTab(page, "New mock", /^New Mock$/i);
-        await chooseProtocol(page, /gRPC Mock/i);
-        await page.getByPlaceholder("Mock name…").last().fill(created.grpcMock);
-        await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E");
-        await page.getByPlaceholder("MethodName").last().fill("MockPing");
-        await clickSave(page, /^Save$/i);
-        await page.getByPlaceholder("ServiceName").last().fill("bifurc.E2E.Updated");
-        await clickSave(page, /Update/i);
 
         // WebSocket CRUD
         await clickSidebar(page, "WebSocket");

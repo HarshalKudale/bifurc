@@ -95,7 +95,7 @@ vi.mock("@bifurc/engine/proxy/serverUtils", async (importOriginal) => {
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig } from "@bifurc/engine/store/config";
+import { loadConfig, type AppConfig } from "@bifurc/engine/store/config";
 import { isCALoaded, unloadCA } from "@bifurc/engine/proxy/tlsCert";
 // Imported so the WI 4 cases can override them: which workspace each read asks for is the whole assertion,
 // and it is not observable from the instance's public surface.
@@ -187,6 +187,11 @@ describe("@bifurc/engine/proxy/server", () => {
     vi.clearAllMocks();
 
     // Restore loadConfig mock after clearAllMocks resets call history
+    //
+    // **Deliberately partial, and the cast says so** — the forward half reads `port` and the entity lists,
+    // and a complete 37-field `AppConfig` literal would be noise. Same trade as `edge.test.ts`'s fixture, with
+    // the same cost (a *newly read* field would arrive as `undefined` rather than as a compile error). The
+    // tests tree is in no `typecheck` script, so this only surfaces when `tsc` is run over `tests/` by hand.
     vi.mocked(loadConfig).mockReturnValue({
       port: 8080, minimizeToTray: true,
       workspaces: [{ id: "default", name: "Workspace 1", activeEnvironmentId: null }],
@@ -194,7 +199,7 @@ describe("@bifurc/engine/proxy/server", () => {
       mappings: [], proxyRules: [],
       mocks: [], requests: [], mockFolders: [], requestFolders: [],
       environments: [], activeEnvironmentId: null,
-    });
+    } as unknown as AppConfig);
 
     mockSrv = makeMockServer();
     vi.mocked(net.createServer).mockReturnValue(mockSrv);
@@ -607,84 +612,12 @@ describe("@bifurc/engine/proxy/server", () => {
       vi.mocked(http.request as any).mockReset();
     });
 
-    // ── localhost home page ────────────────────────────────────────────
-
-    it("serves 200 home page for requests to localhost", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "http://localhost/", "localhost");
-      expect(socket.write).toHaveBeenCalled();
-      const written = (socket.write.mock.calls[0][0] as Buffer | string).toString();
-      expect(written).toContain("200");
-    });
-
-    it("includes active mappings in the home page body", () => {
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).toContain("app.localhost");
-    });
-
-    it("home page includes port suffix when port is not 80", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).toContain("8080");
-    });
-
-    it("home page omits port suffix when port is 80", () => {
-      const cfg = { ...baseConfig, port: 80 };
-      vi.mocked(loadConfig).mockReturnValue(cfg as any);
-      capturedConnectionCb = null;
-      const srv = makeMockServer();
-      vi.mocked(net.createServer).mockImplementation((cb: any) => { capturedConnectionCb = cb; return srv; });
-      startServer(80);
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).not.toMatch(/:80(?!\d)/);
-    });
-
-    // ── *.localhost — unmapped ─────────────────────────────────────────
-
-    it("serves 404 for an unmapped *.localhost domain", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/path", "myapp.localhost");
-      const written = (socket.write.mock.calls[0][0] as Buffer | string).toString();
-      expect(written).toContain("404");
-    });
-
-    it("includes 'Not Mapped' text in the 404 response for *.localhost", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "myapp.localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).toContain("Not Mapped");
-    });
-
-    it("emits request log entry with status 404 for unmapped *.localhost", () => {
-      setupDispatchServer();
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/path", "myapp.localhost");
-      expect(emitted[0]?.status).toBe(404);
-      expect(emitted[0]?.via).toBe("error");
-      logEmitter.removeAllListeners("request");
-    });
-
-    // ── *.localhost — mapped ───────────────────────────────────────────
-
-    it("calls http.request to proxy to the upstream target for a mapped *.localhost domain", () => {
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api/users", "app.localhost");
-      expect(http.request).toHaveBeenCalled();
-    });
+    // ── the reverse half is NOT here ────────────────────────────────────
+    //
+    // The home page, the `*.localhost` 404, and the mapping `/` port-suffix cases moved to
+    // `tests/proxy/edge.test.ts` with `plan/15` work item 3, which moved the reverse half onto the edge.
+    // What remains below is the forward half — absolute-form requests and CONNECT — plus the two negatives
+    // that pin this module's *refusal* to answer the reverse half.
 
     // ── CONNECT tunnel ─────────────────────────────────────────────────
 
@@ -995,17 +928,8 @@ describe("@bifurc/engine/proxy/server", () => {
 
     // ── Error propagation from upstream ───────────────────────────────
 
-    it("sends 502 when proxyToUpstream request emits an error", async () => {
-      const mockReq = makeMockHttpReq();
-      mockReq.end = vi.fn(() => setImmediate(() => mockReq.emit("error", new Error("ECONNREFUSED"))));
-      vi.mocked(http.request as any).mockImplementation((_o: any, _cb: any) => mockReq);
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:9999", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-      await new Promise<void>((r) => setImmediate(() => setImmediate(r)));
-      const written = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(written).toContain("502");
-    });
+    // `sends 502 when proxyToUpstream request emits an error` moved to `edge.test.ts` — it drove a
+    // `*.localhost` mapping, which is the reverse half.
 
     it("sends 502 when passthroughToUpstream request emits an error", async () => {
       const mockReq = makeMockHttpReq();
@@ -1019,49 +943,12 @@ describe("@bifurc/engine/proxy/server", () => {
       expect(written).toContain("502");
     });
 
-    // ── proxyToUpstream response path ──────────────────────────────────
-
-    it("sends the proxied response head and body back to client", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = { "content-type": "application/json", "connection": "keep-alive" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-      mockRes.emit("data", Buffer.from('{"result":"ok"}'));
-      mockRes.emit("end");
-      expect(socket.write).toHaveBeenCalled();
-      const head = (socket.write.mock.calls[0][0] as string);
-      expect(head).toContain("HTTP/1.1 200");
-      expect(head).toContain("content-type: application/json");
-    });
-
-    it("emits request log with via=rfc6761 for mapped *.localhost responses", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-      mockRes.emit("data", Buffer.alloc(0));
-      mockRes.emit("end");
-      expect(emitted[0]?.via).toBe("rfc6761");
-      logEmitter.removeAllListeners("request");
-    });
+    // ── the forward half's own response path ───────────────────────────
+    //
+    // `sends the proxied response head and body back to client` and
+    // `emits request log with via=rfc6761 for mapped *.localhost responses` moved to `edge.test.ts` —
+    // both drove a `*.localhost` mapping. What is left is the half that routes on a **rule**, which is the
+    // forward proxy's own mechanism.
 
     it("emits request log with via=rule for proxy-rule-routed responses", () => {
       const mockRes = new EventEmitter() as any;
@@ -1129,48 +1016,9 @@ describe("@bifurc/engine/proxy/server", () => {
       expect(socket.write).toHaveBeenCalled();
     });
 
-    it("does not write to socket in proxyToUpstream when socket becomes unwritable", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => {
-        cb(mockRes);
-        return mockReq;
-      });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      socket.writable = false;  // make socket unwritable before response arrives
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      // With unwritable socket, the proxy response should not write and should destroy res
-      expect(mockRes.destroy).toHaveBeenCalled();
-    });
-
-    it("processes array-valued response headers in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      // Array-valued header (e.g. set-cookie can come as an array)
-      mockRes.headers = { "set-cookie": ["a=1; Path=/", "b=2; Path=/"], "content-type": "text/plain" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      expect(socket.write).toHaveBeenCalled();
-      const head = (socket.write.mock.calls[0][0] as string);
-      // set-cookie is a hop-by-hop header alternative; content-type should be in response
-      expect(head).toContain("content-type: text/plain");
-    });
+    // `does not write to socket in proxyToUpstream when socket becomes unwritable` and
+    // `processes array-valued response headers in proxyToUpstream` moved to `edge.test.ts` — both drove a
+    // `*.localhost` mapping. The `passthroughToUpstream` twins below stay: they are the forward half.
 
     it("processes array-valued response headers in passthroughToUpstream", () => {
       const mockRes = new EventEmitter() as any;
@@ -1191,75 +1039,10 @@ describe("@bifurc/engine/proxy/server", () => {
       expect(head).toContain("x-custom: val1, val2");
     });
 
-    it("calls socket.destroy when socket becomes unwritable during data reception in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = { "content-type": "text/plain" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      // socket becomes unwritable while data is being received
-      socket.writable = false;
-      mockRes.emit("data", Buffer.from("some response data"));
-      expect(mockRes.destroy).toHaveBeenCalled();
-    });
-
-    it("truncates large response body to 512KB in proxyToUpstream log entry", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      let doneCalled = false;
-      let doneBody = "";
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => {
-        cb(mockRes);
-        return mockReq;
-      });
-
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      // Emit more than 512KB of data
-      const largeData = Buffer.alloc(512 * 1024 + 100, "x");
-      mockRes.emit("data", largeData);
-      mockRes.emit("end");
-
-      // The body should be truncated in the log entry
-      expect(emitted[0]?.resBody.length).toBeGreaterThan(0);
-      logEmitter.removeAllListeners("request");
-    });
-
-    it("calls socket.destroy when response emits error in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      mockRes.emit("error", new Error("response error"));
-      expect(socket.destroy).toHaveBeenCalled();
-    });
+    // `calls socket.destroy when socket becomes unwritable during data reception in proxyToUpstream`,
+    // `truncates large response body to 512KB in proxyToUpstream log entry`, and
+    // `calls socket.destroy when response emits error in proxyToUpstream` moved to `edge.test.ts` — all
+    // three drove a `*.localhost` mapping.
 
     it("uses default port 443 for CONNECT when port part is empty", async () => {
       const upstream = new EventEmitter() as any;
@@ -1281,25 +1064,9 @@ describe("@bifurc/engine/proxy/server", () => {
       expect(capturedPort).toBe(443);
     });
 
-    it("filters hop-by-hop headers from the upstream response in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      // connection is a hop-by-hop header and should be filtered out
-      mockRes.headers = { "connection": "keep-alive", "content-type": "application/json" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      const head = (socket.write.mock.calls[0][0] as string);
-      expect(head).not.toContain("connection: keep-alive");
-      expect(head).toContain("content-type: application/json");
-    });
+    // `filters hop-by-hop headers from the upstream response in proxyToUpstream` and
+    // `writes request body to upstream in proxyToUpstream when body is present` moved to `edge.test.ts` —
+    // both drove a `*.localhost` mapping. Their `passthroughToUpstream` twins stay: the forward half.
 
     it("filters hop-by-hop headers from the upstream response in passthroughToUpstream", () => {
       const mockRes = new EventEmitter() as any;
@@ -1318,20 +1085,6 @@ describe("@bifurc/engine/proxy/server", () => {
       const head = (socket.write.mock.calls[0][0] as string);
       expect(head).not.toContain("transfer-encoding: chunked");
       expect(head).toContain("x-custom: value");
-    });
-
-    it("writes request body to upstream in proxyToUpstream when body is present", () => {
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockReturnValue(mockReq);
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      // Send a POST with body
-      const raw = `POST /api HTTP/1.1\r\nHost: app.localhost\r\nContent-Length: 4\r\n\r\nbody`;
-      socket.emit("data", Buffer.from(raw));
-
-      expect(http.request).toHaveBeenCalled();
-      expect(mockReq.write).toHaveBeenCalled();
     });
 
     it("writes request body to upstream in passthroughToUpstream when body is present", () => {

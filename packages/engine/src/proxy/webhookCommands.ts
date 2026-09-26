@@ -60,25 +60,28 @@
  * `coreHandlers.ts` itself became `coreKinds.ts` in the sixth group; the module-scope registration this
  * paragraph refers to no longer exists anywhere in the shell, which is §5c's whole point.
  *
- * ## P14 WI 7 — all five now resolve a runtime from `workspaceId`, and the routing maps go with it
+ * ## P14 WI 7 resolved a runtime from `workspaceId`; `plan/17` deletes the question
  *
  * The same gap `serverCommands.ts` records, in a second module: these called the module facade
  * (`webhookServer.ts`'s `startWebhookServer` / `isWebhookServerRunning` / `getWebhookPort`), whose lazy
  * default instance is `createWebhookServer({ workspaceId: null })` — the active workspace. WI 1's protocol
- * half gave all five commands an optional `workspaceId`; this is what makes them read it.
+ * half gave all five commands an optional `workspaceId`; P14 made them read it, because **the two
+ * `registerActive` / `unregisterActive` commands were the ones where the old behaviour was worst**: they
+ * mutate a receiver's **active map**, so on a host a registration from workspace A wrote into the *active*
+ * workspace's map, and a webhook registered by A could be served by B or counted against B's
+ * `MAX_ACTIVE_WEBHOOKS` budget. Resolving the runtime first is what made the map the right one.
  *
- * **The two `registerActive` / `unregisterActive` commands are the ones where the old behaviour was worst.**
- * They mutate a receiver's **active map**, and WI 2 deliberately left the routing key as WI 1's job rather
- * than keying it by `(workspaceId, urlSuffix)` — so on a host, `webhook.registerActive` from workspace A
- * wrote into the *active* workspace's map. A webhook registered by A could therefore be served by B, or
- * counted against B's `MAX_ACTIVE_WEBHOOKS` budget. Resolving the runtime first is what makes the map the
- * right one, because the map is per-instance (`createWebhookServer()` declares both inside the factory —
- * WI 4 re-checked that and found the receiver needed nothing further).
+ * **`plan/17` §1 removes the premise.** There is one webhook receiver per host, on a port the user owns, and
+ * the active map is per *instance* — so with one instance there is again one map, and no resolution step can
+ * pick the wrong one. The scope union and `runtimeServerOps.ts` are deleted with it; these bodies are direct
+ * facade calls, and `workspaceId` survives only as an **echo** (`commands/echoWorkspace.ts`).
  *
- * `webhookServer.start` keeps its explicit-port behaviour on both paths, for the reason the section above
- * records. The difference is only in what happens when **no** port is named: the facade branch falls back
- * to the config chain as it always has, while a runtime-backed receiver refuses rather than invent one,
- * because the host allocated its port (D16). See `runtimeServerOps.ts`.
+ * **One consequence is worth stating rather than implying**, because deleting the routing did not remove it:
+ * a single host-level active map means **switching workspace does not retire the previous workspace's active
+ * webhooks**. `plan/17` §1 lists *"which webhook endpoints are in force"* among the things a workspace switch
+ * changes, so this is a **known gap** rather than the intended end state — closing it needs the active map
+ * keyed by workspace, which `createWebhookServer()` does not do. Recorded here and in `runtime/host.ts`
+ * step 3c, so it is found rather than discovered.
  */
 import type { CommandRegistry } from "../commands/registry";
 import type {
@@ -98,83 +101,46 @@ import {
     stopWebhookServer,
     unregisterActiveWebhook,
 } from "./webhookServer";
-import { absentRuntimeError, echoWorkspace, resolveRuntimeScope } from "../runtime/runtimeRegistry";
-import { startManagedServer } from "../runtime/runtimeServerOps";
-
-/** The fallback port, matching `webhookServer.ts`'s own `currentPort` initialiser. */
-const DEFAULT_WEBHOOK_PORT = 9101;
+import { echoWorkspace } from "../commands/echoWorkspace";
 
 export function registerWebhookCommands(registry: CommandRegistry): void {
     registry.register("webhook.registerActive", (params: WebhookRegisterActiveParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        // The map is per-instance, so resolving the runtime *is* the fix — see the header.
-        if (scope.kind === "runtime") {
-            scope.runtime.webhook.registerActive(params.webhookId, params.urlSuffix);
-            return { ok: true };
-        }
-        if (scope.kind === "facade") {
-            registerActiveWebhook(params.webhookId, params.urlSuffix);
-            return { ok: true };
-        }
-        return { ok: false };
+        registerActiveWebhook(params.webhookId, params.urlSuffix);
+        return { ok: true };
     });
 
     registry.register("webhook.unregisterActive", (params: WebhookUnregisterActiveParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        if (scope.kind === "runtime") {
-            scope.runtime.webhook.unregisterActive(params.webhookId);
-            return { ok: true };
-        }
-        if (scope.kind === "facade") {
-            unregisterActiveWebhook(params.webhookId);
-            return { ok: true };
-        }
-        return { ok: false };
+        unregisterActiveWebhook(params.webhookId);
+        return { ok: true };
     });
 
     registry.register("webhookServer.start", (params: WebhookServerStartParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        if (scope.kind === "runtime") return startManagedServer(scope.runtime.webhook, params.port);
-        if (scope.kind === "facade") {
-            const cfg = loadConfig();
-            startWebhookServer(params.port ?? cfg.webhookPort ?? DEFAULT_WEBHOOK_PORT);
-            return { ok: true };
-        }
-        return { ok: false };
+        /**
+         * The port is the **user's**, not the engine's — `plan/17` §1: *"the webhook does NOT scan either. It
+         * is a **feature, not infrastructure**: it is **off by default**, the user starts it, and the user
+         * owns the port."* So a caller-supplied port is honoured exactly, and the fallback is the setting
+         * rather than an invented number.
+         *
+         * **There is no `?? 9101` any more, and its removal is the point.** `cfg.webhookPort` used to be a
+         * fixed default that a missing key could fall through to; since `plan/17` §1 the default is a
+         * **random** port (`store/appSettings.ts#randomWebhookPort`), so the chain has one link and no
+         * constant to disagree with it. A fixed fallback would also have been a second answer to "which port
+         * is this receiver on", which is exactly what the setting exists to be the only home of.
+         */
+        startWebhookServer(params.port ?? loadConfig().webhookPort);
+        return { ok: true };
     });
 
-    registry.register("webhookServer.stop", (params: WebhookServerStopParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        if (scope.kind === "runtime") {
-            scope.runtime.webhook.stop();
-            return { ok: true };
-        }
-        if (scope.kind === "facade") {
-            stopWebhookServer();
-            return { ok: true };
-        }
-        return { ok: false };
+    registry.register("webhookServer.stop", (_params: WebhookServerStopParams) => {
+        stopWebhookServer();
+        return { ok: true };
     });
 
-    registry.register("webhookServer.status", (params: WebhookServerStatusParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
+    registry.register("webhookServer.status", (params: WebhookServerStatusParams) => ({
+        running: isWebhookServerRunning(),
+        port: getWebhookPort(),
+        error: getWebhookServerError(),
         // Conditional echo, same rule and same reason as `server.status` — see `echoWorkspace`.
-        const echo = echoWorkspace(params.workspaceId, scope.workspaceId);
-        if (scope.kind === "runtime") {
-            const webhook = scope.runtime.webhook;
-            return { running: webhook.isRunning(), port: webhook.getPort(), error: webhook.getError(), ...echo };
-        }
-        if (scope.kind === "facade") {
-            return {
-                running: isWebhookServerRunning(),
-                port: getWebhookPort(),
-                error: getWebhookServerError(),
-                ...echo,
-            };
-        }
-        // An `absent` answer still names the workspace when the caller named it — which matters most in
-        // exactly this case, where the caller has no other way to tell which of several requests came back
-        // empty.
-        return { running: false, port: 0, error: absentRuntimeError(scope.workspaceId), ...echo };
-    });
+        ...echoWorkspace(params.workspaceId),
+    }));
 }

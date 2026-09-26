@@ -65,7 +65,7 @@ import { loadConfig } from "@bifurc/engine/store/config";
 import { bus } from "@bifurc/engine/eventBus";
 import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine/commands/registry";
 import { COMPANION_SCOPES, SHELL_SCOPES } from "@bifurc/engine/transport/auth/scopes";
-import { registerCrudKinds } from "@/ipc/handlers/crudKinds";
+import { registerCrudKinds } from "@bifurc/engine/store/kinds/crudKinds";
 import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
 import { registerEntityCrudCommands } from "@bifurc/engine/store/entityCrudCommands";
 

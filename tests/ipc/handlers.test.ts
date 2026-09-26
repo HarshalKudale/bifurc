@@ -68,6 +68,24 @@ vi.mock("@bifurc/engine/proxy/webhookServer", () => ({
   getWebhookServerError: vi.fn(() => null),
 }));
 
+/**
+ * `plan/17` §5 work item 7 — `config.save` re-binds the **edge** when `settings.port` changes, and the edge is
+ * the one listener reached through a module-level binding rather than through a facade with a lazy default.
+ *
+ * **`importOriginal` is spread in rather than the module being replaced**, and that is deliberate: this file
+ * already learned the lesson once (`plan/17` §7's measured −10 — a whole-module `vi.mock` left every
+ * `DEFAULT_*` that `store/config.ts` reads `undefined`). `configCommands.ts` imports this module as a value, so
+ * a replacement mock would make `restartEdge` the only defined export and turn any future import from it into
+ * a `TypeError` inside an unrelated command. Only the two names under assertion are stubbed.
+ */
+vi.mock("@bifurc/engine/proxy/edge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/proxy/edge")>()),
+  restartEdge: vi.fn(),
+  // `true`, so the **port-change** arm is the one that fires. With `false` the `!isEdgeRunning()` recovery arm
+  // would restart on *every* save, and the `config.save` case below would pass for the wrong reason.
+  isEdgeRunning: vi.fn(() => true),
+}));
+
 vi.mock("@bifurc/engine/store/gitStore", () => ({
   commitMutation: vi.fn(() => Promise.resolve("abc123")),
   queryLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
@@ -195,6 +213,9 @@ vi.mock("@bifurc/engine/store/config", () => ({
 import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/store/config";
 import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
 import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@bifurc/engine/proxy/server";
+// `plan/17` §5 work item 7 — `config.save` re-binds the edge, and the edge is the one listener reached through
+// a module-level binding rather than through a facade with a lazy default.
+import { restartEdge } from "@bifurc/engine/proxy/edge";
 import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
 import {
   registerActiveWebhook,
@@ -782,25 +803,34 @@ describe("src/ipc/handlers.ts", () => {
         });
         expect(commandRegistry.invoke("proxy.status", {}, ctx)).toEqual({ running: true });
 
-        // `start` / `stop` / `restart` read the port from `loadConfig()` rather than taking it as a
-        // parameter, so the assertion is on the engine calls, not on the returned `{ok:true}`.
+        // `start` / `stop` / `restart` read the port from `getPort()` — the **resolved** port — rather than
+        // taking it as a parameter, so the assertion is on the engine calls, not on the returned `{ok:true}`.
+        //
+        // **`8080`, the `getPort()` mock, and not `currentConfig.port` (80) — `plan/15` work item 3.** The
+        // facade branch is `startServer(getPort() || loadConfig().port)`: `settings.port` names the **edge**
+        // after the split, so a proxy bound there would collide with the engine's own listener. The resolved
+        // port wins whenever there is one, and `getPort()` is mocked to 8080 above. The config-port fallback
+        // survives for a process that starts a proxy before any is running — a path this case does not take,
+        // and asserting `currentConfig.port` here would pin the fallback instead of the live behaviour.
         expect(commandRegistry.invoke("server.start", {}, ctx)).toEqual({ ok: true });
-        expect(startServer).toHaveBeenCalledWith(currentConfig.port);
+        expect(startServer).toHaveBeenCalledWith(8080);
         expect(commandRegistry.invoke("server.stop", {}, ctx)).toEqual({ ok: true });
         expect(stopServer).toHaveBeenCalled();
 
         // `restart` is stop-then-start, not a distinct code path — and the order is the contract:
         // starting before stopping would rebind a port the old listener still holds.
         //
-        // `startServer(currentConfig.port)` is asserted here rather than in a case of its own: the
-        // deleted `server:restart` handler had one, the reduction's fifth group removed it as a
-        // duplicate of this block, and this is the one assertion it made that this block did not.
+        // `startServer(<resolved port>)` is asserted here rather than in a case of its own: the deleted
+        // `server:restart` handler had one, the reduction's fifth group removed it as a duplicate of this
+        // block, and this is the one assertion it made that this block did not. Same `8080` as `server.start`
+        // above, and for the same reason — `restart` reads `getPort()` before it stops, so the port it
+        // rebinds is the one the listener had rather than the one `app.json` now names.
         vi.mocked(startServer).mockClear();
         vi.mocked(stopServer).mockClear();
         expect(commandRegistry.invoke("server.restart", {}, ctx)).toEqual({ ok: true });
         expect(vi.mocked(stopServer).mock.invocationCallOrder[0])
           .toBeLessThan(vi.mocked(startServer).mock.invocationCallOrder[0]);
-        expect(startServer).toHaveBeenCalledWith(currentConfig.port);
+        expect(startServer).toHaveBeenCalledWith(8080);
 
         // Folded from the deleted `services:discover` case. The mock in `beforeEach` returns `[]`, and
         // `toEqual([])` cannot tell "passed through" from "replaced with an empty array" — the deleted
@@ -812,25 +842,78 @@ describe("src/ipc/handlers.ts", () => {
 
         // ── slice 2: config.save and the three workspace.* commands ──────────
 
-        // `config.save` — the settings path, and the restart is the part worth asserting. An
-        // implementation that only called `saveConfig` would persist the new port while the live
-        // server kept answering on the old one, which is the bug this branch exists to prevent.
-        //
-        // The bus emission is **folded from the deleted `config:save` case** — it was the one assertion
-        // that case made which this block did not. `settings.changed` is the shell's tray-update hook
-        // (P2), so losing it would stop the tray following a settings change with every test still green.
+        /**
+         * `config.save` — **the port branches are inverted by `plan/17` §5 work item 7**, and this comment used
+         * to say the opposite of what follows.
+         *
+         * It read: *"the port it rebinds is `8080`, the resolved one, not the `9876` just saved — `plan/15` work
+         * item 3 … changing the port in Settings persists the preference for the edge's next boot and no longer
+         * moves this listener."* That was the correct rule for `plan/15` and is the bug for `plan/17`:
+         * `settings.port` is the **edge's** port, and a user who changes it means it. So a save now re-binds the
+         * **edge** and leaves the forward proxy exactly where it is.
+         *
+         * Each assertion below fails against the old implementation, which is what makes the inversion a
+         * measurement rather than a rewrite:
+         *   - `restartEdge(9876)` — the edge moved, and to the port just saved;
+         *   - `startServer` **not** called — the forward proxy's port is its own setting
+         *     (`settings.forwardProxyPort`), which this save did not touch. The old code restarted it *because*
+         *     the edge's port changed, which is exactly the coupling work item 7 removes;
+         *   - `stopServer` **not** called — every `start()` in this engine already does `if (server) stop()`, so
+         *     the explicit stop this branch used to make was a second way to say one thing.
+         *
+         * `settingsMutations.integration.test.ts` owns the behaviour end to end — the edge really moves and the
+         * old port really goes dark. This case owns the *call shape*.
+         *
+         * The bus emission is **folded from the deleted `config:save` case** — it was the one assertion that
+         * case made which this block did not. `settings.changed` is the shell's tray-update hook (P2), so losing
+         * it would stop the tray following a settings change with every test still green.
+         */
         const settingsChanged = vi.fn();
         bus.onTyped("settings.changed", settingsChanged);
         vi.mocked(startServer).mockClear();
         vi.mocked(stopServer).mockClear();
+        vi.mocked(restartEdge).mockClear();
         expect(
           commandRegistry.invoke("config.save", { config: { ...makeDefaultConfig(), port: 9876 } }, ctx),
         ).toEqual({ ok: true });
         expect(saveConfig).toHaveBeenCalled();
-        expect(stopServer).toHaveBeenCalled();
-        expect(startServer).toHaveBeenCalledWith(9876);
+        expect(restartEdge).toHaveBeenCalledWith(9876);
+        expect(startServer).not.toHaveBeenCalled();
+        expect(stopServer).not.toHaveBeenCalled();
         expect(settingsChanged).toHaveBeenCalled();
         bus.offTyped("settings.changed", settingsChanged);
+
+        /**
+         * **The other two ports, in the same save's shape.** `config.save` now names three listeners, and a
+         * branch that read the wrong field would be indistinguishable from the outside — so all three are
+         * asserted rather than only the one that changed.
+         *
+         * `port` stays at `9876` (what the previous save left in `currentConfig`, i.e. `prev`), so the edge's
+         * branch must **not** fire. `forwardProxyPort` and `webhookPort` are absent from `makeDefaultConfig()`
+         * and are given values here, so both branches see a change — and they must behave differently, because
+         * `plan/17` §1 gives them different rules.
+         */
+        vi.mocked(restartEdge).mockClear();
+        vi.mocked(startServer).mockClear();
+        vi.mocked(startWebhookServer).mockClear();
+        expect(
+          commandRegistry.invoke(
+            "config.save",
+            { config: { ...makeDefaultConfig(), port: 9876, forwardProxyPort: 8081, webhookPort: 9123 } },
+            ctx,
+          ),
+        ).toEqual({ ok: true });
+        expect(startServer).toHaveBeenCalledWith(8081);
+        /**
+         * **The webhook is off by default**, so a port change moves a receiver that is *running* and never
+         * starts one — starting it is the user's action (`webhookServer.start`, from the Webhooks panel), and a
+         * settings save that bound a port nobody asked for would be this command inventing a feature toggle.
+         * `isWebhookServerRunning` is mocked `false` in this file's `beforeEach`, so `not.toHaveBeenCalled()` is
+         * the assertion rather than an omission.
+         */
+        expect(startWebhookServer).not.toHaveBeenCalled();
+        // The edge's port did not change in this save, so its branch must not fire either.
+        expect(restartEdge).not.toHaveBeenCalled();
 
         // `workspace.add` — the gate is mocked to allow, so this is the success path. The trim is the
         // assertion that matters: `name` comes off the wire as an arbitrary string, and a workspace
@@ -886,12 +969,21 @@ describe("src/ipc/handlers.ts", () => {
         expect(commandRegistry.invoke("webhookServer.start", { port: 9300 }, ctx)).toEqual({ ok: true });
         expect(startWebhookServer).toHaveBeenCalledWith(9300);
 
-        // The `?? 9101` last resort: `webhookPort` is non-optional on `AppConfig`, so this is
-        // defensive — but a config written by an older release is exactly how it would be missing.
-        currentConfig = { ...makeDefaultConfig() } as AppConfig;
-        delete (currentConfig as { webhookPort?: number }).webhookPort;
-        expect(commandRegistry.invoke("webhookServer.start", {}, ctx)).toEqual({ ok: true });
-        expect(startWebhookServer).toHaveBeenCalledWith(9101);
+        /**
+         * **The `?? 9101` last resort is gone, and the case that asserted it is retired rather than fixed.**
+         *
+         * It read: delete `webhookPort` from the config, then expect `startWebhookServer(9101)` — "a config
+         * written by an older release is exactly how it would be missing". `plan/17` §1 removed the constant,
+         * and the reason the case cannot be restated is the interesting part: the chain is now
+         * `params.port ?? loadConfig().webhookPort`, with **one link and no constant**, and `loadConfig()`
+         * cannot return a missing `webhookPort` — `loadSettings()` merges `makeDefaultSettings()` under
+         * whatever the file holds, so a legacy `app.json` without the key gets `randomWebhookPort()` rather
+         * than `undefined`. The branch is therefore unreachable, and a test for an unreachable branch is a
+         * test that can only ever be satisfied by re-introducing the thing that was deleted.
+         *
+         * The two cases above are what remains, and they cover the whole chain: no `port` on the wire falls
+         * back to the config (9200), and a declared `port` wins (9300).
+         */
 
         expect(commandRegistry.invoke("webhookServer.stop", {}, ctx)).toEqual({ ok: true });
         expect(stopWebhookServer).toHaveBeenCalled();
@@ -1296,6 +1388,21 @@ describe("src/ipc/handlers.ts", () => {
       expect(result.id).toBeTruthy();
       expect(result.createdAt).toBeTypeOf("number");
       expect(result.name).toBe("Test Mock");
+    });
+
+    it("rejects a blank urlPattern", async () => {
+      /**
+       * Moved here on 2026-09-25 from `protocolExecution.integration.test.ts`, where it read
+       * `"a graphql mock requires an endpointPattern"`. `plan/17` work item 8 removed the
+       * `graphqlMocks` kind, and this is the suite where `mocks` is actually registered: it goes
+       * through the shell's `registerIpcHandlers()`, which calls all five `register*Kinds()`, whereas
+       * the other suite registers only `registerCoreKinds()` plus the three protocol kind files.
+       *
+       * `crudKinds.ts` checks `urlPattern` **first**, so a whitespace-only pattern with a valid
+       * method reaches exactly this throw. This was the only case in the tree covering mock
+       * validation, so it was moved rather than deleted.
+       */
+      await expect(createEntity("mocks", { ...baseMock, urlPattern: "   " })).rejects.toThrow(/urlPattern/);
     });
 
     it("prepends the new mock to the front of the list", async () => {
@@ -1992,31 +2099,44 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     /**
-     * P14 WI 4, decided 2026-09-21: switching the active workspace must **not** re-point the proxy.
+     * `plan/17` §5 work item 3, 2026-09-25: switching the active workspace **does** re-point the proxy.
      *
-     * This is the half that would otherwise be invisible — every other case in this block passes with the
-     * `reloadConfig()` call present, because they only look at the pointer. The assertion is therefore on the
-     * *absence* of the call, which is exactly the shape `plan/14` §8 asks for ("asserted on identity, not on
-     * a value both could share").
+     * ## This reverses P14 WI 4's rule on purpose, and the reversal is the point of the work item
      *
-     * If someone restores `reloadConfig()` here, this fails — and that is the point. It was load-bearing
-     * before P14 (one proxy, re-pointed at the selection) and is wrong under D10–D12 (N proxies, each owning
-     * its own workspace).
+     * P14 made the pointer and the proxies independent because there were **N** proxies, one per workspace:
+     * the port belonged to the *workspace*, not to the selection, so switching the selection must not move any
+     * of them. `plan/17` §1 deletes that model. There is now **one** host-level forward proxy, and its whole
+     * job is *"which workspace am I looking at?"* — it loads the active workspace's rules and mocks **at
+     * start** and **swaps its in-memory config when the active workspace changes**, rather than resolving them
+     * per request (`plan/17` §5 work item 3, verbatim: *"Changing workspace changes the point to workspace."*).
+     *
+     * So the swap has to happen somewhere, and this command is where. **Without it the proxy would keep
+     * serving the previous workspace's rules until the next restart** — a stale-config failure that every
+     * other case in this block would miss, because they only look at the pointer. Hence the assertion is on
+     * the *presence* of the call, which is the same instrument P14 used for its own (opposite) rule and for
+     * the same reason: the call is the half that is invisible to a value check.
+     *
+     * The contrast with `env.setActive` below is now **symmetry**, not asymmetry — see that case.
      */
-    it("does NOT reload the proxy — the pointer and the proxies are independent (P14 WI 4)", () => {
+    it("DOES reload the proxy — one host-level proxy follows the selection (plan/17 §1)", () => {
       vi.mocked(reloadConfig).mockClear();
 
       const result = workspaceSetActive("ws2");
 
       expect(result.ok).toBe(true);
       expect(currentConfig.activeWorkspaceId).toBe("ws2");
-      expect(reloadConfig).not.toHaveBeenCalled();
+      expect(reloadConfig).toHaveBeenCalled();
     });
 
     /**
-     * The contrast that makes the rule above legible: `env.setActive` **does** reload, and must keep doing so.
-     * An environment is proxy state (which rules and enabled sets are live), so changing it genuinely has to
-     * re-point the proxy serving that workspace. The two commands look symmetric and are not.
+     * `env.setActive` also reloads — and the two commands are now **symmetric**, where they used to be a
+     * deliberate contrast.
+     *
+     * An environment is proxy state (which rules and enabled sets are live), so changing it has always had to
+     * re-point the proxy. P14's `workspace.setActive` was the *exception*: with N proxies, one per workspace,
+     * the selection moved nothing. `plan/17` §1 removed the N, so "the selection is proxy state" is true of
+     * the workspace too — and this pair is kept as a pair because they are the two commands that swap the
+     * proxy's config, and a future change that drops one of the two calls should be caught in both places.
      */
     it("env.setActive DOES reload the proxy — environments are proxy state", () => {
       vi.mocked(reloadConfig).mockClear();

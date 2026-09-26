@@ -1,5 +1,12 @@
 import * as path from "path";
-import { loadSettings, saveSettings, AppSettings, WorkspaceMeta } from "./appSettings";
+import {
+  loadSettings,
+  saveSettings,
+  AppSettings,
+  WorkspaceMeta,
+  DEFAULT_FORWARD_PROXY_PORT,
+  DEFAULT_COMPANION_PORT,
+} from "./appSettings";
 import {
   readAllEntities, readEntityStubs, readEntity,
   readNamesIndex, bootstrapNamesIndex,
@@ -18,6 +25,12 @@ export type { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection
 export interface AppConfig {
   port: number;
   webhookPort: number;
+  /** The forward proxy's port — **engine-level**, one for every workspace (2026-09-25). */
+  forwardProxyPort: number;
+  /**
+   * The companion (RPC over WebSocket) endpoint's port. The web GUI's port is derived as this `+ 1` and is
+   * never stored, and this is the only port whose change needs a restart.
+   */
   companionPort: number;
   minimizeToTray: boolean;
   tlsEnabled: boolean;
@@ -37,21 +50,14 @@ export interface AppConfig {
   webhooks: SavedWebhook[];
   webhookFolders: Folder[];
   graphqlRequests: any[];
-  graphqlMocks: any[];
   graphqlSchemas: any[];
   graphqlRequestFolders: Folder[];
-  graphqlMockFolders: Folder[];
   grpcRequests: any[];
-  grpcMocks: any[];
   protoFiles: any[];
   grpcRequestFolders: Folder[];
-  grpcMockFolders: Folder[];
-  grpcMockServerPort: number;
   soapRequests?: any[];
-  soapMocks?: any[];
   savedWsdls?: any[];
   soapRequestFolders?: Folder[];
-  soapMockFolders?: Folder[];
   environments: Environment[];
   activeEnvironmentId: string | null;
 }
@@ -167,8 +173,19 @@ export function loadConfig(): AppConfig {
 
   return {
     port: settings.port,
-    webhookPort: settings.webhookPort ?? 9101,
-    companionPort: settings.companionPort ?? 9271,
+    /**
+     * No `??` fallback, and its removal is deliberate (`plan/17` §1). `webhookPort` used to fall back to a
+     * fixed `DEFAULT_WEBHOOK_PORT` for an `app.json` written before the field existed — but the field has
+     * existed since long before this, `AppSettings.webhookPort` is **required**, and `loadSettings()` merges
+     * the defaults under whatever it reads. So the fallback was unreachable, and worse, it was a *second*
+     * answer to "which port is the receiver on" — the one thing a fixed default and a random default
+     * (`appSettings.ts#randomWebhookPort`) would have disagreed about the moment the latter landed.
+     */
+    webhookPort: settings.webhookPort,
+    // Both of these are new fields, so an `app.json` written before 2026-09-25 carries neither — the `??` is
+    // the migration. It is why they are defaulted here rather than trusted from disk.
+    forwardProxyPort: settings.forwardProxyPort ?? DEFAULT_FORWARD_PROXY_PORT,
+    companionPort: settings.companionPort ?? DEFAULT_COMPANION_PORT,
     minimizeToTray: settings.minimizeToTray,
     tlsEnabled: settings.tlsEnabled ?? false,
     tlsCaCertPath: settings.tlsCaCertPath ?? null,
@@ -256,13 +273,8 @@ export function loadConfig(): AppConfig {
         headers: {}, query: "", variables: "", operationName: "", createdAt: 0,
       }));
     })(),
-    graphqlMocks: (() => {
-      const enabledSet = readEnabledSet(wsId, "graphqlMocks") ?? bootstrapEnabledSet(wsId, "graphqlMocks");
-      return readAllEntities(wsId, "graphqlMocks").map((m: any) => ({ ...m, enabled: enabledSet.has(m.id) }));
-    })(),
     graphqlSchemas: [],
     graphqlRequestFolders: (() => { try { return autoSyncFsDirectories(wsId, "graphqlRequests", generateId).folders as Folder[]; } catch { return []; } })(),
-    graphqlMockFolders: (() => { try { return autoSyncFsDirectories(wsId, "graphqlMocks", generateId).folders as Folder[]; } catch { return []; } })(),
     // gRPC entities
     grpcRequests: (() => {
       const stubs = readEntityStubs(wsId, "grpcRequests");
@@ -281,16 +293,10 @@ export function loadConfig(): AppConfig {
         createdAt: 0,
       }));
     })(),
-    grpcMocks: (() => {
-      const enabledSet = readEnabledSet(wsId, "grpcMocks") ?? bootstrapEnabledSet(wsId, "grpcMocks");
-      return readAllEntities(wsId, "grpcMocks").map((m: any) => ({ ...m, enabled: enabledSet.has(m.id) }));
-    })(),
     protoFiles: (() => {
       try { return readAllEntities(wsId, "protoFiles"); } catch { return []; }
     })(),
     grpcRequestFolders: (() => { try { return autoSyncFsDirectories(wsId, "grpcRequests", generateId).folders as Folder[]; } catch { return []; } })(),
-    grpcMockFolders: (() => { try { return autoSyncFsDirectories(wsId, "grpcMocks", generateId).folders as Folder[]; } catch { return []; } })(),
-    grpcMockServerPort: 9102,
     // SOAP entities
     soapRequests: (() => {
       const stubs = readEntityStubs(wsId, "soapRequests");
@@ -303,13 +309,8 @@ export function loadConfig(): AppConfig {
         headers: {}, body: "", createdAt: 0,
       }));
     })(),
-    soapMocks: (() => {
-      const enabledSet = readEnabledSet(wsId, "soapMocks") ?? bootstrapEnabledSet(wsId, "soapMocks");
-      return readAllEntities(wsId, "soapMocks").map((m: any) => ({ ...m, enabled: enabledSet.has(m.id) }));
-    })(),
     savedWsdls: [],
     soapRequestFolders: (() => { try { return autoSyncFsDirectories(wsId, "soapRequests", generateId).folders as Folder[]; } catch { return []; } })(),
-    soapMockFolders: (() => { try { return autoSyncFsDirectories(wsId, "soapMocks", generateId).folders as Folder[]; } catch { return []; } })(),
   };
 }
 
@@ -324,8 +325,21 @@ export function saveConfig(cfg: AppConfig): void {
   // Update global settings
   const settings = loadSettings();
   settings.port = cfg.port;
-  settings.webhookPort = cfg.webhookPort ?? 9101;
-  settings.companionPort = cfg.companionPort ?? 9271;
+  /**
+   * `?? settings.webhookPort` — **keep what is on disk**, not a constant (`plan/17` §1).
+   *
+   * This read `?? DEFAULT_WEBHOOK_PORT`, a fixed `9101`. That fallback is gone with the constant, and
+   * substituting the *current* value is the honest replacement rather than a new magic number: the case it
+   * covers is a client that predates the field, and for such a client the correct port is the one the
+   * receiver is already configured on — inventing `9101` would silently move it, which is the exact failure
+   * `plan/17` §1 forbids for a port the user owns. The default for a *fresh* install is drawn in
+   * `appSettings.ts#randomWebhookPort()` and arrives here already resolved.
+   */
+  settings.webhookPort = cfg.webhookPort ?? settings.webhookPort;
+  // Written through even when unchanged, so a save from a client that predates these fields fills them in
+  // rather than leaving `undefined` on disk for the next load to default.
+  settings.forwardProxyPort = cfg.forwardProxyPort ?? DEFAULT_FORWARD_PROXY_PORT;
+  settings.companionPort = cfg.companionPort ?? DEFAULT_COMPANION_PORT;
   settings.minimizeToTray = cfg.minimizeToTray;
   settings.tlsEnabled = cfg.tlsEnabled ?? false;
   settings.tlsCaCertPath = cfg.tlsCaCertPath ?? null;

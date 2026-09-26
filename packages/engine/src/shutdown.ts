@@ -8,7 +8,7 @@
  * a second round of `taskkill`s and duplicate "stopped" logs.
  *
  * Each individual stop function is already null-guarded and safe to call when its subsystem is not
- * running (`stopServer`, `stopCompanionServer`, `stopAllAutoSync`); what was missing is a guard on
+ * running (`stopServer`, `stopAllAutoSync`); what was missing is a guard on
  * the *sequence* — hence the memoised promise below.
  *
  * This module is intentionally Electron-free. Keep it that way: it is on the `packages/engine`
@@ -16,7 +16,6 @@
  */
 import { processSpawner } from "./applications/processSpawner";
 import { stopAllAutoSync } from "./sync/autoSync";
-import { stopCompanionServer } from "./transport/legacyCompanion";
 import { stopServer } from "./proxy/server";
 
 /**
@@ -42,7 +41,6 @@ export function shutdownEngine(): Promise<void> {
   shutdownPromise = Promise.resolve().then(() => {
     processSpawner.stopAll();
     stopAllAutoSync();
-    stopCompanionServer();
     stopServer();
   });
 

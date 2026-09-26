@@ -11,25 +11,35 @@
  * ## This is the companion server, generalised — not a second server
  *
  * `plan/05` work item 1 says it plainly: *"Do not write a new server."* The companion server already
- * speaks a WebSocket JSON envelope on loopback with a shipping external consumer (the companion
+ * spoke a WebSocket JSON envelope on loopback with a shipping external consumer (the companion
  * extension, now in its own repository). What it lacked is everything this file supplies, and the
  * plan lists the five changes: enrich `error: string` into a `RpcError`, add the mandatory `hello`,
  * replace the static allowlist with per-session scopes, add event delivery with `seq`, and move it
  * out of `src/companion/` — *"the directory name `companion` will make no sense once the browser
- * extension is just another client."* That last change is now done: it lives at
- * `transport/legacyCompanion.ts` and `src/companion/` no longer exists.
+ * extension is just another client."* That last change was done in P4: it lived at
+ * `transport/legacyCompanion.ts` while `src/companion/` ceased to exist.
+ *
+ * **The history above is kept deliberately, because it is why this file has its shape** — but its
+ * subject is gone. The retired bridge was deleted outright on 2026-09-23 (implementing `plan/16`): the
+ * extension's v1 protocol is not a contract this engine serves any more, and nothing here depends on
+ * it. So `legacyCompanion.ts` is *history*, not a sibling — read the section below as the finding that
+ * shaped the in-process transport, not as a description of something still shipped.
  *
  * ## The four colon-named actions did **not** become aliases — that is a finding, not an omission
  *
  * The obvious way to finish item 1 is to map `config:get` → `config.get`, `mock:add`/`request:add` →
  * `entity.create`, `folder:add` → `folder.add`, and delete the hand-written bodies. Measured on
  * 2026-09-18, that is **not a migration — it is four behaviour changes**, one of which would make a
- * lower-trust caller's "add" destructive. The full table is in `legacyCompanion.ts`'s header; the
- * load-bearing one is that the registry's mock create runs `onAddConflict`, which **disables an
- * existing enabled mock** with the same `method|urlPattern|capturedBody`, while the extension's
- * allowlist is documented and tested as **additive-only**. So those four stay served by
- * `legacyCompanion.ts` — byte-compatible, on port 9271 — until the extension moves to v2 and the
- * mapping is *decided* rather than assumed. `plan/05` item 1 carries the same table.
+ * lower-trust caller's "add" destructive. The load-bearing one is that the registry's mock create runs
+ * `onAddConflict`, which **disables an existing enabled mock** with the same
+ * `method|urlPattern|capturedBody`, while the extension's allowlist was documented and tested as
+ * **additive-only**. That is why a v1 client cannot simply be pointed at this transport: the four
+ * behaviours would change under it, and one of them destroys data. `plan/05` item 1 carries the table.
+ *
+ * The distinction still matters now that the bridge is deleted, because it is the **reason the
+ * extension's migration is a protocol change and not a port swap** — see `plan/15` §6.4. `plan/16`'s
+ * relay is what will carry it, on this transport, with the behaviour change decided rather than
+ * assumed.
  *
  * ## Why auth is a wrapper here and not a feature
  *
@@ -65,30 +75,41 @@
  * registry throwing. Conflating the two would break every legacy handler that reports failure as a
  * resolved value, which is most of them.
  *
- * ## Bind address and TLS — work item 5's two rules, encoded rather than documented
+ * ## Bind address — loopback, unconditionally
  *
- * | `host` | `allowNonLoopback` | `tls` | result |
- * |---|---|---|---|
- * | loopback (default) | any | any | binds |
- * | non-loopback | absent/false | any | **refused** — remote mode is opt-in and explicit |
- * | non-loopback | `true` | absent | **refused** — "TLS on the channel, not optional" |
- * | non-loopback | `true` | present | binds, `wss://` |
+ * | `host` | result |
+ * |---|---|
+ * | loopback (the default) | binds |
+ * | anything else | **refused** — `ENGINE_ERROR`, thrown by the factory |
  *
- * `plan/05`: *"Never default to `0.0.0.0`. Remote mode is opt-in and explicit."* and, for the TLS
- * row, *"Required for `ws` beyond loopback."* Two guards rather than one because they are two
- * different mistakes: binding wide by accident, and binding wide in the clear on purpose. Encoding
- * them means the engine cannot be talked into an unauthenticated, unencrypted, remotely-reachable RPC
- * surface by a config typo — the process refuses to start rather than exposing one.
+ * `plan/05`: *"Never default to `0.0.0.0`. Remote mode is opt-in and explicit."* The first half is
+ * unchanged and now enforced by the only means left; the second half is **superseded**, because there
+ * is no longer an opt-in to give.
  *
- * The practical consequence, stated so nobody is surprised: **remote mode is not reachable yet**.
- * Nothing in the programme sets `allowNonLoopback`, and the TLS path is a pass-through to
- * `node:https` that has no test behind it. That is the honest position — the guard is what makes it
- * safe to leave that work to P9/P12.
+ * ## Why the opt-in and the TLS option were removed (2026-09-25)
+ *
+ * `plan/15` work item 1 added `--ws-allow-non-loopback` and the `--ws-tls-cert`/`--ws-tls-key` pair to
+ * make a **remote** engine possible: the flag acknowledged the bind, and TLS went on the channel
+ * because an RPC surface reachable from another machine must not be plaintext. The programme has since
+ * decided the engine is **never** deployed remotely — it runs inside the Electron app or as a container
+ * on the user's own machine — so no deployment can reach either option, and a capability nothing can
+ * exercise is a capability that rots. Both are gone, and the non-loopback bind is a hard error rather
+ * than an opt-in.
+ *
+ * **TLS went with them, and that is the part worth stating.** The pair was never a feature in its own
+ * right: it was the second condition of the non-loopback rule, and the only reason this factory ever
+ * built an `https` server. On loopback a `wss` handshake protects nothing a plain `ws` one does not —
+ * the bytes do not leave the machine — so keeping the option would keep a switch whose only observable
+ * effect is a self-signed-certificate warning in the browser.
+ *
+ * The security property did not leave with them. It is enforced by the bind being loopback, and by the
+ * **origin guard** on the upgrade — which is the check that actually distinguishes "a page on this
+ * machine" from "some page the user visited". See `lib/net.ts#isAllowedOrigin`.
  */
 import { createServer as createHttpServer } from "node:http";
-import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
+import { DEFAULT_HOST_DOMAIN, isAllowedOrigin, isLoopbackHost, LOOPBACK_HOSTS } from "../lib/net";
 import {
   Capability,
   EngineError,
@@ -134,8 +155,17 @@ assertBridgeIsTotal(ENGINE_EVENT_NAMES as readonly string[]);
 /** The engine binds loopback unless a caller says otherwise, twice. */
 export const DEFAULT_WS_HOST = "127.0.0.1";
 
-/** Hosts treated as loopback for the bind guard. `localhost` is included because it resolves to one. */
-export const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1", "localhost"];
+/**
+ * The loopback predicate and its host list now live in `lib/net.ts`, and are re-exported here so this
+ * module's callers and the transport barrel are unchanged.
+ *
+ * They moved when `plan/15` work item 2 gave the **proxy** a bind host and therefore a second guard asking
+ * the same question. The alternative — `proxy/server.ts` importing them from here — would pull the `ws`
+ * package, `node:http`, `node:https` and this module's import-time `assertBridgeIsTotal()` into the proxy's
+ * dependency graph to learn a two-element array. See `lib/net.ts`'s header; the definition is there and
+ * **only** there.
+ */
+export { isLoopbackHost, LOOPBACK_HOSTS };
 
 /**
  * Frame-size ceiling — work item 5's "Request size: ... at the frame level".
@@ -168,14 +198,15 @@ export const CLOSE_CODE_POLICY = 1008;
  * and make a mis-scoped client look like a network fault.
  */
 
-function isLoopbackHost(host: string): boolean {
-  return LOOPBACK_HOSTS.includes(host.toLowerCase());
-}
-
-/** `ws://host:port`, bracketing a bare IPv6 literal. */
-function urlFor(host: string, port: number, secure: boolean): string {
+/**
+ * `ws://host:port`, bracketing a bare IPv6 literal.
+ *
+ * No `secure` parameter any more: the listener is plaintext HTTP on loopback, always — see the header
+ * for why the TLS option went.
+ */
+function urlFor(host: string, port: number): string {
   const bracketed = host.includes(":") ? `[${host}]` : host;
-  return `${secure ? "wss" : "ws"}://${bracketed}:${port}`;
+  return `ws://${bracketed}:${port}`;
 }
 
 /** Serialise a frame, reporting a payload JSON cannot represent as a caller error. */
@@ -393,17 +424,26 @@ export function createWsTransport(url: string, opts: WsTransportOptions = {}): T
 // ── the server ───────────────────────────────────────────────────────────────
 
 /**
- * Authentication for a `ws` server.
+ * The `hello` handshake's configuration for a `ws` server — the identity a session is **given**, not a
+ * credential it must present.
  *
- * Optional, and omitting it produces an **unauthenticated** server. That is legal only because the
- * bind guard makes an unauthenticated server reachable from loopback alone: `plan/05`'s threat is an
- * unauthenticated *remote* RPC surface, and the `127.0.0.1` bind is what keeps this one out of it.
- * (The same reasoning `companionServer.ts` used, kept deliberately and now enforced by the guard
- * rather than by a comment.)
+ * ## The name is historical as of 2026-09-25
+ *
+ * This used to carry the per-start token as well, and that token was the authentication half. What
+ * remains is the handshake itself — version compatibility, `sessionId`, scopes, and the `lastSeq` replay
+ * decision — none of which is authentication and all of which is still required. Renaming `auth/` and
+ * `createAuthenticatedTransport` to match is a separate mechanical change, deliberately not folded into
+ * this one so the diff stays reviewable.
+ *
+ * ## Optional, and omitting it means "no handshake at all"
+ *
+ * A server built without this passes every request straight to the registry: `hello` becomes an
+ * `UNKNOWN_COMMAND` and no session ever gets scopes. That is legal for the same reason it always was —
+ * `plan/05`'s threat is an unauthenticated *remote* RPC surface, and the loopback bind plus the origin
+ * guard keep this one out of it. `runtime/host.ts` always passes it; tests construct bare servers on
+ * purpose, to exercise the client against an endpoint that has no handshake.
  */
 export interface WsServerAuthOptions {
-  /** The token `ensureEngineToken()` produced for this run. */
-  token: string;
   /** Reported to the client in the `hello` response. Under D9 it tracks the protocol version. */
   engineVersion: string;
   /** Which scopes a session gets, by client. Defaults to `SHELL_SCOPES` (see `authenticated.ts`). */
@@ -414,6 +454,15 @@ export interface WsServerAuthOptions {
   sessionId?: AuthenticatedTransportOptions["sessionId"];
   /** Extra capabilities to advertise. `ws` is added automatically. */
   capabilities?: readonly CapabilityValue[];
+  /**
+   * The hostname this engine answers as, passed through to `hello`'s `hostDomain` — `localhost`, since
+   * `plan/15`'s `--domain` flag was removed on 2026-09-24 (`runtime/hostArgs.ts`'s header records why).
+   *
+   * Typed off `AuthenticatedTransportOptions` rather than re-declared, like every other field in this
+   * interface: the decorator owns the handshake, so it owns the field's meaning, and a second declaration
+   * here is a second place for that meaning to drift.
+   */
+  hostDomain?: AuthenticatedTransportOptions["hostDomain"];
   /** Overrides the engine's protocol version, so a test can drive the major-mismatch path. */
   protocolVersion?: string;
 }
@@ -430,14 +479,14 @@ export interface WsServerOptions {
    */
   log?: EventLog;
   auth?: WsServerAuthOptions;
-  /** Defaults to `DEFAULT_WS_HOST`. Anything else requires `allowNonLoopback` **and** `tls`. */
+  /**
+   * Defaults to `DEFAULT_WS_HOST`. **Loopback spellings only** — anything else is a hard error, because
+   * the engine is never deployed remotely. The option survives so a test can *prove* that refusal, which
+   * is the same reason `createProxyServer()` keeps its `bindHost`.
+   */
   host?: string;
   /** Defaults to `0` — an ephemeral port, so two engines on one machine cannot collide. */
   port?: number;
-  /** Turns the listener into `wss://`. Mandatory for any non-loopback bind. */
-  tls?: { cert: string | Buffer; key: string | Buffer };
-  /** Explicit acknowledgement that a non-loopback bind is intended. Does not substitute for `tls`. */
-  allowNonLoopback?: boolean;
   /** Overrides `DEFAULT_MAX_PAYLOAD_BYTES`. */
   maxPayloadBytes?: number;
   /** Notified when a connection dies for a reason the engine did not ask for. */
@@ -448,14 +497,14 @@ export interface WsServer {
   readonly host: string;
   /** The **resolved** port, which is what matters when the caller asked for `0`. */
   readonly port: number;
+  /** Always `ws://` — the listener is plaintext HTTP on loopback. See the header. */
   readonly url: string;
-  readonly secure: boolean;
   close(): Promise<void>;
 }
 
 /**
  * Serve the `CommandRegistry` over WebSocket — the engine half, and `plan/05` work item 1's
- * generalisation of `companionServer.ts`.
+ * generalisation of the retired `companionServer.ts`.
  *
  * Asynchronous because it **binds**: the port is not known until the OS assigns one, and a factory
  * that pretended otherwise would have to guess. That is why the conformance suite's `make()` may now
@@ -468,32 +517,32 @@ export interface WsServer {
  */
 export async function createWsServer(opts: WsServerOptions): Promise<WsServer> {
   const host = opts.host ?? DEFAULT_WS_HOST;
-  const loopback = isLoopbackHost(host);
 
-  // Two guards, not one, because they catch two different mistakes — see the header's table.
-  if (!loopback && opts.allowNonLoopback !== true) {
+  /**
+   * One guard, and it has no escape hatch.
+   *
+   * `plan/15` work item 1 expressed this as two guards plus an opt-in, because a *remote* engine was
+   * then something the programme wanted to be possible: `allowNonLoopback` acknowledged the bind and the
+   * TLS pair protected the channel. Both are gone (see the header), so what is left is the rule
+   * `plan/05` states first — *"Never default to `0.0.0.0`"* — with nothing able to override it.
+   *
+   * Thrown from the factory rather than from the bind, so a misconfigured caller fails before a port is
+   * touched and the message can name the address it refused.
+   */
+  if (!isLoopbackHost(host)) {
     throw new EngineError(
       "ENGINE_ERROR",
-      `Refusing to bind ${host}: the engine binds loopback by default and a non-loopback address is ` +
-        `opt-in and explicit (plan/05 work item 5: "Never default to 0.0.0.0"). Pass ` +
-        `allowNonLoopback: true to accept the exposure.`,
-    );
-  }
-  if (!loopback && opts.tls === undefined) {
-    throw new EngineError(
-      "ENGINE_ERROR",
-      `Refusing to serve plaintext WebSocket on ${host}: plan/05 work item 5 requires TLS on the ` +
-        `channel beyond loopback, not as an option. Supply \`tls\` (cert + key) or bind loopback.`,
+      `Refusing to bind ${host}: this listener binds loopback only, and a non-loopback address is not ` +
+        `an opt-in (plan/05 work item 5: "Never default to 0.0.0.0"). The engine is never deployed ` +
+        `remotely, so nothing accepts this. Bind ${DEFAULT_WS_HOST}.`,
     );
   }
 
   const eventBus = opts.bus ?? defaultBus;
   // No server-level `ctx` here on purpose — `opts.ctx` is a *template*, and each connection spreads it
   // into its own context. See the connection handler.
-  const secure = opts.tls !== undefined;
 
-  const server =
-    opts.tls === undefined ? createHttpServer() : createHttpsServer({ cert: opts.tls.cert, key: opts.tls.key });
+  const server = createHttpServer();
 
   // A non-upgrade request gets an answer rather than a hang. This is not decoration: a health check
   // or a browser hitting the port must not be left waiting for a response that never comes.
@@ -503,8 +552,55 @@ export async function createWsServer(opts: WsServerOptions): Promise<WsServer> {
   });
 
   const wss = new WebSocketServer({
-    server,
+    /**
+     * `noServer` plus an explicit `upgrade` handler, rather than `WebSocketServer`'s `verifyClient`.
+     *
+     * `verifyClient` would be shorter, and it is **deprecated** in `ws` — so the origin guard below could be
+     * deleted by a dependency upgrade without a single line of this file changing. A security check that a
+     * routine bump can silently remove is not a check. This is also the pattern `ws`'s own documentation
+     * points at, and it is what lets a refusal be a **403 with a reason** instead of a socket that closes
+     * for causes the client cannot see.
+     *
+     * `close()` below is unaffected: `wss.close()` never closes a server it did not create, in either shape,
+     * which is why that method already closes the listener itself.
+     */
+    noServer: true,
     maxPayload: opts.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES,
+  });
+
+  /**
+   * ## The origin guard — because a browser is a local process
+   *
+   * Every listener in this engine binds loopback, and that is **not** authorisation on its own: a web page
+   * runs on this machine, so its connection to `127.0.0.1` *is* a loopback connection. A WebSocket handshake
+   * is not gated by the same-origin policy the way `fetch` is, so without this check any page the user
+   * visits could open a socket here and drive the engine — which executes scripts and spawns processes.
+   *
+   * This is the check that replaces the token for loopback use, and it is deliberately a *different kind* of
+   * check: not "does this peer hold a secret" but "is this peer a page served from this machine". See
+   * `lib/net.ts#isAllowedOrigin` for the table, what it defeats (including DNS rebinding) and what it
+   * deliberately does not (a non-browser local process, which could already run code here).
+   *
+   * `DEFAULT_HOST_DOMAIN` rather than an option: the engine's own name stopped being configurable when
+   * `--domain` was removed, and reading the constant here is what keeps "the name this engine answers as"
+   * and "the origin it accepts" from becoming two facts that can disagree.
+   */
+  server.on("upgrade", (request, socket, head) => {
+    if (!isAllowedOrigin(request.headers.origin, DEFAULT_HOST_DOMAIN)) {
+      const origin = request.headers.origin;
+      socket.write(
+        "HTTP/1.1 403 Forbidden\r\n" +
+          "connection: close\r\n" +
+          "content-type: text/plain; charset=utf-8\r\n" +
+          "\r\n" +
+          `Refusing a WebSocket from origin ${JSON.stringify(origin)}.\n` +
+          `This engine accepts pages served from ${DEFAULT_HOST_DOMAIN} (or a subdomain of it) and clients ` +
+          `that send no Origin at all.\n`,
+      );
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit("connection", ws, request));
   });
 
   let closed = false;
@@ -538,7 +634,6 @@ export async function createWsServer(opts: WsServerOptions): Promise<WsServer> {
       opts.auth === undefined
         ? inner
         : createAuthenticatedTransport(inner, {
-            token: opts.auth.token,
             engineVersion: opts.auth.engineVersion,
             log: opts.log,
             scopesFor: opts.auth.scopesFor,
@@ -552,6 +647,11 @@ export async function createWsServer(opts: WsServerOptions): Promise<WsServer> {
             onSession: (identity) => {
               ctx.session = { ...identity, peer: remoteAddress };
             },
+            // Passed straight through: the decorator owns the handshake, so it owns what the handshake
+            // reports. `undefined` here means the host was never told its own name, which is a real state —
+            // see the option's docblock — and the decorator turns it into an **absent** field rather than a
+            // substituted one.
+            hostDomain: opts.auth.hostDomain,
             // `ws` is advertised because this *is* the ws transport; `events.replay` is derived by the
             // decorator from `log` being present, so it is not listed here and must not be — two
             // sources for that flag is how they end up disagreeing.
@@ -804,8 +904,7 @@ export async function createWsServer(opts: WsServerOptions): Promise<WsServer> {
   return {
     host,
     port: address.port,
-    url: urlFor(host, address.port, secure),
-    secure,
+    url: urlFor(host, address.port),
 
     async close(): Promise<void> {
       if (closed) return;
