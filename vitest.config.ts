@@ -127,11 +127,6 @@ export default defineConfig({
             "tests/**/*.test.ts",
             "tests/**/*.test.tsx",
             "packages/**/*.test.ts",
-            // The browser host's own suite (P7 work item 5). It sits outside `packages/` because it is a
-            // host rather than a library, so without this entry its tests would never run — and a glob
-            // that looks like it covers everything is exactly how a suite goes silently unexecuted.
-            // It moved from `apps/web` to `web/` under D18, and this glob moved with it.
-            "web/**/*.test.ts",
           ],
           // Integration tests live under tests/integration and bind real ports.
           exclude: ["tests/integration/**"],
@@ -170,10 +165,6 @@ export default defineConfig({
         // easiest to forget because the package is new: without it `channel.ts` and `local.ts` are
         // exercised by two suites and still reported as uncovered — §4.8's mistake in a new costume.
         "packages/web-client/src/**/*.ts",
-        // The browser host's own source. `connect.ts` is covered by `web/tests/connect.test.ts` and
-        // `api.ts` by `web/tests/api.test.ts`; the DOM entry is excluded below, for the same reason as
-        // `src/main.ts`.
-        "web/**/*.ts",
         // The shared UI (D18). Same reasoning as the engine, client and web-client entries above: it is
         // exercised through source in tests, so omitting it would report all 211 files as uncovered.
         // These three globs are the same three that pointed at `renderer/` before the move — **the scope
@@ -190,10 +181,6 @@ export default defineConfig({
         // Process entry points — exercised by launching the app, not by unit tests.
         "src/main.ts",
         "src/preload.ts",
-        // The browser host's DOM entry, for the same reason: `main.tsx` renders the page and is
-        // exercised by loading it. `connect.ts` and `api.ts` beside it hold the composition and no DOM,
-        // and both are covered.
-        "web/main.tsx",
         // Type-only modules.
         "**/*.d.ts",
         "packages/engine/src/store/types.ts",
@@ -230,6 +217,11 @@ export default defineConfig({
        * now sit ~7–9 pts below the actuals, and raising them is a deliberate decision rather than an
        * oversight: the policy below says to raise them as gaps close, and this is the point at which
        * that becomes available.
+       *
+       * ⚠ **The `web/**` entry was removed on 2026-09-26 with the browser host**, so the figure above is
+       * historical. Its two files were well covered — each had its own suite — so dropping them moves the
+       * percentage by a fraction of a point, far inside the margin the floors already have. Left to the
+       * next coverage run rather than guessed at here.
        *
        * Set ~2 pts below the actuals, with one exception: `branches` stays at 31 because
        * 2 pts below 32.66 is 30, and ratcheting *down* is exactly what the policy forbids.

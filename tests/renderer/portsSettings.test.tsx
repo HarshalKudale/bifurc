@@ -146,7 +146,8 @@ describe("PortsSettingsSection", () => {
  *
  * The cases above render `PortsSettingsSection` directly, so every one of them would still pass if
  * `SettingsPanel` never mounted it — the component would be correct and unreachable. That is the shape of gap
- * `verify:web` found four of in code that passed 471 tests, so it gets its own case.
+ * the browser check (`npm run verify:web`, removed 2026-09-26 with the web host) found four of in code that
+ * passed 471 tests, so it gets its own case.
  */
 describe("SettingsPanel → Ports section", () => {
   it("mounts the Ports section", () => {
