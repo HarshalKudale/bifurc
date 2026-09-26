@@ -24,7 +24,7 @@ is the only thing that builds.
 
 **What survives, deliberately:** `@bifurc/engine` (the shared library both runtimes composed),
 `@bifurc/gui`, `@bifurc/protocol`, `@bifurc/client`, `@bifurc/web-client` — and the **headless host**
-(`runtime/hostCli.ts`, `hostArgs.ts`, `--ws-host`/`--ws-port`, and the companion RPC-over-WebSocket server),
+(`runtime/hostCli.ts`, `hostArgs.ts`, `--ws-port` / `--rpc-socket`, and the companion RPC-over-WebSocket server),
 which is what the browser extension will connect to when its half is written. **What was retired is the
 packaging and the browser host, not the ability to run a host.**
 
