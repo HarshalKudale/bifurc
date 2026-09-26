@@ -1170,6 +1170,17 @@ was looking, not where the bug is.
 Found 2026-09-23, `plan/15` work items 1 and 2. The two findings are mirror images, which is what makes them
 worth one entry.
 
+**⚠ Re-pointed 2026-09-25 — the *specific* asymmetry below is now moot; the trap is not, and its entry stays.**
+The three bind opt-ins (`--ws-allow-non-loopback`, `--proxy-allow-non-loopback`, `--edge-allow-non-loopback`)
+and the TLS pair were removed on 2026-09-25 — all nine are in `hostArgs.ts`'s `REMOVED_FLAGS`, and
+`transport/auth/token.ts` is deleted. **Both guards are now unconditional:** each refuses **any** non-loopback
+bind, so "one condition where the other has two" no longer describes the code, and the table's second row has
+no live instance. **What survives, and why the entry stays: the two guards are still separate functions rather
+than one shared helper, and the reason is the *message* rather than the condition** — the proxy's explains a
+*forward proxy's* exposure (it forwards into whatever the machine can reach and performs TLS interception),
+the RPC's explains a *command surface's*. Merging them is still the "make the two consistent" edit this entry
+exists to refuse. Read the rest as the reasoning that produced the original shape.
+
 Work item 1's lesson was **count the guards in the module**: `transport/ws.ts` refuses a non-loopback bind
 without an opt-in **and** without `tls`, so the plan's single flag was inert — it parsed, passed through, and
 changed no outcome. Work item 2 then gave the **proxy** a bind host, and the obvious move — give it the same
