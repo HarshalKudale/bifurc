@@ -13,7 +13,10 @@ edge/mapping → `plan/15` · procedures → the `bifurc-*` skills. **A pointer,
 
 ## Layout
 
-- **Flat repo — the app IS the root.** Git root is the PARENT dir; branch `standalone-engine`. **`git rm`,
+- **Flat repo — the app IS the root.** The repo root is the **project dir itself** (`git rev-parse
+  --show-toplevel` → `I:/workspace/Bifurc-Worskspace/Bifurc`) — **corrected 2026-09-26**. The *parent* dir
+  holds a separate, **empty** `.git` (no commits, no remote, 0 tracked files), so it is not a publish path.
+  Branch `standalone-engine`. **`git rm`,
   `git stash` and `git checkout -- <file>` are ALL destructive** — `cp` to `/tmp` before any rollback.
   **⚠ In this sandbox `rm` is a shim function and `git rm` under `scripts/` wipes the whole directory** — use
   `python -c "import os; os.remove(...)"`, in small batches, verifying each. See `~/.workbuddy-ai/MEMORY.md`.
@@ -46,8 +49,20 @@ edge/mapping → `plan/15` · procedures → the `bifurc-*` skills. **A pointer,
 
 ## Phase state
 
-**Live: P17** — only item 4's Electron half open. **P0–P6 and P14 done. P7, P9 and P16 DECOMMISSIONED
-2026-09-26.** `packages/gui` still exports `<App />`, and `renderer/` is now its only consumer.
+**Live: P18** — enterprise SSO / org workspaces / permission gating, opened 2026-09-26; **WI 0 done** (the
+plan doc and D19–D21), nothing else started. **P17** has only item 4's Electron half open. **P0–P6 and P14
+done. P7, P9 and P16 DECOMMISSIONED 2026-09-26.** `packages/gui` still exports `<App />`, and `renderer/` is
+now its only consumer.
+
+**⚠ P18 adds a SECOND authorization axis — do not merge it with the first.** The engine already gates per
+**session** (`transport/auth/scopes.ts`: a total command→scope table asserted at import, vocabulary
+`read|write|execute|admin` with no hierarchy, fail-closed, enforced by the `authenticated` decorator — it
+answers *"who is calling?"*). P18 gates per **workspace** (`PermissionContext` on the workspace record,
+answering *"which workspace is being changed?"*). Conflating them makes "the org revoked this right"
+indistinguishable from "this session may not call this command". **Local actor ⇒ allow-all** (that is what
+keeps every existing suite byte-identical); **org actor ⇒ fail closed**, with its **own** error code rather
+than `FORBIDDEN`. The enterprise package itself is **private** — a sibling repo, `../bifurc-enterprise`
+(D20); only the permission plumbing is public.
 
 ### Invariants worth not re-deriving
 
