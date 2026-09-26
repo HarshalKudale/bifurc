@@ -1,8 +1,8 @@
-import { SavedSoapRequest, SavedSoapMock } from "@/types";
+import { SavedSoapRequest } from "@/types";
 
 // -- Types ------------------------------------------------------------------
 
-export type SoapTabType = "request" | "mock";
+export type SoapTabType = "request";
 
 export interface SoapTabState {
     tabType: SoapTabType;
@@ -17,14 +17,6 @@ export interface SoapTabState {
     operationName: string;
     preScript: string;
     postScript: string;
-    // Mock-specific
-    endpointPattern: string;
-    useRegex: boolean;
-    soapActionPattern: string;
-    responseStatus: number;
-    responseHeaders: Record<string, string>;
-    responseBody: string;
-    responseDelay: number;
     // Response state (request mode)
     sending: boolean;
     resStatus: number | null;
@@ -53,18 +45,6 @@ export interface SoapRequestDraft {
     postScript: string;
 }
 
-export interface SoapMockDraft {
-    name: string;
-    endpointPattern: string;
-    useRegex: boolean;
-    soapActionPattern: string;
-    responseStatus: number;
-    responseHeaders: Record<string, string>;
-    responseBody: string;
-    responseDelay: number;
-    folderId: string | null;
-}
-
 // -- Actions ----------------------------------------------------------------
 
 import { createTabReducer, CommonTabAction } from "@/lib/createTabReducer";
@@ -72,7 +52,7 @@ import { createTabReducer, CommonTabAction } from "@/lib/createTabReducer";
 export type SoapTabAction =
     | { type: "SEND_START" }
     | { type: "SEND_SUCCESS"; status: number; headers: Record<string, string>; body: string; durationMs: number }
-    | CommonTabAction<SoapTabState, SavedSoapRequest | SavedSoapMock, SoapRequestDraft | SoapMockDraft>;
+    | CommonTabAction<SoapTabState, SavedSoapRequest, SoapRequestDraft>;
 
 // -- Init -------------------------------------------------------------------
 
@@ -84,8 +64,8 @@ const DEFAULT_SOAP_BODY = `<?xml version="1.0" encoding="utf-8"?>
 </soap:Envelope>`;
 
 export function initSoapState(
-    initial: SavedSoapRequest | SavedSoapMock | Partial<SavedSoapRequest> | Partial<SavedSoapMock> | null,
-    draft: SoapRequestDraft | SoapMockDraft | null,
+    initial: SavedSoapRequest | Partial<SavedSoapRequest> | null,
+    draft: SoapRequestDraft | null,
     tabType: SoapTabType,
 ): SoapTabState {
     const base: SoapTabState = {
@@ -100,13 +80,6 @@ export function initSoapState(
         operationName: "",
         preScript: "",
         postScript: "",
-        endpointPattern: "",
-        useRegex: false,
-        soapActionPattern: "",
-        responseStatus: 200,
-        responseHeaders: { "Content-Type": "text/xml; charset=utf-8" },
-        responseBody: DEFAULT_SOAP_BODY,
-        responseDelay: 0,
         sending: false,
         resStatus: null,
         resHeaders: {},
@@ -120,58 +93,29 @@ export function initSoapState(
     };
 
     if (draft) {
-        if (tabType === "request") {
-            const d = draft as SoapRequestDraft;
-            base.name = d.name ?? "";
-            base.endpointUrl = d.endpointUrl ?? "";
-            base.soapAction = d.soapAction ?? "";
-            base.headers = d.headers ?? {};
-            base.body = d.body || DEFAULT_SOAP_BODY;
-            base.folderId = d.folderId ?? null;
-            base.preScript = d.preScript ?? "";
-            base.postScript = d.postScript ?? "";
-        } else {
-            const d = draft as SoapMockDraft;
-            base.name = d.name ?? "";
-            base.endpointPattern = d.endpointPattern ?? "";
-            base.useRegex = d.useRegex ?? false;
-            base.soapActionPattern = d.soapActionPattern ?? "";
-            base.responseStatus = d.responseStatus ?? 200;
-            base.responseHeaders = d.responseHeaders ?? { "Content-Type": "text/xml; charset=utf-8" };
-            base.responseBody = d.responseBody || DEFAULT_SOAP_BODY;
-            base.responseDelay = d.responseDelay ?? 0;
-            base.folderId = d.folderId ?? null;
-        }
+        base.name = draft.name ?? "";
+        base.endpointUrl = draft.endpointUrl ?? "";
+        base.soapAction = draft.soapAction ?? "";
+        base.headers = draft.headers ?? {};
+        base.body = draft.body || DEFAULT_SOAP_BODY;
+        base.folderId = draft.folderId ?? null;
+        base.preScript = draft.preScript ?? "";
+        base.postScript = draft.postScript ?? "";
         return base;
     }
 
     if (initial) {
-        if (tabType === "request") {
-            const r = initial as Partial<SavedSoapRequest>;
-            base.name = r.name ?? "";
-            base.endpointUrl = r.endpointUrl ?? "";
-            base.soapAction = r.soapAction ?? "";
-            base.headers = r.headers ?? {};
-            base.body = r.body || DEFAULT_SOAP_BODY;
-            base.wsdlId = r.wsdlId ?? null;
-            base.operationName = r.operationName ?? "";
-            base.preScript = r.preScript ?? "";
-            base.postScript = r.postScript ?? "";
-            base.folderId = r.folderId ?? null;
-        } else {
-            const m = initial as Partial<SavedSoapMock>;
-            base.name = m.name ?? "";
-            base.endpointPattern = m.endpointPattern ?? "";
-            base.useRegex = m.useRegex ?? false;
-            base.soapActionPattern = m.soapActionPattern ?? "";
-            base.responseStatus = m.responseStatus ?? 200;
-            base.responseHeaders = m.responseHeaders ?? { "Content-Type": "text/xml; charset=utf-8" };
-            base.responseBody = m.responseBody || DEFAULT_SOAP_BODY;
-            base.responseDelay = m.responseDelay ?? 0;
-            base.wsdlId = m.wsdlId ?? null;
-            base.operationName = m.operationName ?? "";
-            base.folderId = m.folderId ?? null;
-        }
+        const r = initial as Partial<SavedSoapRequest>;
+        base.name = r.name ?? "";
+        base.endpointUrl = r.endpointUrl ?? "";
+        base.soapAction = r.soapAction ?? "";
+        base.headers = r.headers ?? {};
+        base.body = r.body || DEFAULT_SOAP_BODY;
+        base.wsdlId = r.wsdlId ?? null;
+        base.operationName = r.operationName ?? "";
+        base.preScript = r.preScript ?? "";
+        base.postScript = r.postScript ?? "";
+        base.folderId = r.folderId ?? null;
     }
 
     return base;
@@ -190,7 +134,7 @@ const baseSoapTabReducer = (state: SoapTabState, action: SoapTabAction): SoapTab
     }
 };
 
-export const soapTabReducer = createTabReducer<SoapTabState, SoapTabAction, SavedSoapRequest | SavedSoapMock, SoapRequestDraft | SoapMockDraft>({
+export const soapTabReducer = createTabReducer<SoapTabState, SoapTabAction, SavedSoapRequest, SoapRequestDraft>({
     init: initSoapState
 }, baseSoapTabReducer);
 
@@ -198,70 +142,36 @@ export const soapTabReducer = createTabReducer<SoapTabState, SoapTabAction, Save
 
 export function soapStateToSavePayload(
     state: SoapTabState,
-    tabType: SoapTabType,
-): Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId"> | Omit<SavedSoapMock, "id" | "createdAt" | "workspaceId"> {
-    if (tabType === "request") {
-        return {
-            name: state.name,
-            endpointUrl: state.endpointUrl,
-            soapAction: state.soapAction,
-            headers: state.headers,
-            body: state.body,
-            wsdlId: state.wsdlId,
-            operationName: state.operationName,
-            preScript: state.preScript,
-            postScript: state.postScript,
-            folderId: state.folderId,
-        };
-    }
+): Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId"> {
     return {
         name: state.name,
-        enabled: true,
-        endpointPattern: state.endpointPattern,
-        useRegex: state.useRegex,
-        soapActionPattern: state.soapActionPattern,
-        operationName: state.operationName,
-        responseStatus: state.responseStatus,
-        responseHeaders: state.responseHeaders,
-        responseBody: state.responseBody,
-        responseDelay: state.responseDelay,
+        endpointUrl: state.endpointUrl,
+        soapAction: state.soapAction,
+        headers: state.headers,
+        body: state.body,
         wsdlId: state.wsdlId,
+        operationName: state.operationName,
+        preScript: state.preScript,
+        postScript: state.postScript,
         folderId: state.folderId,
     };
 }
 
 export function soapStateToDraft(
     state: SoapTabState,
-    tabType: SoapTabType,
-): SoapRequestDraft | SoapMockDraft {
-    if (tabType === "request") {
-        return {
-            name: state.name,
-            endpointUrl: state.endpointUrl,
-            soapAction: state.soapAction,
-            headers: state.headers,
-            body: state.body,
-            folderId: state.folderId,
-            preScript: state.preScript,
-            postScript: state.postScript,
-        };
-    }
+): SoapRequestDraft {
     return {
         name: state.name,
-        endpointPattern: state.endpointPattern,
-        useRegex: state.useRegex,
-        soapActionPattern: state.soapActionPattern,
-        responseStatus: state.responseStatus,
-        responseHeaders: state.responseHeaders,
-        responseBody: state.responseBody,
-        responseDelay: state.responseDelay,
+        endpointUrl: state.endpointUrl,
+        soapAction: state.soapAction,
+        headers: state.headers,
+        body: state.body,
         folderId: state.folderId,
+        preScript: state.preScript,
+        postScript: state.postScript,
     };
 }
 
-export function isSoapDraftEmpty(state: SoapTabState, tabType: SoapTabType): boolean {
-    if (tabType === "request") {
-        return !state.name && !state.endpointUrl && !state.soapAction && state.body === DEFAULT_SOAP_BODY;
-    }
-    return !state.name && !state.endpointPattern && !state.soapActionPattern && state.responseBody === DEFAULT_SOAP_BODY;
+export function isSoapDraftEmpty(state: SoapTabState): boolean {
+    return !state.name && !state.endpointUrl && !state.soapAction && state.body === DEFAULT_SOAP_BODY;
 }

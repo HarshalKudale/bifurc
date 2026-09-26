@@ -4,14 +4,11 @@ import type {
   LocalMapping,
   MockRule,
   ProxyRule,
-  SavedGraphQLMock,
   SavedGraphQLRequest,
   SavedGraphQLSchema,
-  SavedGrpcMock,
   SavedGrpcRequest,
   SavedProtoFile,
   SavedRequest,
-  SavedSoapMock,
   SavedSoapRequest,
   SavedWebhook,
   SavedWsConnection,
@@ -52,6 +49,12 @@ export interface Workspace {
 export interface AppConfig {
   port: number;
   webhookPort: number;
+  /** The forward proxy's port — **engine-level**, one for every workspace (2026-09-25). */
+  forwardProxyPort: number;
+  /**
+   * The companion (RPC over WebSocket) endpoint's port. Changing it needs a restart; the web GUI's port is
+   * derived as this `+ 1` and is never stored.
+   */
   companionPort: number;
   minimizeToTray: boolean;
   tlsEnabled: boolean;
@@ -71,21 +74,14 @@ export interface AppConfig {
   webhooks: SavedWebhook[];
   webhookFolders: Folder[];
   graphqlRequests: SavedGraphQLRequest[];
-  graphqlMocks: SavedGraphQLMock[];
   graphqlSchemas: SavedGraphQLSchema[];
   graphqlRequestFolders: Folder[];
-  graphqlMockFolders: Folder[];
   grpcRequests: SavedGrpcRequest[];
-  grpcMocks: SavedGrpcMock[];
   protoFiles: SavedProtoFile[];
   grpcRequestFolders: Folder[];
-  grpcMockFolders: Folder[];
-  grpcMockServerPort: number;
   soapRequests: SavedSoapRequest[];
-  soapMocks: SavedSoapMock[];
   savedWsdls: SavedWsdl[];
   soapRequestFolders: Folder[];
-  soapMockFolders: Folder[];
   environments: Environment[];
   activeEnvironmentId: string | null;
 }

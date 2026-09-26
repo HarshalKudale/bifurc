@@ -130,25 +130,6 @@ export interface SavedGrpcRequest {
   workspaceId: string;
 }
 
-export interface SavedGrpcMock {
-  id: string;
-  name: string;
-  enabled: boolean;
-  serviceName: string;
-  methodName: string;
-  responseBody: string;
-  responseMetadata: Record<string, string>;
-  responseDelay?: number;
-  streamingResponses?: string[];
-  errorCode?: number;
-  errorMessage?: string;
-  protoFileId: string;
-  protocol?: "grpc";
-  createdAt: number;
-  folderId?: string | null;
-  workspaceId: string;
-}
-
 export interface SavedProtoFile {
   id: string;
   name: string;
@@ -171,25 +152,6 @@ export interface SavedSoapRequest {
   preScript?: string;
   postScript?: string;
   testScript?: string;
-  createdAt: number;
-  folderId?: string | null;
-  workspaceId: string;
-}
-
-export interface SavedSoapMock {
-  id: string;
-  name: string;
-  enabled: boolean;
-  endpointPattern: string;
-  useRegex: boolean;
-  soapActionPattern: string;
-  operationName?: string;
-  responseStatus: number;
-  responseHeaders: Record<string, string>;
-  responseBody: string;
-  responseDelay?: number;
-  wsdlId?: string | null;
-  protocol?: "soap";
   createdAt: number;
   folderId?: string | null;
   workspaceId: string;
@@ -223,36 +185,13 @@ export interface SavedGraphQLRequest {
   workspaceId: string;
 }
 
-export interface SavedGraphQLMock {
-  id: string;
-  name: string;
-  enabled: boolean;
-  endpointPattern: string;
-  useRegex: boolean;
-  operationType: "query" | "mutation" | "subscription" | "any";
-  operationName: string;
-  responseStatus: number;
-  responseHeaders: Record<string, string>;
-  responseBody: string;
-  responseDelay?: number;
-  schemaId?: string | null;
-  protocol?: "graphql";
-  createdAt: number;
-  folderId?: string | null;
-  workspaceId: string;
-}
-
 export type UnifiedRequest =
   | (SavedRequest & { protocol?: "rest" })
   | (SavedGraphQLRequest & { protocol: "graphql" })
   | (SavedGrpcRequest & { protocol: "grpc" })
   | (SavedSoapRequest & { protocol: "soap" });
 
-export type UnifiedMock =
-  | (MockRule & { protocol?: "rest" })
-  | (SavedGraphQLMock & { protocol: "graphql" })
-  | (SavedGrpcMock & { protocol: "grpc" })
-  | (SavedSoapMock & { protocol: "soap" });
+export type UnifiedMock = MockRule & { protocol?: "rest" };
 
 export interface SavedGraphQLSchema {
   id: string;

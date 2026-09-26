@@ -23,7 +23,7 @@ export type EntitySyncStatus = "clean" | "modified" | "new" | "deleted";
 export type FolderStatus = "enabled" | "mixed" | "disabled";
 
 export interface FolderTreeProps {
-  kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "soapRequest" | "soapMock" | "grpcRequest" | "grpcMock" | "runner";
+  kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "soapRequest" | "grpcRequest" | "runner";
   folders: FolderType[];
   items: FolderTreeItem[];
   onOpenItem(id: string): void;

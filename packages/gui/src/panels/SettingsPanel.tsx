@@ -4,6 +4,7 @@ import { strings } from "@/lib/strings";
 import { ColorMode } from "@/hooks/useTheme";
 import PanelLayout from "@/components/ui/PanelLayout";
 import ServerSettingsSection from "./settings/ServerSettingsSection";
+import PortsSettingsSection from "./settings/PortsSettingsSection";
 import TlsSettingsSection from "./settings/TlsSettingsSection";
 import AppearanceSection from "./settings/AppearanceSection";
 import AboutSection from "./settings/AboutSection";
@@ -45,6 +46,9 @@ export default function SettingsPanel({
           colorMode={colorMode}
           onColorModeChange={onColorModeChange}
         />
+
+        {/* The four host-level ports, in one place (`plan/17` work item 6). */}
+        <PortsSettingsSection config={config} onConfigChange={onConfigChange} />
 
         <TlsSettingsSection
           config={config}
