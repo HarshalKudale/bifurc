@@ -59,10 +59,12 @@ import type { CommandRegistry } from "../commands/registry";
 
 /**
  * The 11 folder kinds, as the shell declared them. `packages/protocol/src/commands/folder.ts`'s
- * `FolderKindValue` is the same 11-value enum, which is why P2 work item 7 could convert these four
+ * `FolderKindValue` is the same enum, which is why P2 work item 7 could convert these four
  * commands without a schema gap — and why the channel adapters cast rather than translate.
+ * (`plan/17` work item 8 removed three of its values — the three mock folder kinds — which changes
+ * the enum's size but not that argument.)
  */
-type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "graphqlMock" | "grpcRequest" | "grpcMock" | "soapRequest" | "soapMock";
+type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
 
 /**
  * `kind` → where that kind's folders live. `configKey` is the `AppConfig` array; `entityConfigKey` is
@@ -70,6 +72,10 @@ type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlReque
  * detach them); `fsKind` is the directory name under the workspace.
  *
  * Note `fsKind` is not derivable from `kind`: `ws` → `sockets`, `rule` → `rules`. Keep the table.
+ *
+ * `plan/17` work item 8 removed the three mock folder kinds (`graphqlMock`, `grpcMock`, `soapMock`)
+ * with their entity kinds; REST mocks are the only mock kind left, and they were never foldered
+ * separately.
  */
 const FOLDER_CONFIG: Record<FolderKind, { configKey: string; entityConfigKey?: string; fsKind: string }> = {
     mock: { configKey: "mockFolders", entityConfigKey: "mocks", fsKind: "mocks" },
@@ -77,11 +83,8 @@ const FOLDER_CONFIG: Record<FolderKind, { configKey: string; entityConfigKey?: s
     webhook: { configKey: "webhookFolders", entityConfigKey: "webhooks", fsKind: "webhooks" },
     rule: { configKey: "ruleFolders", entityConfigKey: "proxyRules", fsKind: "rules" },
     graphqlRequest: { configKey: "graphqlRequestFolders", entityConfigKey: "graphqlRequests", fsKind: "graphqlRequests" },
-    graphqlMock: { configKey: "graphqlMockFolders", entityConfigKey: "graphqlMocks", fsKind: "graphqlMocks" },
     grpcRequest: { configKey: "grpcRequestFolders", entityConfigKey: "grpcRequests", fsKind: "grpcRequests" },
-    grpcMock: { configKey: "grpcMockFolders", entityConfigKey: "grpcMocks", fsKind: "grpcMocks" },
     soapRequest: { configKey: "soapRequestFolders", entityConfigKey: "soapRequests", fsKind: "soapRequests" },
-    soapMock: { configKey: "soapMockFolders", entityConfigKey: "soapMocks", fsKind: "soapMocks" },
     request: { configKey: "requestFolders", entityConfigKey: "requests", fsKind: "requests" },
 };
 

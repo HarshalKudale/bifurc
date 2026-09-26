@@ -1,13 +1,11 @@
 /**
- * P14 WI 7 — a workspace-scoped command reaches **the workspace it names**, not the active one.
+ * The `server.*` / `webhookServer.*` commands, after `plan/17`: they act on the host's **one** listener, and
+ * `workspaceId` is an **echo** rather than a selector.
  *
- * WHY THIS FILE EXISTS
- * --------------------
- * WI 1's protocol half gave ten commands an optional `workspaceId`. It did not make them *read* it, and
- * nothing in the suite noticed, because the module facade those commands called is **correct for the
- * desktop**: `createProxyServer({ workspaceId: null })` means "the active workspace", which is the only
- * thing a single-workspace desktop has. The bug only exists on a host serving **two** workspaces, and it
- * was found by probing one, not by reading:
+ * WHAT THIS FILE USED TO ASSERT, AND WHY IT CANNOT NOW
+ * ----------------------------------------------------
+ * Until 2026-09-25 this was `workspaceCommandScope.integration.test.ts`, the guard for P14 WI 7's fix. The bug
+ * it was written for was real and was **succeeding silently** on a two-workspace host:
  *
  * ```
  * host: ws-A proxy=81 webhook=9101     ws-B proxy=82 webhook=9102
@@ -16,20 +14,30 @@
  * server.status                 → { running: false, port: 8791 }  ← a THIRD server
  * ```
  *
- * **The failure succeeds**, so every assertion in this file is written to fail on that shape: each one
- * names a workspace whose answer differs from the active one's, and asserts on **identity** — a specific
- * port, a specific map's count — rather than on "something plausible came back". `activeWorkspaceId` is
- * `WS_A` throughout, and the interesting cases address `WS_B`.
+ * P14's fix was `resolveRuntimeScope()`: a three-way union (`runtime` / `facade` / `absent`) that routed a
+ * `workspaceId` to the right one of N servers, with `absent` for a workspace this host does not serve.
  *
- * WHY ITS OWN FILE
- * ----------------
- * `createWorkspaceHost()` registers the whole command surface into whatever registry it is given, and
- * `register()` **throws on a duplicate**. This file passes its own registry rather than letting the host
- * populate the global singleton, so it can run alongside any other suite in its own worker without either
- * double-registering. That is also why the transport is a socket in a temp dir: the host needs an endpoint
- * to exist, but nothing here goes over it — the commands are invoked directly, which is the layer under
- * test.
+ * **`plan/17` §1 removes the premise of every assertion in that file.** There is now exactly **one** forward
+ * proxy per host, on a port the user owns, serving whichever workspace is active — so a `workspaceId` cannot
+ * select a server, and "which of the N?" is not a question the code is able to ask. The registry, the union
+ * and the `absent` case were deleted with the model; these cases were rewritten rather than adapted, because
+ * an adapted version would assert routing that no longer exists.
+ *
+ * WHAT REPLACES IT — AND WHY EACH CASE CAN STILL FAIL
+ * --------------------------------------------------
+ * Three properties are worth pinning now, and each has a way to break:
+ *
+ * 1. **The commands reach the host's listener.** `bindProxyInstance()` / `bindWebhookInstance()` point the
+ *    module facade at the instances the host created. If that binding were dropped, `server.status` would
+ *    create a *lazily defaulted* instance and report `{ running: false, port: 0 }` — **the exact symptom of
+ *    the P14 bug**, arriving by a new route. So this is asserted against the host's own handle.
+ * 2. **`workspaceId` is echoed, and only when it was sent.** A multiplexed client matches response to
+ *    request by it; returning it unconditionally would change the desktop's payload, which
+ *    `tests/ipc/handlers.test.ts` pins with `toEqual`.
+ * 3. **The webhook is off until started.** `plan/17` §1 makes it a *feature, not infrastructure*. A host that
+ *    opened that port at boot would be adding a listener this product has never had.
  */
+
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
@@ -41,11 +49,10 @@ import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { createWorkspaceHost, type WorkspaceHost } from "@bifurc/engine/runtime/host";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
-import { BLOB_INLINE_THRESHOLD_BYTES } from "@bifurc/protocol";
 
 const WS_A = "scope-ws-a";
 const WS_B = "scope-ws-b";
-/** Deliberately not a workspace that exists — the `absent` case. */
+/** Deliberately not a workspace that exists — under P14 this was the `absent` case. */
 const WS_GHOST = "scope-ws-ghost";
 
 /** `bus` is only read by handlers that emit; none of these do. The shape is the whole requirement. */
@@ -64,56 +71,41 @@ function freePort(): Promise<number> {
   });
 }
 
-/** True when a real `listen()` on `port` succeeds. Not a probe-and-close — see D16 on the TOCTOU race. */
-function portIsFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const s = new net.Server();
-    const done = (free: boolean): void => {
-      s.removeAllListeners();
-      s.on("error", () => {});
-      s.close(() => resolve(free));
-    };
-    s.once("error", () => done(false));
-    s.once("listening", () => done(true));
-    try {
-      s.listen(port, "127.0.0.1");
-    } catch {
-      done(false);
-    }
-  });
-}
-
 function writeWorkspace(dataRoot: string, id: string, name: string): void {
   const dir = path.join(dataRoot, id);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ id, name, createdAt: 0 }, null, 2), "utf-8");
 }
 
-describe("workspace-scoped commands resolve the named workspace (P14 WI 7)", () => {
+/**
+ * Poll until `pred` holds, or the deadline passes.
+ *
+ * **Required, not a convenience.** `startServer()` and `startWebhookServer()` are fire-and-forget — they hand
+ * off to an async `listen()` and return — so `isRunning()` is still `false` on the very next line. Asserting
+ * it directly would be asserting that the OS completed a bind within zero microseconds, which is the flake
+ * class `TESTING.md` records. Polling rather than sleeping also means a *slow* bind is waited out while a
+ * *failed* one is not mistaken for a slow one: the caller still asserts the value afterwards, so a bind that
+ * never lands fails on the assertion rather than passing on the timeout.
+ */
+async function waitUntil(pred: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!pred() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+describe("plan/17 — the server commands act on the host's one listener", () => {
   let root: string;
   let dataRoot: string;
   let socketPath: string;
-  /** The port the **facade** would bind if a command fell through to it. See the "no third server" case. */
-  let configPort: number;
+  /** The port the host's **forward proxy** is configured for. One number, for every workspace. */
+  let forwardProxyPort: number;
+  /** The port the host's **edge** is configured for — deliberately a different one. */
+  let edgePort: number;
+  /** The webhook setting, so "started on the configured port" is a real assertion rather than a default. */
+  let webhookPort: number;
   let host: WorkspaceHost;
   let registry: CommandRegistry;
-
-  /** A runtime's live proxy port, read from the host's own handle rather than from the command under test. */
-  function proxyPortOf(workspaceId: string): number {
-    const rt = host.runtimes.get(workspaceId);
-    if (!rt) throw new Error(`no runtime for ${workspaceId}`);
-    const st = rt.status();
-    if (st.proxyPort === null) throw new Error(`${workspaceId} has no proxy port`);
-    return st.proxyPort;
-  }
-
-  function webhookPortOf(workspaceId: string): number {
-    const rt = host.runtimes.get(workspaceId);
-    if (!rt) throw new Error(`no runtime for ${workspaceId}`);
-    const st = rt.status();
-    if (st.webhookPort === null) throw new Error(`${workspaceId} has no webhook port`);
-    return st.webhookPort;
-  }
 
   beforeAll(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "bifurc-scope-it-"));
@@ -121,18 +113,23 @@ describe("workspace-scoped commands resolve the named workspace (P14 WI 7)", () 
     writeWorkspace(dataRoot, WS_A, "Scope A");
     writeWorkspace(dataRoot, WS_B, "Scope B");
 
-    // The facade branch reads `cfg.port`. Probing for a free one rather than hardcoding means the
-    // "no third server" assertion below is about behaviour and not about whether 8791 happened to be taken
-    // on the machine running the suite.
-    configPort = await freePort();
+    // Every port is probed rather than hardcoded, so a failure is about behaviour rather than about whether
+    // a fixed number happened to be taken on the machine running the suite.
+    edgePort = await freePort();
+    forwardProxyPort = await freePort();
+    webhookPort = await freePort();
 
     fs.writeFileSync(
       path.join(root, "app.json"),
       JSON.stringify(
         {
-          port: configPort,
-          webhookPort: 9101,
-          companionPort: 9271,
+          // The **edge** owns `port` (`plan/15` §3.1) and the **forward proxy** has its own setting
+          // (`plan/17` §1). Keeping them different is what makes "the command reported the forward proxy's
+          // port, not the edge's" an assertion rather than a coincidence.
+          port: edgePort,
+          forwardProxyPort,
+          webhookPort,
+          companionPort: 4747,
           minimizeToTray: true,
           tlsEnabled: false,
           tlsCaCertPath: null,
@@ -141,9 +138,10 @@ describe("workspace-scoped commands resolve the named workspace (P14 WI 7)", () 
             { id: WS_A, name: "Scope A", activeEnvironmentId: null },
             { id: WS_B, name: "Scope B", activeEnvironmentId: null },
           ],
-          // **The active workspace is A, and the discriminating assertions address B.** That is the whole
-          // design of this file: with A active, a command that ignored `workspaceId` would answer for A,
-          // so every B assertion fails on the old code and passes on the new one.
+          // **The active workspace is A, and several assertions address B.** Under P14 that was the whole
+          // design of this file — with A active, a command that ignored `workspaceId` answered for A. It is
+          // kept because the *inverse* now has to hold: the answer must be the same for both ids, because
+          // there is one listener and the id is not a selector.
           activeWorkspaceId: WS_A,
           hasSeenWelcome: true,
           zoomLevel: 0,
@@ -190,233 +188,123 @@ describe("workspace-scoped commands resolve the named workspace (P14 WI 7)", () 
     }
   });
 
-  it("server.status names the workspace it was asked about, not the active one", () => {
-    const a = proxyPortOf(WS_A);
-    const b = proxyPortOf(WS_B);
-    // Guard the premise: if the allocator ever gave both workspaces the same port, every assertion below
-    // would pass for the wrong reason.
-    expect(a).not.toBe(b);
+  // ── the binding: the commands reach the host's listener ──────────────────────
 
-    const statusA = registry.invoke("server.status", { workspaceId: WS_A }, ctx) as {
+  it("server.status reports the host's forward proxy, on its configured port", () => {
+    const status = registry.invoke("server.status", {}, ctx) as {
       running: boolean;
       port: number;
-      workspaceId?: string;
-    };
-    const statusB = registry.invoke("server.status", { workspaceId: WS_B }, ctx) as {
-      running: boolean;
-      port: number;
-      workspaceId?: string;
+      error: string | null;
     };
 
-    // The bug's first symptom was `{ running: false, port: 0 }` while both members were listening.
-    expect(statusA.running).toBe(true);
-    expect(statusB.running).toBe(true);
-    // **Identity, not plausibility.** Each answer is the port that workspace's own runtime bound.
-    expect(statusA.port).toBe(a);
-    expect(statusB.port).toBe(b);
-    // And the response says which workspace it describes, so a multiplexed client can match reply to
-    // request — `ServerStatusResult` has carried the field for exactly this.
-    expect(statusA.workspaceId).toBe(WS_A);
-    expect(statusB.workspaceId).toBe(WS_B);
+    // Read against the host's own handle rather than against a literal, so this fails if the binding is
+    // dropped and the command reports a lazily created instance instead. `{ running: false, port: 0 }` is
+    // what that failure looks like, and it is the P14 bug's own symptom.
+    expect(host.forwardProxy).not.toBeNull();
+    expect(status.running).toBe(true);
+    expect(status.port).toBe(forwardProxyPort);
+    expect(status.port).toBe(host.forwardProxy!.getPort());
+    expect(status.error).toBeNull();
   });
 
-  it("omitting workspaceId resolves to the active workspace — the desktop's contract", () => {
-    const status = registry.invoke("server.status", {}, ctx) as { port: number; workspaceId?: string };
-    // A is active, so the id-less answer is A's. This is the row that keeps the desktop working, and it is
-    // why the parameter is optional rather than required (see `protocol/commands/scope.ts`).
-    expect(status.port).toBe(proxyPortOf(WS_A));
+  it("the same answer for A, for B, and for a workspace that does not exist", () => {
+    const ports = [WS_A, WS_B, WS_GHOST, undefined].map((workspaceId) => {
+      const params = workspaceId === undefined ? {} : { workspaceId };
+      return (registry.invoke("server.status", params, ctx) as { port: number }).port;
+    });
 
-    // **And the echo is absent, deliberately.** `workspaceId` is only echoed when the caller supplied one:
-    // the field exists so a *multiplexed* client can match reply to request, and a multiplexed client is
-    // exactly one that sends an id. Echoing it unconditionally would change the payload of every existing
-    // status call including the desktop's, which WI 7's acceptance criterion forbids — and
-    // `tests/ipc/handlers.test.ts:764` pins that payload with `toEqual`. That test caught the first version
-    // of this code, which echoed always; the test was right and the code was wrong.
-    expect(status.workspaceId).toBeUndefined();
-    expect(Object.keys(status).sort()).toEqual(["error", "port", "running"]);
+    // **This is the assertion P14's fix would fail, inverted.** There, four ids had to produce *different*
+    // answers; now they must all produce the *same* one, because the id selects nothing. A regression that
+    // reintroduced routing would split these — and a `ghost` id would go back to being refused.
+    expect(new Set(ports).size).toBe(1);
+    expect(ports[0]).toBe(forwardProxyPort);
   });
 
-  it("server.start { workspaceId: A } binds nothing new — the third server is gone", async () => {
-    // Capture the state *before* the call, so "nothing changed" is an assertion rather than a tautology.
-    const beforeA = proxyPortOf(WS_A);
-    const beforeB = proxyPortOf(WS_B);
+  it("echoes workspaceId only when the caller sent one — the pinned payload", () => {
+    const withId = registry.invoke("server.status", { workspaceId: WS_B }, ctx) as { workspaceId?: string };
+    expect(withId.workspaceId).toBe(WS_B);
 
-    // The exact call that used to return `{ ok: true }` while binding `cfg.port`. `ok` is still true, and
-    // that is correct: A is already serving, which is what the caller asked for. What must NOT happen is a
-    // bind, so the assertion is about the port rather than about the return value — **`ok: true` is what
-    // made this bug invisible for a whole phase.**
-    const res = registry.invoke("server.start", { workspaceId: WS_A }, ctx) as { ok: boolean };
-    expect(res.ok).toBe(true);
-
-    // The facade branch's port is still free, so no third server took it. A real `listen()`, not a probe.
-    expect(await portIsFree(configPort)).toBe(true);
-
-    // And both members are on exactly the ports they had.
-    expect(proxyPortOf(WS_A)).toBe(beforeA);
-    expect(proxyPortOf(WS_B)).toBe(beforeB);
-    expect((registry.invoke("server.status", { workspaceId: WS_A }, ctx) as { port: number }).port).toBe(beforeA);
+    // Absent, not present-and-undefined: `tests/ipc/handlers.test.ts` pins the desktop's payload with
+    // `toEqual`, so a key that appeared unconditionally would be a user-visible change to `window.api`.
+    const withoutId = registry.invoke("server.status", {}, ctx) as Record<string, unknown>;
+    expect("workspaceId" in withoutId).toBe(false);
   });
 
-  it("an unknown workspace is `absent`, never a silent redirect to the active one", () => {
+  it("a workspaceId naming nothing is echoed rather than refused", () => {
+    // Under P14 this returned `{ running: false, port: 0, error: "No runtime is registered for workspace …" }`
+    // — the `absent` case. There is no routing left to be absent from, so the honest answer is the one the
+    // host can give: its proxy, with the id echoed back. Asserted explicitly so a re-introduced refusal is a
+    // decision rather than a silent return.
     const status = registry.invoke("server.status", { workspaceId: WS_GHOST }, ctx) as {
       running: boolean;
       port: number;
       error: string | null;
       workspaceId?: string;
     };
-    expect(status.running).toBe(false);
-    expect(status.port).toBe(0);
-    // **This is the assertion the third branch exists for.** Falling through to the facade would report
-    // the *active* workspace's port here and claim success — acting on one workspace while the caller
-    // asked about another, which is the original bug with a different id.
-    expect(status.port).not.toBe(proxyPortOf(WS_A));
-    expect(status.error).toMatch(/no runtime/i);
     expect(status.workspaceId).toBe(WS_GHOST);
+    expect(status.running).toBe(true);
+    expect(status.port).toBe(forwardProxyPort);
+    expect(status.error).toBeNull();
+  });
 
-    // The lifecycle commands agree rather than pretending.
-    expect((registry.invoke("server.start", { workspaceId: WS_GHOST }, ctx) as { ok: boolean }).ok).toBe(false);
-    expect((registry.invoke("server.stop", { workspaceId: WS_GHOST }, ctx) as { ok: boolean }).ok).toBe(false);
-    expect((registry.invoke("proxy.status", { workspaceId: WS_GHOST }, ctx) as { running: boolean }).running).toBe(
-      false,
+  // ── lifecycle: one proxy, whatever id the caller names ───────────────────────
+
+  it("server.stop then server.start act on the one proxy, and it comes back on its configured port", async () => {
+    expect((registry.invoke("server.stop", { workspaceId: WS_B }, ctx) as { ok: boolean }).ok).toBe(true);
+    expect(host.forwardProxy!.isRunning()).toBe(false);
+
+    // Stopped, and the command says so rather than reporting a stale port.
+    expect((registry.invoke("server.status", {}, ctx) as { running: boolean }).running).toBe(false);
+
+    expect((registry.invoke("server.start", { workspaceId: WS_A }, ctx) as { ok: boolean }).ok).toBe(true);
+    await waitUntil(() => host.forwardProxy!.isRunning());
+    expect(host.forwardProxy!.isRunning()).toBe(true);
+    expect(host.forwardProxy!.getPort()).toBe(forwardProxyPort);
+  });
+
+  it("proxy.status is the same listener as server.status, with the narrower payload", () => {
+    // Two commands, two payloads, one `isRunning()` — the distinction `serverCommands.ts`'s header records.
+    expect((registry.invoke("proxy.status", { workspaceId: WS_A }, ctx) as { running: boolean }).running).toBe(
+      host.forwardProxy!.isRunning(),
     );
   });
 
-  it("webhookServer.status reports the named workspace's receiver", () => {
-    const statusA = registry.invoke("webhookServer.status", { workspaceId: WS_A }, ctx) as {
+  // ── the webhook: host-level, and off until the user starts it ────────────────
+
+  it("the host does NOT start the webhook — plan/17 §1's off-by-default rule", () => {
+    const status = registry.invoke("webhookServer.status", {}, ctx) as {
       running: boolean;
-      port: number;
-    };
-    const statusB = registry.invoke("webhookServer.status", { workspaceId: WS_B }, ctx) as {
-      running: boolean;
-      port: number;
-    };
-    expect(statusA.running).toBe(true);
-    expect(statusB.running).toBe(true);
-    expect(statusA.port).toBe(webhookPortOf(WS_A));
-    expect(statusB.port).toBe(webhookPortOf(WS_B));
-    expect(statusA.port).not.toBe(statusB.port);
-  });
-
-  it("webhook.registerActive writes into the NAMED workspace's map, not the active one's", () => {
-    const rtA = host.runtimes.get(WS_A)!;
-    const rtB = host.runtimes.get(WS_B)!;
-    const beforeA = rtA.webhook.activeCount();
-    const beforeB = rtB.webhook.activeCount();
-
-    // Registering for **B** while **A** is active is the discriminating choice: the old code wrote into the
-    // facade's map, which means the active workspace's — so this case would land in A and fail here.
-    const res = registry.invoke(
-      "webhook.registerActive",
-      { workspaceId: WS_B, webhookId: "wh-1", urlSuffix: "hook-b" },
-      ctx,
-    ) as { ok: boolean };
-    expect(res.ok).toBe(true);
-
-    expect(rtB.webhook.activeCount()).toBe(beforeB + 1);
-    expect(rtA.webhook.activeCount()).toBe(beforeA);
-
-    // And it unregisters from the same place, which is the other half of the pair.
-    expect(
-      (registry.invoke("webhook.unregisterActive", { workspaceId: WS_B, webhookId: "wh-1" }, ctx) as { ok: boolean })
-        .ok,
-    ).toBe(true);
-    expect(rtB.webhook.activeCount()).toBe(beforeB);
-  });
-
-  it("an egress artifact above the inline threshold is readable by the workspace that asked for it", () => {
-    /**
-     * P14 WI 8. The egress commands' `workspaceId` exists for the **blob half**: above
-     * `BLOB_INLINE_THRESHOLD_BYTES` the engine stages an artifact and the client reads it with
-     * `blob.read` scoped to its own workspace. Without the field the engine staged host-wide, so a
-     * scoped read found nothing — the engine's own export unreadable by the client that requested it.
-     *
-     * **`capture.shareJson` because its payload size is ours to set.** The `entries` come from the
-     * client, so this can cross the threshold without a large fixture on disk or a slow render. The
-     * other two (`runner.exportReport`, `audit.export`) are wired identically and asserted at the
-     * schema level in `packages/protocol/src/commands/index.test.ts`.
-     */
-    const big = "x".repeat(BLOB_INLINE_THRESHOLD_BYTES + 1024);
-
-    const res = registry.invoke(
-      "capture.shareJson",
-      { workspaceId: WS_B, entries: [big] },
-      ctx,
-    ) as { blobId?: string; inline?: string };
-
-    // **Guard the premise.** If the artifact came back inline, the blob branch was never taken and the
-    // two assertions below would pass while testing nothing about namespaces.
-    expect(res.blobId).toBeDefined();
-    expect(res.inline).toBeUndefined();
-
-    // Readable under B, the workspace that asked.
-    const read = registry.invoke("blob.read", { blobId: res.blobId!, offset: 0, workspaceId: WS_B }, ctx) as {
-      data: string;
-    };
-    expect(Buffer.from(read.data, "base64").length).toBeGreaterThan(0);
-
-    // **And NOT under A — the identity assertion.** This is the one that fails if the engine staged
-    // host-wide, and it is why the case asserts on a namespace rather than on "a blobId came back".
-    expect(() =>
-      registry.invoke("blob.read", { blobId: res.blobId!, offset: 0, workspaceId: WS_A }, ctx),
-    ).toThrow(/no such blob/i);
-
-    // Release so the case leaves nothing staged behind it.
-    registry.invoke("blob.release", { blobId: res.blobId!, workspaceId: WS_B }, ctx);
-  });
-
-  it("stopping one workspace leaves its sibling serving — the D10 behaviour", () => {
-    const bPort = proxyPortOf(WS_B);
-
-    expect((registry.invoke("server.stop", { workspaceId: WS_A }, ctx) as { ok: boolean }).ok).toBe(true);
-
-    const statusA = registry.invoke("server.status", { workspaceId: WS_A }, ctx) as { running: boolean };
-    const statusB = registry.invoke("server.status", { workspaceId: WS_B }, ctx) as { running: boolean; port: number };
-    // A is down, B is untouched — and B's *port* is unchanged, so the stop hit the right instance rather
-    // than merely hitting something.
-    expect(statusA.running).toBe(false);
-    expect(statusB.running).toBe(true);
-    expect(statusB.port).toBe(bPort);
-  });
-
-  it("after host.stop() nothing is served — and the two branches answer differently, deliberately", async () => {
-    // `clearRuntimes()` runs in `stop()`. Without it the lookup would keep answering from runtimes the
-    // host no longer serves, and `server.status` would report a retained `currentPort` for a workspace that
-    // is down — the same stale-answer class as `currentPort` surviving `stop()` one layer below
-    // (`proxy/server.ts`'s recorded trap). Called directly here because `afterAll` has not run yet.
-    await host.stop();
-
-    // **The non-active workspace reads `absent`, with an explanation.** This is the branch that earns its
-    // keep: there is no runtime for B, and there is no in-process engine that could serve it either.
-    const b = registry.invoke("server.status", { workspaceId: WS_B }, ctx) as {
-      running: boolean;
-      port: number;
       error: string | null;
     };
-    expect(b.running).toBe(false);
-    expect(b.port).toBe(0);
-    expect(b.error).toMatch(/no runtime/i);
 
-    // **The active workspace reads through the facade branch instead, and that asymmetry is deliberate.**
-    // `resolveRuntimeScope` returns `facade` whenever the target *is* the active workspace, because that is
-    // what keeps the desktop working — `createEngine()` binds one proxy through the facade, so on a desktop
-    // the facade genuinely is the active workspace's server. A stopped host is indistinguishable from that
-    // case here: the registry is empty and the target is the active workspace, so the facade branch answers
-    // from an instance that does not exist. The result is honest (`running: false`, `port: 0`) but
-    // uninformative (`error: null` — nothing failed), and it is recorded rather than hidden.
-    //
-    // Not "fixed" by making the facade branch conditional on a live instance, and that is a real decision
-    // rather than an oversight: the check would have to reach into `proxy/server.ts`'s private
-    // `defaultInstance`, and `tests/integration/settingsMutations.integration.test.ts` drives these same
-    // commands through the facade with no workspace id — so the change would alter behaviour for a suite
-    // that is currently correct. The state is also transient in practice: `runWorkspaceHost()` exits on the
-    // signal that stopped the host.
-    const a = registry.invoke("server.status", { workspaceId: WS_A }, ctx) as {
+    // `plan/17` §1: the webhook *"is a **feature, not infrastructure**: it is **off by default**, the user
+    // starts it, and the user owns the port."* A host that opened it at boot would add a listening port this
+    // product has never had.
+    expect(status.running).toBe(false);
+    expect(status.error).toBeNull();
+    expect(host.status().webhookPort).toBeNull();
+  });
+
+  it("webhookServer.start binds the host's receiver on the configured port", async () => {
+    expect((registry.invoke("webhookServer.start", {}, ctx) as { ok: boolean }).ok).toBe(true);
+
+    await waitUntil(() => host.webhook!.isRunning());
+    expect(host.webhook!.isRunning()).toBe(true);
+    expect(host.webhook!.getPort()).toBe(webhookPort);
+    expect(host.status().webhookPort).toBe(webhookPort);
+
+    const status = registry.invoke("webhookServer.status", { workspaceId: WS_A }, ctx) as {
       running: boolean;
       port: number;
-      error: string | null;
+      workspaceId?: string;
     };
-    expect(a.running).toBe(false);
-    expect(a.port).toBe(0);
-    expect(a.error).toBeNull();
+    expect(status.running).toBe(true);
+    expect(status.port).toBe(webhookPort);
+    // The same echo rule as `server.status`, and asserted here because the two commands must agree about when
+    // the key is present — which is why `commands/echoWorkspace.ts` is one function rather than two copies.
+    expect(status.workspaceId).toBe(WS_A);
+
+    expect((registry.invoke("webhookServer.stop", {}, ctx) as { ok: boolean }).ok).toBe(true);
+    expect(host.webhook!.isRunning()).toBe(false);
   });
 });

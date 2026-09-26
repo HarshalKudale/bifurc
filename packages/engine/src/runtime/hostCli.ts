@@ -2,7 +2,8 @@
  * P14 work item 6 — the **deployable host artifact**: the executable a container runs.
  *
  * ```bash
- * node <engine>/dist/runtime/hostCli.js --data-dir /data --rpc-socket /run/bifurc.sock --token-file /run/token
+ * node <engine>/dist/runtime/hostCli.js --data-dir /data --rpc-socket /run/bifurc.sock
+ * node <engine>/dist/runtime/hostCli.js --data-dir /data --ws-port 4747 --gui-target 4748
  * ```
  *
  * Documented deployment: **one container = one workspace**, one volume = that workspace's `data/` +
@@ -28,31 +29,25 @@
  *
  * It does not read `app.json` itself. The host owns the workspace list and the bootstrap sequence
  * (`bootstrapWorkspaces()`), so the CLI's whole job is argv → `WorkspaceHostOptions`.
+ *
+ * ## What it stopped reading on 2026-09-25
+ *
+ * Three things, all for the same reason — the engine is not deployable remotely, so every listener binds
+ * loopback and there is no boundary for a credential to guard:
+ *
+ * - **`--token-file`** and its `readTokenFile()`, which existed so a container could mount the per-start
+ *   secret. The secret itself is gone (`transport/auth/token.ts` was deleted).
+ * - **`--ws-tls-cert`/`--ws-tls-key`** and their `readPemFile()`. TLS on the RPC channel was the *second
+ *   condition* of the non-loopback bind, not a feature in its own right — see `transport/ws.ts`'s header.
+ * - **`--ws-host`, `--proxy-bind-host`, `--edge-bind-host`** and the three `--*-allow-non-loopback` opt-ins.
+ *   The bind host is not a choice any more, so passing it through would be passing through a value with one
+ *   legal setting.
+ *
+ * `hostArgs.ts`'s `REMOVED_FLAGS` names all of them to an operator who still passes one, so the failure is a
+ * diagnosis rather than an `unrecognised flag`.
  */
-import * as fs from "fs";
 import { runWorkspaceHost, type WorkspaceHostOptions, type HostTransport } from "./host";
-import { DEFAULT_WS_HOST } from "../transport/ws";
 import { HOST_USAGE, parseHostArgs } from "./hostArgs";
-
-/**
- * Read the engine token from a mounted file.
- *
- * Trimmed, because a secret mounted from a file very often ends in a newline and a token with a trailing
- * `\n` fails authentication with a message that does not mention whitespace — the client sends what it
- * read and the engine compares what it generated.
- *
- * A missing or unreadable file is **fatal**: the operator named it, so falling back to a generated token
- * would start a host whose token is not the one the client was given, which is the kind of failure that
- * presents as an unexplained `UNAUTHORIZED` much later.
- */
-function readTokenFile(file: string): string {
-  try {
-    return fs.readFileSync(file, "utf-8").trim();
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`--token-file ${file} could not be read: ${reason}`);
-  }
-}
 
 async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseHostArgs(argv);
@@ -70,40 +65,111 @@ async function main(argv: readonly string[]): Promise<void> {
 
   const { args } = parsed;
 
+  /**
+   * `--ws-port` **is** the WebSocket mode switch, and it is the only one.
+   *
+   * It used to share that job with `--ws-host`, which existed to name a non-loopback address; with the bind
+   * hosts gone (see the header) a port on its own is unambiguous, and the host applies `DEFAULT_WS_HOST`
+   * itself. Note the absence of any bind host, `tls` or `allowNonLoopback` here: those were the fields a
+   * caller could use to widen the bind, and `transport/ws.ts` no longer has them.
+   */
   const transport: HostTransport =
-    args.wsHost !== undefined || args.wsPort !== undefined
-      ? { kind: "ws", host: args.wsHost ?? DEFAULT_WS_HOST, port: args.wsPort }
-      : { kind: "socket", path: args.rpcSocket };
+    args.wsPort !== undefined ? { kind: "ws", port: args.wsPort } : { kind: "socket", path: args.rpcSocket };
+
   const opts: WorkspaceHostOptions = {
     dataDir: args.dataDir,
+    // **No `domain`.** The host answers as `localhost`, which it composes itself, and the parser no longer has
+    // a flag for it — removed 2026-09-24 because the engine is no longer deployed in the cloud
+    // (`hostArgs.ts`'s header records the reasoning). There is nothing here to pass through.
     transport,
     workspaceIds: args.workspaceIds,
-    token: args.tokenFile === undefined ? undefined : readTokenFile(args.tokenFile),
     // Default notices already name each workspace and its resolved ports; keeping the host's own channel
     // means the container's log and a test's `onNotice` say the same things in the same order.
+    //
+    // The edge's port is the one bind-ish number that is still an operator's choice, and it is a *port*
+    // rather than an *address*: the edge is ONE listener for the whole host (`plan/15` §3.1), its default is
+    // a migrated value rather than a chosen one (`app.json`'s `port`, so existing `*.localhost` mappings do
+    // not have to change), and an operator whose machine already has something on 80 needs a way to say so
+    // without editing JSON inside a volume.
+    edgePort: args.edgePort,
+    // `plan/15` work item 5 — the global mapping from this host's own domain to the web GUI's port. Carried
+    // as a target rather than a directory: the edge reverse-proxies to it, so the GUI is served by whatever
+    // the operator runs and the engine learns nothing about bundles, MIME types or cache headers.
+    guiTarget: args.guiTarget,
   };
 
   const host = await runWorkspaceHost(opts);
   const status = host.status();
 
-  // One line per workspace, after start, so "which port is it on?" has an answer in the container log
-  // rather than requiring a shell into the container to ask `server.status`.
-  for (const rt of status.runtimes) {
+  // The host's own name, first, because it is what a reader needs to interpret the edge line that follows:
+  // `plan/15` §3.3's routing table and §4.3's mapping editor both key off it, so what a mapping's domain looks
+  // like depends on it.
+  //
+  // **It is no longer a value the operator supplied.** Until 2026-09-24 this line reported `--domain`, which
+  // was the one startup value that came from the command line rather than from the machine; the flag is gone
+  // (the engine is not deployable in the cloud), so this is the constant the host composed. Printed anyway
+  // rather than dropped, and for the same reason as before: it is what tells an operator that
+  // `<sub>.localhost` is the shape of a mapping on this engine.
+  console.log(
+    `[host] domain ${status.domain} — the name this engine answers as (mappings: <sub>.${status.domain})`,
+  );
+
+  // The edge first, because it is one listener for the whole host rather than one per workspace — so it
+  // reads as the host's own address, ahead of the port lines below.
+  //
+  // A failed bind is a **warning**, unlike a busy proxy port which is routine. `WorkspaceHostStatus.edgeError`
+  // carries the reasoning; in one line: if the edge is down, nothing on the reverse path resolves, which is
+  // the product surface rather than one of several.
+  if (status.edgeError !== null) {
+    console.warn(
+      `[host] edge on ${status.edgeAddress ?? "(unknown)"} FAILED to bind: ${status.edgeError}` +
+        ` — no *.localhost mapping will resolve`,
+    );
+  } else if (status.edgeAddress !== null) {
+    console.log(`[host] edge ${status.edgeAddress} — reverse proxy and home page for the active workspace`);
+  }
+
+  /**
+   * ## The port lines, rewritten for `plan/17`
+   *
+   * There used to be **one line per workspace**, each naming that workspace's proxy and webhook port —
+   * because each had its own. There is now one listener per port for the whole host, so per-workspace lines
+   * would print the same two numbers N times. The ports are printed once, and the workspaces are listed
+   * separately as what they now are: **config scope**.
+   *
+   * The forward proxy gets its own line because it is the one number an operator has to **act on** — it goes
+   * into a browser's proxy setting — so it is stated even when it failed, with the failure attached rather
+   * than replaced by a dash. The webhook is printed only when it is up: `plan/17` §1 makes it off by default,
+   * so "not running" is the ordinary state and a line announcing it on every start would be noise.
+   */
+  if (status.forwardProxyError !== null) {
+    console.warn(
+      `[host] forward proxy FAILED to bind ${status.forwardProxyPort ?? "(unknown)"}: ` +
+        `${status.forwardProxyError} — the browser's proxy setting points here`,
+    );
+  } else if (status.forwardProxyPort !== null) {
     console.log(
-      `[host] workspace ${rt.workspaceId}: proxy ${rt.proxyPort ?? "-"} webhook ${rt.webhookPort ?? "-"}`,
+      `[host] forward proxy ${status.forwardProxyPort} — point the browser's proxy setting here`,
     );
   }
-  console.log(`[host] serving ${status.runtimes.length} workspace(s); rpc ${status.rpcAddress}`);
-  for (const s of status.skipped) {
-    // A workspace the host could not place. `plan/14` D16 makes a taken *override* fail loudly but not
-    // fatally, so this is a warning rather than a startup failure — the others are still serving.
-    console.warn(`[host] skipped ${s.workspaceId}: ${s.reason}`);
+  if (status.webhookPort !== null) {
+    console.log(`[host] webhook receiver ${status.webhookPort}`);
   }
+  if (status.companionPort !== null) {
+    console.log(
+      `[host] companion ${status.companionPort}` +
+        (status.webGuiPort === null ? "" : ` — the web GUI belongs on ${status.webGuiPort}`),
+    );
+  }
+  console.log(
+    `[host] serving ${status.workspaces.length} workspace(s): ` +
+      `${status.workspaces.map((w) => w.workspaceId).join(", ") || "(none)"}; rpc ${status.rpcAddress}`,
+  );
 }
 
 void main(process.argv.slice(2)).catch((err: unknown) => {
-  // A startup failure is the container's problem to surface, so it goes to stderr with a non-zero code.
-  // `PortRangeExhaustedError` and a socket that cannot bind both land here.
+  // A startup failure is the container's problem to surface, so it goes to stderr with a non-zero code. A
+  // socket that cannot bind, and the pair search running out of room for the companion, both land here.
   const reason = err instanceof Error ? err.message : String(err);
   console.error(`[host] failed to start: ${reason}`);
   process.exitCode = 1;

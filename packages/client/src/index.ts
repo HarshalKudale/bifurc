@@ -187,7 +187,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 /**
  * The two `window.api` kinds whose name the **renderer** spells the engine's way.
  *
- * `EntityKind` — the wire vocabulary — renames two of the twelve CRUD kinds: the engine stores a
+ * `EntityKind` — the wire vocabulary — renames two of the CRUD kinds: the engine stores a
  * proxy rule under `"rules"` and a websocket connection under `"sockets"`, while the protocol calls
  * them `"proxyRules"` and `"wsConnections"`. Every panel passes the protocol name (`"mocks"`,
  * `"requests"`, `"webhooks"`, …) **except** two, which pass the engine's:
@@ -574,17 +574,17 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("loadEntity", { workspaceId: wsId, kind: toProtocolKind(kind), id }) as ReturnType<BifurcApi["loadEntity"]>,
     // Reclassified `transport` → `shim` in the same group, for the other half of the same channel pair.
     // `entity:setEnabled`'s channel kept an explicit guard *ahead* of `commandRegistry.invoke()`, because
-    // `EntitySetEnabledParams.kind` is a strict six-value enum: an out-of-enum kind would otherwise throw
+    // `EntitySetEnabledParams.kind` is a strict enum: an out-of-enum kind would otherwise throw
     // `BAD_REQUEST` instead of resolving the `{ok: false, error: "invalid_kind"}` the method has always
     // returned. The guard is checked against the protocol's **own** schema rather than a second copy of
-    // the six names, so a widening there cannot leave this behind.
+    // the names, so a widening there cannot leave this behind.
     //
     // Unlike the `loadEntity` case this one is latent, not live — every caller passes a kind the enum
-    // accepts (the mocks panel's `resolveEntityKind` yields only `mocks` / `graphqlMocks` / `grpcMocks` /
-    // `soapMocks` in mock mode, and the two panels that toggle pass the literals `"mappings"` and
-    // `"rules"`). It is carried over anyway because it is a *documented* client-facing behaviour of the
-    // surface being reconstructed, and `packages/gui/src/types/window.ts`'s `Promise<{ok: boolean; error?:
-    // string}>` is the contract that says so.
+    // accepts (since `plan/17` work item 8 removed the three protocol mock kinds the enum is `mocks` /
+    // `mappings` / `rules`; the mocks panel passes `mocks`, and the two panels that toggle pass the
+    // literals `"mappings"` and `"rules"`). It is carried over anyway because it is a *documented*
+    // client-facing behaviour of the surface being reconstructed, and `packages/gui/src/types/window.ts`'s
+    // `Promise<{ok: boolean; error?: string}>` is the contract that says so.
     setEntityEnabled: (wsId, kind, id, enabled) => {
       if (!EntitySetEnabledParams.shape.kind.safeParse(kind).success) {
         return Promise.resolve({ ok: false, error: "invalid_kind" }) as ReturnType<BifurcApi["setEntityEnabled"]>;
@@ -724,9 +724,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     addGraphQLRequest: async (r) => unwrapCreated(await call("addGraphQLRequest", { kind: "graphqlRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addGraphQLRequest"]>>,
     updateGraphQLRequest: (r) => call("updateGraphQLRequest", { kind: "graphqlRequests", entity: r }) as ReturnType<BifurcApi["updateGraphQLRequest"]>,
     deleteGraphQLRequest: (id) => call("deleteGraphQLRequest", { kind: "graphqlRequests", id }) as ReturnType<BifurcApi["deleteGraphQLRequest"]>,
-    addGraphQLMock: async (m) => unwrapCreated(await call("addGraphQLMock", { kind: "graphqlMocks", entity: m })) as Awaited<ReturnType<BifurcApi["addGraphQLMock"]>>,
-    updateGraphQLMock: (m) => call("updateGraphQLMock", { kind: "graphqlMocks", entity: m }) as ReturnType<BifurcApi["updateGraphQLMock"]>,
-    deleteGraphQLMock: (id) => call("deleteGraphQLMock", { kind: "graphqlMocks", id }) as ReturnType<BifurcApi["deleteGraphQLMock"]>,
     addGraphQLSchema: async (s) => unwrapCreated(await call("addGraphQLSchema", { kind: "graphqlSchemas", entity: s })) as Awaited<ReturnType<BifurcApi["addGraphQLSchema"]>>,
     deleteGraphQLSchema: (id) => call("deleteGraphQLSchema", { kind: "graphqlSchemas", id }) as ReturnType<BifurcApi["deleteGraphQLSchema"]>,
     listGraphQLSchemas: async () =>
@@ -734,9 +731,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     addGrpcRequest: async (r) => unwrapCreated(await call("addGrpcRequest", { kind: "grpcRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addGrpcRequest"]>>,
     updateGrpcRequest: (r) => call("updateGrpcRequest", { kind: "grpcRequests", entity: r }) as ReturnType<BifurcApi["updateGrpcRequest"]>,
     deleteGrpcRequest: (id) => call("deleteGrpcRequest", { kind: "grpcRequests", id }) as ReturnType<BifurcApi["deleteGrpcRequest"]>,
-    addGrpcMock: async (m) => unwrapCreated(await call("addGrpcMock", { kind: "grpcMocks", entity: m })) as Awaited<ReturnType<BifurcApi["addGrpcMock"]>>,
-    updateGrpcMock: (m) => call("updateGrpcMock", { kind: "grpcMocks", entity: m }) as ReturnType<BifurcApi["updateGrpcMock"]>,
-    deleteGrpcMock: (id) => call("deleteGrpcMock", { kind: "grpcMocks", id }) as ReturnType<BifurcApi["deleteGrpcMock"]>,
     addProtoFile: async (p) => unwrapCreated(await call("addProtoFile", { kind: "protoFiles", entity: p })) as Awaited<ReturnType<BifurcApi["addProtoFile"]>>,
     deleteProtoFile: (id) => call("deleteProtoFile", { kind: "protoFiles", id }) as ReturnType<BifurcApi["deleteProtoFile"]>,
     listProtoFiles: async () =>
@@ -744,9 +738,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     addSoapRequest: async (r) => unwrapCreated(await call("addSoapRequest", { kind: "soapRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addSoapRequest"]>>,
     updateSoapRequest: (r) => call("updateSoapRequest", { kind: "soapRequests", entity: r }) as ReturnType<BifurcApi["updateSoapRequest"]>,
     deleteSoapRequest: (id) => call("deleteSoapRequest", { kind: "soapRequests", id }) as ReturnType<BifurcApi["deleteSoapRequest"]>,
-    addSoapMock: async (m) => unwrapCreated(await call("addSoapMock", { kind: "soapMocks", entity: m })) as Awaited<ReturnType<BifurcApi["addSoapMock"]>>,
-    updateSoapMock: (m) => call("updateSoapMock", { kind: "soapMocks", entity: m }) as ReturnType<BifurcApi["updateSoapMock"]>,
-    deleteSoapMock: (id) => call("deleteSoapMock", { kind: "soapMocks", id }) as ReturnType<BifurcApi["deleteSoapMock"]>,
     addWsdl: async (w) => unwrapCreated(await call("addWsdl", { kind: "wsdls", entity: w })) as Awaited<ReturnType<BifurcApi["addWsdl"]>>,
     deleteWsdl: (id) => call("deleteWsdl", { kind: "wsdls", id }) as ReturnType<BifurcApi["deleteWsdl"]>,
     listWsdls: async () =>
@@ -862,9 +853,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     grpcExecute: (serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection) =>
       call("grpcExecute", { serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection }) as ReturnType<BifurcApi["grpcExecute"]>,
     grpcReflect: (serverAddress) => call("grpcReflect", { serverAddress }) as ReturnType<BifurcApi["grpcReflect"]>,
-    grpcMockServerStatus: () => call("grpcMockServerStatus", {}) as ReturnType<BifurcApi["grpcMockServerStatus"]>,
-    grpcStartMockServer: () => call("grpcStartMockServer", {}) as ReturnType<BifurcApi["grpcStartMockServer"]>,
-    grpcStopMockServer: () => call("grpcStopMockServer", {}) as ReturnType<BifurcApi["grpcStopMockServer"]>,
 
     // ── TLS ─────────────────────────────────────────────────────────────────
     //

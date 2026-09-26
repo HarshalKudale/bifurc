@@ -58,7 +58,6 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "graphql.introspect",
   "soap.fetchWsdl",
   "grpc.reflect",
-  "grpc.mockServerStatus",
   "application.list",
   "application.getState",
   "application.getAllStates",
@@ -149,8 +148,6 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "graphql.execute",
   "soap.execute",
   "grpc.execute",
-  "grpc.startMockServer",
-  "grpc.stopMockServer",
   "capture.shareJson",
   "healthbar.saveServices",
 ]);

@@ -1,6 +1,16 @@
 /**
  * The six CRUD kinds, registered directly — **no channels**.
  *
+ * ## It lives in the engine now (2026-09-23, `plan/15` work item 10)
+ *
+ * Moved from `src/ipc/handlers/crudKinds.ts` to `packages/engine/src/store/kinds/crudKinds.ts`, with its
+ * four siblings. **Nothing in it was ever Electron** — two imports, both of engine types — and that is the
+ * whole point: this file is the *engine half* of the CRUD factory's inversion, so leaving it in the shell
+ * meant a headless host registered the four `entity.*` commands and left this file's container **empty**.
+ * Every kind then threw `is not routed through the CommandRegistry yet` while `isRegistered("entity.delete")`
+ * was `true`. `registerAllEngineKinds()` calls it now; the shell still calls it too, for the reasons its own
+ * call site records.
+ *
  * Renamed from `crudHandlers.ts` on 2026-09-21, when the P6 reduction's fourth group deleted the file's
  * last five channels (`webhook:registerActive`, `webhook:unregisterActive`,
  * `webhookServer:start|stop|status`). `plan/07` §5b-septies had recorded a decision to *keep* the
@@ -20,8 +30,8 @@
  * `cfg.webhookPort` → `9101` — and the three-field status shape), which is why deleting them cost no
  * tests. `registerWebhookCommands()` is called from `src/ipc/handlers.ts`.
  */
-import { registerCrudKind } from "@bifurc/engine/store/entityCrudCommands";
-import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "@bifurc/engine/store/config";
+import { registerCrudKind } from "../entityCrudCommands";
+import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "../config";
 
 export function registerCrudKinds() {
   // ── Mappings ───────────────────────────────────────────────────────────────

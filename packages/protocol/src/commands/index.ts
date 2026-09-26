@@ -107,9 +107,6 @@ export const COMMANDS = {
   // grpc.*
   "grpc.execute": spec(GrpcCmd.GrpcExecuteParams, "grpc:execute"),
   "grpc.reflect": spec(GrpcCmd.GrpcReflectParams, "grpc:reflect"),
-  "grpc.mockServerStatus": spec(GrpcCmd.GrpcMockServerStatusParams, "grpc:mockServerStatus"),
-  "grpc.startMockServer": spec(GrpcCmd.GrpcStartMockServerParams, "grpc:startMockServer"),
-  "grpc.stopMockServer": spec(GrpcCmd.GrpcStopMockServerParams, "grpc:stopMockServer"),
 
   // application.*
   "application.list": spec(ApplicationCmd.ApplicationListParams, "applications:list"),

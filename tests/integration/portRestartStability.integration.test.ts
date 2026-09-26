@@ -1,29 +1,42 @@
 /**
- * P14 §8 criterion 6 — D16's stickiness, and the restart behaviour around it. **Three cases, and their
- * shapes are the point: they separate the two mechanisms rather than sharing one outcome.**
+ * P14 §8 criterion 6 — D16's stickiness, and the restart behaviour around it.
  *
- * ## What D16 actually requires
+ * ## ⚠ SUPERSEDED BY `plan/17` §1 (2026-09-25). WHAT THIS FILE IS NOW, AND WHY IT SURVIVED.
  *
- * *"The resolved port is recorded in the host-local registry, so a restart reuses it. A workspace that landed
- * on 81 because 80 was busy **keeps 81** after 80 frees up — a stable URL is worth more to the browser-proxy
- * workflow than reclaiming the base."* The requirement is therefore **not** "the ports come back". It is "the
- * workspace keeps the port it actually bound, *even when a lower one becomes available*" — and those two
- * claims come apart in exactly the third case below.
+ * D16 gave every workspace its own proxy port and remembered it, so *"a workspace that landed on 81 because
+ * 80 was busy keeps 81 after 80 frees up"*. `plan/17` §1 deletes the whole mechanism: a workspace is a
+ * **project**, the forward proxy is **one host-level listener on a port the user chose**, and the host-local
+ * `runtime.json` that recorded the resolved ports is gone (`plan/17` §5 work item 9). There is no per-workspace
+ * port, so there is nothing to be sticky about.
  *
- * ## History, because the shape of these cases is what makes them trustworthy
+ * The file was kept rather than deleted because the **restart** half of its subject survives and is worth
+ * pinning — but the claim is now the opposite shape, and it is important not to read the old meaning into it:
  *
- * The criterion was unsatisfiable *as worded* — it said "stop the host … start again", and
- * `workspaceHost.integration.test.ts:331` pins that a stopped host refuses to restart. It was reworded on
+ * - **Before:** the ports came back because a *scan* re-derived them, and stickiness made it re-derive the
+ *   *same* ones.
+ * - **Now:** the ports come back because they are **settings**, and nothing is allowed to move them. The
+ *   interesting failure is no longer "the scan drifted" — it is **"something started scanning"**, because a
+ *   silently moved forward-proxy port is a broken browser setting, which is exactly what `plan/17` §1 refuses
+ *   to allow: *"the forward proxy does NOT scan. It binds `8080` and **fails if occupied**, naming the port,
+ *   so the user enters a working one instead of the app silently incrementing."*
+ *
+ * So the cases below are, in order: **the ports are reproducible and no registry is written** (the surviving
+ * half of the old criterion, plus WI 9's deletion), and then **a busy port fails loudly rather than moving**,
+ * once for each host-level listener. The last two are the load-bearing ones and they are discriminating by
+ * construction: an implementation that re-added the scan would bind a *different* port and fail them.
+ *
+ * ## The history, kept because it is the reason this file is careful
+ *
+ * The criterion was once unsatisfiable *as worded* — it said "stop the host … start again", and
+ * `workspaceHost.integration.test.ts` pins that a stopped host refuses to restart. It was reworded on
  * 2026-09-22 to "a new host lands on the same ports", which **quietly weakened the claim** from stickiness to
  * reproducibility. The code satisfied the substitute and violated the original, so the criterion went green
- * while D16 stayed unimplemented: `resolvedProxyPort` was **write-only** (`recordResolvedPorts()` wrote it,
- * nothing read it), because the allocator had no *soft* input and passing the value as a `preferred*` one
- * would have turned a taken remembered port into a hard startup failure.
+ * while D16 stayed unimplemented: `resolvedProxyPort` was **write-only**, because the allocator had no *soft*
+ * input and passing the value as a `preferred*` one would have turned a taken remembered port into a hard
+ * startup failure. D16 was implemented the same evening.
  *
- * D16 was implemented the same evening — a soft `remembered*` input on `allocatePorts` — which is what makes
- * the third case possible. **The first two are kept with corrected meanings:** they were always accurate about
- * the code, and only the authority they were measured against changed. See `plan/14` §8 criteria 6a/6b and
- * lesson 3.
+ * That episode is why the cases below state *which mechanism* produces the port rather than only that the
+ * port is the same — the same lesson, applied to a mechanism that has since been replaced.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -41,6 +54,16 @@ import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 const WS_A = "restart-ws-a";
 const WS_B = "restart-ws-b";
 
+/**
+ * The two host-level ports every host in this file is told to use.
+ *
+ * Chosen by the OS rather than hardcoded, because `plan/17` §1 removed the scan: a value colliding with
+ * something on the developer's machine is no longer absorbed, it is a reported bind failure — which the
+ * cases below *deliberately* produce, so they need a base they know is free.
+ */
+let EDGE_PORT: number;
+let FORWARD_PROXY_PORT: number;
+
 /** Ports a case holds open, released in its own `finally` so a failure cannot leak into the next case. */
 const held: net.Server[] = [];
 
@@ -50,12 +73,13 @@ function writeWorkspace(dataRoot: string, id: string, name: string): void {
   fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ id, name, createdAt: 0 }, null, 2), "utf-8");
 }
 
-describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and keeps them when D16 says so", () => {
+describe("P14 §8 criterion 6 — a new host reproduces the ports, and a busy one fails loudly instead of moving", () => {
   let root: string;
   let dataRoot: string;
-  let socketPath: string;
   let registry: CommandRegistry;
   let hostSeq = 0;
+  /** Every notice every host in this file emitted, so a case can assert what the operator was told. */
+  let notices: string[] = [];
 
   /** A fresh host over the same data root. The registry is passed in — see the note in the helper below. */
   async function startHost(): Promise<WorkspaceHost> {
@@ -66,27 +90,35 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
         kind: "socket",
         // A distinct path per host: a named pipe left bound by a stopped host would make the next
         // `listen()` fail, and that failure would have nothing to do with the ports under test.
-        path: process.platform === "win32" ? `\\\\.\\pipe\\bifurc-restart-${process.pid}-${hostSeq}` : path.join(os.tmpdir(), `bifurc-rs-${process.pid}-${hostSeq}.sock`),
+        path:
+          process.platform === "win32"
+            ? `\\\\.\\pipe\\bifurc-restart-${process.pid}-${hostSeq}`
+            : path.join(os.tmpdir(), `bifurc-rs-${process.pid}-${hostSeq}.sock`),
       },
       token: "restart-token",
       // Passed explicitly: `doStart()` would otherwise register into the process-wide singleton, and
       // `register()` throws on a duplicate — which is what makes a second host in one process impossible
       // without this.
       registry,
-      onNotice: () => {},
+      onNotice: (m) => notices.push(m),
     });
     await host.start();
     return host;
   }
 
-  /** The resolved ports, keyed by workspace id, read from the host's own handle. */
-  function portsOf(host: WorkspaceHost): Record<string, [number | null, number | null]> {
-    return Object.fromEntries(
-      host.status().runtimes.map((r) => [r.workspaceId, [r.proxyPort, r.webhookPort] as [number | null, number | null]]),
-    );
+  /**
+   * The host's two host-level ports, read from its own handle.
+   *
+   * Replaces a `portsOf(host)` keyed by workspace id: there is no per-workspace port any more, so a map keyed
+   * by workspace would be N copies of one number. `null` means *that listener is not up* — which under
+   * `plan/17` §1 is a reported failure rather than an allocation, so the cases below read it deliberately.
+   */
+  function portsOf(host: WorkspaceHost): { edge: number | null; forwardProxy: number | null } {
+    const st = host.status();
+    return { edge: st.edgePort, forwardProxy: st.forwardProxyPort };
   }
 
-  /** Ask the OS for a free port and release it — for the case that needs a *specific* base. */
+  /** Ask the OS for a free port and release it. */
   async function freePort(): Promise<number> {
     const srv = new net.Server();
     const port = await new Promise<number>((resolve, reject) => {
@@ -98,6 +130,20 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
     });
     await new Promise<void>((resolve) => srv.close(() => resolve()));
     return port;
+  }
+
+  /**
+   * Two ports the OS reports free, and that **differ from each other**.
+   *
+   * The retry is load-bearing: `freePort()` releases the socket before returning, so the OS may hand the same
+   * ephemeral port back on the next call — and since neither listener scans, two equal values would mean the
+   * second one fails to bind, which would look like a defect in the code under test.
+   */
+  async function twoFreePorts(): Promise<[number, number]> {
+    const first = await freePort();
+    let second = await freePort();
+    while (second === first) second = await freePort();
+    return [first, second];
   }
 
   /** Whether a real `listen()` on `port` succeeds. A fixture probe — fine here, never in the product. */
@@ -119,6 +165,16 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
     });
   }
 
+  /** Hold `port` for the duration of a case, so the host's bind of it must fail. */
+  async function hold(port: number): Promise<void> {
+    const holder = new net.Server();
+    await new Promise<void>((resolve, reject) => {
+      holder.once("error", reject);
+      holder.listen(port, "127.0.0.1", () => resolve());
+    });
+    held.push(holder);
+  }
+
   /** Close every held server. Idempotent, so it is safe in a `finally` after an earlier release. */
   async function releaseHeld(): Promise<void> {
     while (held.length) {
@@ -127,7 +183,9 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
     }
   }
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    [EDGE_PORT, FORWARD_PROXY_PORT] = await twoFreePorts();
+
     root = fs.mkdtempSync(path.join(os.tmpdir(), "bifurc-restart-"));
     dataRoot = path.join(root, "data");
     fs.mkdirSync(dataRoot, { recursive: true });
@@ -138,8 +196,9 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
       path.join(root, "app.json"),
       JSON.stringify(
         {
-          companionEnabled: false,
-          companionPort: 9271,
+          // Both host-level ports are stated, because they are settings the user owns — see `EDGE_PORT`.
+          port: EDGE_PORT,
+          forwardProxyPort: FORWARD_PROXY_PORT,
           minimizeToTray: true,
           tlsEnabled: false,
           tlsCaCertPath: null,
@@ -163,9 +222,12 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
     setDataRootOverride(dataRoot);
     setSettingsPathOverride(path.join(root, "app.json"));
 
-    socketPath = path.join(os.tmpdir(), `bifurc-restart-unused-${process.pid}.sock`);
     registry = new CommandRegistry();
     registerAllEngineCommands(registry);
+  });
+
+  afterEach(() => {
+    notices = [];
   });
 
   afterAll(() => {
@@ -178,129 +240,118 @@ describe("P14 §8 criterion 6 — a new host reproduces the previous ports, and 
     }
   });
 
-  it("a second host lands on the same ports — and still does with `runtime.json` deleted", async () => {
+  it("a second host lands on the same ports — and no `runtime.json` is written at all", async () => {
     const first = await startHost();
     const firstPorts = portsOf(first);
     await first.stop();
 
-    // The increment is real, not two independent picks: the two workspaces got different ports, and the
-    // second is the first plus one. Asserted because "the same ports came back" is uninteresting if both
-    // were `null`.
-    const a = firstPorts[WS_A];
-    const b = firstPorts[WS_B];
-    expect(a[0]).not.toBeNull();
-    expect(b[0]).not.toBeNull();
-    expect(a[0]).not.toBe(b[0]);
+    // The non-vacuity guard, and under `plan/17` §1 a real precondition: `null` means the listener is **not
+    // up**, so "the same ports came back" would be trivially true of two failures.
+    expect(firstPorts.edge).toBe(EDGE_PORT);
+    expect(firstPorts.forwardProxy).toBe(FORWARD_PROXY_PORT);
 
-    // `runtime.json` now records what the first host resolved. Deleted *before* the second host starts, so
-    // the second host cannot possibly be reusing it.
-    const registryPath = path.join(dataRoot, "runtime.json");
-    expect(fs.existsSync(registryPath), "the first host should have recorded its resolved ports").toBe(true);
-    const recorded = JSON.parse(fs.readFileSync(registryPath, "utf-8"));
-    expect(recorded.workspaces[WS_A].resolvedProxyPort).toBe(a[0]);
-    fs.rmSync(registryPath, { force: true });
+    // **`plan/17` §5 work item 9's assertion.** The host-local registry is deleted: it existed to remember
+    // *which port each workspace landed on*, and with one host-level listener per port there is nothing per
+    // workspace to remember. Asserting the **absence** is the point — a re-introduced `runtime.json` would be
+    // a second home for a port that now has exactly one (the setting).
+    expect(
+      fs.existsSync(path.join(dataRoot, "runtime.json")),
+      "the host must not write a port registry any more (plan/17 §5 work item 9)",
+    ).toBe(false);
 
     const second = await startHost();
     const secondPorts = portsOf(second);
     await second.stop();
 
-    // **The assertion that separates the two mechanisms.** Identical ports with the record gone means the
-    // scan reproduced them; had the remembered value been the input, this would have moved.
+    // **Weaker than it used to mean, and stated so.** Before `plan/17` this separated a scan from a
+    // remembered value; now it says only that nothing *moves* the ports — which is the property §1 actually
+    // cares about, because a moved forward-proxy port is a browser setting that no longer works.
     expect(secondPorts).toEqual(firstPorts);
   }, 120000);
 
   /**
-   * **Softness — the whole difference between a remembered port and an override.**
+   * **The rule that replaced the scan, for the forward proxy.**
    *
-   * The remembered port is occupied before the second host starts, and the two possible rules diverge:
+   * `plan/17` §1: *"the forward proxy does NOT scan. It binds `8080` and **fails if occupied**, naming the
+   * port, so the user enters a working one instead of the app silently incrementing."* This case occupies the
+   * configured port and asserts exactly that: no silent increment, a named failure, and **the host still
+   * starts** — because "fails" means the *bind* fails, not that the process refuses to run. A host that
+   * exited would turn one taken port into an outage for every workspace.
    *
-   * - as a `preferred*` **override**, D16's fail-loudly rule applies — `allocatePorts` throws
-   *   `PortUnavailableError`, `host.ts` **skips** the workspace, and it does not serve;
-   * - as a **soft** input, the bind fails and the scan simply moves on, so the workspace comes up one port
-   *   along.
-   *
-   * So "the workspace still serves, and `skipped` is empty" is evidence for softness and against the
-   * preference shape. **These assertions used to be filed as proof that the record was never read at all** —
-   * same assertions, opposite conclusion, because the code at that time did neither. The case now guards the
-   * rule that replaced the omission, which is why it is worth keeping rather than deleting.
+   * **Discriminating by construction:** an implementation that re-added the scan would bind a different port,
+   * so `forwardProxyPort` would be a number and the first assertion would fail. That is the mutation this
+   * case is aimed at.
    */
-  it("still serves when the remembered port is occupied — a remembered port is soft, never a hard failure", async () => {
-    const first = await startHost();
-    const remembered = portsOf(first)[WS_A][0]!;
-    await first.stop();
-
-    // Hold exactly the port the previous host resolved, so a preference would be an unsatisfiable one.
-    const holder = new net.Server();
-    await new Promise<void>((resolve, reject) => {
-      holder.once("error", reject);
-      holder.listen(remembered, "127.0.0.1", () => resolve());
-    });
-    held.push(holder);
+  it("a busy forward-proxy port fails loudly and names it — it does not silently increment", async () => {
+    await hold(FORWARD_PROXY_PORT);
 
     try {
-      const second = await startHost();
-      const status = second.status();
-      const after = portsOf(second);
-      await second.stop();
+      const host = await startHost();
+      const status = host.status();
+      await host.stop();
 
-      // Not skipped: a busy *remembered* port is not a user's override, so D16's fail-loudly rule does not
-      // apply to it and the host must not drop the workspace.
-      expect(status.skipped).toEqual([]);
-      // And it genuinely moved, rather than somehow taking a port that is held.
-      expect(after[WS_A][0]).not.toBe(remembered);
-      expect(after[WS_A][0]).not.toBeNull();
-      expect(after[WS_B][0]).not.toBeNull();
+      // Not moved: `null`, because nothing is answering on the port it was told to use.
+      expect(status.forwardProxyPort).toBeNull();
+      expect(status.forwardProxyError).not.toBeNull();
+
+      // And the operator was told **which** port and **why it matters**, because the browser's proxy setting
+      // points at it. Without the name, "the proxy is down" is unattributable.
+      const joined = notices.join("\n");
+      expect(joined).toMatch(new RegExp(`forward proxy FAILED to bind ${FORWARD_PROXY_PORT}`));
+      expect(joined).toMatch(/browser/i);
+      // A working alternative is **named**, which is what makes `plan/17`'s instruction to the user
+      // (*"enter a working one instead of the app silently incrementing"*) followable at all.
+      expect(joined).toMatch(/Port \d+ is free/);
+
+      // **The host still serves.** The edge is the other host-level listener and it is unaffected, which is
+      // the whole difference between a reported bind failure and a refusal to start.
+      expect(status.edgePort).toBe(EDGE_PORT);
+      expect(status.edgeError).toBeNull();
+      expect(status.workspaces.map((w) => w.workspaceId)).toEqual([WS_A, WS_B]);
     } finally {
       await releaseHeld();
     }
   }, 120000);
 
   /**
-   * **D16's stickiness — the claim the criterion was originally reaching for, and the one a probe measured as
-   * absent on 2026-09-22.**
-   *
-   * The base is moved to a controlled port with `BIFURC_PROXY_BASE_PORT` so that "free the base" is
-   * deterministic and does not depend on what else is running on this machine. The assertion that carries the
-   * meaning is **not** `after === before` — case 1 already shows the ports come back. It is that the base is
-   * **provably free** at the moment the second host starts, so a scan *would* have taken it, and the workspace
-   * keeps its higher port anyway. That is stickiness, and it is the thing D16 asks for.
+   * The same rule for the **edge**, and it is a separate case rather than a second assertion above because
+   * the two listeners fail differently in a way that matters: the edge is the reverse path itself, so a host
+   * whose edge is down answers for no `*.localhost` mapping at all. `host.ts` gives it its own notice for that
+   * reason, and this asserts the notice says so.
    */
-  it("keeps its incremented port once the base frees up (D16 stickiness)", async () => {
-    const base = await freePort();
-    const previous = process.env.BIFURC_PROXY_BASE_PORT;
-    process.env.BIFURC_PROXY_BASE_PORT = String(base);
-
-    // Hold the base so the first host's scan has to increment.
-    const holder = new net.Server();
-    await new Promise<void>((resolve, reject) => {
-      holder.once("error", reject);
-      holder.listen(base, "127.0.0.1", () => resolve());
-    });
-    held.push(holder);
+  it("a busy edge port is reported as a failure, and the forward proxy still serves", async () => {
+    await hold(EDGE_PORT);
 
     try {
-      const first = await startHost();
-      const before = portsOf(first)[WS_A][0];
-      await first.stop();
+      const host = await startHost();
+      const status = host.status();
+      await host.stop();
 
-      expect(before).not.toBeNull();
-      expect(before).not.toBe(base);
+      expect(status.edgePort).toBeNull();
+      expect(status.edgeError).not.toBeNull();
 
-      // D16's "after 80 frees up".
-      await releaseHeld();
-      expect(await portIsFree(base), "the base must be free, or the scan could not have taken it").toBe(true);
+      const joined = notices.join("\n");
+      expect(joined).toMatch(/edge on .* FAILED to bind/);
+      // The consequence, stated as a consequence rather than as routine — see `host.ts`'s notice.
+      expect(joined).toMatch(/no \*\.localhost mapping will resolve/);
 
-      const second = await startHost();
-      const after = portsOf(second)[WS_A][0];
-      await second.stop();
-
-      // **The stickiness assertion.** Without D16 the scan would land this workspace on `base`.
-      expect(after).toBe(before);
-      expect(after).not.toBe(base);
+      // The forward proxy is independent, so it is up: one busy port does not take the other down.
+      expect(status.forwardProxyPort).toBe(FORWARD_PROXY_PORT);
+      expect(status.forwardProxyError).toBeNull();
     } finally {
-      if (previous === undefined) delete process.env.BIFURC_PROXY_BASE_PORT;
-      else process.env.BIFURC_PROXY_BASE_PORT = previous;
       await releaseHeld();
     }
+  }, 120000);
+
+  it("releases both host-level ports on stop, so the next host can take them", async () => {
+    const host = await startHost();
+    expect(portsOf(host)).toEqual({ edge: EDGE_PORT, forwardProxy: FORWARD_PROXY_PORT });
+    await host.stop();
+
+    // The release half, asserted by real binds rather than by a status flag: a `stop()` that only cleared the
+    // handle would leave the sockets bound and the *next* host would fail to bind for a reason that pointed at
+    // the wrong case.
+    await expect.poll(() => portIsFree(EDGE_PORT), { timeout: 5000 }).toBe(true);
+    await expect.poll(() => portIsFree(FORWARD_PROXY_PORT), { timeout: 5000 }).toBe(true);
   }, 120000);
 });

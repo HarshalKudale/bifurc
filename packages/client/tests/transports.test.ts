@@ -12,7 +12,7 @@
  * So each transport gets exactly one question: **does a `createClient()` built over it actually
  * work?** That is a different question from the conformance suite's, and it is the one P5 has to
  * answer — the suite drives the `Transport` interface directly, and nothing so far has driven the
- * 144-method surface through a socket.
+ * 132-method surface through a socket.
  *
  * ## Why `stdio` uses a `PassThrough` pair
  *
@@ -24,12 +24,17 @@
  *
  * ## Why `ws` performs a handshake here and the others do not
  *
- * `ws` is the only one of the three that crosses a trust boundary, so it is the only one built with
- * `auth`. The handshake is not a special method: it is a plain `request("hello", …)`
- * (`HELLO_ACTION` in `transport/auth/authenticated.ts`), which is why it can be driven from a raw
- * `Transport` before the client exists. Doing it *before* `createClient()` keeps the client itself
- * unaware of auth, which is the property P6 needs — the renderer must not know the transport is
- * remote.
+ * `ws` is the only one of the three built with `auth`, and therefore the only one whose first request has to
+ * be `hello`. It used to be justified as the only transport that *crosses a trust boundary*, and that
+ * justification is now weaker than it was: since **2026-09-25** the boundary is not a credential — the
+ * listener binds loopback unconditionally and the upgrade is refused unless the page's `Origin` is local.
+ * What the handshake still buys is the **session** — its `sessionId`, its scopes, and the `lastSeq` replay
+ * decision — which is why it is configured here and not on the other two.
+ *
+ * The handshake is not a special method: it is a plain `request("hello", …)` (`HELLO_ACTION` in
+ * `transport/auth/authenticated.ts`), which is why it can be driven from a raw `Transport` before the client
+ * exists. Doing it *before* `createClient()` keeps the client itself unaware of auth, which is the property
+ * P6 needs — the renderer must not know the transport is remote.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
@@ -43,8 +48,6 @@ import { createWsServer, createWsTransport, type WsServer } from "@bifurc/engine
 import type { Transport } from "@bifurc/engine/transport/types";
 import { createClient } from "../src/index";
 import type { ClientLocal } from "../src/local";
-
-const TOKEN = "client-transports-token";
 
 /** Servers, so a mid-test failure cannot leave a listener or an attached session behind. */
 const servers: (StdioServer | WsServer)[] = [];
@@ -190,7 +193,9 @@ describe("createClient over a real ws transport", () => {
       registry: engineRegistry(),
       bus,
       log,
-      auth: { token: TOKEN, engineVersion: "0.0.0-client-test" },
+      // No token: it was the authentication half of this config and was removed on 2026-09-25. What is left
+      // is the handshake's *session* half — identity and scopes — which is still required.
+      auth: { engineVersion: "0.0.0-client-test" },
     });
     servers.push(server);
 
@@ -203,12 +208,14 @@ describe("createClient over a real ws transport", () => {
      *
      * Without this the decorator refuses the first real request, which is the whole point of the
      * gate — so if this file ever passes with the handshake removed, the gate has stopped working.
+     *
+     * The `token` this call used to carry is gone rather than merely ignored: `HelloRequestSchema` is a
+     * plain `z.object`, so unknown keys are **stripped**, and a stale field would pass silently.
      */
     await transport.request("hello", {
       protocolVersion: PROTOCOL_VERSION,
       clientName: "web-ui",
       clientVersion: "0.0.0-client-test",
-      token: TOKEN,
     });
 
     await assertTheClientWorks(transport);

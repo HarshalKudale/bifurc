@@ -178,7 +178,13 @@ function wireLogEntry(n: number): Record<string, unknown> {
 export interface ConformanceCapabilities {
   /** A `hello` handshake must succeed before any request (work item 4). */
   handshake: boolean;
-  /** Requests can be refused for want of a token or a scope (work item 4). */
+  /**
+   * Requests can be refused for want of a **scope** (work item 4).
+   *
+   * The token half of this flag's name was removed on 2026-09-25: nothing is refused for want of a
+   * credential any more, so the flag now means the scope gate alone. It was not renamed, for the same
+   * reason `createAuthenticatedTransport` was not — see `src/transport/auth/index.ts`.
+   */
   auth: boolean;
   /** Events can be replayed from a client-supplied `lastSeq`, or `resyncRequired` returned (item 3). */
   replay: boolean;
@@ -1170,14 +1176,23 @@ export function defineConformanceSuite(opts: ConformanceOptions): void {
         ).rejects.toMatchObject({ code: "UNSUPPORTED" });
       });
 
-      handshakeIt("refuses a missing or invalid token", async () => {
-        for (const token of [undefined, "definitely-not-the-token"]) {
-          const { transport } = await harness(undefined, { authenticated: false });
-          await expect(
-            transport.request(HELLO_ACTION, { ...auth!.hello(), token }),
-            `token ${String(token)} must be refused`,
-          ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-        }
+      handshakeIt("accepts a `hello` that still carries the removed `token` field", async () => {
+        // **This case replaced "refuses a missing or invalid token", and it is the migration story rather
+        // than a leftover.** The credential half of `hello` was deleted on 2026-09-25 (`packages/protocol`'s
+        // `envelope.ts` records why), so a client built before that date still sends `token` — and it must
+        // not be locked out by a field the engine no longer reads.
+        //
+        // `HelloRequestSchema` is a plain `z.object`, so an unknown key is **stripped**, not refused. That is
+        // the behaviour pinned here. The old case asserted the opposite and became vacuous the moment the
+        // check it described was deleted: it would have gone on passing only if the engine had kept a
+        // comparison against a value nothing produces.
+        const { transport } = await harness(undefined, { authenticated: false });
+        await expect(
+          transport.request(HELLO_ACTION, {
+            ...auth!.hello(),
+            token: "a-stale-token-from-a-client-built-before-the-removal",
+          }),
+        ).resolves.toMatchObject({ sessionId: expect.any(String) });
       });
     });
 

@@ -13,19 +13,26 @@
  * |---|---|
  * | `in-process` | **done** — `inProcess.ts` |
  * | `stdio` | **done** — `stdio.ts` (`createStdioTransport` / `createStdioServer` / `spawnStdioEngine`) |
- * | `ws` | **done** — `ws.ts` (`createWsTransport` / `createWsServer`), auth-wrapped, loopback-only |
+ * | `ws` | **done** — `ws.ts` (`createWsTransport` / `createWsServer`), handshake-wrapped, **loopback only** since 2026-09-25: the non-loopback opt-in and its TLS pair are gone, and a non-loopback address is refused outright rather than published |
  * | `socket` / named pipe | **done** — `socket.ts` (`createSocketTransport` / `createSocketServer`), `0600` on POSIX |
  *
  * That is all four of `plan/05` work item 2's transports, which is the item closed. The client halves of
  * the three that cross a boundary share `session.ts` rather than each carrying their own copy of the
  * request state machine — see that file's header for why a third copy was the moment to extract one.
  *
- * Work item 4 (`auth/`) is **done as a mechanism**: `createAuthenticatedTransport` wraps any transport
- * with the `hello` handshake, a constant-time token check and per-session scopes. It is a decorator
- * precisely so it could be built and tested before the transport that needs it exists — `in-process`
- * and `stdio` are never wrapped, because `plan/05` says `stdio` needs no auth ("the pipe is inherited
- * and process-scoped") and `in-process` has no boundary at all. `ws` **is** wrapped, and the wrapper
- * is the whole of its authentication: `ws.ts` contains no auth logic.
+ * Work item 4 (`auth/`) is **done as a mechanism, and half of it has since been retired**:
+ * `createAuthenticatedTransport` wraps any transport with the `hello` handshake, per-session scopes and the
+ * replay decision — but **not a token**, which was deleted on 2026-09-25 along with the remote deployment
+ * it guarded. It is a decorator precisely so it could be built and tested before the transport that needs
+ * it exists — `in-process` and `stdio` are never wrapped, because `plan/05` says `stdio` needs no auth
+ * ("the pipe is inherited and process-scoped") and `in-process` has no boundary at all. `ws` **is**
+ * wrapped, and the wrapper is the whole of its handshake: `ws.ts` contains no auth logic.
+ *
+ * **The loopback guard moved, and that is the one structural change to this layer.** It used to be the
+ * token, checked inside the decorator; it is now an **`Origin` check in `ws.ts`** (`lib/net.ts`'s
+ * `isAllowedOrigin`, applied in the upgrade handler, refusing with a `403` that never upgrades). The
+ * handshake stays where it was, in the decorator — `auth/index.ts` records why the names no longer
+ * describe what the module does and why they were not renamed in the same change.
  *
  * Work item 3's **sequencing and replay** half is done: `eventLog.ts` is the single engine-scoped `seq`
  * authority and the bounded ring buffer, `in-process` and the `ws` server subscribe through it, and
@@ -117,6 +124,7 @@ export {
   DEFAULT_CONNECT_TIMEOUT_MS,
   DEFAULT_MAX_PAYLOAD_BYTES,
   DEFAULT_WS_HOST,
+  isLoopbackHost,
   LOOPBACK_HOSTS,
   type WsServer,
   type WsServerAuthOptions,

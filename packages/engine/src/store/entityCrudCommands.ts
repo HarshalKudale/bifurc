@@ -173,10 +173,17 @@ export interface SimpleEntityOpts {
   // The three channel-name fields went with `CrudFactoryOpts`' five — same commit, same reason.
 }
 
-/** The container insert for a full-CRUD kind. Called directly by the five shell `*Handlers.ts` files
- * since stage 3b deleted `registerEntityCrudHandlers()` — the wrapper that used to hold this call and
- * the three `ipcMain.handle` channels. Split deliberately: the container is engine state, and letting
- * the shell mutate it directly is what made this file's dependency direction wrong. */
+/** The container insert for a full-CRUD kind. Called by `registerAllEngineKinds()` — the engine-side list
+ * that `registerAllEngineCommands()` calls first — and by the five `*Kinds.ts` files directly, since stage
+ * 3b deleted `registerEntityCrudHandlers()`, the wrapper that used to hold this call and the three
+ * `ipcMain.handle` channels. Split deliberately: the container is engine state, and letting the shell mutate
+ * it directly is what made this file's dependency direction wrong.
+ *
+ * **Those five files live in `packages/engine/src/store/kinds/` as of 2026-09-23** (`plan/15` work item 10).
+ * They were in the shell, and that is exactly why a headless host registered the four `entity.*` commands
+ * and left this container **empty** for every kind — the commands were engine-side, the thing they read was
+ * not. `registerAllEngineKinds()` is the fix, and a guard in `tests/integration/workspaceHost.integration.test.ts`
+ * keeps it honest by *invoking* the command rather than comparing names. */
 export function registerCrudKind<T extends EntityBase>(opts: CrudFactoryOpts<T>): void {
   entityCrudRegistry.set(opts.kind, opts);
 }

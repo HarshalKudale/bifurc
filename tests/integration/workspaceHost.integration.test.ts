@@ -5,9 +5,9 @@
  * ----------------------------------------------------------
  * Two separate reasons, and both matter:
  *
- * 1. The host's whole job is to bind real things — N proxies, N webhook receivers and **one** socket
- *    endpoint — and then prove that endpoint can reach the workspaces behind it. A mocked transport would
- *    assert the wiring this file exists to verify.
+ * 1. The host's whole job is to bind real things — **one** forward proxy, **one** webhook receiver and
+ *    **one** socket endpoint — and then prove that endpoint can reach the workspaces behind it. A mocked
+ *    transport would assert the wiring this file exists to verify.
  * 2. It is its own file because `shutdownEngine()` memoises **process-wide**, so a process holds exactly one
  *    engine lifecycle. This file deliberately never calls `createEngine()` (a host must not — see
  *    `host.ts`'s header), but the *other* lifecycle in this suite (`engineSmoke`) does, and vitest gives each
@@ -15,10 +15,51 @@
  *
  * THE ACCEPTANCE CRITERION THIS FILE EXISTS FOR
  * ---------------------------------------------
- * `plan/14` §6: *"a workspace host starts with no companion server."* So the load-bearing assertion is not
- * "the proxies came up" — it is that **the companion port is genuinely unbound** while the host is serving.
- * A port that merely *looks* unstarted would pass a status check; a real bind attempt is what fails if the
- * companion is up.
+ * `plan/14` §6, in its original wording: *"a workspace host starts with no companion server."*
+ *
+ * **This file used to assert that by probing the companion's port (9271)** and requiring its holder to be
+ * unchanged. The companion was **retired outright** while implementing `plan/16`, so half of that was on
+ * its way to becoming vacuous — the *server* is gone, and a test that only asserts a deleted thing is
+ * absent cannot fail against any code that keeps it deleted.
+ *
+ * ## What replaces it — and a correction, because the first replacement was wrong
+ *
+ * The first rewrite re-pointed the criterion at the **edge router** and asserted the host leaves the
+ * edge's port unbound. **That is backwards, and the suite caught it.** `runtime/host.ts` does
+ * `opts.edgePort ?? settings.port` and then `edge.start(edgePortWanted)` — the host *does* compose and
+ * bind the edge, deliberately: the edge is the host-level reverse half, so *one listener for N
+ * workspaces' mappings* is exactly what a host is for. The criterion never said "bind no host-level
+ * server"; it said "bind no **companion**".
+ *
+ * So the honest assertion is the one that **still discriminates**, and it is two real binds in both
+ * directions:
+ *
+ * 1. **the host holds its edge port** — a bind there must fail, i.e. the reverse path genuinely exists
+ *    (this is new coverage: nothing else asserts the host's own edge is up), and
+ * 2. **the host does not hold the retired companion's port** — the surviving falsifiable form of the
+ *    original criterion. A regression that regrew a companion bridge on 9271 turns this red, which was
+ *    verified rather than assumed: mutating the test to bind 9271 **flips it to `1 failed`** with
+ *    *"the host must not hold the retired companion port 9271"*.
+ *
+ * WHAT `plan/17` §5 WORK ITEM 3 CHANGED HERE, AND WHAT IT DID NOT
+ * --------------------------------------------------------------
+ * The host used to allocate a port per workspace (D16's base-and-scan) and compose a `WorkspaceRuntime`
+ * around each. `plan/17` §1 replaces that: a workspace is a **project**, so switching workspaces changes the
+ * *context* — which rules and mocks are in force — while the ports stay put. There is now one forward proxy
+ * and one webhook receiver for the whole host, and `WorkspaceRuntime` is deleted rather than hollowed.
+ *
+ * So the old assertions *"two workspaces get two distinct proxy ports / two distinct webhook ports"* are
+ * **gone**, and not because they were inconvenient: there is no longer any per-workspace port for them to be
+ * distinct about, and `status().workspaces` is config scope only. What replaces them is sharper, and the
+ * webhook half is new coverage: **the webhook is OFF by default** (`plan/17` §1 — it is a feature, not
+ * infrastructure), so `status().webhookPort` must be `null` on a freshly started host. A receiver that came
+ * up at boot would be a listener this product has never opened on its own.
+ *
+ * **The readiness contract is asserted implicitly and must not be lost again.** `host.start()` resolving
+ * before its listeners bind would make every `status()` port `null`, and the first case below reads
+ * `status.forwardProxyPort` / `status.edgePort` straight off it. That wait used to live in
+ * `WorkspaceRuntime.doStart()` and was restored to `host.ts` when the class was deleted — see
+ * `waitUntilReady`'s docblock there.
  *
  * WHY THE RPC CLIENT IS THE REAL ONE
  * ----------------------------------
@@ -36,7 +77,6 @@ import * as net from "net";
 import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { createWorkspaceHost } from "@bifurc/engine/runtime/host";
-import { loadRuntimeRegistry } from "@bifurc/engine/runtime/hostRegistry";
 import { createSocketTransport } from "@bifurc/engine/transport/socket";
 import { CommandRegistry, commandRegistry } from "@bifurc/engine/commands/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
@@ -49,26 +89,90 @@ const WS_A = "host-ws-a";
 const WS_B = "host-ws-b";
 
 /**
- * The app-level companion port the host must **not** bind.
+ * The port the **retired companion** used, which the host must not be holding.
  *
- * Read from the test's own `app.json` above (9271) rather than hardcoded a second time, so the criterion and
- * the fixture cannot drift apart.
+ * `plan/14` WI 3 was originally *"a workspace host starts with no companion server."* The companion is
+ * gone, so a test asserting its port is never bound would have nothing to catch — except that this
+ * number is exactly what a regression would reuse. Asserting it here costs one bind attempt and is the
+ * only surviving form of the original criterion that can still **fail**.
  *
- * ## It is probed, never assumed free
- *
- * The *real* 9271 is very often already held — a developer running the desktop app, a previous suite's
- * leftover, anything. So this file asserts the companion **address** is one of:
- *
- * - **free before the host starts**, and still free after: nothing anywhere bound it, and the host did not.
- * - **taken before the host starts**, and taken *by the same holder* after: the host did not take it, because
- *   a `listen()` on a port already held fails rather than stealing it.
- *
- * The second case is the one that makes this file pass on a developer's machine without weakening anything —
- * and note it is strictly *stronger* than a status check either way, because it is real binds on both sides.
- * What it deliberately does **not** do is fail when the port is busy: that would be measuring the machine, not
- * the host, and it is the assertion-vs-environment confusion `TRAPS.md` records under evidence quality.
+ * Probed rather than assumed free, for the same reason the edge port is: the real 9271 may be held by a
+ * developer's own instance, so the claim is *"the host did not take it"*, not *"it is free"*. On a clean
+ * machine that reads `free → free`; on a busy one, held by the same outsider before and after.
  */
-const COMPANION_PORT = 9271;
+const RETIRED_COMPANION_PORT = 9271;
+
+/**
+ * The two ports this host is told to use — chosen by the OS at `beforeAll`, not hardcoded.
+ *
+ * ## Why they are not literals any more
+ *
+ * The old file pinned the edge at `8080` and left the forward proxy to D16's scan, so a collision with
+ * anything on the developer's machine was absorbed by the scan. `plan/17` §1 **removes the scan**: the
+ * forward proxy *binds its port and fails if occupied*, precisely so the user always knows what their
+ * browser must point at. A hardcoded value would therefore turn a busy port on one machine into a red
+ * suite that says nothing about the code.
+ *
+ * They must also be **distinct from each other**, which under the new model is a real constraint rather
+ * than a coincidence: the edge and the forward proxy are both host-level listeners now, and the defaults
+ * (80 and 8080) differ only because they are chosen to. `twoFreePorts()` below enforces it.
+ */
+let EDGE_PORT: number;
+let FORWARD_PROXY_PORT: number;
+
+/**
+ * True when this process can `listen()` on the port — i.e. nobody else holds it right now.
+ *
+ * A real bind, not a status read, because the two claims this file makes are both about *possession*:
+ * the host **holds** its edge port, and the host **does not hold** the retired companion's. A status flag
+ * cannot express either — an engine that bound nothing reports nothing.
+ */
+function bindAttemptSucceeds(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(true)));
+  });
+}
+
+/** Can something bind this port? False means something already holds it. */
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = new net.Server();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(true)));
+  });
+}
+
+/** Ask the OS for a free port, then release it. `proxyHarness.getFreePort()`'s shape. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * Two ports the OS reports free, and that **differ from each other**.
+ *
+ * The retry is not defensive padding: `freePort()` closes the socket before returning, so the OS is free
+ * to hand the *same* ephemeral port back on the very next call — and with the forward proxy no longer
+ * scanning (`plan/17` §1), two equal values would mean the second listener fails to bind. That failure
+ * would be reported rather than thrown, so the symptom would be a `forwardProxyPort: null` assertion
+ * failing for a reason that reads like a code defect.
+ */
+async function twoFreePorts(): Promise<[number, number]> {
+  const first = await freePort();
+  let second = await freePort();
+  while (second === first) second = await freePort();
+  return [first, second];
+}
 
 /** Write one workspace's tree. Same layout the runtime suite writes, for the same reason. */
 function writeWorkspace(dataRoot: string, wsId: string, name: string): void {
@@ -94,58 +198,14 @@ function writeWorkspace(dataRoot: string, wsId: string, name: string): void {
   );
 }
 
-/** Can something bind this port? False means something already holds it. */
-function portIsFree(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const srv = new net.Server();
-    srv.once("error", () => resolve(false));
-    srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(true)));
-  });
-}
-
-/**
- * Who is holding this port, as far as anything observable is concerned — a *fingerprint* of the holder, not
- * an identity.
- *
- * Implemented by attempting a `connect()` and reporting what happened, because Node exposes no `SO_PEERNAME`
- * for a TCP listener: `lsof`/`netstat` would be needed for a real PID, and shelling out from a test to read a
- * platform-specific table is a dependency this file should not take. A fingerprint is enough for the one
- * question being asked — *did the set of holders change while the host ran?*
- *
- * The important reading: **"free" is itself a report**, so a port that was free and is free afterwards is
- * compared as `free -> free`, the same way a held port is compared as `busy -> busy`.
- */
-function portHolderFingerprint(port: number): Promise<string> {
-  return new Promise((resolve) => {
-    const probe = net.createConnection({ host: "127.0.0.1", port });
-    let settled = false;
-    const done = (value: string): void => {
-      if (settled) return;
-      settled = true;
-      probe.removeAllListeners();
-      probe.on("error", () => {});
-      try {
-        probe.destroy();
-      } catch {
-        /* already gone */
-      }
-      resolve(value);
-    };
-    probe.once("connect", () => done("accepted"));
-    probe.once("error", (err: NodeJS.ErrnoException) => {
-      // `ECONNREFUSED` means nothing is listening — the free case, and a report in its own right.
-      done(err.code === "ECONNREFUSED" ? "free" : `error:${err.code ?? "unknown"}`);
-    });
-    probe.setTimeout(2000, () => done("timeout"));
-  });
-}
-
-describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", () => {
+describe("createWorkspaceHost — one listener per port, one RPC endpoint, no companion", () => {
   let root: string;
   let dataRoot: string;
   let socketPath: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    [EDGE_PORT, FORWARD_PROXY_PORT] = await twoFreePorts();
+
     root = fs.mkdtempSync(path.join(os.tmpdir(), "bifurc-host-it-"));
     dataRoot = path.join(root, "data");
     writeWorkspace(dataRoot, WS_A, "Host Workspace A");
@@ -155,9 +215,13 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
       path.join(root, "app.json"),
       JSON.stringify(
         {
-          port: 8080,
+          // Both host-level ports are **stated**, because `plan/17` §1 makes them settings the user owns
+          // rather than values the host discovers. See `EDGE_PORT` / `FORWARD_PROXY_PORT`.
+          port: EDGE_PORT,
+          forwardProxyPort: FORWARD_PROXY_PORT,
+          // Carried because the settings shape has it; the host does **not** start the webhook, so nothing
+          // binds this. That the value is inert here is the point of the `webhookPort: null` assertion.
           webhookPort: 9101,
-          companionPort: COMPANION_PORT,
           minimizeToTray: true,
           tlsEnabled: false,
           tlsCaCertPath: null,
@@ -199,11 +263,12 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
     }
   });
 
-  it("starts one runtime per workspace, binds one RPC endpoint, and leaves the companion down", async () => {
-    // The companion address *before* the host starts. On a clean machine this reads `free`; on a developer's
-    // machine running the desktop app it reads `accepted`. Both are fine — see `COMPANION_PORT`'s comment. What
-    // must hold is that the host does not **change** it.
-    const companionBefore = await portIsFree(COMPANION_PORT) ? "free" : await portHolderFingerprint(COMPANION_PORT);
+  it("binds one forward proxy and one edge, serves every workspace as config, and holds no companion port", async () => {
+    // The retired companion's address *before* the host starts. On a clean machine this reads `true` (free);
+    // on a developer's machine running an old instance it reads `false` (held). Both are fine — see
+    // `RETIRED_COMPANION_PORT`'s comment. What must hold is that **the host is not the holder**, so the
+    // reading after the host starts must match this one.
+    const retiredCompanionFreeBefore = await bindAttemptSucceeds(RETIRED_COMPANION_PORT);
 
     const notices: string[] = [];
     const host = createWorkspaceHost({
@@ -218,33 +283,65 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
     try {
       const status = await host.start();
 
-      // ── one runtime per workspace, both serving ───────────────────────────────
-      expect(status.runtimes).toHaveLength(2);
-      for (const rt of status.runtimes) {
-        expect(rt.running).toBe(true);
-        expect(rt.proxyError).toBeNull();
-        expect(rt.webhookRunning).toBe(true);
-      }
+      // ── every workspace is served, and what is per workspace is *config* ──────
+      //
+      // This replaces `status.runtimes` (one entry per workspace, each with its own `proxyPort` /
+      // `webhookPort`). Those numbers were the same for every entry under `plan/17` §1, so the array was N
+      // copies of one fact; `workspaces` is the fact that is genuinely per workspace.
+      expect(status.workspaces.map((w) => w.workspaceId)).toEqual([WS_A, WS_B]);
+      expect(status.workspaces.map((w) => w.name)).toEqual(["Host Workspace A", "Host Workspace B"]);
+      expect(status.workspaces.find((w) => w.workspaceId === WS_A)?.active).toBe(true);
+      expect(status.workspaces.find((w) => w.workspaceId === WS_B)?.active).toBe(false);
 
-      // Distinct ports — the identity criterion WI 2 established, now asserted through the host's own
-      // allocator rather than by passing ports in by hand.
-      const proxyPorts = status.runtimes.map((r) => r.proxyPort);
-      expect(new Set(proxyPorts).size).toBe(2);
-      const webhookPorts = status.runtimes.map((r) => r.webhookPort);
-      expect(new Set(webhookPorts).size).toBe(2);
+      // ── one forward proxy for the whole host, on the port the user chose ──────
+      //
+      // Read straight off `status()` with no polling, which is itself the assertion: `host.start()` must not
+      // resolve before its listeners bind. That wait lived in `WorkspaceRuntime.doStart()` until the class
+      // was deleted; `host.ts`'s `waitUntilReady` is where it lives now.
+      expect(status.forwardProxyPort).toBe(FORWARD_PROXY_PORT);
+      expect(status.forwardProxyError).toBeNull();
+      expect(host.forwardProxy).not.toBeNull();
+      expect(host.forwardProxy!.isRunning()).toBe(true);
+      expect(host.forwardProxy!.getPort()).toBe(FORWARD_PROXY_PORT);
 
-      expect(host.runtimes.size).toBe(2);
-      expect(host.runtimes.has(WS_A)).toBe(true);
-      expect(host.runtimes.has(WS_B)).toBe(true);
+      // ── the webhook is OFF by default — `null`, not a number ─────────────────
+      //
+      // `plan/17` §1: *"the webhook does NOT scan either. It is a feature, not infrastructure: it is off by
+      // default, the user starts it, and the user owns the port."* So the receiver exists (the facade is
+      // bound to it) but nothing is listening — which is why `status.webhookPort` is `null` while
+      // `host.webhook` is not.
+      expect(status.webhookPort).toBeNull();
+      expect(status.webhookError).toBeNull();
+      expect(host.webhook).not.toBeNull();
+      expect(host.webhook!.isRunning()).toBe(false);
 
-      // ── THE ACCEPTANCE CRITERION: no companion ────────────────────────────────
-      // The host did not bind the companion. Asserted as "the state of that address did not change", which is
-      // true on a clean machine (free → free) and on a busy one (accepted → accepted) — and is **false** if the
-      // host bound it, because a `listen()` on an already-held port fails rather than taking it, so a busy
-      // address the host *also* tries to bind goes `accepted → accepted` only if nothing was bound, and on a
-      // clean machine the pair is `free → free` vs `free → accepted`. Both directions are real binds.
-      expect(await portHolderFingerprint(COMPANION_PORT)).toBe(companionBefore);
-      // And it says so on the wire, rather than leaving an operator to guess.
+      // ── THE ACCEPTANCE CRITERION: no companion, and the edge is the host's ────
+      // Real bind attempts, in both directions, because a status read cannot express either claim.
+      //
+      // Direction 1: the host **holds** its edge port. `runtime/host.ts` composes the edge deliberately —
+      // it is the host-level reverse half — so a bind here must FAIL. (`bindAttemptSucceeds` false means
+      // somebody is listening; the host is the only candidate that had the chance to.)
+      //
+      // `status().edgePort` is asserted first so the bind result cannot pass for the wrong reason: on a
+      // machine where some *other* process held the port, the bind would fail and the host's own edge would
+      // be down, and the bind assertion alone would not notice.
+      expect(status.edgePort).toBe(EDGE_PORT);
+      expect(status.edgeError).toBeNull();
+      expect(
+        await bindAttemptSucceeds(EDGE_PORT),
+        `the host must be holding the edge port ${EDGE_PORT} — a bind succeeding means nothing is serving`,
+      ).toBe(false);
+      //
+      // Direction 2: `plan/14` WI 3's original criterion, in its only surviving falsifiable form. The
+      // companion was retired, so this asserts the host has not *regrown* one: on a clean machine the port
+      // is free and still free; on a busy one an outsider holds it both before and after, and the host is
+      // not the holder because a `listen()` on a held port errors rather than stealing it.
+      expect(
+        await bindAttemptSucceeds(RETIRED_COMPANION_PORT),
+        `the host must not hold the retired companion port ${RETIRED_COMPANION_PORT}`,
+      ).toBe(retiredCompanionFreeBefore);
+      // And it says so on the wire, rather than leaving an operator to guess. The companion's notice is
+      // emitted only on the `ws` transport, so a socket host must not mention it at all.
       expect(notices.some((m) => m.includes("rpc endpoint"))).toBe(true);
       expect(notices.join("\n")).not.toMatch(/companion/i);
 
@@ -282,7 +379,7 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
 
         /**
          * A real command round trip. `config.get` takes **empty params** and is the cheapest read that proves
-         * the endpoint reaches the registry behind all the runtimes.
+         * the endpoint reaches the registry behind the host's listeners.
          *
          * ## The finding this assertion encodes, recorded rather than papered over
          *
@@ -291,10 +388,10 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
          * `z.object({}).strict()`. `.strict()` means an extra key is a `BAD_REQUEST`, so the rule is not
          * merely unimplemented: the schema actively rejects it today.
          *
-         * That is **WI 1's work, not WI 3's.** WI 3's job is the composition — one endpoint, N runtimes, no
-         * companion — and this file proves exactly that. Asserting the D13 param shape here would be asserting
-         * work that has not been done, so the assertion below is what is true now, and it is written so that
-         * WI 1 failing to add the parameter is *visible* rather than silently absorbed.
+         * That is **WI 1's work, not WI 3's.** WI 3's job is the composition — one endpoint, one listener per
+         * port, no companion — and this file proves exactly that. Asserting the D13 param shape here would be
+         * asserting work that has not been done, so the assertion below is what is true now, and it is written
+         * so that WI 1 failing to add the parameter is *visible* rather than silently absorbed.
          */
         const cfg = (await transport.request("config.get", {})) as Record<string, unknown>;
         expect(cfg).toBeDefined();
@@ -306,27 +403,31 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
         await transport.close();
       }
 
-      // ── the resolved ports reached the host-local registry, not workspace.json ─
-      const reg = loadRuntimeRegistry();
-      expect(reg.workspaces[WS_A]?.resolvedProxyPort).toBe(
-        status.runtimes.find((r) => r.workspaceId === WS_A)?.proxyPort,
-      );
-      expect(reg.workspaces[WS_B]?.resolvedWebhookPort).toBe(
-        status.runtimes.find((r) => r.workspaceId === WS_B)?.webhookPort,
-      );
-      // The D16 rule, asserted rather than trusted: the port is host-local state, so it is in
-      // `runtime.json` and **not** in the git-tracked `workspace.json` that syncs between machines.
+      // ── the host-local port registry is gone, and no port reached `workspace.json` ─
+      //
+      // This block used to read `runtime.json` back through `loadRuntimeRegistry()` and check that each
+      // workspace's *resolved* proxy/webhook port had landed there. `plan/17` §5 work item 9 deletes that
+      // registry outright: it existed to remember which port each workspace landed on (D16's stickiness rule),
+      // and with one host-level listener per port there is nothing per workspace to remember. The surviving
+      // half of the rule is the half that mattered — **no port is in the git-tracked `workspace.json`**,
+      // which syncs between machines and must not carry one machine's port allocation.
+      expect(fs.existsSync(path.join(dataRoot, "runtime.json"))).toBe(false);
       const wsJson = fs.readFileSync(path.join(dataRoot, WS_A, "workspace.json"), "utf-8");
       expect(wsJson).not.toMatch(/Port/i);
     } finally {
       // ── teardown releases everything ──────────────────────────────────────────
-      const before = host.status().runtimes.map((r) => ({ proxy: r.proxyPort!, webhook: r.webhookPort! }));
+      const held = { proxy: host.status().forwardProxyPort, edge: host.status().edgePort };
+      expect(held.proxy).toBe(FORWARD_PROXY_PORT);
+      expect(held.edge).toBe(EDGE_PORT);
+
       await host.stop();
 
-      for (const { proxy, webhook } of before) {
-        await expect.poll(() => portIsFree(proxy), { timeout: 5000 }).toBe(true);
-        await expect.poll(() => portIsFree(webhook), { timeout: 5000 }).toBe(true);
+      for (const port of [held.proxy!, held.edge!]) {
+        await expect.poll(() => portIsFree(port), { timeout: 5000 }).toBe(true);
       }
+      // The webhook was never started, so there is nothing here to release — and that is asserted rather
+      // than assumed, because "the teardown released it" and "it was never bound" are different facts.
+      expect(host.status().webhookPort).toBeNull();
       // `stop()` is idempotent, and a stopped host refuses to restart rather than half-working.
       await expect(host.stop()).resolves.toBeUndefined();
       await expect(host.start()).rejects.toThrow(/already been stopped/i);
@@ -372,15 +473,18 @@ describe("createWorkspaceHost — N runtimes, one RPC endpoint, no companion", (
     try {
       const status = await host.start();
       // The real workspace is served...
-      expect(status.runtimes.map((r) => r.workspaceId)).toEqual([WS_A]);
+      expect(status.workspaces.map((w) => w.workspaceId)).toEqual([WS_A]);
       // ...and the missing one is reported rather than skipped in silence.
       const joined = notices.join("\n");
       expect(joined).toMatch(/requested workspace "ghost-ws" is not in the settings/);
       // The directory is the diagnostic — see the comment above.
       expect(joined).toMatch(/looked in /);
       // And the host did not refuse to start over it: the same "skip loudly, do not refuse" rule D16
-      // applies to a taken port override.
-      expect(status.skipped).toHaveLength(0);
+      // applies to a taken port override. Asserted by the host actually **serving** — both host-level
+      // listeners up on the ports it was told to use — rather than by a `skipped` count, which no longer
+      // exists because there is nothing per workspace left to skip.
+      expect(status.forwardProxyPort).toBe(FORWARD_PROXY_PORT);
+      expect(status.edgePort).toBe(EDGE_PORT);
     } finally {
       await host.stop();
     }

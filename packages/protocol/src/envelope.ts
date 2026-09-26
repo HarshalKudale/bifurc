@@ -88,19 +88,6 @@ export const HelloRequestSchema = z.object({
    */
   clientVersion: z.string(),
   /**
-   * P4 work item 4. The per-start secret the client read from `<dataDir>/engine.token`.
-   *
-   * **Optional in the schema, mandatory in practice for any transport with a boundary.** It is
-   * optional here because `in-process` and `stdio` have none — the pipe is inherited and
-   * process-scoped, so a token there would be security theatre — and one schema has to serve both.
-   * The enforcement is the transport's job, not the schema's: `createAuthenticatedTransport`
-   * refuses a `hello` with no token, and `in-process`/`stdio` never wrap it.
-   *
-   * Adding this field is legal: the protocol is not frozen against growth — only the four
-   * companion-extension commands are (`plan/README.md:150`).
-   */
-  token: z.string().optional(),
-  /**
    * P4 work item 3. The highest event `seq` the client has already seen, so the engine can replay
    * what it missed.
    *
@@ -114,12 +101,55 @@ export const HelloRequestSchema = z.object({
 });
 export type HelloRequest = z.infer<typeof HelloRequestSchema>;
 
+/**
+ * ## The `token` field was removed on 2026-09-25 — from both schemas
+ *
+ * `HelloRequest.token` was P4 work item 4's per-start secret (read from `<dataDir>/engine.token`, or
+ * from `BIFURC_ENGINE_TOKEN` in a container) and `HelloResponse.token` was an optional echo of it that
+ * nothing ever read. Both are gone, along with the file, the environment variable and the
+ * `--token-file` flag.
+ *
+ * The reason is a deployment decision rather than a simplification. The engine is **never** deployed
+ * remotely: it runs inside the Electron app, or as a container on the machine whose browser uses it. Its
+ * RPC surface binds loopback and refuses anything else, so the token was guarding a boundary that no
+ * longer exists — and `plan/05`'s actual threat (an unauthenticated *remote* RPC surface) is answered by
+ * the bind plus the origin guard on the WebSocket upgrade, which is the check that distinguishes a page
+ * served from this machine from a page the user visited somewhere else.
+ *
+ * **The handshake stays.** `protocolVersion`, `clientName`, `clientVersion` and `lastSeq` all still do
+ * their jobs — version compatibility, session identity, the audit trail and replay. Only the credential
+ * half went. `createAuthenticatedTransport`, whose name is now historical, still refuses a first request
+ * that is not `hello`, and still enforces per-command scopes.
+ */
 export const HelloResponseSchema = z.object({
   protocolVersion: z.string(),
   engineVersion: z.string(),
   capabilities: z.array(z.enum(Object.values(Capability) as [CapabilityValue, ...CapabilityValue[]])),
   sessionId: z.string(),
-  token: z.string().optional(),
+  /**
+   * The hostname this engine answers as — `localhost`, since `plan/15` work item 9's `--domain` flag was
+   * **removed on 2026-09-24** (the engine is no longer deployable in the cloud; see `runtime/hostArgs.ts`).
+   *
+   * The engine's **own** name: not the client's, not a request's. It is what a mapping's domain is derived
+   * *from*: a mapping on an engine that answers as `engine.example.com` is `app.engine.example.com`. That
+   * derivation is the whole reason this field exists — the mapping editor needs a suffix to offer, and today it
+   * hardcodes `.localhost` (`plan/15` §4.3). **There is one suffix now**, but the field stays on the wire so
+   * the client still *reads* it rather than guessing it, which is §4.1's rule.
+   *
+   * **Optional, and absence is meaningful.** The desktop shell's transport is not the authenticated one
+   * (`plan/06`: the renderer reaches the engine over IPC, with no handshake), so no `hello` response is ever
+   * produced there; the transports are also constructed directly by tests. Absent therefore means *this engine
+   * did not say* — which a client must treat as "no domain-derived suggestions available", not as a licence to
+   * substitute a guess. Guessing is the failure `plan/15` §4.1 names.
+   *
+   * **This is not `hostKind`.** §4.1's `local`/`remote` signal is a separate field, decided by the host, and
+   * work item 7's. A client that derived that decision from this string would be making the very call the
+   * host is supposed to make, so the two are deliberately not folded into one field.
+   *
+   * Adding it is legal: the protocol is not frozen against growth — only the four companion-extension
+   * commands are (`plan/README.md:150`).
+   */
+  hostDomain: z.string().optional(),
   /**
    * P4 work item 3. Present **only** when the client sent `lastSeq` and the engine can serve it: the
    * engine has retained every event after that seq and will deliver them once the client subscribes.

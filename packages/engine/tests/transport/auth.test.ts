@@ -2,9 +2,14 @@
  * P4 work item 4 — authentication and authorisation, tested without a socket.
  *
  * This is the payoff of building auth as a **decorator**: every case below runs over `in-process`, so
- * the handshake, the token check and the scope gate are all exercised before `ws` exists. `ws` stays
+ * the handshake and the scope gate are both exercised before `ws` exists. `ws` stays
  * behind its hard gate — "an unauthenticated remote RPC surface is a remote code execution hole" —
  * and this file is what makes that gate satisfiable rather than merely blocking.
+ *
+ * **The token check was the third thing in that list until 2026-09-25**, and its removal is recorded
+ * where the token's own cases used to be — see "the token, and why there is nothing here" below. The
+ * short version: what is left is the half of work item 4 that was never about a credential, and the
+ * boundary that replaced it lives in `transport/ws.ts` (the bind) and `lib/net.ts` (the origin).
  *
  * ## What is deliberately asserted as a *property* rather than a spot check
  *
@@ -13,10 +18,7 @@
  * reach anything destructive?". Those are sweeps over the whole table, so a future re-scoping cannot
  * quietly open a hole that a spot check would not notice.
  */
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { COMMAND_FIXTURES, EngineError, PROTOCOL_VERSION, type RpcError } from "@bifurc/protocol";
 import {
   CommandRegistry,
@@ -31,17 +33,12 @@ import {
   commandIsAllowed,
   COMPANION_SCOPES,
   createAuthenticatedTransport,
-  ENGINE_TOKEN_ENV_VAR,
-  ensureEngineToken,
-  generateToken,
   HELLO_ACTION,
   READ_ONLY_SCOPES,
-  readEngineToken,
   requiredScopeFor,
   SCOPE_BY_COMMAND,
   SCOPES,
   SHELL_SCOPES,
-  verifyToken,
   type Scope,
 } from "../../src/transport/auth";
 import type { EngineEvent, Transport } from "../../src/transport/types";
@@ -71,16 +68,10 @@ function validPayload(cmd: string): unknown {
   return fixture.valid;
 }
 
-const tempDirs: string[] = [];
-afterEach(async () => {
-  for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
-});
-
-async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "bifurc-auth-"));
-  tempDirs.push(dir);
-  return dir;
-}
+// `tempDirs`, an `afterEach` that removed them, and `tempDir()` stood here until 2026-09-25. All three
+// existed for one client: the `engine.token` file, which the deleted token block above was the only thing
+// to create, read and stat. With that gone there is nothing on this path that touches the filesystem, so
+// `node:fs/promises`, `node:os` and `node:path` are no longer imported at all — this file is now pure.
 
 // ── the scope table ──────────────────────────────────────────────────────────
 
@@ -177,113 +168,36 @@ describe("scopes", () => {
   });
 });
 
-// ── the token ────────────────────────────────────────────────────────────────
-
-describe("token", () => {
-  it("generates a fresh 256-bit base64url token each time", () => {
-    const a = generateToken();
-    const b = generateToken();
-    expect(a).not.toBe(b);
-    // 32 bytes base64url = 43 chars, no padding — safe in a URL, a JSON string, an env var and a file.
-    expect(a).toHaveLength(43);
-    expect(a).toMatch(/^[A-Za-z0-9_-]+$/);
-  });
-
-  it("accepts the matching token and rejects a different one", () => {
-    const token = generateToken();
-    expect(verifyToken(token, token)).toBe(true);
-    expect(verifyToken(token, generateToken())).toBe(false);
-  });
-
-  it("rejects a token that is only a correct prefix", () => {
-    // Guards the comparison against a `startsWith`/`slice` rewrite, which would accept any extension
-    // of the real token — a far weaker secret than it looks.
-    const token = generateToken();
-    expect(verifyToken(token, token.slice(0, 20))).toBe(false);
-    expect(verifyToken(token, token + "x")).toBe(false);
-  });
-
-  it("rejects non-strings without throwing", () => {
-    // `token` arrives from a client. A TypeError escaping here would crash the session instead of
-    // refusing it, and `timingSafeEqual` throws on a length mismatch, so both paths matter.
-    const token = generateToken();
-    for (const bad of [undefined, null, 42, {}, [], true, Buffer.from(token)]) {
-      expect(verifyToken(token, bad), `${String(bad)} must be refused`).toBe(false);
-    }
-    expect(verifyToken(token, "")).toBe(false);
-  });
-
-  it("writes the token where a client can read it", async () => {
-    const dir = await tempDir();
-    const { token, path, source } = await ensureEngineToken(dir, {});
-    expect(source).toBe("generated");
-    expect(path).toBeDefined();
-    expect(await readEngineToken(dir)).toBe(token);
-  });
-
-  it("rotates on every call, so a token does not survive a restart", async () => {
-    // The property that makes this a *session* secret. A reused token stays valid against a
-    // freshly-started engine, so anything that ever read it keeps its access forever.
-    const dir = await tempDir();
-    const first = await ensureEngineToken(dir, {});
-    const second = await ensureEngineToken(dir, {});
-    expect(second.token).not.toBe(first.token);
-    expect(await readEngineToken(dir)).toBe(second.token);
-    expect(verifyToken(second.token, first.token)).toBe(false);
-  });
-
-  it("writes the token file 0600 where the platform has permission bits", async () => {
-    const dir = await tempDir();
-    const { path } = await ensureEngineToken(dir, {});
-    if (process.platform === "win32") {
-      // Stated rather than asserted: Windows has no POSIX permission bits and Node maps `mode` to the
-      // read-only attribute only, so the token is protected by the data directory's ACL and nothing
-      // else. Same class of gap as the named-pipe transport; belongs in P9/P12.
-      expect(path).toBeDefined();
-      return;
-    }
-    const mode = (await stat(path!)).mode & 0o777;
-    expect(mode.toString(8)).toBe("600");
-  });
-
-  it("takes the token from the environment and writes no file", async () => {
-    // The Docker / mounted-secret path. A container that mounts its secret should not also have it
-    // written into a volume that may be more widely readable.
-    const dir = await tempDir();
-    const { token, path, source } = await ensureEngineToken(dir, {
-      [ENGINE_TOKEN_ENV_VAR]: "from-the-environment",
-    });
-    expect(source).toBe("environment");
-    expect(token).toBe("from-the-environment");
-    expect(path).toBeUndefined();
-    expect(await readEngineToken(dir)).toBeUndefined();
-  });
-
-  it("ignores an empty environment variable rather than trusting it", async () => {
-    // An empty token is a trivially guessable credential. Falling through to generation is the safe
-    // reading of "set but empty".
-    const dir = await tempDir();
-    const { source, token } = await ensureEngineToken(dir, { [ENGINE_TOKEN_ENV_VAR]: "" });
-    expect(source).toBe("generated");
-    expect(token).not.toBe("");
-  });
-
-  it("treats a missing or blank file as no token", async () => {
-    const dir = await tempDir();
-    expect(await readEngineToken(dir)).toBeUndefined();
-    await writeFile(join(dir, "engine.token"), "   \n", "utf8");
-    // A truncated write must not become a credential.
-    expect(await readEngineToken(dir)).toBeUndefined();
-  });
-
-  it("writes the token as-is, with no trailing newline", async () => {
-    // A client reads this file and puts the bytes in `hello`. A newline would make the value differ
-    // from the one the engine compares against, and the failure would look like a wrong token.
-    const dir = await tempDir();
-    const { token } = await ensureEngineToken(dir, {});
-    expect(await readFile(join(dir, "engine.token"), "utf8")).toBe(token);
-  });
-});
+// ── the token, and why there is nothing here ─────────────────────────────────
+//
+// **Nine cases stood here until 2026-09-25**, and they are not skipped or weakened — they are gone,
+// because the thing they tested is gone. `generateToken`, `verifyToken`, `ensureEngineToken`,
+// `readEngineToken` and `ENGINE_TOKEN_ENV_VAR` were all deleted with the token itself, so every one of
+// them would now be a test of a symbol that does not exist.
+//
+// The list is worth keeping, because "the token tests were deleted" and "the token tests were lost" are
+// different events and this record is what tells them apart:
+//
+//   - "generates a fresh 256-bit base64url token each time" — `generateToken`
+//   - "accepts the matching token and rejects a different one" — `verifyToken`
+//   - "rejects a token that is only a correct prefix" — the `timingSafeEqual` guard
+//   - "rejects non-strings without throwing" — the same guard, from the other side
+//   - "writes the token where a client can read it" — `ensureEngineToken`
+//   - "rotates on every call, so a token does not survive a restart" — the session-secret property
+//   - "writes the token file 0600 where the platform has permission bits" — the file's mode
+//   - "takes the token from the environment and writes no file" — the container path
+//   - "ignores an empty environment variable rather than trusting it", and the two file-shape cases
+//
+// **What replaced them is not a weaker version of the same thing, and that is the point of deleting
+// rather than porting.** A credential test asserts that a *secret* is compared correctly. The engine no
+// longer has a secret to compare, so the boundary moved to two places that are not secrets at all: the
+// loopback bind (`transport/ws.ts`, pinned in `ws.test.ts`) and the `Origin` guard on the upgrade
+// (`lib/net.ts`'s `isAllowedOrigin`, pinned in `lib/net.test.ts` and driven end-to-end in `ws.test.ts`).
+// Neither can be "rotated", and neither has a file mode.
+//
+// The **one** case here that outlived its subject is the credential half of the handshake, and it now
+// asserts the opposite: `protocol.conformance.ts` has "accepts a `hello` that still carries the removed
+// `token` field", which is the migration story rather than a leftover.
 
 // ── the decorator ────────────────────────────────────────────────────────────
 
@@ -320,7 +234,10 @@ function harness(
   const inner = createInProcessTransport(registry, { bus, ctx: { bus }, log });
   const failures: RpcError[] = [];
   const transport = createAuthenticatedTransport(inner, {
-    token: "the-engine-token",
+    // **No `token`.** It was the first field here, and the harness threaded it through `opts` so a case
+    // could present the *wrong* one — see `authenticated()` below, which did exactly that. There is no
+    // credential now, so "a wrong token" is not a state this harness can be put into; the one identity
+    // failure the decorator still has (a request that is not `hello`) is driven directly instead.
     engineVersion: "0.3.3",
     onAuthFailure: (error) => failures.push(error),
     ...(log === undefined ? {} : { log }),
@@ -335,7 +252,8 @@ async function authenticated(
   harnessOpts: { log?: Partial<Omit<EventLogOptions, "bus">> } = {},
 ): Promise<Harness> {
   const h = harness(opts, harnessOpts);
-  await h.transport.request(HELLO_ACTION, { ...VALID_HELLO, token: opts.token ?? "the-engine-token" });
+  // The payload no longer carries a token; sending it **first** is the rule this call satisfies.
+  await h.transport.request(HELLO_ACTION, { ...VALID_HELLO });
   return h;
 }
 
@@ -344,7 +262,6 @@ describe("the hello handshake", () => {
     const { transport } = harness();
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
     })) as Record<string, unknown>;
 
     expect(response.protocolVersion).toBe(PROTOCOL_VERSION);
@@ -358,46 +275,91 @@ describe("the hello handshake", () => {
     const { transport } = harness({ capabilities: ["blob", "events.replay"] });
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
     })) as { capabilities: string[] };
     expect(response.capabilities).toEqual(["blob", "events.replay"]);
+  });
+
+  it("reports the host's own domain when it was told one — the transport option, not `--domain`", async () => {
+    // The only route a domain has to a client: the host that holds one passes it down as an auth option, and this
+    // decorator is what turns it into a wire field. Pinned here because this is where the *shape* is decided;
+    // `tests/integration/workspaceHost.integration.test.ts` is where the host-to-wire wiring is pinned, and the
+    // two are different questions.
+    //
+    // **The value is arbitrary on purpose.** `plan/15` work item 9's `--domain` flag was removed on 2026-09-24,
+    // so the only host that exists passes `localhost` — but the *option* is still a free string, and this case is
+    // about the decorator's shape rather than about which host supplies what. A case that only ever saw
+    // `localhost` could not tell "passed through" from "defaulted".
+    const { transport } = harness({ hostDomain: "engine.example.com" });
+    const response = (await transport.request(HELLO_ACTION, {
+      ...VALID_HELLO,
+    })) as { hostDomain?: string };
+    expect(response.hostDomain).toBe("engine.example.com");
+  });
+
+  it("OMITS hostDomain when it was not told one, rather than inventing localhost", async () => {
+    // **The absence is the assertion, and `in` is the only way to make it.** A spread that produced
+    // `hostDomain: undefined` would satisfy `toBeUndefined()` while putting a *present* field on the wire — and a
+    // client reading it the way this codebase reads `replayedFrom`/`resyncRequired` (`"key" in response`, which
+    // is what the schema's own docblock records) would then see a domain the engine never had.
+    //
+    // Inventing `localhost` would be worse still, and it is the tempting shortcut: the desktop app's engine
+    // really is `localhost`, so the substitution would be *right* there and a lie everywhere else — and a client
+    // could not tell the two apart.
+    const { transport } = harness();
+    const response = (await transport.request(HELLO_ACTION, {
+      ...VALID_HELLO,
+    })) as Record<string, unknown>;
+    expect("hostDomain" in response).toBe(false);
   });
 
   it("uses the injected session-id factory", async () => {
     const { transport } = harness({ sessionId: () => "session-fixed" });
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
     })) as { sessionId: string };
     expect(response.sessionId).toBe("session-fixed");
   });
 
-  it("refuses a missing or wrong token and closes the session", async () => {
-    for (const token of [undefined, "wrong"]) {
+  it("refuses a request before the handshake, and closes the session", async () => {
+    // This replaced "refuses a missing or wrong token and closes the session". The rule it asserts is the
+    // same one — work item 5's *"Auth failure returns UNAUTHORIZED and closes. Never fall back to
+    // unauthenticated"* — but the **trigger** is now the rule itself rather than a credential: the first
+    // request must be `hello`, and a session that skipped the handshake has claimed nothing to revoke.
+    //
+    // Driven across two namespaces, because an implementation could exempt one and the exemption would be
+    // exactly the hole this case exists to close. The payload is `{}` on purpose: the decorator refuses
+    // *before* the registry ever sees the command, so a valid payload would prove nothing extra.
+    for (const cmd of [READ_COMMAND, WRITE_COMMAND]) {
       const { transport } = harness();
       await expect(
-        transport.request(HELLO_ACTION, { ...VALID_HELLO, token }),
+        transport.request(cmd, {}),
+        `${cmd} before the handshake must be refused`,
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-      // Closed, per work item 5: "Auth failure returns UNAUTHORIZED and closes."
+      // Closed, per work item 5.
       await expect(transport.request(READ_COMMAND, {})).rejects.toBeInstanceOf(EngineError);
     }
   });
 
-  it("treats a non-string token as a malformed message, not a wrong credential", async () => {
-    // `42` fails `HelloRequestSchema`, so it is `BAD_REQUEST` and the session survives — a
-    // well-formed message carrying the wrong secret is an *identity* failure and closes, but a
-    // message that is not shaped like a handshake at all claimed nothing to revoke.
+  it("ACCEPTS a hello carrying a `token`, because the field is no longer read", async () => {
+    // This replaced "treats a non-string token as a malformed message, not a wrong credential", and it
+    // asserts the **opposite** of that case. `token: 42` used to be a `BAD_REQUEST`, because the field was
+    // part of `HelloRequestSchema` and `42` is not a string. It is not part of the schema any more, so a
+    // `z.object` strips it whatever its type and the handshake succeeds.
     //
-    // The security-relevant half is that it is never *accepted*: the schema refuses it here, and
-    // `verifyToken` refuses a non-string independently — belt and braces, because a future change
-    // could loosen the schema without anyone re-checking the comparison.
-    const { transport } = harness();
-    await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, token: 42 }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
-    await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" }),
-    ).resolves.toBeDefined();
+    // Both values are worth driving: `42` is the shape that used to fail schema validation, and a plausible
+    // string is what a real client built before 2026-09-25 still sends.
+    //
+    // **This is not a hole, and the reason is the shape of the change.** The old case's security claim was
+    // that a bad credential is never *accepted*; the claim now is that there is no credential to be bad —
+    // the boundary moved to the loopback bind and the `Origin` guard. `protocol.conformance.ts` pins the
+    // same property from the conformance side, so it holds for every transport rather than for this one.
+    for (const token of [42, "a-stale-token-from-an-older-client"]) {
+      const { transport } = harness();
+      await expect(
+        transport.request(HELLO_ACTION, { ...VALID_HELLO, token }),
+        `token ${JSON.stringify(token)} must be ignored, not refused`,
+      ).resolves.toBeDefined();
+    }
   });
 
   it("refuses a malformed hello without closing, so the client can correct it", async () => {
@@ -409,14 +371,14 @@ describe("the hello handshake", () => {
     );
     // Still usable:
     await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" }),
+      transport.request(HELLO_ACTION, { ...VALID_HELLO }),
     ).resolves.toBeDefined();
   });
 
   it("refuses a major protocol mismatch with UNSUPPORTED", async () => {
     const { transport } = harness();
     await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, protocolVersion: "2.0.0", token: "the-engine-token" }),
+      transport.request(HELLO_ACTION, { ...VALID_HELLO, protocolVersion: "2.0.0" }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED" });
   });
 
@@ -427,7 +389,7 @@ describe("the hello handshake", () => {
     // external consumer `plan/README.md:150` freezes four commands for.
     const { transport } = harness({ protocolVersion: "1.4.0" });
     await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, protocolVersion: "1.2.0", token: "the-engine-token" }),
+      transport.request(HELLO_ACTION, { ...VALID_HELLO, protocolVersion: "1.2.0" }),
     ).resolves.toBeDefined();
   });
 
@@ -436,13 +398,15 @@ describe("the hello handshake", () => {
     // into a suggestion.
     const { transport } = await authenticated();
     await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" }),
+      transport.request(HELLO_ACTION, { ...VALID_HELLO }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
   it("reports the failure to onAuthFailure", async () => {
+    // The trigger is a request that is not `hello`. The "wrong credential" version of this went with the
+    // token; this is the one identity failure the decorator has left to report.
     const { transport, failures } = harness();
-    await expect(transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "wrong" })).rejects.toThrow();
+    await expect(transport.request(READ_COMMAND, {})).rejects.toThrow();
     expect(failures).toHaveLength(1);
     expect(failures[0]!.code).toBe("UNAUTHORIZED");
   });
@@ -451,8 +415,8 @@ describe("the hello handshake", () => {
 /**
  * Work item 4's audit trail, and the `ctx.session` half of it.
  *
- * The decorator is the only thing that knows **who** connected — the token check, the version check and
- * the `hello` payload all live in it — so it is the only thing that can report the identity. *Where*
+ * The decorator is the only thing that knows **who** connected — the version check and the `hello`
+ * payload both live in it — so it is the only thing that can report the identity. *Where*
  * that identity is recorded is deliberately not its business, which is why these cases assert the
  * observer and never reach for a command context: the decorator observes, the caller records.
  *
@@ -474,7 +438,6 @@ describe("the session identity", () => {
 
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
     })) as { sessionId: string };
 
     expect(seen).toHaveLength(1);
@@ -497,18 +460,19 @@ describe("the session identity", () => {
     const { seen, opts } = collect();
     const { transport } = harness({ ...opts, scopesFor: () => COMPANION_SCOPES });
 
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO });
 
     expect(seen).toHaveLength(1);
     expect(seen[0].scopes).toEqual(COMPANION_SCOPES);
   });
 
-  it("reports nothing when the token is wrong", async () => {
+  it("reports nothing when the session is refused", async () => {
+    // Replaced "reports nothing when the token is wrong". The property is the one that matters for an
+    // audit trail — a client that never established a session must not appear in it — but the way to
+    // produce a refusal is now a request that is not `hello`.
     const { seen, opts } = collect();
     const { transport } = harness(opts);
-    await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "definitely-not-the-token" }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(transport.request(READ_COMMAND, {})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     expect(seen).toEqual([]);
   });
 
@@ -520,7 +484,6 @@ describe("the session identity", () => {
       transport.request(HELLO_ACTION, {
         ...VALID_HELLO,
         protocolVersion: `${Number(major) + 1}.${minor}.${patch}`,
-        token: "the-engine-token",
       }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED" });
     expect(seen).toEqual([]);
@@ -548,9 +511,9 @@ describe("the session identity", () => {
   it("reports at most once, because a second hello is refused", async () => {
     const { seen, opts } = collect();
     const { transport } = harness(opts);
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO });
     await expect(
-      transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" }),
+      transport.request(HELLO_ACTION, { ...VALID_HELLO }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(seen).toHaveLength(1);
   });
@@ -565,10 +528,10 @@ describe("the session identity", () => {
     registry.register(READ_COMMAND, (_params, inner) => ({ session: inner.session ?? null }));
     const transport = createAuthenticatedTransport(
       createInProcessTransport(registry, { bus, ctx }),
-      { token: "the-engine-token", engineVersion: "0.3.3" },
+      { engineVersion: "0.3.3" },
     );
 
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO });
 
     expect(ctx.session).toBeUndefined();
     await expect(transport.request(READ_COMMAND, {})).resolves.toEqual({ session: null });
@@ -583,7 +546,6 @@ describe("the session identity", () => {
     const transport = createAuthenticatedTransport(
       createInProcessTransport(registry, { bus, ctx }),
       {
-        token: "the-engine-token",
         engineVersion: "0.3.3",
         onSession: (identity) => {
           ctx.session = identity;
@@ -593,7 +555,6 @@ describe("the session identity", () => {
 
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
     })) as { sessionId: string };
 
     await expect(transport.request(READ_COMMAND, {})).resolves.toMatchObject({
@@ -758,7 +719,6 @@ describe("replay from lastSeq", () => {
     const { transport } = harness();
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
       lastSeq: 7,
     })) as Record<string, unknown>;
 
@@ -774,7 +734,7 @@ describe("replay from lastSeq", () => {
     const with_ = harness({}, { log: {} });
 
     const ask = async (t: Transport) =>
-      ((await t.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token" })) as {
+      ((await t.request(HELLO_ACTION, { ...VALID_HELLO })) as {
         capabilities: string[];
       }).capabilities;
 
@@ -786,7 +746,6 @@ describe("replay from lastSeq", () => {
     const { transport } = harness({ capabilities: ["events.replay"] }, { log: {} });
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
     })) as { capabilities: string[] };
     expect(response.capabilities).toEqual(["events.replay"]);
   });
@@ -797,7 +756,7 @@ describe("replay from lastSeq", () => {
     bus.emitTyped("server.error", "an-error");
     bus.emitTyped("log.chunk", { logId: "l1", chunk: "a-chunk", done: false });
 
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token", lastSeq: 0 });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO, lastSeq: 0 });
 
     const errors: EngineEvent[] = [];
     transport.subscribe([ERROR], (e) => errors.push(e));
@@ -821,7 +780,6 @@ describe("replay from lastSeq", () => {
     // The promise is made while seq 1 is still retained.
     const response = (await transport.request(HELLO_ACTION, {
       ...VALID_HELLO,
-      token: "the-engine-token",
       lastSeq: 0,
     })) as Record<string, unknown>;
     expect(response.replayedFrom).toBe(0);
@@ -854,7 +812,7 @@ describe("replay from lastSeq", () => {
     const { transport, bus, log } = harness({}, { log: { maxEvents: 2 } });
     openTheWindow(log!);
     bus.emitTyped("server.error", "one");
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token", lastSeq: 0 });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO, lastSeq: 0 });
     bus.emitTyped("server.error", "two");
     bus.emitTyped("server.error", "three");
 
@@ -869,7 +827,7 @@ describe("replay from lastSeq", () => {
     const { transport, bus, log } = harness({}, { log: {} });
     openTheWindow(log!);
     bus.emitTyped("server.error", "in-the-backlog");
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token", lastSeq: 0 });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO, lastSeq: 0 });
 
     const seen: EngineEvent[] = [];
     let first = true;
@@ -897,7 +855,7 @@ describe("replay from lastSeq", () => {
     const { transport, bus, log } = harness({}, { log: {} });
     openTheWindow(log!);
     bus.emitTyped("server.error", "one");
-    await transport.request(HELLO_ACTION, { ...VALID_HELLO, token: "the-engine-token", lastSeq: 1 });
+    await transport.request(HELLO_ACTION, { ...VALID_HELLO, lastSeq: 1 });
 
     const seen: EngineEvent[] = [];
     transport.subscribe([ERROR], (e) => seen.push(e));

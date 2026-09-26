@@ -393,25 +393,22 @@ describe("socket — event delivery", () => {
 });
 
 describe("socket — the auth consequence (work item 5)", () => {
-  it("answers UNAUTHORIZED and then closes the session", async () => {
+  it("answers UNAUTHORIZED and then closes the session when the first request is not `hello`", async () => {
     // "Auth failure returns UNAUTHORIZED and closes. Never fall back to unauthenticated." Both halves
     // matter, and the ordering matters more here than on `ws`, not less: a WebSocket can carry a close
     // code, whereas a plain socket has no way to say *why* it went away. The reply is the only signal
-    // the peer gets, so a peer disconnected without it cannot tell a rejected credential from a crash.
+    // the peer gets, so a peer disconnected without it cannot tell a rejected request from a crash.
+    //
+    // **The trigger is "not `hello`", not "the wrong token"** — the token was deleted on 2026-09-25, so
+    // a bad credential is no longer expressible and this is the one identity failure the decorator has.
+    // Same rewrite as `ws.test.ts`, and for the same reason.
     const fatals: Error[] = [];
     const { transport } = await pair(
-      { auth: { token: "the-right-token", engineVersion: "0.0.0-test" } },
+      { auth: { engineVersion: "0.0.0-test" } },
       { onFatal: (e) => fatals.push(e) },
     );
 
-    await expect(
-      transport.request("hello", {
-        protocolVersion: PROTOCOL_VERSION,
-        clientName: "cli",
-        clientVersion: "0.0.0-test",
-        token: "definitely-not-the-token",
-      }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(transport.request("config.get", {})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
     // The close is what proves there is no unauthenticated fallback path: waiting for it here rather
     // than assuming it has already happened is what makes the next assertion deterministic.
@@ -427,7 +424,6 @@ describe("socket — the auth consequence (work item 5)", () => {
     const { transport } = await pair(
       {
         auth: {
-          token: "the-right-token",
           engineVersion: "0.0.0-test",
           scopesFor: () => new Set(["read"] as const),
         },
@@ -439,7 +435,6 @@ describe("socket — the auth consequence (work item 5)", () => {
       protocolVersion: PROTOCOL_VERSION,
       clientName: "bifurc-extension",
       clientVersion: "0.0.0-test",
-      token: "the-right-token",
     });
 
     // `env.setActive` requires `write`; a `read` session must be refused and must stay connected.
@@ -453,14 +448,13 @@ describe("socket — the auth consequence (work item 5)", () => {
     // would have to infer the transport from what it happened to construct, and the `hello` response
     // is the only place capabilities are reported.
     const { transport } = await pair({
-      auth: { token: "the-right-token", engineVersion: "0.0.0-test" },
+      auth: { engineVersion: "0.0.0-test" },
     });
 
     const response = (await transport.request("hello", {
       protocolVersion: PROTOCOL_VERSION,
       clientName: "electron-shell",
       clientVersion: "0.0.0-test",
-      token: "the-right-token",
     })) as { capabilities: string[] };
 
     expect(response.capabilities).toContain("socket");

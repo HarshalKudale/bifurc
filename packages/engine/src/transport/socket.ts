@@ -340,16 +340,19 @@ export function createSocketTransport(
 // ── the server ───────────────────────────────────────────────────────────────
 
 /**
- * Authentication for a `socket` server.
+ * The identity a `socket` session is given.
  *
- * Optional, and omitting it produces an **unauthenticated** server. That is legal because the socket
- * file is `0600` — reachable by this user alone, the same reachability as `ws`'s loopback bind — and
- * `plan/05`'s threat is an unauthenticated *remote* RPC surface. The plan nonetheless recommends a
- * token here as well, which is why the option exists.
+ * Optional, and omitting it produces a server with **no handshake at all**. That is legal because the
+ * socket file is `0600` — reachable by this user alone, which is the same reachability `ws` gets from its
+ * loopback bind — and `plan/05`'s threat is an unauthenticated *remote* RPC surface.
+ *
+ * **It no longer carries a token.** `plan/05` recommended one here and `ensureEngineToken()` produced it,
+ * until 2026-09-25: the engine stopped being remotely deployable, so a secret guarding nothing but a `0600`
+ * file became a field whose only legal value was one nobody needs. The interface keeps the name "auth"
+ * because the handshake it configures is the same handshake — `transport/auth/index.ts` records why the
+ * names were left alone rather than renamed inside a behavioural change.
  */
 export interface SocketServerAuthOptions {
-  /** The token `ensureEngineToken()` produced for this run. */
-  token: string;
   /** Reported to the client in the `hello` response. Under D9 it tracks the protocol version. */
   engineVersion: string;
   /** Which scopes a session gets, by client. Defaults to `SHELL_SCOPES` (see `authenticated.ts`). */
@@ -360,6 +363,15 @@ export interface SocketServerAuthOptions {
   sessionId?: AuthenticatedTransportOptions["sessionId"];
   /** Extra capabilities to advertise. `socket` is added automatically. */
   capabilities?: readonly CapabilityValue[];
+  /**
+   * The hostname this engine answers as, passed through to `hello`'s `hostDomain` — `localhost`, since
+   * `plan/15`'s `--domain` flag was removed on 2026-09-24 (`runtime/hostArgs.ts`'s header records why).
+   *
+   * Typed off `AuthenticatedTransportOptions` rather than re-declared, like every other field in this
+   * interface: the decorator owns the handshake, so it owns the field's meaning, and a second declaration
+   * here is a second place for that meaning to drift.
+   */
+  hostDomain?: AuthenticatedTransportOptions["hostDomain"];
   /** Overrides the engine's protocol version, so a test can drive the major-mismatch path. */
   protocolVersion?: string;
 }
@@ -561,7 +573,6 @@ export async function createSocketServer(opts: SocketServerOptions): Promise<Soc
       opts.auth === undefined
         ? inner
         : createAuthenticatedTransport(inner, {
-            token: opts.auth.token,
             engineVersion: opts.auth.engineVersion,
             log: opts.log,
             scopesFor: opts.auth.scopesFor,
@@ -572,12 +583,17 @@ export async function createSocketServer(opts: SocketServerOptions): Promise<Soc
              * No `peer`, and that is deliberate rather than an oversight: a unix socket or a named pipe
              * has no peer *address*. The path names this engine's own endpoint, so recording it in a
              * field called `peer` would be a fiction — and a misleading one, since it would read like a
-             * client identifier. Identity on this transport is the token plus the handshake, which is
-             * exactly what `sessionId` and `clientName` carry.
+             * client identifier. Identity on this transport is now the handshake alone — `sessionId` and
+             * `clientName` — because the token it used to be paired with was deleted on 2026-09-25.
              */
             onSession: (identity) => {
               ctx.session = identity;
             },
+            // Passed straight through: the decorator owns the handshake, so it owns what the handshake
+            // reports. `undefined` here means the host was never told its own name, which is a real state —
+            // see the option's docblock — and the decorator turns it into an **absent** field rather than a
+            // substituted one.
+            hostDomain: opts.auth.hostDomain,
             // `socket` is advertised because this *is* the socket transport; `events.replay` is derived
             // by the decorator from `log` being present, so it is not listed here and must not be —
             // two sources for that flag is how they end up disagreeing.

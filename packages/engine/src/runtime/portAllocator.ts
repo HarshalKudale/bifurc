@@ -1,123 +1,59 @@
 /**
- * P14 work item 5 — the port allocator, to D16's rule.
+ * Port finding, after `plan/17`: **every port is engine-level, none is per workspace**.
  *
- * ## The rule, from `plan/14` §3 / D16
+ * ## What this module is now, and what it stopped being
  *
- * The environment supplies a **base port** and a workspace's proxy scans **contiguously upward** from it
- * until a bind succeeds. Resolution order:
+ * Until 2026-09-25 this file was the **per-workspace allocator** to D16's rule — a base port, a contiguous
+ * scan upward, a per-workspace override that failed loudly, and a remembered resolved port so a workspace
+ * that landed on 81 kept 81. `plan/17` §1 replaced that model: a workspace is a **project**, so switching
+ * workspaces changes the **context** (which rules, mocks and webhook endpoints are in force) while the ports
+ * and the infrastructure stay put.
  *
- * | # | Source | If the port is taken |
+ * The consequence for this module is that it loses its subject. `allocatePorts()`,
+ * `PortUnavailableError`, `PortRangeExhaustedError` and `AllocatedPorts` all existed to answer *"which port
+ * does workspace N get?"* — a question the new model does not ask. They are **deleted, not deprecated**:
+ * leaving them behind would keep a second, contradictory answer to a question the host now answers once.
+ *
+ * What survives is finding, and there are exactly **two** kinds because the plan's port table has exactly
+ * two shapes of listener:
+ *
+ * | Finder | For | Why this shape |
  * |---|---|---|
- * | 1 | **Per-workspace override** (the host-local registry, or the settings UI) | **Fail loudly**, naming the next free port. Never silently move a port the user chose. |
- * | 2 | **Remembered resolved port** — what this workspace actually bound on a previous run | **Fall through to 3.** A remembered *outcome* is not a request, so it must never become a startup failure. |
- * | 3 | **Environment base** — `80` on win32, `8080` elsewhere, overridable via `BIFURC_PROXY_BASE_PORT` | Scan upward: `base + 1`, `base + 2`, … |
+ * | `findFreePortFrom` | the **companion** on a host with no GUI (Electron) | one port, no neighbour to reserve |
+ * | `findPortPair` | the **companion + web GUI** pair | `n` free with `n + 1` taken is a *failed* start, not a usable one |
  *
- * The webhook port follows the same shape with base `9101` on every platform (already above 1024, so no
- * platform split is needed).
+ * Three ports are deliberately **not** found here, because they are bound rather than discovered — a port
+ * that has to be *addressed* cannot move without breaking whoever addresses it:
+ *
+ * - the **edge** (reverse proxy) — every `*.localhost` mapping points at it;
+ * - the **forward proxy** — the browser's proxy setting names it, so a taken port **fails loudly** instead
+ *   of the app silently incrementing;
+ * - the **webhook** — a *feature*, off by default, whose port the user owns.
+ *
+ * ## The defaults do not live here
+ *
+ * The numbers are in `store/appSettings.ts`, next to the settings they are the defaults *of*, so a number
+ * cannot drift from the field it fills. This module owns only the *finding*, which is a runtime concern and
+ * takes its base as a parameter.
  *
  * ## The one thing that must not be done differently: bind for real
  *
  * `applications/portUtils.ts#checkPortInUse` **binds a port and immediately closes it** to answer "is this
  * free?", then the caller's real `listen()` happens later. That is a TOCTOU race: between the probe and the
- * bind, another process — or another of this host's own runtimes — can take the port, and the allocator
- * would have promised a port it cannot deliver. D16 records the rule as **"must be driven by the real
- * `listen()`, never `checkPortInUse`"**, and this module honours it: `tryBind()` attempts an actual
- * `net.Server.listen()`, and the port is only considered free if that *succeeded*. `checkPortInUse` is still
- * the right tool for **reporting** a busy port to a user (it can name the owning PID, which a bind cannot),
- * and `killProcessOnPort` is unaffected.
- *
- * ## Scanning, and where the remembered port sits
- *
- * The scan is `base, base+1, base+2, …` up to `SCAN_LIMIT`. It is the **last** of D16's three sources, and the
- * remembered port is tried **before** it — which is what makes a workspace's proxy URL stable. D16, verbatim:
- * *"A workspace that landed on 81 because 80 was busy **keeps 81** after 80 frees up — a stable URL is worth
- * more to the browser-proxy workflow than reclaiming the base."* Without this step the scan would walk the
- * workspace back down to the base the moment it freed up, and a browser configured for `:81` would break
- * silently.
- *
- * **The remembered port is soft, and that is why it is a separate input from the override rather than reusing
- * it.** Passing it as `preferredProxyPort` would have been a one-line change and would have been wrong: D16's
- * fail-loudly rule is for a port **the user chose**, and a busy remembered port is nobody's mistake — it is
- * another process having taken the port since. So a remembered port that is taken falls through to the scan,
- * exactly as if it had never been remembered. *(This was missing until 2026-09-22; the allocator had no soft
- * input, so `host.ts` could not honour D16 without turning a taken remembered port into a hard startup
- * failure. See `plan/14` §8 criteria 6a/6b.)*
- *
- * ## What this module does not do
- *
- * It does not read the registry, write it, or know what a workspace is. It takes a *preference* and a
- * *remembered port*, and returns a *port*. The host owns the registry (`plan/14` §4: the resolved port is
- * recorded in the host-local
- * `runtime.json`, **never** in `workspace.json`, which is git-tracked and therefore syncs and collides).
+ * bind, another process can take the port, and the finder would have promised a port it cannot deliver.
+ * `plan/14` §4 records the rule as **"must be driven by the real `listen()`, never `checkPortInUse`"**, and
+ * this module honours it: `tryBind()` attempts an actual `net.Server.listen()`, and a port is only free if
+ * that *succeeded*. `checkPortInUse` is still the right tool for **reporting** a busy port to a user (it can
+ * name the owning PID, which a bind cannot), and `killProcessOnPort` is unaffected.
  */
 
 import * as net from "net";
 
-/** Windows may bind privileged ports without elevation; everywhere else, 80 needs root or a capability. */
-export const IS_WINDOWS = process.platform === "win32";
-
 /**
- * The per-environment base port (D16). `BIFURC_PROXY_BASE_PORT` moves the **base**, not one workspace's
- * port, so the increment keeps working after it — which is what a container wants: pin the published port
- * without giving up the fallback.
- */
-export function proxyBasePort(): number {
-  const raw = process.env.BIFURC_PROXY_BASE_PORT;
-  if (raw !== undefined && raw !== "") {
-    const parsed = Number.parseInt(raw, 10);
-    // Fail loudly on a malformed override rather than silently using the default: a container that set the
-    // variable meant it, and a silent fallback would publish the wrong port.
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
-      throw new Error(
-        `BIFURC_PROXY_BASE_PORT must be a port number (0-65535), got ${JSON.stringify(raw)}`,
-      );
-    }
-    return parsed;
-  }
-  return IS_WINDOWS ? 80 : 8080;
-}
-
-/** The webhook base. `9101` on every platform — above 1024, so no environment split is needed. */
-export const WEBHOOK_BASE_PORT = 9101;
-
-/**
- * How far the scan will look. 1000 is far beyond any plausible workspace count and bounds the loop so a
- * pathological environment cannot hang startup.
+ * How far a scan will look. 1000 is far beyond any plausible need and bounds the loop so a pathological
+ * environment cannot hang startup.
  */
 export const SCAN_LIMIT = 1000;
-
-/** Raised when a **per-workspace override** cannot be honoured. D16 requires this to fail loudly. */
-export class PortUnavailableError extends Error {
-  constructor(
-    readonly requested: number,
-    readonly nextFree: number | null,
-    readonly kind: "proxy" | "webhook",
-  ) {
-    super(
-      nextFree !== null
-        ? `Port ${requested} (the configured ${kind} port for this workspace) is already in use. ` +
-            `Port ${nextFree} is free — either free ${requested} or change this workspace's ${kind} port.`
-        : `Port ${requested} (the configured ${kind} port for this workspace) is already in use, and no ` +
-            `free port was found in the ${SCAN_LIMIT} ports above it. Free ${requested} or change this ` +
-            `workspace's ${kind} port.`,
-    );
-    this.name = "PortUnavailableError";
-  }
-}
-
-/** Raised when the scan exhausted its range with nothing free. */
-export class PortRangeExhaustedError extends Error {
-  constructor(
-    readonly base: number,
-    readonly kind: "proxy" | "webhook",
-  ) {
-    super(
-      `No free ${kind} port in ${base}-${base + SCAN_LIMIT - 1}. ` +
-        `Set BIFURC_PROXY_BASE_PORT to move the base, or free a port in that range.`,
-    );
-    this.name = "PortRangeExhaustedError";
-  }
-}
 
 /**
  * Attempt a **real** bind on `port`, then release it.
@@ -154,37 +90,78 @@ export function tryBind(port: number, host = "127.0.0.1"): Promise<boolean> {
 }
 
 /**
- * Scan contiguously upward from `base` for the first bindable port.
+ * The first bindable port at or above `base`, or `null` if the whole range is taken.
  *
- * Returns the port, or `null` if the whole range is taken. Used for the **environment base** path, where
- * landing on `base + 1` is the designed outcome rather than a degraded one — so callers must not warn about
- * it.
+ * **The single-port finder** — for a listener with no neighbour it has to reserve. Its one caller is
+ * Electron's companion port (`plan/17` §1: *"Electron has no GUI port, so it checks only the companion's
+ * `n` — requiring `n + 1` to be free there would refuse a port for a neighbour it is never going to
+ * use"*). The host's companion, which does have a GUI neighbour, uses `findPortPair` instead.
  *
- * `reserved` ports are skipped **without binding them**. Skipping rather than binding matters for the ports
- * this host is about to take itself: binding one to test it would be a probe of a port already spoken for,
- * and a `reserved` set that had to win a race against its own scan would be no guard at all.
+ * `reserved` ports are skipped **without binding them**. Skipping rather than binding matters for a port the
+ * caller is about to take itself: binding one to test it would be a probe of a port already spoken for, and
+ * a `reserved` set that had to win a race against its own scan would be no guard at all.
  */
 export async function findFreePortFrom(
   base: number,
-  kind: "proxy" | "webhook" = "proxy",
   reserved: ReadonlySet<number> = new Set<number>(),
 ): Promise<number | null> {
-  void kind;
   for (let offset = 0; offset < SCAN_LIMIT; offset += 1) {
     const candidate = base + offset;
     if (candidate > 65535) return null;
     if (reserved.has(candidate)) continue;
     // eslint-disable-next-line no-await-in-loop -- the scan is inherently sequential: each candidate must be
-    // bound before the next is tried, or two runtimes scanning at once could both see the same port free.
+    // bound before the next is tried, or two starters scanning at once could both see the same port free.
     if (await tryBind(candidate)) return candidate;
   }
   return null;
 }
 
 /**
- * The next free port at or above `from`, for **error messages only**. D16 requires the "fail loudly" message
- * to *name* the next free port, so a user whose override was taken is told what to do; it is deliberately
- * advisory and not used to pick a port.
+ * The web GUI's port, **derived** from the companion's.
+ *
+ * A function rather than a second setting, because the two are one decision: the GUI is served *with* the
+ * companion's port handed to it, so an independently settable GUI port would be a way to configure the pair
+ * into a state where the GUI looks for the companion somewhere it is not.
+ */
+export function webGuiPortFor(companionPort: number): number {
+  return companionPort + 1;
+}
+
+/**
+ * The first `n >= base` where **both** `n` and `n + 1` are free, or `null` if the range holds no such pair.
+ *
+ * The pair is the reason this is not `findFreePortFrom`: the companion and the GUI are started **together**,
+ * the GUI is handed the companion's port, and the edge's global mapping points at the GUI — so `n` free with
+ * `n + 1` taken is a **failed** start rather than a usable one. Checking the two one at a time would hand
+ * back a companion port whose GUI has nowhere to live. The scan steps by **one** rather than two so a run of
+ * adjacent free ports is used densely.
+ *
+ * `reserved` is honoured for both halves, so a pair cannot straddle a port the caller is about to bind.
+ */
+export async function findPortPair(
+  base: number,
+  reserved: ReadonlySet<number> = new Set<number>(),
+): Promise<{ companionPort: number; webGuiPort: number } | null> {
+  for (let offset = 0; offset < SCAN_LIMIT; offset += 1) {
+    const companionPort = base + offset;
+    if (companionPort + 1 > 65535) return null;
+    if (reserved.has(companionPort) || reserved.has(companionPort + 1)) continue;
+    // eslint-disable-next-line no-await-in-loop -- sequential: the pair must be proven free before the next
+    // candidate is tried, or two starters scanning at once could both see the same pair free.
+    if ((await tryBind(companionPort)) && (await tryBind(companionPort + 1))) {
+      return { companionPort, webGuiPort: companionPort + 1 };
+    }
+  }
+  return null;
+}
+
+/**
+ * The next free port at or above `from`, for **error messages only**.
+ *
+ * Its one caller is the forward proxy's bind failure. `plan/17` §1 requires that port to fail loudly rather
+ * than silently increment *"so the user enters a working one instead of the app silently incrementing"* —
+ * and a message that names a working port is what makes that instruction followable. It is deliberately
+ * advisory: nothing uses its answer to pick a port.
  */
 export async function nextFreePortAbove(from: number): Promise<number | null> {
   for (let candidate = from; candidate <= 65535 && candidate < from + SCAN_LIMIT; candidate += 1) {
@@ -192,162 +169,4 @@ export async function nextFreePortAbove(from: number): Promise<number | null> {
     if (await tryBind(candidate)) return candidate;
   }
   return null;
-}
-
-/** The ports a runtime will use, with the provenance of each — so a host can log *why* it landed there. */
-export interface AllocatedPorts {
-  proxyPort: number;
-  webhookPort: number;
-  /** True when `preferredProxyPort` was honoured as-is (no increment, no override). */
-  proxyPortWasPreferred: boolean;
-  /** True when `preferredWebhookPort` was honoured as-is. */
-  webhookPortWasPreferred: boolean;
-  /**
-   * True when the port came from `rememberedProxyPort` — D16's stickiness path, as opposed to the scan.
-   *
-   * Exposed because the **outcome cannot distinguish the two**: on a quiet machine the remembered port and the
-   * scan produce the same number, so "the port did not move" is not evidence that the remembered value was
-   * used. This flag is. Same reasoning as the `IS_WINDOWS` count in `plan/14` §8 criterion 3 — when the claim
-   * is about *which mechanism ran*, assert the mechanism, not the result it happens to share.
-   */
-  proxyPortWasRemembered: boolean;
-  /** True when the port came from `rememberedWebhookPort`. */
-  webhookPortWasRemembered: boolean;
-}
-
-export interface AllocateOptions {
-  /** A per-workspace override. If given and taken, this **throws** — D16's fail-loudly rule. */
-  preferredProxyPort?: number | null;
-  /** A per-workspace webhook override, same rule. */
-  preferredWebhookPort?: number | null;
-  /**
-   * The port this workspace resolved to on a **previous run**, from the host-local `runtime.json`.
-   *
-   * **Soft, and that is the entire difference from `preferredProxyPort`:** honoured when it is free, skipped
-   * when it is not, never thrown over. Tried after the override and before the base scan — D16's stickiness
-   * rule. See the module header.
-   */
-  rememberedProxyPort?: number | null;
-  /** The remembered webhook port, same rule. */
-  rememberedWebhookPort?: number | null;
-  /** The environment base for the proxy. Defaults to `proxyBasePort()`. */
-  proxyBase?: number;
-  /** The environment base for the webhook. Defaults to `WEBHOOK_BASE_PORT`. */
-  webhookBase?: number;
-  /**
-   * Ports the scan must not take even though they are free.
-   *
-   * **Not an optimisation — a correctness requirement.** The RPC endpoint binds a port of its own *after*
-   * this allocator has run, and so does a workspace the operator has configured but not started. Without a
-   * reserved set, the scan would happily hand workspace 2 the port the RPC server is about to want, and the
-   * failure would surface as an RPC endpoint that cannot bind — long after the allocator reported success.
-   * The host computes this set; the allocator only honours it, because only the host knows what it is about
-   * to bind.
-   */
-  reserved?: Iterable<number>;
-}
-
-/**
- * Allocate the proxy and webhook ports for one workspace.
- *
- * **The override path throws rather than moving**, which is the whole difference between D16's sources: an
- * override is a choice the user made, so an allocator that quietly gave them a different port would be lying
- * about what it did. The **remembered** path does neither — it takes the port it was given when that port is
- * available, and otherwise behaves exactly as if it had not been given one. The base path scans, because the
- * increment is the designed behaviour.
- *
- * The two allocations are independent — a taken proxy port must not consume the webhook range, and the
- * callers of this function are themselves serialised by the host (one call per runtime, in order), because
- * two *concurrent* calls could otherwise both see the same port free and race to bind it.
- */
-export async function allocatePorts(opts: AllocateOptions = {}): Promise<AllocatedPorts> {
-  const proxyBase = opts.proxyBase ?? proxyBasePort();
-  const webhookBase = opts.webhookBase ?? WEBHOOK_BASE_PORT;
-  // Captured as `const`s so the `!== null` narrowing survives the `await` inside the conditions below.
-  const rememberedProxy = opts.rememberedProxyPort ?? null;
-  const rememberedWebhook = opts.rememberedWebhookPort ?? null;
-  // Materialised once, and the port this call allocates is added to it as it is chosen — so the webhook
-  // allocation cannot be handed the port the proxy allocation just took when the two ranges overlap (they do
-  // not today, but a `BIFURC_PROXY_BASE_PORT` of 9101 makes them overlap, and an allocator that relied on the
-  // bases staying apart would be one env var away from a self-collision).
-  const reserved = new Set<number>(opts.reserved ?? []);
-  // **Neither base is a reservation, and that is subtle enough to have been got wrong twice.**
-  //
-  // A base is where *its own* range starts, so putting it in `reserved` makes `findFreePortFrom(base)` skip
-  // `base` and land on `base + 1`: a silent off-by-one for the first workspace on a free machine — the
-  // common case — and one no integration test catches, because a runtime on `base + 1` still comes up and
-  // still serves. The first version of this file reserved *both* bases, which broke the base path in both
-  // ranges; the fix is not to switch which one is reserved but to reserve **neither**.
-  //
-  // What the original comment was reaching for is real but belongs elsewhere: with a `BIFURC_PROXY_BASE_PORT`
-  // of 9101 the two ranges overlap, and the proxy scan could take the port the webhook range is about to
-  // want. That is handled by `reserved.add(proxyPort)` below, which excludes the *chosen* proxy port from the
-  // webhook scan — a stronger guard than excluding the webhook's base, because it covers every port the
-  // proxy actually took rather than one hypothetical collision point.
-
-  // ── proxy ──────────────────────────────────────────────────────────────────
-  let proxyPort: number;
-  let proxyPortWasPreferred = false;
-  let proxyPortWasRemembered = false;
-
-  if (opts.preferredProxyPort != null) {
-    const preferred = opts.preferredProxyPort;
-    // An override is checked against `reserved` as well as the bind. What `reserved` holds here is only the
-    // **host's** reservations (the RPC endpoint, a not-yet-started workspace) — a user who typed the port the
-    // host is about to bind has made a mistake the bind alone cannot detect, and silently honouring it would
-    // trade their explicit choice for a broken host.
-    if (reserved.has(preferred) || !(await tryBind(preferred))) {
-      throw new PortUnavailableError(preferred, await nextFreePortAbove(preferred + 1), "proxy");
-    }
-    proxyPort = preferred;
-    proxyPortWasPreferred = true;
-  } else if (rememberedProxy !== null && !reserved.has(rememberedProxy) && (await tryBind(rememberedProxy))) {
-    // D16's stickiness. The bind is the entire test, so a remembered port that has since been taken falls
-    // through to the scan below rather than throwing — a remembered outcome must not be able to stop a host.
-    proxyPort = rememberedProxy;
-    proxyPortWasRemembered = true;
-  } else {
-    // `proxyBase` is deliberately **not** in `reserved` — it is this range's own starting point, and the
-    // first workspace on a free machine must be able to take it. Only the host's reservations are excluded.
-    const found = await findFreePortFrom(proxyBase, "proxy", reserved);
-    if (found === null) throw new PortRangeExhaustedError(proxyBase, "proxy");
-    proxyPort = found;
-  }
-  reserved.add(proxyPort);
-
-  // ── webhook ────────────────────────────────────────────────────────────────
-  let webhookPort: number;
-  let webhookPortWasPreferred = false;
-  let webhookPortWasRemembered = false;
-
-  if (opts.preferredWebhookPort != null) {
-    const preferred = opts.preferredWebhookPort;
-    if (reserved.has(preferred) || !(await tryBind(preferred))) {
-      throw new PortUnavailableError(preferred, await nextFreePortAbove(preferred + 1), "webhook");
-    }
-    webhookPort = preferred;
-    webhookPortWasPreferred = true;
-  } else if (
-    rememberedWebhook !== null &&
-    !reserved.has(rememberedWebhook) &&
-    (await tryBind(rememberedWebhook))
-  ) {
-    // Same rule as the proxy half — soft, and falling through rather than failing.
-    webhookPort = rememberedWebhook;
-    webhookPortWasRemembered = true;
-  } else {
-    // Same rule as the proxy half: `webhookBase` is this range's own start, never a reservation.
-    const found = await findFreePortFrom(webhookBase, "webhook", reserved);
-    if (found === null) throw new PortRangeExhaustedError(webhookBase, "webhook");
-    webhookPort = found;
-  }
-
-  return {
-    proxyPort,
-    webhookPort,
-    proxyPortWasPreferred,
-    webhookPortWasPreferred,
-    proxyPortWasRemembered,
-    webhookPortWasRemembered,
-  };
 }
