@@ -11,7 +11,7 @@
  * engine logged `the first request must be "hello"` once per attempt.
  *
  * Electron never hit this: its transport is `in-process`, which has no boundary and is therefore never
- * wrapped. The browser is the first client that has to authenticate, which is why the gap survived P6.
+ * wrapped. The browser is the first client that has to run the handshake, which is why the gap survived P6.
  *
  * ## Why the handshake is here and not inside `createClient`
  *
@@ -21,16 +21,24 @@
  * would know. So the composition layer owns it, exactly as
  * `packages/client/tests/transports.test.ts` already does for the `ws` transport.
  *
- * ## Why the token is conditional
+ * ## The handshake became unconditional on 2026-09-25, and that is the simplification
  *
- * `HelloRequest.token` is optional **in the schema** because `in-process` and `stdio` have no boundary
- * and a token there would be security theatre — one schema serves both. So a token present means "this
- * endpoint has a boundary, authenticate"; a token absent means "this one does not". That is also what
- * keeps the browser usable against a plain, unwrapped `ws` server, where a `hello` would be an
- * `UNKNOWN_COMMAND` — `hello` is deliberately not a registry command.
+ * It used to be conditional on a **token**, and the token *was* the discriminator: `HelloRequest.token` was
+ * optional in the schema because `in-process` and `stdio` have no boundary, so a token present meant "this
+ * endpoint has a boundary, authenticate" and a token absent meant "this one does not". The token is gone —
+ * the engine binds loopback and refuses every other address — so the discriminator went with it, and the
+ * conclusion it was drawing is now simply true of every endpoint this client can reach: **there is a
+ * handshake**.
  *
- * The cost is one real failure mode with confusing copy: connecting *without* a token to an endpoint
- * that requires one. It is handled explicitly in `classify()` rather than left to the engine's message.
+ * The alternatives were considered and are all worse. A `?token=`-style query flag would be a second, weaker
+ * spelling of the same question. Probing for `hello` support behind a `try`/`catch` would make an
+ * `UNKNOWN_COMMAND` indistinguishable from a genuine failure, and would hide the one case worth reporting —
+ * an endpoint that is not a Bifurc engine at all. Defaulting to *no* handshake would restore the bug at the
+ * top of this file against every host that has one.
+ *
+ * `Connection.hello` is therefore **required** rather than optional, which retires the "fabricated
+ * `sessionId`" caveat it used to carry: a caller that gets a `Connection` back can read the engine's
+ * identity directly.
  */
 import { createClient, type BifurcClient } from "@bifurc/client";
 import { EngineError, HELLO_ACTION, HelloResponseSchema, PROTOCOL_VERSION } from "@bifurc/protocol";
@@ -52,7 +60,13 @@ export const UNKNOWN_CLIENT_VERSION = "0.0.0-unknown";
 export type ConnectFailure =
   /** Nothing answered: refused, no route, or the connect timeout. */
   | "unreachable"
-  /** The endpoint requires a token and none was supplied, or the one supplied is wrong. */
+  /**
+   * The engine answered `UNAUTHORIZED` — it refused the session before establishing it.
+   *
+   * This used to mean "a token is required and none was supplied, or the one supplied is wrong". There is no
+   * token now and this client always sends the handshake first, so reaching this means something else is
+   * speaking to the endpoint — see `classify()`'s copy.
+   */
   | "unauthorized"
   /** The engine answered and refuses this client's protocol major. */
   | "version"
@@ -73,13 +87,6 @@ export class ConnectError extends Error {
 export interface ConnectOptions {
   /** The engine's RPC endpoint, e.g. `ws://127.0.0.1:8080`. */
   url: string;
-  /**
-   * The host's per-start secret, read from `<dataDir>/engine.token` on the machine running the host.
-   *
-   * A browser cannot read a file, so this is supplied by the user through the connection form. Absent
-   * means "this endpoint has no auth boundary" — see the note at the top.
-   */
-  token?: string;
   /** Reported in the engine's log. Defaults to `UNKNOWN_CLIENT_VERSION`. */
   clientVersion?: string;
   /**
@@ -132,11 +139,13 @@ export interface Connection {
   /**
    * What the engine said in `hello` — identity, and whether replay happened.
    *
-   * Optional because an endpoint with **no auth boundary** has no handshake at all: `hello` is not a
-   * registry command, so sending it to an unwrapped server is an `UNKNOWN_COMMAND`. Fabricating a
-   * `sessionId` for that case would be a lie the caller could not detect.
+   * **Required since the handshake became unconditional** (2026-09-25). It used to be optional because an
+   * endpoint with no handshake would answer `hello` with `UNKNOWN_COMMAND` — `hello` is deliberately not a
+   * registry command — so there was a real case with no response to report. This client no longer talks to
+   * such an endpoint: it always sends the handshake, and one that is not understood is a failure rather than
+   * a mode.
    */
-  hello?: HelloOutcome;
+  hello: HelloOutcome;
   /** A real round trip, so "connected" means the engine answered rather than the socket opened. */
   probe(): Promise<unknown>;
   /** Tear the session down. The UI's surface deliberately does not carry this — see `web/api.ts`. */
@@ -151,7 +160,7 @@ export interface Connection {
 }
 
 /**
- * Connect, and return a client that is already authenticated.
+ * Connect, and hand back a client whose session is already established.
  *
  * **Async, and that is load-bearing.** The handshake must complete before the first real request, so a
  * host cannot install `window.api` and then connect — it has to connect, and only then render the UI
@@ -161,20 +170,18 @@ export async function connectToEngine(opts: ConnectOptions): Promise<Connection>
   const transport = createBrowserTransport({ url: opts.url, onFatal: opts.onFatal });
 
   try {
-    // Before `createClient()`, per `plan/06` — and only when the endpoint has an auth boundary. An
-    // unwrapped endpoint has no handshake at all, which is why the outcome is optional rather than
-    // invented: a fabricated `sessionId` would be a lie a caller could not detect.
-    const hello =
-      opts.token !== undefined && opts.token !== "" ? await handshake(transport, opts) : undefined;
+    // Before `createClient()`, per `plan/06`, and unconditionally — see the note at the top. A refusal here
+    // is reported rather than routed around: an `UNKNOWN_COMMAND` means the endpoint is not a Bifurc engine.
+    const hello = await handshake(transport, opts);
 
     const client = createClient(transport, { local: createBrowserLocal() });
     const connection: Connection = {
       client,
-      ...(hello === undefined ? {} : { hello }),
+      hello,
       /**
-       * `config.get` rather than a second handshake: now that the session is authenticated this is an
-       * ordinary command, and going through `client` rather than the transport is deliberate — it
-       * exercises the client's own correlation and retry layer, not just the wire.
+       * `config.get` rather than a second handshake: the session is established, so this is an ordinary
+       * command — and going through `client` rather than the transport is deliberate, because it exercises
+       * the client's own correlation and retry layer rather than just the wire.
        */
       probe: () => client.getConfig(),
       close: () => client.close(),
@@ -184,11 +191,10 @@ export async function connectToEngine(opts: ConnectOptions): Promise<Connection>
     /**
      * **Prove the session works before handing it back.**
      *
-     * This is the round trip that makes "connected" mean something. Without it, connecting with *no*
-     * token to an endpoint that requires one succeeds here — the handshake is skipped by design, so
-     * nothing has failed yet — and the container would mount the whole UI before the first real request
-     * came back `UNAUTHORIZED`. That is precisely the failure that prompted this work, and it is why
-     * `classify()`'s `"unauthorized"` arm has to fire on a probe as well as on a handshake.
+     * This is the round trip that makes "connected" mean something. A socket that opens and a handshake that
+     * parses are both things a half-broken endpoint can do, and without this the container would mount the
+     * whole UI before the first real request failed — which is precisely the failure that prompted this work,
+     * and the reason `classify()`'s arms have to fire on a probe as well as on the handshake.
      */
     await connection.probe();
     return connection;
@@ -226,10 +232,9 @@ async function handshake(
     protocolVersion: PROTOCOL_VERSION,
     clientName: WEB_CLIENT_NAME,
     clientVersion: opts.clientVersion ?? UNKNOWN_CLIENT_VERSION,
-    // Spread rather than assigned: both are optional, and `undefined` is not the same as absent —
+    // Spread rather than assigned, because it is optional and `undefined` is not the same as absent:
     // `exactOptionalPropertyTypes` rejects the assignment, and the engine branches on whether `lastSeq`
     // is *present* when deciding whether this is a reconnect or a first connection.
-    ...(opts.token === undefined ? {} : { token: opts.token }),
     ...(opts.lastSeq === undefined ? {} : { lastSeq: opts.lastSeq }),
   });
 
@@ -266,11 +271,9 @@ function classify(error: unknown, opts: ConnectOptions): ConnectError {
     if (error.code === "UNAUTHORIZED") {
       return new ConnectError(
         "unauthorized",
-        opts.token === undefined
-          ? "This engine requires a token. Read it from <data-dir>/engine.token on the machine running " +
-            "the host, and enter it above."
-          : "The engine rejected this token. It is regenerated every time the host starts, so a token " +
-            "from a previous run will not work — read the current one from <data-dir>/engine.token.",
+        "The engine refused this session. This client always sends the handshake as its first request, " +
+          "so reaching this means something else is using the endpoint — another client on the same " +
+          "socket, or a proxy that rewrote the first frame.",
         error,
       );
     }

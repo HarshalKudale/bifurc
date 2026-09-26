@@ -39,9 +39,11 @@ import { connectToEngine, type ConnectOptions, type Connection, type HelloOutcom
  * default belongs with the other form state in `settings.ts` — one place decides what an endpoint looks
  * like, and `?engine=` survives only as a prefill for the form.
  *
- * **The token is deliberately never read from a query string.** It is a per-start secret, and a URL ends
- * up in browser history, in a referrer header and in any proxy's access log. The form keeps it out of
- * all three.
+ * **The paragraph about the token that used to be here went with the token** (2026-09-25). It said the
+ * secret was deliberately never read from a query string, because a URL ends up in browser history, in a
+ * referrer header and in any proxy's access log. That was true and is now moot: there is no secret left to
+ * keep out of them — `settings.ts` records the removal, and `connect.ts` why the handshake did not go with
+ * it.
  */
 
 export interface InstalledApi {
@@ -49,9 +51,11 @@ export interface InstalledApi {
   url: string;
   /**
    * What the engine answered in `hello` — its identity, and whether a reconnect got its replay.
-   * Absent for an endpoint with no auth boundary, which has no handshake at all.
+   *
+   * **Required since the handshake became unconditional** (2026-09-25): `connectToEngine` always sends it,
+   * so there is no longer a case with no response to report.
    */
-  hello?: HelloOutcome;
+  hello: HelloOutcome;
   /** A real round trip, so "connected" means the engine answered rather than the socket opened. */
   probe(): Promise<unknown>;
   /** Tear the session down — it closes the transport too. */
@@ -81,7 +85,7 @@ export async function connectAndInstall(opts: ConnectOptions): Promise<Installed
 
   return {
     url: opts.url,
-    ...(connection.hello === undefined ? {} : { hello: connection.hello }),
+    hello: connection.hello,
     probe: connection.probe,
     close: connection.close,
     lastSeq: connection.lastSeq,

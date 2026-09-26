@@ -19,11 +19,14 @@
  * ```bash
  * node packages/engine/dist/runtime/hostCli.js --data-dir ./data --ws-port 8080
  * npm run dev:web                     # in another shell, on 5199
- * node scripts/verify-web-ui.mjs --data-dir ./data --port 8080
+ * node scripts/verify-web-ui.mjs --port 8080
  * ```
  *
- * `--data-dir` is where the **host's** `engine.token` lives; the browser cannot read a file, so this script
- * reads it on the user's behalf and types it into the form — which is exactly what a person does.
+ * **`--data-dir` is gone** (2026-09-25), and it existed for exactly one reason: the host's `engine.token`
+ * lived there, and a browser cannot read a file, so this script read it on the user's behalf and typed it
+ * into the form. The token is gone, so the flag is gone. A host that is not running is now reported by the
+ * **form** rather than by a precondition check here — which is a strictly better place for it, because that
+ * is where the user sees it too.
  *
  * ## Why it does not use `npx playwright install`
  *
@@ -57,7 +60,16 @@ function arg(name, fallback) {
 const APP_URL = arg("url", "http://localhost:5199/");
 const HOST = arg("host", "127.0.0.1");
 const PORT = arg("port", "8080");
-const DATA_DIR = path.resolve(REPO, arg("data-dir", "data"));
+
+/**
+ * The form has exactly two fields — host and port — and this constant is the assertion, not a coincidence.
+ *
+ * The third used to be **Token**, and its absence is the thing this check now pins. It is worth pinning
+ * because the failure it guards against is *silent*: `inputs.nth(2).fill(…)` on a two-field form would fill
+ * nothing and throw, but a script that merely stopped filling the third field would pass while the token
+ * input came back. Counting is what makes the regression loud.
+ */
+const FORM_FIELD_COUNT = 2;
 
 /**
  * The newest Chromium in Playwright's cache, whatever revision it is.
@@ -88,13 +100,6 @@ if (exe === undefined) {
   process.exit(2);
 }
 
-const tokenPath = path.join(DATA_DIR, "engine.token");
-if (!fs.existsSync(tokenPath)) {
-  console.error(`No token at ${tokenPath}. Start a host with --data-dir pointing there first.`);
-  process.exit(2);
-}
-const token = fs.readFileSync(tokenPath, "utf8").trim();
-
 const say = (label, value) => console.log("  " + String(label).padEnd(30) + value);
 
 const browser = await chromium.launch({ headless: true, executablePath: exe });
@@ -116,11 +121,13 @@ try {
   await page.waitForSelector("form");
   say("heading", await page.locator("h1").first().textContent());
 
-  console.log("=== connect ===");
   const inputs = page.locator("input");
+  const fieldCount = await inputs.count();
+  say("form fields", `${fieldCount} (expected ${FORM_FIELD_COUNT})`);
+
+  console.log("=== connect ===");
   await inputs.nth(0).fill(HOST);
   await inputs.nth(1).fill(PORT);
-  await inputs.nth(2).fill(token);
   await page.getByRole("button", { name: /connect/i }).click();
 
   // The form disappearing is the container's own signal that the handshake and the probe both succeeded.
@@ -153,7 +160,11 @@ try {
   pageErrors.slice(0, 10).forEach((m) => console.log("     ! " + m.slice(0, 260)));
   say("console warnings", consoleWarnings.length);
 
-  const clean = consoleErrors.length === 0 && pageErrors.length === 0 && reached;
+  const clean =
+    consoleErrors.length === 0 &&
+    pageErrors.length === 0 &&
+    reached &&
+    fieldCount === FORM_FIELD_COUNT;
   console.log(clean ? "\nPASS" : "\nFAIL");
   process.exitCode = clean ? 0 : 1;
 } finally {
