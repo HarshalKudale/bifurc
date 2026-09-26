@@ -51,14 +51,20 @@ describe("the window.api surface", () => {
     expect([...SURFACE_KEYS].sort()).toEqual([...keys].sort());
   });
 
-  it("exposes 144 keys, which is what the preload actually has", async () => {
+  it("exposes 132 keys, which is what the preload actually has", async () => {
     /**
-     * Pinned deliberately. The plan says 136 and `packages/gui/src/types/window.ts` declares 140; both
+     * Pinned deliberately. The plan says 136 and `packages/gui/src/types/window.ts` declares 128; both
      * are stale, and a test that merely said "> 100" would let either number drift back in.
+     *
+     * **144 → 132 on 2026-09-25** (`plan/17` work item 8, mocks became REST-only): the nine mock CRUD
+     * methods (`graphqlMocks` / `grpcMocks` / `soapMocks` × add/update/delete) and the three
+     * `grpc*MockServer` transport methods left the surface. The *declared* type lost the same twelve,
+     * so the four-key gap this file's header describes is still four — which is what makes this a
+     * recorded contract change rather than a number that was edited to match reality.
      */
     const keys = await realPreloadKeys();
-    expect(keys).toHaveLength(144);
-    expect(SURFACE_KEYS).toHaveLength(144);
+    expect(keys).toHaveLength(132);
+    expect(SURFACE_KEYS).toHaveLength(132);
   });
 
   it("classifies every key it exposes, with no key classified twice", async () => {
@@ -140,16 +146,17 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 65 transport + 48 entity + 7 subscribe + 8 shim + 16 local = 144
+    // 62 transport + 39 entity + 7 subscribe + 8 shim + 16 local = 132
     //
-    // Four moves. The total is asserted because it is what proves nothing was dropped in a move — a
-    // key that vanished would keep this test green only if some other count happened to absorb it,
-    // which the sum rules out.
+    // The total is asserted because it is what proves nothing was dropped in a move — a key that
+    // vanished would keep this test green only if some other count happened to absorb it, which the
+    // sum rules out.
     //
     //   `transport` 73 → 72, `local` 13 → 14    `checkUpdate` — the surface's only `SPLIT`
     //   `transport` 72 → 70, `local` 14 → 16    `tlsRemoveCert` + `tlsCertStatus` — both two-sided
     //   `transport` 70 → 67, `shim` 3 → 6       `tlsGenerate` / `tlsImportCert` / `tlsImportKey`
     //   `transport` 67 → 65, `shim` 6 → 8       `loadEntity` + `setEntityEnabled` (2026-09-21)
+    //   `transport` 65 → 62, `entity` 48 → 39   mocks became REST-only (`plan/17` WI 8, 2026-09-25)
     //
     // The third and fourth are corrections of a *mis*classification rather than new decisions. Those
     // five keys were filed as 1:1 mappings while the shell channels they replaced each performed a step
@@ -160,8 +167,14 @@ describe("the window.api surface", () => {
     // `loadEntity`'s channel translated the engine-internal kinds `"rules"` / `"sockets"` to the
     // protocol's `"proxyRules"` / `"wsConnections"`, and two panels pass the engine's names — so their
     // loads threw `BAD_REQUEST` into a `.catch(() => {})` and silently returned nothing.
-    expect(byKind("transport")).toBe(65);
-    expect(byKind("entity")).toBe(48);
+    //
+    // The fifth is the only *removal* of the five, and the only one where both counts fall together:
+    // the three `grpc*MockServer` transport methods and the nine mock CRUD methods (three kinds ×
+    // add/update/delete) went with their entity kinds. Two counts moving by the exact size of the
+    // deletion is the signal that nothing was reclassified on the way out — a key filed under a
+    // different kind would show as one count rising while the other fell by less.
+    expect(byKind("transport")).toBe(62);
+    expect(byKind("entity")).toBe(39);
     expect(byKind("subscribe")).toBe(7);
     expect(byKind("shim")).toBe(8);
     expect(byKind("local")).toBe(16);

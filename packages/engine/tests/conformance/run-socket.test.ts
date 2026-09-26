@@ -24,8 +24,10 @@
  * All four verifiable ones are claimed, and each is earned rather than declared:
  *
  * - `handshake` / `auth` — every connection is wrapped in `createAuthenticatedTransport`, so the
- *   `hello` exchange, the token check and the scope gate are exercised **through a unix socket**
- *   rather than over `in-process` (which is what `run-authenticated.test.ts` does).
+ *   `hello` exchange and the scope gate are exercised **through a unix socket** rather than over
+ *   `in-process` (which is what `run-authenticated.test.ts` does). The **token check** was the third
+ *   thing named here until 2026-09-25, and no guard replaced it on this path: the `0600` socket file is
+ *   the whole of a `socket` transport's reachability, which is the reasoning `socket.ts` gives.
  * - `replay` — the server is given the suite's own `EventLog`, so `lastSeq` means the engine's `seq`.
  * - `backpressure` — the connection's bus subscriptions go through a per-session `eventPump`, so
  *   `log.entry` is coalesced and `server.error` is never queued. Per connection, not per server, for
@@ -51,7 +53,8 @@ import {
 } from "../../src/transport/socket";
 import { defineConformanceSuite } from "./protocol.conformance";
 
-const TOKEN = "conformance-socket-token";
+// `const TOKEN` was here, and it went on 2026-09-25 with the token itself: it fed both the server's `auth`
+// object and the suite's `auth.hello()` payload, and neither takes a credential any more.
 
 /** Distinct per test file, so parallel files cannot collide on a path. */
 const FILE_TAG = Math.random().toString(36).slice(2, 8);
@@ -92,7 +95,6 @@ defineConformanceSuite({
       // issued. The decorator advertises `events.replay` off the back of this being present.
       log,
       auth: {
-        token: TOKEN,
         engineVersion: "0.0.0-conformance",
         // Undefined -> the decorator's default (SHELL_SCOPES), which is what the matrix needs.
         // A narrow set is only asked for by the FORBIDDEN case, which needs a session that can be
@@ -118,7 +120,6 @@ defineConformanceSuite({
       protocolVersion: PROTOCOL_VERSION,
       clientName: "electron-shell",
       clientVersion: "0.0.0-conformance",
-      token: TOKEN,
       ...overrides,
     }),
   },

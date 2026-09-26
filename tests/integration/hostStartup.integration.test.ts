@@ -1,5 +1,5 @@
 /**
- * P14 WI 3 — the workspace-host startup shape: `EngineOptions.startCompanion: false`.
+ * P14 WI 3 — the workspace-host startup shape.
  *
  * WHY THIS IS ITS OWN FILE AND NOT A SECOND CASE IN `engineSmoke.integration.test.ts`
  * ----------------------------------------------------------------------------------
@@ -16,11 +16,22 @@
  *
  * WHAT IS ACTUALLY UNDER TEST
  * ---------------------------
- * `plan/14`'s WI 3 criterion is *"a workspace host starts with no companion server."* So the
- * load-bearing assertions are that the companion port is genuinely never bound **and** that
- * `status().companionPort` reports `null` — a stale `getCompanionPort()` reading would let a host
- * believe it had a bridge it never opened. The proxy must be fully working in the same run, or the
- * test would pass for the wrong reason (an engine that failed to start at all also has no companion).
+ * `plan/14`'s WI 3 criterion, as amended 2026-09-23: *"a workspace host starts with no app-level
+ * singleton server."*
+ *
+ * **This file used to assert the criterion by its old wording** — `startCompanion: false`, a free
+ * port that stays free, and `status().companionPort === null`. The companion server and its port
+ * were **retired outright** (not relocated) while implementing `plan/16`, so `startCompanion` and
+ * `companionPort` no longer exist: `EngineOptions` has no such option and `EngineStatus` has no such
+ * field. A test asserting them would not compile, and — worse — a test asserting their *absence* is
+ * now vacuous, because there is nothing left that could be absent.
+ *
+ * So the option and the port field are simply gone from this file. What survives, and is what the
+ * criterion was always *for*, is the assertion underneath the old ones: **the engine's own
+ * app-level singleton server is the edge router, and a lifecycle's placement of it is real binds**,
+ * not a status flag. `status().edgePort` therefore has to be reported while the engine serves, and
+ * the edge's socket has to be genuinely released by `stop()` — the same "prove it with a real bind"
+ * standard the old companion port was held to, applied to the server that actually exists.
  *
  * WHY `LOCALAPPDATA` IS OVERRIDDEN
  * --------------------------------
@@ -77,7 +88,7 @@ function portIsFree(port: number): Promise<boolean> {
   });
 }
 
-describe("createEngine with startCompanion: false — the workspace-host shape", () => {
+describe("createEngine — the workspace-host startup shape (P14 WI 3, as amended)", () => {
   let root: string;
   let originalLocalAppData: string | undefined;
 
@@ -98,17 +109,21 @@ describe("createEngine with startCompanion: false — the workspace-host shape",
     }
   });
 
-  it("starts the proxy but never binds the companion port", async () => {
+  it("starts the proxy and the edge, and releases both on stop", async () => {
     const proxyPort = await getFreePort();
-    const companionPort = await getFreePort();
+    const edgePort = await getFreePort();
+    const hookPort = await getFreePort();
 
     setDataRoot(root);
-    saveSettings({ ...loadSettings(), port: proxyPort, companionPort });
+    // `port` is the edge's port (`plan/15` §6.2) and `webhookPort` belongs to the webhook receiver;
+    // the forward proxy's port is *not* settable here — it is resolved from D16's base with the
+    // edge's port reserved, which is why the assertion below reads it back from `status()` rather
+    // than comparing it to a port this test chose.
+    saveSettings({ ...loadSettings(), port: edgePort, webhookPort: hookPort });
 
     const warnings: string[] = [];
     const engine = createEngine({
       dataDir: root,
-      startCompanion: false,
       onPreflightWarning: (c) => warnings.push(c.code ?? "unknown"),
     });
 
@@ -116,26 +131,29 @@ describe("createEngine with startCompanion: false — the workspace-host shape",
 
     // The proxy is up — this is a working engine, not a disabled one.
     expect(status.running).toBe(true);
-    expect(status.proxyPort).toBe(proxyPort);
     expect(status.proxyError).toBeNull();
 
-    // And the companion reports nothing, rather than a port it never bound.
-    expect(status.companionPort).toBeNull();
-    // The port is genuinely free — proof the server was not started and then merely hidden.
-    expect(await portIsFree(companionPort)).toBe(true);
-    // Preflight was not asked about a port this engine deliberately never opens.
+    // The engine's app-level singleton server is the edge, and it is really listening. Asserted as a
+    // port that is **bound**, not merely reported: a stale `getPort()` reading would let a caller
+    // believe a router it never opened was serving every mapping on the host.
+    expect(status.edgePort).toBe(edgePort);
+    expect(status.edgeError).toBeNull();
+    expect(await portIsFree(edgePort)).toBe(false);
+    // Preflight was not asked about a port this engine does not open.
     expect(warnings.filter((w) => w !== "mkcert-unusable")).toEqual([]);
 
-    // It still serves, so the runtime half of the engine is untouched by the option.
-    const res = await get(proxyPort);
+    // It still serves, so the runtime half of the engine is untouched. The request goes to the **edge**,
+    // not `proxyPort`: `plan/15` WI 3 moved the home page onto the edge with the rest of the reverse half,
+    // so a bare `GET /` is the edge's row 5. Asking the forward proxy for it is a deliberate 400.
+    const res = await get(edgePort);
     expect(res.status).toBe(200);
     expect(res.body).toContain("Bifurc");
 
     await engine.stop();
     await expect.poll(() => portIsFree(proxyPort), { timeout: 5000 }).toBe(true);
-    // Still free after the whole lifecycle — `shutdownEngine()`'s `stopCompanionServer()` is
-    // null-guarded, so it must not have bound anything on the way out either.
-    expect(await portIsFree(companionPort)).toBe(true);
-    expect(engine.status().companionPort).toBeNull();
+    // And the edge is genuinely released rather than flagged stopped — `shutdownEngine()`'s
+    // `edge.stop()` is what makes this true, and a null-guarded no-op would leave the socket bound.
+    await expect.poll(() => portIsFree(edgePort), { timeout: 5000 }).toBe(true);
+    expect(engine.status().edgePort).toBeNull();
   }, 30000);
 });

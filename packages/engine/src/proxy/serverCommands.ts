@@ -70,7 +70,7 @@
  * `invoke`. The lesson is that "duplication kept deliberately to avoid a hidden coupling" is a
  * *temporary* answer that a deletion can retire, and that retiring it needs no new coupling at all.
  *
- * ## P14 WI 7 — these now resolve a runtime from `workspaceId` instead of the facade
+ * ## P14 WI 7 resolved a runtime from `workspaceId`; `plan/17` deletes the question
  *
  * WI 1's protocol half made the six commands *accept* an optional `workspaceId`. It did not make them
  * *read* it, and this module was the reason: it called the module facade
@@ -81,14 +81,26 @@
  * the active workspace's configured port. **The failure succeeded**, which is why every desktop suite
  * stayed green through it.
  *
- * `resolveRuntimeScope()` (`runtime/runtimeRegistry.ts`) is the fix, and its third case is the load-bearing
- * one: a workspace that is explicitly named but has no registered runtime is reported as **`absent`**, not
- * silently redirected to the facade. Redirecting would have re-created the same bug — acting on one
- * workspace while the caller asked for another — with a success code.
+ * P14's fix was `resolveRuntimeScope()` (`runtime/runtimeRegistry.ts`), a three-way union whose load-bearing
+ * case was **`absent`**: a workspace explicitly named but not served by this host was reported, not silently
+ * redirected to the facade.
  *
- * **The desktop is untouched, and that is the acceptance criterion.** With no runtimes registered, a
- * request resolving to the active workspace still takes the facade branch, which is exactly what
- * `createEngine()` binds. P6's rule for this work item is *zero user-visible change*.
+ * **`plan/17` §1 makes that union unanswerable and therefore unnecessary.** There is now exactly **one**
+ * forward proxy per host, on a port the user owns, serving whichever workspace is active — so a
+ * `workspaceId` no longer selects a server, and "which of the N?" is not a question the code can ask. The
+ * registry, the union and the `absent` case are all deleted with it, and these bodies become direct facade
+ * calls again.
+ *
+ * **The bug P14 fixed cannot come back, and it is worth saying why rather than trusting the deletion.** Its
+ * shape was *"the command acted on the active workspace while the caller named another"* — which needed
+ * **per-workspace servers** to be wrong about. With one server there is no other workspace's server to act
+ * on instead: `server.start` starts the host's proxy, and that is the only thing it could mean. The
+ * `workspaceId` parameter survives as an **echo** (see `commands/echoWorkspace.ts`) because a multiplexed
+ * client still has to match response to request.
+ *
+ * **What did *not* survive the deletion is the guard on the active workspace.** The edge's `resolveConfig`
+ * still asks "is the active workspace one of ours?" — that question survives, because `--workspace` can
+ * still filter the host down to a subset. See `runtime/host.ts` step 4.
  *
  * `services.discover` is deliberately **not** scoped: it reports the ports this host is listening on,
  * which is a property of the host and not of any workspace. Asserted in `index.test.ts` so it reads as a
@@ -105,71 +117,65 @@ import type {
 import { loadConfig } from "../store/config";
 import { discoverServices } from "./service-discovery";
 import { getPort, getServerError, isRunning, startServer, stopServer } from "./server";
-import { absentRuntimeError, echoWorkspace, resolveRuntimeScope } from "../runtime/runtimeRegistry";
-import { restartManagedServer, startManagedServer } from "../runtime/runtimeServerOps";
+import { echoWorkspace } from "../commands/echoWorkspace";
+
+/**
+ * The port a command re-binds when the proxy is not running.
+ *
+ * **`getPort()` first, and that is deliberate.** `proxy/server.ts` keeps `currentPort` across `stop()`, so a
+ * proxy that has been started once reports the port it really bound; that is a stronger answer than a
+ * setting, and `tests/proxy/server.test.ts` pins the retention. The config is the fallback for the one caller
+ * that never started a proxy at all — a process that asks this command first, where there is no resolved port
+ * to remember.
+ *
+ * **It reads `forwardProxyPort`, not `port`.** `settings.port` is the **edge's** port (`plan/15` §3.1): the
+ * host binds the edge on it at boot, so a proxy bound there would fail with `EADDRINUSE` against the engine's
+ * own listener — a failure that would read as a busy machine rather than as a stale read. `plan/17` §1 gives
+ * the forward proxy its own setting, which is what this now names.
+ */
+function proxyPortInForce(): number {
+    return getPort() || loadConfig().forwardProxyPort;
+}
 
 export function registerServerCommands(registry: CommandRegistry): void {
-    registry.register("server.status", (params: ServerStatusParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        const echo = echoWorkspace(params.workspaceId, scope.workspaceId);
-        if (scope.kind === "runtime") {
-            const proxy = scope.runtime.proxy;
-            return { running: proxy.isRunning(), port: proxy.getPort(), error: proxy.getError(), ...echo };
-        }
-        if (scope.kind === "facade") {
-            return { running: isRunning(), port: getPort(), error: getServerError(), ...echo };
-        }
-        return { running: false, port: 0, error: absentRuntimeError(scope.workspaceId), ...echo };
+    registry.register("server.status", (params: ServerStatusParams) => ({
+        running: isRunning(),
+        port: getPort(),
+        error: getServerError(),
+        ...echoWorkspace(params.workspaceId),
+    }));
+
+    registry.register("server.start", (_params: ServerStartParams) => {
+        /**
+         * **No `workspaceId` is read, and that is the change `plan/17` makes rather than a regression.**
+         * There is one proxy; the parameter used to pick between N and now has nothing to pick.
+         *
+         * `startServer()` re-binds — `proxy/server.ts`'s `start()` stops first — so calling this on a running
+         * proxy restarts it on the same port. That is the pre-P14 body's behaviour, kept deliberately: the
+         * alternative (report `{ ok: true }` and do nothing) would make the command's name untrue for the one
+         * caller that uses it to recover a proxy that failed to bind.
+         */
+        startServer(proxyPortInForce());
+        return { ok: true };
     });
 
-    registry.register("server.start", (params: ServerStartParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        // The host allocated this workspace's port and started it (D16), so a command reports rather than
-        // binds — see `runtimeServerOps.ts`'s header for why that is not merely tidiness.
-        if (scope.kind === "runtime") return startManagedServer(scope.runtime.proxy);
-        if (scope.kind === "facade") {
-            startServer(loadConfig().port);
-            return { ok: true };
-        }
-        return { ok: false };
+    registry.register("server.stop", (_params: ServerStopParams) => {
+        stopServer();
+        return { ok: true };
     });
 
-    registry.register("server.stop", (params: ServerStopParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        if (scope.kind === "runtime") {
-            scope.runtime.proxy.stop();
-            return { ok: true };
-        }
-        if (scope.kind === "facade") {
-            stopServer();
-            return { ok: true };
-        }
-        return { ok: false };
+    registry.register("server.restart", (_params: ServerRestartParams) => {
+        // Stop then start, exactly as before — `restart` is not a distinct code path, which is the property
+        // the module header records for the original body. The port is read **before** the stop only because
+        // `stopServer()` retains it; reading it after would work for the same reason, but reading it first is
+        // what makes this identical in shape to the body it replaces.
+        const port = proxyPortInForce();
+        stopServer();
+        startServer(port);
+        return { ok: true };
     });
 
-    registry.register("server.restart", (params: ServerRestartParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        if (scope.kind === "runtime") return restartManagedServer(scope.runtime.proxy);
-        if (scope.kind === "facade") {
-            // Stop then start, exactly as the runtime branch does — `restart` is not a distinct code path,
-            // which is the property the module header records for the pre-P14 body.
-            const cfg = loadConfig();
-            stopServer();
-            startServer(cfg.port);
-            return { ok: true };
-        }
-        return { ok: false };
-    });
-
-    registry.register("proxy.status", (params: ProxyStatusParams) => {
-        const scope = resolveRuntimeScope(params.workspaceId);
-        if (scope.kind === "runtime") return { running: scope.runtime.proxy.isRunning() };
-        if (scope.kind === "facade") return { running: isRunning() };
-        // `ProxyStatusResult` is `{ running }` and carries no error field — unlike `server.status`, which
-        // is why the two are separate commands. `false` is the truthful answer for a workspace this host
-        // does not serve: nothing is running *for it*.
-        return { running: false };
-    });
+    registry.register("proxy.status", (_params: ProxyStatusParams) => ({ running: isRunning() }));
 
     registry.register("services.discover", () => discoverServices());
 }

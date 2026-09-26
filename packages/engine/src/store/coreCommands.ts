@@ -68,7 +68,7 @@ import { toEngineKind } from "../commands/entityKindMap";
  * entity itself. `EntitySetEnabledParams.kind` is already restricted to exactly these six
  * engine-internal strings (see `entityKindMap.ts`'s own note on why it needs no translation).
  */
-const ENABLED_STATE_KINDS = new Set(["mocks", "mappings", "rules", "graphqlMocks", "soapMocks", "grpcMocks"]);
+const ENABLED_STATE_KINDS = new Set(["mocks", "mappings", "rules"]);
 
 export function registerCoreCommands(registry: CommandRegistry): void {
     registry.register("config.get", (_params: ConfigGetParams) => loadConfig());
@@ -85,22 +85,35 @@ export function registerCoreCommands(registry: CommandRegistry): void {
     });
 
     /**
-     * Switch the **UI pointer**, and deliberately nothing else — P14 WI 4, decided 2026-09-21.
+     * Switch the active workspace **and re-point the forward proxy at it** — the `plan/17` §1 rule.
      *
-     * This used to call `reloadConfig()`, which re-pointed the process's single proxy at the newly active
-     * workspace: switching workspace stopped the port serving the rules it had been serving. Under D10–D12
-     * each workspace has its own runtime, so the pointer and the proxies are independent, and a workspace's
-     * rules should keep serving while you edit another one. Dropping the call is what makes
-     * "two workspaces, each serving its own rules" true for the desktop and not just for a host.
+     * ## This call was removed in P14 and is restored here, deliberately
      *
-     * **Visible change, and the reason this needed confirming:** after switching workspace in the UI, the
-     * old workspace's proxy keeps answering on its port. That is the intended D10 behaviour, not a leak —
-     * the port is owned by the workspace, not by which one is selected.
+     * P14 WI 4 (2026-09-21) dropped the `reloadConfig()` this command used to make, and the reasoning was
+     * sound *for that model*: D10–D12 gave each workspace its own runtime and its own port, so the UI pointer
+     * and the proxies were independent, and a workspace's rules should keep serving while you edited another
+     * one. Re-pointing the single process-wide proxy would have stopped a port from serving what it had been
+     * serving.
      *
-     * `env.setActive` below **keeps** its `reloadConfig()`: an environment *is* proxy state (which rules and
-     * enabled sets are live), so changing it genuinely has to re-point the proxy that serves that workspace.
-     * The two commands look symmetric and are not — that asymmetry is the whole distinction between a
-     * workspace and an environment.
+     * **`plan/17` §1 replaces the model, so it replaces the conclusion.** There is now exactly **one** forward
+     * proxy for the whole host, and the plan states what a workspace switch means: *"a workspace is a
+     * **project**: switching workspaces changes the **context** — which rules, mocks and webhook endpoints are
+     * in force — while the ports and the infrastructure stay put."* With one proxy, "the context" *is* what
+     * that proxy dispatches with, so the switch **must** re-point it or the model is not implemented at all.
+     *
+     * **This is not a revert, and the difference is the port.** P14's objection was that re-pointing *stopped
+     * a port from serving*. Now the port keeps serving and only the rules behind it change — which is exactly
+     * what `plan/17` §5 work item 3 asks for: the proxy *"loads the active workspace's rules and mocks at
+     * start and **swaps its in-memory config when the active workspace changes** — not per-request
+     * resolution."* This command is that swap.
+     *
+     * The **edge** needs no equivalent: its `resolveConfig` is read per request, so it follows the pointer for
+     * free. That asymmetry is `plan/15` §3.1's fresh-versus-cached distinction and is unchanged by `plan/17`.
+     *
+     * `env.setActive` below keeps its own `reloadConfig()` for the reason it always had one — an environment
+     * *is* proxy state (which rules and enabled sets are live). The two commands look symmetric and now
+     * genuinely are, which is the distinction between a workspace and an environment surviving the model
+     * change rather than being flattened by it.
      */
     registry.register("workspace.setActive", ({ id }: WorkspaceSetActiveParams) => {
         const cfg = loadConfig();
@@ -109,6 +122,8 @@ export function registerCoreCommands(registry: CommandRegistry): void {
         cfg.activeWorkspaceId = id;
         cfg.activeEnvironmentId = ws.activeEnvironmentId;
         saveConfig(cfg);
+        // The swap. See the block above for why this is back after P14 removed it.
+        reloadConfig();
         return { ok: true, config: loadConfig() };
     });
 

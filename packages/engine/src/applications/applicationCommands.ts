@@ -88,7 +88,7 @@ import type { CommandRegistry } from "../commands/registry";
  *
  * None of the ten is renderer-exposed — `src/preload.ts` has no entry for any of them and only
  * `tests/integration/applications.integration.test.ts` drives them. So this slice cannot move the
- * 144-key surface in either direction, which is a stronger guarantee than "the diff is empty".
+ * 132-key surface in either direction, which is a stronger guarantee than "the diff is empty".
  */
 export function registerApplicationCommands(registry: CommandRegistry): void {
     registry.register("application.list", ({ workspaceId }: ApplicationListParams) => {

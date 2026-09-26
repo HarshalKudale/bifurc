@@ -13,11 +13,8 @@ export const FolderKind = z.enum([
   "webhook",
   "rule",
   "graphqlRequest",
-  "graphqlMock",
   "grpcRequest",
-  "grpcMock",
   "soapRequest",
-  "soapMock",
 ]);
 export type FolderKindValue = z.infer<typeof FolderKind>;
 

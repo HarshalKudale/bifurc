@@ -6,7 +6,6 @@ vi.mock("@bifurc/engine/applications/processSpawner", () => ({
   processSpawner: { stopAll: vi.fn() },
 }));
 vi.mock("@bifurc/engine/sync/autoSync", () => ({ stopAllAutoSync: vi.fn() }));
-vi.mock("@bifurc/engine/transport/legacyCompanion", () => ({ stopCompanionServer: vi.fn() }));
 vi.mock("@bifurc/engine/proxy/server", () => ({ stopServer: vi.fn() }));
 
 type MockFn = ReturnType<typeof vi.fn>;
@@ -16,7 +15,6 @@ interface Harness {
   isShuttingDown: () => boolean;
   stopAll: MockFn;
   stopAllAutoSync: MockFn;
-  stopCompanionServer: MockFn;
   stopServer: MockFn;
 }
 
@@ -29,7 +27,6 @@ async function harness(): Promise<Harness> {
   vi.resetModules();
   const spawner = await import("@bifurc/engine/applications/processSpawner");
   const autoSync = await import("@bifurc/engine/sync/autoSync");
-  const companion = await import("@bifurc/engine/transport/legacyCompanion");
   const proxy = await import("@bifurc/engine/proxy/server");
   const shutdown = await import("@bifurc/engine/shutdown");
   return {
@@ -37,7 +34,6 @@ async function harness(): Promise<Harness> {
     isShuttingDown: shutdown.isShuttingDown,
     stopAll: spawner.processSpawner.stopAll as unknown as MockFn,
     stopAllAutoSync: autoSync.stopAllAutoSync as unknown as MockFn,
-    stopCompanionServer: companion.stopCompanionServer as unknown as MockFn,
     stopServer: proxy.stopServer as unknown as MockFn,
   };
 }
@@ -57,7 +53,6 @@ describe("shutdown/shutdownEngine", () => {
 
     expect(h.stopAll).toHaveBeenCalledTimes(1);
     expect(h.stopAllAutoSync).toHaveBeenCalledTimes(1);
-    expect(h.stopCompanionServer).toHaveBeenCalledTimes(1);
     expect(h.stopServer).toHaveBeenCalledTimes(1);
   });
 
@@ -68,7 +63,6 @@ describe("shutdown/shutdownEngine", () => {
 
     const order = (m: MockFn) => m.mock.invocationCallOrder[0];
     // Otherwise a server still accepting traffic can spawn work after we tore the spawner down.
-    expect(order(h.stopAll)).toBeLessThan(order(h.stopCompanionServer));
     expect(order(h.stopAll)).toBeLessThan(order(h.stopServer));
     expect(order(h.stopAllAutoSync)).toBeLessThan(order(h.stopServer));
   });
@@ -82,7 +76,6 @@ describe("shutdown/shutdownEngine", () => {
 
     expect(h.stopAll).toHaveBeenCalledTimes(1);
     expect(h.stopAllAutoSync).toHaveBeenCalledTimes(1);
-    expect(h.stopCompanionServer).toHaveBeenCalledTimes(1);
     expect(h.stopServer).toHaveBeenCalledTimes(1);
   });
 

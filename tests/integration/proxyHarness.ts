@@ -9,12 +9,34 @@
  * prove that a mapping actually forwards to the right port, that a proxy rule routes
  * to the right target, or that a mock actually replaces the response.
  *
- * This harness boots the REAL proxy server (`startServer`) against a REAL on-disk
- * workspace and drives it with REAL TCP/HTTP sockets. That is the only way to verify
- * the end-to-end behaviour a user actually depends on:
+ * This harness boots the REAL servers against a REAL on-disk workspace and drives them
+ * with REAL TCP/HTTP sockets. That is the only way to verify the end-to-end behaviour a
+ * user actually depends on:
  *
  *   workspace files on disk  →  loadConfig()  →  enabled sets  →  workspaceCfg()
  *     →  dispatch()  →  mock / rule / mapping / passthrough  →  response bytes
+ *
+ * ## TWO listeners, not one — `plan/15` work item 3
+ *
+ * Until 2026-09-23 this harness booted a **single** server and the module answered both jobs on one
+ * socket: the reverse half (a mapped `Host` forwarded to its target, plus the home page that listed the
+ * mappings and the 404 for an unmapped `*.localhost`) and the forward half (a browser configured to use
+ * the port as its proxy). **WI 3 split them, and the split is the port model, not a refactor:**
+ *
+ *   - the **edge router** (`proxy/edge.ts`) is **host-level** and owns the reverse half. It reads which
+ *     workspace is active **per request** through `resolveConfig`.
+ *   - the **forward proxy** (`proxy/server.ts`) is **per workspace** and owns absolute-form traffic,
+ *     mocks, and rules on the absolute-form path.
+ *
+ * **They are on different ports, and a test must name the one it means.** `proxyRequest()` and
+ * `edgeRequest()` are the two seams; `startProxy()` returns both ports. Asking the forward proxy for a
+ * `*.localhost` mapping is no longer a routing question — it is a **400** by design, because that module
+ * no longer answers for that host.
+ *
+ * The connection between the two is composed here the same way `runtime/host.ts` composes it: the edge's
+ * `resolveConfig` returns **the same dispatch config the proxy dispatches with** (`dispatchConfig()`),
+ * never a second `workspaceCfg()`. That identity is the point — a second composition would be a second
+ * answer, and a test asserting through it would prove nothing about the app.
  *
  * The production store exposes `setDataRootOverride` (workspaceFs) and
  * `setSettingsPathOverride` (appSettings) precisely so tests can point it at a
@@ -28,7 +50,12 @@ import * as net from "net";
 import * as http from "http";
 import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
-import { startServer, stopServer } from "@bifurc/engine/proxy/server";
+import {
+  createProxyServer,
+  bindProxyInstance,
+  type ProxyServerInstance,
+} from "@bifurc/engine/proxy/server";
+import { createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
 
 export const TEST_WS = "ws-test";
 export const TEST_WS_NAME = "Integration Workspace";
@@ -105,6 +132,17 @@ export interface WorkspaceEntities {
   environments?: any[];
   activeEnvironmentId?: string | null;
   port?: number;
+  /**
+   * The **forward proxy's** port — its own setting since `plan/17` §1, when it stopped sharing the edge's.
+   *
+   * A suite that boots a proxy the way the engine does has to say which port that is, because the engine now
+   * binds `settings.forwardProxyPort` **outright** — there is no scan to fall back on, and the default `8080`
+   * is a port this machine may well already be using.
+   *
+   * **Written only when provided**, so every existing suite's `app.json` keeps exactly the shape it had;
+   * `loadConfig()` supplies the default for a file without the key.
+   */
+  forwardProxyPort?: number;
   tlsEnabled?: boolean;
   /** Real CA paths to load when `tlsEnabled` is true (see `generateCA()` in certManager). */
   tlsCaCertPath?: string | null;
@@ -149,8 +187,10 @@ export function createWorkspace(entities: WorkspaceEntities = {}): WorkspaceFixt
     JSON.stringify(
       {
         port: entities.port ?? 80,
+        // Written only when a suite asks for it — see `WorkspaceEntities.forwardProxyPort`. Omitted, the key is
+        // absent and `loadConfig()` supplies the default, which is the shape every pre-`plan/17` suite expects.
+        ...(entities.forwardProxyPort === undefined ? {} : { forwardProxyPort: entities.forwardProxyPort }),
         webhookPort: 9101,
-        companionPort: 9271,
         minimizeToTray: true,
         tlsEnabled: entities.tlsEnabled ?? false,
         tlsCaCertPath: entities.tlsCaCertPath ?? null,
@@ -267,14 +307,52 @@ export interface ProxyResponse {
 }
 
 /**
- * Send a raw HTTP request to the proxy.
+ * Send a raw HTTP request **to the forward proxy** (`proxy/server.ts`).
  *
- * - `target` is the request line target. Pass an absolute URL
- *   ("http://api.test/data") to exercise the forward-proxy path, or a path
- *   ("/api/users") to exercise the `*.localhost` mapping path.
- * - `host` sets the Host header, which is what the proxy routes on.
+ * Use this for anything the forward half owns: an absolute-form target
+ * ("http://api.test/data"), a mock served on the proxy path, a rule applied to it, or a passthrough.
+ *
+ * **Do not ask for a `*.localhost` mapping or `/` here.** `plan/15` work item 3 moved the reverse half to
+ * the edge, and this module answers such a request with a deliberate **400** — see `edgeRequest()`.
  */
 export function proxyRequest(
+  port: number,
+  opts: {
+    method?: string;
+    target: string;
+    host: string;
+    headers?: Record<string, string>;
+    body?: string;
+  },
+): Promise<ProxyResponse> {
+  return rawRequest(port, opts);
+}
+
+/**
+ * Send a raw HTTP request **to the edge router** (`proxy/edge.ts`) — the reverse half.
+ *
+ * Use this for a mapped `Host` (forwarded to its mapping's target), the home page, and the 404 that an
+ * unmapped `*.localhost` gets. `host` is the whole routing input: the edge looks the `Host` up in the
+ * active workspace's mapping table.
+ *
+ * A relative `target` ("/api/users") is what a browser sends through the edge; an absolute-form target is
+ * also accepted so a case can prove where the halves *do* differ.
+ */
+export function edgeRequest(
+  port: number,
+  opts: {
+    method?: string;
+    target: string;
+    host: string;
+    headers?: Record<string, string>;
+    body?: string;
+  },
+): Promise<ProxyResponse> {
+  return rawRequest(port, opts);
+}
+
+/** The one implementation both seams share, so the two cannot drift in how they frame a request. */
+function rawRequest(
   port: number,
   opts: {
     method?: string;
@@ -320,18 +398,75 @@ export function proxyRequest(
 
 // ── Server lifecycle ──────────────────────────────────────────────────────────
 
+/**
+ * The two listeners, and both ports.
+ *
+ * `port` is kept as the **forward** port's name because that is what the majority of call sites mean, and
+ * `edgePort` is new. **Both are live**: a case that reaches for the wrong one gets a `400` (or a
+ * connection error) rather than a silently wrong answer, which is the property that makes this worth
+ * spelling out.
+ */
 export interface RunningProxy {
+  /** The **forward** proxy's port — absolute-form traffic, the mock path, rules on that path. */
   port: number;
+  /** The **edge router's** port — mappings, `*.localhost`, the home page, the 404. */
+  edgePort: number;
+  /** The proxy instance, so a case can reach `dispatchConfig()` — the object the edge routes with. */
+  instance: ProxyServerInstance;
   stop: () => void;
 }
 
-/** Boot the real proxy server on a free port. */
-export async function startProxy(): Promise<RunningProxy> {
+/**
+ * Boot **both** servers: the per-workspace forward proxy on a free port, and the host-level edge on
+ * another. Mirrors `runtime/host.ts`'s composition, including the part that matters most — the edge's
+ * `resolveConfig` returns the proxy's **own** `dispatchConfig()`, so the two are provably looking at the
+ * same workspace config rather than two independently-composed copies of it.
+ *
+ * Two free ports are requested up front (and re-requested if they collide, which they can under parallel
+ * load) because `getFreePort()` is bind-then-close: the port is a reservation, not a guarantee.
+ *
+ * `opts` carries the edge options that describe a **deployment** rather than a request — `plan/15` work item
+ * 5's `guiTarget` and `plan/15` work item 9's `hostDomain`. Both are absent by default, which is the state
+ * every suite written before work item 5 was written against, so adding them here moved no existing case.
+ */
+export async function startProxy(
+  opts: { guiTarget?: string; hostDomain?: string } = {},
+): Promise<RunningProxy> {
   const port = await getFreePort();
-  startServer(port);
-  // Give listen() a tick to bind before the first request.
+  let edgePort = await getFreePort();
+  while (edgePort === port) edgePort = await getFreePort();
+
+  // The instance is created and bound explicitly rather than through the module-level `startServer()`
+  // facade, because the facade's instance is reached through `defaultServer()` — private. Binding it here
+  // also keeps the module-level `stopServer()` / `isRunning()` / `getPort()` working for callers that
+  // still use them, since they act on whatever is bound.
+  const instance = createProxyServer({ workspaceId: null });
+  bindProxyInstance(instance);
+  instance.start(port);
+
+  // `resolveConfig` closes over the instance and is read per request — the same shape as the host's, and
+  // the reason the edge needs no invalidation step. It reads the *active* workspace lazily, so a case that
+  // switches the active workspace mid-test is answered correctly on the next request.
+  const edge: EdgeRouterInstance = createEdgeRouter({
+    resolveConfig: () => instance.dispatchConfig(),
+    guiTarget: opts.guiTarget,
+    hostDomain: opts.hostDomain,
+  });
+  edge.start(edgePort);
+
+  // Give both listen() calls a tick to bind before the first request.
   await new Promise((r) => setTimeout(r, 50));
-  return { port, stop: () => stopServer() };
+
+  return {
+    port,
+    edgePort,
+    instance,
+    stop: () => {
+      edge.stop();
+      instance.stop();
+      bindProxyInstance(null);
+    },
+  };
 }
 
 /** Convenience: build a mock entity with sensible defaults. */

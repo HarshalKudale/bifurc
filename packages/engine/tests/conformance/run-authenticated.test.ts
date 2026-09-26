@@ -17,9 +17,13 @@
  *
  * The point of the decorator is that the auth mechanism is independent of the channel it protects.
  * Running it over the cheapest transport keeps the auth cases fast and — more importantly — means the
- * handshake, the token check and the scope gate are all exercised **before `ws` exists**. `ws` is
+ * handshake and the scope gate are all exercised **before `ws` exists**. `ws` is
  * gated on this work item ("an unauthenticated remote RPC surface is a remote code execution hole"),
  * and a gate that can only be satisfied by building the thing it gates is not a gate.
+ *
+ * **The token check was the third thing named here until 2026-09-25**, and its removal narrows what this
+ * runner proves without weakening it: what is left is the half of work item 4 that was never about a
+ * credential — a session is *established* by `hello` and *bounded* by scopes, and both are channel-agnostic.
  *
  * When `run-ws.test.ts` lands it will claim the same two capabilities and supply the same `auth`
  * payload over a socket — a runner, not a second suite.
@@ -50,7 +54,8 @@ import { createAuthenticatedTransport } from "../../src/transport/auth";
 import { createInProcessTransport } from "../../src/transport/inProcess";
 import { defineConformanceSuite } from "./protocol.conformance";
 
-const TOKEN = "conformance-token";
+// `const TOKEN` was here, and it went on 2026-09-25 with the token itself: it fed both the decorator's
+// `auth` object and the suite's `auth.hello()` payload, and neither takes a credential any more.
 
 defineConformanceSuite({
   name: "in-process + authenticated",
@@ -74,7 +79,6 @@ defineConformanceSuite({
     const ctx: CommandContext = { bus };
     const inner = createInProcessTransport(registry, { bus, ctx, log });
     return createAuthenticatedTransport(inner, {
-      token: TOKEN,
       engineVersion: "0.0.0-conformance",
       // Undefined -> the decorator's default (SHELL_SCOPES), which is what the matrix needs.
       scopesFor: scopes === undefined ? undefined : () => new Set(scopes),
@@ -94,7 +98,6 @@ defineConformanceSuite({
       protocolVersion: PROTOCOL_VERSION,
       clientName: "cli",
       clientVersion: "0.0.0-conformance",
-      token: TOKEN,
       ...overrides,
     }),
   },

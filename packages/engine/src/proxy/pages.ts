@@ -1,12 +1,30 @@
 import * as net from "net";
 import { AppConfig } from "../store/config";
 
+/**
+ * The reason phrase for a status code.
+ *
+ * `sendHtml` used to write `OK` for **every** status, so the 404 page went out as `HTTP/1.1 404 OK` and a
+ * 502 as `502 OK`. That is legal — RFC 9110 makes the reason phrase advisory and says a client must not
+ * rely on it — and every caller here is a browser or a test, both of which read the code. It is still
+ * wrong, and it survived only until a new page had to be added: writing `503 OK` in fresh code is harder
+ * to defend than inheriting an old wart, and the fix is smaller than the paragraph explaining it.
+ */
+const REASON_PHRASES: Record<number, string> = {
+  200: "OK",
+  400: "Bad Request",
+  404: "Not Found",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+};
+
 export function sendHtml(socket: net.Socket, status: number, htmlBody: string): void {
   if (!socket.writable) return;
   const page = wrapPage(htmlBody);
   const buf = Buffer.from(page, "utf-8");
   socket.write(
-    `HTTP/1.1 ${status} OK\r\n` +
+    `HTTP/1.1 ${status} ${REASON_PHRASES[status] ?? ""}\r\n` +
     `content-type: text/html; charset=utf-8\r\n` +
     `content-length: ${buf.length}\r\n` +
     `connection: close\r\n\r\n`
@@ -28,7 +46,7 @@ export function buildHomePage(cfg: AppConfig, currentPort: number): string {
   return `<div class="logo"><div class="logo-icon"></div><span class="logo-name">Bifurc</span></div>
 <div class="badge">Port ${currentPort}</div>
 <h1>Local proxy is active</h1>
-<p>Requests to <code>*.localhost${portSuffix}</code> are routed to mapped services. Configure mappings in the Bifurc app.</p>
+<p>Requests to a mapped domain are routed to that mapping's target. <code>*.localhost${portSuffix}</code> needs no setup; any other domain needs a DNS or hosts entry pointing at this engine.</p>
 ${active.length > 0 ? `<ul>${rows}</ul>` : `<p style="margin-top:1rem;color:#5b8dee">No mappings yet. Open the Bifurc app to add one.</p>`}`;
 }
 
@@ -39,4 +57,25 @@ export function buildNotMappedPage(host: string, currentPort: number): string {
 <h1>${host}</h1>
 <p>This domain is not mapped to any local service.</p>
 <p>Open <a href="http://localhost${portSuffix}/">Bifurc</a> and add a mapping for <code>${host}</code>.</p>`;
+}
+
+/**
+ * The edge's page for "this host is not serving the active workspace" (`plan/15` work item 3).
+ *
+ * It exists because both alternatives are a lie, in opposite directions. Rendering the ordinary home page
+ * with an empty mapping list says *"No mappings yet — open the Bifurc app to add one"*, which is false when
+ * the workspace has plenty and this host simply is not serving it (it was skipped for a taken port
+ * override, or filtered out by `--workspace`). Rendering **another** workspace's mappings is worse: it
+ * would send the browser to a target the active workspace never configured — a wrong-target answer of
+ * exactly the kind `runtimeRegistry.ts` exists to prevent.
+ *
+ * 503 rather than 200: the edge is up and cannot serve this, so the state belongs to the host rather than
+ * to the request. The port is not named, because the request already reached it.
+ */
+export function buildUnservedPage(): string {
+  return `<div class="logo"><div class="logo-icon"></div><span class="logo-name">Bifurc</span></div>
+<div class="badge">Not Serving</div>
+<h1>No workspace is being served</h1>
+<p>The edge is listening, but this host is not running the active workspace — it was skipped (a port override that was taken) or filtered out of the workspace list.</p>
+<p>The host's startup log names the workspace it declined to start, and why.</p>`;
 }

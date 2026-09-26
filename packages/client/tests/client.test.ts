@@ -176,14 +176,14 @@ describe("createClient — the surface is byte-identical", () => {
 
     // Set equality in both directions: a swap (one added, one dropped) must fail.
     expect(mine).toEqual(theirs);
-    expect(mine).toHaveLength(144);
+    expect(mine).toHaveLength(132);
   });
 
   it("keeps close() off the enumerated surface while still being callable", async () => {
     /**
      * The mechanism behind the test above, asserted directly — so a refactor that moves `close` back
      * into the object literal fails *here*, with the reason spelled out, instead of only showing up
-     * as an opaque 145-vs-144 length mismatch.
+     * as an opaque 133-vs-132 length mismatch.
      *
      * `window.api` has no `close`; the shell needs one. Enumerability is the discriminator that lets
      * both be true at once, and it is also what `contextBridge` follows when it copies the object
@@ -273,9 +273,11 @@ describe("createClient — command routing and payloads", () => {
   it("setEntityEnabled resolves `invalid_kind` for an out-of-enum kind, and does not call the engine", async () => {
     /**
      * The other half of the same channel pair, and **latent rather than live** — every caller passes a
-     * kind the enum accepts (the mocks panel's `resolveEntityKind` yields only `mocks` / `graphqlMocks` /
-     * `grpcMocks` / `soapMocks` in mock mode, and the two toggling panels pass `"mappings"` and
-     * `"rules"`). It is carried over because it is a *documented* client-facing behaviour of the surface
+     * kind the enum accepts (the mocks panel's `resolveEntityKind` yields only `mocks` in mock mode now
+     * that the three protocol mock kinds are gone — `useMultiplexedEntities` empties its graphql/grpc/soap
+     * item arrays when `mode !== "request"`, so `itemProtocolMap` cannot carry one — and the two toggling
+     * panels pass `"mappings"` and `"rules"`). It is carried over because it is a *documented* client-facing
+     * behaviour of the surface
      * being reconstructed: `packages/gui/src/types/window.ts:41` declares
      * `Promise<{ ok: boolean; error?: string }>`, and the engine's own header says the guard
      * "is client-facing behaviour and stays where the channel is" (`store/coreCommands.ts:24-28`).
@@ -1167,7 +1169,7 @@ describe("createClient — single-dialog ingress (step 3b-3)", () => {
  *
  * The assertions below are what fails if anyone files them as `transport` again. That is the whole
  * point of pinning them here rather than only in `surface.test.ts`'s counts: the count would still be
- * 144 if the classification regressed, and the counts test cannot see a dropped *field*.
+ * 132 if the classification regressed, and the counts test cannot see a dropped *field*.
  */
 describe("createClient — the TLS path shims (step 3b-1 regression)", () => {
   const CERT = "C:/data/ca-cert.pem";

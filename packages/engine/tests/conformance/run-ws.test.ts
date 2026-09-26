@@ -39,8 +39,11 @@
  * All four verifiable ones are claimed, and each is earned rather than declared:
  *
  * - `handshake` / `auth` — every connection is wrapped in `createAuthenticatedTransport`, so the
- *   `hello` exchange, the token check and the scope gate are exercised **through a socket** rather
- *   than over `in-process` (which is what `run-authenticated.test.ts` does).
+ *   `hello` exchange and the scope gate are exercised **through a socket** rather than over
+ *   `in-process` (which is what `run-authenticated.test.ts` does). The **token check** was the third
+ *   thing named here until 2026-09-25; it is gone, and nothing on this path replaced it — the guard that
+ *   did is an `Origin` check on the WebSocket **upgrade** in `src/transport/ws.ts`, which is a transport
+ *   concern and is asserted in `tests/transport/ws.test.ts` rather than through this suite.
  * - `replay` — the server is given the suite's own `EventLog`, so `lastSeq` means the engine's `seq`.
  * - `backpressure` — the connection's bus subscriptions go through a per-session `eventPump`, so
  *   `log.entry` is coalesced and `server.error` is never queued. **One pump per connection, not one
@@ -52,7 +55,8 @@ import { PROTOCOL_VERSION } from "@bifurc/protocol";
 import { createWsServer, createWsTransport, type WsServer } from "../../src/transport/ws";
 import { defineConformanceSuite } from "./protocol.conformance";
 
-const TOKEN = "conformance-ws-token";
+// `const TOKEN` was here, and it went on 2026-09-25 with the token itself: it fed both the server's `auth`
+// object and the suite's `auth.hello()` payload, and neither takes a credential any more.
 
 /**
  * Servers built by this file's `make()`, so they can be closed.
@@ -83,7 +87,6 @@ defineConformanceSuite({
       // issued. The decorator advertises `events.replay` off the back of this being present.
       log,
       auth: {
-        token: TOKEN,
         engineVersion: "0.0.0-conformance",
         // Undefined -> the decorator's default (SHELL_SCOPES), which is what the matrix needs.
         // A narrow set is only asked for by the FORBIDDEN case, which needs a session that can be
@@ -102,11 +105,14 @@ defineConformanceSuite({
   auth: {
     // The suite drives the handshake from this, so it can drive the *bad* ones too — and, for the
     // replay cases, the `lastSeq` of a client that has already seen something.
+    //
+    // **No `token`.** It was the credential half of this payload until 2026-09-25, and there is no
+    // credential now. The suite keeps a case for a payload that still carries one — see "accepts a
+    // `hello` that still carries the removed `token` field" in `protocol.conformance.ts`.
     hello: (overrides) => ({
       protocolVersion: PROTOCOL_VERSION,
       clientName: "web-ui",
       clientVersion: "0.0.0-conformance",
-      token: TOKEN,
       ...overrides,
     }),
   },

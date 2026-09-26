@@ -9,15 +9,16 @@
  *   engine-internal "rules"   <-> protocol "proxyRules"
  *   engine-internal "sockets" <-> protocol "wsConnections"
  *
- * The other ten kinds (`mappings`, `mocks`, `requests`, `webhooks`, `graphqlRequests`,
- * `graphqlMocks`, `grpcRequests`, `grpcMocks`, `soapRequests`, `soapMocks`) plus the
+ * The other kinds (`mappings`, `mocks`, `requests`, `webhooks`, `graphqlRequests`,
+ * `grpcRequests`, `soapRequests`) plus the
  * non-CRUD-factory kinds `environments`/`graphqlSchemas`/`protoFiles`/`wsdls` are identical on
  * both sides, so this map only needs to carry the two exceptions — everything else round-trips
- * unchanged.
+ * unchanged. (`plan/17` work item 8 removed the three protocol mock kinds, so the list is shorter
+ * than it was; this map is unaffected either way, since none of the three was renamed.)
  *
- * Note `EntitySetEnabledParams.kind` (unlike `EntityKind`) is already restricted to the six
- * literal engine-internal strings (`mocks`, `mappings`, `rules`, `graphqlMocks`, `soapMocks`,
- * `grpcMocks`) that actually carry enabled-state, so `entity.setEnabled` needs no translation at
+ * Note `EntitySetEnabledParams.kind` (unlike `EntityKind`) is already restricted to the three
+ * literal engine-internal strings (`mocks`, `mappings`, `rules`)
+ * that actually carry enabled-state, so `entity.setEnabled` needs no translation at
  * all — only `entity.create`/`entity.update`/`entity.delete`/`entity.load`, which are typed
  * against the generic `EntityKind` enum, need it.
  */

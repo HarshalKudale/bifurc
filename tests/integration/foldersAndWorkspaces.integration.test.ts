@@ -170,8 +170,8 @@ const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
 beforeAll(async () => {
   ws = createWorkspace();
 
-  const { registerCoreKinds } = await import("@/ipc/handlers/coreKinds");
-  const { registerCrudKinds } = await import("@/ipc/handlers/crudKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
   // P6 §5c: `config.get`, `entity.load` and `workspace.setActive` moved out of `coreHandlers`' module
   // scope into the engine. The reduction's sixth group then deleted that file's channels and renamed it
   // to `coreKinds.ts` (`plan/07` §5b-septendecies), so `registerCoreKinds()` is the shell's
@@ -253,12 +253,16 @@ describe("folder:add", () => {
     await addFolder("request", "Req Folder");
     await addFolder("rule", "Rule Folder");
     await addFolder("graphqlRequest", "GQL Folder");
-    await addFolder("soapMock", "SOAP Folder");
+    // `soapMock` stood here until 2026-09-25, when `plan/17` work item 8 removed the three mock
+    // folder kinds. `soapRequest` is the replacement: the same protocol family, and its `fsKind`
+    // (`soapRequests`) is distinct from `requests`, so this case still discriminates the table
+    // rather than duplicating the `request` case above.
+    await addFolder("soapRequest", "SOAP Folder");
 
     expect(exists(wsPath("requests", "Req Folder"))).toBe(true);
     expect(exists(wsPath("rules", "Rule Folder"))).toBe(true);
     expect(exists(wsPath("graphqlRequests", "GQL Folder"))).toBe(true);
-    expect(exists(wsPath("soapMocks", "SOAP Folder"))).toBe(true);
+    expect(exists(wsPath("soapRequests", "SOAP Folder"))).toBe(true);
   });
 
   it("sanitises characters that are illegal in a path", async () => {

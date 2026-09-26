@@ -1,6 +1,14 @@
 /**
  * The last `EntityKind` the shell declares — **no channels**.
  *
+ * ## It lives in the engine now (2026-09-23, `plan/15` work item 10)
+ *
+ * Moved from `src/ipc/handlers/coreKinds.ts` to `packages/engine/src/store/kinds/coreKinds.ts`, with its
+ * four siblings, because the container it populates is read by the engine-side `entity.*` commands and a
+ * headless host could not reach a shell file — so `entity.create` for `environments` threw
+ * `is not routed through the CommandRegistry yet` on the one host the browser UI talks to. See
+ * `crudKinds.ts`'s header for the full shape; `registerAllEngineKinds()` is the engine-side caller.
+ *
  * Renamed from `coreHandlers.ts` on 2026-09-21, when the P6 reduction's sixth group deleted the file's
  * seventeen channels. The name follows the same rule `crudHandlers.ts` → `crudKinds.ts` followed one
  * group earlier: a file named `*Handlers` that registers no handlers is a lie, and the three siblings
@@ -71,8 +79,8 @@
  * the file is reduced. Folding this one call into `crudKinds.ts` is a **merge**, a different change
  * with a different blast radius, and it is recorded as a follow-up rather than smuggled in here.
  */
-import { registerCrudKind } from "@bifurc/engine/store/entityCrudCommands";
-import { Environment } from "@bifurc/engine/store/config";
+import { registerCrudKind } from "../entityCrudCommands";
+import { Environment } from "../config";
 
 export function registerCoreKinds() {
   // `environments` — the last `EntityKind` still holding out of the CRUD collapse (see the
