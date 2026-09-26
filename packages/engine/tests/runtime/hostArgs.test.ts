@@ -288,10 +288,11 @@ describe("parseHostArgs", () => {
  *
  * ## Why the parser names them instead of saying "unrecognised"
  *
- * These are not typos. They are flags an operator **copied from a compose file or a `DOCKER.md` that was
- * correct when it was written** — this repository's own, among others — and the generic message sends them
- * hunting for a spelling mistake that is not there. `hostArgs.ts`'s `REMOVED_FLAGS` is the only place left
- * that can still recover what these meant, so it does, with the reason.
+ * These are not typos. They are flags an operator **copied from a compose file that was correct when it was
+ * written** — this repository's own `DOCKER.md` and `docker-compose.yml`, until the container image was
+ * decommissioned on 2026-09-26 — and the generic message sends them hunting for a spelling mistake that is
+ * not there. `hostArgs.ts`'s `REMOVED_FLAGS` is the only place left that can still recover what these meant,
+ * so it does, with the reason.
  *
  * ## What replaced them
  *
