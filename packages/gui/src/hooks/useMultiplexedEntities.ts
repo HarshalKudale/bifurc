@@ -12,17 +12,18 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
   const isRequest = mode === "request";
 
   const restItems = isRequest ? (config.requests ?? []) : (config.mocks ?? []);
-  const graphqlItems = isRequest ? (config.graphqlRequests ?? []) : (config.graphqlMocks ?? []);
-  const grpcItems = isRequest ? (config.grpcRequests ?? []) : (config.grpcMocks ?? []);
-  const soapItems = isRequest ? (config.soapRequests ?? []) : (config.soapMocks ?? []);
+  // GraphQL / gRPC / SOAP entities exist only as requests — their mock counterparts were removed.
+  const graphqlItems = isRequest ? (config.graphqlRequests ?? []) : [];
+  const grpcItems = isRequest ? (config.grpcRequests ?? []) : [];
+  const soapItems = isRequest ? (config.soapRequests ?? []) : [];
 
   // Unified folders deduplicated by ID
   const folders = useMemo(() => {
     const map = new Map<string, Folder>();
     const restFolders = isRequest ? (config.requestFolders ?? []) : (config.mockFolders ?? []);
-    const gqlFolders = isRequest ? (config.graphqlRequestFolders ?? []) : (config.graphqlMockFolders ?? []);
-    const grpcF = isRequest ? (config.grpcRequestFolders ?? []) : (config.grpcMockFolders ?? []);
-    const soapF = isRequest ? (config.soapRequestFolders ?? []) : (config.soapMockFolders ?? []);
+    const gqlFolders = isRequest ? (config.graphqlRequestFolders ?? []) : [];
+    const grpcF = isRequest ? (config.grpcRequestFolders ?? []) : [];
+    const soapF = isRequest ? (config.soapRequestFolders ?? []) : [];
 
     restFolders.forEach((f) => map.set(f.id, f));
     gqlFolders.forEach((f) => { if (!map.has(f.id)) map.set(f.id, f); });
@@ -64,10 +65,10 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         name: m.name || "",
         folderId: m.folderId ?? null,
         protocol: "graphql",
-        summary: isRequest ? (m.endpointUrl || "GraphQL Operation") : (m.operationName ? `${m.operationType || "query"} ${m.operationName}` : (m.endpointPattern || "GraphQL Mock")),
+        summary: m.endpointUrl || "GraphQL Operation",
         methodBadge: "GQL",
         enabled: m.enabled ?? true,
-        relPath: entityRelPath(isRequest ? "graphqlRequests" : "graphqlMocks", m, folders),
+        relPath: entityRelPath("graphqlRequests", m, folders),
       });
     });
 
@@ -77,10 +78,10 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         name: m.name || "",
         folderId: m.folderId ?? null,
         protocol: "grpc",
-        summary: m.serviceName && m.methodName ? `${m.serviceName}/${m.methodName}` : (isRequest ? "gRPC Call" : "gRPC Mock"),
+        summary: m.serviceName && m.methodName ? `${m.serviceName}/${m.methodName}` : "gRPC Call",
         methodBadge: "gRPC",
         enabled: m.enabled ?? true,
-        relPath: entityRelPath(isRequest ? "grpcRequests" : "grpcMocks", m, folders),
+        relPath: entityRelPath("grpcRequests", m, folders),
       });
     });
 
@@ -90,10 +91,10 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         name: m.name || "",
         folderId: m.folderId ?? null,
         protocol: "soap",
-        summary: isRequest ? (m.soapAction || m.endpointUrl || "SOAP Request") : (m.soapActionPattern || m.endpointPattern || "SOAP Mock"),
+        summary: m.soapAction || m.endpointUrl || "SOAP Request",
         methodBadge: "SOAP",
         enabled: m.enabled ?? true,
-        relPath: entityRelPath(isRequest ? "soapRequests" : "soapMocks", m, folders),
+        relPath: entityRelPath("soapRequests", m, folders),
       });
     });
 
@@ -112,9 +113,9 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
 
   const resolveEntityKind = useCallback((id: string): string => {
     const proto = itemProtocolMap.get(id);
-    if (proto === "graphql") return isRequest ? "graphqlRequests" : "graphqlMocks";
-    if (proto === "grpc") return isRequest ? "grpcRequests" : "grpcMocks";
-    if (proto === "soap") return isRequest ? "soapRequests" : "soapMocks";
+    if (proto === "graphql") return "graphqlRequests";
+    if (proto === "grpc") return "grpcRequests";
+    if (proto === "soap") return "soapRequests";
     return isRequest ? "requests" : "mocks";
   }, [itemProtocolMap, isRequest]);
 
@@ -126,16 +127,16 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         : await (isRequest ? window.api.updateRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data }) : window.api.updateMock({ ...(currentLoadedEntities[tabId] ?? {}), ...data }));
     } else if (protocol === "graphql") {
       saved = isNew
-        ? await (isRequest ? window.api.addGraphQLRequest(data) : window.api.addGraphQLMock(data))
-        : await (isRequest ? window.api.updateGraphQLRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data }) : window.api.updateGraphQLMock({ ...(currentLoadedEntities[tabId] ?? {}), ...data }));
+        ? await window.api.addGraphQLRequest(data)
+        : await window.api.updateGraphQLRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data });
     } else if (protocol === "grpc") {
       saved = isNew
-        ? await (isRequest ? window.api.addGrpcRequest(data) : window.api.addGrpcMock(data))
-        : await (isRequest ? window.api.updateGrpcRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data }) : window.api.updateGrpcMock({ ...(currentLoadedEntities[tabId] ?? {}), ...data }));
+        ? await window.api.addGrpcRequest(data)
+        : await window.api.updateGrpcRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data });
     } else if (protocol === "soap") {
       saved = isNew
-        ? await (isRequest ? window.api.addSoapRequest(data) : window.api.addSoapMock(data))
-        : await (isRequest ? window.api.updateSoapRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data }) : window.api.updateSoapMock({ ...(currentLoadedEntities[tabId] ?? {}), ...data }));
+        ? await window.api.addSoapRequest(data)
+        : await window.api.updateSoapRequest({ ...(currentLoadedEntities[tabId] ?? {}), ...data });
     }
     await reload();
     return saved;
@@ -144,9 +145,9 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
   const handleDelete = useCallback(async (id: string, closeTab: (id: string) => void) => {
     closeTab(id);
     const proto = itemProtocolMap.get(id);
-    if (proto === "graphql") await (isRequest ? window.api.deleteGraphQLRequest(id) : window.api.deleteGraphQLMock(id));
-    else if (proto === "grpc") await (isRequest ? window.api.deleteGrpcRequest(id) : window.api.deleteGrpcMock(id));
-    else if (proto === "soap") await (isRequest ? window.api.deleteSoapRequest(id) : window.api.deleteSoapMock(id));
+    if (proto === "graphql") await window.api.deleteGraphQLRequest(id);
+    else if (proto === "grpc") await window.api.deleteGrpcRequest(id);
+    else if (proto === "soap") await window.api.deleteSoapRequest(id);
     else await (isRequest ? window.api.deleteRequest(id) : window.api.deleteMock(id));
     await reload();
   }, [itemProtocolMap, reload, isRequest]);
@@ -156,9 +157,9 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
     allIds.forEach((id) => closeTab(id));
     for (const id of allIds) {
       const proto = itemProtocolMap.get(id);
-      if (proto === "graphql") await (isRequest ? window.api.deleteGraphQLRequest(id) : window.api.deleteGraphQLMock(id));
-      else if (proto === "grpc") await (isRequest ? window.api.deleteGrpcRequest(id) : window.api.deleteGrpcMock(id));
-      else if (proto === "soap") await (isRequest ? window.api.deleteSoapRequest(id) : window.api.deleteSoapMock(id));
+      if (proto === "graphql") await window.api.deleteGraphQLRequest(id);
+      else if (proto === "grpc") await window.api.deleteGrpcRequest(id);
+      else if (proto === "soap") await window.api.deleteSoapRequest(id);
       else await (isRequest ? window.api.deleteRequest(id) : window.api.deleteMock(id));
     }
     await reload();
@@ -176,9 +177,9 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
     const { id: _id, createdAt: _ca, workspaceId: _ws, ...rest } = item;
     const copyName = item.name ? `${item.name} (copy)` : "Copy";
 
-    if (proto === "graphql") await (isRequest ? window.api.addGraphQLRequest({ ...rest, name: copyName }) : window.api.addGraphQLMock({ ...rest, name: copyName }));
-    else if (proto === "grpc") await (isRequest ? window.api.addGrpcRequest({ ...rest, name: copyName }) : window.api.addGrpcMock({ ...rest, name: copyName }));
-    else if (proto === "soap") await (isRequest ? window.api.addSoapRequest({ ...rest, name: copyName }) : window.api.addSoapMock({ ...rest, name: copyName }));
+    if (proto === "graphql") await window.api.addGraphQLRequest({ ...rest, name: copyName });
+    else if (proto === "grpc") await window.api.addGrpcRequest({ ...rest, name: copyName });
+    else if (proto === "soap") await window.api.addSoapRequest({ ...rest, name: copyName });
     else await (isRequest ? window.api.addRequest({ ...rest, name: copyName }) : window.api.addMock({ ...rest, name: copyName }));
     await reload();
   }, [itemProtocolMap, resolveEntityKind, config.activeWorkspaceId, reload, isRequest]);
@@ -194,9 +195,9 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
       }
       if (!item) continue;
       const updated = { ...item, folderId: folderId ?? undefined };
-      if (proto === "graphql") await (isRequest ? window.api.updateGraphQLRequest(updated) : window.api.updateGraphQLMock(updated));
-      else if (proto === "grpc") await (isRequest ? window.api.updateGrpcRequest(updated) : window.api.updateGrpcMock(updated));
-      else if (proto === "soap") await (isRequest ? window.api.updateSoapRequest(updated) : window.api.updateSoapMock(updated));
+      if (proto === "graphql") await window.api.updateGraphQLRequest(updated);
+      else if (proto === "grpc") await window.api.updateGrpcRequest(updated);
+      else if (proto === "soap") await window.api.updateSoapRequest(updated);
       else await (isRequest ? window.api.updateRequest(updated) : window.api.updateMock(updated));
     }
     await reload();

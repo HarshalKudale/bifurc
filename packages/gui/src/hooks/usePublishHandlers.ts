@@ -9,11 +9,8 @@ function getItemFromConfig(cfg: any, kind: string, id: string) {
   if (kind === "webhooks") return (cfg.webhooks ?? []).find((h: any) => h.id === id);
   if (kind === "sockets") return (cfg.wsConnections ?? []).find((c: any) => c.id === id);
   if (kind === "graphqlRequests") return (cfg.graphqlRequests ?? []).find((r: any) => r.id === id);
-  if (kind === "graphqlMocks") return (cfg.graphqlMocks ?? []).find((m: any) => m.id === id);
   if (kind === "soapRequests") return (cfg.soapRequests ?? []).find((r: any) => r.id === id);
-  if (kind === "soapMocks") return (cfg.soapMocks ?? []).find((m: any) => m.id === id);
   if (kind === "grpcRequests") return (cfg.grpcRequests ?? []).find((r: any) => r.id === id);
-  if (kind === "grpcMocks") return (cfg.grpcMocks ?? []).find((m: any) => m.id === id);
   return null;
 }
 

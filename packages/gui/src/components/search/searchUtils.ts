@@ -74,13 +74,8 @@ export function searchEntities({
   ];
   const reqMap = new Map<string, SavedRequest>(allReqs.map((r) => [r.id, r]));
 
-  const mockFolders = [...(config.mockFolders ?? []), ...(config.graphqlMockFolders ?? []), ...(config.grpcMockFolders ?? []), ...(config.soapMockFolders ?? [])];
-  const allMocks: MockRule[] = [
-    ...(config.mocks ?? []),
-    ...(config.graphqlMocks ?? []).map((m: any) => ({ ...m, method: "GQL" })),
-    ...(config.grpcMocks ?? []).map((m: any) => ({ ...m, method: "GRPC" })),
-    ...(config.soapMocks ?? []).map((m: any) => ({ ...m, method: "SOAP" })),
-  ];
+  const mockFolders = config.mockFolders ?? [];
+  const allMocks: MockRule[] = config.mocks ?? [];
   const mockMap = new Map<string, MockRule>(allMocks.map((m) => [m.id, m]));
 
   const ruleFolders = config.ruleFolders ?? [];
@@ -131,12 +126,12 @@ export function searchEntities({
           }
         }
       } else if (panelKey === "mocks") {
-        if (tabId.startsWith("mock-draft-") || tabId.startsWith("pending-mock-") || tabId.startsWith("gql-mock-draft-") || tabId.startsWith("grpc-mock-draft-") || tabId.startsWith("soap-mock-draft-")) {
+        if (tabId.startsWith("mock-draft-") || tabId.startsWith("pending-mock-")) {
           isDraft = true;
           const draft = loadDraft<any>(tabId);
           title = draft?.name || "New Mock";
           subtitle = draft?.path || draft?.urlPattern;
-          method = draft?.method || (tabId.includes("gql") ? "GQL" : tabId.includes("grpc") ? "GRPC" : tabId.includes("soap") ? "SOAP" : "*");
+          method = draft?.method || "*";
         } else {
           const mock = mockMap.get(tabId);
           if (mock) {

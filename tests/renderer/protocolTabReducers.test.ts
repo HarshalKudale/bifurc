@@ -3,8 +3,8 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * These three are the state machines behind the request and mock editors for the
- * non-REST protocols. They were at 0% coverage: `restTabReducer` had a suite, its three
+ * These three are the state machines behind the **request** editors for the non-REST
+ * protocols. They were at 0% coverage: `restTabReducer` had a suite, its three
  * siblings had none. They are pure functions, so they are cheap to pin exactly — and
  * pinning them immediately surfaced a real bug.
  *
@@ -16,6 +16,24 @@
  * user had just thrown away. REST never hit it because it implements REFRESH itself.
  *
  * The `REFRESH` block below is the regression guard for that fix.
+ *
+ * ── 2026-09-25 — `plan/17` work item 8: the mock half is gone ─────────────────
+ *
+ * Mocks became REST-only, so **the mock half of each of these three reducers was deleted**:
+ * `GraphQLTabType` / `SoapTabType` / `GrpcTabType` now have the single value `"request"`, and
+ * `initGrpcMockState`, `stateToMockPayload`, `stateToMockDraft` and `mockToSaveData` no longer
+ * exist. The mock cases that lived here were deleted with them — they were pinning a state
+ * machine with no caller, and a test that keeps passing against dead code is worse than no test
+ * because it reads as coverage.
+ *
+ * Two of the deletions were not straight removals, and both are worth knowing about:
+ *
+ *  - `initSoapState` used to seed the *mock* response fields (`responseBody`, `responseHeaders`)
+ *    unconditionally — including for a request — and the "seeds a blank request" case pinned
+ *    that. Those fields are gone; the case now asserts the request half and its name says so.
+ *  - `initGrpcRequestState`'s sibling `initGrpcMockState` carried `SET_RESPONSE_METADATA`, whose
+ *    request-side counterpart is `resMetadata` (set by `SEND_SUCCESS`, not by an action of its
+ *    own). So that case went too rather than being retargeted.
  */
 
 import { describe, it, expect } from "vitest";
@@ -24,7 +42,6 @@ import {
   graphqlTabReducer,
   initGraphQLState,
   stateToRequestPayload,
-  stateToMockPayload,
   stateToDraft as gqlStateToDraft,
   isDraftEmpty as isGqlDraftEmpty,
   type GraphQLTabState,
@@ -40,11 +57,8 @@ import {
 import {
   grpcTabReducer,
   initGrpcRequestState,
-  initGrpcMockState,
   stateToRequestDraft,
-  stateToMockDraft,
   requestToSaveData,
-  mockToSaveData,
   type GrpcTabState,
 } from "@/components/grpc/grpcTabReducer";
 
@@ -64,21 +78,6 @@ const GQL_REQ: any = {
   folderId: "folder-1",
 };
 
-const GQL_MOCK: any = {
-  id: "gqlm-1", workspaceId: "ws-1", createdAt: 1,
-  name: "User Mock",
-  endpointPattern: "https://api.example.com/graphql",
-  useRegex: false,
-  operationType: "query",
-  operationName: "GetUsers",
-  responseStatus: 200,
-  responseHeaders: { "content-type": "application/json" },
-  responseBody: '{"data":{"users":[]}}',
-  responseDelay: 0,
-  schemaId: null,
-  folderId: null,
-};
-
 const SOAP_REQ: any = {
   id: "soap-1", workspaceId: "ws-1", createdAt: 1,
   name: "GetQuote",
@@ -90,21 +89,6 @@ const SOAP_REQ: any = {
   operationName: "GetQuote",
   preScript: "", postScript: "",
   folderId: "folder-2",
-};
-
-const SOAP_MOCK: any = {
-  id: "soapm-1", workspaceId: "ws-1", createdAt: 1,
-  name: "Quote Mock",
-  endpointPattern: "https://api.example.com/soap",
-  useRegex: true,
-  soapActionPattern: ".*GetQuote",
-  responseStatus: 500,
-  responseHeaders: { "Content-Type": "text/xml; charset=utf-8" },
-  responseBody: "<soap:Fault/>",
-  responseDelay: 25,
-  wsdlId: null,
-  operationName: "",
-  folderId: null,
 };
 
 const GRPC_REQ: any = {
@@ -121,22 +105,6 @@ const GRPC_REQ: any = {
   preScript: "pm.environment.set('b', 2);",
   postScript: "",
   folderId: "folder-3",
-};
-
-const GRPC_MOCK: any = {
-  id: "grpcm-1", workspaceId: "ws-1", createdAt: 1,
-  name: "Greeter Mock",
-  serviceName: "helloworld.Greeter",
-  methodName: "SayHello",
-  responseBody: '{"message":"hi"}',
-  responseMetadata: { "x-mocked": "1" },
-  responseDelay: 10,
-  streamingResponses: ["a", "b"],
-  errorCode: 5,
-  errorMessage: "not found",
-  protoFileId: "proto-2",
-  enabled: false,
-  folderId: null,
 };
 
 // ── Shared REFRESH semantics ──────────────────────────────────────────────────
@@ -173,17 +141,6 @@ describe("protocol reducers — REFRESH (the discarded-edits bug)", () => {
     const refreshed = graphqlTabReducer(edited, { type: "REFRESH", entity: GQL_REQ, tabType: "request" } as any);
     expect(refreshed.endpointUrl).toBe(GQL_REQ.endpointUrl);
     expect(entityPart(refreshed as any)).toEqual(entityPart(fresh as any));
-  });
-
-  it("restores a GraphQL mock field whose entity value equals the default", () => {
-    // The trap: a naive "copy only the keys that differ from the blank state" merge
-    // would keep the edited 404 because the entity's 200 matches the default.
-    const fresh = initGraphQLState(GQL_MOCK, null, "mock");
-    const edited = graphqlTabReducer(fresh, { type: "SET_FIELD", field: "responseStatus", value: 404 });
-    expect(edited.responseStatus).toBe(404);
-
-    const refreshed = graphqlTabReducer(edited, { type: "REFRESH", entity: GQL_MOCK, tabType: "mock" } as any);
-    expect(refreshed.responseStatus).toBe(200);
   });
 
   it("preserves the response pane and in-flight flags across a REFRESH", () => {
@@ -226,15 +183,6 @@ describe("protocol reducers — REFRESH (the discarded-edits bug)", () => {
     expect(refreshed.resStatusMessage).toBe("OK");
   });
 
-  it("restores gRPC mock fields, and preserves the response stream", () => {
-    const fresh = initGrpcMockState(GRPC_MOCK);
-    const edited = grpcTabReducer(fresh, { type: "SET_FIELD", field: "errorCode", value: 99 });
-    const refreshed = grpcTabReducer(edited, { type: "REFRESH", entity: GRPC_MOCK, tabType: "mock" } as any);
-
-    expect(refreshed.errorCode).toBe(5);
-    expect(entityPart(refreshed as any)).toEqual(entityPart(fresh as any));
-  });
-
   it("rebuilds from scratch on LOAD_ENTITY, resetting the response pane", () => {
     const sent = graphqlTabReducer(initGraphQLState(GQL_REQ, null, "request"), {
       type: "SEND_SUCCESS", status: 500, headers: {}, body: "boom", durationMs: 1,
@@ -275,14 +223,6 @@ describe("graphqlTabReducer — init", () => {
     expect(s.dirty).toBe(false);
   });
 
-  it("defaults the mock response to an empty GraphQL data envelope", () => {
-    const s = initGraphQLState(null, null, "mock");
-    expect(s.responseStatus).toBe(200);
-    expect(JSON.parse(s.responseBody)).toEqual({ data: {} });
-    expect(s.operationType).toBe("any");
-    expect(s.enabled).toBe(true);
-  });
-
   it("loads a request entity", () => {
     const s = initGraphQLState(GQL_REQ, null, "request");
     expect(s.name).toBe("Get Users");
@@ -292,13 +232,6 @@ describe("graphqlTabReducer — init", () => {
     expect(s.schemaId).toBe("schema-1");
     expect(s.folderId).toBe("folder-1");
     expect(s.headers).toEqual({ "x-api-key": "secret" });
-  });
-
-  it("maps the mock entity's operationName onto operationNameMatch", () => {
-    const s = initGraphQLState(GQL_MOCK, null, "mock");
-    expect(s.operationNameMatch).toBe("GetUsers");
-    expect(s.endpointPattern).toBe(GQL_MOCK.endpointPattern);
-    expect(s.responseBody).toBe(GQL_MOCK.responseBody);
   });
 
   it("lets a draft win over the entity", () => {
@@ -381,56 +314,34 @@ describe("graphqlTabReducer — serialization", () => {
     expect(payload.schemaId).toBe("schema-1");
   });
 
-  it("builds the mock save payload, mapping operationNameMatch back and defaulting delay", () => {
-    const s = initGraphQLState(GQL_MOCK, null, "mock");
-    const payload = stateToMockPayload(s);
-    expect(payload.operationName).toBe("GetUsers");
-    expect(payload.endpointPattern).toBe(GQL_MOCK.endpointPattern);
-    expect(payload.responseStatus).toBe(200);
-    // `responseDelay || undefined` — a zero delay is written as absent, not as 0.
-    expect(payload.responseDelay).toBeUndefined();
-  });
-
-  it("keeps a non-zero mock delay", () => {
-    const s = initGraphQLState({ ...GQL_MOCK, responseDelay: 250 }, null, "mock");
-    expect(stateToMockPayload(s).responseDelay).toBe(250);
-  });
-
   it("round-trips state through a draft", () => {
     const s = initGraphQLState(GQL_REQ, null, "request");
-    const d = gqlStateToDraft(s, "request") as any;
+    const d = gqlStateToDraft(s) as any;
     expect(d.endpointUrl).toBe(GQL_REQ.endpointUrl);
     expect(d.endpointPattern).toBeUndefined();
-
-    const m = gqlStateToDraft(initGraphQLState(GQL_MOCK, null, "mock"), "mock") as any;
-    expect(m.endpointPattern).toBe(GQL_MOCK.endpointPattern);
-    expect(m.endpointUrl).toBeUndefined();
   });
 
-  it("reports an empty draft for a blank request, but not for a blank mock", () => {
-    expect(isGqlDraftEmpty(initGraphQLState(null, null, "request"), "request")).toBe(true);
-    expect(isGqlDraftEmpty({ ...initGraphQLState(null, null, "request"), query: "q" }, "request")).toBe(false);
-    expect(isGqlDraftEmpty({ ...initGraphQLState(null, null, "request"), name: "N" }, "request")).toBe(false);
-
-    // Asymmetry worth knowing about: a *blank* GraphQL mock is NOT reported as empty,
-    // because the default response body is a non-empty `{ data: {} }` envelope and this
-    // predicate only checks truthiness. SOAP avoids this by comparing its response body
-    // against the default envelope. Harmless in practice — `useDraftPersist` uses the
-    // predicate only to skip its debounced save, and it saves on mount and unmount
-    // regardless — but it means a GraphQL mock draft is never suppressed as "blank".
-    expect(isGqlDraftEmpty(initGraphQLState(null, null, "mock"), "mock")).toBe(false);
-    expect(isGqlDraftEmpty({ ...initGraphQLState(null, null, "mock"), name: "N" }, "mock")).toBe(false);
+  it("reports an empty draft for a blank request", () => {
+    expect(isGqlDraftEmpty(initGraphQLState(null, null, "request"))).toBe(true);
+    expect(isGqlDraftEmpty({ ...initGraphQLState(null, null, "request"), query: "q" })).toBe(false);
+    expect(isGqlDraftEmpty({ ...initGraphQLState(null, null, "request"), name: "N" })).toBe(false);
   });
 });
 
 // ── SOAP ──────────────────────────────────────────────────────────────────────
 
 describe("soapTabReducer", () => {
-  it("seeds a blank request with a SOAP envelope and the XML content type", () => {
+  it("seeds a blank request with a SOAP envelope", () => {
+    /**
+     * Until 2026-09-25 this case also asserted `responseBody` and `responseHeaders["Content-Type"]`
+     * against a *request* state. Those were the **mock's** canned response, which `initSoapState`
+     * seeded unconditionally — so the assertion was pinning a quirk rather than a property of a
+     * blank request. `plan/17` work item 8 removed the mock fields, and the two assertions went with
+     * them rather than being retargeted: a request's response pane is `resBody` / `resHeaders`, and
+     * asserting the mock's defaults here would have preserved the quirk in a new form.
+     */
     const s = initSoapState(null, null, "request");
     expect(s.body).toContain("soap:Envelope");
-    expect(s.responseBody).toContain("soap:Envelope");
-    expect(s.responseHeaders["Content-Type"]).toBe("text/xml; charset=utf-8");
     expect(s.reqTab).toBe("body");
     expect(s.resTab).toBe("body");
   });
@@ -446,15 +357,6 @@ describe("soapTabReducer", () => {
     expect(s.wsdlId).toBe("wsdl-1");
     expect(s.operationName).toBe("GetQuote");
     expect(s.body).toBe(SOAP_REQ.body);
-  });
-
-  it("loads a mock entity", () => {
-    const s = initSoapState(SOAP_MOCK, null, "mock");
-    expect(s.endpointPattern).toBe(SOAP_MOCK.endpointPattern);
-    expect(s.useRegex).toBe(true);
-    expect(s.soapActionPattern).toBe(".*GetQuote");
-    expect(s.responseStatus).toBe(500);
-    expect(s.responseDelay).toBe(25);
   });
 
   it("lets a draft win over the entity", () => {
@@ -491,36 +393,21 @@ describe("soapTabReducer", () => {
   });
 
   it("builds the request save payload", () => {
-    const payload: any = soapStateToSavePayload(initSoapState(SOAP_REQ, null, "request"), "request");
+    const payload: any = soapStateToSavePayload(initSoapState(SOAP_REQ, null, "request"));
     expect(payload.endpointUrl).toBe(SOAP_REQ.endpointUrl);
     expect(payload.soapAction).toBe(SOAP_REQ.soapAction);
     expect(payload.wsdlId).toBe("wsdl-1");
   });
 
-  it("builds the mock save payload, always enabled", () => {
-    const payload: any = soapStateToSavePayload(initSoapState(SOAP_MOCK, null, "mock"), "mock");
-    expect(payload.endpointPattern).toBe(SOAP_MOCK.endpointPattern);
-    expect(payload.useRegex).toBe(true);
-    expect(payload.responseStatus).toBe(500);
-    // SOAP mock state has no `enabled` field, so the payload pins it true.
-    expect(payload.enabled).toBe(true);
-  });
-
   it("round-trips state through a draft", () => {
-    const d: any = soapStateToDraft(initSoapState(SOAP_REQ, null, "request"), "request");
+    const d: any = soapStateToDraft(initSoapState(SOAP_REQ, null, "request"));
     expect(d.soapAction).toBe(SOAP_REQ.soapAction);
     expect(d.endpointPattern).toBeUndefined();
-
-    const m: any = soapStateToDraft(initSoapState(SOAP_MOCK, null, "mock"), "mock");
-    expect(m.endpointPattern).toBe(SOAP_MOCK.endpointPattern);
-    expect(m.soapAction).toBeUndefined();
   });
 
-  it("reports an empty draft only when the identifying fields are blank", () => {
-    expect(isSoapDraftEmpty(initSoapState(null, null, "request"), "request")).toBe(true);
-    expect(isSoapDraftEmpty(initSoapState(null, null, "mock"), "mock")).toBe(true);
-    expect(isSoapDraftEmpty({ ...initSoapState(null, null, "request"), soapAction: "a" }, "request")).toBe(false);
-    expect(isSoapDraftEmpty({ ...initSoapState(null, null, "mock"), endpointPattern: "/x" }, "mock")).toBe(false);
+  it("reports an empty draft when the identifying fields are blank", () => {
+    expect(isSoapDraftEmpty(initSoapState(null, null, "request"))).toBe(true);
+    expect(isSoapDraftEmpty({ ...initSoapState(null, null, "request"), soapAction: "a" })).toBe(false);
   });
 });
 
@@ -537,38 +424,18 @@ describe("grpcTabReducer", () => {
     expect(s.metadata).toEqual({});
   });
 
-  it("seeds a blank mock", () => {
-    const s = initGrpcMockState();
-    expect(s.tabType).toBe("mock");
-    expect(s.responseBody).toBe("{}");
-    expect(s.enabled).toBe(true);
-    expect(s.streamingResponses).toEqual([]);
-  });
-
-  it("loads request and mock entities", () => {
+  it("loads a request entity", () => {
     const r = initGrpcRequestState(GRPC_REQ);
     expect(r.serverAddress).toBe("grpc.example.com:443");
     expect(r.serviceName).toBe("helloworld.Greeter");
     expect(r.useReflection).toBe(true);
     expect(r.streamingType).toBe("server");
     expect(r.protoFileId).toBe("proto-1");
-
-    const m = initGrpcMockState(GRPC_MOCK);
-    expect(m.responseBody).toBe('{"message":"hi"}');
-    expect(m.streamingResponses).toEqual(["a", "b"]);
-    expect(m.errorCode).toBe(5);
-    expect(m.enabled).toBe(false);
   });
 
   it("SET_METADATA replaces metadata and marks the tab dirty", () => {
     const s = grpcTabReducer(initGrpcRequestState(), { type: "SET_METADATA", metadata: { a: "1" } });
     expect(s.metadata).toEqual({ a: "1" });
-    expect(s.dirty).toBe(true);
-  });
-
-  it("SET_RESPONSE_METADATA replaces response metadata and marks the tab dirty", () => {
-    const s = grpcTabReducer(initGrpcMockState(), { type: "SET_RESPONSE_METADATA", metadata: { b: "2" } });
-    expect(s.responseMetadata).toEqual({ b: "2" });
     expect(s.dirty).toBe(true);
   });
 
@@ -614,18 +481,5 @@ describe("grpcTabReducer", () => {
     expect(payload.serviceName).toBe("helloworld.Greeter");
     expect(payload.metadata).toEqual({ authorization: "Bearer t" });
     expect(payload.streamingType).toBe("server");
-  });
-
-  it("serializes a mock draft and a save payload, defaulting protoFileId to empty", () => {
-    const s = initGrpcMockState({ ...GRPC_MOCK, protoFileId: null });
-    const draft = stateToMockDraft(s);
-    expect(draft.responseMetadata).toEqual({ "x-mocked": "1" });
-    expect(draft.enabled).toBe(false);
-
-    const payload = mockToSaveData(s);
-    expect(payload.errorCode).toBe(5);
-    expect(payload.streamingResponses).toEqual(["a", "b"]);
-    // `protoFileId ?? ""` — the saved mock uses an empty string, not null.
-    expect(payload.protoFileId).toBe("");
   });
 });

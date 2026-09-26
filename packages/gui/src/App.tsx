@@ -257,7 +257,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
 
   const cnt = (n: number) => n > 0 ? n : undefined;
   const totalRequests = (wsConfig.requests ?? []).length + (wsConfig.graphqlRequests ?? []).length + (wsConfig.grpcRequests ?? []).length + (wsConfig.soapRequests ?? []).length;
-  const totalMocks = (wsConfig.mocks ?? []).length + (wsConfig.graphqlMocks ?? []).length + (wsConfig.grpcMocks ?? []).length + (wsConfig.soapMocks ?? []).length;
+  const totalMocks = (wsConfig.mocks ?? []).length;
   const navBadges: Partial<Record<Panel, number | undefined>> = {
     mappings: cnt((wsConfig.mappings ?? []).length),
     rules: cnt((wsConfig.proxyRules ?? []).length),
