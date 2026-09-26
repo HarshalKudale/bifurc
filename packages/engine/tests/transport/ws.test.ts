@@ -5,8 +5,9 @@
  * sockets, ports or TLS. That is exactly what makes it reusable — and it is also why several things
  * worth asserting about a *listener* cannot live there:
  *
- *  - the **bind guards** (work item 5's "never default to `0.0.0.0`" and "TLS beyond loopback"),
- *    which are properties of `createWsServer`, not of a `Transport`;
+ *  - the **bind guard** (work item 5's "never default to `0.0.0.0`", which since 2026-09-25 has neither
+ *    an opt-in nor a TLS companion) and the **`Origin` guard on the upgrade**, both of which are
+ *    properties of `createWsServer` rather than of a `Transport`;
  *  - what happens to a request that is **in flight when the peer disappears**;
  *  - what happens to a **malformed frame from one peer**, and whether it takes the engine with it;
  *  - whether a disconnected session **releases its `EventLog` subscriptions** — the leak class that
@@ -89,34 +90,106 @@ describe("ws — the bind guards (work item 5)", () => {
     // "Never default to 0.0.0.0."
     const { server } = await pair();
     expect(server.host).toBe(DEFAULT_WS_HOST);
-    expect(server.secure).toBe(false);
+    // `server.secure` was asserted here and is gone with the TLS option: `WsServer.url` is always `ws://`
+    // now, and the assertion below is what actually pins that.
     // `port: 0` is resolved by the OS, and the resolved value is the only one that identifies this
     // listener — which is why `createWsServer` is async.
     expect(server.port).toBeGreaterThan(0);
     expect(server.url).toBe(`ws://127.0.0.1:${server.port}`);
   });
 
-  it("REFUSES a non-loopback bind without an explicit opt-in", async () => {
+  it("REFUSES a non-loopback bind, and there is no opt-in that changes that", async () => {
+    // This replaced **two** cases on 2026-09-25: "refuses a non-loopback bind without an explicit opt-in"
+    // and "refuses a non-loopback bind in the clear, even with the opt-in" — the bind guard and the TLS
+    // guard. Both described options that no longer exist (`allowNonLoopback`, and the
+    // `--ws-tls-cert`/`--ws-tls-key` pair behind it), so keeping them would have meant asserting against a
+    // parameter the type system now rejects.
+    //
+    // The property they protected survives and is **stronger**: no configuration, flag or programmatic
+    // caller can publish this listener. `plan/05`'s first rule ("Never default to `0.0.0.0`") is now
+    // unconditional rather than a default with an escape hatch, so the loop below is exhaustive by
+    // construction rather than a sample of the addresses an opt-in would have allowed.
     const registry = makeRegistry();
     const bus = new EngineEventBus();
-    for (const host of ["0.0.0.0", "::", "192.168.1.10"]) {
+    for (const host of ["0.0.0.0", "::", "192.168.1.10", "10.1.2.3"]) {
       await expect(
         createWsServer({ registry, bus, host }),
-        `${host} must not bind without an opt-in`,
-      ).rejects.toThrow(/loopback by default/i);
+        `${host} must not bind — this listener is loopback-only`,
+      ).rejects.toThrow(/loopback only/i);
+    }
+  });
+});
+
+describe("ws — the origin guard: a browser is a local process", () => {
+  /**
+   * A handshake with a chosen `Origin`, reporting whether it opened or was refused.
+   *
+   * The `ws` **client** sends no `Origin` unless asked, which is why every other case in this file is
+   * unaffected by the guard and why these have to set it explicitly. A non-101 response surfaces as an
+   * `Unexpected server response: 403` error, so a refusal is an observable rejection rather than a hang.
+   *
+   * The three-argument form is used deliberately: `new WebSocket(url, options)` is a `ws` convenience whose
+   * second parameter is otherwise `protocols`, and a case that silently sent protocols instead of options
+   * would pass while testing nothing.
+   */
+  async function attempt(url: string, origin?: string): Promise<{ opened: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      const socket = origin === undefined ? new WebSocket(url) : new WebSocket(url, [], { origin });
+      socket.once("open", () => {
+        socket.close();
+        resolve({ opened: true });
+      });
+      socket.once("error", (err) => resolve({ opened: false, error: (err as Error).message }));
+    });
+  }
+
+  it("REFUSES a page served from another origin", async () => {
+    // The whole point: a page the user visits must not be able to drive the engine, and loopback binding
+    // does not stop it because the page is on this machine too.
+    const { server } = await pair();
+    const result = await attempt(server.url, "http://evil.example.com");
+    expect(result.opened).toBe(false);
+    expect(result.error).toMatch(/403/);
+  });
+
+  it("REFUSES `Origin: null`, which is what a file:// page sends", async () => {
+    // The case a host-allowlist alone misses if "unparseable" is read as "not a browser". `null` is not a
+    // URL, so it must fail closed.
+    const { server } = await pair();
+    const result = await attempt(server.url, "null");
+    expect(result.opened).toBe(false);
+    expect(result.error).toMatch(/403/);
+  });
+
+  it("ACCEPTS the GUI's own mapping — a *.localhost subdomain", async () => {
+    // `bifurc.localhost` is where the web GUI is served, so this is the origin the real client sends.
+    const { server } = await pair();
+    expect((await attempt(server.url, "http://bifurc.localhost")).opened).toBe(true);
+  });
+
+  it("ACCEPTS a plain loopback origin, on any port and in any spelling", async () => {
+    // Port-agnostic on purpose: the GUI is served from `:80` through the edge, from `:4748` directly, and
+    // from vite's `:5199` in development, and all three are the same page on the same machine.
+    const { server } = await pair();
+    for (const origin of ["http://localhost:5199", "http://127.0.0.1", "http://[::1]:8080"]) {
+      expect((await attempt(server.url, origin)).opened, origin).toBe(true);
     }
   });
 
-  it("REFUSES a non-loopback bind in the clear, even with the opt-in", async () => {
-    // The second guard, and the one that is easy to forget: opting into exposure is not the same as
-    // opting into exposure *unencrypted*. `plan/05` work item 5: "TLS on the channel, not optional."
-    // Until this is satisfiable, remote mode is unreachable — which is the honest state, and the
-    // reason a pass-through `tls` option with no test behind it is acceptable.
-    const registry = makeRegistry();
-    const bus = new EngineEventBus();
-    await expect(
-      createWsServer({ registry, bus, host: "0.0.0.0", allowNonLoopback: true }),
-    ).rejects.toThrow(/requires TLS/i);
+  it("ACCEPTS a client that sends no Origin at all", async () => {
+    // The CLI, `curl`, the extension, every other case in this file. A browser *always* sends one, so an
+    // absent Origin means "not a browser" rather than "unknown" — the distinction the guard rests on.
+    const { server } = await pair();
+    expect((await attempt(server.url)).opened).toBe(true);
+  });
+
+  it("still serves a session that arrived with an allowed Origin", async () => {
+    // The guard must not become the feature: an allowed page still gets a working RPC session, not merely a
+    // socket that opens and then fails.
+    const { server } = await pair();
+    const transport = createWsTransport(server.url, { headers: { origin: "http://bifurc.localhost" } });
+    transports.push(transport);
+    await expect(transport.request("config.get", {})).resolves.toEqual({ port: 8080 });
   });
 });
 
@@ -272,25 +345,24 @@ describe("ws — event delivery", () => {
 });
 
 describe("ws — the auth consequence (work item 5)", () => {
-  it("answers UNAUTHORIZED and then closes the session", async () => {
+  it("answers UNAUTHORIZED and then closes the session when the first request is not `hello`", async () => {
     // "Auth failure returns UNAUTHORIZED and closes. Never fall back to unauthenticated." Two halves,
     // and both matter: the reply must be flushed *before* the close (a peer disconnected without being
-    // told sees a network fault instead of a rejected credential), and the session must really be gone
+    // told sees a network fault instead of a rejected request), and the session must really be gone
     // afterwards rather than merely unauthorised-looking.
+    //
+    // **The trigger is now "not `hello`" rather than "the wrong token"**, and that is the whole of what
+    // the token's removal changed here. A bad credential is no longer expressible — `hello` ignores a
+    // `token` field, which `protocol.conformance.ts` pins from the other direction — so this is the one
+    // identity failure the decorator still has, and it is the one `plan/05` states as a rule rather than
+    // as a credential check.
     const fatals: Error[] = [];
     const { transport } = await pair(
-      { auth: { token: "the-right-token", engineVersion: "0.0.0-test" } },
+      { auth: { engineVersion: "0.0.0-test" } },
       { onFatal: (e) => fatals.push(e) },
     );
 
-    await expect(
-      transport.request("hello", {
-        protocolVersion: PROTOCOL_VERSION,
-        clientName: "cli",
-        clientVersion: "0.0.0-test",
-        token: "definitely-not-the-token",
-      }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(transport.request("config.get", {})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
     // The close is what proves there is no unauthenticated fallback path: waiting for it here rather
     // than assuming it has already happened is what makes the next assertion deterministic.
@@ -305,7 +377,6 @@ describe("ws — the auth consequence (work item 5)", () => {
     const { transport } = await pair(
       {
         auth: {
-          token: "the-right-token",
           engineVersion: "0.0.0-test",
           scopesFor: () => new Set(["read"] as const),
         },
@@ -317,7 +388,6 @@ describe("ws — the auth consequence (work item 5)", () => {
       protocolVersion: PROTOCOL_VERSION,
       clientName: "bifurc-extension",
       clientVersion: "0.0.0-test",
-      token: "the-right-token",
     });
 
     // `env.setActive` requires `write`; a `read` session must be refused and must stay connected.
@@ -335,7 +405,7 @@ describe("ws — the auth consequence (work item 5)", () => {
     const server = await createWsServer({
       registry: makeRegistry((_params, ctx) => ctx.session ?? null),
       bus,
-      auth: { token: "the-right-token", engineVersion: "0.0.0-test" },
+      auth: { engineVersion: "0.0.0-test" },
     });
     servers.push(server);
     const transport = createWsTransport(server.url);
@@ -345,7 +415,6 @@ describe("ws — the auth consequence (work item 5)", () => {
       protocolVersion: PROTOCOL_VERSION,
       clientName: "cli",
       clientVersion: "0.0.0-test",
-      token: "the-right-token",
     });
 
     const seen = await transport.request("config.get", {});

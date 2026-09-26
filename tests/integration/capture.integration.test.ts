@@ -30,6 +30,7 @@ import {
     startUpstream,
     startProxy,
     proxyRequest,
+  edgeRequest,
     mappingFixture,
     mockFixture,
     ruleFixture,
@@ -224,7 +225,7 @@ beforeEach(() => {
 
 describe("capture — the entry the Capture screen renders", () => {
     it("captures a mapped request with method, url, host, status and target", async () => {
-        await proxyRequest(proxy.port, { target: "/api/users", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/users", host: "api.localhost" });
 
         const e = await waitFor(byPath("/api/users"));
 
@@ -237,13 +238,13 @@ describe("capture — the entry the Capture screen renders", () => {
     });
 
     it("records how the request was fulfilled: rfc6761 for a domain mapping", async () => {
-        await proxyRequest(proxy.port, { target: "/api/mapped", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/mapped", host: "api.localhost" });
 
         expect((await waitFor(byPath("/api/mapped"))).via).toBe("rfc6761");
     });
 
     it("records how the request was fulfilled: mock when a mock served it", async () => {
-        await proxyRequest(proxy.port, { target: "http://mocked.localhost/thing", host: "mocked.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "http://mocked.localhost/thing", host: "mocked.localhost" });
 
         const e = await waitFor((x) => x.via === "mock");
 
@@ -270,7 +271,7 @@ describe("capture — the entry the Capture screen renders", () => {
     });
 
     it("records an error entry for a domain with no mapping", async () => {
-        const res = await proxyRequest(proxy.port, { target: "/nope", host: "unmapped.localhost" });
+        const res = await edgeRequest(proxy.edgePort, { target: "/nope", host: "unmapped.localhost" });
 
         const e = await waitFor(byPath("/nope"));
 
@@ -282,8 +283,8 @@ describe("capture — the entry the Capture screen renders", () => {
     });
 
     it("assigns each capture a unique id and a millisecond timestamp", async () => {
-        await proxyRequest(proxy.port, { target: "/api/one", host: "api.localhost" });
-        await proxyRequest(proxy.port, { target: "/api/two", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/one", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/two", host: "api.localhost" });
 
         const a = await waitFor(byPath("/api/one"));
         const b = await waitFor(byPath("/api/two"));
@@ -296,7 +297,7 @@ describe("capture — the entry the Capture screen renders", () => {
     });
 
     it("reports a non-null duration", async () => {
-        await proxyRequest(proxy.port, { target: "/api/timed", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/timed", host: "api.localhost" });
 
         const e = await waitFor(byPath("/api/timed"));
 
@@ -305,7 +306,7 @@ describe("capture — the entry the Capture screen renders", () => {
     });
 
     it("does not capture the localhost home page", async () => {
-        const res = await proxyRequest(proxy.port, { target: "/", host: "localhost" });
+        const res = await edgeRequest(proxy.edgePort, { target: "/", host: "localhost" });
         expect(res.status).toBe(200);
 
         // Give the emitter a moment; nothing should arrive.
@@ -318,7 +319,7 @@ describe("capture — the entry the Capture screen renders", () => {
 
 describe("capture — the payload a replay needs", () => {
     it("captures the request headers", async () => {
-        await proxyRequest(proxy.port, {
+        await edgeRequest(proxy.edgePort, {
             target: "/api/headers",
             host: "api.localhost",
             headers: { "x-trace-id": "trace-123", accept: "application/json" },
@@ -332,7 +333,7 @@ describe("capture — the payload a replay needs", () => {
     });
 
     it("does not capture hop-by-hop headers", async () => {
-        await proxyRequest(proxy.port, {
+        await edgeRequest(proxy.edgePort, {
             target: "/api/hop",
             host: "api.localhost",
             headers: { connection: "keep-alive", "x-keep": "yes" },
@@ -346,7 +347,7 @@ describe("capture — the payload a replay needs", () => {
 
     it("base64-encodes the request body so it can be replayed byte-for-byte", async () => {
         const body = JSON.stringify({ name: "ada", nested: { n: 1 } });
-        await proxyRequest(proxy.port, {
+        await edgeRequest(proxy.edgePort, {
             method: "POST",
             target: "/api/create",
             host: "api.localhost",
@@ -361,7 +362,7 @@ describe("capture — the payload a replay needs", () => {
 
     it("round-trips a multi-byte request body", async () => {
         const body = JSON.stringify({ greeting: "héllo — 日本語 ✓" });
-        await proxyRequest(proxy.port, {
+        await edgeRequest(proxy.edgePort, {
             method: "POST",
             target: "/api/utf8",
             host: "api.localhost",
@@ -374,13 +375,13 @@ describe("capture — the payload a replay needs", () => {
     });
 
     it("leaves the request body empty for a bodyless request", async () => {
-        await proxyRequest(proxy.port, { target: "/api/empty", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/empty", host: "api.localhost" });
 
         expect((await waitFor(byPath("/api/empty"))).reqBody).toBe("");
     });
 
     it("base64-encodes the response body", async () => {
-        await proxyRequest(proxy.port, { target: "/api/body", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/body", host: "api.localhost" });
 
         const e = await waitFor(byPath("/api/body"));
 
@@ -392,7 +393,7 @@ describe("capture — the payload a replay needs", () => {
     });
 
     it("captures the mocked response so it can be re-served", async () => {
-        await proxyRequest(proxy.port, { target: "http://mocked.localhost/thing", host: "mocked.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "http://mocked.localhost/thing", host: "mocked.localhost" });
 
         const e = await waitFor((x) => x.via === "mock");
 
@@ -405,7 +406,7 @@ describe("capture — the payload a replay needs", () => {
 
 describe("capture — the 512 KB response-body cap", () => {
     it("caps an oversized captured response body", async () => {
-        await proxyRequest(proxy.port, { target: "/big", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/big", host: "api.localhost" });
 
         const e = await waitFor(byPath("/big"));
 
@@ -414,7 +415,7 @@ describe("capture — the 512 KB response-body cap", () => {
     });
 
     it("keeps a response below the cap in full", async () => {
-        await proxyRequest(proxy.port, { target: "/api/small", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/small", host: "api.localhost" });
 
         const e = await waitFor(byPath("/api/small"));
         const decoded = fromB64(e.resBody).toString("utf-8");
@@ -432,7 +433,7 @@ describe("capture.shareJson — exporting selected captures (the deleted `captur
         const outFile = path.join(outDir, "captured-requests.json");
         dialogState.result = { canceled: false, filePath: outFile };
 
-        await proxyRequest(proxy.port, { target: "/api/share-me", host: "api.localhost" });
+        await edgeRequest(proxy.edgePort, { target: "/api/share-me", host: "api.localhost" });
         const e = await waitFor(byPath("/api/share-me"));
 
         const res = await invoke("capture:shareJson", [e], "captured-requests.json");

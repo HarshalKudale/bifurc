@@ -41,14 +41,9 @@ export function extractNameEntry(kind: string, entity: any): EntityNameEntry | n
       return { name: entity.name ?? "", urlSuffix: entity.urlSuffix ?? "" };
     case "soapRequests":
       return { name: entity.name ?? "", endpointUrl: entity.endpointUrl ?? "", soapAction: entity.soapAction ?? "" };
-    case "soapMocks":
-      return { name: entity.name ?? "", soapActionPattern: entity.soapActionPattern ?? "" };
     case "graphqlRequests":
       return { name: entity.name ?? "", endpointUrl: entity.endpointUrl ?? "" };
-    case "graphqlMocks":
-      return { name: entity.name ?? "", operationName: entity.operationName ?? "" };
     case "grpcRequests":
-    case "grpcMocks":
       return { name: entity.name ?? "" };
     default:
       return entity.name ? { name: entity.name } : null;
@@ -157,11 +152,8 @@ export async function discardChanges(
         "rules",
         "mappings",
         "graphqlRequests",
-        "graphqlMocks",
         "soapRequests",
-        "soapMocks",
         "grpcRequests",
-        "grpcMocks",
         "environments",
       ];
       for (const k of allKinds) {
@@ -209,8 +201,8 @@ export async function syncChanges(
       if (entityId) {
         for (const kind of [
           "requests", "mocks", "sockets", "webhooks", "rules", "mappings",
-          "graphqlRequests", "graphqlMocks", "soapRequests", "soapMocks",
-          "grpcRequests", "grpcMocks", "environments",
+          "graphqlRequests", "soapRequests",
+          "grpcRequests", "environments",
         ]) {
           removePendingDeletion(wsId, kind, entityId);
         }

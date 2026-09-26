@@ -101,13 +101,14 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
 
   it("starts headless, serves over a real socket, and shuts down cleanly", async () => {
     const proxyPort = await getFreePort();
-    const companionPort = await getFreePort();
+    const edgePort = await getFreePort();
+    const hookPort = await getFreePort();
 
-    // Persist the two ports we want, then let the engine read them back through its own bootstrap.
+    // Persist the ports we want, then let the engine read them back through its own bootstrap.
     // Written with the production `saveSettings`, not a fixture, so the test exercises the same
     // path a real CLI would.
     setDataRoot(root);
-    saveSettings({ ...loadSettings(), port: proxyPort, companionPort });
+    saveSettings({ ...loadSettings(), port: edgePort, webhookPort: hookPort });
 
     const warnings: string[] = [];
     const engine = createEngine({
@@ -124,8 +125,11 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
     // ── start() ──────────────────────────────────────────────────────────────
     const status = await engine.start();
     expect(status.running).toBe(true);
-    expect(status.proxyPort).toBe(proxyPort);
-    expect(status.companionPort).toBe(companionPort);
+    expect(status.proxyPort).not.toBeNull();
+    // The edge holds `settings.port` — `plan/15` §6.2's migration, asserted here rather than assumed.
+    // `status().edgePort` was named in `index.ts`'s own comment as "asserted by the smoke test"; the
+    // assertion had never actually been written, so this is the line that comment was describing.
+    expect(status.edgePort).toBe(edgePort);
     expect(status.proxyError).toBeNull();
     // The engine bootstrapped a workspace to serve — proof bootstrapWorkspaces() ran.
     expect(status.settings.activeWorkspaceId).toBeTruthy();
@@ -147,7 +151,9 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
     expect(typeof engine.bus.emitTyped).toBe("function");
 
     // ── it actually serves ───────────────────────────────────────────────────
-    const res = await get(proxyPort);
+    // The request goes to the **edge**: `plan/15` WI 3 moved the home page to the edge's row 5, so a bare
+    // `GET /` is the edge's answer and the forward proxy gives a deliberate 400 for it.
+    const res = await get(edgePort);
     expect(res.status).toBe(200);
     expect(res.body).toContain("Bifurc");
 
@@ -192,8 +198,8 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
 
     // ── start() is idempotent ────────────────────────────────────────────────
     const second = await engine.start();
-    expect(second.proxyPort).toBe(proxyPort);
-    expect(await portIsFree(proxyPort)).toBe(false); // still bound exactly once
+    expect(second.proxyPort).toBe(status.proxyPort);
+    expect(await portIsFree(status.proxyPort!)).toBe(false); // still bound exactly once
 
     // ── stop() ───────────────────────────────────────────────────────────────
     await engine.stop();
@@ -202,6 +208,9 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
 
     // The socket is genuinely released, not just flagged as stopped.
     await expect.poll(() => portIsFree(proxyPort), { timeout: 5000 }).toBe(true);
+    // Both of the engine's app-level listeners are released, not just the forward one.
+    await expect.poll(() => portIsFree(edgePort), { timeout: 5000 }).toBe(true);
+    expect(engine.status().edgePort).toBeNull();
 
     // ── stop() is idempotent ─────────────────────────────────────────────────
     await expect(engine.stop()).resolves.toBeUndefined();

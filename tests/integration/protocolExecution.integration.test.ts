@@ -315,10 +315,10 @@ beforeAll(async () => {
     res.end('<?xml version="1.0"?><definitions name="TestService"/>');
   });
 
-  const { registerCoreKinds } = await import("@/ipc/handlers/coreKinds");
-  const { registerGraphqlKinds } = await import("@/ipc/handlers/graphqlKinds");
-  const { registerSoapKinds } = await import("@/ipc/handlers/soapKinds");
-  const { registerGrpcKinds } = await import("@/ipc/handlers/grpcKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerGraphqlKinds } = await import("@bifurc/engine/store/kinds/graphqlKinds");
+  const { registerSoapKinds } = await import("@bifurc/engine/store/kinds/soapKinds");
+  const { registerGrpcKinds } = await import("@bifurc/engine/store/kinds/grpcKinds");
   // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine — and the
   // reduction's sixth group then deleted that file's channels and renamed it to `coreKinds.ts`
   // (`plan/07` §5b-septendecies). `registerCoreKinds()` is now the shell's `environments` kind and
@@ -659,14 +659,16 @@ describe("grpc — current (unimplemented) contract", () => {
     expect(res.error).toMatch(/not yet configured/i);
   });
 
-  it("grpc.mockServerStatus defaults to stopped on port 9102", async () => {
-    expect(await invokeCommand("grpc.mockServerStatus")).toEqual({ running: false, port: 9102 });
-  });
-
-  it("grpc.startMockServer is unimplemented while grpc.stopMockServer is a no-op success", async () => {
-    expect((await invokeCommand("grpc.startMockServer")).ok).toBe(false);
-    expect(await invokeCommand("grpc.stopMockServer")).toEqual({ ok: true });
-  });
+  /**
+   * `grpc.mockServerStatus`, `grpc.startMockServer` and `grpc.stopMockServer` were pinned here until
+   * 2026-09-25. `plan/17` work item 8 **deleted** all three rather than leaving them `wontfix`, so
+   * there is nothing left to pin: `grpc.execute` and `grpc.reflect` above are now the whole of the
+   * gRPC command surface, and the mock server's port default (`9102`) went with them.
+   *
+   * Deliberately not replaced by an "is now unregistered" assertion — that would pin
+   * `UNKNOWN_COMMAND`, which the registry covers generically, and it would re-introduce the three
+   * command *names* this work item exists to remove.
+   */
 });
 
 // ── Health Bar: add a service, then poll it ───────────────────────────────────
@@ -774,14 +776,22 @@ describe("protocol entity CRUD", () => {
     expect((await invoke("entity:load", TEST_WS, "graphqlRequests", created.id)).ok).toBe(false);
   });
 
-  it("a graphql mock requires an endpointPattern", async () => {
-    await expect(
-      createEntity("graphqlMocks", {
-        name: "m", endpointPattern: "  ", useRegex: false, operationType: "query", operationName: "",
-        responseStatus: 200, responseHeaders: {}, responseBody: "{}", workspaceId: TEST_WS,
-      }),
-    ).rejects.toThrow(/endpointPattern/);
-  });
+  /**
+   * "a graphql mock requires an endpointPattern" stood here until 2026-09-25, when `plan/17` work
+   * item 8 removed the `graphqlMocks` kind.
+   *
+   * It was **not** retargeted to the surviving REST mock, and the reason is worth keeping: this
+   * suite's `beforeAll` registers only `registerCoreKinds()` plus the three *protocol* kind files
+   * (`graphqlKinds` / `soapKinds` / `grpcKinds`) — `registerCrudKinds()` is deliberately not among
+   * them, so `mocks` has never been routable here. The old case passed only because
+   * `registerGraphqlKinds()` registered `graphqlMocks`; now that those three files register no mock
+   * kind at all, an `entity.create({kind:"mocks"})` here fails with
+   * `kind "mocks" is not routed through the CommandRegistry yet` — which is a fact about this
+   * harness, not about mocks.
+   *
+   * The coverage therefore moved to `tests/ipc/handlers.test.ts`'s `entity.create — mocks` block,
+   * which registers through the shell and does reach `crudKinds.ts`'s `validate`.
+   */
 
   it("graphql schemas round-trip through add → list → delete", async () => {
     const schema = await createEntity("graphqlSchemas", { name: "s1", content: "type Query { a: String }", workspaceId: TEST_WS });

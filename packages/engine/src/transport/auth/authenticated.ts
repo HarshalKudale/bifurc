@@ -1,31 +1,47 @@
 /**
- * P4 work item 4 — the authenticated transport decorator.
+ * P4 work item 4 — the `hello` handshake and per-session authorisation, as a transport decorator.
  *
- * Wraps any `Transport` and puts the `hello` handshake and per-session authorisation in front of it.
- * It is a **decorator** rather than a feature of each transport because the mechanism is identical for
- * every transport that has a boundary, and `plan/05`'s whole design premise is that the four
- * transports are the same interface. `in-process` and `stdio` are simply never wrapped: `plan/05`
- * work item 4 says `stdio` needs no authentication ("the pipe is inherited and process-scoped"), and
- * `in-process` has no boundary at all. A token there would be security theatre.
+ * Wraps any `Transport` and puts the handshake and scope enforcement in front of it. It is a
+ * **decorator** rather than a feature of each transport because the mechanism is identical for every
+ * transport that has a boundary, and `plan/05`'s whole design premise is that the four transports are
+ * the same interface. `in-process` and `stdio` are simply never wrapped: `plan/05` work item 4 says
+ * `stdio` needs no boundary ("the pipe is inherited and process-scoped"), and `in-process` has no
+ * boundary at all. A handshake there would be ceremony.
+ *
+ * ## What this no longer does: authenticate
+ *
+ * Until **2026-09-25** this decorator also verified a per-start token, and that token was the whole of
+ * its claim to the name. It is gone — the engine is never deployed remotely, so its RPC surface binds
+ * loopback and refuses anything else, and there is no boundary left for a credential to guard. What
+ * remains is the handshake (version compatibility, session identity, the `lastSeq` replay decision) and
+ * **authorisation** (`FORBIDDEN` per command, from `scopes.ts`).
+ *
+ * The name is kept deliberately: renaming this module and `createAuthenticatedTransport` touches every
+ * transport, the host and six test files, and folding a mechanical rename into a behavioural change
+ * makes the behavioural change unreviewable. Recorded as debt in `auth/index.ts`.
  *
  * ## Why this can exist before any socket does
  *
- * `ws` is gated on this work item ("an unauthenticated remote RPC surface is a remote code execution
- * hole"), and the gate would be unsatisfiable if the mechanism could only be tested through `ws`. A
- * decorator is testable over `in-process` today, so the auth path is built and proven before the
- * thing it protects exists — and when `ws` lands, auth is a wrapper, not a redesign.
+ * `ws` was gated on this work item ("an unauthenticated remote RPC surface is a remote code execution
+ * hole"), and the gate would have been unsatisfiable if the mechanism could only be tested through
+ * `ws`. A decorator is testable over `in-process`, so the handshake path was built and proven before
+ * the thing it protects existed — and when `ws` landed, it was a wrapper rather than a redesign.
  *
  * ## The three failure modes, and why they do not share one code
  *
  * | Situation | Code | Session |
  * |---|---|---|
- * | first request is not `hello`, or the token is wrong | `UNAUTHORIZED` | **closed** |
+ * | first request is not `hello` | `UNAUTHORIZED` | **closed** |
  * | the client's protocol **major** differs | `UNSUPPORTED` | **closed** |
  * | the command needs a scope the session lacks | `FORBIDDEN` | stays open |
  *
  * The first two are *identity* failures — the peer has not established who it is, so the session ends
  * and `plan/05` work item 5's rule applies: "Auth failure returns `UNAUTHORIZED` and closes. Never
  * fall back to unauthenticated."
+ *
+ * **The first row used to read "…or the token is wrong".** It survives without that clause because the
+ * rule it encodes does: a session that never sent `hello` has no identity and no scopes, and serving it
+ * would make the handshake a suggestion rather than a boundary.
  *
  * The third is not. The peer proved who it is and asked for something its scope does not cover;
  * closing would turn a scope error into a disconnect and make a mis-scoped client look like a network
@@ -64,7 +80,6 @@ import type { SessionIdentity } from "../../commands/registry";
 import { toClientEvent } from "../eventPump";
 import type { EngineEvent, Transport } from "../types";
 import { commandIsAllowed, requiredScopeFor, SHELL_SCOPES, type Scope } from "./scopes";
-import { verifyToken } from "./token";
 
 /**
  * The handshake's action name now lives in `@bifurc/protocol`, beside its schemas — see the note there
@@ -105,8 +120,6 @@ if (HELLO_ACTION in COMMANDS) {
 export const IDENTITY_FAILURE_CODES: ReadonlySet<string> = new Set(["UNAUTHORIZED", "UNSUPPORTED"]);
 
 export interface AuthenticatedTransportOptions {
-  /** The token `ensureEngineToken()` produced for this run. */
-  token: string;
   /**
    * The protocol version this engine speaks. Defaults to `PROTOCOL_VERSION`; injectable so a test can
    * exercise the major-mismatch path without inventing a fake protocol.
@@ -116,6 +129,28 @@ export interface AuthenticatedTransportOptions {
   engineVersion: string;
   /** Advertised in the `hello` response. Defaults to none — this decorator adds no capability. */
   capabilities?: readonly CapabilityValue[];
+  /**
+   * The hostname this engine answers as, reported to the client in `hello` — added 2026-09-23 as
+   * `plan/15`'s `--domain`, which was **removed on 2026-09-24**, so this field now carries `localhost` and
+   * nothing else. It stays on the wire because the client still must not *guess* the mapping suffix
+   * (`plan/15` §4.1); see `runtime/hostArgs.ts`'s header for why the flag went.
+   *
+   * ## Why it is an option here and not derived
+   *
+   * The decorator cannot know it: a hostname is a property of the **deployment**, and this module sees a
+   * transport, a registry and a token. It is passed down from the host that holds it — `runtime/host.ts`
+   * composes `lib/net.ts#DEFAULT_HOST_DOMAIN` — which is what keeps `plan/15` §4.1's rule intact: *the host
+   * decides, the client does not guess*.
+   *
+   * ## Why absent is a legal value
+   *
+   * Every transport is constructed directly by tests, and the desktop shell's renderer never reaches this
+   * decorator at all (`plan/06`: it is IPC, with no handshake). So there are real sessions that carry no
+   * domain, and the honest wire answer for those is **no `hostDomain` field** rather than a substitute —
+   * a client that saw `localhost` invented on its behalf could not tell it from a host that really answers
+   * there.
+   */
+  hostDomain?: string;
   /**
    * Scopes granted to a session that authenticates successfully.
    *
@@ -226,19 +261,24 @@ export function createAuthenticatedTransport(
     }
     const hello = parsed.data;
 
-    // Token first, then version. Order matters: an unauthenticated peer should learn nothing beyond
-    // "your credential was wrong", and a legitimate client with a stale protocol version but a valid
-    // token still gets the actionable `UNSUPPORTED` rather than a misleading `UNAUTHORIZED`.
-    if (!verifyToken(opts.token, hello.token)) {
-      return reject(
-        new EngineError(
-          "UNAUTHORIZED",
-          `the ${HELLO_ACTION} token is missing or does not match this engine's token`,
-        ),
-        hello,
-      );
-    }
-
+    /**
+     * ## The token check that stood here, and why removing it is not a loosening
+     *
+     * Until **2026-09-25** the first thing after the schema parse was `verifyToken(opts.token, hello.token)`,
+     * refusing with `UNAUTHORIZED` and closing the session. The ordering comment that used to be here
+     * explained why a bad credential was answered *before* a bad version: a peer that had not proved who it
+     * was should learn nothing else.
+     *
+     * There is nothing to prove now. The engine's RPC surface binds loopback and refuses any other address
+     * (`transport/ws.ts`), so the only peers that can reach this line are processes on this machine — and a
+     * process on this machine can already run code here, which is the same reasoning `plan/05` work item 4
+     * applies to `stdio`'s inherited pipe. The check that actually discriminates is the **origin guard** on
+     * the WebSocket upgrade: it is what stops a page the user *visited* from driving the engine, and a secret
+     * could not replace it, because a page cannot be trusted to keep one.
+     *
+     * `UNAUTHORIZED` is still reachable — the "first request must be `hello`" branch below throws it — so the
+     * close-on-identity-failure rule is unchanged. It simply has one fewer way to fire.
+     */
     const compatibility = checkVersionCompatibility(hello.protocolVersion, protocolVersion);
     if (compatibility === "incompatible") {
       return reject(
@@ -256,8 +296,8 @@ export function createAuthenticatedTransport(
     scopes = opts.scopesFor?.(hello) ?? SHELL_SCOPES;
 
     /**
-     * Identity is now established — the token and the version were both verified above — so tell the
-     * caller who this is.
+     * Identity is now established — the handshake parsed and the protocol major was accepted above — so tell
+     * the caller who this is.
      *
      * After `scopes`, not before: `scopesFor` is caller-supplied and may throw, and a recorded session
      * that never actually opened is a worse artefact than a missing one. That ordering is also what
@@ -311,6 +351,10 @@ export function createAuthenticatedTransport(
       engineVersion: opts.engineVersion,
       capabilities: [...capabilities],
       sessionId,
+      // Spread for the same reason the two below are — optional means **absent**, not `undefined` — and this
+      // one is absent for a whole class of session rather than an edge case: anything that did not come
+      // through a host that knows its own domain. See the option's docblock.
+      ...(opts.hostDomain === undefined ? {} : { hostDomain: opts.hostDomain }),
       // Spread rather than assigned, because both are optional and `undefined` is not the same as
       // absent: `exactOptionalPropertyTypes` would reject the assignment, and a client that tested
       // `"replayedFrom" in response` would get a different answer from one testing `!== undefined`.

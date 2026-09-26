@@ -1,9 +1,23 @@
-import { registerSoapKinds } from "@/ipc/handlers/soapKinds";
-import { registerGraphqlKinds } from "@/ipc/handlers/graphqlKinds";
-import { registerGrpcKinds } from "@/ipc/handlers/grpcKinds";
+// ── The five kind registrations now live in the **engine** (2026-09-23, `plan/15` work item 10) ────
+//
+// They moved from `@/ipc/handlers/*Kinds` to `@bifurc/engine/store/kinds/*Kinds`, and the reason is a
+// defect rather than tidiness: the four `entity.*` commands are engine-side and a **headless host**
+// registers them through `registerAllEngineCommands()`, but the containers those commands dispatch
+// through were populated only here, by the shell. So a browser client could invoke `entity.create` for
+// every kind and get `"<kind>" is not routed through the CommandRegistry yet` — while
+// `isRegistered("entity.delete")` was `true` the whole time. Nothing in them was ever Electron: they
+// import `registerCrudKind`/`registerSimpleKind` and the config types, and nothing else.
+//
+// **The five calls below stay explicit rather than collapsing into `registerAllEngineKinds()`**, for the
+// same reason `registerAll.ts`'s header gives about the eighteen command calls: each one carries a
+// comment naming which P6 reduction made it the only registration, and collapsing them would delete
+// that record. A test keeps the two lists honest — see `workspaceHost.integration.test.ts`'s kinds guard.
+import { registerSoapKinds } from "@bifurc/engine/store/kinds/soapKinds";
+import { registerGraphqlKinds } from "@bifurc/engine/store/kinds/graphqlKinds";
+import { registerGrpcKinds } from "@bifurc/engine/store/kinds/grpcKinds";
 import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
-import { registerCrudKinds } from "@/ipc/handlers/crudKinds";
-import { registerCoreKinds } from "@/ipc/handlers/coreKinds";
+import { registerCrudKinds } from "@bifurc/engine/store/kinds/crudKinds";
+import { registerCoreKinds } from "@bifurc/engine/store/kinds/coreKinds";
 
 import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
 import { bus, wireLogEventsToBus } from "@bifurc/engine/eventBus";

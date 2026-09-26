@@ -160,8 +160,8 @@ export type CommandHandler<Params = unknown, Result = unknown> = (
 // protocol package. Correctness comes from the runtime `schema.safeParse()` in `invoke()` below,
 // not from the type system — handlers should narrow with the same schema type import if they
 // want compile-time help (see `store/coreCommands.ts` for the pattern — the reference used to point at
-// the shell file those registrations lived in, which is now `src/ipc/handlers/coreKinds.ts` and
-// registers none of them).
+// the shell file those registrations lived in, which is now `store/kinds/coreKinds.ts`: that file moved
+// into the engine on 2026-09-23, `plan/15` work item 10, because a headless host could not reach it).
 
 /**
  * One handler per command name, validated against the frozen protocol schema. Deliberately

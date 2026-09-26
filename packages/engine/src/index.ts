@@ -35,7 +35,15 @@
 import { setDataRoot, dataDir, isDataRootSet } from "./store/paths";
 import { loadSettings, type AppSettings } from "./store/appSettings";
 import { startServer, isRunning, getPort, getServerError } from "./proxy/server";
-import { startCompanionServer, getCompanionPort, isCompanionRunning } from "./transport/legacyCompanion";
+// The **edge router** — `plan/15` §3.3, work item 3. Host-level: one listener for the reverse half
+// (the `*.localhost` mappings and the home page) and, later, the GUI.
+//
+// `bindEdgeInstance` is `plan/17` §5 work item 7: the edge is per-engine state, so it is *named* to the
+// module-level binding here rather than being found through it — which is what lets `config.save` re-bind it
+// when `settings.port` changes.
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./proxy/edge";
+import { DEFAULT_HOST_DOMAIN } from "./lib/net";
+import { loadConfig } from "./store/config";
 import { bus, wireLogEventsToBus } from "./eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
 import { shutdownEngine } from "./shutdown";
@@ -79,32 +87,49 @@ export interface EngineOptions {
    */
   onPreflightWarning?: (check: StartupCheck) => void;
   /**
-   * P14 WI 3 — whether this engine binds the **legacy companion** server (the browser-extension
-   * WebSocket bridge). Defaults to `true`, so the Electron shell's behaviour is unchanged.
+   * `plan/15` work item 5 — where the **web GUI** is served, so the edge can carry a global mapping from
+   * this engine's own address to it. `host:port`, or a bare port meaning loopback.
    *
-   * A **workspace host** (`plan/14`) passes `false`, and that is not an optimisation: D10 makes the
-   * host's deployable unit a workspace rather than the engine, and `plan/14`'s WI 3 acceptance
-   * criterion is that *"a workspace host starts with no companion server."* The companion is
-   * app-level state (`legacyCompanion.ts` is a module-level singleton by design — `plan/14` WI 2
-   * records it as deliberately not de-singletonized), so N per-workspace runtimes inside one host
-   * cannot each own one.
-   *
-   * When `false`: `doStart()` skips `startCompanionServer()` and its readiness wait, and
-   * `status().companionPort` reads `null`. `shutdownEngine()`'s `stopCompanionServer()` stays as it
-   * is — it is null-guarded, so calling it for a server this engine never started is already a no-op.
+   * **Optional with no default, and the absence is meaningful**: the desktop's own window *is* the GUI, so
+   * an engine that invented a port would forward `localhost:80` to nothing and answer 502. Set this only
+   * when something is really serving the bundle — `npm run dev:web` (5199), `vite preview`, nginx, or any
+   * other static server. See `EdgeRouterOptions.guiTarget`.
    */
-  startCompanion?: boolean;
+  guiTarget?: string;
 }
 
 export interface EngineStatus {
   /** True once `start()` has completed and the proxy is listening. */
   running: boolean;
   dataDir: string;
-  /** The port the proxy actually bound, or `null` when it is not running. */
+  /**
+   * The **forward proxy**'s port — the per-workspace half (`plan/15` §3.4) — or `null` when it is not
+   * running.
+   *
+   * **It is not `settings.port`, and that is work item 3.** `settings.port` is the *edge's* port (see
+   * `edgePort`); the forward proxy's port is resolved from D16's base with the edge's port reserved, so
+   * the two never collide — which on Windows they otherwise would, since the proxy base and the
+   * settings port are both `80`.
+   */
   proxyPort: number | null;
   /** Whatever the proxy reported on a failed bind, if anything. */
   proxyError: string | null;
-  companionPort: number | null;
+  /**
+   * The **edge router**'s port — the host-level half — or `null` when it is not running.
+   *
+   * This is `settings.port`, which is the migration `plan/15` §6.2 promises: before the split that one
+   * socket served both halves, so a mapping's URL was `*.localhost:<settings.port>`. Handing the edge
+   * the same port is what keeps every existing mapping working with no URL edited.
+   */
+  edgePort: number | null;
+  /**
+   * Whatever the edge reported on a failed bind, if anything.
+   *
+   * Separate from `proxyError` rather than folded into it, because the two failures mean different
+   * things: a proxy that failed to bind costs one workspace its forward path, and an edge that failed
+   * to bind costs **every** mapping on the host — the reverse path is not one of N.
+   */
+  edgeError: string | null;
   /** The **effective** settings after bootstrap — `activeWorkspaceId` may have been repaired. */
   settings: AppSettings;
   /** Workspace ids whose auto-sync poller was started by this `start()`. */
@@ -113,7 +138,7 @@ export interface EngineStatus {
 
 export interface Engine {
   /**
-   * Resolve the data root, run preflight, bootstrap workspaces, then bind the proxy and companion
+   * Resolve the data root, run preflight, bootstrap workspaces, then bind the edge and the proxy
    * sockets. Safe to call twice — the second call returns the same status without re-binding.
    *
    * @throws if the engine has already been stopped (see `stop()`).
@@ -153,10 +178,10 @@ export interface Engine {
 /**
  * Poll until a fire-and-forget server reports ready, or reports an error, or the deadline passes.
  *
- * Polling rather than an event because neither `startServer()` nor `startCompanionServer()` exposes
- * its `net.Server`/`WebSocketServer` — the only readiness signal they publish is the predicate
- * passed here. 10 ms is well below the cost of a socket bind, so this adds no measurable latency in
- * practice; the deadline exists so a hung bind cannot hang `start()` forever.
+ * Polling rather than an event because neither `startServer()` nor `edge.start()` exposes its
+ * `net.Server` — the only readiness signal they publish is the predicate passed here. 10 ms is well
+ * below the cost of a socket bind, so this adds no measurable latency in practice; the deadline
+ * exists so a hung bind cannot hang `start()` forever.
  */
 async function waitUntilReady(
   isReady: () => boolean,
@@ -179,6 +204,13 @@ export function createEngine(opts: EngineOptions): Engine {
   let autoSyncStarted: string[] = [];
   let startPromise: Promise<EngineStatus> | null = null;
   let stopped = false;
+  /**
+   * The one edge router for this engine. `null` before `start()`.
+   *
+   * Per engine **instance**, like the log wiring and the sweeper, and for the same reason: it holds a
+   * listener and must not outlive the object that created it.
+   */
+  let edge: EdgeRouterInstance | null = null;
   /**
    * P3 work item 1 — the blob TTL sweep. Owned by the lifecycle rather than by a caller because
    * an unswept blob root only grows: in Docker (P9) that is a volume that fills up forever, and
@@ -210,12 +242,6 @@ export function createEngine(opts: EngineOptions): Engine {
    */
   const log = new EventLog({ bus });
 
-  /**
-   * P14 WI 3 — resolved once, at construction. The default `true` is what keeps the Electron shell
-   * byte-identical: it passes no option, so nothing about its startup changes.
-   */
-  const companionEnabled = opts.startCompanion ?? true;
-
   async function doStart(): Promise<EngineStatus> {
     // Must come first: every store module resolves through the data root.
     setDataRoot(opts.dataDir);
@@ -230,11 +256,11 @@ export function createEngine(opts: EngineOptions): Engine {
     const checks = await preflight({
       dataDir: dataDir(),
       ports: [
-        { name: "proxy", port: settings.port },
+        // Named for the edge rather than the proxy because `settings.port` **is** the edge's port as
+        // of work item 3. The forward proxy's port is resolved after this, from D16's base, so there
+        // is nothing to check here for it.
+        { name: "edge", port: settings.port },
         { name: "webhook", port: settings.webhookPort ?? 9101 },
-        // Only checked when this engine will actually bind it — a host that passes
-        // `startCompanion: false` should not be warned about a port it never opens.
-        ...(companionEnabled ? [{ name: "companion", port: settings.companionPort ?? 9271 }] : []),
       ],
     });
     for (const check of checks) if (!check.ok) warn(check);
@@ -252,37 +278,118 @@ export function createEngine(opts: EngineOptions): Engine {
     // whole reason the function lives in the engine rather than in the shell.
     stopLogWiring = wireLogEventsToBus(bus);
 
-    startServer(settings.port);
-    // P14 WI 3 — a host omits the companion entirely (`EngineOptions.startCompanion`).
-    if (companionEnabled) startCompanionServer(settings.companionPort ?? 9271);
+    /**
+     * ## The edge first, then the proxy — `plan/15` §3.3, work item 3
+     *
+     * The order is load-bearing in both directions.
+     *
+     * **The edge takes `settings.port`**, which is the migration §6.2 promises: that port is where
+     * every existing `*.localhost` mapping already points, so the reverse half keeps answering exactly
+     * where it did before the split and no mapping is edited.
+     *
+     * **The forward proxy is then resolved with the edge's port reserved.** D16's rule is *base →
+     * scan upward*, and on Windows the proxy base and the settings port are both `80` — so without the
+     * reservation the scan would hand the proxy the very port the edge holds, and the failure would be
+     * an `EADDRINUSE` that looked like a busy machine.
+     *
+     * `resolveConfig` reads `loadConfig()` — the **active** workspace's config — and that is the right
+     * answer *for this shape*: `createEngine()` is the single-workspace facade, so the active workspace
+     * is the only one there is. A multi-workspace host resolves it from its `runtimes` map instead
+     * (`runtime/host.ts`), because there the answer differs per workspace.
+     */
+    edge = createEdgeRouter({
+      resolveConfig: () => loadConfig(),
+      /**
+       * `localhost`, and since 2026-09-24 that is the only value any engine has: the `--domain` flag is gone
+       * because the engine is no longer deployable in the cloud (`runtime/hostArgs.ts`'s header records why),
+       * and `runtime/host.ts` composes this same constant for a headless host. So the desktop and the container
+       * agree here by construction rather than by a default that happens to match.
+       *
+       * This is branch G's first gate, so getting it wrong here would send the base domain to the home page
+       * instead of the GUI.
+       */
+      hostDomain: DEFAULT_HOST_DOMAIN,
+      /**
+       * `plan/15` work item 5 — the **global mapping** from this engine's own address to the web GUI's own
+       * port. `undefined` by default.
+       *
+       * **No default, deliberately.** The desktop's own window *is* the GUI, so an engine that invented a
+       * port here would forward `localhost:80` to nothing and answer **502** — a worse failure than the home
+       * page it replaced, and a misleading one, because it looks like a bug rather than an unconfigured
+       * feature. A shell that wants the browser GUI on the base domain sets `EngineOptions.guiTarget`; a
+       * headless host sets `--gui-target` or `BIFURC_GUI_TARGET`.
+       *
+       * See `EdgeRouterOptions.guiTarget` for why this is a *target* rather than a directory.
+       */
+      guiTarget: opts.guiTarget,
+    });
+    /**
+     * ## `plan/17` §5 work item 7 — the edge is *named* to the module-level binding
+     *
+     * The forward proxy needs no equivalent call here, and the asymmetry is the design: `startServer()` acts
+     * on `proxy/server.ts`'s **lazy default instance**, which *is* this engine's proxy, so a command can reach
+     * it without being told. The edge is per-engine state created on the line above, so the only way a command
+     * can find it is for this composition to say so.
+     *
+     * **Bound before `start()`, not after.** A `config.save` arriving during the boot window would otherwise
+     * find no edge and skip its re-bind silently; binding first makes the worst case a `start()` on a listener
+     * that has not bound yet — the same fire-and-forget call the next line already makes.
+     *
+     * `stop()` unbinds it. That is not tidiness: the binding is **process-global** module state, so a leaked one
+     * would leave the next consumer in this process re-binding a dead edge — the leak `runtime/host.ts`
+     * documents for the other two facades, and which `facadeBinding.integration.test.ts`'s teardown records the
+     * rule against.
+     */
+    bindEdgeInstance(edge);
+    edge.start(settings.port);
+    /**
+     * ## The forward proxy's port is a **setting**, not a scan result — `plan/17` §1
+     *
+     * This used to be `findFreePortFrom(proxyBasePort(), "proxy", new Set([settings.port]))`: D16's
+     * base-and-scan, with the edge's port reserved so the scan could not hand the proxy the port the edge
+     * holds (on Windows both were `80`, so without the reservation the failure was an `EADDRINUSE` that read
+     * like a busy machine). `plan/17` §1 removed the scan for this port — *"it binds `8080` and **fails if
+     * occupied**, naming the port, so the user enters a working one instead of the app silently
+     * incrementing"* — because a browser's proxy setting names it, so a port that moves on its own is a broken
+     * browser rather than a degraded mode. There is nothing left to reserve and nothing to scan for.
+     *
+     * **A busy port is not fatal here**, and that is the engine's oldest bind contract rather than an
+     * oversight: `startServer()` hands off to an async `listen()` whose failure lands in the instance's
+     * `lastError`, which `server.status` reports. `runtime/host.ts` step 3b states the same reasoning for the
+     * deployable host, and adds the notice that makes the failure impossible to miss.
+     */
+    startServer(settings.forwardProxyPort);
 
-    // `startServer()` and `startCompanionServer()` are fire-and-forget — both hand off to an async
-    // `listen()` and return immediately, so `isRunning()` is still false on the very next line.
-    // Resolving `start()` before the sockets are actually accepting would make the one promise a
-    // caller has to await tell them nothing, so wait for readiness here.
+    // `startServer()` is fire-and-forget — it hands off to an async `listen()` and returns
+    // immediately, so `isRunning()` is still false on the very next line. Resolving `start()` before
+    // the sockets are actually accepting would make the one promise a caller has to await tell them
+    // nothing, so wait for readiness here.
     //
     // A bind failure is *not* thrown: the proxy already reports it through `bus` and
     // `status().proxyError`, and the shell has always tolerated a busy port. Waiting on the error
     // as well as on success keeps `start()` bounded either way.
     await waitUntilReady(isRunning, getServerError);
-    // Only waited on when it was started; `isCompanionRunning()` would otherwise stay false and
-    // cost the full 5 s deadline for a server this engine deliberately never opened.
-    if (companionEnabled) await waitUntilReady(isCompanionRunning, () => null);
+    // The edge is fire-and-forget too, and `status().edgePort` is asserted by the smoke test
+    // immediately after `start()` resolves — so it is waited on the same way. There is no
+    // `getEdgeError` predicate to pass: a failed bind is reported through `status().edgeError`, and
+    // the deadline bounds the wait either way.
+    await waitUntilReady(() => edge?.isRunning() === true, () => null);
 
     return status();
   }
 
   function status(): EngineStatus {
     const proxyUp = isRunning();
-    // `false` when the companion was never started, so `companionPort` below reads `null` rather
-    // than `getCompanionPort()`'s stale value — the same trap `currentPort` set in the proxy.
-    const companionUp = companionEnabled && isCompanionRunning();
     return {
       running: proxyUp,
       dataDir: isDataRootSet() ? dataDir() : opts.dataDir,
       proxyPort: proxyUp ? getPort() : null,
       proxyError: getServerError(),
-      companionPort: companionUp ? getCompanionPort() : null,
+      // Follows `proxyPort`'s rule rather than a new one: a port is reported only while the listener
+      // is up, so a stopped engine reports `null` rather than a stale number. `edgeError` stays
+      // readable either way — a stopped edge's last failure is still the reason it is not serving.
+      edgePort: edge !== null && edge.isRunning() ? edge.getPort() : null,
+      edgeError: edge?.getError() ?? null,
       settings: settings ?? loadSettingsIfPossible(),
       autoSyncStarted,
     };
@@ -332,6 +439,19 @@ export function createEngine(opts: EngineOptions): Engine {
       // the memoised shutdown. Closing it detaches the retention listeners, which is what stops the
       // engine numbering events after it has been told to stop.
       log.close();
+      // The edge is per-instance state like the sweeper and the log wiring, so it is torn down here
+      // rather than in the memoised `shutdownEngine()`. Stopped **before** `shutdownEngine()` so a
+      // request arriving mid-teardown finds a closed edge rather than a live one in front of a
+      // stopped proxy — the ordering `runtime/host.ts` gives the same reason.
+      edge?.stop();
+      /**
+       * **…and the binding goes with it.** `bindEdgeInstance()` is process-global module state, so an engine
+       * that bound and did not unbind would leave the next consumer in this process re-binding *this*
+       * engine's stopped edge. One engine per process is the design, so the CLI never pays for it — the test
+       * worker does, and it is the same leak `runtime/host.ts` documents for the proxy and the webhook.
+       */
+      bindEdgeInstance(null);
+      edge = null;
       await shutdownEngine();
     },
 
@@ -423,29 +543,30 @@ export * as randomizer from "./lib/randomizer";
 export * as eventBus from "./eventBus";
 export * as proxy from "./proxy/server";
 export * as webhookServer from "./proxy/webhookServer";
-// P14 WI 3 — the per-workspace unit a host deploys (D10/D11). Exported as a namespace rather than a
-// named re-export so a caller writes `runtime.createWorkspaceRuntime(...)`, which reads as the
-// composition it is: the runtime is not part of the engine's own lifecycle.
-export * as runtime from "./runtime/workspaceRuntime";
-// P14 WI 3 — the workspace **host**: the composition a deployable unit runs. Separate from `runtime` because
-// it is the opposite end of the abstraction: a runtime is one workspace's servers, a host is the thing that
-// owns N of them plus the one RPC endpoint (D13) and the signal handling.
+// P14 WI 3 — the workspace **host**: the composition a deployable unit runs. It owns one listener per port
+// for the whole host — the edge, the forward proxy, the webhook receiver and the RPC endpoint — plus the
+// signal handling.
+//
+// **`runtime` (the `WorkspaceRuntime` namespace) and `hostRegistry` (the `runtime.json` namespace) were both
+// exported here until `plan/17`, and both are gone.** `WorkspaceRuntime` composed exactly two things — a
+// forward proxy and a webhook receiver — and `plan/17` §1 moved both to the host, so it owned no listener and
+// had no subject left. It was **deleted rather than hollowed** (owner decision, 2026-09-25). `hostRegistry`
+// remembered *which port each workspace landed on*, which stopped being a question the moment the ports
+// stopped varying by workspace. `plan/17` §5 work items 1 and 9.
 export * as host from "./runtime/host";
-// P14 WI 1 — the **host-local** `runtime.json`. Deliberately not part of `runtime`: it is a property of *this
-// machine hosting these workspaces*, never of the workspaces' content, which is exactly why it is not
-// `workspace.json` (that file is git-tracked and syncs).
-export * as hostRegistry from "./runtime/hostRegistry";
 // P14 WI 3 — the engine's **whole** command surface in one call, for a consumer with no shell.
 // `createEngine()` registers nothing by design (P3: "the consumer declares what it is willing to serve"),
 // and until a headless host existed the only declaration was the Electron shell's `registerIpcHandlers()`.
-export { registerAllEngineCommands } from "./registerAll";
-// P14 WI 5 — D16's allocator. Separate from the runtime because allocation is the *host's* job: it needs
-// host-wide knowledge of what the other runtimes already took, which is exactly why the runtime takes ports
-// as required inputs rather than choosing them.
+export { registerAllEngineCommands, registerAllEngineKinds } from "./registerAll";
+// `plan/17` §5 work item 2 — what is left of D16's allocator: **finding** ports, not allocating them per
+// workspace. The per-workspace machinery (`allocatePorts`, `PortUnavailableError`,
+// `PortRangeExhaustedError`, `AllocatedPorts` and its provenance flags) was deleted along with the model that
+// needed it. Two finders remain, because the port table has two shapes of listener: `findFreePortFrom` for a
+// single port (Electron's companion, which has no GUI neighbour) and `findPortPair` for the companion + web
+// GUI pair.
 export * as ports from "./runtime/portAllocator";
 export * as sync from "./sync/syncManager";
 export * as applications from "./applications/processSpawner";
-export * as companion from "./transport/legacyCompanion";
 export * as commands from "./commands/registry";
 export * as startup from "./startup";
 export * as shutdown from "./shutdown";

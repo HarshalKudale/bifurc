@@ -4,11 +4,9 @@ import { registerIpcHandlers } from "@/ipc/handlers";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 import { loadConfig } from "@bifurc/engine/store/config";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
-import { startServer, bindProxyInstance } from "@bifurc/engine/proxy/server";
-import { bindWebhookInstance } from "@bifurc/engine/proxy/webhookServer";
-import { createWorkspaceRuntime } from "@bifurc/engine/runtime/workspaceRuntime";
-import { registerRuntime } from "@bifurc/engine/runtime/runtimeRegistry";
-import { startCompanionServer } from "@bifurc/engine/transport/legacyCompanion";
+import { startServer, bindProxyInstance, createProxyServer } from "@bifurc/engine/proxy/server";
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
+import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/proxy/webhookServer";
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@bifurc/engine/eventBus";
 import { setDataRoot, dataDir } from "@bifurc/engine/store/paths";
@@ -22,6 +20,14 @@ app.commandLine.appendSwitch("disable-gpu");
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
+/**
+ * The edge router, held so `before-quit` can close it (`plan/15` work item 3).
+ *
+ * Module-level for the same reason `tray` is: it is created inside `whenReady()` and released from a
+ * different handler. Without this the edge's listening socket would outlive the shutdown the rest of the
+ * engine performs — and an open listening handle is exactly the kind of thing that keeps a process alive.
+ */
+let edgeRouter: EdgeRouterInstance | null = null;
 
 function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
   return themeId === "light"
@@ -277,9 +283,12 @@ if (!gotTheLock) {
     preflight({
       dataDir: dataDir(),
       ports: [
-        { name: "proxy", port: settings.port },
+        // `settings.port` is the **edge**'s port now (`plan/15` work item 3), which is why the name
+        // changed rather than the number. The forward proxy's port is deliberately absent: it is resolved
+        // after this check, from D16's base, and reporting a value that has not been chosen yet would be a
+        // preflight result about a different port than the one the proxy will use.
+        { name: "edge", port: settings.port },
         { name: "webhook", port: settings.webhookPort ?? 9101 },
-        { name: "companion", port: settings.companionPort ?? 9271 },
       ],
     }).then((checks) => {
       for (const c of checks) {
@@ -308,42 +317,102 @@ if (!gotTheLock) {
     createWindow();
     createTray();
 
-    // P14 work item 7 — the desktop adopts a `WorkspaceRuntime`, and the module facades are **bound** to
-    // it rather than replaced. That distinction is the whole of the work item: 23 engine modules import
-    // `reloadConfig()` from `proxy/server.ts`, so removing the facade would leave them updating a lazily
-    // created *phantom* instance whose config the running proxy never sees. Binding keeps the facade
-    // meaning "the active workspace's server, wherever it lives" and changes nothing for those callers.
+    // `plan/17` §1 — the desktop composes the **same two host-level listeners** the deployable host does,
+    // and binds the module facades to them. Before this the desktop built a `WorkspaceRuntime` and a host
+    // built N of them; that abstraction is deleted, so the two compositions are now the same composition at
+    // different scopes rather than two different shapes.
     //
-    // The binding names no workspace on purpose. WI 4 made the desktop's active pointer independent of its
-    // running servers (`workspace.setActive` no longer calls `reloadConfig()`), so a facade that resolved
-    // by `activeWorkspaceId` would look up the wrong workspace after a switch and fall back to an instance
-    // that is not listening. `proxy/server.ts`'s `bindProxyInstance()` docblock carries the full argument.
+    // The facades are **bound** rather than replaced, and that distinction still matters for the reason P14
+    // WI 7 recorded: 23 engine modules import `reloadConfig()` from `proxy/server.ts`, so removing the facade
+    // would leave them updating a lazily created *phantom* instance whose config the running proxy never
+    // sees. Binding keeps the facade meaning "the server, wherever it lives" and changes nothing for those
+    // callers.
+    //
+    // `workspaceId: null` is now right for the **opposite** reason it was before. P14 chose it because
+    // `workspace.setActive` had stopped calling `reloadConfig()`, so a facade resolving by `activeWorkspaceId`
+    // would have looked up a workspace the proxy was not serving. `plan/17` §1 restores that call — the
+    // forward proxy **follows** the active workspace, which is what a host-level listener means — so `null`
+    // is right because following the pointer is now the intended behaviour rather than a hazard.
     const cfg = loadConfig();
-    const runtime = createWorkspaceRuntime({
-      workspaceId: cfg.activeWorkspaceId,
-      proxyPort: cfg.port,
-      // Required by the runtime, but **not bound below**. The webhook receiver has always been started by
-      // the user — `WebhooksPanel` → `window.api.startWebhookServer()` → the `webhookServer.start` command
-      // — so opening it at boot would add a listening port this product has never had, which §8's
-      // "one proxy port" criterion and P6's zero-visible-change rule both forbid. The value here is what
-      // the receiver *would* use, and it matches the preflight fallback above.
-      webhookPort: cfg.webhookPort ?? 9101,
-      // The single-runtime case, and therefore the pre-P14 behaviour: this proxy unloads the
-      // process-global TLS CA on `stop()`. A host member passes `false` and unloads once itself.
-      ownsCA: true,
-    });
-    registerRuntime(runtime);
-    bindProxyInstance(runtime.proxy);
-    bindWebhookInstance(runtime.webhook);
 
-    // Unchanged lines, now delegating: `startServer()` acts on the instance bound above. Note this is
-    // **not** `runtime.start()`, which would bind both servers and open the webhook port discussed above.
-    startServer(cfg.port);
-    startCompanionServer(cfg.companionPort ?? 9271);
+    /**
+     * ## The proxy split — `plan/15` work item 3 — and what `plan/17` changed about the port
+     *
+     * `cfg.port` used to be the one socket that served both halves. It now belongs to the **edge**, and
+     * that direction is the migration rather than a preference: `settings.port` is where every existing
+     * `*.localhost` mapping already points, so handing it to the edge is what keeps those URLs working
+     * (`plan/15` §6.2) with no edit to a single mapping. The **forward** proxy moves instead — its port is
+     * one line in a browser's proxy settings, against one edit per mapping, which the user cannot make.
+     *
+     * `cfg.port` comes from `app.json`, which is **host-local** (`store/appSettings.ts`), so this is not
+     * the git-tracked config carrying one machine's port to another.
+     *
+     * **`plan/17` §1 replaced the scan with a setting.** This used to call `findFreePortFrom(proxyBasePort(),
+     * …)` — D16's base-and-scan — which meant the port a browser had to be pointed at could move on its own.
+     * It is now `settings.forwardProxyPort` (`8080` by default, `BIFURC_PROXY_BASE_PORT` to pin it in a
+     * container), bound exactly as configured: *"It binds `8080` and **fails if occupied**, naming the port,
+     * so the user enters a working one instead of the app silently incrementing."* A busy port is reported by
+     * `server.status`'s `error` field and by the proxy's own `[server:<port>]` log line — the engine's oldest
+     * bind contract, and the same one the edge uses.
+     */
+    const edgePort = cfg.port;
+
+    const forwardProxy = createProxyServer({ workspaceId: null });
+    bindProxyInstance(forwardProxy);
+    /**
+     * The webhook receiver is created but **not started** — `plan/17` §1 makes it off by default, and the
+     * desktop has never opened that port at boot (`WebhooksPanel` → `window.api.startWebhookServer()` is what
+     * binds it). Creating it here is what gives the facade one authority to point at rather than a lazily
+     * created default that would become a second one.
+     */
+    bindWebhookInstance(createWebhookServer({ workspaceId: null }));
+
+    /**
+     * The edge, on the port the mappings use.
+     *
+     * `resolveConfig` reads the **bound** proxy's dispatch config rather than loading the config again.
+     * The edge routes the same workspace's mappings, and a second reader of the same files is how the two
+     * halves drift — `store/serverUtils.ts#workspaceCfg()` is the record of what that cost. Read per
+     * request, so a `workspace.setActive` needs no invalidation step on the edge's side.
+     *
+     * No `bindHost`: the desktop's edge is loopback, exactly as its proxy has always been. That is no longer
+     * a *choice this module is declining* — since 2026-09-25 loopback is the only value the edge's guard
+     * accepts, for the shell and for the deployable host alike, and `--edge-bind-host` is a fatal flag. See
+     * `proxy/edge.ts`.
+     */
+    edgeRouter = createEdgeRouter({ resolveConfig: () => forwardProxy.dispatchConfig() });
+    /**
+     * ## `plan/17` §5 work item 7 — and this is the desktop's half of it
+     *
+     * `createEngine()` binds its own edge, but **this module is the desktop's composition and does not call
+     * `createEngine()`** — it builds the proxy, the webhook and the edge itself, which is exactly why it
+     * already calls `bindProxyInstance()` and `bindWebhookInstance()` a few lines above. The edge had no
+     * equivalent call, so `config.save` could not reach it *here*: `restartEdge()` would have been a no-op, and
+     * *"changing the port in Settings"* would have kept its pre-`plan/17` meaning — persisted immediately, in
+     * force only at the next launch.
+     *
+     * **Bound before `start()`**, matching `index.ts` and `runtime/host.ts`: a save arriving in the boot window
+     * should find the instance rather than silently skip the re-bind. `before-quit` unbinds it, because this is
+     * process-global module state and a leaked binding outlives the listener it names.
+     */
+    bindEdgeInstance(edgeRouter);
+    edgeRouter.start(edgePort);
+
+    // Delegating to the bound instance above — `startServer()` acts on whatever `bindProxyInstance()` was
+    // given, so this is the same call it always was.
+    startServer(cfg.forwardProxyPort);
   });
 
   app.on("before-quit", () => {
     quitting = true;
+    // The edge first, and synchronously: it is this module's own listener, and a request arriving during
+    // teardown should find a closed edge rather than a live edge in front of the proxies `shutdownEngine()`
+    // is about to stop. `EdgeRouterInstance.stop()` owns no async handle, so there is nothing to await.
+    edgeRouter?.stop();
+    // The binding goes with it — process-global module state, so it is released rather than left pointing at a
+    // stopped listener. The same rule `bindProxyInstance()` / `bindWebhookInstance()` follow; see
+    // `bindEdgeInstance()` for why a leak here is paid for by whatever runs next in the process, not by this one.
+    bindEdgeInstance(null);
     // Idempotent by design (P2 work item 3): the shell quitting, a supervisor restarting a crashed
     // engine and a SIGTERM handler may all ask for this, in any order. See `packages/engine/src/shutdown.ts`.
     void shutdownEngine();

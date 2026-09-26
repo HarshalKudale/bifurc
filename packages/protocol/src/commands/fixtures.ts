@@ -83,9 +83,6 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
     invalid: { serverAddress: "a" },
   },
   "grpc.reflect": { valid: { serverAddress: "a" }, invalid: {} },
-  "grpc.mockServerStatus": { valid: {}, invalid: { extra: true } },
-  "grpc.startMockServer": { valid: {}, invalid: { extra: true } },
-  "grpc.stopMockServer": { valid: {}, invalid: { extra: true } },
 
   "application.list": { valid: { workspaceId: "ws1" }, invalid: {} },
   "application.save": { valid: { application: { name: "a" } }, invalid: {} },

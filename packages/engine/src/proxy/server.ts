@@ -1,19 +1,28 @@
 import * as net from "net";
-import * as http from "http";
-import * as https from "https";
-import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, Environment, ProxyRule, type WorkspaceDispatchSlice } from "../store/config";
-import { readEnabledSet, bootstrapEnabledSet, readAllEntities } from "../store/workspaceFs";
+import { EngineError } from "@bifurc/protocol";
+import { isLoopbackHost } from "../lib/net";
+import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../store/config";
+import { readAllEntities } from "../store/workspaceFs";
 import { HOP_BY_HOP } from "./constants";
-import { sendHtml, buildHomePage, buildNotMappedPage } from "./pages";
-import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "./mockHandler";
-import { matchGraphQLMock, matchSoapMock, serveProtocolMock, GraphQLMockDef, SoapMockDef } from "./protocolMockHandler";
-import { tcpTunnel, proxyToUpstream, passthroughToUpstream, passthroughToUpstreamHttps, matchProxyRule, proxyWithScripts, fetchUpstreamResponse } from "./proxyHandler";
+import { sendHtml } from "./pages";
+import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";
 import { loadCA, unloadCA, isCALoaded, clearCertCache } from "./tlsCert";
 import { interceptTls } from "./tlsIntercept";
-import { decompressBody, stripContentEncoding } from "./decompressUtils";
 import { handleProxyRouting } from "./routingUtils";
 import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "./logEmitter";
 export { RequestLogEntry, logEmitter, emitLogChunk } from "./logEmitter";
+
+// `plan/15` work item 3 took this module's **reverse half**, and its imports went with it: the home
+// page and the mapping/mock dispatch — `buildHomePage`, `buildNotMappedPage`, `matchMock`, `serveMock`,
+// `isFullyMocked`, `mergeMockWithUpstream`, `resolveMockOnlyResponse`, `serveResolvedResponse`,
+// `proxyToUpstream`, `fetchUpstreamResponse` — are `proxy/edge.ts`'s now. The forward half never used
+// any of them.
+//
+// `http` and `https` were **already** unused here before the split and are gone with the rest. Worth
+// naming because it is not a one-off: `tsc` does not report an unused import, so a namespace imported
+// for a branch that later moves stays imported indefinitely, and the next reader has no way to tell
+// which of a dozen imports a module actually needs.
+
 
 import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./serverUtils";
 
@@ -56,6 +65,27 @@ import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./s
  *
  * Do **not** "fix" the hazard by deleting the `unloadCA()` call outright — that leaks the CA past the stop
  * it was written to bound, and the desktop's single-proxy lifecycle depends on it.
+ *
+ * ## The reverse half is gone — `plan/15` work item 3 (2026-09-23)
+ *
+ * This module used to serve **two** jobs on one socket: the reverse proxy (a mapped `Host` forwarded to
+ * its target) and the forward proxy (a browser configured to use this port). They are now two servers,
+ * and only the forward half is here — `proxy/edge.ts` holds the reverse half, on a **host-level** port.
+ *
+ * The reason is §1's second problem: sharing one socket meant a mock could not be applied to
+ * forward-proxied traffic without also affecting reverse-proxied traffic, which is exactly what the
+ * split buys. The reason the *reverse* half is the one that moved is §3.1's routing rule — a port
+ * belongs to the thing that has to be addressed once, and a mapping is a hostname, which carries no
+ * workspace in it.
+ *
+ * Two consequences are worth knowing before reading `dispatch()`:
+ *
+ * - **The home page moved with it.** It is tempting to read §3.4's *"loses only the reverse branch"* as
+ *   leaving the `host === "localhost"` page here. It cannot: `buildHomePage()` builds every mapping's
+ *   link from the port the page is served on, and after the split the mappings are no longer on this
+ *   port — so a home page left behind would render links to a port that refuses them.
+ * - **`dispatchConfig()` is public because of it.** The edge routes the same workspace's mappings and
+ *   asks this instance for them rather than composing a second copy of the same config.
  */
 
 // The six mutables this file used to hold here (`server`, `currentPort`, `currentConfig`, `fullRules`,
@@ -72,6 +102,30 @@ export interface ProxyServerInstance {
   getPort(): number;
   getError(): string | null;
   reloadConfig(): void;
+  /**
+   * The config this instance dispatches with — its own workspace's entities, composed by
+   * `workspaceCfg()`. (`plan/15` work item 3.)
+   *
+   * ## Why the edge reads its config from here instead of loading its own
+   *
+   * The edge router serves the **active** workspace's mappings, and this instance already holds that
+   * workspace's four dispatch inputs — `currentConfig`, `fullRules`, `enabledSets` and `wsSlice` —
+   * loaded at `start()` and refreshed by `reloadConfig()`. Composing them is exactly what `dispatch()`
+   * does on every request, so the edge asks for the same object rather than loading the same files a
+   * second time.
+   *
+   * That is not a convenience, and it is not only about the I/O. Two readers of one config is how the
+   * two halves drift, and this file's own history is the record of the cost: `store/serverUtils.ts`'s
+   * `workspaceCfg()` exists because a proxy once read its entities through `loadConfig()` (the *active*
+   * workspace) and its enabled sets through its *own* workspace, cross-filtered the two, and served
+   * nothing — silently, with every test green. A second composition inside `edge.ts` would be a second
+   * chance at exactly that defect, and every later change to either composition would have to be made
+   * twice to avoid it.
+   *
+   * A **method**, not a property, because it must be re-read per call: it falls back to `loadConfig()`
+   * before `start()`, and everything behind it changes on `reloadConfig()`.
+   */
+  dispatchConfig(): AppConfig;
 }
 
 /** Options for `createProxyServer()`. */
@@ -89,7 +143,34 @@ export interface ProxyServerOptions {
    * CA is one mkcert root shared by every workspace on the machine. See the header.
    */
   ownsCA?: boolean;
+  /**
+   * The interface the proxy binds. Defaults to loopback — the literal `server.listen(port, "127.0.0.1")`
+   * that used to be hardcoded here, so the desktop is unchanged (`plan/15` work item 2).
+   *
+   * **A host-local value, deliberately not an `AppConfig` field.** `AppConfig` is the *per-workspace,
+   * git-tracked* config and it **syncs** (`store/gitStore.ts`) — a bind host is a property of the machine,
+   * so storing it there would carry one machine's interface name to another and back. It is the same rule
+   * that keeps resolved ports in the host-local `runtime.json` rather than in `workspace.json`
+   * (`plan/14` §4). The deployable host takes it as an option, from its CLI.
+   *
+   * **The exposure is larger than the RPC bind's, and the plan says so** (`plan/15` §9): this port serves a
+   * proxy that forwards into whatever the machine can reach *and* performs TLS interception, so a wide bind
+   * is a route into a private network rather than a control channel.
+   *
+   * **Which is why it is loopback, and only loopback.** `plan/15` work item 2 gave it its own opt-in on the
+   * argument that one flag covering both listeners would mean accepting the larger exposure in order to get
+   * the smaller; the 2026-09-25 decision that the engine is never deployed remotely removed the exposure
+   * itself, and the opt-in with it. `bindHost` stays a parameter because a test may want to *prove* the
+   * refusal, and because the constant should have one definition rather than two.
+   */
+  bindHost?: string;
 }
+
+/**
+ * The address a proxy binds when its caller names none — the pre-`plan/15` literal, in one place, and
+ * since 2026-09-25 the only address it will accept.
+ */
+export const DEFAULT_PROXY_BIND_HOST = "127.0.0.1";
 
 /**
  * Create one proxy server. Every mutable the module used to hold lives here instead, so two callers get
@@ -98,6 +179,32 @@ export interface ProxyServerOptions {
 export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerInstance {
   const workspaceId = opts.workspaceId ?? null;
   const ownsCA = opts.ownsCA ?? true;
+  const bindHost = opts.bindHost ?? DEFAULT_PROXY_BIND_HOST;
+
+  /**
+   * ## The bind guard — now unconditional
+   *
+   * `plan/15` work item 2 made this an opt-in (`allowNonLoopback`). As of **2026-09-25 there is no
+   * opt-in**, because there is no deployment in which a wide bind is wanted: the engine is never
+   * deployed remotely. Encoding the rule means the engine cannot be talked into publishing this port by
+   * a config typo — the process refuses rather than exposing one. It is deliberately *not* left to the
+   * caller to check, and it is deliberately **not** duplicated in `runtime/host.ts`: the module that
+   * binds owns the rule about binding.
+   *
+   * **It throws from the factory rather than from `start()`.** This is a *configuration* error, not a
+   * bind failure: a caller that named `0.0.0.0` has nothing to retry, so there is no value in waiting
+   * until the first workspace is being placed — and by then the host has bootstrapped a data root it did
+   * not need to touch.
+   */
+  if (!isLoopbackHost(bindHost)) {
+    throw new EngineError(
+      "ENGINE_ERROR",
+      `Refusing to bind the proxy to ${bindHost}: this listener binds loopback only. A forward proxy ` +
+        `forwards into whatever this machine can reach and performs TLS interception, so a wide bind is ` +
+        `a route into a private network; the engine is never deployed remotely, so there is no opt-in ` +
+        `for it and no deployment that would need one. Bind ${DEFAULT_PROXY_BIND_HOST}.`,
+    );
+  }
 
   let server: net.Server | null = null;
   let currentPort = 0;
@@ -205,9 +312,9 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       logEmitter.emit("server-error", lastError);
     });
 
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, bindHost, () => {
       lastError = null;
-      console.log(`[server:${port}] listening on 127.0.0.1:${port}`);
+      console.log(`[server:${port}] listening on ${bindHost}:${port}`);
     });
   }
 
@@ -244,8 +351,38 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     return workspaceId ?? (currentConfig ?? loadConfig()).activeWorkspaceId;
   }
 
+  /**
+   * The config this instance dispatches with — the four inputs `start()` / `reloadConfig()` load,
+   * composed by `workspaceCfg()`. Public because the edge router routes the **same** workspace's
+   * mappings and must not compose a second copy; see `ProxyServerInstance.dispatchConfig`.
+   *
+   * Both dispatch paths below call this, and both always did compute this same expression. The
+   * extraction is not new behaviour — it is the removal of a duplicated one, which is what made the
+   * edge's need for it cheap to satisfy.
+   */
+  function dispatchConfig(): AppConfig {
+    return workspaceCfg(
+      currentConfig ?? loadConfig(),
+      fullRules,
+      enabledSets,
+      wsSlice ?? loadWorkspaceDispatchSlice(servedWorkspaceId()),
+    );
+  }
+
   // ── HTTP dispatch (instance-scoped: reads this instance's config/rules) ──
 
+  /**
+   * ## This is the **forward** half — `plan/15` work item 3
+   *
+   * The reverse half is no longer here. A request whose `Host` is a mapped domain, and the home page
+   * that listed those mappings, are served by `proxy/edge.ts` on the host-level **edge** port. What
+   * remains is what a browser sends when it has been *configured to use this port as its proxy*: an
+   * absolute-form target for `http://`, and `CONNECT` for the https it wants tunnelled — the latter
+   * handled by the connection handler, not here.
+   *
+   * That is why this function still parses a relative request at all: it does not serve one, it
+   * **refuses** one, and the refusal names where to go instead.
+   */
   function dispatch(
     socket: net.Socket,
     method: string,
@@ -253,12 +390,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     headerLines: string[],
     bodyBuf: Buffer,
   ): void {
-    const cfg = workspaceCfg(
-      currentConfig ?? loadConfig(),
-      fullRules,
-      enabledSets,
-      wsSlice ?? loadWorkspaceDispatchSlice(servedWorkspaceId()),
-    );
+    const cfg = dispatchConfig();
     const t0 = Date.now();
     const id = mkId();
 
@@ -290,57 +422,10 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       reqBody: reqBodyB64,
     };
 
-    // 1. localhost base → home page (no log)
-    if (host === "localhost") {
-      sendHtml(socket, 200, buildHomePage(cfg, currentPort));
-      return;
-    }
-
-    // 2. *.localhost → mapping lookup (RFC 6761) — no mock matching here, these are internal
-    if (host.endsWith(".localhost")) {
-      const mapping = cfg.mappings.find((m) => m.enabled && m.domain.toLowerCase() === host);
-      const env = activeEnv(cfg);
-      const mock = matchMock(cfg.mocks, method, url, env);
-      if (mock) {
-        if (isFullyMocked(mock)) {
-          serveMock(socket, mock, env);
-          const resolved = resolveMockOnlyResponse(mock, env);
-          const slice = resolved.body.length <= 512 * 1024 ? resolved.body : resolved.body.slice(0, 512 * 1024);
-          emitLog({ ...baseEntry, status: resolved.status, via: "mock", target: `mock:${mock.id}`, durationMs: Date.now() - t0 + resolved.delayMs, resHeaders: resolved.headers, resBody: slice.toString("base64"), resStatus: resolved.status });
-          return;
-        }
-
-        if (!mapping) {
-          sendHtml(socket, 502, `<h1>502 Bad Gateway</h1><p>No downstream mapping exists for <code>${host}</code>, so this partial mock cannot fetch live headers.</p>`);
-          emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-          return;
-        }
-
-        fetchUpstreamResponse(method, mapping.target, reqPath, headers, bodyBuf).then((upstream) => {
-          const merged = mergeMockWithUpstream(mock, upstream, env);
-          serveResolvedResponse(socket, merged);
-          const slice = merged.body.length <= 512 * 1024 ? merged.body : merged.body.slice(0, 512 * 1024);
-          emitLog({ ...baseEntry, status: merged.status, via: "mock", target: `mock:${mock.id}`, durationMs: upstream.durationMs + merged.delayMs, resHeaders: merged.headers, resBody: slice.toString("base64"), resStatus: merged.status });
-        }).catch((err: Error) => {
-          console.error(`[mock downstream] ${mapping.target}${reqPath} —`, err.message);
-          sendHtml(socket, 502, `<h1>502 Bad Gateway</h1><p>Could not connect to <code>${mapping.target}</code>.</p>`);
-          emitLog({ ...baseEntry, status: 502, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 502 });
-        });
-        return;
-      }
-
-      if (mapping) {
-        proxyToUpstream(socket, method, mapping.target, reqPath, headers, bodyBuf, (status, dur, resH, resB) => {
-          emitLog({ ...baseEntry, status, via: "rfc6761", target: mapping.target, durationMs: dur, resHeaders: resH, resBody: resB, resStatus: status });
-        }, baseEntry.id);
-      } else {
-        sendHtml(socket, 404, buildNotMappedPage(host, currentPort));
-        emitLog({ ...baseEntry, status: 404, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 404 });
-      }
-      return;
-    }
-
-    // 3. Forward proxy path (always active for absolute http:// targets)
+    // ── the forward-proxy path — the only HTTP path this port serves ─────────
+    //
+    // Still numbered 3, and the numbering is kept on purpose: the branches that were 1 and 2 are the
+    // ones that moved, so a reader looking for them finds a pointer here rather than a gap.
     if (rawTarget.startsWith("http://") || rawTarget.startsWith("https://")) {
       // 3a. Proxy routing (mocks, rules)
       const env = activeEnv(cfg);
@@ -355,7 +440,26 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       return;
     }
 
-    sendHtml(socket, 400, "<h1>400 Bad Request</h1><p>Not a localhost domain.</p>");
+    /**
+     * ## 4. anything else → refused, and the refusal says where to go
+     *
+     * This branch used to read `400 Not a localhost domain`, and a relative request for an unmapped
+     * host was one of several things that reached it. It is now reached by **every** relative request,
+     * because the mapped ones belong to the edge — `*.localhost` included, which this port answered
+     * until work item 3.
+     *
+     * **It names the edge, not a port number, and that is deliberate.** Naming the port would mean
+     * threading the edge's port into this module, which is the one direction of coupling the split
+     * exists to remove: the edge knows nothing about this server, and a forward proxy that knew the
+     * edge's port would be the start of the two knowing about each other. The port is discoverable
+     * where it is actually useful — in the app, and in the host's startup line for the edge.
+     */
+    sendHtml(socket, 400,
+      "<h1>400 Bad Request</h1>" +
+      "<p>This is Bifurc's <strong>forward-proxy</strong> port, and this request did not arrive as a " +
+      "proxy request.</p>" +
+      "<p>Domain mappings (<code>*.localhost</code>) and the home page are served by the " +
+      "<strong>edge</strong> — the port Bifurc shows as your mapping port.</p>");
     emitLog({ ...baseEntry, status: 400, via: "error", target: null, durationMs: Date.now() - t0, resHeaders: {}, resBody: "", resStatus: 400 });
   }
 
@@ -370,12 +474,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     hostname: string,
     port: number,
   ): void {
-    const cfg = workspaceCfg(
-      currentConfig ?? loadConfig(),
-      fullRules,
-      enabledSets,
-      wsSlice ?? loadWorkspaceDispatchSlice(servedWorkspaceId()),
-    );
+    const cfg = dispatchConfig();
     const t0 = Date.now();
     const id = mkId();
 
@@ -425,6 +524,9 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       return lastError;
     },
     reloadConfig,
+    // Exposed for the edge router, which routes the same workspace's mappings and must not compose a
+    // second copy of them. See the interface's docblock.
+    dispatchConfig,
   };
 }
 

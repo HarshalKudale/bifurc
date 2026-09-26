@@ -7,10 +7,21 @@
  * (`unshift` vs `push`, flat vs foldered storage, enabled-state tracking, the
  * mapping->proxyRule delete cascade) — those quirks are ENGINE-side dispatch-table concerns,
  * not protocol concerns. The protocol only needs to carry `{kind, entity}` / `{kind, id}`.
+ *
+ * ## `plan/17` work item 8 removed the three protocol MOCK kinds
+ *
+ * `graphqlMocks`, `grpcMocks` and `soapMocks` are gone, and so are their folder kinds. The owner's
+ * decision is **REST mocks only**: a GraphQL call and a SOAP call are both just POSTs, so either is
+ * mockable as an ordinary REST mock, and the gRPC mock's serving half was a `wontfix` stub with no
+ * UI left to drive it.
+ *
+ * **The four *request* kinds all stay** — `graphqlRequests`, `grpcRequests` and `soapRequests`
+ * remain, as do `graphqlSchemas`, `protoFiles` and `wsdls`. `plan/17` §3 is explicit that the gRPC
+ * request client, the proto files and their folders are **not** part of the removal.
  */
 import { z } from "zod";
 
-/** The 12 kinds behind the collapsed CRUD surface, from `plan/handler-classification.md`. */
+/** The entity kinds behind the collapsed CRUD surface, from `plan/handler-classification.md`. */
 export const EntityKind = z.enum([
   "mappings",
   "proxyRules",
@@ -19,11 +30,8 @@ export const EntityKind = z.enum([
   "wsConnections",
   "webhooks",
   "graphqlRequests",
-  "graphqlMocks",
   "grpcRequests",
-  "grpcMocks",
   "soapRequests",
-  "soapMocks",
   // Non-generated but same-shaped generic entity kinds (work item 1, coreHandlers.ts):
   "environments",
   "graphqlSchemas",
@@ -90,10 +98,13 @@ export interface EntityListResult {
 }
 
 /** `kind` here is the plural fs-kind string, e.g. `"mocks"` — see the spike finding about the
- * asymmetry with `folder.*`'s singular `FolderKind` enum; both are kept as-is for now. */
+ * asymmetry with `folder.*`'s singular `FolderKind` enum; both are kept as-is for now.
+ *
+ * This enum is the set of kinds that carry enabled-state, so `plan/17` work item 8 narrowed it to
+ * the three that remain: the three protocol mock kinds were the other members. */
 export const EntitySetEnabledParams = z.object({
   workspaceId: z.string(),
-  kind: z.enum(["mocks", "mappings", "rules", "graphqlMocks", "soapMocks", "grpcMocks"]),
+  kind: z.enum(["mocks", "mappings", "rules"]),
   id: z.string(),
   enabled: z.boolean(),
 });
