@@ -1165,6 +1165,38 @@ testing rejection. That hazard was **live but not hit** — the fixtures happene
 exposure was entirely in the call sites the note did not mention. A hazard note names where the author
 was looking, not where the bug is.
 
+## A sibling's guard is not evidence about this module's — the *reason* for the rule is
+
+Found 2026-09-23, `plan/15` work items 1 and 2. The two findings are mirror images, which is what makes them
+worth one entry.
+
+Work item 1's lesson was **count the guards in the module**: `transport/ws.ts` refuses a non-loopback bind
+without an opt-in **and** without `tls`, so the plan's single flag was inert — it parsed, passed through, and
+changed no outcome. Work item 2 then gave the **proxy** a bind host, and the obvious move — give it the same
+two guards — would have **broken the product**.
+
+`createProxyServer()` therefore has **one** condition where `createWsServer()` has two, and the difference is
+the hazard rather than an oversight:
+
+| | RPC endpoint (`transport/ws.ts`) | Proxy (`proxy/server.ts`) |
+|---|---|---|
+| non-loopback, no opt-in | refused | refused |
+| non-loopback **with** the opt-in, no TLS | **refused** | **allowed** |
+
+`--ws-allow-non-loopback` is worthless without TLS because a WebSocket RPC channel *can* carry TLS and should.
+A **forward proxy's client speaks plain HTTP to the listener** — it sends `CONNECT` for the https it wants
+tunnelled — so a TLS requirement there would break the browser the port exists for. The opt-ins are separate
+flags too, because the exposures are not equal: the proxy forwards into whatever the machine can reach *and*
+performs TLS interception, so one flag for both would make accepting the smaller exposure imply accepting the
+larger.
+
+**The rule: before copying a guard from a sibling module, ask what its second condition is *for*.** A guard's
+shape encodes a specific hazard, and "this module is the same kind of thing" is the assumption that hides the
+difference. Write the asymmetry down **at the guard**, and assert the absence in a test — otherwise a later
+"make the two consistent" edit passes everything else and ships. Both guards also throw from their **factory**
+rather than from `start()`, for a third reason: a configuration error has nothing to retry, and throwing early
+keeps the host from bootstrapping a data root it did not need to touch.
+
 ## An optional param that is *accepted and ignored* reads as implemented
 
 Found 2026-09-21, P14 WI 1 remainder, by probe rather than by reading. After the protocol half added an
@@ -2361,5 +2393,868 @@ shim alone.
 **The generalisable form:** a failure that disappears in isolation is evidence about the *pack*, not about
 the file. Do not "fix" the file.
 
+## A subtraction that leaves a page behind leaves it pointing at a port that refuses it
+
+Measured 2026-09-23, landing `plan/15` work item 3 — the proxy split.
+
+The plan's §3.4 said the forward half *"loses only the reverse branch"*. It lost **two** things: the reverse
+branch (branch 2) and the **home page** (branch 5, the old `host === "localhost"` page). The home page is not
+a routing decision like branch 2 — it is a **generator of content that names its own port**:
+
+```ts
+export function buildHomePage(cfg: AppConfig, currentPort: number): string {
+  const portSuffix = currentPort === 80 ? "" : `:${currentPort}`;
+  // … `<a href="http://${m.domain}${portSuffix}/" …>` …
+```
+
+After the split that port is the **edge's**. A forward proxy that still served the page would have built every
+mapping link pointing at *itself* — at a listener whose whole answer to a relative request is now a `400` that
+names the edge. The page did move, so nothing broke; but nothing would have broken **loudly** either, and
+that is the point.
+
+**How it was found:** not by the plan and not by a failing test — by reading `dispatch()` after deleting the
+reverse branch and noticing that the branch numbered 5 was still there and still calling `buildHomePage` with
+the instance's own port.
+
+**The generalisable form:** enumerate a subtraction by its **outputs**, not by its branches. A branch that
+routes can be deleted cleanly; a branch that *emits text containing an address* cannot, because the address
+stops being true the moment the listener moves. Grep the thing being moved for the identifier that is about to
+change meaning — here, the port.
+
+## A guard that removes nondeterminism cannot be covered by a deterministic test
+
+Measured 2026-09-23, on the host's `reserved` set (`runtime/host.ts`, `plan/15` work item 3).
+
+The host starts the **edge** before the runtime loop and hands its port to the allocator as `reserved`, so no
+workspace's scan can take it. Replacing `new Set([edgePortWanted])` with an empty set **fails nothing** —
+`hostStartup`, `engineSmoke` and `workspaceCommandScope` all pass, exit 0.
+
+That is not an uncovered guard; it is an **uncoverable** one, and the difference matters. The edge is started
+*before* the loop, so by the time `allocatePorts` runs the edge's own bind usually makes the port look busy
+and the allocator skips it for the ordinary reason. The reservation only decides the outcome in the **race
+window** where `listen` has not completed — and in every integration fixture `settings.port` is a random high
+port while the proxy's scan starts at 80, so the two can never meet. On the one platform where they do meet
+(Windows, where both default to 80) the collision is a timing question.
+
+A test able to notice the guard's absence would have to enter that window, which means it would have to be
+**nondeterministic** — the opposite of a test. The alternative, asserting the wiring structurally, needs a
+unit test of `host.ts`, which does not exist and would mean mocking the allocator, the runtimes and three
+transports to check one line.
+
+**The generalisable form:** when a mutation fails nothing, do not conclude the guard is untested — ask what
+the guard *does*. If its job is to make an outcome independent of timing, then any test sharp enough to notice
+its absence is a test that depends on timing, and the honest move is to say **"uncoverable, and here is why"**
+rather than to manufacture a flaky case. The covered half usually sits one layer down: here the allocator's
+`reserved` contract *is* asserted (`tests/runtime/portAllocator.test.ts`), and what is uncovered is the
+one-line wiring of it.
+
+## A case's name is a coverage claim, and only a mutation checks it
+
+Measured 2026-09-23, **twice in one work item**.
+
+`tests/integration/settingsMutations.integration.test.ts` had a case named **"server:restart reuses the port
+the proxy already held, not the one in Settings"**. It never invoked `server:restart`. It stopped the server
+and then **saved** — which is `config.save`'s `!isRunning()` branch starting the proxy again. Reverting
+`server.restart`'s port read to `loadConfig().port` left the case **green**, so it could not have been
+asserting what its name said: the command it named had no coverage at all, and the file's own case list looked
+complete.
+
+Same work item, the other shape: a case in `tests/proxy/edge.test.ts` named for re-resolving the active
+workspace **could not fail** either, because it swapped the config *before* its first request — so a cache
+primed with the new config passed. Two cases, two names, both describing a behaviour neither asserted.
+
+**How to fix this class:** the mutation names the function; the name says which case should have caught it. If
+no case fails, either the name is wrong or the body is. Both fixes here were small — move the settings port
+*before* the restart so the two reads are separable; make one request against the old config before swapping.
+
+**The generalisable form:** a green suite says nothing about whether a case asserts what it is *called*. The
+name is the claim; the mutation is the only thing that tests the claim. And the failure is quiet in the worst
+way — the coverage a reader believes in is exactly the coverage that is not there.
+
+## Grep for the *behaviour* you changed, not the layer you changed it in
+
+Measured 2026-09-23, `plan/15` work item 4 — and it is the same failure mode as the entry above, one level up.
+
+Work item 3 changed two port reads (`server.start`, `server.restart`, and `config.save`'s restart branch) from
+`loadConfig().port` to `getPort() || …`. Its sweep updated
+`tests/integration/settingsMutations.integration.test.ts` — the *integration* copy of that behaviour — and
+missed **`tests/ipc/handlers.test.ts`**, which asserts the same three commands at the unit level through
+`commandRegistry.invoke`. Two assertions there expected the *configured* port (80) and the *incoming* port
+(9876) while the code had begun passing the facade's *resolved* port (8080, the value the test itself mocks
+`getPort()` to).
+
+It failed **in isolation**, which is what made it findable: the two real-git suites that failed in the same
+full run (`tests/store/gitStore.test.ts`, `tests/sync/gitOps.test.ts`) each pass alone, so they are the
+documented `EBUSY` shim flake — and this one was not.
+
+**How to avoid it:** after changing a behaviour, grep for the behaviour, not for the file you edited. A port
+read is asserted wherever a port is read. Work item 3's own notes list the three call sites it changed; the
+grep that would have found this is `grep -rn "toHaveBeenCalledWith(.*port" tests/`.
+
+**The generalisable form:** a sweep scoped by *layer* leaves the other layers' copies of the same assertion
+behind, and they fail for a reason that looks like a product bug — a command starting the server on the wrong
+port. The tell is that the expected value is a fixture constant while the received value is a mock's.
+
+## `npm run verify:web` is not self-contained — it is a client of two servers
+
+Measured 2026-09-23. Run with nothing else up, it dies as:
+
+```
+page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5199/
+```
+
+That reads like a broken web host and is not one. `scripts/verify-web-ui.mjs` **starts nothing**: it needs
+`npm run dev:web` on 5199 and a host on 8080 already running — its own usage block says so, but the npm script
+name implies otherwise. `npm run verify:web:reconnect` is *half* self-contained: it spawns its own host
+(`hostCli.js --data-dir … --ws-port …`) but still needs `dev:web`.
+
+**So a `verify:web` failure is a question about the environment before it is a finding about the product.**
+Start both, then run it — a headless Chromium does run from the agent shell (see the entry on the cached
+revision), so the prerequisites are the whole obstacle.
+
+## `packages/gui` is not in `npm run typecheck` — and its error count is not a baseline
+
+Measured 2026-09-23.
+
+- `typecheck:packages` covers `@bifurc/protocol`, `@bifurc/engine`, `@bifurc/client`, `@bifurc/web-client`.
+- The root `tsc --noEmit` has `"include": ["src/**/*"]` — the Electron shell's `src/`, **not**
+  `packages/gui/src`.
+- `packages/gui` has **no build script** (the hosts bundle it from source), and its only runner is
+  `npm run typecheck --workspace @bifurc/gui`.
+
+That runner is **not green**: 34 errors, measured 2026-09-23 (the "33" in `MEMORY.md` was stale). So it cannot
+be used as a pass/fail gate. What it *can* be used for is sharper: **which files carry errors.** A change that
+widens a union consumed by a `Record<Via, string>` or an exhaustive `switch` produces an error **in the file
+that forgot the case** — so "no error in the files I touched" is the assertion, and it is stronger than any
+count comparison. `typecheck:renderer` and `typecheck:web` both compile `packages/gui/src` and both exit 2 for
+the same 34, so neither is a gate either.
+
+## `via` reaches one host's UI and not the other's — and nothing declares it
+
+Measured 2026-09-23, while widening `via` for `plan/15` work item 4.
+
+The engine's `RequestLogEntry` carries `via`, `host`, `target` and both capture bodies. The **Electron** host
+subscribes to the engine's bus and forwards that interface over IPC unchanged, so the renderer's capture panel
+has all of it. `ws`, `socket` and `stdio` all pump through `eventPump`'s projection first, so a **web** client
+receives `{id, timestamp, method, url, status, durationMs}` — `via` is `undefined`, `ViaBadge` renders an empty
+badge, and `fulfilledBy` returns `undefined`.
+
+Two consequences worth carrying:
+
+- **Widening `via` costs no protocol change** (it is not in `LogEntryEventSchema`, and it is never persisted),
+  but it also **does not reach a remote client's capture panel** — so "the union has a new member" is not the
+  same claim as "the user sees the new label".
+- The GUI's `packages/gui/src/types/ipc.ts` declares the **full** entry, which is accurate for Electron and
+  wrong for the web host. That is the same seam `plan/15` §4.1 is about: *what a host gives the UI varies, and
+  nothing declares it.* Any fix has to choose between growing the wire and having the panel ask for the entry.
+
+## A flag that carries *data* is accepted and ignored until something reads it
+
+Measured 2026-09-23, building `plan/15`'s `--domain`.
+
+The parser is one end of a chain and the *consumer* is the other:
+`parseHostArgs` → `WorkspaceHostOptions.<field>` → `host.ts`'s `auth` object → `createSocketServer` /
+`createWsServer`'s `auth` → `createAuthenticatedTransport`'s options → `HelloResponseSchema` → the client.
+Land the first link alone and **every gate stays green**: the parser suite passes (parsing is what it tests),
+`tsc` passes (the option is optional), the host boots, the log line prints. The flag is simply inert — and no
+suite can observe an *absence of effect*, because there is nothing to assert against.
+
+Two instruments, and they answer different questions:
+
+- **An assertion at the far end of the chain.** `tests/integration/workspaceHost.integration.test.ts` starts the
+  real host with `domain: "engine.example.com"` and reads it back off `hello` over a **real socket**. That is the
+  only place the host→wire wiring is pinned; `transport/auth.test.ts` pins the *shape* the decorator produces,
+  which is a different question and can be green while the host never passes anything down.
+- **A mutation that removes the last link**, which must produce exactly **1** failure. `0` means the assertion
+  was decorative.
+
+The generalisation: **when you add an option, ask who *reads* it, and name the test that fails if nobody does.**
+"A default exists" is not an answer, and neither is "the parser tests pass".
+
+## `docker run <image> <args>` REPLACES the image's `CMD` — it does not append
+
+Measured 2026-09-23, while making `--domain` required.
+
+`docker run bifurc --ws-port 0` starts the container **without** `--domain`, so it dies on the required-flag
+check instead of running with an overridden port. Every documented override must therefore **repeat the flags
+it is not overriding**:
+
+```sh
+docker run -p 8080:8080 bifurc --domain localhost --ws-host 127.0.0.1 --ws-port 9271
+```
+
+**The trap is invisible until a flag becomes required.** Before that, the omitted flags had defaults, so the
+override appeared to work — which means the `Dockerfile` / `docker-compose.yml` / `DOCKER.md` examples that had
+been correct for months became *fatal* in the same commit that added the requirement, and nothing failed to say
+so. **When a flag becomes required, grep the deployment artifacts for every command line that starts the
+image**, including the ones in prose.
+
+## Deployment artifacts go stale silently — no gate reads them
+
+Measured 2026-09-23. `Dockerfile`, `docker-compose.yml` and `DOCKER.md` still claimed *"the opt-in exists but no
+entry point exposes it"* and *"that needs a code change"* — both falsified by `plan/15` work items 1–3 — while
+`DOCKER.md`'s own tail already carried the corrections. The file contradicted itself and nothing noticed.
+
+Nothing runs them. `npm test` does not read them, `tsc` does not read them, and no suite asserts a claim written
+in prose. So a documentation claim is verified by **nothing**, and the only instrument is a **grep for the
+claim** (not for the flag name) after the behaviour changes — *"the opt-in exists but no entry point exposes
+it"* is the string to search for, because searching `--proxy-bind-host` finds the code that proves it wrong.
+
+Two families, and they fail differently:
+
+- the deployment artifacts (`Dockerfile`, `docker-compose.yml`, `DOCKER.md`) — **silent**;
+- the `scripts/verify-*.mjs` runners, which *are* executed — **loud**, because a stale `--domain` there is a
+  spawn error. Loud is not the same as caught: `verify:web` is not self-contained, so a runner that dies on a
+  stale flag also dies on a missing server.
+
+## An optional wire field must be **spread**, never assigned — and `toBeUndefined()` cannot see the difference
+
+Measured 2026-09-23, `hostDomain` on `HelloResponseSchema`.
+
+```ts
+...(opts.hostDomain === undefined ? {} : { hostDomain: opts.hostDomain })   // absent
+{ hostDomain: opts.hostDomain }                                            // present, value undefined
+```
+
+Both satisfy `expect(response.hostDomain).toBeUndefined()`. Only the first is *absent*, and the difference is
+observable: the `in-process` transport passes objects **by reference** (no JSON, no clone — checked), so the
+second shape really does put a present key on the response. This codebase reads optional handshake fields with
+`"key" in response` (`replayedFrom`, `resyncRequired`), so a present-but-undefined key reads as *"the engine has
+a domain, and it is `undefined`"*.
+
+**Assert absence with `expect("hostDomain" in response).toBe(false)`.** The mutation that proves the assertion
+is replacing the spread with the assignment; it must fail, and it fails only against `in`.
+
+*The caveat that makes this a trap rather than a nit:* over a JSON transport `JSON.stringify` would drop the key
+anyway, so the in-process suite is the **only** place the distinction is observable — and it is the suite that
+does not look like a wire test. The rule has to be stated, because it cannot be inferred from the socket tests.
+
+## A hand-maintained list in a test drifts, and the drift is invisible
+
+Measured 2026-09-23. `packages/engine/tests/runtime/hostArgs.test.ts` asserted the usage text against a
+**hand-written list of flags**, and that list had been stale since work item 3: `--edge-port`,
+`--edge-bind-host` and `--edge-allow-non-loopback` were in the parser and in `HOST_USAGE` but in **none** of the
+assertions — so the third bind opt-in's coherence rule had no test at all, and nothing said so.
+
+The fix is not "add the three" (that list drifts again); it is to **derive the list from the artifact that must
+name them all**:
+
+```ts
+const documented = HOST_USAGE.match(/--[a-z][a-z-]*/g)!.filter((f) => f !== "--help");
+expect(documented.length).toBeGreaterThan(10);
+```
+
+then assert every extracted flag parses. The `length` guard is what keeps the extraction from silently matching
+nothing — **a filter that finds 0 matches and a filter that is wrong look identical** (the same failure this
+file's own `## "My filter found 0 matches"` entry records).
+
+The generalisation: **a list in a test that mirrors a list in the code is a claim that the two are equal, and
+nothing enforces it.** Extract one from the other, or the claim is a comment.
+
+## Mutating a file: back up, mutate, test and restore inside **one** shell invocation
+
+Measured 2026-09-23; this recipe caught all five of work item 9's mutations.
+
+A mutation left behind by a failed command is a landmine: the next run reports failures that are *yours*, and
+you will attribute them to the product. So the mutation must not be able to outlive the command that made it.
+
+- **One invocation.** Copy the file to a temp path, mutate, test, restore, and re-grep the anchor — all in a
+  single `Bash` call, so the restore runs whether the test passed or failed.
+- **A node one-liner, not `sed`.** `sed` cannot check that it matched; a one-liner can assert the anchor
+  (`if (!src.includes(ANCHOR)) process.exit(3)`), so a mutation that silently changed nothing exits **3** rather
+  than looking like a test that passed.
+- **The verdict is `${PIPESTATUS[0]}`.** Piping to `tail`/`grep` makes `$?` the exit code of the *filter*;
+  `EXIT=${PIPESTATUS[0]}` is the test runner's.
+- **Re-grep the anchor after restoring**, and search for the mutation's marker. "I restored it" is a claim; the
+  grep is the measurement.
+- **A narrow mutation is the point.** `if (false)` on one condition tells you which assertion owned that line; a
+  rewrite tells you nothing. And **judge by exit code, not by failure count** — the count says how many cases
+  happened to cover the line, not whether the line matters.
+
+Work item 9's five, each of which failed as required: the required-flag check removed → **1**; the shape check
+short-circuited → **4**; the canonicalisation removed → **1**; the host no longer passing the domain down →
+**1** (integration, and it names the line); the optional spread replaced by an assignment → **1**.
+
+## A command's registration is not the whole of its dependency — a *container* is not a command
+
+Measured 2026-09-23, `plan/15` work item 10.
+
+`entity.create` is **one** command serving sixteen kinds. It learns which kind it was handed by looking the
+name up in a container that `registerCrudKind()` / `registerSimpleKind()` populate — so a kind is not a
+command, and a guard that compares **command names** cannot see it. The five `register*Kinds()` files lived in
+the Electron shell's `src/ipc/handlers/`, and the existing drift guard
+(`tests/integration/workspaceHost.integration.test.ts`) stayed green throughout, because it enumerates
+`register([A-Za-z]+)Commands(commandRegistry);` — and the kind calls take **no argument**, so the regex does not
+match them at all.
+
+```js
+// after registerAllEngineCommands(reg) — a headless host's ONLY registration path
+entity.delete({ kind: "mocks" })   ->  kind "mocks" is not routed through the CommandRegistry yet
+isRegistered("entity.delete")      ->  true
+```
+
+**Both lines are the finding.** `isRegistered` being `true` is what makes it silent: `@bifurc/client`
+advertises the command, the browser UI offers the affordance, and the message blames the *kind* rather than the
+host. The control that proves the mechanism is one line — call `registerCrudKind({kind:"mocks",…})` by hand and
+the same invocation returns **`{ok:true}`**, while `mappings` still says *not routed*.
+
+**The generalisable rule: when you move a command, ask what it *reads*.** Moving the eighteen
+`register*Commands()` calls engine-side fixed the names and left the containers behind — the same bug class one
+layer down, and the layer where a name-comparison guard is structurally blind.
+
+**Check it by invoking, and derive the input from the schema** — never from a list in the test:
+
+```js
+for (const kind of EntityKind.options)            // the protocol's own enum; 16 at the time of writing
+  await registry.invoke("entity.delete", { kind, id: "does-not-exist" }, {});
+// the failure is the message "is not routed through the CommandRegistry yet"
+```
+
+Two details that make the difference between a real guard and a decorative one:
+
+- **A routed invocation performs real I/O.** Point the data root at a temp dir first, and use an id that does
+  not exist, so the assertion is about *routing* and cannot delete anything. (Before that, this probe ran
+  against the developer's own data root — harmless only because the id was missing.)
+- **Assert on the message, not on "it threw".** A routed call may legitimately throw for other reasons (no
+  workspace, a missing file); *"it threw"* would pass for a command that is not routed at all.
+
+## Moving a source file leaves a stale compiled twin, and `assert:dist` stays green on it
+
+Measured 2026-09-23, moving `src/ipc/handlers/{crud,core,graphql,grpc,soap}Kinds.ts` into `packages/engine`.
+
+The root `tsc` compiles `src/` into `dist/` **without removing what is no longer emitted** — `clean:main` is
+what removes it, and it runs only as part of `build:main`. So after a *move*:
+
+- `dist/ipc/handlers.js` still `require`s `./handlers/crudKinds`, a path the source no longer has;
+- `dist/ipc/handlers/crudKinds.js` and its `.map` are **still there**, so the specifier *resolves*;
+- `npm run assert:dist` therefore reports *"every relative specifier resolves"* and exits **0** — while the
+  app runs the **old** code, with no error at all.
+
+`assert:dist` checks that the graph **resolves**, not that it is **current**, and a rename is precisely the
+change where those two differ. **So after any file move or rename under `src/`, the gate is
+`npm run build:main`, not `assert:dist`.** The tell is a `dist/` file whose mtime predates the `src/` file it
+came from:
+
+```sh
+ls -l --time-style=full-iso dist/main.js src/ipc/handlers.ts   # 11:33 vs 19:41 = stale
+grep -rl 'handlers/crudKinds' dist/                            # finds the stale twin
+```
+
+This is the general form of the `src/preload.ts` rule in `MEMORY.md`: the app runs `dist/`, so any `src/`
+edit needs a rebuild — and a *move* needs a **clean** one. And it is why the two halves of a move have
+different gates: the engine half is covered by `build:packages` (which cleans), the shell half is not.
+
+## A mock must declare its response headers, or the case silently needs a listener on port 80
+
+Measured 2026-09-23, in `tests/integration/workspaceDispatchScope.integration.test.ts`.
+
+`isFullyMocked()` (`proxy/mockHandler.ts`) asks whether **every** response header is declared mocked:
+
+```ts
+const keys = Object.keys(resolveMockHeaders(mock, null));       // e.g. ["content-type"]
+const mockedKeys = new Set(mock.mockedResponseHeaders ?? []);    // absent in the fixture → empty set
+return … && keys.every((key) => mockedKeys.has(key.toLowerCase()));
+```
+
+So a fixture that writes `responseHeaders: { "content-type": … }` **without** `mockedResponseHeaders` is a
+**partial** mock: the engine fetches live headers from the request's own URL. When that URL is
+`http://app.localhost/api/b`, "the request's own URL" is **port 80 of the machine running the test**.
+
+Three consequences, and the middle one is the trap:
+
+- **In a full run it passes** — some other suite is holding `127.0.0.1:80` at that moment, the header fetch
+  succeeds, and only its headers are used. The *body* still comes from the mock, so the assertion is green
+  and reads as meaningful.
+- **In isolation it fails** with `502` and the body *"Could not connect to `http://app.localhost/api/b`"* —
+  which reads like a proxy defect and is not one.
+- **It flips between runs**, so it gets filed as a flake. Measured both directions inside one minute:
+  **4 passed** with a probe listener on `127.0.0.1:80`; **2 failed / 2 passed** without one.
+
+**The fix is in the fixture, not the engine:** declare `mockedResponseHeaders: ["content-type"]`, which makes
+the mock complete and removes the upstream entirely. **The instrument that finds this class is "run the file
+alone"** — a case depending on ambient state fails there and passes in a full run, and that asymmetry *is*
+the diagnosis. Do not reach for "flake" until the file has been run alone and the mechanism named.
+
+**The 502 body is the fingerprint, and it names the branch.** *"Could not connect to"* with an **absolute**
+URL is `routingUtils.ts`'s **mock-merge** failure — the mock matched and then tried to reach the upstream for
+the headers it does not declare. The passthrough sites print `host:port` or a mapping target instead. So the
+page tells you which path you are on, if you read the shape of the URL in it.
 
 
+
+
+
+## A "default port" in a client is a *user-facing setting*, and retiring the port retires the setting
+
+**Measured 2026-09-23, deciding to retire the companion port.**
+
+`../bifurc-extension` carries `companionPort: 9271` in **two** files (`background.js:22`, `popup.js:26`), builds
+its URL as `ws://127.0.0.1:${companionPort}` (`background.js:145–148`), and **lets the popup set the port**
+(`background.js:277`). So "the companion's port moves" is not a constant to edit — it is **a field the user can
+see and change**, and a decision phrased as *"the port is retired"* silently implies **removing a setting**.
+
+The generalisable form: **before treating a port as an implementation detail, grep the client for who writes
+it.** A port that appears in a popup, a settings file or a connection form is part of the UI's contract, and a
+plan that moves it must say what happens to the control — otherwise the control remains, offering a number that
+no longer does anything.
+
+**Corollary, and it is the sharper half: a *deprecated/frozen* contract degrades differently from a live one.**
+The usual rule here — *"extension first, engine second; a new client against an old engine degrades, the
+reverse breaks"* — becomes **"both directions break totally"** once the old contract is scheduled for
+*deletion*. An engine that has deleted the bridge plus an extension that only speaks the old protocol is not a
+degraded pair, it is **no connection at all**. So the deletion step is gated on the client changes having
+**shipped**, not merely on having been written.
+
+## Two config surfaces that "both do the same thing" are not interchangeable — check the *validation*
+
+**Measured 2026-09-23, `legacyCompanion.ts`'s own header, re-verified for the retirement decision.**
+
+The companion's four v1 actions look like aliases of registry commands (`mock:add` → `entity.create`,
+`folder:add` → `folder.add`) and the obvious migration is to map them and delete the bodies. The header
+tabulates why that breaks, and **the differences are not cosmetic**:
+
+| | v1 | registry |
+|---|---|---|
+| mock validation | `"urlPattern is required"` | `…required **for mocks**` |
+| request validation | `"url is required"` | `…required **for requests**` |
+| **duplicate mock** | adds verbatim | **`onAddConflict` DISABLES an existing enabled mock** |
+| blank folder name | refused | **no check** — creates a folder named `"   "` |
+| unknown folder kind | `"Unknown folder kind: bogus"` | `TypeError` from `FOLDER_CONFIG[undefined]` |
+
+**The third row is the trap**: one surface **mutates existing state** where the other only adds, so "just map
+them" would **silently switch off a user's mock**. The generalisable form: **when consolidating two code paths
+that do the same job, diff their *validation and conflict behaviour*, not their *intent*.** Intent is what makes
+them look equivalent; validation and conflict handling is where the user-visible difference lives.
+
+**And a test that asserts a contract's exact strings dies with the contract.** Four of these strings are
+asserted verbatim by `companionServer.integration.test.ts`; once the path is deleted the suite goes with it, and
+the replacements must be **written for the new surface** — copying them across would assert a message the new
+code does not produce.
+
+## `git checkout HEAD -- <dir>` can report success and restore **nothing** — verify on disk, and use `git archive` instead
+
+**Measured 2026-09-23, mid-edit, on the companion removal.**
+
+The whole `tests/` directory (94 tracked files) vanished from the working tree. `git status` showed 90+ as
+` D` (unstaged deletions) while `git ls-files tests/` still listed all 94 — and the reflog was **clean**: no
+`reset`, no `checkout`, no `rebase`, HEAD unmoved. So it was a working-tree deletion with the objects intact.
+
+**The trap is the recovery, not the loss.** `git checkout HEAD -- tests/` **exited 0 and restored nothing**:
+
+```
+$ git checkout HEAD -- tests/
+restore exit=0
+$ ls tests/
+ls: cannot access 'tests/': No such file or directory
+```
+
+A second attempt with `git rm` then failed with *"pathspec did not match any files"* — the index and the disk
+had diverged in a way `checkout` does not reconcile when the whole directory is gone.
+
+**What worked, first try: `git archive`.**
+
+```
+git archive HEAD tests/ | tar -x
+```
+
+94 files back, `find tests -name "*.ts" | wc -l` = **94**, and `git status --short tests/` afterwards showed
+**only the two files I had meant to delete**. `git archive` writes files from the object store and does not go
+through the index/worktree reconciliation that `checkout` does, which is why it is the reliable form here.
+
+**Two rules that follow.**
+
+1. **After any recovery command, verify on disk — never trust the exit code.** `ls`/`find | wc -l`, then
+   `git diff --stat HEAD -- <path>` to confirm the diff is *only* what you intended. Both of the failed
+   commands exited **0**.
+2. **`git archive HEAD <path> | tar -x` is the recovery for "a whole directory disappeared", and it is
+   additive-safe**: it cannot delete anything, so it is safe to run on a tree that is *partly* correct — which
+   `checkout --` and `restore` are not obviously not.
+
+**And: an unexplained working-tree deletion is a question, not a finding.** The cause of the original
+deletion was never established, and it was not attributed to the `git rm -r tests/companion/` that ran
+immediately before it — that command named two files and staged exactly two (`git status` proved it: the rest
+were unstaged). **The rule that kept it cheap was "check the object store before assuming data loss":**
+`git ls-files | wc -l` said 94 and `git show HEAD:tests/...` printed the file, so the files were never at risk —
+only their working copies were. **Look at `git ls-files` and `git show` before panicking or before running
+anything destructive.**
+
+---
+
+## Removing a flag: a grep that misses an extension misses a *live call site*
+
+Found 2026-09-24, removing `plan/15` work item 9's `--domain`.
+
+The sweep was `grep -rn -- "--domain" --include="*.ts" --include="*.md" --include="*.json" --include="*.yml"
+--include="*.js" .` — **no `*.mjs`**. It found the parser, the `Dockerfile`, the compose file and `DOCKER.md`.
+It **missed `scripts/verify-web-reconnect.mjs`, which passed `--domain localhost` in a real `spawn`** — so the
+removal would have broken the reconnect verification with `unrecognised flag "--domain"` the next time anyone
+ran it, and **nothing in the suite would have caught it, because that script is not a test.**
+
+**Two rules, and the second is the one that generalises:**
+
+1. **Grep for the *string*, not for a file type.** `grep -rn -- "--domain" .` with the exclusions you actually
+   want (`node_modules`, `dist`, `coverage`) *is* the sweep; an `--include` list is a guess about where a flag
+   lives, and a spawn site lives wherever somebody wrote a spawn.
+2. **A removed flag has two failure shapes, and only one is a compile error.** A *typed* option that is deleted
+   fails loudly at `tsc`. A *string* handed to `spawn` — or written into a `Dockerfile`'s `CMD`, or quoted in a
+   docblock's example — fails at runtime, in the one kind of artifact no test imports. **Enumerate the spawn
+   sites by hand.** And **prefer making the parser *refuse* a removed flag over ignoring it**: that is what turns
+   a silent no-op into a diagnosis, and it is why the image's stale `CMD` had to be updated in the same change
+   rather than left to fail at deploy time.
+
+## Removing a feature invalidates the *skills* that teach it, and they live outside the repo
+
+Found 2026-09-25, the day after the `--domain` removal, by accident.
+
+The repo sweep was **clean** — every remaining hit was text the change itself had written. But the
+**procedural** documentation is not in the repo: it is `~/.workbuddy-ai/skills/*/SKILL.md`, so
+`grep -rn … .` from the repository root cannot see it. And two skills had gone stale in a way a README could
+not:
+
+- `bifurc-host-cli-flag` used `--domain` as **the** worked example of the *required-flag pattern* ("two now:
+  `--data-dir` and `--domain`"), carried a mutation table for code that no longer exists, and named
+  `--domain` in its **description** — the field that decides whether the skill loads at all. So the skill
+  still taught the flag as live, and would have loaded *because* of the removed flag.
+- `bifurc-edge-router` called §3.3's write-time collision refusal *"a possible follow-up"* while `plan/15`
+  recorded it as **withdrawn** — a skill contradicting the plan it points at as the authority.
+
+**Three rules:**
+
+1. **A removal is not finished until the skills are swept.**
+   `grep -rn -- "<the flag>" ~/.workbuddy-ai/skills/`. A stale README misleads a human once; a stale *skill*
+   is loaded as instructions and misleads every future session — it is the more expensive of the two, and the
+   one nobody greps for.
+2. **Separate the *rule* from the *instance*.** The rule survived here (*"a flag whose consumers are all
+   unbuilt must still be read by something"*) and so did the assertion that made it concrete
+   (`expect("x" in response).toBe(false)`); only the flag died. So the fix is to **re-point the example** and
+   mark the mutation table **RETIRED, with the reason**, keeping the rows whose subject still exists — not to
+   delete the section. Deleting it loses a lesson that cost days; leaving it unmarked teaches code that is
+   gone.
+3. **A mutation table is executable documentation of a shape that no longer exists.** It reads as a
+   procedure, so it is re-run as one. Either retire it explicitly or it becomes a set of anchors that no
+   longer match — which the recipe's own `includes` check will report as `ANCHOR MISSING`, i.e. as a *bug in
+   the mutation*, not as a stale skill.
+
+**And the inverse, which is the same insight from the other side:** a flag's *justification* expires too.
+`--domain` was required on the reasoning *"a wrong default is worse than no default"* — correct while the
+value was an operator's choice. When the product decided the answer, the flag was **deleted**, not defaulted.
+*"Required"* is a claim about the world, so a required flag is a claim with an expiry date; when it lapses the
+fix is removal, and **a defaulted flag is just an inert flag with extra steps.**
+
+## A trivial probe test is how you tell "my change broke collection" from "the runner is broken"
+
+Found 2026-09-25, mid-refactor of the port model, when every suite in the unit project failed at once.
+
+The failure looked like it was mine: **every** test file failed at collection with
+`TypeError: Cannot read properties of undefined (reading 'config')`, and the error was pinned to the *last line
+of the file being tested* — which reads exactly like "this file's module graph is broken, and I just changed
+the module graph". Two of the failing files were ones I had never touched, but that is weak evidence when a
+shared module is in play, and the honest next move looked like bisecting the diff.
+
+**The instrument that settles it in one step, and it is cheaper than a revert:** write a throwaway
+`tests/__probe.test.ts` containing nothing but an import-free `expect(1).toBe(1)`, run it, delete it.
+
+```bash
+printf 'import { describe, it, expect } from "vitest";\ndescribe("probe", () => { it("c", () => { expect(1).toBe(1); }); });\n' > tests/__probe.test.ts
+npx vitest run --project unit tests/__probe.test.ts 2>&1 | grep -E "Tests |Test Files |Error"
+rm -f tests/__probe.test.ts
+```
+
+It failed **identically**. A test with zero project imports cannot be affected by a source edit, so the runner
+was broken and no amount of diffing would have found anything.
+
+**Four rules:**
+
+1. **Read the phase timings before reading the diff.** `transform 23ms, setup 79ms, import 0ms` means the
+   module was *never imported* — so the failure is in collection or setup, and nothing in the test file's own
+   imports is implicated. An error attributed to a file's last line with `import 0ms` is the signature.
+2. **Prove the failure is reachable by *any* test before bisecting.** This is the same move as the mutation
+   recipe's `ANCHOR MISSING` guard — it tells you whether you are measuring the thing you think you are.
+3. **It also rules out "one of my edits is a syntax error" without touching git** — which matters here, because
+   `git stash` and `git checkout -- <file>` are both destructive in this repo, and a probe costs nothing.
+4. **A runner that dies at setup *plus* `npm ls` failing with its own internal error
+   (`Cannot read properties of null (reading 'edgesOut')`) points at `node_modules`/lockfile integrity**, not
+   at your change. The repair is `npm ci`, which rewrites `node_modules` — that is a **decision for the owner**,
+   never a silent agent action, because it can pull the ground out from under a live dev session.
+
+**And the thing to say out loud afterwards:** the new code is then *typecheck-verified but suite-unverified*.
+Call the expected delta a **prediction**, not a measurement, and re-measure before building further on it.
+
+## A "zero delta" prediction cannot see a mock that replaces a whole module
+
+`plan/17` §4 was additive to the product — three exports added, one removed — and it was **predicted** to
+produce a delta of zero. It produced **−10**: every case in `tests/store/config.test.ts` failed with
+`No "DEFAULT_WEBHOOK_PORT" export is defined on the "@bifurc/engine/store/appSettings" mock`.
+
+The mechanism is the one thing an additive change can still break. The test's mock was a **whole-module
+replacement**:
+
+```ts
+vi.mock("@bifurc/engine/store/appSettings", () => ({ loadSettings: vi.fn(), saveSettings: vi.fn() }));
+```
+
+That is fine while `config.ts` reads only the two stubbed functions. The moment it starts reading
+`DEFAULT_FORWARD_PROXY_PORT`, the mock's *absence* of that export becomes the failure — at a line that has
+nothing to do with the change.
+
+**Fix, and the shape to write from the start for any module whose *constants* are read elsewhere:**
+
+```ts
+vi.mock("@bifurc/engine/store/appSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/store/appSettings")>()),
+  loadSettings: vi.fn(),
+  saveSettings: vi.fn(),
+}));
+```
+
+**Rule:** a folded `vi.mock` is a claim that nothing outside the stubbed functions will ever be read. Adding an
+export to that module quietly makes the claim false. **When a change is "additive", grep for whole-module mocks
+of the module you added to** — that is the only place an addition can still break something.
+
+## Deleting a class takes its contracts with it, not just its callers
+
+`plan/17` WI 1 deleted `WorkspaceRuntime`, whose stated job was "compose a forward proxy and a webhook
+receiver". It also **awaited their readiness**:
+
+```ts
+proxy.start(proxyPort); webhook.start(webhookPort);
+await Promise.all([waitUntilReady(() => proxy.isRunning(), () => proxy.getError()), …]);
+```
+
+Both `start()`s hand off to an async `listen()` and return, so without that wait `host.start()` resolved
+**before its listeners bound** — and `status()` reads a port through `isRunning()` (`server.listening`), so
+`forwardProxyPort` and `edgePort` came back `null` for listeners that came up milliseconds later.
+
+Nothing in the deletion's own description mentioned a wait, because a wait is not a listener. **The compiler
+cannot see it either** — every call site still typechecked; the only symptom was a `null` where a number was
+expected, in the one suite that read `status()` straight after `start()`.
+
+**Rules:** before deleting a class, list what its **methods guarantee** — a readiness wait, an idempotence
+guard, a `finally`, a cleanup — not only what its fields hold, then decide where each guarantee goes. And a
+`start()` that returns before `listen()` completes is a **contract**, not an implementation detail: if a caller
+can read a status immediately afterwards, the wait belongs inside `start()`.
+
+## A process-global binding needs its unbind, and `stop()` is where it goes
+
+`bindProxyInstance()` / `bindWebhookInstance()` set **module-level** state in `proxy/server.ts` and
+`proxy/webhookServer.ts`; every module function in those files then acts on whatever is bound. `host.start()`
+binds them — that is how `server.*` / `webhookServer.*` reach a headless host's listeners — and the first draft
+left them bound on `stop()`, with a plausible reason: a stopped instance answers `isRunning() === false` with
+its last error intact, which is a *truthful* answer to `server.status`.
+
+The cost is that a stopped host stays the **module-wide authority** for the whole process: `startServer()` from
+any later caller resurrects *that* host's instance instead of building a fresh one. The CLI cannot notice —
+it has exactly one lifecycle. **The test worker can**, and `facadeBinding.integration.test.ts` already records
+the rule in its own teardown: *"Unbind before releasing the overrides: a leak here would redirect every later
+integration test in this worker."*
+
+**Rule:** if `start()` binds a module-level override, `stop()` unbinds it. "The stale value is informative"
+loses to "the stale value is global" — and check whether another suite already documents the hazard, because
+it probably does.
+
+## A criterion can flip while its subject survives — invert it, do not delete it
+
+Three suites asserted P14 WI 4's *"the pointer and the proxies are independent"*, and `plan/17` §1 reversed
+that rule. The temptation is deletion, since they now assert the opposite of the truth. **That is the wrong
+move: the old rule was not wrong, it was right for N listeners.** Each case was **inverted** with its reasoning
+recorded, which converts it into the guard for the *new* rule and keeps the record of why the answer changed.
+
+**The tell that a case is this kind and not merely stale: it fails with the value the new rule predicts.** One
+read `{from: "second"}` where it expected `{from: "mock"}` — the code did exactly what the new model says, and
+the *assertion* was the outdated half. A stale test fails with an unrelated value; a flipped criterion fails
+with the correct one.
+
+**Corollary — a rewritten test can pin a gap.** `webhookWorkspaceScope`'s cross-port isolation became
+**unstatable** (one receiver, one port), and the honest replacement was not deletion but an assertion of the new
+shape **plus an explicit pin on the capability that was lost**, with a failure message naming it. A gap
+described only in a comment is read once; a gap with an assertion fails the moment someone changes the
+behaviour, which forces the change to be deliberate.
+
+## A recorded blocker is not a standing fact
+
+`plan/17` §7 said **"No suite can run"** and forbade proceeding. It was a detailed, well-evidenced diagnosis —
+probe test, phase timings, `npm ls` failure — from a previous session. Re-measured before anything was touched:
+**11/11 passed**, no `npm ci` needed.
+
+This is *"a failure you cannot attribute is a question, not a finding"* one step further: **a failure you
+attributed last week is a claim about last week's environment.** A blocked plan stops all work behind it, so a
+stale blocker is expensive in a way a stale assertion is not.
+
+**Rule:** before treating a recorded blocker as current, spend one command re-measuring it and date the result.
+Then **replace the section rather than deleting it** — keep the old diagnosis in a collapsed block, because the
+fact that it once looked conclusive is itself the lesson.
+
+## A fix at the entry point misses every composition that bypasses it
+
+`plan/17` work item 7 gave the edge a module-level binding so a settings save could re-bind it. The binding was
+added where the edge is created — `index.ts` (`createEngine`) and `runtime/host.ts` — and both are correct and
+both are tested. **`src/main.ts`, the *desktop's* composition, does not call `createEngine()`**: it builds the
+proxy, the webhook and the edge itself, which is exactly why it already called `bindProxyInstance()` and
+`bindWebhookInstance()`. So the feature would have been a **silent no-op on the desktop** — the platform it
+exists for — with every suite green.
+
+**The grep that finds this is the one for the *factory*, not for the entry point.** `grep -rn createEdgeRouter`
+lists all three compositions, one line each; `grep -rn createEngine` lists two and cannot see the third. The
+general rule: when a change is *"register X with Y"*, search for **every place X is constructed** — a
+registration is only as good as the number of constructors you found.
+
+**And the failure is silent by construction when the facade has no lazy default.** `restartEdge()` on an unbound
+handle is a no-op *on purpose*, because a lazily created edge would answer **503 for every request** — worse
+than doing nothing, since it looks like a bug rather than an unbound handle. That is the right design, and it is
+precisely why the missing call had no symptom. A no-op that is correct in isolation is invisible in aggregate;
+the only defence is enumerating constructors.
+
+## A replacement is not an addition — count the cases, do not remember writing one
+
+Work item 7 inverted two `settingsMutations` cases and wrote two new ones. The delta was recorded as **+1**,
+from the memory of writing a case that had not existed before. Measured: the suite reports **31 tests** in both
+the pre-change and post-change full-run logs, so the true delta is **`0` tests / `0` files**.
+
+**The tell is that the claimed delta had no *mechanism* to name.** `+1` could not be attributed to a file, and
+this project's own rule — *a delta is the signal; name its mechanism* — says an unattributable delta is not a
+delta but an inference. An inversion plus an addition in the same block *looks* like one edit; only the
+before/after counts separate them.
+
+**Rule:** for a change to a test file, compare the file's count before and after — one command over the two
+full-run logs: `grep -E '<file> \([0-9]+ tests' <old-log> <new-log>`.
+
+## A green typecheck is not evidence about `tests/`
+
+`npm run typecheck` is `build:packages && typecheck:packages && tsc --noEmit`, and the root `tsconfig.json` is
+`include: ["src/**/*"]`. **No tsconfig in the tree includes `tests/`** — `typecheck:renderer` covers
+`packages/gui` + `renderer/`, `typecheck:e2e` covers `e2e/`, and the root covers `src/`.
+
+Measured 2026-09-25 (`plan/17` WI 8). Removing twelve client methods and three entity kinds left every test file
+that referenced them syntactically intact — they still imported `initGrpcMockState`, still called
+`createEntity("graphqlMocks", …)` — and `npm run typecheck` exited **`0` with zero `error TS` lines**. The
+breakage surfaced only when vitest ran: **22 failures across 4 files**, none of them a compile error.
+
+**The tell is that `tsc --noEmit` printed *nothing*, when the change plainly had a test-layer blast radius.** An
+empty error list after removing a public export is a signal about the *instrument*, not about the tree.
+
+**Rule:** after removing an export, a kind or a command, **run the suite** — a green typecheck says nothing about
+`tests/`. To enumerate the call sites, grep `tests/` for the removed *names*; `tsc` will not do it for you.
+
+## A kind that is unroutable in one suite may be perfectly routable in production
+
+`createEntity("mocks", …)` throws `kind "mocks" is not routed through the CommandRegistry yet` in
+`tests/integration/protocolExecution.integration.test.ts`, and **succeeds** in `tests/ipc/handlers.test.ts`.
+
+The mechanism is the harness's registration list, not the kind. The first suite's `beforeAll` calls
+`registerCoreKinds()` plus `registerGraphqlKinds()` / `registerSoapKinds()` / `registerGrpcKinds()` — the three
+*protocol* kind files — and **`registerCrudKinds()` is deliberately not among them**. The second suite goes
+through the shell's `registerIpcHandlers()`, which calls all five. `registerAllEngineKinds()` in
+`packages/engine/src/registerAll.ts` is the full list.
+
+The message cannot distinguish the two cases, and that is deliberate: `entityCrudCommands.ts` documents that an
+*empty* container throws the same string as a genuinely unregistered kind, because collapsing them was judged
+worse than the ambiguity.
+
+**Rule:** before concluding a kind is missing from the engine, check **which `register*Kinds()` the suite
+calls**. A kind can be unroutable in a suite and live in production, and the error blames the kind.
+
+## A counted contract changes without any line mentioning what you removed
+
+`packages/client/tests/surface.test.ts` asserts `expect(SURFACE_KEYS).toHaveLength(144)` plus five per-kind
+counts that sum to it, and `packages/client/tests/client.test.ts` asserts the same total. Removing nine mock CRUD
+methods and three `grpc*MockServer` transport entries changed both files' *numbers* — and **no line in either
+file contains the string `graphqlMocks`, `grpcMocks`, `soapMocks` or `MockServer`**, so a grep for the removed
+names finds neither file.
+
+Measured 2026-09-25: the only client-surface failure in the full run read
+`expected [ 'addEnvironment', …(131) ] to have a length of 144 but got 132` — a bare number with no hint of its
+cause, in a file the removal sweep had no reason to visit.
+
+**Rule:** after removing commands or methods, do not stop at grepping the names. Grep for the **pinned counts**
+and the file that owns the spec (`toHaveLength(` next to a total, a per-category sum, a header table), because a
+count is a contract and it fails by arithmetic rather than by symbol.
+
+## A test that renders a component directly cannot see that its parent never mounts it
+
+`tests/renderer/portsSettings.test.tsx` has eleven cases. Ten render `PortsSettingsSection` **directly**; one
+renders `SettingsPanel`. Measured 2026-09-25: with `<PortsSettingsSection/>` **deleted from `SettingsPanel`**, the
+suite ran `1 failed | 10 passed` — every component-level case stayed green over a component that nothing
+rendered.
+
+The ten are not wrong; they test the component, and it is still correct. The error would be in reading them as
+coverage of the *feature*. A suite that only ever mounts a component proves the component works and says
+**nothing** about whether it is reachable — and reachability is the half `verify:web` found four defects in, in
+code that passed 471 tests.
+
+**Rule:** for a newly added section, panel or route, at least one case must render the **parent** and assert the
+child appears. And when a mutation run reports `1 failed | N passed`, read *which* one failed before calling the
+suite thin: a single failing case that owns reachability is the design working, not a gap.
+
+## `npm ci` validates the workspace set against the lockfile — and it fails in **both** directions
+
+A `Dockerfile` that copies one `package.json` per workspace is **coupling its manifest list to
+`package-lock.json`**, and either mismatch is fatal:
+
+- a manifest **present** for a package the lockfile does not know →
+  `npm error code EUSAGE … Missing: @bifurc/gui@0.1.0 from lock file`;
+- a lockfile entry for a directory that **no longer exists** → npm follows the link and asks the **public
+  registry**: `404 Not Found - GET https://registry.npmjs.org/@bifurc%2fgui`.
+
+Measured 2026-09-26 against the Dockerfile's exact manifest set, both ways, in a temp context. The repo's
+lockfile had **both** problems at once: it still described `apps/web` (`@bifurc/web`, with
+`node_modules/@bifurc/web` pointing at a deleted directory, root `workspaces` still `["packages/*","apps/*"]`)
+and did not describe `packages/gui` at all. So **the image could never have built** — and `npm ci` was broken
+for a fresh clone and for CI independently of Docker. It stayed invisible because the build had never been run;
+`DOCKER.md` said "reviewed rather than exercised", which reads like an untested path and was in fact a
+deterministic failure.
+
+**Rule:** a `Dockerfile` copying workspace manifests must copy **exactly** the lockfile's set, and the way to
+know is `npm ci --dry-run` against that exact set in a temp directory — not reasoning about it. A stale lockfile
+is a hard install failure, not cosmetics. And "reconciling it might change versions" is not a reason to leave it
+broken: measured, it cost **one key removed, two added, zero version changes**.
+
+## A Vite build in a container can ship a stylesheet with **no utilities** and still exit 0
+
+`web/vite.config.ts` sets `root: __dirname` (`web/`), and two config files are found by rules that are not
+"next to the source":
+
+- Vite finds PostCSS config by **walking up** from `root`, so `postcss.config.js` must reach the image's working
+  directory;
+- Tailwind's `content` globs resolve relative to the **working directory**, so `tailwind.config.js` must be
+  there too (its `./renderer/**` glob matching nothing in an image without the Electron entry is harmless).
+
+Measured 2026-09-26, and the intuitive expectation is **wrong**: with both configs absent, `build:web` **exits
+0** and `index.html` **still references a CSS file** — but that file is **20,134 bytes with zero `w-24`
+occurrences**, against **60,042 bytes with one**. No error, no missing stylesheet, an app that renders unstyled.
+
+**Rule:** when a bundler resolves config by walking up or relative to cwd, the image must carry it explicitly,
+and the check is the **output** rather than the exit code. "The build passed" says nothing about whether the
+config was found.
+
+## A curl probe is not a browser: `Accept` decides an SPA fallback, so a default probe gets a 404
+
+`scripts/gui-static-server.mjs` answers a document request for an unknown path with `index.html`, and the test is
+the request's `Accept` naming `text/html` — deliberately, because a browser requests a missing `.js` with a
+wildcard `Accept`, and answering that with HTML turns a broken asset into a confusing parse error.
+
+**curl sends `Accept: */*` by default.** Measured: `GET /deep/route` → `404 text/plain` from curl, and
+`200 text/html` with a document `Accept`. The server was right; **the probe was not a browser.** Same shape one
+layer down: `/assets/nope.js` returns `200 text/html` if the *probe* sends a document `Accept`, because the rule
+is about the request, not the path.
+
+**Rule:** when a server's behaviour is conditioned on a request header, a probe must send the header the real
+client sends, and a mismatch is a question about the probe first. Read the header before reading the status code
+as a defect.
+
+## A shell's exit code for a killed job is not the process's exit code — and Windows cannot catch `SIGTERM`
+
+Two facts that together produced one wrong record:
+
+- **`child.kill("SIGTERM")` on Windows terminates unconditionally.** Measured 2026-09-26: a Node child that
+  installs `process.on("SIGTERM", …)` and logs on entry never logged — the parent saw `code=null
+  signal=SIGTERM`. So a signal-forwarding path (entrypoint → host → `128 + signo`) is **not measurable on this
+  machine**, only in the Linux container via `docker stop`.
+- **A shell reports its own number for a killed job.** The entrypoint's exit was recorded as `143`, "the child's
+  `128+15` propagated" — that `143` came from the **shell**, not the entrypoint. Separately, a
+  `healthcheck exit=23` was a **mislabelled `$?`**: `23` is not a Node exit code, and the script's real status is
+  `1`/`0`, measured against a known-free port through `spawnSync().status` (bash propagates node exits
+  faithfully — `0`→0, `23`→23, `1`→1, controlled).
+
+**Rule:** read a process's status from `spawnSync().status` or its own log, never from a shell's `$?` inside a
+compound command — and when the platform cannot deliver the signal, write **"not measurable here"** rather than
+a number. Same family as the standing rule: an environment's number is not the product's behaviour.

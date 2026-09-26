@@ -30,6 +30,10 @@ coverage-*/
 .nyc_output/
 test-results/
 playwright-report/
+# A raw `--reporter=json` dump, kept beside the tree to diff one run against another.
+# A measurement artifact rather than a ledger: TESTING.md is the ledger, and this file is
+# ~900 KB of per-test timings that no reader opens.
+.vitest-baseline*.json
 
 # ===== Runtime Data =====
 userData/

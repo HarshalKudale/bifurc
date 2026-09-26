@@ -606,9 +606,14 @@ wide in the clear on purpose. Encoding them means the engine cannot be talked in
 unencrypted, remotely-reachable RPC surface by a config typo — the process refuses to start rather than
 exposing one.
 
-**The practical consequence, stated so nobody is surprised: remote mode is not reachable yet.** Nothing
-in the programme sets `allowNonLoopback`, and the TLS path is a pass-through to `node:https` with no test
-behind it. The guard is what makes it safe to leave that work to P9/P12.
+**The practical consequence, stated so nobody is surprised: remote mode was not reachable for six phases.**
+Nothing in the programme set `allowNonLoopback`, and the TLS path is a pass-through to `node:https` with no
+test behind it. The guard is what made it safe to leave that work to P9/P12 — which is where it was picked up:
+**`plan/15` work item 1 closed the first half on 2026-09-23**, adding `--ws-allow-non-loopback` and the
+`--ws-tls-cert`/`--ws-tls-key` pair to the host CLI, with a real `wss://` handshake asserted off loopback in
+`tests/integration/hostBindPolicy.integration.test.ts`. The narrower claim still stands and is the one worth
+remembering: **nothing generates a certificate for this endpoint**, so the material is the operator's to
+supply.
 
 `RESERVED_ACTIONS` and `remoteErrorToEngineError` moved from `stdio.ts` into `types.ts` when this landed,
 so the two serialising transports share one copy of each. `remoteErrorToEngineError` in particular
