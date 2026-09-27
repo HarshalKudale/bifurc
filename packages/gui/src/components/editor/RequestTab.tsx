@@ -246,7 +246,7 @@ export function BottomBar({
         )}
         <button
           onClick={onCancel}
-          className="px-3 py-1.5 rounded border border-border bg-card hover:bg-surface-2 text-muted-foreground text-xs font-medium transition-all cursor-pointer"
+          className="px-3 py-1.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-surface-2/60 text-xs font-medium transition-all cursor-pointer"
         >
           {strings.common.cancel}
         </button>

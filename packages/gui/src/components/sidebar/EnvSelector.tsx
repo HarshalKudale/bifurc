@@ -30,7 +30,7 @@ export default function EnvSelector({ environments, activeId, open, dropdownRef,
         aria-haspopup="menu"
         aria-expanded={open}
         title={strings.titleBar.switchEnvironment}
-        className={`flex min-h-8 items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
+        className={`flex min-h-10 items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
           open
             ? "border-signal/40 bg-signal/10 text-signal"
             : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"

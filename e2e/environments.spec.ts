@@ -5,10 +5,12 @@ import { openEnvironmentsManager } from "./helpers";
  * The Environments manager is reached through the titlebar's environment **dropdown**
  * (`openEnvironmentsManager`).
  *
- * There is no sidebar entry for it, and the reason is easy to get wrong: `environments` **is** in
- * `PANEL_REGISTRY` (`packages/gui/src/lib/panelRegistry.tsx:160`) but carries `showInSidebar: false`, and
- * `enabledPanels` (`:207`) filters exactly those out. No `NavItem` is rendered, so no
- * `nav-environments` testid exists in the DOM. (`settings`, `workspace` and `audit` are the same.)
+ * There is now a sidebar entry for it too: `environments` **is** in
+ * `PANEL_REGISTRY` (`packages/gui/src/lib/panelRegistry.tsx:160`) and since the Signal
+ * restyle no longer carries `showInSidebar: false`, so `enabledPanels` (`:207`) includes
+ * it and a sidebar `NavItem` is rendered. (`settings`, `workspace` and `audit` still
+ * carry `showInSidebar: false`.) The `openEnvironmentsManager` helper below keeps using
+ * the titlebar dropdown path, which works unchanged.
  *
  * This spec used to wrap every step in `if (await locator.isVisible())`, which is the anti-pattern
  * `e2e/helpers/index.ts`'s header calls out: a renamed or missing control produced a *passing* test.

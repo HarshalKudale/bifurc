@@ -33,7 +33,7 @@ export default function RequestPane({
       <TabStrip
         tabs={[
           ...(!reqReadOnly ? [{ id: "params" as const, label: `${strings.editor.params}${reqParamCount > 0 ? ` (${reqParamCount})` : ""}` }] : []),
-          { id: "headers" as const, label: `${strings.editor.headers}${reqHeaderCount > 0 ? ` (${reqHeaderCount})` : ""}` },
+          { id: "headers" as const, label: `${strings.editor.reqHeaders}${reqHeaderCount > 0 ? ` (${reqHeaderCount})` : ""}` },
           { id: "body" as const, label: strings.editor.body },
           ...(!reqReadOnly ? [{ id: "pre-script" as const, label: `${strings.editor.preScript}${preScriptDot}` }] : []),
         ]}

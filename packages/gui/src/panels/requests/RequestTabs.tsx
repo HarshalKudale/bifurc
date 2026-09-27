@@ -18,6 +18,7 @@ interface Props {
   closeOtherTabs: (id: string) => void;
   closeAllTabs: () => void;
   handleDuplicateImpl: (id: string) => void;
+  onTabRename?: (id: string, name: string) => void;
 }
 
 export default function RequestTabs({
@@ -35,6 +36,7 @@ export default function RequestTabs({
   closeOtherTabs,
   closeAllTabs,
   handleDuplicateImpl,
+  onTabRename,
 }: Props) {
   const tabsItems = useMemo(() => {
     return openTabs.map((id) => {
@@ -47,6 +49,7 @@ export default function RequestTabs({
         isDraft: isDraft(id),
         isModified: dirtyTabs[id],
         isRunner: isRunner(id),
+        disableRename: isRunner(id),
         renderTab: () => {
           if (isRunner(id)) {
             return (
@@ -84,6 +87,7 @@ export default function RequestTabs({
       onCloseOthers={closeOtherTabs}
       onCloseAll={closeAllTabs}
       onTabDuplicate={handleDuplicateImpl}
+      onTabRename={onTabRename}
     />
   );
 }

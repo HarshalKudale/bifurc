@@ -33,7 +33,7 @@ textarea {
 }
 
 :focus-visible {
-  outline: 2px solid oklch(var(--signal) / 0.5);
+  outline: 2px solid oklch(var(--signal) / 0.6);
   outline-offset: 2px;
 }
 
@@ -42,6 +42,28 @@ textarea {
 .bg-signal {
   color: oklch(var(--signal-foreground));
 }
+
+/* ── HTTP method badges — tinted wash (12%) + colored text (Signal spec) ─ */
+
+.method-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.method-get    { color: var(--c-method-get);    background: color-mix(in oklab, var(--c-method-get) 13%, transparent); }
+.method-post   { color: var(--c-method-post);   background: color-mix(in oklab, var(--c-method-post) 13%, transparent); }
+.method-put    { color: var(--c-method-put);    background: color-mix(in oklab, var(--c-method-put) 13%, transparent); }
+.method-patch  { color: var(--c-method-patch);  background: color-mix(in oklab, var(--c-method-patch) 13%, transparent); }
+.method-delete { color: var(--c-method-delete); background: color-mix(in oklab, var(--c-method-delete) 13%, transparent); }
+.method-ws     { color: var(--c-method-ws);     background: color-mix(in oklab, var(--c-method-ws) 13%, transparent); }
+.method-other  { color: var(--c-muted-foreground); background: color-mix(in oklab, var(--c-muted-foreground) 13%, transparent); }
 
 /* ── Animations ──────────────────────────────────────────────────────── */
 

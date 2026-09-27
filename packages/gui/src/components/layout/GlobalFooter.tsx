@@ -152,7 +152,9 @@ export default function GlobalFooter({
             <div className="flex items-center gap-1.5">
                 <GitBranch size={10} className="text-muted-foreground flex-shrink-0" />
                 <span className="text-muted-foreground text-[10px]">{hasRemote ? strings.footer.sync : strings.footer.local}</span>
-                <span className="font-mono text-muted-foreground text-[10px]">{branch}</span>
+                {hasRemote && (
+                    <span className="font-mono text-muted-foreground text-[10px]">{branch}</span>
+                )}
                 <span className="text-muted-foreground/50 text-[10px]">·</span>
                 <span className="text-signal text-[10px]">{strings.footer.upToDate}</span>
             </div>

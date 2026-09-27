@@ -68,6 +68,7 @@ export default function RequestsPanel({
     draftTabIds,
     tabLabel,
     tabBadge,
+    renameTab,
     folderViewItems,
     folders,
     itemProtocolMap,
@@ -119,6 +120,7 @@ export default function RequestsPanel({
         closeOtherTabs={closeOtherTabs}
         closeAllTabs={closeAllTabs}
         handleDuplicateImpl={handleDuplicateImpl}
+        onTabRename={renameTab}
       />
 
       <div className="flex-1 overflow-hidden relative">

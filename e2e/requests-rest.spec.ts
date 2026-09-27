@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openPanel, chooseProtocol, uniqueName, pause } from "./helpers";
+import { openPanel, chooseProtocol, uniqueName, pause, renameTab } from "./helpers";
 
 /**
  * REST Requests panel.
@@ -25,7 +25,7 @@ test.describe("REST Requests panel", () => {
             await pause(page, 300);
             await chooseProtocol(page, /REST Request/i);
 
-            await page.getByPlaceholder("Request name (optional)").fill(name);
+            await renameTab(page, name);
             await page
                 .getByPlaceholder("https://example.localhost/endpoint")
                 .fill("https://example.localhost/api/e2e-request");
@@ -51,14 +51,14 @@ test.describe("REST Requests panel", () => {
             await pause(page, 300);
             await chooseProtocol(page, /REST Request/i);
 
-            await page.getByPlaceholder("Request name (optional)").fill(name);
+            await renameTab(page, name);
             await page
                 .getByPlaceholder("https://example.localhost/endpoint")
                 .fill("https://example.localhost/api/e2e-request-update");
             await page.getByRole("button", { name: /Save Request/i }).click();
             await expect(page.locator("body")).toContainText(name);
 
-            await page.getByPlaceholder("Request name (optional)").fill(updated);
+            await renameTab(page, updated);
             await page.getByRole("button", { name: /Update Request/i }).click();
 
             await expect(page.locator("body")).toContainText(updated);

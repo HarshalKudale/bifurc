@@ -9,12 +9,31 @@ export interface RestCurlImportProps {
   curlInput: string;
   onToggleShowCurl: () => void;
   onCurlChange: (v: string) => void;
+  /** Compact mode: render only the textarea (the toggle lives elsewhere). */
+  bare?: boolean;
 }
 
 export function RestCurlImport({
-  tabType, showCurl, curlInput, onToggleShowCurl, onCurlChange
+  tabType, showCurl, curlInput, onToggleShowCurl, onCurlChange, bare = false
 }: RestCurlImportProps) {
   if (tabType === "request") {
+    const textarea = (
+      <textarea
+        className="w-full bg-card border border-border focus:border-signal rounded px-3 py-2 text-xs font-mono text-foreground outline-none resize-none placeholder:text-muted-foreground/50"
+        rows={3}
+        placeholder={strings.requests.curlPlaceholder}
+        value={curlInput}
+        onChange={(e) => onCurlChange(e.target.value)}
+        spellCheck={false}
+      />
+    );
+    if (bare) {
+      return (
+        <div className="px-4 flex-shrink-0 border-b border-border bg-background/30">
+          <div className="py-2">{textarea}</div>
+        </div>
+      );
+    }
     return (
       <div className="px-4 flex-shrink-0 border-b border-border bg-background/30">
         <button
@@ -26,16 +45,7 @@ export function RestCurlImport({
           </span>
           {strings.requests.importFromCurl}
         </button>
-        {showCurl && (
-          <textarea
-            className="w-full bg-card border border-border focus:border-signal rounded px-3 py-2 text-xs font-mono text-foreground outline-none resize-none placeholder:text-muted-foreground/50 mb-2"
-            rows={3}
-            placeholder={strings.requests.curlPlaceholder}
-            value={curlInput}
-            onChange={(e) => onCurlChange(e.target.value)}
-            spellCheck={false}
-          />
-        )}
+        {showCurl && <div className="mb-2">{textarea}</div>}
       </div>
     );
   } else {

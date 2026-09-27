@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openPanel, openEnvironmentsManager, chooseProtocol } from "./helpers";
+import { openPanel, openEnvironmentsManager, chooseProtocol, renameTab } from "./helpers";
 
 test.describe("Application Launch", () => {
     test("window opens with correct title", async ({ page }) => {
@@ -104,7 +104,7 @@ test.describe("Navigation", () => {
         await expect(page.getByText("Select Request Protocol").first()).toBeVisible();
         await chooseProtocol(page, /REST Request/i);
 
-        await page.getByPlaceholder("Request name (optional)").fill("Keyboard Save Test");
+        await renameTab(page, "Keyboard Save Test");
         await page
             .getByPlaceholder("https://example.localhost/endpoint")
             .fill("https://example.localhost/keybind-save-test");

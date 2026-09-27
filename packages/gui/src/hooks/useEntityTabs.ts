@@ -6,6 +6,8 @@ import type { SavedRequest, MockRule } from "@/types";
 export interface PersistableTabHandle {
   refresh?: (entity: unknown) => void;
   save?: () => void;
+  /** Optional rename support (used by double-click tab rename). */
+  rename?: (name: string) => void;
 }
 
 interface Options<T> {

@@ -25,6 +25,8 @@ import { GrpcResponsePane, ResSubTab } from "./GrpcResponsePane";
 export interface GrpcTabHandle {
     save(): Promise<any> | void;
     refresh?(entity: SavedGrpcRequest): void;
+    /** Rename the tab's entity (used by double-click tab rename). Marks the tab dirty. */
+    rename?(name: string): void;
 }
 
 interface Props {
@@ -156,6 +158,9 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
             handleRefresh(entity);
             const freshState = initGrpcRequestState(entity);
             setMetaRows(metadataToRows(freshState.metadata));
+        },
+        rename(name: string) {
+            set("name")(name);
         },
     }), [handleSave, handleRefresh]);
 
