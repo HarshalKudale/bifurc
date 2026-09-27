@@ -73,7 +73,7 @@ function SearchResultItemViewComponent({
       {item.entityType === "service" && item.original?.port && (
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {item.isMapped ? (
-            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-success/15 text-success border border-success/30">
               Mapped
             </span>
           ) : (

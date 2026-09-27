@@ -6,12 +6,13 @@ import { statusColor } from "@/lib/utils";
 
 export function methodColor(method: string): string {
   switch (method.toUpperCase()) {
-    case "GET": return "text-signal";
-    case "POST": return "text-amber";
-    case "PUT": return "text-blue";
-    case "PATCH": return "text-orange";
-    case "DELETE": return "text-destructive";
-    default: return "text-signal";
+    case "GET": return "text-method-get";
+    case "POST": return "text-method-post";
+    case "PUT": return "text-method-put";
+    case "PATCH": return "text-method-patch";
+    case "DELETE": return "text-method-delete";
+    case "WS": return "text-method-ws";
+    default: return "text-muted-foreground";
   }
 }
 
@@ -21,7 +22,7 @@ export function StatusDot({ result }: { result: RunnerRequestResult }) {
   const allPassed = result.tests.every((t) => t.passed);
   const isGood = !hasError && (!hasTests ? (result.status !== null && result.status >= 200 && result.status < 300) : allPassed);
   return isGood
-    ? <CheckCircle2 size={13} className="text-signal flex-shrink-0" />
+    ? <CheckCircle2 size={13} className="text-success flex-shrink-0" />
     : <XCircle size={13} className="text-destructive flex-shrink-0" />;
 }
 
@@ -30,8 +31,8 @@ function getResultCardStyle(result: RunnerRequestResult): { border: string; bg: 
   const hasTests = result.tests.length > 0;
   const allPassed = result.tests.every((t) => t.passed);
   if (hasError || (hasTests && !allPassed)) return { border: "border-destructive/25", bg: "bg-destructive/5", indicator: "bg-destructive" };
-  if (hasTests && allPassed) return { border: "border-signal/25", bg: "bg-signal/5", indicator: "bg-signal" };
-  if (result.status !== null && result.status >= 200 && result.status < 300) return { border: "border-signal/25", bg: "bg-signal/5", indicator: "bg-signal" };
+  if (hasTests && allPassed) return { border: "border-success/25", bg: "bg-success/5", indicator: "bg-success" };
+  if (result.status !== null && result.status >= 200 && result.status < 300) return { border: "border-success/25", bg: "bg-success/5", indicator: "bg-success" };
   if (result.status !== null && result.status >= 400) return { border: "border-destructive/25", bg: "bg-destructive/5", indicator: "bg-destructive" };
   return { border: "border-border/40", bg: "bg-surface/20", indicator: "bg-amber" };
 }

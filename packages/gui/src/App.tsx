@@ -398,7 +398,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
         onOpenSearch={(m) => { setSearchModalMode(m ?? "current"); setSearchModalOpen(true); }}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <nav className="w-[74px] bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden">
+        <nav className="w-[92px] bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden">
           <AppSidebar entries={visiblePanels} activePanel={panel} onPanelSelect={setPanel} badges={navBadges} />
         </nav>
         <main className="flex-1 overflow-hidden flex flex-col min-w-0">{renderPanel(panel, panelRenderCtx)}</main>

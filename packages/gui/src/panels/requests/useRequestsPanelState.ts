@@ -3,7 +3,7 @@ import { AppConfig, SavedRequest, Environment, ApiProtocol } from "@/types";
 import { useMultiplexedEntities } from "@/hooks/useMultiplexedEntities";
 import { useEntityTabs } from "@/hooks/useEntityTabs";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { loadDraft } from "@/hooks/useDraftPersist";
+import { loadDraft, saveDraft } from "@/hooks/useDraftPersist";
 import { strings } from "@/lib/strings";
 
 const DRAFT_PREFIX = "req-draft-";
@@ -209,6 +209,29 @@ export function useRequestsPanelState({
     return item?.methodBadge || "REQ";
   };
 
+  /**
+   * Rename a tab's entity (double-click on the tab). Pushes the new name into
+   * the open editor via its imperative handle so reducer state, the dirty flag
+   * and the draft stay in sync; the tab label is refreshed from the same source
+   * tabLabel() reads. Saved tabs keep the old label until the user saves
+   * (parity with the previous name field behaviour).
+   */
+  const renameTab = useCallback((tabId: string, name: string) => {
+    const ref = tabRefs.current[tabId];
+    if (!ref || typeof ref.rename !== "function") return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    ref.rename(trimmed);
+    if (isDraft(tabId) && !isRunner(tabId)) {
+      if (tabId.startsWith("pending-")) {
+        setPendingData((prev) => (prev[tabId] ? { ...prev, [tabId]: { ...prev[tabId], name: trimmed } } : prev));
+      } else {
+        const d = loadDraft<Record<string, unknown>>(tabId);
+        saveDraft(tabId, { ...(d ?? {}), name: trimmed });
+      }
+    }
+  }, [tabRefs, isDraft, isRunner]);
+
   const folderViewItems = useMemo(() => {
     const items: any[] = [];
     allItemsMap.forEach((it) => {
@@ -265,6 +288,7 @@ export function useRequestsPanelState({
     draftTabIds,
     tabLabel,
     tabBadge,
+    renameTab,
     folderViewItems,
     folders,
     itemProtocolMap,

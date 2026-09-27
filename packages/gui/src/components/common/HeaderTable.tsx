@@ -149,7 +149,7 @@ export default function HeaderTable({ rows, onChange, readOnly = false, emptyMes
             <div className="flex-1 border-r border-border/25 min-w-0">
               <input
                 ref={isFirstRow ? topKeyInputRef : undefined}
-                className="w-full h-full bg-transparent font-mono text-xs px-3 py-2 outline-none focus:bg-card/60 min-w-0"
+                className="w-full h-full bg-transparent font-mono text-xs px-3 py-2 outline-none focus:bg-card/60 min-w-0 placeholder:italic placeholder:opacity-50"
                 style={{ color: "var(--c-signal)" }}
                 placeholder={readOnly ? "—" : strings.editor.placeholderKey}
                 value={row.key}
@@ -160,7 +160,7 @@ export default function HeaderTable({ rows, onChange, readOnly = false, emptyMes
             </div>
             <div className="flex-1 min-w-0">
               <input
-                className="w-full h-full bg-transparent font-mono text-xs text-foreground px-3 py-2 outline-none focus:bg-card/60 min-w-0"
+                className="w-full h-full bg-transparent font-mono text-xs text-foreground px-3 py-2 outline-none focus:bg-card/60 min-w-0 placeholder:italic placeholder:opacity-50"
                 placeholder={readOnly ? "—" : strings.editor.placeholderValue}
                 value={row.value}
                 onChange={(e) => update(row.id, { value: e.target.value })}

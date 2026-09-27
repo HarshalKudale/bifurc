@@ -1,36 +1,53 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Bifurc — Cyberpunk Neon Design Tokens
+   Bifurc — "Signal" Design Tokens
+   Warm charcoal surfaces + signal amber accent (network-hardware inspired).
    OKLCH color system with dark (default) and light modes.
    Tokens are stored as OKLCH channel values (L C H) so Tailwind can
    interpolate alpha via oklch(var(--token) / <alpha-value>).
    Full computed values are available as --c-<name> aliases.
+
+   Accent = action + state only (buttons, active nav, toggles, focus rings).
+   Semantic colors (success/warning/danger/info) carry meaning only.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Dark mode (default) ────────────────────────────────────────────────── */
 
 :root {
-  /* Core surfaces (blue-charcoal, never pure black) */
-  --background:   0.16 0.012 250;
-  --surface:      0.19 0.013 252;
-  --card:         0.20 0.014 252;
-  --surface-2:    0.23 0.015 252;
-  --secondary:    0.26 0.016 252;
-  --accent:       0.28 0.020 252;
-  --border:       0.31 0.016 252;
+  /* Core surfaces (warm charcoal, never pure black) */
+  --background:   0.205 0.014 80;
+  --surface:      0.240 0.014 78;
+  --card:         0.258 0.015 78;
+  --surface-2:    0.285 0.016 82;
+  --secondary:    0.310 0.018 82;
+  --accent:       0.350 0.020 82;
+  --border:       0.330 0.020 82;
 
   /* Text */
-  --foreground:         0.96 0.005 250;
-  --muted-foreground:   0.68 0.018 252;
-  --subtle-text:        0.52 0.016 252;
-  --primary-foreground: 0.18 0.020 190;
+  --foreground:         0.945 0.012 88;
+  --muted-foreground:   0.690 0.018 80;
+  --subtle-text:        0.550 0.018 80;
+  --primary-foreground: 0.260 0.050 62;
 
-  /* Signal & semantic */
-  --signal:             0.84 0.16 172;
-  --signal-foreground:  0.18 0.020 190;
-  --violet:             0.72 0.16 300;
-  --amber:              0.83 0.15 78;
-  --blue:               0.66 0.15 240;
-  --destructive:        0.63 0.21 22;
+  /* Signal amber — the one accent (was emerald) */
+  --signal:             0.820 0.158 74;
+  --signal-foreground:  0.260 0.050 62;
+
+  /* Semantic (meaning only, never brand) */
+  --success:      0.800 0.150 172;
+  --warning:      0.750 0.150 60;
+  --info:         0.700 0.135 240;
+  --violet:       0.720 0.160 300;
+  --amber:        0.750 0.150 60;
+  --blue:         0.660 0.150 240;
+  --destructive:  0.630 0.210 22;
+
+  /* HTTP method hues */
+  --method-get:    0.820 0.090 235;
+  --method-post:   0.870 0.120 170;
+  --method-put:    0.780 0.100 300;
+  --method-patch:  0.870 0.140 85;
+  --method-delete: 0.780 0.100 20;
+  --method-ws:     0.800 0.140 335;
 
   /* Radius */
   --radius-sm: 4px;
@@ -62,6 +79,10 @@
 
   --c-signal:             oklch(var(--signal));
   --c-signal-foreground:  oklch(var(--signal-foreground));
+
+  --c-success:            oklch(var(--success));
+  --c-warning:            oklch(var(--warning));
+  --c-info:               oklch(var(--info));
   --c-violet:             oklch(var(--violet));
   --c-amber:              oklch(var(--amber));
   --c-blue:               oklch(var(--blue));
@@ -103,11 +124,12 @@
 /* ── HTTP method & status colors ──────────────────────────────────────── */
 
 :root {
-  --c-method-get:     var(--c-signal);
-  --c-method-post:    var(--c-amber);
-  --c-method-put:     var(--c-blue);
-  --c-method-patch:   var(--c-amber);
-  --c-method-delete:  var(--c-destructive);
+  --c-method-get:     oklch(var(--method-get));
+  --c-method-post:    oklch(var(--method-post));
+  --c-method-put:     oklch(var(--method-put));
+  --c-method-patch:   oklch(var(--method-patch));
+  --c-method-delete:  oklch(var(--method-delete));
+  --c-method-ws:      oklch(var(--method-ws));
   --c-method-head:    var(--c-violet);
   --c-method-options: var(--c-violet);
 
@@ -119,34 +141,39 @@
 :root {
   --c-sync-new:      var(--c-destructive);
   --c-sync-modified: var(--c-amber);
-  --c-sync-clean:    var(--c-signal);
+  --c-sync-clean:    var(--c-success);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Light mode overrides
+   Light mode overrides — warm paper
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .light {
-  /* Surfaces: light blue-grey */
-  --background:   0.96 0.006 250;
-  --surface:      0.98 0.004 252;
-  --card:         0.97 0.005 252;
-  --surface-2:    0.94 0.008 252;
-  --secondary:    0.91 0.010 252;
-  --accent:       0.89 0.012 252;
-  --border:       0.82 0.015 252;
+  /* Surfaces: warm paper */
+  --background:   0.970 0.008 90;
+  --surface:      1.000 0.000 90;
+  --card:         1.000 0.000 90;
+  --surface-2:    0.930 0.012 85;
+  --secondary:    0.900 0.015 85;
+  --accent:       0.860 0.018 85;
+  --border:       0.830 0.025 82;
 
-  /* Text: dark navy */
-  --foreground:         0.22 0.015 250;
-  --muted-foreground:   0.48 0.015 252;
-  --subtle-text:        0.62 0.012 252;
-  --primary-foreground: 0.98 0.005 172;
+  /* Text: warm near-black */
+  --foreground:         0.250 0.015 78;
+  --muted-foreground:   0.410 0.018 78;
+  --subtle-text:        0.570 0.018 80;
+  --primary-foreground: 1.000 0.000 90;
 
-  /* Signals: deeper for contrast on light backgrounds */
-  --signal:             0.52 0.14 172;
-  --signal-foreground:  0.98 0.005 172;
-  --violet:             0.52 0.16 300;
-  --amber:              0.55 0.14 78;
-  --blue:               0.50 0.14 240;
-  --destructive:        0.50 0.20 22;
+  /* Signal: deeper amber for contrast on paper */
+  --signal:             0.550 0.130 65;
+  --signal-foreground:  1.000 0.000 90;
+
+  /* Semantic: darkened one step for contrast */
+  --success:      0.600 0.130 165;
+  --warning:      0.620 0.160 55;
+  --info:         0.550 0.120 245;
+  --violet:       0.520 0.160 300;
+  --amber:        0.620 0.160 55;
+  --blue:         0.500 0.140 240;
+  --destructive:  0.550 0.190 28;
 }

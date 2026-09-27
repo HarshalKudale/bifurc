@@ -3,6 +3,7 @@ import { RequestLogEntry } from "@/types";
 import { Square, CheckSquare, Ban } from "@/lib/icons";
 import { strings } from "@/lib/strings";
 import { blockKey } from "@/lib/blocks";
+import { methodBadgeClass } from "@/lib/utils";
 import {
   statusColor, fmtTime, fmtDur, urlName, deriveType, fulfilledBy, fulfilledColor, resBodySize,
 } from "./captureUtils";
@@ -83,7 +84,7 @@ export default function CaptureTable({
                   <span className={`block truncate ${blocked ? "line-through" : ""}`}>{urlName(e.url)}</span>
                 </span>
               </td>
-              <td className="px-3 py-1.5 text-signal whitespace-nowrap">{e.method}</td>
+              <td className="px-3 py-1.5 whitespace-nowrap"><span className={methodBadgeClass(e.method)}>{e.method}</span></td>
               <td className={`px-3 py-1.5 whitespace-nowrap font-semibold ${statusColor(e.status)}`}>{e.status ?? "—"}</td>
               <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{TYPE_LABEL[deriveType(e)]}</td>
               <td className={`px-3 py-1.5 whitespace-nowrap ${fulfilledColor(e.via)}`}>{fulfilledBy(e.via)}</td>
