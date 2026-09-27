@@ -19,6 +19,8 @@ export {
   Folder,        // folder closed
   FolderOpen,    // folder open
   LayoutGrid,    // tree/grid view
+  Columns2,      // side-by-side split
+  Rows2,         // stacked split
   Play,          // start / connect / resume
   Square,        // stop server
   Pause,         // pause

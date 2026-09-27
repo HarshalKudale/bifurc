@@ -11,7 +11,7 @@ interface StatusDotProps {
 }
 
 const colorStyles: Record<DotColor, string> = {
-  green:  "var(--c-signal)",
+  green:  "var(--c-success)",
   red:    "var(--c-destructive)",
   yellow: "var(--c-amber)",
   accent: "var(--c-signal)",

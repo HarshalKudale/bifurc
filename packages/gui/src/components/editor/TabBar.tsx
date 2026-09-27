@@ -8,6 +8,8 @@ export interface TabBarTab {
   label: string;
   isDraft?: boolean;
   isModified?: boolean;
+  /** When true, double-click rename is disabled for this tab (e.g. runner tabs). */
+  disableRename?: boolean;
   /** Optional custom renderer for the tab pill content. Receives active state. */
   renderTab?: (isActive: boolean) => React.ReactNode;
 }
@@ -22,6 +24,8 @@ interface Props {
   onCloseOthers?(id: string): void;
   onCloseAll?(): void;
   onReorderTabs?(fromId: string, toId: string, edge?: "left" | "right"): void;
+  /** Called when a tab is renamed via double-click. Absent = rename disabled. */
+  onTabRename?(id: string, name: string): void;
   newTabTitle?: string;
   closeTabTitle?: string;
 }
@@ -36,6 +40,7 @@ export default function TabBar({
   onCloseOthers,
   onCloseAll,
   onReorderTabs,
+  onTabRename,
   newTabTitle = "New tab",
   closeTabTitle = "Close tab",
 }: Props) {
@@ -43,6 +48,9 @@ export default function TabBar({
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
   const [tabCtxMenu, setTabCtxMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  // Inline rename state (double-click a tab to rename)
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   // Drag and drop state
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
@@ -77,6 +85,21 @@ export default function TabBar({
     const el = scrollRef.current.querySelector<HTMLElement>(`[data-tab-id="${activeTab}"]`);
     el?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeTab]);
+
+  // -- Inline rename (double-click) -----------------------------------------
+
+  const commitRename = useCallback(() => {
+    const id = editingTabId;
+    setEditingTabId(null);
+    if (!id || !onTabRename) return;
+    const v = editValue.trim();
+    const tab = tabs.find((t) => t.id === id);
+    if (v && tab && v !== tab.label) onTabRename(id, v);
+  }, [editingTabId, editValue, onTabRename, tabs]);
+
+  const cancelRename = useCallback(() => {
+    setEditingTabId(null);
+  }, []);
 
   return (
     <div className="flex items-end border-b border-border bg-surface flex-shrink-0 h-[38px] min-h-[38px] max-h-[38px] px-1.5 gap-1 select-none">
@@ -135,7 +158,7 @@ export default function TabBar({
             <div
               key={tab.id}
               data-tab-id={tab.id}
-              draggable={Boolean(onReorderTabs)}
+              draggable={Boolean(onReorderTabs) && editingTabId !== tab.id}
               onDragStart={(e) => {
                 setDraggedTabId(tab.id);
                 e.dataTransfer.effectAllowed = "move";
@@ -168,6 +191,12 @@ export default function TabBar({
                 setDropTarget(null);
               }}
               onClick={() => onTabClick(tab.id)}
+              onDoubleClick={(e) => {
+                if (!onTabRename || tab.disableRename) return;
+                e.stopPropagation();
+                setEditingTabId(tab.id);
+                setEditValue(tab.label);
+              }}
               onAuxClick={(e) => {
                 // Middle-click to close tab
                 if (e.button === 1) {
@@ -205,9 +234,32 @@ export default function TabBar({
                 </span>
               )}
 
-              {/* Tab main content */}
+              {/* Tab main content (or rename input while editing) */}
               <div className="flex-1 min-w-0 overflow-hidden flex items-center">
-                {tab.renderTab ? tab.renderTab(isActive) : <span className="truncate">{tab.label}</span>}
+                {editingTabId === tab.id ? (
+                  <input
+                    data-testid="tab-rename-input"
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      else if (e.key === "Escape") cancelRename();
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="w-full bg-card border border-signal rounded px-1.5 py-0.5 text-xs text-foreground outline-none"
+                    aria-label="Rename tab"
+                  />
+                ) : tab.renderTab ? (
+                  tab.renderTab(isActive)
+                ) : (
+                  <span className="truncate">{tab.label}</span>
+                )}
               </div>
 
               {/* Tab close button - visible on tab hover */}

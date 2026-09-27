@@ -25,7 +25,7 @@ function cardBgClass(s: CheckStatus, code: number | null): string {
   if (s === "idle") return "";
   if (s === "checking") return "bg-amber/5";
   if (s === "error") return "bg-destructive/5";
-  if (code !== null && code >= 200 && code < 300) return "bg-signal/5";
+  if (code !== null && code >= 200 && code < 300) return "bg-success/5";
   return "bg-destructive/5";
 }
 

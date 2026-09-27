@@ -4,11 +4,15 @@ import { Environment } from "@/types";
 import { strings } from "@/lib/strings";
 import { KVRow } from "@/lib/utils";
 import { BodyMode } from "@/lib/bodyUtils";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 import RequestPane from "./RequestPane";
 import ResponsePane from "./ResponsePane";
 
 export type EditorMode = "request" | "mock";
+
+/** Orientation of the request/response split pane. */
+export type SplitOrientation = "horizontal" | "vertical";
 
 export interface RequestPaneProps {
   reqTab: "params" | "headers" | "body" | "pre-script";
@@ -68,6 +72,11 @@ export interface ResponsePaneProps {
   testResults?: { name: string; passed: boolean; error?: string; durationMs: number }[];
   testLogs?: string[];
   testRunning?: boolean;
+
+  /** Current request/response split orientation (persisted). */
+  splitOrientation?: SplitOrientation;
+  /** Flips the split between side-by-side and stacked. */
+  onToggleSplitOrientation?: () => void;
 }
 
 export interface EditorTabProps extends RequestPaneProps, ResponsePaneProps {
@@ -98,6 +107,15 @@ const STATUS_OPTIONS = [
 export default function EditorTab(props: EditorTabProps) {
   const { mode, activeEnv = null } = props;
 
+  const [splitOrientation, setSplitOrientation] = usePersistedState<SplitOrientation>(
+    "bifurc:editor-split-orientation",
+    "horizontal",
+    (v) => (v === "vertical" ? "vertical" : "horizontal"),
+  );
+  const toggleSplitOrientation = () =>
+    setSplitOrientation((o) => (o === "horizontal" ? "vertical" : "horizontal"));
+  const isHorizontal = splitOrientation === "horizontal";
+
   if (mode === "mock") {
     return (
       <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -107,13 +125,28 @@ export default function EditorTab(props: EditorTabProps) {
   }
 
   return (
-    <PanelGroup orientation="horizontal" className="flex flex-1 min-h-0 overflow-hidden">
-      <Panel defaultSize={50} minSize={20} className="flex flex-col overflow-hidden">
+    <PanelGroup
+      key={splitOrientation}
+      orientation={splitOrientation}
+      className="flex flex-1 min-h-0 overflow-hidden"
+    >
+      <Panel defaultSize={isHorizontal ? 40 : 50} minSize={20} className="flex flex-col overflow-hidden">
         <RequestPane {...props} activeEnv={activeEnv} />
       </Panel>
-      <ResizeHandle className="w-1 bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-col-resize flex-shrink-0" />
-      <Panel defaultSize={50} minSize={20} className="flex flex-col overflow-hidden">
-        <ResponsePane {...props} activeEnv={activeEnv} />
+      <ResizeHandle
+        className={
+          isHorizontal
+            ? "w-1 bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-col-resize flex-shrink-0"
+            : "h-1 w-full bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-row-resize flex-shrink-0"
+        }
+      />
+      <Panel defaultSize={isHorizontal ? 60 : 50} minSize={20} className="flex flex-col overflow-hidden">
+        <ResponsePane
+          {...props}
+          activeEnv={activeEnv}
+          splitOrientation={splitOrientation}
+          onToggleSplitOrientation={toggleSplitOrientation}
+        />
       </Panel>
     </PanelGroup>
   );

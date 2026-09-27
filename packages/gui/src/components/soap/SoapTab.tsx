@@ -24,6 +24,8 @@ import { useProtocolEditor } from "@/hooks/useProtocolEditor";
 export interface SoapTabHandle {
     refresh(entity: SavedSoapRequest): void;
     save(): void;
+    /** Rename the tab's entity (used by double-click tab rename). Marks the tab dirty. */
+    rename(name: string): void;
 }
 
 // -- Props ------------------------------------------------------------------
@@ -136,6 +138,9 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
         save() {
             return handleSave();
         },
+        rename(name: string) {
+            dispatch({ type: "SET_FIELD", field: "name", value: name });
+        },
     }), [handleRefresh, handleSave]);
 
     const canSave = !(!state.name && !state.endpointUrl);
@@ -179,7 +184,7 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
                         className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1"
                         style={{ background: "var(--c-card)" }}
                     >
-                        <span className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 text-signal flex-shrink-0">{strings.soap.methodPost}</span>
+                        <span className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 text-method-post flex-shrink-0">{strings.soap.methodPost}</span>
                         <input
                             className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-foreground outline-none placeholder:text-muted-foreground min-w-0"
                             placeholder="https://example.com/ws/service"

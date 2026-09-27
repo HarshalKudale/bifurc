@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/electronApp";
 import type { Page } from "@playwright/test";
-import { openEnvironmentsManager } from "./helpers";
+import { openEnvironmentsManager, renameTab } from "./helpers";
 
 test.setTimeout(180_000);
 
@@ -209,11 +209,11 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
 
         await clickNewTab(page, "New request", /^New Request$/i);
         await chooseProtocol(page, /REST Request/i);
-        await page.getByPlaceholder("Request name (optional)").fill(created.restRequest);
+        await renameTab(page, created.restRequest);
         await page.getByPlaceholder("https://example.localhost/endpoint").fill("https://example.localhost/api/e2e");
         await clickSave(page, /Save Request/i);
         await expect(page.locator("body")).toContainText(created.restRequest);
-        await page.getByPlaceholder("Request name (optional)").fill(created.restRequestUpdated);
+        await renameTab(page, created.restRequestUpdated);
         await clickSave(page, /Update Request/i);
         await expect(page.locator("body")).toContainText(created.restRequestUpdated);
 

@@ -98,6 +98,20 @@ export async function chooseProtocol(page: Page, label: RegExp): Promise<void> {
 }
 
 /**
+ * Rename the n-th open editor tab via double-click (the tab bar's inline rename).
+ * Tabs are named via the tab itself since the inline name field was removed from
+ * the request editor header.
+ */
+export async function renameTab(page: Page, name: string, index = 0): Promise<void> {
+    await page.locator("[data-tab-id]").nth(index).dblclick();
+    const input = page.getByTestId("tab-rename-input");
+    await expect(input).toBeVisible({ timeout: 5_000 });
+    await input.fill(name);
+    await input.press("Enter");
+    await expect(input).toBeHidden({ timeout: 5_000 });
+}
+
+/**
  * Open the Environments manager.
  *
  * It is reached through the titlebar's environment **dropdown**, not by a button of its own.
