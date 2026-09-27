@@ -18,7 +18,7 @@ import { contentTypeToMode, isBinaryContentType } from "@/lib/bodyUtils";
 import { strings } from "@/lib/strings";
 import { runPreScript, runPostScript } from "@/lib/scriptRunner";
 import { runTestScript } from "@/lib/testRunner";
-import { ChevronDown } from "@/lib/icons";
+import { ChevronDown, Terminal } from "@/lib/icons";
 
 import { useProtocolEditor } from "@/hooks/useProtocolEditor";
 import { RestCurlImport } from "./RestCurlImport";
@@ -30,6 +30,8 @@ import { useRestActions } from "./useRestActions";
 export interface RestTabHandle {
   refresh(entity: SavedRequest | MockRule): void;
   save(): void;
+  /** Rename the tab's entity (used by double-click tab rename). Marks the tab dirty. */
+  rename(name: string): void;
 }
 
 // -- Props ------------------------------------------------------------------
@@ -143,13 +145,16 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
   const { handleSend, handleTest, handleCreateMock } = useRestActions(state, dispatch, activeEnv, tabType, onCreateMock);
 
-  // Expose imperative handle for save + refresh
+  // Expose imperative handle for save + refresh + rename
   useImperativeHandle(ref, () => ({
     refresh(entity: SavedRequest | MockRule) {
       handleRefresh(entity);
     },
     save() {
       return handleSaveRef.current();
+    },
+    rename(name: string) {
+      dispatch({ type: "SET_FIELD", field: "name", value: name });
     },
   }), [handleRefresh]);
 
@@ -189,19 +194,23 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface">
-      {/* Title bar */}
-      <EditorTitleBar
-        label={titleLabel}
-        namePlaceholder={namePlaceholder}
-        name={state.name}
-        onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}
-        onClose={onClose}
-        enabled={enabled}
-        onToggleEnabled={onToggleEnabled}
-      />
+      {/* Title bar — request tabs rename via double-click on the tab instead;
+          mock tabs keep the inline name field */}
+      {tabType !== "request" && (
+        <EditorTitleBar
+          label={titleLabel}
+          namePlaceholder={namePlaceholder}
+          name={state.name}
+          onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}
+          onClose={onClose}
+          enabled={enabled}
+          onToggleEnabled={onToggleEnabled}
+        />
+      )}
 
-      {/* cURL import - collapsible for request, always open for mock */}
-      {showCurlImport && (
+      {/* cURL import - compact icon button next to Send for requests (textarea below);
+          always-open section for mocks */}
+      {tabType === "mock" && showCurlImport && (
         <RestCurlImport
           tabType={tabType}
           showCurl={state.showCurl}
@@ -227,6 +236,23 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         onEnter={tabType === "request" ? handleSend : undefined}
         activeEnv={activeEnv}
         showRandomizer={tabType !== "mock"}
+        afterButton={
+          tabType === "request" && showCurlImport ? (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
+              title={strings.requests.importFromCurl}
+              aria-label={strings.requests.importFromCurl}
+              className={`p-2.5 rounded border transition-colors cursor-pointer flex-shrink-0 ${
+                state.showCurl
+                  ? "border-signal/50 bg-signal/10 text-signal"
+                  : "border-border text-muted-foreground hover:text-foreground hover:bg-surface-2"
+              }`}
+            >
+              <Terminal size={14} />
+            </button>
+          ) : undefined
+        }
         inputSuffix={
           tabType === "mock" ? (
             <label
@@ -244,6 +270,18 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
           ) : undefined
         }
       />
+
+      {/* cURL textarea (compact) - shown below the URL bar when toggled */}
+      {tabType === "request" && showCurlImport && state.showCurl && (
+        <RestCurlImport
+          bare
+          tabType={tabType}
+          showCurl={state.showCurl}
+          curlInput={state.curlInput}
+          onToggleShowCurl={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
+          onCurlChange={handleCurlChange}
+        />
+      )}
 
       {/* Error banner */}
       {errorMsg && (

@@ -5,6 +5,7 @@ import { IconButton } from "@/components/ui";
 import CodeEditor from "@/components/common/CodeEditor";
 import BinaryViewer from "@/components/common/BinaryViewer";
 import { isBinaryContentType } from "@/lib/bodyUtils";
+import { methodBadgeClass } from "@/lib/utils";
 import { strings } from "@/lib/strings";
 import CaptureHeaderTable from "./CaptureHeaderTable";
 import {
@@ -62,7 +63,7 @@ export default function CaptureDetail({ entry, onClose }: Props) {
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-surface border-l border-border">
       {/* Header */}
       <div className="flex items-center gap-3 px-3 py-2 border-b border-border flex-shrink-0">
-        <span className="font-mono text-xs font-semibold text-signal">{entry.method}</span>
+        <span className={methodBadgeClass(entry.method)}>{entry.method}</span>
         <span className="font-mono text-xs text-muted-foreground truncate flex-1" title={entry.url}>{entry.url}</span>
         {entry.status !== null && (
           <span className={`font-mono text-xs font-bold ${statusColor(entry.status)}`}>{entry.status}</span>

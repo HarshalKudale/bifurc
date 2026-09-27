@@ -7,6 +7,7 @@ import { SavedWebhook, Folder, WebhookPayload } from '@/types';
 import type { WebhookDraft } from '@/panels/WebhooksPanel';
 import { loadDraft, useDraftPersist } from '@/hooks/useDraftPersist';
 import { Webhook } from '@/lib/icons';
+import { methodBadgeClass } from '@/lib/utils';
 import { strings } from '@/lib/strings';
 import CodeEditor from '@/components/common/CodeEditor';
 import EditorTitleBar from '@/components/editor/EditorTitleBar';
@@ -269,7 +270,7 @@ const WebhookEditor = forwardRef<WebhookEditorHandle, WebhookEditorProps>(functi
             <>
               {/* Headers strip */}
               <div className="px-4 py-2 border-b border-border flex-shrink-0 flex items-center gap-3 text-[10px] text-muted-foreground font-mono">
-                <span className="text-signal font-semibold">{selectedPayload.method}</span>
+                <span className={methodBadgeClass(selectedPayload.method)}>{selectedPayload.method}</span>
                 <span>{new Date(selectedPayload.ts).toLocaleString()}</span>
                 {Object.keys(selectedPayload.headers).length > 0 && (
                   <span>{Object.keys(selectedPayload.headers).length} headers</span>

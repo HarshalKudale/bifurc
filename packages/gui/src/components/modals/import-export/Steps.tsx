@@ -168,7 +168,7 @@ export function StepCollision({
 export function StepDone({ step, onClose }: { step: Extract<Step, { name: "done" }>; onClose(): void }) {
   return (
     <div>
-      <div className={`px-4 py-3 rounded border text-sm mb-5 ${step.ok ? "border-signal/30 bg-signal/10 text-signal" : "border-destructive/30 bg-destructive/10 text-destructive"
+      <div className={`px-4 py-3 rounded border text-sm mb-5 ${step.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive"
         }`}>
         {step.message}
       </div>

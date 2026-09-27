@@ -25,6 +25,8 @@ import { useProtocolEditor } from "@/hooks/useProtocolEditor";
 export interface GraphQLTabHandle {
     refresh(entity: SavedGraphQLRequest): void;
     save(): void;
+    /** Rename the tab's entity (used by double-click tab rename). Marks the tab dirty. */
+    rename(name: string): void;
 }
 
 // -- Props ------------------------------------------------------------------
@@ -133,6 +135,9 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         },
         save() {
             return handleSave();
+        },
+        rename(name: string) {
+            dispatch({ type: "SET_FIELD", field: "name", value: name });
         },
     }), [handleRefresh, handleSave]);
 
@@ -270,7 +275,7 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.response}</span>
                             {state.resStatus !== null && (
                                 <>
-                                    <span className={`text-xs font-mono font-bold ${state.resStatus < 300 ? "text-signal" : state.resStatus < 400 ? "text-amber" : "text-destructive"}`}>
+                                    <span className={`text-xs font-mono font-bold ${state.resStatus < 300 ? "text-success" : state.resStatus < 400 ? "text-amber" : "text-destructive"}`}>
                                         {state.resStatus}
                                     </span>
                                     <span className="text-xs text-muted-foreground">{state.resDuration}ms</span>

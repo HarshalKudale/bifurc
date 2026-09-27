@@ -196,7 +196,7 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
     <span
       style={{
         display: "inline-block", width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-        background: isConnected ? "var(--c-signal)" : status === "connecting" ? "var(--c-amber)" : status === "error" ? "var(--c-destructive)" : "var(--c-muted-foreground)",
+        background: isConnected ? "var(--c-success)" : status === "connecting" ? "var(--c-amber)" : status === "error" ? "var(--c-destructive)" : "var(--c-muted-foreground)",
       }}
     />
   );

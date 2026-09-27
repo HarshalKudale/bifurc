@@ -11,6 +11,7 @@ import { ResponsePaneProps, EditorMode } from "./EditorTab";
 import ScriptEditor from "./ScriptEditor";
 import TestsPanel from "./TestsPanel";
 import { TokenToolbar, appendTokenToFocusedRow, insertAtActiveInput } from "./TokenToolbar";
+import { Columns2, Rows2 } from "@/lib/icons";
 
 interface ResponsePaneComponentProps extends ResponsePaneProps {
   mode: EditorMode;
@@ -35,6 +36,7 @@ export default function ResponsePane({
   scriptErr,
   testScript, onTestScriptChange,
   testResults, testLogs, testRunning,
+  splitOrientation, onToggleSplitOrientation,
 }: ResponsePaneComponentProps) {
   const resHeaderCount = (resHeaders ?? []).filter((r) => r.enabled && r.key.trim()).length;
   const resBodyRef = useRef<BodyEditorHandle>(null);
@@ -45,7 +47,7 @@ export default function ResponsePane({
         <TabStrip
           tabs={[
             { id: "body" as const, label: strings.editor.response },
-            { id: "headers" as const, label: `${strings.editor.headers}${resHeaderCount > 0 ? ` (${resHeaderCount})` : ""}` },
+            { id: "headers" as const, label: `${strings.editor.resHeaders}${resHeaderCount > 0 ? ` (${resHeaderCount})` : ""}` },
           ]}
           active={resTab}
           onChange={onResTabChange}
@@ -188,11 +190,11 @@ export default function ResponsePane({
       : "";
 
     return (
-      <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex flex-col h-full overflow-hidden bg-surface-2/30">
         <TabStrip
           tabs={[
             { id: "body" as const, label: strings.editor.response },
-            { id: "headers" as const, label: strings.editor.headers },
+            { id: "headers" as const, label: strings.editor.resHeaders },
             { id: "post-script" as const, label: `${strings.editor.postScript}${postScriptDot}` },
             { id: "tests" as const, label: `${strings.editor.tests}${testScriptDot}${testBadge}` },
           ]}
@@ -200,6 +202,18 @@ export default function ResponsePane({
           onChange={onResTabChange}
           suffix={
             <div className="flex items-center gap-2 pr-3">
+              {onToggleSplitOrientation && (
+                <button
+                  type="button"
+                  onClick={onToggleSplitOrientation}
+                  title={strings.editor.splitLayoutToggle}
+                  aria-label={strings.editor.splitLayoutToggle}
+                  data-testid="split-orientation-toggle"
+                  className="p-1.5 rounded border transition-colors cursor-pointer flex-shrink-0 border-border text-muted-foreground hover:text-foreground hover:bg-surface-2"
+                >
+                  {splitOrientation === "horizontal" ? <Rows2 size={14} /> : <Columns2 size={14} />}
+                </button>
+              )}
               {result && (
                 <span className="text-sm font-bold font-mono" style={{ color: statusColor(result.status) }}>
                   {result.status}

@@ -55,7 +55,7 @@ export function tryFormat(text: string): string {
 }
 
 export function statusColor(code: number): string {
-  if (code < 300) return "var(--c-signal)";
+  if (code < 300) return "var(--c-success)";
   if (code < 400) return "var(--c-amber)";
   return "var(--c-destructive)";
 }
@@ -66,28 +66,30 @@ export const MOCK_METHODS = ["*", ...METHODS];
 
 export const METHOD_HEX: Record<string, string> = {
   "*": "var(--c-muted-foreground)",
-  GET: "var(--c-signal)",
-  POST: "var(--c-amber)",
-  PUT: "var(--c-blue)",
-  PATCH: "var(--c-amber)",
-  DELETE: "var(--c-destructive)",
+  GET: "var(--c-method-get)",
+  POST: "var(--c-method-post)",
+  PUT: "var(--c-method-put)",
+  PATCH: "var(--c-method-patch)",
+  DELETE: "var(--c-method-delete)",
   HEAD: "var(--c-violet)",
   OPTIONS: "var(--c-violet)",
+  WS: "var(--c-method-ws)",
   GQL: "#d946ef",
   GRPC: "#06b6d4",
   SOAP: "#14b8a6",
 };
 
-// Semi-transparent backgrounds for method badges
+// Semi-transparent backgrounds for method badges (12% washes per Signal spec)
 const METHOD_BG: Record<string, string> = {
   "*": "oklch(var(--muted-foreground) / 0.13)",
-  GET: "oklch(var(--signal) / 0.13)",
-  POST: "oklch(var(--amber) / 0.13)",
-  PUT: "oklch(var(--blue) / 0.13)",
-  PATCH: "oklch(var(--amber) / 0.13)",
-  DELETE: "oklch(var(--destructive) / 0.13)",
+  GET: "oklch(var(--method-get) / 0.13)",
+  POST: "oklch(var(--method-post) / 0.13)",
+  PUT: "oklch(var(--method-put) / 0.13)",
+  PATCH: "oklch(var(--method-patch) / 0.13)",
+  DELETE: "oklch(var(--method-delete) / 0.13)",
   HEAD: "oklch(var(--violet) / 0.13)",
   OPTIONS: "oklch(var(--violet) / 0.13)",
+  WS: "oklch(var(--method-ws) / 0.13)",
   GQL: "rgba(217, 70, 239, 0.15)",
   GRPC: "rgba(6, 182, 212, 0.15)",
   SOAP: "rgba(20, 184, 166, 0.15)",
@@ -95,6 +97,19 @@ const METHOD_BG: Record<string, string> = {
 
 export const methodColor = (m: string) => METHOD_HEX[m.toUpperCase()] ?? "var(--c-muted-foreground)";
 export const methodBg = (m: string) => METHOD_BG[m.toUpperCase()] ?? "oklch(var(--muted-foreground) / 0.13)";
+
+/** CSS class for the tinted-wash HTTP method badge (Signal spec). */
+export function methodBadgeClass(m: string): string {
+  switch (m.toUpperCase()) {
+    case "GET": return "method-badge method-get";
+    case "POST": return "method-badge method-post";
+    case "PUT": return "method-badge method-put";
+    case "PATCH": return "method-badge method-patch";
+    case "DELETE": return "method-badge method-delete";
+    case "WS": return "method-badge method-ws";
+    default: return "method-badge method-other";
+  }
+}
 
 // -- Entity file path helpers (mirrors workspaceFs.ts logic, renderer-side) -----
 
