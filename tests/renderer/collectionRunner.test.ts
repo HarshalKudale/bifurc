@@ -1,6 +1,6 @@
 /**
  * Happy-path workflow test for the **Collection Runner** — the engine behind the
- * Run button. `renderer/lib/{collectionRunner,testRunner,runnerReport}.ts` were at
+ * Run button. `packages/gui/src/lib/{collectionRunner,testRunner,runnerReport}.ts` were at
  * **0% coverage**: nothing verified that a run actually walks the folder, applies
  * pre/post scripts, sends the request, evaluates the test script and totals the
  * results.
@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { runCollection, type RunnerRequestResult } from "@/lib/collectionRunner";
 import { runTestScript } from "@/lib/testRunner";
 import { generateHtmlReport, saveRunnerReport, getRunHistory } from "@/lib/runnerReport";
-import { executeIpcScript } from "@/proxy/scriptExecutor";
+import { executeIpcScript } from "@bifurc/engine/proxy/scriptExecutor";
 import type { Environment, SavedRequest } from "@/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

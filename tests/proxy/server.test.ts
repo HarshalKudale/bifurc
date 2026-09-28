@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "events";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
 // Mocked modules — all at top level so they are properly hoisted
 vi.mock("fs");
@@ -12,7 +15,7 @@ let _testProxyRules: any[] = [];
 let _testMappings: any[] = [];
 let _testMocks: any[] = [];
 
-vi.mock("../../src/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/store/workspaceFs", () => ({
   readEnabledSet: vi.fn(() => null),
   bootstrapEnabledSet: vi.fn((_wsId: string, kind: string) => {
     if (kind === "rules") return new Set<string>(_testProxyRules.filter((r) => r.enabled).map((r) => r.id));
@@ -30,8 +33,8 @@ vi.mock("../../src/store/workspaceFs", () => ({
 }));
 
 // Mock store/config at top level so it is effective for the imported server module
-vi.mock("../../src/store/config", () => ({
-  loadConfig: vi.fn(() => ({
+vi.mock("@bifurc/engine/store/config", () => {
+  const loadConfig = vi.fn(() => ({
     port: 8080,
     minimizeToTray: true,
     workspaces: [{ id: "default", name: "Workspace 1", activeEnvironmentId: null }],
@@ -44,16 +47,62 @@ vi.mock("../../src/store/config", () => ({
     requestFolders: [],
     environments: [],
     activeEnvironmentId: null,
-  })),
-  saveConfig: vi.fn(),
-  generateId: vi.fn(() => "test-id"),
-}));
+  }));
+
+  return {
+    loadConfig,
+    /**
+     * Derived from `loadConfig`'s **most recent** return value, rather than by calling it again.
+     *
+     * Both halves of that are load-bearing, and both are the kind of thing this file has already been bitten
+     * by once (see the `loadEnabledSets` wrapper's comment below):
+     *
+     * - **The slice must agree with `loadConfig()`.** `workspaceCfg()` filters the slice's entities by the
+     *   enabled sets, so a slice that disagreed would silently change dispatch for every case here — which is
+     *   exactly what the first version of that instrument did, at a cost of 22 failures.
+     * - **It must not *call* `loadConfig()`.** Several cases assert `toHaveBeenCalledOnce()` on it, and the
+     *   proxy now calls both in sequence, so an extra call from the instrument would fail assertions about a
+     *   different mechanism. `mock.results` is how a test double reports what it was last asked to return.
+     */
+    loadWorkspaceDispatchSlice: vi.fn((wsId: string) => {
+      const results = loadConfig.mock.results;
+      const cfg = (results.length ? results[results.length - 1].value : {}) as any;
+      return {
+        workspaceId: wsId,
+        mocks: cfg.mocks ?? [],
+        mappings: cfg.mappings ?? [],
+        environments: cfg.environments ?? [],
+        activeEnvironmentId: cfg.activeEnvironmentId ?? null,
+      };
+    }),
+    saveConfig: vi.fn(),
+    generateId: vi.fn(() => "test-id"),
+  };
+});
+
+// Mocked so the WI 4 cases can observe *which* workspace the proxy asks for. It is the only place the
+// severed `activeWorkspaceId` read is observable, and it is not part of the instance's public surface.
+//
+// **The wrapper must delegate, not stub.** The first version returned empty enabled sets for every call,
+// which silently changed dispatch for all 74 pre-existing cases in this file (22 failed) — the enabled set
+// decides which mocks and mappings are live. A pass-through spy records the workspace id and then calls the
+// real implementation, so the instrument is inert.
+vi.mock("@bifurc/engine/proxy/serverUtils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@bifurc/engine/proxy/serverUtils")>();
+  return { ...actual, loadEnabledSets: vi.fn(actual.loadEnabledSets) };
+});
 
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig } from "@/store/config";
+import { loadConfig, type AppConfig } from "@bifurc/engine/store/config";
+import { isCALoaded, unloadCA } from "@bifurc/engine/proxy/tlsCert";
+// Imported so the WI 4 cases can override them: which workspace each read asks for is the whole assertion,
+// and it is not observable from the instance's public surface.
+import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
+import { loadEnabledSets } from "@bifurc/engine/proxy/serverUtils";
 import {
+  createProxyServer,
   startServer,
   stopServer,
   isRunning,
@@ -62,9 +111,43 @@ import {
   reloadConfig,
   replayRequest,
   logEmitter,
-} from "@/proxy/server";
+} from "@bifurc/engine/proxy/server";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Poll a predicate until it holds, or fail after ~1s. `start()` binds asynchronously. */
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("waitFor: predicate never became true");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/**
+ * A config shaped for the CA-ownership cases. Deliberately independent of the `baseConfig` declared
+ * inside the dispatch `describe` — that one is scoped there, and the TLS cases need a config whose
+ * `tlsEnabled` / `tlsCaCertPath` / `tlsCaKeyPath` they control per case.
+ */
+function tlsConfig() {
+  return {
+    port: 8080,
+    minimizeToTray: true,
+    workspaces: [{ id: "default", name: "Workspace 1", activeEnvironmentId: null }],
+    activeWorkspaceId: "default",
+    mappings: [],
+    proxyRules: [],
+    mocks: [],
+    requests: [],
+    mockFolders: [],
+    requestFolders: [],
+    environments: [],
+    activeEnvironmentId: null,
+    tlsEnabled: false,
+    tlsCaCertPath: null as string | null,
+    tlsCaKeyPath: null as string | null,
+  };
+}
 
 function makeMockServer() {
   const srv = new EventEmitter() as any;
@@ -97,13 +180,18 @@ function makeMockHttpResponse(
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("src/proxy/server.ts", () => {
+describe("@bifurc/engine/proxy/server", () => {
   let mockSrv: ReturnType<typeof makeMockServer>;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     // Restore loadConfig mock after clearAllMocks resets call history
+    //
+    // **Deliberately partial, and the cast says so** — the forward half reads `port` and the entity lists,
+    // and a complete 37-field `AppConfig` literal would be noise. Same trade as `edge.test.ts`'s fixture, with
+    // the same cost (a *newly read* field would arrive as `undefined` rather than as a compile error). The
+    // tests tree is in no `typecheck` script, so this only surfaces when `tsc` is run over `tests/` by hand.
     vi.mocked(loadConfig).mockReturnValue({
       port: 8080, minimizeToTray: true,
       workspaces: [{ id: "default", name: "Workspace 1", activeEnvironmentId: null }],
@@ -111,7 +199,7 @@ describe("src/proxy/server.ts", () => {
       mappings: [], proxyRules: [],
       mocks: [], requests: [], mockFolders: [], requestFolders: [],
       environments: [], activeEnvironmentId: null,
-    });
+    } as unknown as AppConfig);
 
     mockSrv = makeMockServer();
     vi.mocked(net.createServer).mockReturnValue(mockSrv);
@@ -524,84 +612,12 @@ describe("src/proxy/server.ts", () => {
       vi.mocked(http.request as any).mockReset();
     });
 
-    // ── localhost home page ────────────────────────────────────────────
-
-    it("serves 200 home page for requests to localhost", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "http://localhost/", "localhost");
-      expect(socket.write).toHaveBeenCalled();
-      const written = (socket.write.mock.calls[0][0] as Buffer | string).toString();
-      expect(written).toContain("200");
-    });
-
-    it("includes active mappings in the home page body", () => {
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).toContain("app.localhost");
-    });
-
-    it("home page includes port suffix when port is not 80", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).toContain("8080");
-    });
-
-    it("home page omits port suffix when port is 80", () => {
-      const cfg = { ...baseConfig, port: 80 };
-      vi.mocked(loadConfig).mockReturnValue(cfg as any);
-      capturedConnectionCb = null;
-      const srv = makeMockServer();
-      vi.mocked(net.createServer).mockImplementation((cb: any) => { capturedConnectionCb = cb; return srv; });
-      startServer(80);
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).not.toMatch(/:80(?!\d)/);
-    });
-
-    // ── *.localhost — unmapped ─────────────────────────────────────────
-
-    it("serves 404 for an unmapped *.localhost domain", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/path", "myapp.localhost");
-      const written = (socket.write.mock.calls[0][0] as Buffer | string).toString();
-      expect(written).toContain("404");
-    });
-
-    it("includes 'Not Mapped' text in the 404 response for *.localhost", () => {
-      setupDispatchServer();
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/", "myapp.localhost");
-      const allWritten = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(allWritten).toContain("Not Mapped");
-    });
-
-    it("emits request log entry with status 404 for unmapped *.localhost", () => {
-      setupDispatchServer();
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/path", "myapp.localhost");
-      expect(emitted[0]?.status).toBe(404);
-      expect(emitted[0]?.via).toBe("error");
-      logEmitter.removeAllListeners("request");
-    });
-
-    // ── *.localhost — mapped ───────────────────────────────────────────
-
-    it("calls http.request to proxy to the upstream target for a mapped *.localhost domain", () => {
-      vi.mocked(http.request as any).mockReturnValue(makeMockHttpReq());
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api/users", "app.localhost");
-      expect(http.request).toHaveBeenCalled();
-    });
+    // ── the reverse half is NOT here ────────────────────────────────────
+    //
+    // The home page, the `*.localhost` 404, and the mapping `/` port-suffix cases moved to
+    // `tests/proxy/edge.test.ts` with `plan/15` work item 3, which moved the reverse half onto the edge.
+    // What remains below is the forward half — absolute-form requests and CONNECT — plus the two negatives
+    // that pin this module's *refusal* to answer the reverse half.
 
     // ── CONNECT tunnel ─────────────────────────────────────────────────
 
@@ -912,17 +928,8 @@ describe("src/proxy/server.ts", () => {
 
     // ── Error propagation from upstream ───────────────────────────────
 
-    it("sends 502 when proxyToUpstream request emits an error", async () => {
-      const mockReq = makeMockHttpReq();
-      mockReq.end = vi.fn(() => setImmediate(() => mockReq.emit("error", new Error("ECONNREFUSED"))));
-      vi.mocked(http.request as any).mockImplementation((_o: any, _cb: any) => mockReq);
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:9999", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-      await new Promise<void>((r) => setImmediate(() => setImmediate(r)));
-      const written = socket.write.mock.calls.map((c: any) => c[0].toString()).join("");
-      expect(written).toContain("502");
-    });
+    // `sends 502 when proxyToUpstream request emits an error` moved to `edge.test.ts` — it drove a
+    // `*.localhost` mapping, which is the reverse half.
 
     it("sends 502 when passthroughToUpstream request emits an error", async () => {
       const mockReq = makeMockHttpReq();
@@ -936,49 +943,12 @@ describe("src/proxy/server.ts", () => {
       expect(written).toContain("502");
     });
 
-    // ── proxyToUpstream response path ──────────────────────────────────
-
-    it("sends the proxied response head and body back to client", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = { "content-type": "application/json", "connection": "keep-alive" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-      mockRes.emit("data", Buffer.from('{"result":"ok"}'));
-      mockRes.emit("end");
-      expect(socket.write).toHaveBeenCalled();
-      const head = (socket.write.mock.calls[0][0] as string);
-      expect(head).toContain("HTTP/1.1 200");
-      expect(head).toContain("content-type: application/json");
-    });
-
-    it("emits request log with via=rfc6761 for mapped *.localhost responses", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-      mockRes.emit("data", Buffer.alloc(0));
-      mockRes.emit("end");
-      expect(emitted[0]?.via).toBe("rfc6761");
-      logEmitter.removeAllListeners("request");
-    });
+    // ── the forward half's own response path ───────────────────────────
+    //
+    // `sends the proxied response head and body back to client` and
+    // `emits request log with via=rfc6761 for mapped *.localhost responses` moved to `edge.test.ts` —
+    // both drove a `*.localhost` mapping. What is left is the half that routes on a **rule**, which is the
+    // forward proxy's own mechanism.
 
     it("emits request log with via=rule for proxy-rule-routed responses", () => {
       const mockRes = new EventEmitter() as any;
@@ -1046,48 +1016,9 @@ describe("src/proxy/server.ts", () => {
       expect(socket.write).toHaveBeenCalled();
     });
 
-    it("does not write to socket in proxyToUpstream when socket becomes unwritable", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => {
-        cb(mockRes);
-        return mockReq;
-      });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      socket.writable = false;  // make socket unwritable before response arrives
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      // With unwritable socket, the proxy response should not write and should destroy res
-      expect(mockRes.destroy).toHaveBeenCalled();
-    });
-
-    it("processes array-valued response headers in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      // Array-valued header (e.g. set-cookie can come as an array)
-      mockRes.headers = { "set-cookie": ["a=1; Path=/", "b=2; Path=/"], "content-type": "text/plain" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      expect(socket.write).toHaveBeenCalled();
-      const head = (socket.write.mock.calls[0][0] as string);
-      // set-cookie is a hop-by-hop header alternative; content-type should be in response
-      expect(head).toContain("content-type: text/plain");
-    });
+    // `does not write to socket in proxyToUpstream when socket becomes unwritable` and
+    // `processes array-valued response headers in proxyToUpstream` moved to `edge.test.ts` — both drove a
+    // `*.localhost` mapping. The `passthroughToUpstream` twins below stay: they are the forward half.
 
     it("processes array-valued response headers in passthroughToUpstream", () => {
       const mockRes = new EventEmitter() as any;
@@ -1108,75 +1039,10 @@ describe("src/proxy/server.ts", () => {
       expect(head).toContain("x-custom: val1, val2");
     });
 
-    it("calls socket.destroy when socket becomes unwritable during data reception in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = { "content-type": "text/plain" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      // socket becomes unwritable while data is being received
-      socket.writable = false;
-      mockRes.emit("data", Buffer.from("some response data"));
-      expect(mockRes.destroy).toHaveBeenCalled();
-    });
-
-    it("truncates large response body to 512KB in proxyToUpstream log entry", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      let doneCalled = false;
-      let doneBody = "";
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => {
-        cb(mockRes);
-        return mockReq;
-      });
-
-      const emitted: any[] = [];
-      logEmitter.on("request", (e: any) => emitted.push(e));
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      // Emit more than 512KB of data
-      const largeData = Buffer.alloc(512 * 1024 + 100, "x");
-      mockRes.emit("data", largeData);
-      mockRes.emit("end");
-
-      // The body should be truncated in the log entry
-      expect(emitted[0]?.resBody.length).toBeGreaterThan(0);
-      logEmitter.removeAllListeners("request");
-    });
-
-    it("calls socket.destroy when response emits error in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      mockRes.headers = {};
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      mockRes.emit("error", new Error("response error"));
-      expect(socket.destroy).toHaveBeenCalled();
-    });
+    // `calls socket.destroy when socket becomes unwritable during data reception in proxyToUpstream`,
+    // `truncates large response body to 512KB in proxyToUpstream log entry`, and
+    // `calls socket.destroy when response emits error in proxyToUpstream` moved to `edge.test.ts` — all
+    // three drove a `*.localhost` mapping.
 
     it("uses default port 443 for CONNECT when port part is empty", async () => {
       const upstream = new EventEmitter() as any;
@@ -1198,25 +1064,9 @@ describe("src/proxy/server.ts", () => {
       expect(capturedPort).toBe(443);
     });
 
-    it("filters hop-by-hop headers from the upstream response in proxyToUpstream", () => {
-      const mockRes = new EventEmitter() as any;
-      mockRes.statusCode = 200;
-      mockRes.statusMessage = "OK";
-      // connection is a hop-by-hop header and should be filtered out
-      mockRes.headers = { "connection": "keep-alive", "content-type": "application/json" };
-      mockRes.pipe = vi.fn();
-      mockRes.destroy = vi.fn();
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockImplementation((_o: any, cb: any) => { cb(mockRes); return mockReq; });
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      sendHttp(socket, "GET", "/api", "app.localhost");
-
-      const head = (socket.write.mock.calls[0][0] as string);
-      expect(head).not.toContain("connection: keep-alive");
-      expect(head).toContain("content-type: application/json");
-    });
+    // `filters hop-by-hop headers from the upstream response in proxyToUpstream` and
+    // `writes request body to upstream in proxyToUpstream when body is present` moved to `edge.test.ts` —
+    // both drove a `*.localhost` mapping. Their `passthroughToUpstream` twins stay: the forward half.
 
     it("filters hop-by-hop headers from the upstream response in passthroughToUpstream", () => {
       const mockRes = new EventEmitter() as any;
@@ -1237,20 +1087,6 @@ describe("src/proxy/server.ts", () => {
       expect(head).toContain("x-custom: value");
     });
 
-    it("writes request body to upstream in proxyToUpstream when body is present", () => {
-      const mockReq = makeMockHttpReq();
-      vi.mocked(http.request as any).mockReturnValue(mockReq);
-
-      setupDispatchServer({ ...baseConfig, mappings: [{ id: "m1", domain: "app.localhost", target: "localhost:3000", enabled: true }] });
-      const socket = openConnection();
-      // Send a POST with body
-      const raw = `POST /api HTTP/1.1\r\nHost: app.localhost\r\nContent-Length: 4\r\n\r\nbody`;
-      socket.emit("data", Buffer.from(raw));
-
-      expect(http.request).toHaveBeenCalled();
-      expect(mockReq.write).toHaveBeenCalled();
-    });
-
     it("writes request body to upstream in passthroughToUpstream when body is present", () => {
       const mockReq = makeMockHttpReq();
       vi.mocked(http.request as any).mockReturnValue(mockReq);
@@ -1262,6 +1098,316 @@ describe("src/proxy/server.ts", () => {
 
       expect(http.request).toHaveBeenCalled();
       expect(mockReq.write).toHaveBeenCalled();
+    });
+  });
+
+  // ── createProxyServer() instance isolation (P14 WI 2) ────────────────
+  //
+  // WI 2's whole point is that the six module-level mutables (`server`, `currentPort`,
+  // `currentConfig`, `fullRules`, `lastError`, `enabledSets`) become instance state. The cases
+  // below prove the two halves that matter: two instances do NOT share that state, and the
+  // module-level facade still resolves to exactly ONE instance (no accidental N-by-import).
+
+  describe("createProxyServer() — instance isolation (P14 WI 2)", () => {
+    // The file-level beforeEach installs ONE shared mock server via mockReturnValue. For
+    // isolation cases that is the wrong fixture: `net.createServer` returning the same object
+    // would make two instances share the `net.Server` even after the refactor. Hand each call a
+    // fresh mock so the assertions are about the instance state, not about the mock.
+    beforeEach(() => {
+      vi.mocked(net.createServer).mockImplementation(() => makeMockServer());
+    });
+
+    it("two instances report independent running state", () => {
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+
+      a.start(8080);
+
+      expect(a.isRunning()).toBe(true);
+      // b was never started — if `server` were still module-global, b would read a's server.
+      expect(b.isRunning()).toBe(false);
+
+      a.stop();
+    });
+
+    it("two instances report independent ports", () => {
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+
+      a.start(8080);
+      b.start(8090);
+
+      expect(a.getPort()).toBe(8080);
+      expect(b.getPort()).toBe(8090);
+
+      a.stop();
+      b.stop();
+    });
+
+    it("each instance carries its own workspaceId", () => {
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+      const c = createProxyServer();
+
+      expect(a.workspaceId).toBe("ws-a");
+      expect(b.workspaceId).toBe("ws-b");
+      // Omitted → null, the same default the module-level facade uses.
+      expect(c.workspaceId).toBeNull();
+    });
+
+    it("stopping one instance does not stop the other", () => {
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+
+      a.start(8080);
+      b.start(8090);
+      a.stop();
+
+      expect(a.isRunning()).toBe(false);
+      expect(b.isRunning()).toBe(true);
+
+      b.stop();
+    });
+
+    it("a bind failure lands on the losing instance only", () => {
+      const srv = makeMockServer();
+      srv.listen = vi.fn((_port: number, _host: string) => {
+        // Simulate EADDRINUSE arriving asynchronously, as net.Server does.
+        setTimeout(() => srv.emit("error", Object.assign(new Error("in use"), { code: "EADDRINUSE" })), 0);
+        return srv;
+      });
+      vi.mocked(net.createServer).mockReturnValue(srv);
+
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+
+      a.start(8080);
+
+      // `start()` is fire-and-forget for the error path; wait for the error to land.
+      return waitFor(() => a.getError() !== null).then(() => {
+        expect(a.getError()).toContain("8080");
+        // b never bound anything, so it must not have inherited a's lastError.
+        expect(b.getError()).toBeNull();
+      });
+    });
+
+    it("reloadConfig on one instance does not disturb the other's port", () => {
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+
+      a.start(8080);
+      b.start(8090);
+      a.reloadConfig();
+
+      expect(a.getPort()).toBe(8080);
+      expect(b.getPort()).toBe(8090);
+
+      a.stop();
+      b.stop();
+    });
+  });
+
+  // ── WI 4: each instance serves its OWN workspace's rules ─────────────
+  //
+  // The acceptance criterion is "two workspaces, each serving its own rules", and it must be asserted on
+  // **identity** — each instance reading a rule set the other cannot see — not on a value both could share.
+  // A proxy that read `cfg.activeWorkspaceId` would pass every other case in this file, because with one
+  // workspace there is nothing to confuse it with.
+
+  describe("WI 4 — workspace severance (each instance serves its own rules)", () => {
+    /** Records which workspace each read asks for, and returns a distinguishable rule set per workspace. */
+    function recordEntityReads() {
+      const reads: string[] = [];
+      vi.mocked(readAllEntities).mockImplementation((wsId: string) => {
+        reads.push(wsId);
+        // The identity: only ws-a gets a rule, and it names its own workspace, so a mixed-up read is
+        // detectable rather than plausible.
+        return wsId === "ws-a"
+          ? ([{ id: "rule-a", workspaceId: "ws-a", targetType: "mapping" }] as any)
+          : ([] as any);
+      });
+      // Left delegating to the real implementation — stubbing it here would change dispatch for every
+      // other case in this file (see the note on the `serverUtils` mock).
+      vi.mocked(loadEnabledSets).mockClear();
+      return reads;
+    }
+
+    it("reads its own workspaceId, not cfg.activeWorkspaceId", () => {
+      const reads = recordEntityReads();
+      // The config's active workspace is deliberately a *third* value: if the instance consulted it, the
+      // recorded reads would say "ws-active" and this case would fail on the assertion below.
+      vi.mocked(loadConfig).mockReturnValue({ ...tlsConfig(), activeWorkspaceId: "ws-active" } as any);
+
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      a.start(8080);
+
+      expect(reads).toContain("ws-a");
+      expect(reads).not.toContain("ws-active");
+      a.stop();
+    });
+
+    it("two instances read two different workspaces", () => {
+      const reads = recordEntityReads();
+      vi.mocked(loadConfig).mockReturnValue({ ...tlsConfig(), activeWorkspaceId: "ws-active" } as any);
+
+      const a = createProxyServer({ workspaceId: "ws-a" });
+      const b = createProxyServer({ workspaceId: "ws-b" });
+
+      a.start(8080);
+      b.start(8090);
+
+      expect(reads).toContain("ws-a");
+      expect(reads).toContain("ws-b");
+      a.stop();
+      b.stop();
+    });
+
+    it("an instance with no workspaceId still follows the active workspace (the desktop's path)", () => {
+      // This is the facade's behaviour, and P14 WI 7 keeps it until the desktop adopts the runtime. It is
+      // asserted here so the fallback is *load-bearing* rather than incidental.
+      const reads = recordEntityReads();
+      vi.mocked(loadConfig).mockReturnValue({ ...tlsConfig(), activeWorkspaceId: "ws-active" } as any);
+
+      const facade = createProxyServer();
+      facade.start(8080);
+
+      expect(reads).toContain("ws-active");
+      facade.stop();
+    });
+
+    it("the fallback is re-read on reloadConfig, so the desktop still follows a workspace switch", () => {
+      const reads = recordEntityReads();
+      vi.mocked(loadConfig).mockReturnValue({ ...tlsConfig(), activeWorkspaceId: "ws-first" } as any);
+
+      const facade = createProxyServer();
+      facade.start(8080);
+      expect(reads).toContain("ws-first");
+
+      // The user switches workspace in the UI; the single proxy must follow.
+      vi.mocked(loadConfig).mockReturnValue({ ...tlsConfig(), activeWorkspaceId: "ws-second" } as any);
+      facade.reloadConfig();
+
+      expect(reads).toContain("ws-second");
+      facade.stop();
+    });
+  });
+
+  // ── CA ownership: the shared-TLS-anchor rule (P14 WI 3) ──────────────
+  //
+  // `tlsCert.ts` keeps the CA in module state, so `unloadCA()` is process-global. A host running N
+  // proxies must not let runtime A's stop tear down the CA runtime B is signing with — hence
+  // `ownsCA: false` for host members. These cases exercise the real `tlsCert` module (it is not
+  // mocked in this file), writing a real temp CA pair so `loadCA()` genuinely succeeds.
+
+  describe("CA ownership (ownsCA) — the process-global TLS anchor", () => {
+    let tmpDir: string;
+    let caCertPath: string;
+    let caKeyPath: string;
+    // This file mocks `fs` globally for the dispatch cases, so `fs.mkdtempSync` is a no-op here.
+    // The CA cases need real files on disk — `tlsCert.loadCA()` does a real `readFileSync`.
+    let realFs: typeof import("fs");
+
+    beforeAll(async () => {
+      realFs = await vi.importActual<typeof import("fs")>("fs");
+    });
+
+    beforeEach(() => {
+      // The file-level beforeEach hands every `net.createServer` call the SAME mock object, so a
+      // `stop()` on one instance flips `listening` for both. These cases assert on per-instance
+      // liveness, so each call gets its own mock — same reason as the isolation describe above.
+      vi.mocked(net.createServer).mockImplementation(() => makeMockServer());
+
+      tmpDir = realFs.mkdtempSync(path.join(os.tmpdir(), "proxy-ca-"));
+      caCertPath = path.join(tmpDir, "ca.pem");
+      caKeyPath = path.join(tmpDir, "ca-key.pem");
+      realFs.writeFileSync(caCertPath, "CA_CERT_PEM");
+      realFs.writeFileSync(caKeyPath, "CA_KEY_PEM");
+      unloadCA();
+    });
+
+    afterEach(() => {
+      unloadCA();
+      realFs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("an owning instance unloads the CA on stop (the desktop's behaviour, unchanged)", () => {
+      const cfg = { ...tlsConfig(), tlsEnabled: true, tlsCaCertPath: caCertPath, tlsCaKeyPath: caKeyPath };
+      vi.mocked(loadConfig).mockReturnValue(cfg as any);
+
+      const a = createProxyServer({ workspaceId: "ws-a" }); // ownsCA defaults to true
+      a.start(8080);
+      expect(isCALoaded()).toBe(true);
+      a.stop();
+      expect(isCALoaded()).toBe(false);
+    });
+
+    it("a non-owning instance leaves the shared CA loaded when it stops", () => {
+      const cfg = { ...tlsConfig(), tlsEnabled: true, tlsCaCertPath: caCertPath, tlsCaKeyPath: caKeyPath };
+      vi.mocked(loadConfig).mockReturnValue(cfg as any);
+
+      const a = createProxyServer({ workspaceId: "ws-a", ownsCA: false });
+      const b = createProxyServer({ workspaceId: "ws-b", ownsCA: false });
+
+      a.start(8080);
+      b.start(8090);
+      expect(isCALoaded()).toBe(true);
+
+      a.stop();
+
+      // The point of the option: B is still interpolating, so the CA must survive A's teardown.
+      expect(isCALoaded()).toBe(true);
+      expect(b.isRunning()).toBe(true);
+
+      b.stop();
+      // B does not unload it either — unloading belongs to whoever owns the anchor, not the last
+      // proxy to fall. A host that wants it gone calls unloadCA() itself.
+      expect(isCALoaded()).toBe(true);
+    });
+
+    it("a non-owning instance with TLS off does not clear a sibling's CA", () => {
+      // A is a host member configured with TLS enabled and loads the CA.
+      vi.mocked(loadConfig).mockReturnValue(
+        { ...tlsConfig(), tlsEnabled: true, tlsCaCertPath: caCertPath, tlsCaKeyPath: caKeyPath } as any,
+      );
+      const a = createProxyServer({ workspaceId: "ws-a", ownsCA: false });
+      a.start(8080);
+      expect(isCALoaded()).toBe(true);
+      a.stop();
+      expect(isCALoaded()).toBe(true);
+
+      // B is a host member whose own workspace has TLS off. Pre-P14 it would have called unloadCA()
+      // here and silently broken A's interception.
+      vi.mocked(loadConfig).mockReturnValue({ ...tlsConfig(), tlsEnabled: false } as any);
+      const b = createProxyServer({ workspaceId: "ws-b", ownsCA: false });
+      b.start(8090);
+
+      expect(isCALoaded()).toBe(true);
+      b.stop();
+    });
+  });
+
+  describe("the module-level facade still backs a single default instance", () => {
+    it("startServer() and getPort() read the same instance", () => {
+      startServer(8080);
+      expect(isRunning()).toBe(true);
+      expect(getPort()).toBe(8080);
+    });
+
+    it("isRunning() is false before anything is started", () => {
+      // The facade's default instance is lazy — it is not created until first use. This case
+      // deliberately does not assert the *port*, because vitest shares module state across cases
+      // in a file and a prior case's `currentPort` survives `stop()` (it is only reset by the
+      // next `start()`). The meaningful invariant here is that nothing is listening.
+      expect(isRunning()).toBe(false);
+    });
+
+    it("switching ports through the facade does not resurrect a stopped server", () => {
+      startServer(8080);
+      stopServer();
+      expect(isRunning()).toBe(false);
+      startServer(8090);
+      expect(getPort()).toBe(8090);
+      stopServer();
     });
   });
 });

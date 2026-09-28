@@ -1,11 +1,15 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openPanel, uniqueName } from "./helpers";
+import { openPanel, uniqueName, awaitAutosave } from "./helpers";
 
 /**
  * Proxy Rules panel — real CRUD assertions.
  *
  * Previously these tests were guarded by `if (await locator.isVisible())` and could
  * therefore pass with the panel completely broken.
+ *
+ * The rule editor now has one explicit write — **Create Rule**, which belongs to a rule that has no
+ * id yet — and autosaves every later change one second after the last keystroke. The update test
+ * therefore renames the rule and waits the debounce out rather than clicking an Update button.
  */
 test.describe("Proxy Rules panel", () => {
     test.beforeEach(async ({ page }) => {
@@ -27,7 +31,7 @@ test.describe("Proxy Rules panel", () => {
             await page.getByPlaceholder("^https?://api\\.example\\.com/.*").fill("https://api.example.com/v1/e2e");
             await page.getByRole("radio", { name: /External Host/i }).click();
             await page.getByPlaceholder("api.example.com:8080 or 127.0.0.1:3000").fill("127.0.0.1:3010");
-            await page.getByRole("button", { name: /Save Rule/i }).click();
+            await page.getByRole("button", { name: /Create Rule/i }).click();
 
             await expect(page.locator(`tr:has-text("${name}")`).first()).toBeVisible();
         } finally {
@@ -50,11 +54,13 @@ test.describe("Proxy Rules panel", () => {
             await page.getByPlaceholder("^https?://api\\.example\\.com/.*").fill("https://api.example.com/v1/update-e2e");
             await page.getByRole("radio", { name: /External Host/i }).click();
             await page.getByPlaceholder("api.example.com:8080 or 127.0.0.1:3000").fill("127.0.0.1:3010");
-            await page.getByRole("button", { name: /Save Rule/i }).click();
+            await page.getByRole("button", { name: /Create Rule/i }).click();
             await expect(page.locator(`tr:has-text("${name}")`).first()).toBeVisible();
 
+            // No Update button: the rename autosaves. The row below is rendered from
+            // `config.proxyRules`, so it is the persisted name and not a local label.
             await page.getByPlaceholder("Rule name (optional)").fill(updated);
-            await page.getByRole("button", { name: /Update Rule/i }).click();
+            await awaitAutosave(page);
 
             await expect(page.locator(`tr:has-text("${updated}")`).first()).toBeVisible();
         } finally {
@@ -67,12 +73,12 @@ test.describe("Proxy Rules panel", () => {
         }
     });
 
-    test("does not save a rule when the pattern is missing", async ({ page }) => {
+    test("does not create a rule when the pattern is missing", async ({ page }) => {
         await page.getByRole("button", { name: /Add Rule/i }).first().click();
         await page.getByPlaceholder("Rule name (optional)").fill(uniqueName("NoPattern"));
-        await page.getByRole("button", { name: /Save Rule/i }).click();
+        await page.getByRole("button", { name: /Create Rule/i }).click();
 
-        // Still on the rule editor with the pattern field present — nothing was saved.
+        // Still on the rule editor with the pattern field present — nothing was created.
         await expect(page.getByPlaceholder("^https?://api\\.example\\.com/.*")).toBeVisible();
     });
 });

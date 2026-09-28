@@ -12,8 +12,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as zlib from "zlib";
 import { startUpstream, type UpstreamServer } from "./proxyHarness";
-import { fetchUpstreamResponse } from "@/proxy/responseUtils";
-import type { ProxyRule } from "@/store/config";
+import { fetchUpstreamResponse } from "@bifurc/engine/proxy/responseUtils";
+import type { ProxyRule } from "@bifurc/engine/store/config";
 
 let upstream: UpstreamServer | null = null;
 

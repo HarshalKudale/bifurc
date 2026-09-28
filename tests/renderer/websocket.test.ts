@@ -93,7 +93,7 @@ import {
 
 // ── Registry helper tests ────────────────────────────────────────────────────
 
-describe("renderer/lib/useWebSocket.ts — registry helpers", () => {
+describe("packages/gui/src/lib/useWebSocket.ts — registry helpers", () => {
   it("MAX_WS_CONNECTIONS is 5", () => {
     expect(MAX_WS_CONNECTIONS).toBe(5);
   });

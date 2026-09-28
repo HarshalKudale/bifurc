@@ -9,12 +9,13 @@
  */
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { logEmitter } from "@/proxy/server";
+import { logEmitter } from "@bifurc/engine/proxy/server";
 import {
   createWorkspace,
   startProxy,
   startUpstream,
   proxyRequest,
+  edgeRequest,
   mockFixture,
   mappingFixture,
   type UpstreamServer,
@@ -59,7 +60,7 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/api/users", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/users", host: "app.localhost" });
 
     expect(res.status).toBe(201);
     expect(res.headers["x-mocked"]).toBe("1");
@@ -84,7 +85,7 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/api/users/42", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/users/42", host: "app.localhost" });
 
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ byId: true });
@@ -106,7 +107,7 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { method: "DELETE", target: "/anything", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { method: "DELETE", target: "/anything", host: "app.localhost" });
 
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ any: true });
@@ -132,7 +133,7 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/blob", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/blob", host: "app.localhost" });
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toBe("application/octet-stream");
@@ -158,7 +159,7 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     const listener = (e: any) => entries.push(e);
     logEmitter.on("request", listener);
 
-    await proxyRequest(proxy.port, { target: "/api/users", host: "app.localhost" });
+    await edgeRequest(proxy.edgePort, { target: "/api/users", host: "app.localhost" });
     await new Promise((r) => setTimeout(r, 50));
 
     logEmitter.removeListener("request", listener);
@@ -184,7 +185,7 @@ describe("mocks — selection rules (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { method: "GET", target: "/api/users", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { method: "GET", target: "/api/users", host: "app.localhost" });
 
     expect(JSON.parse(res.body)).toEqual({ live: true });
     expect(upstream.requests).toHaveLength(1);
@@ -207,7 +208,7 @@ describe("mocks — selection rules (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/api/users", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/users", host: "app.localhost" });
 
     expect(JSON.parse(res.body)).toEqual({ live: true });
     expect(upstream.requests).toHaveLength(1);
@@ -228,7 +229,7 @@ describe("mocks — selection rules (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/api/users", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/users", host: "app.localhost" });
 
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ live: true });
@@ -356,7 +357,7 @@ describe("mocks — environment variable resolution (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/api/config", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/config", host: "app.localhost" });
 
     expect(JSON.parse(res.body)).toEqual({ url: "http://real-api.example.com" });
   });
@@ -387,7 +388,7 @@ describe("mocks — environment variable resolution (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/api/cors", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/cors", host: "app.localhost" });
 
     expect(res.headers["access-control-allow-origin"]).toBe("https://myapp.example.com");
   });
@@ -414,7 +415,7 @@ describe("mocks — streaming responses (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/events", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/events", host: "app.localhost" });
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/event-stream");
@@ -443,7 +444,7 @@ describe("mocks — response delay (end-to-end)", () => {
     proxy = await startProxy();
 
     const started = Date.now();
-    const res = await proxyRequest(proxy.port, { target: "/slow", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/slow", host: "app.localhost" });
     const elapsed = Date.now() - started;
 
     expect(res.status).toBe(200);
