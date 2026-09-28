@@ -4,11 +4,10 @@ import Modal from "@/components/common/Modal";
 import PanelHeader from "@/components/layout/PanelHeader";
 import { strings } from "@/lib/strings";
 import { flatEntityRelPath } from "@/lib/utils";
-import { ArrowLeftRight, History, AlertCircle, CheckCircle2 } from "@/lib/icons";
-import { Button, IconButton, Input, FormField, EmptyState, DataTable, ModalFooter, StatusDot, Switch } from "@/components/ui";
+import { ArrowLeftRight, History, AlertCircle, CheckCircle2, Plus, Globe, Server, RotateCcw } from "@/lib/icons";
+import { Button, IconButton, Input, FormField, EmptyState, ModalFooter, StatusDot, Switch } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
-import type { TableColumn } from "@/components/ui";
 
 
 interface Props {
@@ -19,7 +18,7 @@ interface Props {
   onPrefillConsumed?: () => void;
   onHistoryOpen?: (filePath: string) => void;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
-  onPublish?: (entityId: string) => void;
+  onPublish?: (entityId: string) => Promise<void> | void;
   onRevert?: (entityId: string) => void;
 }
 
@@ -77,7 +76,7 @@ export default function MappingsPanel({
 }: Props) {
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
 
-  // The modal is create-only now: an existing mapping is edited in its own table row.
+  // The modal is create-only; existing mappings are edited on their cards.
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<FormState>>({});
@@ -90,6 +89,8 @@ export default function MappingsPanel({
    */
   const [edits, setEdits] = useState<Record<string, MappingEdit>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, Partial<FormState>>>({});
+  const [publishingIds, setPublishingIds] = useState<Record<string, boolean>>({});
+  const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (prefillTarget) {
@@ -217,126 +218,46 @@ export default function MappingsPanel({
     await onConfigChange({ ...config, mappings: config.mappings.map((x) => (x.id === m.id ? { ...x, enabled } : x)) });
   };
 
+  const publish = async (m: LocalMapping) => {
+    if (!onPublish || publishingIds[m.id]) return;
+    const pending = edits[m.id];
+    if (pending) {
+      const errors = {
+        ...(subdomainError(pending.subdomain, config.mappings, m.id) ? { subdomain: subdomainError(pending.subdomain, config.mappings, m.id)! } : {}),
+        ...(targetError(pending.target) ? { target: targetError(pending.target)! } : {}),
+      };
+      if (Object.keys(errors).length) {
+        setRowErrors((prev) => ({ ...prev, [m.id]: errors }));
+        return;
+      }
+    }
+    setPublishingIds((prev) => ({ ...prev, [m.id]: true }));
+    setPublishErrors((prev) => { const next = { ...prev }; delete next[m.id]; return next; });
+    try {
+      // Persist in-progress card edits before committing the entity file.
+      await applyEdits();
+      await onPublish(m.id);
+    } catch (error) {
+      setPublishErrors((prev) => ({ ...prev, [m.id]: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setPublishingIds((prev) => ({ ...prev, [m.id]: false }));
+    }
+  };
+
   const syncDotColor = (syncSt: string | undefined) => {
     if (syncSt === "new" || syncSt === "deleted") return "red" as const;
     if (syncSt === "modified") return "yellow" as const;
     return "green" as const;
   };
 
-  // -- Columns --------------------------------------------------------------
-
-  const columns: TableColumn<LocalMapping>[] = [
-    {
-      key: "status",
-      width: "w-8",
-      render: (m) => {
-        const syncSt = entitySyncStatus?.[flatEntityRelPath("mappings", m.id)];
-        return <div className="flex items-center gap-2">{syncSt && <StatusDot color={syncDotColor(syncSt)} />}</div>;
-      },
-    },
-    {
-      key: "domain",
-      header: strings.mappings.columnDomain,
-      render: (m) => {
-        const v = rowValue(m);
-        const err = rowErrors[m.id]?.subdomain;
-        return (
-          <div className="flex items-center" title={err ?? undefined}>
-            <Input
-              className="flex-1 rounded-l rounded-r-none min-w-0 font-mono text-xs"
-              value={v.subdomain}
-              error={!!err}
-              aria-label={strings.mappings.columnDomain}
-              onChange={(e) => setRowField(m.id, { subdomain: e.target.value })}
-            />
-            <span className="bg-surface-2 border border-l-0 border-border rounded-r px-2 py-1.5 text-[11px] font-mono text-muted-foreground select-none whitespace-nowrap">
-              {strings.mappings.localHostSuffix}
-            </span>
-          </div>
-        );
-      },
-    },
-    {
-      key: "target",
-      header: strings.mappings.columnTarget,
-      render: (m) => {
-        const v = rowValue(m);
-        const err = rowErrors[m.id]?.target;
-        return (
-          <Input
-            className="w-full font-mono text-xs"
-            value={v.target}
-            error={!!err}
-            title={err ?? undefined}
-            aria-label={strings.mappings.columnTarget}
-            onChange={(e) => setRowField(m.id, { target: e.target.value })}
-          />
-        );
-      },
-    },
-    {
-      key: "label",
-      header: strings.mappings.columnLabel,
-      render: (m) => {
-        const v = rowValue(m);
-        return (
-          <Input
-            className="w-full text-xs"
-            value={v.label}
-            placeholder="—"
-            aria-label={strings.mappings.columnLabel}
-            onChange={(e) => setRowField(m.id, { label: e.target.value })}
-          />
-        );
-      },
-    },
-    {
-      key: "on",
-      header: strings.mappings.columnOn,
-      align: "center",
-      width: "w-14",
-      render: (m) => (
-        <div className="flex items-center justify-center">
-          <Switch checked={m.enabled} onChange={(v) => toggleEnabled(m, v)} />
-        </div>
-      ),
-    },
-    {
-      key: "actions",
-      width: "w-24",
-      render: (m) => {
-        const syncSt = entitySyncStatus?.[flatEntityRelPath("mappings", m.id)];
-        return (
-          <div className="flex items-center justify-end gap-1">
-            {onPublish && syncSt && syncSt !== "clean" && (
-              <Button variant="ghost" size="sm" onClick={() => onPublish(m.id)}>{strings.mappings.publish}</Button>
-            )}
-            {onRevert && syncSt && syncSt !== "clean" && (
-              <button
-                onClick={() => onRevert(m.id)}
-                className="px-2.5 py-1 rounded text-amber hover:bg-amber/10 text-xs font-medium transition-all cursor-pointer"
-              >
-                {strings.mappings.revert}
-              </button>
-            )}
-            {onHistoryOpen && (
-              <IconButton
-                icon={<History size={11} />}
-                title={strings.mappings.viewHistory}
-                onClick={() => onHistoryOpen(`mappings/${m.id}.json`)}
-                className="hover:text-signal"
-              />
-            )}
-            <Button variant="danger" size="sm" onClick={() => remove(m.id)}>{strings.common.delete}</Button>
-          </div>
-        );
-      },
-    },
-  ];
-
-  const emptyNode = config.mappings.length === 0
-    ? <EmptyState icon={<ArrowLeftRight size={36} />} title={strings.mappings.noMappingsYet} description={strings.mappings.noMappingsYetHint} />
-    : <EmptyState icon={<ArrowLeftRight size={36} />} title={strings.mappings.noMatchingMappings} description={strings.mappings.noMatchingMappingsHint} />;
+  const emptyNode = <EmptyState
+    fill
+    className="border border-dashed border-border rounded-xl bg-card/40"
+    icon={<ArrowLeftRight size={38} />}
+    title={strings.mappings.noMappingsYet}
+    description={strings.mappings.noMappingsYetHint}
+    action={<Button variant="primary" onClick={openAdd} icon={<Plus size={15} />}>{strings.mappings.addMapping}</Button>}
+  />;
 
   return (
     <>
@@ -358,19 +279,55 @@ export default function MappingsPanel({
                   <span>{strings.common.saved}</span>
                 </span>
               ) : null}
-              <Button variant="primary" onClick={openAdd}>{strings.mappings.addMapping}</Button>
+              <Button variant="primary" onClick={openAdd} icon={<Plus size={15} />}>{strings.mappings.addMapping}</Button>
             </div>
           }
         />
 
         <div className="flex-1 overflow-y-auto p-6">
-          {/* Rows are the editor — every field here writes itself one second after you stop typing. */}
-          <DataTable
-            columns={columns}
-            data={config.mappings}
-            rowKey={(m) => m.id}
-            emptyState={emptyNode}
-          />
+          {config.mappings.length === 0 ? emptyNode : (
+            <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
+              {config.mappings.map((m) => {
+                const value = rowValue(m);
+                const syncSt = entitySyncStatus?.[flatEntityRelPath("mappings", m.id)];
+                const hasSavedVersion = syncSt === "clean" || syncSt === "modified";
+                const changed = syncSt === "new" || syncSt === "modified";
+                const statusText = syncSt === "new" ? strings.mappings.syncNew : syncSt === "modified" ? strings.mappings.syncModified : syncSt === "clean" ? strings.mappings.syncClean : "";
+                return (
+                  <article key={m.id} className="group rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-border/80">
+                    <div className="flex items-start gap-3 border-b border-border/70 px-4 py-4">
+                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-signal/10 text-signal"><Globe size={17} /></div>
+                      <div className="min-w-0 flex-1">
+                        <Input className="w-full border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-foreground shadow-none hover:border-border focus:border-border" value={value.label} placeholder={strings.mappings.titlePlaceholder} aria-label={strings.mappings.columnLabel} onChange={(e) => setRowField(m.id, { label: e.target.value })} />
+                      </div>
+                      <div className="flex items-center gap-2 pt-1">
+                        {syncSt && <span title={statusText} className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><StatusDot color={syncDotColor(syncSt)} />{statusText}</span>}
+                        <Switch checked={m.enabled} onChange={(v) => toggleEnabled(m, v)} />
+                      </div>
+                    </div>
+                    <div className="space-y-3 px-4 py-4">
+                      <FormField label={strings.mappings.subdomainLabel} error={rowErrors[m.id]?.subdomain}>
+                        <div className="flex items-center"><Input className="min-w-0 flex-1 rounded-r-none font-mono text-xs" value={value.subdomain} error={!!rowErrors[m.id]?.subdomain} aria-label={strings.mappings.columnDomain} onChange={(e) => setRowField(m.id, { subdomain: e.target.value })} /></div>
+                        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"><span className="font-mono text-signal">{fullDomain(value.subdomain)}</span></div>
+                      </FormField>
+                      <FormField label={strings.mappings.targetCardLabel} error={rowErrors[m.id]?.target}>
+                        <div className="relative"><Server size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><Input className="w-full pl-9 font-mono text-xs" value={value.target} error={!!rowErrors[m.id]?.target} aria-label={strings.mappings.columnTarget} onChange={(e) => setRowField(m.id, { target: e.target.value })} /></div>
+                      </FormField>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-border/70 px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        {onPublish && changed && <Button variant="secondary" size="sm" disabled={publishingIds[m.id]} onClick={() => void publish(m)}>{publishingIds[m.id] ? strings.footer.publishing : strings.mappings.publish}</Button>}
+                        {onRevert && syncSt === "modified" && <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => onRevert(m.id)}>{strings.mappings.revert}</Button>}
+                        {onHistoryOpen && hasSavedVersion && <IconButton icon={<History size={13} />} title={strings.mappings.viewHistory} onClick={() => onHistoryOpen(`mappings/${m.id}.json`)} className="hover:text-signal" />}
+                      </div>
+                      <Button variant="danger" size="sm" onClick={() => remove(m.id)}>{strings.common.delete}</Button>
+                    </div>
+                    {publishErrors[m.id] && <p role="alert" className="border-t border-destructive/20 px-4 py-2 text-xs text-destructive">{publishErrors[m.id]}</p>}
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <Modal

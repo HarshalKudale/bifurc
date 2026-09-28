@@ -60,11 +60,13 @@ export function usePublishHandlers({
   const makeFlatPublish = useCallback((kind: "mappings") =>
     async (id: string) => {
       const relPath = flatEntityRelPath(kind, id);
-      await window.api.publishEntity(wsId, [relPath]);
+      const result = await window.api.publishEntity(wsId, [relPath]);
+      if (!result.ok) throw new Error(result.error ?? "Publish failed");
+      await refreshConfig();
       refreshEntitySyncStatus(wsId);
       onAfterPublish?.();
     },
-    [wsId, refreshEntitySyncStatus, onAfterPublish]
+    [wsId, refreshConfig, refreshEntitySyncStatus, onAfterPublish]
   );
 
   const makeFlatRevert = useCallback((kind: "mappings") =>
