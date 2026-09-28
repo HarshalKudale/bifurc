@@ -1,5 +1,6 @@
 import { useReducer, useRef, useEffect, useCallback, useState } from "react";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
+import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
 
 export interface ProtocolEditorConfig<
     State,
@@ -76,7 +77,14 @@ export function useProtocolEditor<
     );
 
     const initialSnapshot = useRef(JSON.stringify(stateToDraft(initState(initial ?? null, draft, tabType), tabType)));
-    const isDirty = JSON.stringify(stateToDraft(state, tabType)) !== initialSnapshot.current;
+
+    /**
+     * The serialized draft projection, computed once and shared by the dirty check and the
+     * autosave debounce — so "has the user edited this?" and "should we write it?" cannot drift
+     * apart. Deriving it twice was the obvious way to introduce a save that never fires.
+     */
+    const draftSnapshot = JSON.stringify(stateToDraft(state, tabType));
+    const isDirty = draftSnapshot !== initialSnapshot.current;
 
     useEffect(() => {
         onDirtyChange?.(isDirty);
@@ -89,6 +97,10 @@ export function useProtocolEditor<
     );
 
     const handleSave = useCallback(async () => {
+        // Nothing to write: an existing entity with no edits. Ctrl+S and Sync both route here,
+        // and neither should cost a round-trip on a clean entity. Drafts are exempt — an
+        // untouched new tab still has to be created.
+        if (!draftTabId && !isDirty) return undefined;
         dispatch({ type: "SAVE_START" } as unknown as Action);
         try {
             const payload = stateToSavePayload(state, tabType);
@@ -101,7 +113,23 @@ export function useProtocolEditor<
             dispatch({ type: "SAVE_ERROR", error: e instanceof Error ? e.message : String(e) } as unknown as Action);
             throw e;
         }
-    }, [state, tabType, onSave, markSaved, stateToSavePayload, stateToDraft]);
+    }, [state, tabType, onSave, markSaved, stateToSavePayload, stateToDraft, draftTabId, isDirty]);
+
+    /**
+     * **Autosave is now the only way an existing entity is written** — the Save button is gone.
+     * A draft is excluded: it has no server id yet, so the user creates it explicitly and
+     * autosave takes over from the next edit.
+     */
+    const {
+        saving: autoSaving,
+        savedAt: autoSavedAt,
+        error: autoSaveError,
+        flush: flushSave,
+    } = useDebouncedAutosave({
+        snapshot: draftSnapshot,
+        enabled: !draftTabId,
+        onSave: handleSave,
+    });
 
     const handleRefresh = useCallback((entity: Entity) => {
         dispatch({ type: "REFRESH", entity, tabType } as unknown as Action);
@@ -117,7 +145,10 @@ export function useProtocolEditor<
         try {
             let savedId: string | undefined = undefined;
             if (isDirty || draftTabId) {
-                const res: any = await handleSave();
+                // A draft must go through `handleSave` (it creates); an existing entity goes
+                // through `flushSave`, which also cancels the pending autosave so the same
+                // edit is not written twice — once here and once by the debounce.
+                const res: any = draftTabId ? await handleSave() : await flushSave();
                 if (res && typeof res === "object" && res.id) {
                     savedId = res.id;
                 }
@@ -126,7 +157,7 @@ export function useProtocolEditor<
         } finally {
             setSyncing(false);
         }
-    }, [syncing, onSync, isDirty, draftTabId, handleSave]);
+    }, [syncing, onSync, isDirty, draftTabId, handleSave, flushSave]);
 
     const handleRevertClick = useCallback(async () => {
         if (reverting || !onRevert) return;
@@ -140,6 +171,16 @@ export function useProtocolEditor<
 
     const hasLocalChanges = !draftTabId && Boolean(isDirty || (syncStatus && syncStatus !== "clean"));
 
+    /**
+     * Ctrl+S. A draft is created; an existing entity flushes its pending autosave — which also
+     * cancels the debounce, so the same edit is not written twice (once by the shortcut, once by
+     * the timer that was already scheduled).
+     */
+    const saveNow = useCallback(
+        () => (draftTabId ? handleSave() : flushSave()),
+        [draftTabId, handleSave, flushSave]
+    );
+
     return {
         state,
         dispatch,
@@ -151,5 +192,10 @@ export function useProtocolEditor<
         handleSyncClick,
         handleRevertClick,
         hasLocalChanges,
+        autoSaving,
+        autoSavedAt,
+        autoSaveError,
+        flushSave,
+        saveNow,
     };
 }

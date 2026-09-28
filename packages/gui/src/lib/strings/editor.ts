@@ -95,9 +95,10 @@ export const editorStrings = {
       saveFailed: "Save failed",
       preScriptError: "Pre-script: {error}",
       postScriptError: "Post-script: {error}",
-      saveRequest: "Save Request",
-      updateRequest: "Update Request",
-      updateMock: "Update Mock",
+      // The only write button left in the footer: it creates a draft that has no id yet.
+      // There is no "Update Request"/"Update Mock" — an existing entity autosaves.
+      createRequest: "Create Request",
+      createMock: "Create Mock",
     },
   
     // Workspace panel,
@@ -113,7 +114,7 @@ export const editorStrings = {
       pause: "Pause",
       clear: "Clear",
       mockAll: "Mock All",
-      saveAll: "Save All",
+      createAll: "Create Requests",
       searchPlaceholder: "URL, method, host…",
       selectedCount: "{count} selected",
       // Empty states
@@ -163,14 +164,14 @@ export const editorStrings = {
       // Context menu - single row
       ctxMock: "Mock this request",
       ctxOpen: "Open in Requests",
-      ctxSave: "Save to requests",
+      ctxCreate: "Create request",
       ctxBlock: "Block request",
       ctxUnblock: "Unblock request",
       ctxShare: "Share (as JSON file)",
       ctxDelete: "Delete",
       // Context menu - multiple rows
       ctxMockMany: "Mock these requests",
-      ctxSaveMany: "Save these to requests",
+      ctxCreateMany: "Create requests",
       ctxBlockMany: "Block these requests",
       ctxUnblockMany: "Unblock these requests",
       ctxShareMany: "Share these (as JSON file)",

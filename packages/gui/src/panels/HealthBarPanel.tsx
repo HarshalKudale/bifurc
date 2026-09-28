@@ -4,7 +4,8 @@ import PanelHeader from "@/components/layout/PanelHeader";
 import { resolveVars } from "@/lib/resolveVars";
 import { Button, EmptyState } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
-import { Plus, RefreshCw, Activity, Cloud } from "@/lib/icons";
+import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
+import { Plus, RefreshCw, Activity, Cloud, AlertCircle, CheckCircle2 } from "@/lib/icons";
 import { strings } from "@/lib/strings";
 import { HealthCheckResult, ServiceState } from "./healthbar/types";
 import ServiceCard from "./healthbar/ServiceCard";
@@ -31,10 +32,12 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
   const [checkStates, setCheckStates] = useState<Record<string, ServiceState>>({});
   const [loading, setLoading] = useState(true);
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [editingService, setEditingService] = useState<HealthBarService | null>(null);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [responseModal, setResponseModal] = useState<{ service: HealthBarService; state: ServiceState } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const inflightRef = useRef<Set<string>>(new Set());
+  /** JSON of what is already on disk, so an autosave that changes nothing writes nothing. */
+  const persistedRef = useRef<string>("");
 
   const syncStatus = entitySyncStatus["healthbar/services.json"];
   const publishDisabled = syncStatus === "clean" || publishing;
@@ -43,13 +46,20 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
     setLoading(true);
     try {
       const svcs = await window.api.healthbarGetServices(wsId);
+      persistedRef.current = JSON.stringify(svcs);
       setServices(svcs);
       return svcs;
     } finally { setLoading(false); }
   }, [wsId]);
 
   const persistServices = useCallback(async (svcs: HealthBarService[]) => {
+    const json = JSON.stringify(svcs);
+    // Delete, the auto-refresh toggle and a create all persist immediately. Without this guard the
+    // debounce that their own state change schedules would rewrite the identical file a second
+    // later — a no-op on disk, but a pointless write and a spurious "Saved" flicker.
+    if (json === persistedRef.current) return;
     await window.api.healthbarSaveServices(wsId, svcs);
+    persistedRef.current = json;
     onAfterSave?.();
   }, [wsId, onAfterSave]);
 
@@ -93,18 +103,32 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
     });
   }, [wsId]);
 
-  const handleOpenAdd = () => { setEditingService(null); setAddModalOpen(true); };
+  const handleOpenAdd = () => { setEditingServiceId(null); setAddModalOpen(true); };
+  const handleOpenEdit = useCallback((id: string) => { setEditingServiceId(id); setAddModalOpen(true); }, []);
 
-  const handleSaveService = async (name: string, url: string) => {
-    let updated: HealthBarService[];
-    if (editingService) {
-      updated = services.map(s => s.id === editingService.id ? { ...s, name, url } : s);
-    } else {
-      updated = [...services, { id: mkHbId(), name, url, autoRefreshEnabled: true, createdAt: Date.now() }];
-    }
-    setServices(updated); setAddModalOpen(false); setEditingService(null);
+  /** Name / URL typed straight on a card. The debounce below is what writes it. */
+  const handleEditField = useCallback((id: string, patch: Partial<HealthBarService>) => {
+    setServices(prev => prev.map(s => (s.id === id ? { ...s, ...patch } : s)));
+  }, []);
+
+  /**
+   * Autosave. Gated on `!loading` so the services arriving from disk arm the hook silently instead
+   * of looking like an edit and being written straight back.
+   */
+  const { savedAt: autoSavedAt, error: autoSaveError } = useDebouncedAutosave({
+    snapshot: JSON.stringify(services),
+    enabled: !loading,
+    onSave: () => persistServices(services),
+  });
+
+  const handleCreateService = async (name: string, url: string, autoRefreshEnabled: boolean) => {
+    const created: HealthBarService = { id: mkHbId(), name, url, autoRefreshEnabled, createdAt: Date.now() };
+    const updated = [...services, created];
+    setServices(updated);
+    setAddModalOpen(false);
+    setEditingServiceId(null);
     await persistServices(updated);
-    checkService(editingService ? updated.find(s => s.id === editingService.id)! : updated[updated.length - 1]);
+    checkService(created);
   };
 
   const handleDelete = useCallback(async (id: string) => {
@@ -140,6 +164,17 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
 
   const headerActions = (
     <>
+      {autoSaveError ? (
+        <span title={autoSaveError} className="flex items-center gap-1.5 text-[11px] font-medium text-destructive">
+          <AlertCircle size={12} className="flex-shrink-0" />
+          <span>{strings.common.saveFailed}</span>
+        </span>
+      ) : autoSavedAt ? (
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+          <CheckCircle2 size={12} className="flex-shrink-0" />
+          <span>{strings.common.saved}</span>
+        </span>
+      ) : null}
       <span title={syncStatus === "clean" ? strings.healthBar.synced : undefined}>
         <Button variant="secondary" icon={<Cloud size={13} />} disabled={publishDisabled} onClick={handlePublish}>
           {publishing ? strings.healthBar.publishing : strings.healthBar.publish}
@@ -174,12 +209,19 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {services.map(svc => (
                 <ServiceCard key={svc.id} service={svc} state={checkStates[svc.id] ?? defaultState} resolvedUrl={resolveVars(svc.url, activeEnv)}
-                  onRefresh={handleRefresh} onToggleAutoRefresh={handleToggleAutoRefresh} onDelete={handleDelete} onClick={handleCardClick} />
+                  onRefresh={handleRefresh} onToggleAutoRefresh={handleToggleAutoRefresh} onDelete={handleDelete} onClick={handleCardClick}
+                  onEdit={handleOpenEdit} onEditField={handleEditField} />
               ))}
             </div>
           )}
         </div>
-        <AddServiceModal open={addModalOpen} editingService={editingService} onClose={() => { setAddModalOpen(false); setEditingService(null); }} onSave={handleSaveService} />
+        <AddServiceModal
+          open={addModalOpen}
+          editingService={editingServiceId ? services.find(s => s.id === editingServiceId) ?? null : null}
+          onClose={() => { setAddModalOpen(false); setEditingServiceId(null); }}
+          onCreate={handleCreateService}
+          onEdit={handleEditField}
+        />
         <ResponseModal open={!!responseModal} service={responseModal?.service ?? null} state={responseModal?.state ?? null} onClose={() => setResponseModal(null)} />
       </div>
     </>

@@ -5,7 +5,14 @@ import { strings } from "@/lib/strings";
 interface ModalFooterProps {
   onCancel: () => void;
   onConfirm: () => void;
-  confirmLabel?: string;
+  /**
+   * **Required on purpose.** This used to default to `strings.common.save`, so a modal that forgot
+   * to pass one silently rendered a "Save" button — and Save is no longer a concept in this app: an
+   * entity that already exists autosaves, and the only explicit write is a **Create**. Making it
+   * required means a new modal cannot reintroduce one by omission. Both call sites pass
+   * `strings.common.create` / `strings.common.done`.
+   */
+  confirmLabel: string;
   confirmVariant?: "primary" | "danger";
   confirmDisabled?: boolean;
   cancelLabel?: string;
@@ -14,7 +21,7 @@ interface ModalFooterProps {
 export default function ModalFooter({
   onCancel,
   onConfirm,
-  confirmLabel = strings.common.save,
+  confirmLabel,
   confirmVariant = "primary",
   confirmDisabled,
   cancelLabel = strings.common.cancel,

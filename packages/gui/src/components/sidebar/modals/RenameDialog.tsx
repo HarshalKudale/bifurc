@@ -64,7 +64,7 @@ export function RenameDialog({
             disabled={!val.trim()}
             onClick={handleSave}
           >
-            {strings.common.save}
+            {strings.common.rename}
           </button>
         </div>
       </div>
