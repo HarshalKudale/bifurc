@@ -28,9 +28,20 @@
  * So `"a:b"` becomes `"ab"` under the engine's and `"a-b"` under this one, and a name of only illegal
  * characters becomes `"unnamed"` versus `"-"`. Collapsing would silently change the git path a folder
  * publish writes to — for names with a colon, a control character, or no legal characters at all.
- * **Kept local and verbatim.** The general rule this is the worked example of: grep the helper's
- * *body*, not its name — and note that the two are used for different things anyway (a filesystem
- * directory versus a git pathspec prefix).
+ * **Kept local and verbatim** — during a *move*, which is what this file was.
+ *
+ * ### Resolved 2026-09-28: the two are now one function, and it is the engine's
+ *
+ * The note above is preserved because the reasoning was right for a move and the general rule it
+ * teaches still holds ("grep the helper's *body*, not its name"). What it could not decide is which of
+ * the two is *correct* — and only one can be. A folder is created by `writeEntity()` →
+ * `workspaceFs.sanitizeDirName`, so the **storage** sanitiser is the only one whose output can name a
+ * directory that exists. The local `"-"` variant built a pathspec for a directory that was never
+ * created: a folder called `a:b` lives at `ab/` and was being published as `a-b/`, which matches
+ * nothing — so "Publish All" on that folder silently did nothing while the UI reported changes in it
+ * forever. `folder.publish` now imports the storage sanitiser, and `syncCommands.ts` no longer declares
+ * a second one. The two sites are no longer "different things": a pathspec prefix must equal the
+ * directory it points at.
  *
  * ## Three bodies that look like one, and are deliberately left as three
  *
@@ -93,7 +104,9 @@ import {
 import { startAutoSync, stopAutoSync, updateLastKnownHead } from "./autoSync";
 import { getFileDiff, discardChanges, syncChanges, getFileHistory } from "./gitOps";
 import { getWorkspaceSyncStatus, invalidateCache } from "./statusTracker";
+import { getWorkspaceGitState } from "./gitState";
 import { loadConfig } from "../store/config";
+import { sanitizeDirName } from "../store/workspaceFs";
 import { reloadConfig } from "../proxy/server";
 import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "../store/gitStore";
 import { emitEntityStatus } from "../eventBus";
@@ -129,7 +142,16 @@ export function registerSyncCommands(registry: CommandRegistry): void {
         return result;
     });
 
-    registry.register("sync.getEntityStatus", ({ workspaceId }: SyncGetEntityStatusParams) => getWorkspaceSyncStatus(workspaceId));
+    registry.register("sync.getEntityStatus", async ({ workspaceId }: SyncGetEntityStatusParams) => {
+        // Both axes, read together. The UI cannot decide what to offer an entity from the file map
+        // alone — a committed-but-unpushed entity is `clean` there yet still needs a Sync. See
+        // `sync/gitState.ts`.
+        const [files, git] = await Promise.all([
+            getWorkspaceSyncStatus(workspaceId),
+            getWorkspaceGitState(workspaceId),
+        ]);
+        return { files, git };
+    });
 
     registry.register("git.diff", ({ workspaceId, relPath }: GitDiffParams) => getFileDiff(workspaceId, relPath));
 
@@ -164,8 +186,20 @@ export function registerSyncCommands(registry: CommandRegistry): void {
     });
 
     registry.register("folder.publish", async ({ workspaceId, kind, folderName }: FolderPublishParams) => {
-        // Local on purpose — see the header. This is NOT `store/workspaceFs.sanitizeDirName`.
-        const sanitizeDirName = (name: string) => name.replace(/[<>:"/\\|?*]+/g, "-");
+        /**
+         * **The storage sanitiser, not the local one this used to carry.**
+         *
+         * The folder being published was created by `writeEntity()` → `workspaceFs.sanitizeDirName`,
+         * which **strips** illegal characters and falls back to `"unnamed"`. The local variant here
+         * **replaced** them with `"-"`, so the pathspec it built could only ever name a directory that
+         * does not exist: a folder called `a:b` is on disk as `ab/` and this asked git to publish
+         * `a-b/`, which matches nothing. The UI would report changes in that folder forever and
+         * "Publish All" would do nothing — a *group* publish that silently no-ops.
+         *
+         * The header's table below is kept as the record of why the two were separated during the P6
+         * move (a move must not change behaviour). They are now one function, because only one of them
+         * can be right: a pathspec has to match what the storage layer wrote.
+         */
         const folderPath = folderName ? `${kind}/${sanitizeDirName(folderName)}/` : `${kind}/`;
         const result = await syncChanges(workspaceId, [folderPath]);
         emitEntityStatus(workspaceId);

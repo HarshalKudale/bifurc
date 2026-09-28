@@ -3,7 +3,7 @@ import { SidebarHeader } from "@/components/ui";
 import { strings } from "@/lib/strings";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
-import { Folder } from "@/types";
+import { Folder, WorkspaceGitState } from "@/types";
 
 interface Props {
   setSidebarOpen: (v: boolean) => void;
@@ -26,7 +26,11 @@ interface Props {
   onHistoryOpen?: (id: string) => void;
   getEntityFilePath: (id: string) => string;
   entitySyncStatus?: Record<string, any>;
+  /** The workspace's position relative to its remote — the tree needs both axes. */
+  workspaceGitState?: WorkspaceGitState | null;
   onPublishItem?: (id: string) => void;
+  /** Publish a whole selection in one commit. */
+  onPublishPaths?: (paths: string[]) => void;
   onPublishFolder?: (id: string | null) => void;
   onRestoreItem?: (id: string) => void;
   handleOpenRunner: (folderId: string) => void;
@@ -54,7 +58,9 @@ export default function RequestsSidebar({
   onHistoryOpen,
   getEntityFilePath,
   entitySyncStatus,
+  workspaceGitState,
   onPublishItem,
+  onPublishPaths,
   onPublishFolder,
   onRestoreItem,
   handleOpenRunner,
@@ -97,7 +103,9 @@ export default function RequestsSidebar({
             if (path) onHistoryOpen(path);
           } : undefined}
           pathStatusMap={entitySyncStatus}
+          workspaceGitState={workspaceGitState}
           onPublishItem={onPublishItem}
+          onPublishPaths={onPublishPaths}
           onPublishFolder={onPublishFolder}
           onRestoreItem={onRestoreItem}
           onOpenRunner={handleOpenRunner}

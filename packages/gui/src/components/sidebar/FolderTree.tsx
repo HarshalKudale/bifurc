@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import ContextMenu from "@/components/ui/ContextMenu";
 import { strings } from "@/lib/strings";
+import { sanitizeDirName } from "@/lib/utils";
+import { entityGitView, folderGitRollup, PLURAL_KIND_BY_TREE_KIND, type EntityGitView, type FolderGitRollup } from "@/lib/entityGit";
 import { FolderTreeProps, FolderNode, TreeContextType, FolderTreeItem, EntitySyncStatus } from "./FolderTree.types";
 import { FolderTreeContext } from "./FolderTreeContext";
 import { FolderTreeNode } from "./FolderTreeNode";
@@ -10,10 +12,20 @@ import { RenameDialog } from "./modals/RenameDialog";
 import { DeletedItemDialog } from "./modals/DeletedItemDialog";
 import { useFolderTreeContextMenu } from "./useFolderTreeContextMenu";
 
+/**
+ * Re-exported so the four sidebars can keep importing the item type from the component they render.
+ * They always have (`import FolderTree, { FolderTreeItem } from "…/FolderTree"`), and it was a
+ * dangling import — `FolderTree.tsx` imported the type for its own use but never re-exported it, so
+ * every one of them was a type error. The four are the reason it is worth fixing here rather than in
+ * four places.
+ */
+export type { FolderTreeItem, FolderTreeProps, EntitySyncStatus } from "./FolderTree.types";
+
 export default function FolderTree({
   kind, folders, items, onOpenItem, onDeleteItem, onToggleItem, onToggleFolderItems, onFoldersChange,
   onDuplicateItem, onMoveItems, onMoveFolder, onOpenNewTab, onHistoryItem,
-  pathStatusMap, entitySyncStatus, folderStatusMap, onPublishItem, onPublishFolder, onRestoreItem,
+  pathStatusMap, entitySyncStatus, folderStatusMap, workspaceGitState,
+  onPublishItem, onPublishPaths, onPublishFolder, onRestoreItem,
   onBeforeCreateFolder, onOpenRunner, onBeforeDeleteFolder,
   blocksFolderId, onBlockItem, onUnblockItem, onSelectedFolderChange, onDeleteItems,
   onStartItem, onStopItem,
@@ -24,7 +36,7 @@ export default function FolderTree({
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set());
   const [showMove, setShowMove] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<{ itemIds: string[]; folderIds: string[]; hasTracked?: boolean } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ itemIds: string[]; folderIds: string[]; recoverable?: boolean } | null>(null);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
   const [deletedItemPopup, setDeletedItemPopup] = useState<FolderTreeItem | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -40,16 +52,67 @@ export default function FolderTree({
     return (item.relPath ? pathStatusMap?.[item.relPath] : undefined) ?? entitySyncStatus?.[item.id];
   }, [pathStatusMap, entitySyncStatus]);
 
+  /**
+   * The uniform view of an item's git state — **the only thing any menu or row in this tree reads to
+   * decide what to offer.** Before this the three menus each derived their own conditions from the raw
+   * status and disagreed: the item menu offered History for an unknown status, the multi menu offered
+   * no Revert at all, and the labels were a third vocabulary ("Commit & Push", "Discard Changes").
+   */
+  const getItemView = useCallback(
+    (item: FolderTreeItem): EntityGitView => entityGitView(getItemStatus(item), workspaceGitState),
+    [getItemStatus, workspaceGitState],
+  );
+
+  /**
+   * The rollup for a folder — or for the whole kind when `folderId` is `null`, which is the tree's
+   * **root row** and the "folder details" case the spec names.
+   *
+   * The prefix is built with the *storage* sanitiser so it matches the paths on disk. A prefix (rather
+   * than a list of the folder's own items) means descendants count, which is what "Publish All" on a
+   * parent has to mean — the old context menu published only `kind/Folder/` and silently skipped
+   * subfolders.
+   */
+  const getFolderRollup = useCallback((folderId: string | null): FolderGitRollup => {
+    const plural = PLURAL_KIND_BY_TREE_KIND[kind] ?? kind;
+    if (folderId === null) return folderGitRollup([`${plural}/`], pathStatusMap ?? {}, workspaceGitState);
+    const folder = folders.find((f) => f.id === folderId);
+    if (!folder) return folderGitRollup([], pathStatusMap ?? {}, workspaceGitState);
+    return folderGitRollup([`${plural}/${sanitizeDirName(folder.name)}/`], pathStatusMap ?? {}, workspaceGitState);
+  }, [kind, folders, pathStatusMap, workspaceGitState]);
+
+  /**
+   * The **storage** kind for folder CRUD — `"request"` when this tree is a runner view.
+   *
+   * `kind` is `"runner"` for the collection-runner tree, which is a *view over a request folder*
+   * rather than a folder kind of its own, and `folder.add` / `rename` / `delete` do not accept it.
+   * Passing `kind` straight through was three type errors and, had they been silenced, three
+   * runtime failures on a folder rename from the runner tree.
+   */
+  const folderKind = (kind === "runner" ? "request" : kind) as "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
+
   const toggleExpand = useCallback((id: string) => setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; }), []);
   const expandAll = useCallback(() => setExpanded(new Set(["__root__", ...folders.map((f) => f.id)])), [folders]);
   const collapseAll = useCallback(() => setExpanded(new Set(["__root__"])), []);
 
+  /**
+   * Publish a selection as **one commit** when the surface can name the paths, and fall back to
+   * per-item publishes otherwise. The fallback is strictly worse — N commits for one gesture — so it
+   * exists only for a host that has not bound `onPublishPaths`.
+   */
+  const publishIds = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const paths = ids.map((id) => items.find((i) => i.id === id)?.relPath).filter((p): p is string => !!p);
+    if (onPublishPaths && paths.length === ids.length) { onPublishPaths(paths); return; }
+    ids.forEach((id) => onPublishItem?.(id));
+  }, [items, onPublishPaths, onPublishItem]);
+
   const { ctxMenu, closeMenu, openEmptySpaceMenu, openFolderMenu, openItemMenu, openMultiMenu } = useFolderTreeContextMenu({
     expandAll, collapseAll, setNewFolderParent, setExpanded, onOpenNewTab, blocksFolderId,
     onPublishFolder, onToggleFolderItems, setRenaming, setPendingDelete, clearSelection,
-    onOpenRunner, onUnblockItem, getItemStatus, onOpenItem, onPublishItem, onRestoreItem,
+    onOpenRunner, onUnblockItem, getItemView, getFolderRollup, onOpenItem, onPublishItem,
+    onPublishIds: publishIds, onRestoreItem,
     onToggleItem, onStartItem, onStopItem, onDuplicateItem, onHistoryItem, onBlockItem,
-    selectedItemIds, selectedFolderIds, items, onMoveItems, setShowMove
+    selectedItemIds, selectedFolderIds, items, onMoveItems, setShowMove,
   });
 
   useEffect(() => {
@@ -81,14 +144,14 @@ export default function FolderTree({
 
   const handleNewFolder = useCallback(async (name: string, parentId: string | null) => {
     if (onBeforeCreateFolder && !onBeforeCreateFolder()) { setNewFolderParent(undefined); return; }
-    await window.api.addFolder(kind, { name, parentId });
+    await window.api.addFolder(folderKind, { name, parentId });
     onFoldersChange(); setNewFolderParent(undefined);
     setExpanded((p) => { const s = new Set(p); s.add(parentId === null ? "__root__" : parentId); return s; });
-  }, [kind, onBeforeCreateFolder, onFoldersChange]);
+  }, [folderKind, onBeforeCreateFolder, onFoldersChange]);
 
   const handleDeleteFolder = useCallback(async (id: string) => {
-    onBeforeDeleteFolder?.(id); await window.api.deleteFolder(kind, id); onFoldersChange();
-  }, [kind, onBeforeDeleteFolder, onFoldersChange]);
+    onBeforeDeleteFolder?.(id); await window.api.deleteFolder(folderKind, id); onFoldersChange();
+  }, [folderKind, onBeforeDeleteFolder, onFoldersChange]);
 
   const doBulkDelete = useCallback(async () => {
     if (!pendingDelete) return;
@@ -158,9 +221,10 @@ export default function FolderTree({
     },
     onDragLeaveNode: () => setDragOver(null),
     onHoverItem: setHoveredItemId, handleNewFolder, cancelNewFolder: () => setNewFolderParent(undefined), getItemStatus,
+    getItemView, getFolderRollup,
     folderStatusMap, onOpenRunner, onOpenItem, setDeletedItemPopup,
     hasMoveItems: !!onMoveItems, hasMoveFolder: !!onMoveFolder
-  }), [expanded, selectedItemIds, selectedFolderIds, dragOver, renaming, newFolderParent, hoveredItemId, toggleExpand, handleSelectFolder, handleSelectItem, openMultiMenu, openFolderMenu, openItemMenu, handleNewFolder, getItemStatus, folderStatusMap, onOpenRunner, onOpenItem, onMoveItems, onMoveFolder]);
+  }), [expanded, selectedItemIds, selectedFolderIds, dragOver, renaming, newFolderParent, hoveredItemId, toggleExpand, handleSelectFolder, handleSelectItem, openMultiMenu, openFolderMenu, openItemMenu, handleNewFolder, getItemStatus, getItemView, getFolderRollup, folderStatusMap, onOpenRunner, onOpenItem, onMoveItems, onMoveFolder]);
 
   return (
     <FolderTreeContext.Provider value={contextValue}>
@@ -171,10 +235,19 @@ export default function FolderTree({
         {showMove && <MoveDialog folders={folders} onMove={(id) => { onMoveItems?.([...selectedItemIds], id); clearSelection(); setShowMove(false); }} onCancel={() => setShowMove(false)} />}
         <ConfirmDialog open={!!pendingDelete} onConfirm={doBulkDelete} onCancel={() => setPendingDelete(null)} message={pendingDelete ? (() => {
           const what = [(pendingDelete.itemIds.length > 0 && `${pendingDelete.itemIds.length} item(s)`), (pendingDelete.folderIds.length > 0 && `${pendingDelete.folderIds.length} folder(s)`)].filter(Boolean).join(strings.folderTree.and);
-          return pendingDelete.hasTracked ? strings.folderTree.deleteConfirmTracked.replace("{what}", what) : strings.folderTree.deleteConfirmUntracked.replace("{what}", what);
+          return pendingDelete.recoverable
+            ? strings.entityGit.deleteConfirmRecoverable.replace("{what}", what)
+            : strings.entityGit.deleteConfirmPermanent.replace("{what}", what);
         })() : ""} />
-        {renaming && (() => { const f = folders.find((f) => f.id === renaming); return f ? <RenameDialog currentName={f.name} onSave={async (name) => { await window.api.renameFolder(kind, f.id, name); onFoldersChange(); setRenaming(null); }} onCancel={() => setRenaming(null)} /> : null; })()}
-        {deletedItemPopup && <DeletedItemDialog item={deletedItemPopup} onRestore={onRestoreItem} onPublish={onPublishItem} onClose={() => setDeletedItemPopup(null)} />}
+        {renaming && (() => { const f = folders.find((f) => f.id === renaming); return f ? <RenameDialog currentName={f.name} onSave={async (name) => { await window.api.renameFolder(folderKind, f.id, name); onFoldersChange(); setRenaming(null); }} onCancel={() => setRenaming(null)} /> : null; })()}
+        {deletedItemPopup && (
+          <DeletedItemDialog
+            name={deletedItemPopup.name}
+            onRecover={() => onRestoreItem?.(deletedItemPopup.id)}
+            onCommitDelete={() => onPublishItem?.(deletedItemPopup.id)}
+            onClose={() => setDeletedItemPopup(null)}
+          />
+        )}
       </div>
     </FolderTreeContext.Provider>
   );

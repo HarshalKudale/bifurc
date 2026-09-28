@@ -23,6 +23,49 @@ export interface EntityIndex {
   order: string[];
 }
 
+// ── The entity kind vocabulary ────────────────────────────────────────────────
+
+/**
+ * Every engine-internal storage kind that has a workspace directory.
+ *
+ * **This list exists because it used to exist in four places, and three of them were wrong.** The
+ * kind vocabulary is written out literally at each site that has to walk "all entities" — the
+ * pending-deletion reaper in `sync/statusTracker.ts`, the post-publish/post-discard cleanup in
+ * `sync/gitOps.ts`, and the import/export entity list. They had drifted: `statusTracker` carried
+ * only `requests` / `mocks` / `sockets`, so a deleted-but-uncommitted `rules`, `webhooks`,
+ * `graphqlRequests`, `soapRequests`, `grpcRequests`, `mappings` or `environments` entity had **no
+ * pending-deletion record at all** and simply vanished from the UI — the deletion was real on disk
+ * and invisible in git, with nothing left to publish it from. One list, imported everywhere, is the
+ * only version of this that stays correct.
+ *
+ * `capture` and `applications` are deliberately absent: neither is a user-authored, publishable
+ * entity (`capture/` is gitignored by `initWorkspaceDir`).
+ */
+export const ALL_ENTITY_KINDS = [
+  "requests",
+  "mocks",
+  "sockets",
+  "webhooks",
+  "rules",
+  "mappings",
+  "graphqlRequests",
+  "soapRequests",
+  "grpcRequests",
+  "environments",
+] as const;
+
+export type EntityKind = (typeof ALL_ENTITY_KINDS)[number];
+
+/**
+ * The kinds stored directly in `{kind}/{id}.json` with no folder level — so an entity's path is
+ * always `{kind}/{id}.json` and a folder rollup can never apply to them.
+ *
+ * Kept as a separate list rather than derived, because "flat" is a *storage* property declared by
+ * each kind's registration (`CrudFactoryOpts.isFlat`) and this module cannot see that registry.
+ * The two lists are cross-checked by `tests/store/workspaceFs.test.ts`.
+ */
+export const FLAT_ENTITY_KINDS: readonly string[] = ["mappings", "environments"];
+
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
 let _dataRootOverride: string | null = null;

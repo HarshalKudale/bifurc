@@ -2,8 +2,9 @@ import React, { memo } from "react";
 import { FolderNode } from "./FolderTree.types";
 import { useFolderTreeContext } from "./FolderTreeContext";
 import { FolderTreeItemNode } from "./FolderTreeItemNode";
-import { ChevronDown, Folder, FolderOpen } from "@/lib/icons";
+import { ChevronDown, Folder, FolderOpen, Cloud } from "@/lib/icons";
 import ActiveDot from "@/components/ui/ActiveDot";
+import SyncIndicator from "@/components/ui/SyncIndicator";
 import { InlineInput } from "./modals/InlineInput";
 import { strings } from "@/lib/strings";
 
@@ -28,6 +29,16 @@ export const FolderTreeNode = memo(function FolderTreeNode({ node, depth }: Prop
   const isSel = !isRoot && ctx.selectedFolderIds.has(nodeKey);
   const isDragOverThis = ctx.dragOver === nodeKey;
 
+  /**
+   * The folder's git rollup — **shown, not just acted on**.
+   *
+   * A folder is a group of entities, and before this the tree said nothing about whether the group had
+   * unpublished or uncommitted work: the only way to find out was to open the context menu, and the
+   * menu's item was there whether or not it would do anything. This is the "check the folder status"
+   * half of the spec; the menu item is the "show publish all" half.
+   */
+  const rollup = ctx.getFolderRollup(isRoot ? null : node.folder!.id);
+
   const newFolderRow = ctx.newFolderParent !== undefined && ctx.newFolderParent === (isRoot ? null : node.folder?.id) && (
     <div key="new-folder-input" style={{ display: "flex", alignItems: "center", gap: 6, height: 28, paddingLeft: depth > 0 ? CONNECTOR_W + 4 : 4, paddingRight: 8, marginLeft: 2, marginRight: 4 }}>
       <Folder size={11} style={{ color: "var(--c-muted-foreground)", flexShrink: 0 }} />
@@ -49,6 +60,7 @@ export const FolderTreeNode = memo(function FolderTreeNode({ node, depth }: Prop
     <div key={nodeKey}>
       <div
         draggable={!isRoot && !!ctx.hasMoveFolder}
+        title={rollup.primary ? `${rollup.changed} unpublished or changed` : undefined}
         style={{
           position: "relative",
           display: "flex", alignItems: "center",
@@ -110,6 +122,16 @@ export const FolderTreeNode = memo(function FolderTreeNode({ node, depth }: Prop
         ) : (
           <span style={{ fontSize: 13, fontWeight: 500, color: "var(--c-foreground)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
             {isRoot ? strings.folderTree.root : node.folder!.name}
+          </span>
+        )}
+        {/* The group's git state, from the same rollup the menu item is gated on. */}
+        {rollup.primary && (
+          <span
+            title={`${rollup.changed} ${rollup.primary === "publish" ? "unpublished" : "changed"}`}
+            style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}
+          >
+            {rollup.primary === "publish" ? <SyncIndicator status="new" size={9} /> : <SyncIndicator status="modified" size={9} />}
+            <span style={{ fontSize: 9, fontFamily: "monospace", color: "var(--c-amber)" }}>{rollup.changed || <Cloud size={9} />}</span>
           </span>
         )}
         {(node.items.length > 0 || node.children.length > 0) && (

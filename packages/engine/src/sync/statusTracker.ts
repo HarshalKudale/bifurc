@@ -1,5 +1,5 @@
 import { getGit } from "../store/gitStore";
-import { getPendingDeletions } from "../store/workspaceFs";
+import { getPendingDeletions, ALL_ENTITY_KINDS } from "../store/workspaceFs";
 
 export type EntitySyncStatus = "clean" | "modified" | "new" | "deleted";
 
@@ -81,8 +81,15 @@ export async function getWorkspaceSyncStatus(wsId: string): Promise<Record<strin
     }
 
     // Also mark pending-deletion entities as "deleted" even if git doesn't track the deletion
-    // (e.g., entity was never committed — file was untracked, now gone, not visible in git status)
-    for (const kind of ["requests", "mocks", "sockets"]) {
+    // (e.g. entity was never committed — file was untracked, now gone, not visible in git status).
+    //
+    // Driven by `ALL_ENTITY_KINDS` rather than a local list. It used to name only
+    // `requests`/`mocks`/`sockets`, so a never-committed `rule`/`webhook`/`graphqlRequest`/
+    // `mapping`/… deleted through the UI had a pending-deletion record that nothing ever read —
+    // the stub stayed in the tree but its status was `undefined`, which the renderer reads as
+    // "not deleted" and therefore renders as an ordinary, clickable row pointing at a file that is
+    // gone. See `ALL_ENTITY_KINDS` for the same defect at the other three call sites.
+    for (const kind of ALL_ENTITY_KINDS) {
       for (const p of getPendingDeletions(wsId, kind)) {
         const rootPath = `${kind}/${p.id}.json`;
         if (!result[rootPath]) {

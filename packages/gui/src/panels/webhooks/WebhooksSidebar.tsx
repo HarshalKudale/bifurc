@@ -3,7 +3,7 @@ import { SidebarHeader } from "@/components/ui";
 import { strings } from "@/lib/strings";
 import DraftsFolder from "@/components/sidebar/DraftsFolder";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
-import { Folder } from "@/types";
+import { Folder, WorkspaceGitState } from "@/types";
 import { Play, Square } from "@/lib/icons";
 
 interface Props {
@@ -25,7 +25,11 @@ interface Props {
   onHistoryOpen?: (id: string) => void;
   getEntityFilePath: (id: string) => string;
   entitySyncStatus?: Record<string, any>;
+  /** The workspace's position relative to its remote — the tree needs both axes. */
+  workspaceGitState?: WorkspaceGitState | null;
   onPublishItem?: (id: string) => void;
+  /** Publish a whole selection in one commit. */
+  onPublishPaths?: (paths: string[]) => void;
   onPublishFolder?: (id: string | null) => void;
   onRestoreItem?: (id: string) => void;
   folderStatusMap: Record<string, any>;
@@ -55,7 +59,9 @@ export default function WebhooksSidebar({
   onHistoryOpen,
   getEntityFilePath,
   entitySyncStatus,
+  workspaceGitState,
   onPublishItem,
+  onPublishPaths,
   onPublishFolder,
   onRestoreItem,
   folderStatusMap,
@@ -67,9 +73,9 @@ export default function WebhooksSidebar({
 }: Props) {
   return (
     <>
-      <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.webhooks.collapseSidebar}>
+      <SidebarHeader onCollapse={() => setSidebarOpen(false)} collapseTitle={strings.titleBar.collapseSidebar}>
         <span className="text-xs font-semibold px-1 text-muted-foreground uppercase tracking-wider">
-          {strings.nav.webhooks}
+          {strings.panels.sectionWebhooks}
         </span>
       </SidebarHeader>
 
@@ -128,7 +134,9 @@ export default function WebhooksSidebar({
             if (path) onHistoryOpen(path);
           } : undefined}
           pathStatusMap={entitySyncStatus}
+          workspaceGitState={workspaceGitState}
           onPublishItem={onPublishItem}
+          onPublishPaths={onPublishPaths}
           onPublishFolder={onPublishFolder}
           onRestoreItem={onRestoreItem}
           folderStatusMap={folderStatusMap}

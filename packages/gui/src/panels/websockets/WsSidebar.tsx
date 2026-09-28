@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Folder as FolderType, SavedWsConnection } from "@/types";
+import { Folder as FolderType, SavedWsConnection, WorkspaceGitState } from "@/types";
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import { SidebarHeader } from "@/components/ui";
 import { strings } from "@/lib/strings";
@@ -18,7 +18,11 @@ interface WsSidebarProps {
   onHistoryOpen?: (filePath: string) => void;
   getEntityFilePath: (id: string) => string;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
+  /** The workspace's position relative to its remote — the tree needs both axes. */
+  workspaceGitState?: WorkspaceGitState | null;
   onPublishItem?: (id: string) => void;
+  /** Publish a whole selection in one commit. */
+  onPublishPaths?: (paths: string[]) => void;
   onPublishFolder?: (folderId: string | null) => void;
   onRestoreItem?: (id: string) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -27,7 +31,8 @@ interface WsSidebarProps {
 export default function WsSidebar({
   connections, folders, activeTab, openTab, handleDelete, handleFoldersChange,
   handleDuplicate, handleMoveItems, openNewTab, onHistoryOpen, getEntityFilePath,
-  entitySyncStatus, onPublishItem, onPublishFolder, onRestoreItem, setSidebarOpen
+  entitySyncStatus, workspaceGitState, onPublishItem, onPublishPaths, onPublishFolder,
+  onRestoreItem, setSidebarOpen
 }: WsSidebarProps) {
   // Folder view items
   const folderViewItems: FolderTreeItem[] = useMemo(() =>
@@ -66,7 +71,9 @@ export default function WsSidebar({
             if (path) onHistoryOpen(path);
           } : undefined}
           pathStatusMap={entitySyncStatus}
+          workspaceGitState={workspaceGitState}
           onPublishItem={onPublishItem}
+          onPublishPaths={onPublishPaths}
           onPublishFolder={onPublishFolder}
           onRestoreItem={onRestoreItem}
           onBeforeCreateFolder={() => true}

@@ -1,13 +1,16 @@
 import React, { useCallback } from "react";
 import { AppConfig, Environment } from "@/types";
 import { Globe, Plus } from "@/lib/icons";
-import { Button, EmptyState } from "@/components/ui";
+import { Button, EmptyState, StatusDot } from "@/components/ui";
 import { strings } from "@/lib/strings";
 import SidebarLayout, { SidebarHeader } from "@/components/ui/SidebarLayout";
 import ActiveDot from "@/components/ui/ActiveDot";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { EnvVariableTable } from "./EnvVariableTable";
+import { entityGitView, entityGitDotColor } from "@/lib/entityGit";
+import { flatEntityRelPath } from "@/lib/utils";
+import { History, RotateCcw, ArrowUp } from "@/lib/icons";
 
 const GLOBAL_ENV_ID = "__global__";
 
@@ -16,49 +19,120 @@ interface Props {
   onConfigChange: (cfg: AppConfig) => Promise<void>;
   onHistoryOpen?: (filePath: string) => void;
   onAfterSave?: () => void;
+  /** Per-environment git status, keyed by workspace-relative path. */
+  entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
+  /** Publish one environment by id. */
+  onPublishItem?: (id: string) => void;
+  /** Revert one environment by id — also backs "Recover" for a deleted one. */
+  onRestoreItem?: (id: string) => void;
 }
 
 
 // -- Sidebar env item -------------------------------------------------------
 
+/**
+ * One row in the environments sidebar.
+ *
+ * ## Why the git actions are siblings of the button, not inside it
+ *
+ * The row is a `<button>` for selection, and a nested `<button>` is invalid HTML — the browser
+ * hoists it out and the click handler stops working. So the row is a flex container with the
+ * select button and the git actions beside it.
+ *
+ * ## Why the environments panel needed them at all
+ *
+ * Environments are publishable entities like every other kind, and this panel had **no** git
+ * affordance whatsoever — no publish, no revert, no history. A published environment could only be
+ * updated from the global footer, and could never be rolled back from the UI.
+ */
 function EnvItem({
   env,
   isActive,
   isSelected,
   isGlobal,
+  view,
   onClick,
+  onPublish,
+  onRevert,
+  onHistoryOpen,
+  busy,
 }: {
   env: Environment;
   isActive: boolean;
   isSelected: boolean;
   isGlobal: boolean;
+  view?: import("@/lib/entityGit").EntityGitView;
   onClick: () => void;
+  onPublish?: (id: string) => void;
+  onRevert?: (id: string) => void;
+  onHistoryOpen?: (filePath: string) => void;
+  busy?: boolean;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer ${
-        isSelected ? "bg-signal/15 text-foreground" : "hover:bg-card/50 text-foreground"
-      }`}
-    >
-      {isGlobal ? (
-        <Globe size={13} className={isSelected ? "text-signal" : "text-muted-foreground"} />
-      ) : (
-        <ActiveDot active={isActive} color="accent" size="sm" />
-      )}
-      <span className="flex-1 text-xs truncate">{env.name}</span>
-      {isGlobal && (
-        <span className="text-[9px] font-semibold uppercase tracking-wide text-signal opacity-70 flex-shrink-0">
-          {strings.environments.alwaysActive}
-        </span>
-      )}
-    </button>
+    <div className={`flex items-center gap-1 transition-colors group ${isSelected ? "bg-signal/15" : "hover:bg-card/50"}`}>
+      <button
+        onClick={onClick}
+        className="flex flex-1 min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer"
+      >
+        {isGlobal ? (
+          <Globe size={13} className={isSelected ? "text-signal" : "text-muted-foreground"} />
+        ) : (
+          <ActiveDot active={isActive} color="accent" size="sm" />
+        )}
+        <span className="flex-1 text-xs truncate">{env.name}</span>
+        {view && view.status !== "clean" && (
+          <span title={view.stateLabel} className="flex-shrink-0 flex items-center gap-1">
+            <StatusDot color={entityGitDotColor(view.status)} />
+            <span className="text-[9px] font-mono text-muted-foreground">{view.primaryLabel || view.stateLabel}</span>
+          </span>
+        )}
+        {isGlobal && (
+          <span className="text-[9px] font-semibold uppercase tracking-wide text-signal opacity-70 flex-shrink-0">
+            {strings.environments.alwaysActive}
+          </span>
+        )}
+      </button>
+      <div className="flex items-center gap-1 pr-2 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        {view?.primary && onPublish && (
+          <button
+            onClick={() => onPublish(env.id)}
+            disabled={busy}
+            title={view.primaryTitle}
+            className="px-1.5 py-0.5 rounded border border-border bg-card hover:bg-surface-2 disabled:opacity-40 text-[9px] font-medium text-foreground cursor-pointer flex items-center gap-1"
+          >
+            <ArrowUp size={9} />
+            {view.primaryLabel}
+          </button>
+        )}
+        {view?.canRevert && onRevert && (
+          <button
+            onClick={() => onRevert(env.id)}
+            title={strings.entityGit.revertTooltip}
+            className="px-1.5 py-0.5 rounded border border-border bg-card hover:bg-surface-2 text-[9px] font-medium text-amber cursor-pointer flex items-center gap-1"
+          >
+            <RotateCcw size={9} />
+            {strings.entityGit.revert}
+          </button>
+        )}
+        {view?.canViewHistory && onHistoryOpen && (
+          <button
+            onClick={() => onHistoryOpen(flatEntityRelPath("environments", env.id))}
+            title={strings.entityGit.historyTooltip}
+            className="px-1.5 py-0.5 rounded border border-border bg-card hover:bg-surface-2 text-[9px] font-medium text-muted-foreground hover:text-signal cursor-pointer"
+          >
+            <History size={9} />
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
 // -- EnvironmentsPanel ------------------------------------------------------
 
-export default function EnvironmentsPanel({ config, onConfigChange, onHistoryOpen, onAfterSave }: Props) {
+export default function EnvironmentsPanel({ config, onConfigChange, onHistoryOpen, onAfterSave, entitySyncStatus, workspaceGitState, onPublishItem, onRestoreItem }: Props) {
   const allEnvs = config.environments ?? [];
   const activeId = config.activeEnvironmentId ?? null;
 
@@ -101,6 +175,30 @@ export default function EnvironmentsPanel({ config, onConfigChange, onHistoryOpe
     await reloadConfig();
   }, [reloadConfig]);
 
+  /**
+   * One environment's git view, from the shared status map.
+   *
+   * Keyed by `flatEntityRelPath`, which is the same string `statusTracker` produces — `environments`
+   * is a flat kind, so the path is always `environments/<id>.json` with no folder level.
+   */
+  const envView = (id: string) =>
+    entityGitView(entitySyncStatus?.[flatEntityRelPath("environments", id)], workspaceGitState);
+
+  const renderEnvItem = (env: Environment, isGlobal: boolean) => (
+    <EnvItem
+      key={env.id}
+      env={env}
+      isActive={env.id === activeId}
+      isSelected={selectedEnvId === env.id}
+      isGlobal={isGlobal}
+      view={envView(env.id)}
+      onClick={() => setSelectedEnvId(env.id)}
+      onPublish={onPublishItem}
+      onRevert={onRestoreItem}
+      onHistoryOpen={onHistoryOpen}
+    />
+  );
+
   const sidebar = (
     <div className="flex flex-col flex-1 overflow-hidden">
       <SidebarHeader onCollapse={() => setSidebarOpen(false)}>
@@ -109,30 +207,13 @@ export default function EnvironmentsPanel({ config, onConfigChange, onHistoryOpe
 
       <div className="flex flex-col flex-1 overflow-y-auto">
         {/* Global always at top */}
-        {globalEnv && (
-          <EnvItem
-            env={globalEnv}
-            isActive={false}
-            isSelected={selectedEnvId === GLOBAL_ENV_ID}
-            isGlobal={true}
-            onClick={() => setSelectedEnvId(GLOBAL_ENV_ID)}
-          />
-        )}
+        {globalEnv && renderEnvItem(globalEnv, true)}
 
         {userEnvs.length > 0 && (
           <div className="border-t border-border/40 my-1" />
         )}
 
-        {userEnvs.map((env) => (
-          <EnvItem
-            key={env.id}
-            env={env}
-            isActive={env.id === activeId}
-            isSelected={selectedEnvId === env.id}
-            isGlobal={false}
-            onClick={() => setSelectedEnvId(env.id)}
-          />
-        ))}
+        {userEnvs.map((env) => renderEnvItem(env, false))}
       </div>
 
       {/* New env button at bottom */}

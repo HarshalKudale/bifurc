@@ -5,8 +5,9 @@ import { resolveVars } from "@/lib/resolveVars";
 import { Button, EmptyState } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
-import { Plus, RefreshCw, Activity, Cloud, AlertCircle, CheckCircle2 } from "@/lib/icons";
+import { Plus, RefreshCw, Activity, Cloud, AlertCircle, CheckCircle2, History, RotateCcw } from "@/lib/icons";
 import { strings } from "@/lib/strings";
+import { entityGitView, entityGitDotColor } from "@/lib/entityGit";
 import { HealthCheckResult, ServiceState } from "./healthbar/types";
 import ServiceCard from "./healthbar/ServiceCard";
 import ResponseModal from "./healthbar/ResponseModal";
@@ -15,7 +16,13 @@ import AddServiceModal from "./healthbar/AddServiceModal";
 interface Props {
   config: AppConfig;
   entitySyncStatus: Record<string, "clean" | "modified" | "new" | "deleted">;
-  onPublish: () => Promise<void>;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
+  onPublish: () => Promise<unknown>;
+  /** Revert this singleton file to its last synced version. */
+  onRevert?: () => Promise<unknown>;
+  /** Open the History sidebar for this singleton file. */
+  onHistoryOpen?: (filePath: string) => void;
   onAfterSave?: () => void;
 }
 
@@ -23,7 +30,7 @@ let _hbid = 0;
 const mkHbId = () => `hb${Date.now().toString(36)}${(++_hbid).toString(36)}`;
 const defaultState: ServiceState = { status: "idle", statusCode: null, body: null, headers: null, error: null, durationMs: null, checkedAt: null };
 
-export default function HealthBarPanel({ config, entitySyncStatus, onPublish, onAfterSave }: Props) {
+export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitState, onPublish, onRevert, onHistoryOpen, onAfterSave }: Props) {
   const wsId = config.activeWorkspaceId;
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const activeEnv: Environment | null = (config.environments ?? []).find((e) => e.id === config.activeEnvironmentId) ?? null;
@@ -39,8 +46,16 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
   /** JSON of what is already on disk, so an autosave that changes nothing writes nothing. */
   const persistedRef = useRef<string>("");
 
-  const syncStatus = entitySyncStatus["healthbar/services.json"];
-  const publishDisabled = syncStatus === "clean" || publishing;
+  /**
+   * The singleton file's git view.
+   *
+   * `healthbar/services.json` is **one** entity, so the whole panel is that entity — which is why
+   * Publish / Sync / Revert / History are panel-level controls here rather than per-row ones. Revert
+   * and History did not exist on this panel at all: the health bar could be published but never
+   * rolled back, and its commits were invisible.
+   */
+  const view = entityGitView(entitySyncStatus["healthbar/services.json"], workspaceGitState);
+  const publishDisabled = !view.primaryEnabled || publishing;
 
   const loadServices = useCallback(async () => {
     setLoading(true);
@@ -175,11 +190,23 @@ export default function HealthBarPanel({ config, entitySyncStatus, onPublish, on
           <span>{strings.common.saved}</span>
         </span>
       ) : null}
-      <span title={syncStatus === "clean" ? strings.healthBar.synced : undefined}>
-        <Button variant="secondary" icon={<Cloud size={13} />} disabled={publishDisabled} onClick={handlePublish}>
-          {publishing ? strings.healthBar.publishing : strings.healthBar.publish}
+      {view.primary && (
+        <span title={view.primaryTitle}>
+          <Button variant="secondary" icon={<Cloud size={13} />} disabled={publishDisabled} onClick={handlePublish}>
+            {publishing ? strings.entityGit.publishing : view.primaryLabel}
+          </Button>
+        </span>
+      )}
+      {onRevert && view.canRevert && (
+        <Button variant="ghost" icon={<RotateCcw size={13} />} title={strings.entityGit.revertTooltip} onClick={() => void onRevert()}>
+          {strings.entityGit.revert}
         </Button>
-      </span>
+      )}
+      {onHistoryOpen && view.canViewHistory && (
+        <Button variant="ghost" icon={<History size={13} />} title={strings.entityGit.historyTooltip} onClick={() => onHistoryOpen("healthbar/services.json")}>
+          {strings.entityGit.history}
+        </Button>
+      )}
       <Button variant="secondary" icon={<RefreshCw size={13} className={anyChecking ? "animate-spin" : ""} />}
         disabled={anyChecking || services.length === 0} onClick={() => checkAll(services)}>
         {strings.healthBar.refreshAll}

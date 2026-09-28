@@ -5,6 +5,7 @@ import { entityRelPath } from "@/lib/utils";
 import { Settings, History, Copy, Trash2 } from "@/lib/icons";
 import { Button, IconButton, DataTable, EmptyState, StatusDot, Switch } from "@/components/ui";
 import type { TableColumn } from "@/components/ui";
+import { entityGitView, entityGitDotColor, type EntityGitView } from "@/lib/entityGit";
 
 interface Props {
   rules: ProxyRule[];
@@ -12,6 +13,8 @@ interface Props {
   selectedRuleId: string | null;
   isDetailsOpen: boolean;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
   onSelectRule: (id: string) => void;
   onToggleRule: (rule: ProxyRule, enabled?: boolean) => void;
   onPublishItem?: (id: string) => void;
@@ -22,11 +25,8 @@ interface Props {
   onOpenAdd: () => void;
 }
 
-const syncDotColor = (syncSt: string | undefined) => {
-  if (syncSt === "new" || syncSt === "deleted") return "red" as const;
-  if (syncSt === "modified") return "yellow" as const;
-  return "green" as const;
-};
+/** Delegates to the one implementation — see `lib/entityGit.ts`. */
+const syncDotColor = (syncSt: string | undefined) => entityGitDotColor(syncSt as any);
 
 export default function ProxyRulesTable({
   rules,
@@ -34,6 +34,7 @@ export default function ProxyRulesTable({
   selectedRuleId,
   isDetailsOpen,
   entitySyncStatus,
+  workspaceGitState,
   onSelectRule,
   onToggleRule,
   onPublishItem,
@@ -47,6 +48,14 @@ export default function ProxyRulesTable({
     const relPath = entityRelPath("rules", r, folders);
     return entitySyncStatus?.[relPath];
   };
+
+  /**
+   * The uniform git view for a rule — what the row's dot, its action buttons and its History gate all
+   * read. The table used to compute three different conditions from the raw status, and its History
+   * button was rendered **unconditionally**, so a never-published rule opened an empty History panel.
+   */
+  const getView = (r: ProxyRule): EntityGitView =>
+    entityGitView(getSyncStatus(r), workspaceGitState);
 
   const columns: TableColumn<ProxyRule>[] = useMemo(() => {
     if (isDetailsOpen) {
@@ -141,27 +150,30 @@ export default function ProxyRulesTable({
         key: "actions",
         width: "w-32",
         render: (r) => {
-          const syncSt = getSyncStatus(r);
+          const view = getView(r);
           const relPath = entityRelPath("rules", r, folders);
           return (
             <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-              {onPublishItem && syncSt && syncSt !== "clean" && (
-                <Button variant="ghost" size="sm" onClick={() => onPublishItem(r.id)}>
-                  {strings.mappings.publish}
+              {/* One primary button, labelled Publish or Sync by the rule's state. */}
+              {onPublishItem && view.primary && (
+                <Button variant="ghost" size="sm" title={view.primaryTitle} onClick={() => onPublishItem(r.id)}>
+                  {view.primaryLabel}
                 </Button>
               )}
-              {onRestoreItem && syncSt && syncSt !== "clean" && (
+              {onRestoreItem && view.canRevert && (
                 <button
                   onClick={() => onRestoreItem(r.id)}
+                  title={strings.entityGit.revertTooltip}
                   className="px-2.5 py-1 rounded text-amber hover:bg-amber/10 text-xs font-medium transition-all cursor-pointer"
                 >
-                  {strings.mappings.revert}
+                  {strings.entityGit.revert}
                 </button>
               )}
-              {onHistoryOpen && (
+              {/* History only for a rule that has commits — it used to render unconditionally. */}
+              {onHistoryOpen && view.canViewHistory && (
                 <IconButton
                   icon={<History size={11} />}
-                  title={strings.mappings.viewHistory}
+                  title={strings.entityGit.historyTooltip}
                   onClick={() => onHistoryOpen(relPath)}
                   className="hover:text-signal"
                 />

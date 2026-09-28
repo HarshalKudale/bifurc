@@ -41,6 +41,11 @@ export function registerCrudKinds() {
     configKey: "mappings",
     isFlat: true,
     hasEnabledState: true,
+    // `name` is the card's label, `url` is the `.localhost` domain. The pending-deletion record
+    // needs both to rebuild a readable stub in `loadConfig()` after the file is gone — without it a
+    // deleted published mapping simply disappeared from the UI with nothing left to recover or
+    // commit (see the delete site in `entityCrudCommands.ts`).
+    getNameEntry: (m) => ({ name: m.label || m.domain, url: m.domain }),
   });
 
   // ── Proxy Rules ────────────────────────────────────────────────────────────
