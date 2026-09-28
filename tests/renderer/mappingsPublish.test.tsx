@@ -176,13 +176,34 @@ describe("MappingsPanel — the publish button actually publishes", () => {
    * **success** (`ok: true`), because an unchanged file must not produce an empty commit. It used to
    * be silent, which made it indistinguishable from a button that is not wired up.
    */
-  it("says 'nothing to publish' when the engine had nothing to stage", async () => {
+  /**
+   * The message is only honest when the card **agrees** that the entity is published. The button that
+   * can reach it is Sync, from a clean entity whose commits are not on the remote: the file matches
+   * HEAD, so there is nothing to stage — and the entity is tracked, so "already committed" is true.
+   */
+  it("says 'nothing to publish' when git and the status agree there is nothing to do", async () => {
+    publishEntity.mockResolvedValue({ ok: true, commit: null });
+    renderPanel({ status: "clean", git: { hasRemote: true, branch: "main", ahead: true, behind: false } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Nothing to publish");
+  });
+
+  /**
+   * …and when they **disagree**, it must say so rather than assert a state the card contradicts. A
+   * Publish button sitting above the words "this entity is already committed" is a bug report, not a
+   * state — and it was the exact shape of the report.
+   */
+  it("reports the disagreement instead of claiming the entity is committed", async () => {
     publishEntity.mockResolvedValue({ ok: true, commit: null });
     renderPanel({ status: "new" });
 
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Nothing to publish");
+    const notice = await screen.findByRole("status");
+    expect(notice).not.toHaveTextContent("already committed");
+    expect(notice).toHaveTextContent(/disagree/i);
   });
 
   it("reports the commit id, so success is provable rather than claimed", async () => {
