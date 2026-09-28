@@ -82,8 +82,8 @@ vi.mock("@/lib/panelFactory", () => ({
   renderPanel: () => <div data-testid="app-panel">App Panel</div>,
 }));
 
-vi.mock("@/components/sidebar/HistorySidebar", () => ({
-  default: () => <div data-testid="history-sidebar" />,
+vi.mock("@/components/sidebar/RightSidebar", () => ({
+  default: () => <div data-testid="right-sidebar" />,
 }));
 
 vi.mock("@/components/sidebar/AppSidebar", () => ({

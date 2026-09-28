@@ -89,5 +89,26 @@ export const commonStrings = {
       showUnchanged: "Show {n} unchanged",
     },
   
+    // Right sidebar, variables face. The two group headings mirror the resolver: the active
+    // environment is overlaid on `__global__`, so the same key in both lists resolves to the
+    // environment's value — `overriddenBadge` is how that is visible at all.,
+
+  rightSidebar: {
+      toggleVariables: "Environment variables",
+      variablesTitle: "Variables",
+      closeVariables: "Close variables",
+      currentEnvGroup: "Environment",
+      globalGroup: "Global",
+      noActiveEnv: "No environment selected",
+      noActiveEnvHint: "Choose an environment from the title bar to see its variables.",
+      noVarsInEnv: "This environment has no variables.",
+      noGlobalVars: "No global variables.",
+      overriddenBadge: "overridden",
+      overriddenByEnv: "The active environment defines this key, so its value wins.",
+      copyReference: "Copy variable reference",
+      emptyValue: "(empty)",
+      nVariables: "{n} variable{s}",
+    },
+  
     // Import/export modal,
 } as const;

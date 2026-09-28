@@ -117,7 +117,7 @@ textarea {
   transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
 }
 
-.history-sidebar {
+.right-sidebar {
   transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
   overflow: hidden;
   flex-shrink: 0;
@@ -166,7 +166,7 @@ textarea {
 
   .sidebar-collapse,
   .panel-sidebar,
-  .history-sidebar,
+  .right-sidebar,
   .tree-folder-body {
     transition: none !important;
   }
