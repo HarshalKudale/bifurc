@@ -37,7 +37,7 @@ import {
   type ImportPreflightParams,
   type ImportPreflightResult,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import {
   blobContentPath,
   createStaging,

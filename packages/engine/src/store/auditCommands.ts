@@ -44,7 +44,7 @@
  * reduction, second group, 2026-09-21 — `plan/07` §5b-terdecies).
  */
 import type { AuditListParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import { queryLog, type QueryLogOptions } from "./gitStore";
 import { loadConfig } from "./config";
 

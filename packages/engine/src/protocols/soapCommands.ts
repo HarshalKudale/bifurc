@@ -53,7 +53,7 @@
 import * as http from "http";
 import * as https from "https";
 import type { SoapFetchWsdlParams, SoapExecuteParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 
 export function registerSoapCommands(registry: CommandRegistry): void {
     registry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {

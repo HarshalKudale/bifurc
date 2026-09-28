@@ -59,11 +59,11 @@ import { createSocketServer, defaultSocketPath, type SocketServer } from "../tra
 //
 // `DEFAULT_WS_HOST` and `isLoopbackHost` were imported here too, for the step -1 bind guard that read them;
 // both went with that guard on 2026-09-25 — see `doStart`'s note and `transport/ws.ts`'s header.
-import { DEFAULT_HOST_DOMAIN } from "../lib/net";
+import { DEFAULT_HOST_DOMAIN } from "../utils/net";
 import { createWsServer, type WsServer } from "../transport/ws";
-import { commandRegistry, type CommandRegistry } from "../commands/registry";
+import { commandRegistry, type CommandRegistry } from "../kernel/registry";
 import { registerAllEngineCommands } from "../registerAll";
-import { bus as defaultBus, type EngineEventBus } from "../eventBus";
+import { bus as defaultBus, type EngineEventBus } from "../kernel/eventBus";
 import { loadSettings, appDataDir, type AppSettings } from "../store/appSettings";
 import { bootstrapWorkspaces } from "../startup";
 import { setDataRoot, dataDir } from "../store/paths";

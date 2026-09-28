@@ -55,13 +55,13 @@ import { loadConfig, loadEntity, saveConfig } from "./config";
 import { readEnabledSet } from "./workspaceFs";
 import { syncEnabledSet } from "./enabledSet";
 import { reloadConfig } from "../proxy/server";
-import { emitEntityStatus } from "../eventBus";
+import { emitEntityStatus } from "../kernel/eventBus";
 import {
     mayAffectUnnamedEntities,
     type CommandContext,
     type CommandRegistry,
-} from "../commands/registry";
-import { toEngineKind } from "../commands/entityKindMap";
+} from "../kernel/registry";
+import { toEngineKind } from "../kernel/kinds";
 
 /**
  * The six kinds that carry an enabled/disabled flag, tracked in `enabled.json` rather than on the

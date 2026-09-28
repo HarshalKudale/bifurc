@@ -100,8 +100,8 @@ import {
   UnsubscribeRequestSchema,
   type CapabilityValue,
 } from "@bifurc/protocol";
-import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEventBus } from "../eventBus";
-import type { CommandContext, CommandRegistry } from "../commands/registry";
+import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEventBus } from "../kernel/eventBus";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import {
   createAuthenticatedTransport,
   IDENTITY_FAILURE_CODES,

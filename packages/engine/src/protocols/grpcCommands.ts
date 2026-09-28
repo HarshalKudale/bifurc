@@ -44,7 +44,7 @@
  * touch the client, the proto files or their folders.
  */
 import type { GrpcExecuteParams, GrpcReflectParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 
 export function registerGrpcCommands(registry: CommandRegistry): void {
     registry.register("grpc.execute", async (_params: GrpcExecuteParams) => {

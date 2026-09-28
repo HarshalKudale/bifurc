@@ -30,8 +30,8 @@ import {
   type BlobReadResult,
 } from "@bifurc/protocol";
 import type { CommandAction } from "@bifurc/protocol";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 const ctx = { bus };
 

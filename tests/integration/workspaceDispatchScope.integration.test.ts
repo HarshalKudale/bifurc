@@ -57,7 +57,7 @@ import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { loadWorkspaceDispatchSlice } from "@bifurc/engine/store/config";
 import { bindProxyInstance, createProxyServer, type ProxyServerInstance } from "@bifurc/engine/proxy/server";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 import { getFreePort, proxyRequest, startUpstream, type UpstreamServer } from "./proxyHarness";
 

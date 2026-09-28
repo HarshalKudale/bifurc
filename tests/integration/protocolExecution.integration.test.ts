@@ -31,8 +31,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as http from "http";
 import * as zlib from "zlib";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Capture the handlers the features register ────────────────────────────────
 // Same technique as tests/ipc/handlers.test.ts and applications.integration.test.ts:
@@ -323,7 +323,7 @@ beforeAll(async () => {
   // reduction's sixth group then deleted that file's channels and renamed it to `coreKinds.ts`
   // (`plan/07` §5b-septendecies). `registerCoreKinds()` is now the shell's `environments` kind and
   // nothing else; the *commands* still need wiring, which is the line below.
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   // P6 §5c slice 4: the nine protocol-client commands left the three handler files' module scope as
   // well. Every channel in those files *delegates* through `commandRegistry.invoke()`, so without

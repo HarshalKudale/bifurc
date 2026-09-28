@@ -49,7 +49,7 @@
  * This function must be **called**, and that is the §5c rule preserved rather than undone. What changed is
  * that there is now a non-shell way to call it.
  */
-import type { CommandRegistry } from "./commands/registry";
+import type { CommandRegistry } from "./kernel/registry";
 import { registerBlobCommands } from "./blob/commands";
 import { registerImportExportCommands } from "./importExport/commands";
 import { registerFileOpsCommands } from "./fileOps/commands";

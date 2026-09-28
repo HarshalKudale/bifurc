@@ -20,8 +20,8 @@ import { registerCrudKinds } from "@bifurc/engine/store/kinds/crudKinds";
 import { registerCoreKinds } from "@bifurc/engine/store/kinds/coreKinds";
 
 import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
-import { bus, wireLogEventsToBus } from "@bifurc/engine/eventBus";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus, wireLogEventsToBus } from "@bifurc/engine/kernel/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";

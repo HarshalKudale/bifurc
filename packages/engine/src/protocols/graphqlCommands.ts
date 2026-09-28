@@ -42,7 +42,7 @@
 import * as http from "http";
 import * as https from "https";
 import type { GraphqlIntrospectParams, GraphqlExecuteParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 
 /**
  * The standard introspection query, verbatim from the shell. It is written out in full rather than

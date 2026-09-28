@@ -33,7 +33,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vites
 import * as fs from "fs";
 import * as path from "path";
 import type { CommandAction } from "@bifurc/protocol";
-import type { CommandContext, CommandRegistry } from "@bifurc/engine/commands/registry";
+import type { CommandContext, CommandRegistry } from "@bifurc/engine/kernel/registry";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 
 const { handlers, dialogState } = vi.hoisted(() => ({
@@ -130,7 +130,7 @@ beforeAll(async () => {
   // `packages/client/tests/client.test.ts` pins for the real surface. See `plan/07` §5b-novendecies.)
   const { registerBlobCommands } = await import("@bifurc/engine/blob/commands");
   const { registerFileOpsCommands } = await import("@bifurc/engine/fileOps/commands");
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerRunnerCommands } = await import("@bifurc/engine/runner/runnerCommands");
   registerBlobCommands(commandRegistry);
   registerFileOpsCommands(commandRegistry);

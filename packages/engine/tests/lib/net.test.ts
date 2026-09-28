@@ -25,7 +25,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_HOST_DOMAIN, isAllowedOrigin, isLoopbackHost, LOOPBACK_HOSTS, normalizeHostname } from "../../src/lib/net";
+import { DEFAULT_HOST_DOMAIN, isAllowedOrigin, isLoopbackHost, LOOPBACK_HOSTS, normalizeHostname } from "../../src/utils/net";
 
 describe("isLoopbackHost", () => {
   it("accepts every spelling of loopback, case-insensitively", () => {

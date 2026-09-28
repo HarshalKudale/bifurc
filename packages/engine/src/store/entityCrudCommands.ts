@@ -116,9 +116,9 @@ import { registerKindNameEntry } from "./kindNameEntries";
 import { getGit } from "./gitStore";
 import { reloadConfig } from "../proxy/server";
 import { invalidateCache } from "../sync/statusTracker";
-import { bus, emitEntityStatus } from "../eventBus";
-import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../commands/registry";
-import { toEngineKind } from "../commands/entityKindMap";
+import { bus, emitEntityStatus } from "../kernel/eventBus";
+import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../kernel/registry";
+import { toEngineKind } from "../kernel/kinds";
 import { gateCreate } from "../subscription/entityCount";
 
 /** The shape every CRUD-factory entity satisfies — pulled out so the extracted `*Core`

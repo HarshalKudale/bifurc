@@ -74,7 +74,7 @@ import {
   type RpcError,
 } from "@bifurc/protocol";
 import type { ReplayOutcome } from "../eventLog";
-import type { SessionIdentity } from "../../commands/registry";
+import type { SessionIdentity } from "../../kernel/registry";
 // The client-facing payload shape, applied to the replay backlog this decorator synthesises itself —
 // see the loop in `subscribe()` for the two-shapes-for-one-event-name defect that made this necessary.
 import { toClientEvent } from "../eventPump";

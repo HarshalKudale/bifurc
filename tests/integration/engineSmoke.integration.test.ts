@@ -43,8 +43,8 @@ vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
 import { createEngine, createInProcessTransport } from "@bifurc/engine";
 import { setDataRoot, resetDataRootForTests } from "@bifurc/engine/store/paths";
 import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 import { getFreePort } from "./proxyHarness";
 
 /**

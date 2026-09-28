@@ -83,7 +83,7 @@
  * keyed by workspace, which `createWebhookServer()` does not do. Recorded here and in `runtime/host.ts`
  * step 3c, so it is found rather than discovered.
  */
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import type {
     WebhookRegisterActiveParams,
     WebhookUnregisterActiveParams,
@@ -101,7 +101,7 @@ import {
     stopWebhookServer,
     unregisterActiveWebhook,
 } from "./webhookServer";
-import { echoWorkspace } from "../commands/echoWorkspace";
+import { echoWorkspace } from "../utils/echoWorkspace";
 
 export function registerWebhookCommands(registry: CommandRegistry): void {
     registry.register("webhook.registerActive", (params: WebhookRegisterActiveParams) => {
