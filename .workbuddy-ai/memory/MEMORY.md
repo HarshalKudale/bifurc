@@ -41,8 +41,13 @@ diagnosing anything** — most traps are already recorded there.
   suites failing teardown only** — `fileOps`, `importExport`, `importExportBlob`, `importExportFormats`
   (`Hook timed out in 20000ms` in `afterAll`, all 116 tests pass). A suite-level `FAIL` beside
   `Tests N passed` is this, not a regression.
-- **Last full measurement 2026-09-28: 2,677 tests / 120 files** (2,217 unit + 460 integration, 40 skipped).
-  **e2e: 11 specs rewritten 2026-09-28 — the old 46/46 figure is stale and wants an owner run.**
+- **Last full measurement 2026-09-28: 2,737 tests / 127 files** (re-measured; the recorded 2,677/120 was
+  stale). 11 baseline failures, **all environment**: `gitRemote` 10 (sandbox `git push` writes no remote
+  refs) + `serverUtils` 1 hook timeout, plus **four teardown-only** file failures (`fileOps`, `importExport`,
+  `importExportBlob`, `importExportFormats`) whose tests all pass. **⚠ A *varying* count in the
+  `tests/store/`+`tests/sync/` git/temp family is the shim's contention signature — check alone before
+  blaming a change.** **e2e: 11 specs rewritten 2026-09-28 — the old 46/46 figure is stale and wants an
+  owner run.**
 
 ## Phase state
 
@@ -53,10 +58,19 @@ Electron half open. **P0–P6, P14 done. P7, P9, P16 decommissioned.** `packages
 
 ## Active work: engine module layout — branch `engine_modules`
 
-`Engine_Module_Plan.md` (repo root, **proposal — no code changed yet**) reorganises `packages/engine/src`
-(140 files / 23,443 LOC) into feature modules behind an enforced layering rule. **Phases 1–2 are the
-recommended start** (kernel + utils; then the `notifyConfigChanged()` rebind inversion — a dependency
-inversion, no file moves). §7.3 holds the repo-specific mechanics: never `git rm`; the **stale-`dist/` trap**
-(`tsc` never deletes output → `npm run clean:main` before the app build, and
-`node scripts/pkg-check-reachability.mjs` after each phase); `vitest.config.ts`'s coverage `exclude` names
-three engine `types.ts` paths by hand.
+`Engine_Module_Plan.md` (repo root) reorganises `packages/engine/src` (140 files / 23,443 LOC) into feature
+modules behind an enforced layering rule. **Phase 0 + Phase 1 are DONE and committed** (`c531c7c`, `16161ad`):
+`kernel/` + `utils/` extracted. **Phase 2 (the `notifyConfigChanged()` rebind inversion) is scoped but not
+started** — 26 files / 82 call sites, and two tests bind the seam.
+
+- **`scripts/engine-layout-codemod.mjs` is the instrument** — `--check` (report + assert totality),
+  `--emit-map`, `--apply --phase N [--write]` (dry by default). Re-running an applied phase must report **0**.
+- **⚠ The rewrite has TWO surfaces.** `@bifurc/engine/*` (532 refs / 102 files / 81 subpaths) **and** the
+  engine's internal *relative* imports — and 226 of the 532 are dynamic `import()` / `vi.mock`, which fail at
+  **RUNTIME**, so a `from`-only find/replace is silently wrong. Do not hand-edit these.
+- **⚠ §7.1's counts were wrong** (529/104/82; only `from` counted). `plan/engine-layout-map.json` has the
+  measured numbers and the one deviation (`store/workspace/*` → `workspace/fs/*`, not `workspace/workspace/*`).
+- §7.3 mechanics: never `git rm`; the **stale-`dist/` trap** (`npm run clean:main` before the app build,
+  `node scripts/pkg-check-reachability.mjs` after each phase); `vitest.config.ts`'s coverage `exclude` names
+  three engine `types.ts` paths by hand. **`packages/**/*.test.ts` IS in the `unit` project, and
+  `packages/engine/tsconfig.json` covers `packages/engine/tests/`.**
