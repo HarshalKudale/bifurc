@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseCurl, SKIP_CURL_HEADERS } from "@/lib/curlParser";
 
-describe("renderer/lib/curlParser.ts", () => {
+describe("packages/gui/src/lib/curlParser.ts", () => {
   describe("SKIP_CURL_HEADERS", () => {
     it("contains common headers to skip", () => {
       expect(SKIP_CURL_HEADERS.has("host")).toBe(true);

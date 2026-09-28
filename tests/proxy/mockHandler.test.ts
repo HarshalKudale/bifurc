@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@/lib/randomizer", () => ({
+vi.mock("@bifurc/engine/lib/randomizer", () => ({
     resolveRandomizers: vi.fn((text: string) => text),
 }));
 
-import { resolveVars, matchMock, serveMock, serveStreamingMock, isFullyMocked, mergeMockWithUpstream } from "@/proxy/mockHandler";
+import { resolveVars, matchMock, serveMock, serveStreamingMock, isFullyMocked, mergeMockWithUpstream } from "@bifurc/engine/proxy/mockHandler";
 
 const createSocket = () => ({ writable: true, write: vi.fn(), end: vi.fn() } as any);
 

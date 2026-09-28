@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gateCreate, gateEnable } from "@/subscription/entityCount";
+import { gateCreate, gateEnable } from "@bifurc/engine/subscription/entityCount";
 
 /**
  * These two functions are the licensing/plan gate for creating and enabling

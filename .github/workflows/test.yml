@@ -33,6 +33,22 @@ jobs:
       - name: Typecheck E2E specs
         run: npm run typecheck:e2e
 
+      # `typecheck:renderer` covers `renderer/` and `packages/gui/src` — neither is a package nor under
+      # `src/`, so the `npm run typecheck` step above does not reach them, and `@bifurc/gui` is
+      # deliberately out of `typecheck:packages` (including it would break `npm run typecheck`).
+      #
+      # This step replaced `typecheck:web` when the browser host was decommissioned. That command typechecked
+      # the shared UI *because* `web/` imported `@bifurc/gui`, so dropping it without a replacement would have
+      # removed the only CI gate over `packages/gui` — the gap would have looked like a deletion rather than a
+      # regression.
+      #
+      # **`continue-on-error`, because this check cannot pass yet, and a red gate is worse than a visible
+      # report.** The shared UI carries **34 pre-existing type errors** that have never been gated anywhere.
+      # Fixing them is its own work item; until then this step is a *report*.
+      - name: Typecheck the renderer and the shared UI
+        run: npm run typecheck:renderer
+        continue-on-error: true
+
   # ── Unit + integration ──────────────────────────────────────────────────────
   # `test:ci` runs every Vitest project (unit and integration) with coverage and
   # enforces the thresholds declared in vitest.config.ts. A coverage regression

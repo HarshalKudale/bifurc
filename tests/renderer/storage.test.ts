@@ -30,7 +30,7 @@ class MockLocalStorage {
 const mockStorage = new MockLocalStorage();
 (globalThis as { localStorage: MockLocalStorage }).localStorage = mockStorage;
 
-describe("renderer/lib/storage.ts", () => {
+describe("packages/gui/src/lib/storage.ts", () => {
   beforeEach(() => {
     mockStorage.clear();
   });

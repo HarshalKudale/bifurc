@@ -26,6 +26,11 @@ vi.mock("@/hooks/useAppConfigSync", () => ({
     setConfig: vi.fn(),
     wsLoading: null,
     setWsLoading: vi.fn(),
+    // Present, and explicitly `null`. `App` renders its failure screen on `loadError !== null`, so a mock
+    // that *omits* the field leaves it `undefined` — which is not `null`, so the error screen renders and
+    // every case below fails looking for a title bar. Found by exactly that failure; the mock was
+    // incomplete, not the guard.
+    loadError: null,
     services: [],
     refreshServices: vi.fn(),
     serverRunning: false,
@@ -50,9 +55,6 @@ vi.mock("@/hooks/useWorkspaceView", () => ({
     grpcRequests: [],
     soapRequests: [],
     mocks: [],
-    graphqlMocks: [],
-    grpcMocks: [],
-    soapMocks: [],
     mappings: [],
     proxyRules: [],
     wsConnections: [],
@@ -61,9 +63,15 @@ vi.mock("@/hooks/useWorkspaceView", () => ({
   }),
 }));
 
-vi.mock("@/hooks/usePublishHandlers", () => ({
-  usePublishHandlers: () => ({
-    handlePublishPanel: vi.fn(),
+vi.mock("@/hooks/useEntityGitActions", () => ({
+  useEntityGitActions: () => ({
+    publish: vi.fn(async () => ({ ok: true })),
+    revert: vi.fn(async () => ({ ok: true })),
+    publishPanel: vi.fn(async () => ({ ok: true })),
+    isBusy: () => false,
+    lastError: null,
+    clearError: vi.fn(),
+    keyFor: () => "key",
   }),
 }));
 
@@ -80,8 +88,8 @@ vi.mock("@/lib/panelFactory", () => ({
   renderPanel: () => <div data-testid="app-panel">App Panel</div>,
 }));
 
-vi.mock("@/components/sidebar/HistorySidebar", () => ({
-  default: () => <div data-testid="history-sidebar" />,
+vi.mock("@/components/sidebar/RightSidebar", () => ({
+  default: () => <div data-testid="right-sidebar" />,
 }));
 
 vi.mock("@/components/sidebar/AppSidebar", () => ({

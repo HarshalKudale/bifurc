@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as zlib from "zlib";
-import { decompressBody, stripContentEncoding } from "@/proxy/decompressUtils";
+import { decompressBody, stripContentEncoding } from "@bifurc/engine/proxy/decompressUtils";
 
 /**
  * `decompressBody` is on the hot path of every proxied response: whatever it

@@ -427,10 +427,27 @@ export function writeSampleWorkspace(dataRoot: string, themeId: string | null = 
         "utf-8"
     );
 
+    /**
+     * `names.json` holds **`EntityNameEntry` objects, not bare strings** — `{ name, url? , method? ,
+     * urlSuffix? , … }` per id (`packages/engine/src/store/workspace/fsNamesIndex.ts:5`), which is what
+     * `upsertNameEntry()` writes on every real save and import.
+     *
+     * **All four names indexes below used to write `{ id: "<name>" }` — a string — and that silently
+     * blanked every seeded name and pattern.** `store/config.ts` reads `names[s.id]?.name` and
+     * `names[s.id]?.url`, so a string value yields `undefined` for both and the entity loads with
+     * `name: ""` and its second field empty. The panels then render their empty-state placeholders, which
+     * is exactly the observed failure: the Proxy Rules panel showed **"2 rules"** with `—` for every name
+     * and no match pattern, so `expect(body).toContainText("Block Analytics")` could never pass.
+     *
+     * The field each kind needs is *not* uniform, and it is read by name:
+     *   rules → `url` (= the rule's `pattern`) · requests → `method` + `url`
+     *   sockets → `url`                          · webhooks → `urlSuffix`
+     * See `store/config.ts:133-134,168-170,175-176,184-185`.
+     */
     // Write rules/names.json
-    const ruleNames: Record<string, string> = {};
+    const ruleNames: Record<string, { name: string; url: string }> = {};
     for (const rule of proxyRules) {
-        ruleNames[rule.id] = rule.name;
+        ruleNames[rule.id] = { name: rule.name, url: rule.pattern };
     }
     fs.writeFileSync(
         path.join(wsDir, "rules", "names.json"),
@@ -484,10 +501,10 @@ export function writeSampleWorkspace(dataRoot: string, themeId: string | null = 
         fs.writeFileSync(reqPath, JSON.stringify(request, null, 2), "utf-8");
     }
 
-    // Write requests/names.json
-    const requestNames: Record<string, string> = {};
+    // Write requests/names.json — objects, not strings; see the note above `rules/names.json`.
+    const requestNames: Record<string, { name: string; method: string; url: string }> = {};
     for (const req of requests) {
-        requestNames[req.id] = req.name;
+        requestNames[req.id] = { name: req.name, method: req.method, url: req.url };
     }
     fs.writeFileSync(
         path.join(wsDir, "requests", "names.json"),
@@ -524,10 +541,10 @@ export function writeSampleWorkspace(dataRoot: string, themeId: string | null = 
         );
     }
 
-    // Write sockets/names.json
-    const wsNames: Record<string, string> = {};
+    // Write sockets/names.json — objects, not strings; see the note above `rules/names.json`.
+    const wsNames: Record<string, { name: string; url: string }> = {};
     for (const ws of wsConnections) {
-        wsNames[ws.id] = ws.name;
+        wsNames[ws.id] = { name: ws.name, url: ws.url };
     }
     fs.writeFileSync(
         path.join(wsDir, "sockets", "names.json"),
@@ -555,10 +572,11 @@ export function writeSampleWorkspace(dataRoot: string, themeId: string | null = 
         );
     }
 
-    // Write webhooks/names.json
-    const webhookNames: Record<string, string> = {};
+    // Write webhooks/names.json — objects, not strings; see the note above `rules/names.json`.
+    // Webhooks key on `urlSuffix`, not `url` (`store/config.ts:185`).
+    const webhookNames: Record<string, { name: string; urlSuffix: string }> = {};
     for (const wh of webhooks) {
-        webhookNames[wh.id] = wh.name;
+        webhookNames[wh.id] = { name: wh.name, urlSuffix: wh.urlSuffix };
     }
     fs.writeFileSync(
         path.join(wsDir, "webhooks", "names.json"),
