@@ -1,11 +1,35 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-28 · suite: **2,666 tests / 119 files** — 2,621 passed, 40 skipped. Unit
-**2,206 / 89 files**, integration **460 / 30 files** (`2,206 + 460 = 2,666` ✓, both halves measured
+_Last reviewed: 2026-09-28 · suite: **2,677 tests / 120 files** — 2,632 passed, 40 skipped. Unit
+**2,217 / 90 files**, integration **460 / 30 files** (`2,217 + 460 = 2,677` ✓, both halves measured
 separately, not derived). **0 product failures.** The two failure groups are both environment, and both are
 named below._
 
-**The last move was the tab-page unification, 2026-09-28** — `TabPage.tsx` now owns the frame of three of
+**The last move gave the right sidebar a second face — entity history plus the active environment's
+variables, 2026-09-28.** `2,666 → 2,677` is `+11` tests and `+1` file, and the new file is the whole delta:
+unit moved `2,206 → 2,217` total (`2,176` passed + `40` skipped) while integration stayed at `460 / 30`,
+which is what says no existing case changed behaviour. The eleven cases are
+`tests/renderer/rightSidebar.test.tsx`; ten GUI files changed and three were added, and **nothing outside
+`packages/gui/src/` and `tests/renderer/`** — no engine, protocol, client, reducer, `window.api` call or
+save payload.
+
+**The feature's one load-bearing decision is that the sidebar's *mode* is its open state** — a single field
+`"history" | "variables" | null`, rather than a mode plus an `open` boolean that could disagree with it (and
+could express *open, with no face to show*). That is what makes both toggle rules fall out instead of being
+written twice: pressing the control for the face already showing closes the sidebar, and pressing the other
+one swaps the content in place. `historyOpen` is still threaded to the panels, now derived from the mode.
+**Checked by mutation: forcing `overridden={false}` in `VariablesSidebar` fails exactly one case** (the
+shadowed-global badge) and leaves the other ten green.
+
+**The variables face keeps two groups rather than one merged list, and that is a product decision.**
+`mergeEnvVars` overlays the active environment on `__global__`, so a key in both resolves to the
+*environment's* value — a merged list would show one row and hide exactly the fact you need when a
+substitution is not what you expected. So the global rows stay and the shadowed ones are marked
+`overridden`. The file's `precedes()` helper asserts group order as **document order**, because jsdom has no
+layout engine and "above" can only mean "earlier in the DOM" — the same constraint `tabPageLayout.test.tsx`
+records.
+
+**The move before that was the tab-page unification, 2026-09-28** — `TabPage.tsx` now owns the frame of three of
 the four bands (title bar / toolbar / split / footer) for REST, GraphQL, gRPC, SOAP *and* the collection
 runner. Ten GUI files changed, one added, and **nothing outside `packages/gui/src/`** — no engine, protocol,
 client, reducer, `window.api` call or save payload. `2,658 → 2,666` is `+8` tests and `+2` files:

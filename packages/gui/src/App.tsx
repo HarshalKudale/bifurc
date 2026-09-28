@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { MockRule, SavedRequest, Folder, SyncStatus } from "@/types";
 import { mergeEnvVars } from "@/lib/resolveVars";
 import { CaptureStats } from "@/panels/CapturePanel";
-import HistorySidebar from "@/components/sidebar/HistorySidebar";
+import RightSidebar, { type RightSidebarMode } from "@/components/sidebar/RightSidebar";
 import AppSidebar from "@/components/sidebar/AppSidebar";
 import TitleBar from "@/components/layout/TitleBar";
 import GlobalFooter from "@/components/layout/GlobalFooter";
@@ -144,9 +144,21 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
   const [pendingMockInitial, setPendingMockInitial] = useState<Partial<MockRule> | null>(null);
   const [pendingRuleId, setPendingRuleId] = useState<string | null>(null);
   const [captureStats, setCaptureStats] = useState<CaptureStats | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  /**
+   * The right sidebar's face, or `null` when closed. **The mode is the open state** — a separate
+   * `open` boolean would be a second source of truth that could disagree with it, and would allow an
+   * "open" sidebar with no face to show.
+   */
+  const [rightSidebar, setRightSidebar] = useState<RightSidebarMode | null>(null);
   const [openedEntityPath, setOpenedEntityPath] = useState<string>("");
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
+
+  /**
+   * Panels gate their "publish my entity path upward" effect on this. It has to stay tied to the
+   * history face specifically: the variables face shows no entity, so a push would be meaningless
+   * work on every keystroke.
+   */
+  const historyOpen = rightSidebar === "history";
 
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchModalMode, setSearchModalMode] = useState<"current" | "global">("current");
@@ -157,18 +169,28 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     setPendingOpenRequest(null);
     setPendingMockInitial(null);
     setPendingRuleId(null);
-    setHistoryOpen(false);
+    setRightSidebar(null);
     setMappingPrefill(undefined);
     baseClearContext(msg);
   }, [baseClearContext]);
 
+  /**
+   * Opening an entity's history. Asking for the entity that is already on screen closes the sidebar —
+   * the toggle history has always had, which now falls out of "the mode is the open state". Any other
+   * call *replaces* whatever face was showing.
+   */
   const openHistory = useCallback((filePath: string) => {
-    if (historyOpen && openedEntityPath === filePath) { setHistoryOpen(false); return; }
+    if (rightSidebar === "history" && openedEntityPath === filePath) { setRightSidebar(null); return; }
     setOpenedEntityPath(filePath);
-    if (!historyOpen) setHistoryOpen(true);
-  }, [historyOpen, openedEntityPath]);
+    setRightSidebar("history");
+  }, [rightSidebar, openedEntityPath]);
 
-  const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  /** The same toggle rule for the variables face: press it while it is showing and the sidebar closes. */
+  const toggleVariables = useCallback(() => {
+    setRightSidebar((v) => (v === "variables" ? null : "variables"));
+  }, []);
+
+  const closeRightSidebar = useCallback(() => setRightSidebar(null), []);
   const bumpHistoryReload = useCallback(() => setHistoryReloadKey((k) => k + 1), []);
   const handleEntityPathChange = useCallback((filePath: string) => setOpenedEntityPath(filePath), []);
 
@@ -396,13 +418,23 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
         }}
         activePanel={panel} onOpenWorkspaceSettings={() => setPanel("workspace")}
         onOpenSearch={(m) => { setSearchModalMode(m ?? "current"); setSearchModalOpen(true); }}
+        variablesOpen={rightSidebar === "variables"}
+        onToggleVariables={toggleVariables}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <nav className="w-[92px] bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden">
           <AppSidebar entries={visiblePanels} activePanel={panel} onPanelSelect={setPanel} badges={navBadges} />
         </nav>
         <main className="flex-1 overflow-hidden flex flex-col min-w-0">{renderPanel(panel, panelRenderCtx)}</main>
-        <HistorySidebar filePath={openedEntityPath} workspaceId={wsId} onClose={closeHistory} open={historyOpen} reloadKey={historyReloadKey} />
+        <RightSidebar
+          mode={rightSidebar}
+          filePath={openedEntityPath}
+          workspaceId={wsId}
+          onClose={closeRightSidebar}
+          reloadKey={historyReloadKey}
+          activeEnvironment={selectedActiveEnv}
+          globalEnvironment={globalEnv}
+        />
       </div>
       <GlobalFooter
         panel={panel}
