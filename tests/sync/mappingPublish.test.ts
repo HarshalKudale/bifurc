@@ -202,4 +202,37 @@ describe("entity.publish — a mapping, through the command the button issues", 
     expect(second).toEqual({ ok: true, commit: null });
     expect((await git().revparse(["HEAD"])).trim()).toBe(head);
   });
+
+  /**
+   * **The report, reproduced.** A stale `.git/index.lock`.
+   *
+   * A killed git process leaves the lock behind, and from then on every `git add` fails with
+   * `Unable to create '…/.git/index.lock': File exists.` while `git status` keeps reading happily — so
+   * the entity correctly looks untracked, the Publish button is correctly offered, and the publish
+   * fails for a reason nothing surfaced. `publishEntities` swallowed it in a bare `catch {}` and
+   * reported `commit: null`, which the UI rendered as *"this entity is already committed"*.
+   *
+   * The lock is written by hand here because that is exactly what the crash leaves: a file nobody will
+   * ever release.
+   */
+  it("publishes anyway when a stale index.lock was left behind by a killed process", async () => {
+    const { getWorkspaceSyncStatus } = await import("@bifurc/engine/sync/statusTracker");
+    const created = await createMapping("locked.localhost");
+    const relPath = `mappings/${created.id}.json`;
+    const lock = path.join(tmpDir, WS_ID, ".git", "index.lock");
+    fs.writeFileSync(lock, "");
+
+    const result = await registry.invoke(
+      "entity.publish",
+      { workspaceId: WS_ID, paths: [relPath] },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.commit).toMatch(/^[0-9a-f]{40}$/);
+    // Removed, not merely retried past — otherwise the next publish fails the same way, forever.
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(await tracked()).toContain(relPath);
+    expect((await getWorkspaceSyncStatus(WS_ID))[relPath]).toBe("clean");
+  });
 });

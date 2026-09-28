@@ -141,7 +141,24 @@ writes (`publish` / `revert` / `publishPanel` — **two writers, not seven**); e
   (`git status` reads fine while every `git add` fails; a killed git process leaves one) or a
   `.gitignore` rule. A path that does not exist is an error too. **A silent `catch` around a git
   command is the general trap here**: it converts every failure into the one outcome that looks like
-  success.
+  success, and a plausible comment beside it ("path may not exist — ignore") makes it look deliberate.
+- **⚠ `.git/index.lock` — the confirmed root cause of the whole "publish does nothing" saga
+  (2026-09-28).** Every index-touching git command holds the lock for its duration. Two sources:
+  - **A killed process** (the app closed during a push) never releases it, and `git status` keeps
+    reading fine while **every `git add` fails** with `Unable to create '…/.git/index.lock': File
+    exists.` So the entity correctly reads untracked, the Publish button is correctly offered, and the
+    publish fails for a reason nothing surfaced. Fix: **`sync/gitLock.ts#withIndexLockRetry()`** —
+    retry ×5 over ~0.8 s (a *live* lock clears in ms), then remove it, because the alternative is a
+    Publish button that can never work again. Wrapped around the staging loop, `git commit`, and both
+    `git checkout HEAD --` attempts in `discardChanges`. **The path is re-validated before unlinking**
+    (basename exactly `index.lock` **and** inside this workspace's `.git/`) — git's message is input,
+    and a wording we did not anticipate must not be able to name a file we then delete.
+  - **⚠ The app raced itself.** `git status` refreshes the index and **writes it back**, taking the
+    lock — and the renderer polls the status on every write *and* on every `sync.entityStatus` event, so
+    a status read could collide with a publish's `git add` and lose. Fixed by **`GIT_OPTIONAL_LOCKS=0`**
+    on the git instance in `store/gitStore.ts#getGit`. It must be the **env**, not a per-call flag:
+    `simple-git`'s `status()` builds its own argv, so a flag could not reach it. Mandatory locks
+    (`add`/`commit`/`checkout`) are unaffected.
 - **⚠ A card must not claim a state its own status contradicts.** `commit: null` says "Nothing to
   publish" only when the card agrees the entity is tracked; if it still reads unpublished, it reports
   the *disagreement*. Pinned by `tests/renderer/mappingsPublishRoundTrip.test.tsx` — the file that
