@@ -47,7 +47,7 @@ import * as net from "net";
 import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { createWorkspaceHost, type WorkspaceHost } from "@bifurc/engine/runtime/host";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 
 const WS_A = "scope-ws-a";

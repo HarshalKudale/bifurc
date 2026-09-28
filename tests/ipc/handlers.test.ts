@@ -39,7 +39,7 @@ vi.mock("@bifurc/engine/proxy/server", () => ({
   replayRequest: vi.fn(),
 }));
 
-vi.mock("@bifurc/engine/proxy/logEmitter", () => ({
+vi.mock("@bifurc/engine/kernel/telemetry", () => ({
   logEmitter: mockLogEmitter,
 }));
 
@@ -229,8 +229,8 @@ import {
 import { replayRequest as replayRequestImpl } from "@bifurc/engine/proxy/serverReplay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Helper: get registered handler ───────────────────────────────────────────
 
@@ -609,7 +609,7 @@ describe("src/ipc/handlers.ts", () => {
 
       it("implements every protocol command — the pinned list is empty", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
 
         // Non-vacuity. An empty or unreadable `COMMANDS` would make the assertion below pass while
         // checking nothing, and this is the one test that is supposed to notice a missing
@@ -705,7 +705,7 @@ describe("src/ipc/handlers.ts", () => {
         // legacy channel. A command that is neither is unreachable on both paths at once — a silent
         // regression the surface test cannot see, because the key stays exposed either way.
         const { COMMANDS } = await import("@bifurc/protocol");
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
 
         const all = Object.keys(COMMANDS);
         expect(all.length).toBeGreaterThan(80);
@@ -744,7 +744,7 @@ describe("src/ipc/handlers.ts", () => {
         // `surface.ts` has it) and the alias in `vitest.config.ts` covers `@bifurc/engine/*` only.
         // Read-only data, so the relative hop costs nothing but honesty about where the contract lives.
         const { SURFACE } = await import("../../packages/client/src/surface");
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
 
         const routed = Object.entries(SURFACE)
           .filter(([, e]) => e.kind === "transport" || e.kind === "shim")
@@ -786,8 +786,8 @@ describe("src/ipc/handlers.ts", () => {
        * **no session**, since a session-less caller is the engine itself and holds every scope.
        */
       it("delivers the 21 moved commands through the registry, not just the channel", async () => {
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-        const { bus } = await import("@bifurc/engine/eventBus");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+        const { bus } = await import("@bifurc/engine/kernel/eventBus");
         const ctx = { bus };
 
         vi.mocked(isRunning).mockReturnValue(true);
@@ -1091,8 +1091,8 @@ describe("src/ipc/handlers.ts", () => {
         // The registry validates **before** the handler runs, so a transport gets `BAD_REQUEST` from
         // the same place for every command. Asserted here because 3b-2's new handlers take no params,
         // which makes it tempting to assume `{}` is merely conventional — it is enforced.
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-        const { bus } = await import("@bifurc/engine/eventBus");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+        const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
         expect(() => commandRegistry.invoke("server.status", { unexpected: 1 }, { bus }))
           .toThrow(/Invalid payload for command "server\.status"/);

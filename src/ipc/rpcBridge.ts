@@ -34,8 +34,8 @@
 import { BrowserWindow, ipcMain } from "electron";
 
 import { EngineError, SubscribeRequestSchema, UnsubscribeRequestSchema } from "@bifurc/protocol";
-import { bus } from "@bifurc/engine/eventBus";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { createInProcessTransport } from "@bifurc/engine/transport/inProcess";
 import {
   BUS_NAME_BY_WIRE_NAME,

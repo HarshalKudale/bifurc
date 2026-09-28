@@ -1,6 +1,6 @@
 import * as net from "net";
 import { EngineError } from "@bifurc/protocol";
-import { isLoopbackHost } from "../lib/net";
+import { isLoopbackHost } from "../utils/net";
 import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../store/config";
 import { readAllEntities } from "../store/workspaceFs";
 import { HOP_BY_HOP } from "./constants";
@@ -9,8 +9,8 @@ import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./
 import { loadCA, unloadCA, isCALoaded, clearCertCache } from "./tlsCert";
 import { interceptTls } from "./tlsIntercept";
 import { handleProxyRouting } from "./routingUtils";
-import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "./logEmitter";
-export { RequestLogEntry, logEmitter, emitLogChunk } from "./logEmitter";
+import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "../kernel/telemetry";
+export { RequestLogEntry, logEmitter, emitLogChunk } from "../kernel/telemetry";
 
 // `plan/15` work item 3 took this module's **reverse half**, and its imports went with it: the home
 // page and the mapping/mock dispatch — `buildHomePage`, `buildNotMappedPage`, `matchMock`, `serveMock`,

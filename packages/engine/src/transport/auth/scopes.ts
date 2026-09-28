@@ -36,7 +36,7 @@
  * asks. The presets below exist so callers do not hand-roll the sets.
  */
 import { COMMANDS, type CommandAction } from "@bifurc/protocol";
-import type { Scope } from "../../commands/registry";
+import type { Scope } from "../../kernel/registry";
 
 /**
  * Re-exported, **not declared here**. `Scope` is the vocabulary a handler reads off

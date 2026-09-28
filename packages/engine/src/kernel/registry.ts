@@ -44,7 +44,7 @@
  * (P9) was still broken: a per-process ratchet cannot see a module side effect.
  */
 import { type CommandAction, getCommandParamsSchema, isKnownCommand, EngineError } from "@bifurc/protocol";
-import type { bus } from "../eventBus";
+import type { bus } from "./eventBus";
 
 /**
  * The authorisation vocabulary — what a session is allowed to do.

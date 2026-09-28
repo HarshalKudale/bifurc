@@ -39,8 +39,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
-import { CommandRegistry } from "@bifurc/engine/commands/registry";
-import { EngineEventBus } from "@bifurc/engine/eventBus";
+import { CommandRegistry } from "@bifurc/engine/kernel/registry";
+import { EngineEventBus } from "@bifurc/engine/kernel/eventBus";
 import { EventLog } from "@bifurc/engine/transport/eventLog";
 import { createInProcessTransport } from "@bifurc/engine/transport/inProcess";
 import { createStdioServer, createStdioTransport, type StdioServer } from "@bifurc/engine/transport/stdio";

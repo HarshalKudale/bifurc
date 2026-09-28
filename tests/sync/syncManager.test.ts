@@ -238,13 +238,13 @@ describe("syncManager", () => {
 
 describe("generateRandomWorkspaceName()", () => {
   it("returns adjective-noun format", async () => {
-    const { generateRandomWorkspaceName } = await import("@bifurc/engine/lib/randomNames");
+    const { generateRandomWorkspaceName } = await import("@bifurc/engine/utils/randomNames");
     const name = generateRandomWorkspaceName();
     expect(name).toMatch(/^[a-z]+-[a-z]+$/);
   });
 
   it("returns different names on repeated calls (probabilistic)", async () => {
-    const { generateRandomWorkspaceName } = await import("@bifurc/engine/lib/randomNames");
+    const { generateRandomWorkspaceName } = await import("@bifurc/engine/utils/randomNames");
     const names = new Set(Array.from({ length: 10 }, () => generateRandomWorkspaceName()));
     expect(names.size).toBeGreaterThan(1);
   });

@@ -6,7 +6,7 @@ import { HOP_BY_HOP } from "./constants";
 import { sendHtml } from "./pages";
 import { executeRequestScript, executeResponseScript } from "./scriptExecutor";
 import { decompressBody, stripContentEncoding } from "./decompressUtils";
-import { emitLogChunk } from "./logEmitter";
+import { emitLogChunk } from "../kernel/telemetry";
 import { handleProxyResponse, parseRawHeaders } from "./responseUtils";
 
 export function tcpTunnel(

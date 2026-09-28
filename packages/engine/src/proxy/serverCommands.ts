@@ -106,7 +106,7 @@
  * which is a property of the host and not of any workspace. Asserted in `index.test.ts` so it reads as a
  * decision rather than an oversight.
  */
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import type {
     ProxyStatusParams,
     ServerRestartParams,
@@ -117,7 +117,7 @@ import type {
 import { loadConfig } from "../store/config";
 import { discoverServices } from "./service-discovery";
 import { getPort, getServerError, isRunning, startServer, stopServer } from "./server";
-import { echoWorkspace } from "../commands/echoWorkspace";
+import { echoWorkspace } from "../utils/echoWorkspace";
 
 /**
  * The port a command re-binds when the proxy is not running.

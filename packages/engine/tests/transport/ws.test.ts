@@ -28,8 +28,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer as createTcpServer, type AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
-import { CommandRegistry, type CommandContext } from "../../src/commands/registry";
-import { EngineEventBus } from "../../src/eventBus";
+import { CommandRegistry, type CommandContext } from "../../src/kernel/registry";
+import { EngineEventBus } from "../../src/kernel/eventBus";
 import { EventLog } from "../../src/transport/eventLog";
 import type { Transport } from "../../src/transport/types";
 import {

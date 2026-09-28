@@ -49,7 +49,7 @@
  * `backpressure: false` is what says so.
  */
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
-import type { CommandContext } from "../../src/commands/registry";
+import type { CommandContext } from "../../src/kernel/registry";
 import { createAuthenticatedTransport } from "../../src/transport/auth";
 import { createInProcessTransport } from "../../src/transport/inProcess";
 import { defineConformanceSuite } from "./protocol.conformance";

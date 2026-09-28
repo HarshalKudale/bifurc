@@ -32,7 +32,7 @@ import type {
     TlsGenerateResult,
     TlsRemoveCertResult,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import { caDir, generateCA, getCertStatus, removeCA } from "./certManager";
 
 export function registerCertCommands(registry: CommandRegistry): void {

@@ -1,7 +1,7 @@
 import * as net from "net";
 import { MockRule, Environment } from "../store/config";
 import { HOP_BY_HOP } from "./constants";
-import { resolveRandomizers } from "../lib/randomizer";
+import { resolveRandomizers } from "../utils/randomizer";
 
 export interface ResolvedMockResponse {
   status: number;
