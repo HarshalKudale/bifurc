@@ -24,8 +24,8 @@ import {
   CommandRegistry,
   type CommandContext,
   type SessionIdentity,
-} from "../../src/commands/registry";
-import { EngineEventBus } from "../../src/eventBus";
+} from "../../src/kernel/registry";
+import { EngineEventBus } from "../../src/kernel/eventBus";
 import { EventLog, type EventLogOptions } from "../../src/transport/eventLog";
 import { createInProcessTransport } from "../../src/transport/inProcess";
 import {

@@ -83,7 +83,7 @@
 import * as net from "net";
 import * as http from "http";
 import { EngineError } from "@bifurc/protocol";
-import { isLoopbackHost } from "../lib/net";
+import { isLoopbackHost } from "../utils/net";
 import { AppConfig } from "../store/config";
 import { HOP_BY_HOP } from "./constants";
 import { sendHtml, buildHomePage, buildNotMappedPage, buildUnservedPage } from "./pages";
@@ -96,7 +96,7 @@ import {
   serveResolvedResponse,
 } from "./mockHandler";
 import { proxyToUpstream, fetchUpstreamResponse } from "./proxyHandler";
-import { RequestLogEntry, logEmitter, emitLog } from "./logEmitter";
+import { RequestLogEntry, logEmitter, emitLog } from "../kernel/telemetry";
 import { mkId, activeEnv, hostnameOf } from "./serverUtils";
 
 export interface EdgeRouterOptions {

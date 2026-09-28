@@ -109,8 +109,8 @@ import { loadConfig } from "../store/config";
 import { sanitizeDirName } from "../store/workspaceFs";
 import { reloadConfig } from "../proxy/server";
 import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "../store/gitStore";
-import { emitEntityStatus } from "../eventBus";
-import type { CommandRegistry } from "../commands/registry";
+import { emitEntityStatus } from "../kernel/eventBus";
+import type { CommandRegistry } from "../kernel/registry";
 
 export function registerSyncCommands(registry: CommandRegistry): void {
     registry.register("sync.setRemote", async ({ workspaceId, remote, branch }: SyncSetRemoteParams) => {

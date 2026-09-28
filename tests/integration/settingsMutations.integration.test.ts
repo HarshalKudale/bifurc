@@ -80,8 +80,8 @@ import { generateCA } from "@bifurc/engine/proxy/certManager";
 import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
 import { loadConfig } from "@bifurc/engine/store/config";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Capture the handlers the Settings screen drives ───────────────────────────
 
@@ -364,7 +364,7 @@ beforeEach(async () => {
 // after it with `Command "config.get" is already registered.` — which is exactly how it was found:
 // 29 failures in this file, all from one throw inside the second test's `beforeEach`.
 beforeAll(async () => {
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   registerCoreCommands(commandRegistry);
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.

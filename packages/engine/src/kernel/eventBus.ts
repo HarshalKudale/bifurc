@@ -13,10 +13,10 @@
  * moves there verbatim — it already has zero Electron coupling.
  */
 import { EventEmitter } from "events";
-import { logEmitter, type RequestLogEntry } from "./proxy/logEmitter";
-import type { WebhookPayload } from "./proxy/webhookServer";
-import { getWorkspaceSyncStatus } from "./sync/statusTracker";
-import { getWorkspaceGitState } from "./sync/gitState";
+import { logEmitter, type RequestLogEntry } from "./telemetry";
+import type { WebhookPayload } from "../proxy/webhookServer";
+import { getWorkspaceSyncStatus } from "../sync/statusTracker";
+import { getWorkspaceGitState } from "../sync/gitState";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };

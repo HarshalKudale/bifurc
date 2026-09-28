@@ -54,8 +54,8 @@ import {
     sanitizeDirName,
     deleteEntityDir,
 } from "./workspaceFs";
-import { bus } from "../eventBus";
-import type { CommandRegistry } from "../commands/registry";
+import { bus } from "../kernel/eventBus";
+import type { CommandRegistry } from "../kernel/registry";
 
 /**
  * The 11 folder kinds, as the shell declared them. `packages/protocol/src/commands/folder.ts`'s

@@ -62,8 +62,8 @@ vi.mock("@bifurc/engine/proxy/server", () => ({
 
 import { createWorkspace, mockFixture, mappingFixture, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 import { loadConfig } from "@bifurc/engine/store/config";
-import { bus } from "@bifurc/engine/eventBus";
-import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
+import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine/kernel/registry";
 import { COMPANION_SCOPES, SHELL_SCOPES } from "@bifurc/engine/transport/auth/scopes";
 import { registerCrudKinds } from "@bifurc/engine/store/kinds/crudKinds";
 import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";

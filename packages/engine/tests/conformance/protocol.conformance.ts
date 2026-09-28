@@ -64,8 +64,8 @@ import {
 // suite that typechecks against stale `dist` is the failure mode `vitest.config.ts` already warns
 // about for the runtime alias ("a source edit that was not rebuilt is silently not tested"). A
 // relative path reaches the same source file the test actually runs, with no build in between.
-import { CommandRegistry, type CommandContext } from "../../src/commands/registry";
-import { EngineEventBus, ENGINE_EVENT_NAMES } from "../../src/eventBus";
+import { CommandRegistry, type CommandContext } from "../../src/kernel/registry";
+import { EngineEventBus, ENGINE_EVENT_NAMES } from "../../src/kernel/eventBus";
 import { EventLog, DEFAULT_MAX_EVENTS } from "../../src/transport/eventLog";
 import {
   commandIsAllowed,
@@ -76,7 +76,7 @@ import {
 import type { EngineEvent, Transport } from "../../src/transport/types";
 // Type-only, so nothing of the proxy module is loaded — it is here so the `log.entry` fixture below is
 // compile-checked against the shape the bus really emits.
-import type { RequestLogEntry } from "../../src/proxy/logEmitter";
+import type { RequestLogEntry } from "../../src/kernel/telemetry";
 import {
   assertBridgeIsTotal,
   BUS_EVENTS_NOT_ON_THE_WIRE,

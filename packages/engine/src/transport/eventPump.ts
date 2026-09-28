@@ -128,7 +128,7 @@
  * it is recorded here rather than left to be discovered.
  */
 import type { EventEnvelope, LogEntryBatchEvent, LogEntryEvent } from "@bifurc/protocol";
-import type { RequestLogEntry } from "../proxy/logEmitter";
+import type { RequestLogEntry } from "../kernel/telemetry";
 import type { EngineEvent } from "./types";
 
 /**

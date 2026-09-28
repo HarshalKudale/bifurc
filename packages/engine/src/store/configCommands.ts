@@ -27,7 +27,7 @@
  * result it never read. That line is dropped rather than reproduced; every observable behaviour is
  * unchanged. Everything else is a character-for-character move.
  */
-import type { CommandRegistry, CommandContext } from "../commands/registry";
+import type { CommandRegistry, CommandContext } from "../kernel/registry";
 import type {
     ConfigSaveParams,
     WorkspaceAddParams,
@@ -37,7 +37,7 @@ import type {
 import { generateId, loadConfig, saveConfig, type AppConfig, type Workspace } from "./config";
 import { initWorkspaceDir } from "./workspaceFs";
 import { initWorkspaceRepo } from "./gitStore";
-import { generateRandomWorkspaceName } from "../lib/randomNames";
+import { generateRandomWorkspaceName } from "../utils/randomNames";
 import { gateCreate } from "../subscription/entityCount";
 import { isRunning, reloadConfig, startServer } from "../proxy/server";
 // `plan/17` §5 work item 7 — the edge's binding, added so a save can re-bind the one runtime port a command

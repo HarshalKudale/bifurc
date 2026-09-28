@@ -185,11 +185,11 @@ describe("deleting a flat kind — the deletion must survive until it is publish
    * kind containers (`entityCrudRegistry`, `simpleEntityKinds`) are singletons for the same reason.
    */
   beforeAll(async () => {
-    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
     const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
     const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
     const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
-    const { bus } = await import("@bifurc/engine/eventBus");
+    const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
     registerCrudKinds();
     registerCoreKinds();

@@ -52,7 +52,7 @@ import {
 } from "./proxyHarness";
 import { generateCA } from "@bifurc/engine/proxy/certManager";
 import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
-import { logEmitter, type RequestLogEntry } from "@bifurc/engine/proxy/logEmitter";
+import { logEmitter, type RequestLogEntry } from "@bifurc/engine/kernel/telemetry";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 import * as http from "http";
 import * as net from "net";
 import { HOP_BY_HOP } from "./constants";
-import { emitLogChunk } from "./logEmitter";
+import { emitLogChunk } from "../kernel/telemetry";
 import { decompressBody, stripContentEncoding } from "./decompressUtils";
 
 export function buildResponseHeaders(res: http.IncomingMessage) {
