@@ -46,8 +46,6 @@ export const entitiesStrings = {
   requests: {
       title: "Requests",
       noRequestsYet: "No saved requests yet.\nClick  +  in the tab bar.",
-      noRequestsOpen: "No requests open",
-      noRequestsOpenHint: "Click a request in the tree, or press + to create a new one.",
       newRequest: "New Request",
       editRequest: "Edit Request",
       searchPlaceholder: "Search requests…",

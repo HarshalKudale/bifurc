@@ -129,9 +129,12 @@ describe("packages/gui/src/lib/utils.ts", () => {
   });
 
   describe("statusColor()", () => {
-    it("returns signal green for 2xx status codes", () => {
-      expect(statusColor(200)).toBe("var(--c-signal)");
-      expect(statusColor(201)).toBe("var(--c-signal)");
+    // These named `var(--c-signal)` until 2026-09-28, when `a618982` ("Minor UX changes") moved the 2xx
+    // colour to its own `--c-success` token. The literals stay literals on purpose: asserting against
+    // `statusColor`'s own constants would pass even if the mapping itself were wrong.
+    it("returns success green for 2xx status codes", () => {
+      expect(statusColor(200)).toBe("var(--c-success)");
+      expect(statusColor(201)).toBe("var(--c-success)");
     });
 
     it("returns amber for 3xx status codes", () => {
@@ -145,12 +148,14 @@ describe("packages/gui/src/lib/utils.ts", () => {
   });
 
   describe("methodColor()", () => {
-    it("returns signal green for GET", () => {
-      expect(methodColor("GET")).toBe("var(--c-signal)");
+    // Same commit: every method got its own `--c-method-*` token instead of sharing `--c-signal` /
+    // `--c-amber`, so these two expectations were the stale half — the source was right.
+    it("returns the per-method token for GET", () => {
+      expect(methodColor("GET")).toBe("var(--c-method-get)");
     });
 
-    it("returns amber for POST", () => {
-      expect(methodColor("POST")).toBe("var(--c-amber)");
+    it("returns the per-method token for POST", () => {
+      expect(methodColor("POST")).toBe("var(--c-method-post)");
     });
 
     it("returns muted foreground for unknown methods", () => {
