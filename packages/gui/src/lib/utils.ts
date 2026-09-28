@@ -113,7 +113,18 @@ export function methodBadgeClass(m: string): string {
 
 // -- Entity file path helpers (mirrors workspaceFs.ts logic, renderer-side) -----
 
-function sanitizeDirName(name: string): string {
+/**
+ * The directory-name sanitiser the **storage layer** uses — `strip`, not `replace`.
+ *
+ * Exported because anything that needs to name a folder's path on disk has to agree with it, and two
+ * things now do: `entityRelPath()` (above) and the folder git-status rollup in
+ * `components/sidebar/FolderTree.tsx`. The engine's `workspaceFs.sanitizeDirName` is the authority and
+ * this is its mirror; the engine's **`folder.publish`** used to carry a *third*, different one
+ * (`[<>:"/\\|?*]+` → `"-"`), which is why a folder whose name contains a colon could never be
+ * published — the pathspec it built pointed at a directory that does not exist. That is fixed at the
+ * source (`sync/syncCommands.ts` now uses the storage sanitiser); do not reintroduce a local variant.
+ */
+export function sanitizeDirName(name: string): string {
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim() || "unnamed";
 }
 

@@ -9,9 +9,12 @@ import {
   removeNameEntry,
   getPendingDeletions,
   removePendingDeletion,
+  ALL_ENTITY_KINDS,
+  FLAT_ENTITY_KINDS,
   EntityNameEntry,
 } from "../store/workspaceFs";
-import { publishEntities } from "./publishService";
+import { getKindNameEntry } from "../store/kindNameEntries";
+import { publishEntities, type PublishResult } from "./publishService";
 import {
   getWorkspaceSyncStatus,
   invalidateCache,
@@ -26,7 +29,20 @@ export interface FileDiffResult {
   current?: string | null;
 }
 
+/**
+ * The name entry a kind wants recorded for an entity — the *display* half of a pending deletion.
+ *
+ * **Registration first, table second, and the order is the point.** Each kind already declares this
+ * via `CrudFactoryOpts.getNameEntry` (`store/kinds/*.ts`), which is what `entityCrudCommands` writes
+ * into `pending-deletions.json`. This function's table is a **second copy of the same mapping**, and
+ * the two had already drifted: `grpcRequests` carries `methodName`/`serviceName` in its registration
+ * and not here. Preferring the registration means there is one authority in the running app, and the
+ * table survives only as the fallback for a caller that never registered any kinds — which is every
+ * unit test that imports the engine's functions directly rather than going through `registerAll`.
+ */
 export function extractNameEntry(kind: string, entity: any): EntityNameEntry | null {
+  const registered = getKindNameEntry(kind, entity);
+  if (registered) return registered;
   if (!entity || typeof entity !== "object") return null;
   switch (kind) {
     case "rules":
@@ -44,6 +60,10 @@ export function extractNameEntry(kind: string, entity: any): EntityNameEntry | n
     case "graphqlRequests":
       return { name: entity.name ?? "", endpointUrl: entity.endpointUrl ?? "" };
     case "grpcRequests":
+      return { name: entity.name ?? "" };
+    case "mappings":
+      return { name: entity.label || entity.domain || "", url: entity.domain ?? "" };
+    case "environments":
       return { name: entity.name ?? "" };
     default:
       return entity.name ? { name: entity.name } : null;
@@ -144,35 +164,32 @@ export async function discardChanges(
 
     // 3. Post-discard cleanup: pending deletions & names.json
     if (entityId) {
-      const allKinds = [
-        "requests",
-        "mocks",
-        "sockets",
-        "webhooks",
-        "rules",
-        "mappings",
-        "graphqlRequests",
-        "soapRequests",
-        "grpcRequests",
-        "environments",
-      ];
-      for (const k of allKinds) {
+      // One shared kind list, not a local copy. The copy that used to live here named the same ten
+      // kinds, which is exactly how the four copies of this vocabulary drifted apart — see
+      // `ALL_ENTITY_KINDS`.
+      for (const k of ALL_ENTITY_KINDS) {
         const pending = getPendingDeletions(wsId, k);
         if (pending.some((e) => e.id === entityId)) {
           removePendingDeletion(wsId, k, entityId);
         }
       }
 
-      // Re-sync names.json with disk state
-      const restoredEntity = readEntity<any>(wsId, kind, entityId);
-      if (restoredEntity) {
-        const nameEntry = extractNameEntry(kind, restoredEntity);
-        if (nameEntry) {
-          upsertNameEntry(wsId, kind, entityId, nameEntry);
+      // Re-sync names.json with disk state — **foldered kinds only**. A flat kind has no names
+      // index, so `upsertNameEntry` here would create a stray `{kind}/names.json` on every revert:
+      // untracked, invisible in the entity list (it is filtered as a bookkeeping file), and then
+      // silently committed by the next `git add -A -- {kind}/`. Reverting a mapping used to leave
+      // one behind.
+      if (!FLAT_ENTITY_KINDS.includes(kind)) {
+        const restoredEntity = readEntity<any>(wsId, kind, entityId);
+        if (restoredEntity) {
+          const nameEntry = extractNameEntry(kind, restoredEntity);
+          if (nameEntry) {
+            upsertNameEntry(wsId, kind, entityId, nameEntry);
+          }
+        } else {
+          // File is deleted
+          removeNameEntry(wsId, kind, entityId);
         }
-      } else {
-        // File is deleted
-        removeNameEntry(wsId, kind, entityId);
       }
     }
 
@@ -185,25 +202,28 @@ export async function discardChanges(
 
 /**
  * Commit and push changes for one or more files or folders.
+ *
+ * Returns `publishEntities`'s `committed` flag unchanged, so a caller can tell "there was nothing to
+ * commit" from "a commit was made" — see `PublishResult`.
  */
 export async function syncChanges(
   wsId: string,
   paths: string[],
   message?: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<PublishResult> {
   const normalizedPaths = paths.map((p) => p.replace(/\\/g, "/"));
   const result = await publishEntities({ wsId, paths: normalizedPaths, message });
   if (result.ok) {
+    // A published deletion is no longer pending, whichever kind it belonged to. `loadConfig()`
+    // rebuilds the deleted entity's stub from this record, so clearing it is what makes the entity
+    // finally leave the UI — and leaving any kind out here means that kind's deletion can never be
+    // completed. Shared list for the same reason as everywhere else; see `ALL_ENTITY_KINDS`.
     for (const p of normalizedPaths) {
       const parts = p.split("/");
       const base = parts[parts.length - 1];
       const entityId = base?.endsWith(".json") ? base.slice(0, -5) : null;
       if (entityId) {
-        for (const kind of [
-          "requests", "mocks", "sockets", "webhooks", "rules", "mappings",
-          "graphqlRequests", "soapRequests",
-          "grpcRequests", "environments",
-        ]) {
+        for (const kind of ALL_ENTITY_KINDS) {
           removePendingDeletion(wsId, kind, entityId);
         }
       }

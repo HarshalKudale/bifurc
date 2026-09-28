@@ -3,11 +3,10 @@ import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import { AppConfig, Environment, Workspace } from "@/types";
-import { Panel } from "@/lib/panelRegistry";
+import { Environment, Workspace } from "@/types";
 import RightSidebar from "@/components/sidebar/RightSidebar";
 import VariablesSidebar from "@/components/sidebar/VariablesSidebar";
-import TitleBar from "@/components/layout/TitleBar";
+import GlobalFooter from "@/components/layout/GlobalFooter";
 
 /**
  * The right sidebar grew a second face (2026-09-28): entity history, and the variables the active
@@ -153,35 +152,37 @@ describe("VariablesSidebar — the variables face", () => {
   });
 });
 
-describe("TitleBar — the variables toggle", () => {
-  const baseProps = {
-    config: {
-      activeWorkspaceId: "ws-1",
-      activeEnvironmentId: null,
-      port: 8080,
-      environments: [],
-    } as unknown as AppConfig,
-    serverRunning: false,
-    serverError: null,
-    helpText: "help",
-    onServerStart: vi.fn(),
-    onServerStop: vi.fn(),
+/**
+ * The toggle's host, corrected 2026-09-28.
+ *
+ * These two cases used to render `TitleBar` and look for the button there. `TitleBar` has never had a
+ * `variablesOpen` prop — the environment selector and the variables toggle both live in
+ * `GlobalFooter`, beside the git/sync status, and that is the decision, not a drift: the toggle opens
+ * the expansion of the selector's current value, so the two belong in one row. The cases were
+ * **red at HEAD** for exactly that reason, and `MEMORY.md`'s "11 cases, mutation-checked" claim for
+ * this file covered the other nine.
+ *
+ * The claims themselves are unchanged and are still the ones worth pinning — the toggle is next to
+ * the selector in document order, and `aria-pressed` carries the open state. Only the component under
+ * test moved.
+ */
+describe("GlobalFooter — the variables toggle", () => {
+  const footerProps = {
+    panel: "services",
+    workspace: { id: "ws-1", name: "Default" } as Workspace,
+    entitySyncStatus: {},
+    workspaceGitState: null,
+    syncStatus: "idle" as const,
+    onPublishPanel: vi.fn(),
+    environments: [] as Environment[],
+    activeEnvironmentId: null,
     onEnvChange: vi.fn(),
     onManageEnvs: vi.fn(),
-    workspaces: [{ id: "ws-1", name: "Default" }] as Workspace[],
-    activeWorkspaceId: "ws-1",
-    onWorkspaceChange: vi.fn(),
-    onWorkspaceCreate: vi.fn(),
-    onWorkspaceRename: vi.fn(),
-    onWorkspaceDelete: vi.fn(),
-    activePanel: "services" as Panel,
-    onOpenWorkspaceSettings: vi.fn(),
-    onOpenSearch: vi.fn(),
   };
 
   it("sits beside the environment selector and reports its pressed state", () => {
     const onToggleVariables = vi.fn();
-    render(<TitleBar {...baseProps} variablesOpen={false} onToggleVariables={onToggleVariables} />);
+    render(<GlobalFooter {...footerProps} variablesOpen={false} onToggleVariables={onToggleVariables} />);
 
     const toggle = screen.getByRole("button", { name: "Environment variables" });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -192,7 +193,7 @@ describe("TitleBar — the variables toggle", () => {
   });
 
   it("shows as pressed while the variables face is open", () => {
-    render(<TitleBar {...baseProps} variablesOpen={true} onToggleVariables={vi.fn()} />);
+    render(<GlobalFooter {...footerProps} variablesOpen={true} onToggleVariables={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Environment variables" })).toHaveAttribute("aria-pressed", "true");
   });

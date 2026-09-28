@@ -1,4 +1,4 @@
-import type { AppConfig, SyncState, SyncStatus, Workspace } from "./config";
+import type { AppConfig, SyncState, SyncStatus, Workspace, EntitySyncStatus, EntityStatusPayload, WorkspaceGitState } from "./config";
 import type {
   Environment,
   Folder,
@@ -91,15 +91,20 @@ export interface BifurcApi {
   syncGetState(wsId: string): Promise<SyncState>;
   syncSetAutoSync(wsId: string, enabled: boolean): Promise<{ ok: boolean }>;
   onSyncStatus(cb: (state: { wsId: string; status: SyncStatus; error?: string | null; updatedIds?: string[] }) => void): () => void;
-  publishEntity(wsId: string, paths: string[], message?: string): Promise<{ ok: boolean; error?: string }>;
-  publishFolder(wsId: string, kind: string, folderName: string | null): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Both resolve to the **commit id** they created, or `commit: null` when there was nothing to
+   * commit. `ok: true` alone cannot distinguish those two, and that distinction is the whole point:
+   * Publish and Sync are `git add` + `git commit`, so a hash is the proof that git did something.
+   */
+  publishEntity(wsId: string, paths: string[], message?: string): Promise<{ ok: boolean; error?: string; commit?: string | null }>;
+  publishFolder(wsId: string, kind: string, folderName: string | null): Promise<{ ok: boolean; error?: string; commit?: string | null }>;
   restoreEntity(wsId: string, relPath: string): Promise<{ ok: boolean; error?: string }>;
   gitGetDiff(wsId: string, relPath: string): Promise<{ hasDiff: boolean; status: "clean" | "modified" | "new" | "deleted"; diff?: string; original?: string | null; current?: string | null }>;
   gitDiscard(wsId: string, relPath: string): Promise<{ ok: boolean; error?: string }>;
   gitSync(wsId: string, paths: string[], message?: string): Promise<{ ok: boolean; error?: string }>;
   gitGetHistory(wsId: string, relPath: string, opts?: { limit?: number; offset?: number }): Promise<{ entries: AuditEntry[]; total: number }>;
-  getEntitySyncStatus(wsId: string): Promise<Record<string, "clean" | "modified" | "new" | "deleted">>;
-  onEntitySyncStatus(cb: (data: { wsId: string; status: Record<string, "clean" | "modified" | "new" | "deleted"> }) => void): () => void;
+  getEntitySyncStatus(wsId: string): Promise<EntityStatusPayload>;
+  onEntitySyncStatus(cb: (data: { wsId: string; status: Record<string, EntitySyncStatus>; git?: WorkspaceGitState }) => void): () => void;
   executeScript(opts: {
     script: string;
     context: "pre" | "post" | "test";

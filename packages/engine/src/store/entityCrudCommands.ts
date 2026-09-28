@@ -84,10 +84,12 @@
  *  - **`invalidateCache()` is called on delete and not on create or update** — the sync status cache is
  *    keyed by workspace, and only a removal can make a previously-reported entity stale.
  *  - **`"__global__"` cannot be deleted** (`environments` only), checked ahead of everything else.
- *  - **Delete branches on git-tracking.** A tracked entity with a name entry becomes a
- *    `addPendingDeletion` — the deletion has to be *published*, so the name entry has to survive until
- *    the commit lands. An untracked one is `removeNameEntry` immediately. Getting this backwards makes
- *    a published deletion either unreplayable or resurrectable.
+ *  - **Delete branches on git-tracking, and the branch is the same for flat kinds.** A tracked entity
+ *    with a name entry becomes an `addPendingDeletion` — the deletion has to be *published*, so the
+ *    name entry has to survive until the commit lands. An untracked one is `removeNameEntry`
+ *    immediately. Getting this backwards makes a published deletion either unreplayable or
+ *    resurrectable. Flat kinds (`mappings`, `environments`) take the same branch and only skip the
+ *    names index, which they do not have — see the note at the delete site.
  *  - **`entity.list` only serves simple kinds and `entity.update` has no simple path at all.**
  *    `graphqlSchemas` / `protoFiles` / `wsdls` are written straight to disk, nothing mirrors them into
  *    an `AppConfig` array, and there is no "update" concept for any of them. Both asymmetries are the
@@ -106,10 +108,11 @@ import { loadConfig, saveConfig, generateId, AppConfig } from "./config";
 import {
   writeEntity, deleteEntityFile, writeFlatEntity, deleteFlatEntityFile,
   upsertNameEntry, removeNameEntry,
-  addPendingDeletion, findEntityRelPath,
+  addPendingDeletion, findEntityRelPath, flatEntityRelPath,
   readAllEntities,
 } from "./workspaceFs";
 import { syncEnabledSet } from "./enabledSet";
+import { registerKindNameEntry } from "./kindNameEntries";
 import { getGit } from "./gitStore";
 import { reloadConfig } from "../proxy/server";
 import { invalidateCache } from "../sync/statusTracker";
@@ -186,6 +189,9 @@ export interface SimpleEntityOpts {
  * keeps it honest by *invoking* the command rather than comparing names. */
 export function registerCrudKind<T extends EntityBase>(opts: CrudFactoryOpts<T>): void {
   entityCrudRegistry.set(opts.kind, opts);
+  // Publish the label resolver so `sync/gitOps.ts` can re-sync `names.json` after a revert without
+  // importing this module (and, behind it, `proxy/server`). See `store/kindNameEntries.ts`.
+  if (opts.getNameEntry) registerKindNameEntry(opts.kind, opts.getNameEntry);
 }
 
 /** The container insert for a no-`AppConfig`-array kind — see `registerCrudKind()`. */
@@ -283,7 +289,11 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
     syncEnabledSet(wsId, opts.kind, newEntity.id, newEntity.enabled ?? false);
   }
 
-  if (opts.getNameEntry) {
+  // **Foldered kinds only.** A flat kind has no names index — it is listed from its own files — so
+  // this call would create a stray `{kind}/names.json`: untracked, invisible in the entity list
+  // (`readAllEntities` skips it as a bookkeeping file), and then silently committed by the next
+  // `git add -A -- {kind}/`. Measured: creating a mapping wrote `mappings/names.json`.
+  if (opts.getNameEntry && !opts.isFlat) {
     upsertNameEntry(wsId, opts.kind, newEntity.id, opts.getNameEntry(newEntity));
   }
 
@@ -326,7 +336,8 @@ async function updateEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
     writeEntity(wsId, opts.kind, entity.id, entity, folderName);
   }
 
-  if (opts.getNameEntry) {
+  // Foldered kinds only — see the same guard in `createEntityCore`.
+  if (opts.getNameEntry && !opts.isFlat) {
     upsertNameEntry(wsId, opts.kind, entity.id, opts.getNameEntry(entity));
   }
 
@@ -375,17 +386,32 @@ async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
     if (opts.isFlat) {
       deleteFlatEntityFile(wsId, opts.kind, id);
     } else {
-      const relPath = findEntityRelPath(wsId, opts.kind, id);
-      const tracked = relPath ? await isGitTracked(wsId, relPath) : false;
-
       deleteEntityFile(wsId, opts.kind, id);
+    }
 
-      if (tracked && opts.getNameEntry) {
-        const entry = opts.getNameEntry(entity);
-        addPendingDeletion(wsId, opts.kind, { id, folderId: entity.folderId ?? null, ...entry });
-      } else if (opts.getNameEntry) {
-        removeNameEntry(wsId, opts.kind, id);
-      }
+    // ── The deletion's git half — identical for flat and foldered kinds ─────────────────────────
+    //
+    // `isFlat` used to short-circuit this whole block, so deleting a **published mapping or
+    // environment** removed the file, removed the entity from the config, and recorded nothing —
+    // the deletion was real on disk and invisible everywhere else. No stub, no status, no way to
+    // recover it or to commit it from the UI. `mappings` and `environments` are the two flat kinds
+    // and both are publishable, so that was a straight hole in the publish model, not a variant of
+    // it. (Found while unifying publish/sync/revert/delete across entity types, 2026-09-28.)
+    //
+    // The storage difference is still real and is confined to the *names index*: only foldered
+    // kinds have one, and `upsertNameEntry`/`removeNameEntry` on a flat kind would create a stray
+    // `{kind}/names.json` that nothing reads and that the next `git add -A -- {kind}/` would
+    // commit. So the index is skipped for flat kinds and the pending deletion is not.
+    const relPath = opts.isFlat
+      ? flatEntityRelPath(opts.kind, id)
+      : findEntityRelPath(wsId, opts.kind, id);
+    const tracked = relPath ? await isGitTracked(wsId, relPath) : false;
+
+    if (tracked && opts.getNameEntry) {
+      const entry = opts.getNameEntry(entity);
+      addPendingDeletion(wsId, opts.kind, { id, folderId: entity.folderId ?? null, ...entry });
+    } else if (!opts.isFlat && opts.getNameEntry) {
+      removeNameEntry(wsId, opts.kind, id);
     }
 
     if (opts.hasEnabledState) {

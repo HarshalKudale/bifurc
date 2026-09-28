@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppConfig, ProxyRule } from "@/types";
 import { strings } from "@/lib/strings";
+import { entityGitView } from "@/lib/entityGit";
 import { Switch, Button, IconButton } from "@/components/ui";
 import { X, History, Trash2, Copy, GitCommit, AlertCircle, CheckCircle2 } from "@/lib/icons";
 import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
@@ -32,6 +33,8 @@ interface Props {
   onRevert?: () => Promise<void>;
   onHistory?: () => void;
   syncStatus?: "clean" | "modified" | "new" | "deleted";
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
 }
 
 function stateFromRule(rule: Partial<ProxyRule> | null): RuleFormState {
@@ -61,6 +64,7 @@ export default function ProxyRuleDetailsPanel({
   onRevert,
   onHistory,
   syncStatus,
+  workspaceGitState,
 }: Props) {
   const s = strings.proxyRules;
 
@@ -209,7 +213,14 @@ export default function ProxyRuleDetailsPanel({
     }
   };
 
-  const hasChanges = !isNew && Boolean(isDirty || (syncStatus && syncStatus !== "clean"));
+  /**
+   * The uniform view. `hasChanges` used to be `syncStatus !== "clean"`, which cannot express a
+   * *clean* rule whose commits are not on the remote yet — such a rule had both buttons disabled and
+   * no way to push it from here. `isDirty` is the editor's own unsaved state, which git cannot see at
+   * all.
+   */
+  const view = entityGitView(syncStatus, workspaceGitState);
+  const hasChanges = !isNew && Boolean(isDirty || view.primary !== null);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden h-full bg-surface">
@@ -220,7 +231,7 @@ export default function ProxyRuleDetailsPanel({
             {isNew ? s.newRuleTitle : s.ruleLabel}
           </span>
           {!isNew && onToggleEnabled && enabled !== undefined && (
-            <Switch checked={enabled} onChange={onToggleEnabled} title={enabled ? "Disable rule" : "Enable rule"} />
+            <Switch checked={enabled} onChange={onToggleEnabled} />
           )}
         </div>
 
@@ -266,31 +277,33 @@ export default function ProxyRuleDetailsPanel({
       {/* Footer toolbar */}
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-t border-border bg-surface flex-shrink-0">
         <div className="flex items-center gap-1.5">
-          {!isNew && onSync && (
+          {/* One primary button, labelled Publish or Sync by the rule's state. */}
+          {!isNew && onSync && (view.primary || isDirty) && (
             <Button
               variant="ghost"
               size="sm"
               onClick={handleSyncClick}
               disabled={syncing}
-              title={hasChanges ? strings.common.syncTooltip : strings.common.noChangesToSync}
+              title={view.primaryTitle}
             >
               <GitCommit size={13} className="mr-1" />
-              {syncing ? strings.footer.publishing : strings.mappings.publish}
+              {syncing ? strings.entityGit.publishing : (view.primaryLabel || strings.entityGit.publish)}
             </Button>
           )}
-          {!isNew && onRevert && (
+          {!isNew && onRevert && view.canRevert && (
             <button
               onClick={handleRevertClick}
-              disabled={reverting || !hasChanges}
+              disabled={reverting}
+              title={strings.entityGit.revertTooltip}
               className="px-2.5 py-1 rounded text-amber hover:bg-amber/10 text-xs font-medium transition-all disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
             >
-              {reverting ? "Reverting…" : strings.mappings.revert}
+              {reverting ? strings.entityGit.reverting : strings.entityGit.revert}
             </button>
           )}
-          {!isNew && onHistory && (
+          {!isNew && onHistory && view.canViewHistory && (
             <IconButton
               icon={<History size={13} />}
-              title={strings.mappings.viewHistory}
+              title={strings.entityGit.historyTooltip}
               onClick={onHistory}
               className="text-muted-foreground hover:text-signal"
             />

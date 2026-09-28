@@ -1,4 +1,4 @@
-import { Folder as FolderType } from "@/types";
+import type { Folder as FolderType, WorkspaceGitState, EntitySyncStatus } from "@/types";
 
 export interface FolderTreeItem {
   id: string;
@@ -19,7 +19,14 @@ export interface FolderNode {
   items: FolderTreeItem[];
 }
 
-export type EntitySyncStatus = "clean" | "modified" | "new" | "deleted";
+/**
+ * An entity's position relative to HEAD. Re-exported from `@/types` so the tree's own modules can
+ * import it from here — the definition itself lives beside `WorkspaceGitState` in `types/config.ts`,
+ * because it is a mirror of a protocol type rather than a tree concern.
+ */
+export type { EntitySyncStatus } from "@/types";
+
+/** A folder's enable/disable rollup — **not** a git status. See the note on `folderStatusMap`. */
 export type FolderStatus = "enabled" | "mixed" | "disabled";
 
 export interface FolderTreeProps {
@@ -36,11 +43,34 @@ export interface FolderTreeProps {
   onMoveFolder?: (folderId: string, targetParentId: string | null) => void;
   onOpenNewTab?: () => void;
   onHistoryItem?: (id: string) => void;
+  /** Per-file git status, keyed by workspace-relative path. */
   pathStatusMap?: Record<string, EntitySyncStatus>;
+  /** Per-entity git status, keyed by entity id — a fallback for an item with no `relPath`. */
   entitySyncStatus?: Record<string, EntitySyncStatus>;
+  /**
+   * A folder's **enable/disable** rollup, keyed by folder id.
+   *
+   * The name is a collision worth naming: this is *not* git status, and `folderStatusMap[id]` is
+   * `"enabled" | "mixed" | "disabled"`. Git status for a folder is derived on demand by
+   * `folderGitRollup()` from `pathStatusMap`, which is why there is no second map here.
+   */
   folderStatusMap?: Record<string, FolderStatus>;
+  /**
+   * The workspace's position relative to its remote. Without it a committed-but-unpushed entity
+   * reads `clean` and is offered no action at all — see `lib/entityGit.ts`.
+   */
+  workspaceGitState?: WorkspaceGitState | null;
+  /** Publish one entity. Labelled Publish or Sync by its state. */
   onPublishItem?: (id: string) => void;
+  /**
+   * Publish a whole selection in **one commit**.
+   *
+   * Distinct from calling `onPublishItem` N times, which is what the multi-selection menu used to do
+   * and which produced N commits for one gesture. Falls back to per-item publishes when absent.
+   */
+  onPublishPaths?: (paths: string[]) => void;
   onPublishFolder?: (folderId: string | null) => void;
+  /** Revert one entity to its last synced version. Also backs "Recover" for a deleted entity. */
   onRestoreItem?: (id: string) => void;
   onBeforeCreateFolder?: () => boolean;
   onOpenRunner?: (folderId: string) => void;
@@ -81,6 +111,10 @@ export interface TreeContextType {
   cancelNewFolder: () => void;
   
   getItemStatus: (item: FolderTreeItem) => EntitySyncStatus | undefined;
+  /** The uniform view of an item's git state — what every menu and row renders from. */
+  getItemView: (item: FolderTreeItem) => import("@/lib/entityGit").EntityGitView;
+  /** The rollup for a folder, or for the whole kind when `folderId` is `null`. */
+  getFolderRollup: (folderId: string | null) => import("@/lib/entityGit").FolderGitRollup;
   
   folderStatusMap?: Record<string, FolderStatus>;
   onOpenRunner?: (id: string) => void;

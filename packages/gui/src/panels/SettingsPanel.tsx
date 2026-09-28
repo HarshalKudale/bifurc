@@ -18,7 +18,7 @@ interface SettingsPanelProps {
   colorMode: ColorMode;
   onColorModeChange: (m: ColorMode) => void;
   sidebarVisibility: Record<string, boolean>;
-  onSidebarVisibilityChange: (id: string, visible: boolean) => void;
+  onSidebarVisibilityChange: (id: import("@/lib/panelRegistry").Panel, visible: boolean) => void;
 }
 
 export default function SettingsPanel({

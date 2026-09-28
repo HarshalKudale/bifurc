@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight } from "@/lib/icons";
 
 interface AppearanceSectionProps {
   sidebarVisibility: Record<string, boolean>;
-  onSidebarVisibilityChange: (id: string, visible: boolean) => void;
+  onSidebarVisibilityChange: (id: import("@/lib/panelRegistry").Panel, visible: boolean) => void;
 }
 
 export default function AppearanceSection({

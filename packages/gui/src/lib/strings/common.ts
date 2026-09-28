@@ -111,4 +111,75 @@ export const commonStrings = {
     },
   
     // Import/export modal,
+
+  /**
+   * The git-tracking vocabulary — **one set of words for one set of actions, everywhere.**
+   *
+   * Before this section the same two actions were spelled four ways depending on which surface you
+   * were looking at: the editors said *Sync* / *Revert*, the mapping cards said *Publish* / *Revert*,
+   * the folder tree said *Commit & Push* / *Discard Changes* / *Restore*, and the footer said
+   * *Publish*. `packages/gui/src/lib/entityGit.ts` decides which of these apply to an entity; these
+   * strings are the only place the words are written. Do not inline a new label at a call site —
+   * that is how the four vocabularies happened.
+   */
+  entityGit: {
+      /** Untracked entity — the create action. */
+      publish: "Publish",
+      publishing: "Publishing…",
+      publishTooltip: "Commit and push this entity for the first time",
+      /** Tracked entity with local work — the update action. */
+      sync: "Sync",
+      syncing: "Syncing…",
+      syncTooltip: "Commit and push the current state",
+      /** Tracked entity whose commits are not on the remote yet. */
+      pushTooltip: "Push the commits that are not on the remote yet",
+      revert: "Revert",
+      reverting: "Reverting…",
+      revertTooltip: "Discard local changes and restore the last synced version",
+      /** Folder / multi-selection verbs. */
+      publishAll: "Publish All",
+      syncAll: "Sync All",
+      publishAllTooltip: "Commit and push every unpublished entity here",
+      syncAllTooltip: "Commit and push every change here",
+      history: "History",
+      historyTooltip: "View the commit history of this entity",
+      /**
+       * The outcome of a write, said out loud.
+       *
+       * A successful publish used to produce **no** feedback beyond a subtle status-label change, and
+       * a publish that staged nothing produced none at all — so "clicking publish does nothing" was
+       * literally accurate. `publishedWithCommit` carries the **commit id**, which is the only thing
+       * that proves a git operation happened; `nothingToPublish` is the case that was silent: the
+       * engine returns `ok: true, commit: null` when the entity is already committed, which is correct
+       * behaviour and was indistinguishable from a failure to act.
+       */
+      published: "Published",
+      publishedWithCommit: "Published · {sha}",
+      syncedWithCommit: "Synced · {sha}",
+      reverted: "Reverted",
+      nothingToPublish: "Nothing to publish — this entity is already committed.",
+      /** The proof, for a caller that wants to name the commit without a sentence around it. */
+      commitLabel: "commit {sha}",
+      noChangesToSync: "No local changes to sync",
+      noChangesToRevert: "No local changes to revert",
+      noHistoryYet: "Not published yet, so it has no history",
+      /** The deleted-but-uncommitted state. */
+      deleted: "Deleted",
+      recover: "Recover",
+      recoverTooltip: "Restore this entity from the last synced version",
+      syncDelete: "Commit Delete",
+      syncDeleteTooltip: "Commit the deletion to git",
+      pendingDeletion: "Pending Deletion",
+      pendingDeletionBody: "has been deleted locally but not yet committed. Recover it, or commit the deletion.",
+      /** Status badges, in the same words on every surface. */
+      stateNew: "Not published",
+      stateModified: "Changes to sync",
+      stateUnpushed: "Unpushed commits",
+      stateDeleted: "Deleted",
+      stateSynced: "Synced",
+      stateUnknown: "Checking…",
+      /** Delete confirmation, split by whether the deletion can be undone. */
+      deleteConfirmRecoverable: "Delete {what}? The entity is removed locally but stays recoverable until you commit the deletion.",
+      deleteConfirmPermanent: "Delete {what}? This entity has never been published and will be permanently removed.",
+    },
 } as const;

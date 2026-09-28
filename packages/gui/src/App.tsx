@@ -17,7 +17,7 @@ import { readStorage, writeStorage } from "@/lib/storage";
 
 import { useAppConfigSync } from "@/hooks/useAppConfigSync";
 import { useWorkspaceView } from "@/hooks/useWorkspaceView";
-import { usePublishHandlers } from "@/hooks/usePublishHandlers";
+import { useEntityGitActions } from "@/hooks/useEntityGitActions";
 
 /**
  * The host's live session, when the host owns connecting and reconnecting.
@@ -102,6 +102,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     serverRunning, setServerRunning,
     serverError, setServerError,
     entitySyncStatus, refreshEntitySyncStatus,
+    workspaceGitState,
     syncStatus,
     handleConfigChange,
     handleWsConfigChange: rawHandleWsConfigChange,
@@ -264,13 +265,22 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
   const handleOpenInRequests = useCallback((req: any) => { setPendingOpenRequest(req); setPanel("requests"); }, []);
   const handleOpenMockEditor = useCallback((initial: any) => { setPendingMockInitial(initial); setPanel("mocks"); }, []);
 
-  const publishHandlers = usePublishHandlers({
+  /**
+   * **One** git-action handler for the whole UI — every publish, sync, revert, recover and panel-level
+   * publish goes through it. See `hooks/useEntityGitActions.ts` for why the seven factories that used
+   * to live here were replaced by two writers.
+   *
+   * `onAfterWrite` is `bumpHistoryReload`, which is what satisfies "if the entity is updated while
+   * History is open, refresh the panel" for **every** panel — including the ones that never passed
+   * `onAfterSave` before (mappings, rules, environments, health bar).
+   */
+  const gitActions = useEntityGitActions({
     wsConfig,
     wsId,
     refreshConfig,
     refreshEntitySyncStatus,
     panel,
-    onAfterPublish: bumpHistoryReload,
+    onAfterWrite: bumpHistoryReload,
   });
 
   const globalEnv = (wsConfig.environments ?? []).find((e) => e.id === "__global__") ?? null;
@@ -326,13 +336,20 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
   const panelRenderCtx: PanelRenderContext = useMemo(() => ({
     wsConfig, config, wsId, services, serverRunning, serverError, colorMode, setColorMode,
     activeEnv, openHistory, handleEntityPathChange, historyOpen, bumpHistoryReload,
-    entitySyncStatus, refreshEntitySyncStatus, handleConfigChange, handleWsConfigChange, setConfig, refreshServices,
+    entitySyncStatus, workspaceGitState, refreshEntitySyncStatus,
+    gitPublish: gitActions.publish,
+    gitRevert: gitActions.revert,
+    gitPublishPanel: gitActions.publishPanel,
+    gitIsBusy: gitActions.isBusy,
+    gitKeyFor: gitActions.keyFor,
+    gitLastError: gitActions.lastError,
+    gitClearError: gitActions.clearError,
+    handleConfigChange, handleWsConfigChange, setConfig, refreshServices,
     mappingPrefill, onPrefillConsumed: () => setMappingPrefill(undefined), setPanel, setMappingPrefill,
     pendingOpenRequest, onPendingRequestConsumed: () => setPendingOpenRequest(null),
     pendingMockInitial, onPendingMockConsumed: () => setPendingMockInitial(null),
     pendingRuleId, onPendingRuleConsumed: () => setPendingRuleId(null),
     handleOpenMockEditor, handleOpenInRequests, onStatsChange: setCaptureStats,
-    ...publishHandlers,
     onWorkspaceRename: async (id: string, name: string) => {
       await window.api.renameWorkspace(id, name);
       setConfig(await window.api.getConfig());
@@ -352,9 +369,10 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
   }), [
     wsConfig, config, wsId, services, serverRunning, serverError, colorMode, setColorMode,
     activeEnv, openHistory, handleEntityPathChange, historyOpen, bumpHistoryReload,
-    entitySyncStatus, refreshEntitySyncStatus, handleConfigChange, handleWsConfigChange,
+    entitySyncStatus, workspaceGitState, refreshEntitySyncStatus, gitActions,
+    handleConfigChange, handleWsConfigChange,
     refreshServices, mappingPrefill, pendingOpenRequest, pendingMockInitial, pendingRuleId,
-    handleOpenMockEditor, handleOpenInRequests, publishHandlers, visibility, setPanelVisible,
+    handleOpenMockEditor, handleOpenInRequests, visibility, setPanelVisible,
   ]);
 
   /**
@@ -436,8 +454,11 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
         panel={panel}
         workspace={currentWorkspace}
         entitySyncStatus={entitySyncStatus}
+        workspaceGitState={workspaceGitState}
         syncStatus={syncStatus}
-        onPublishPanel={publishHandlers.handlePublishPanel}
+        onPublishPanel={gitActions.publishPanel}
+        gitError={gitActions.lastError}
+        onDismissGitError={gitActions.clearError}
         environments={wsConfig.environments ?? []}
         activeEnvironmentId={wsConfig.activeEnvironmentId ?? null}
         onEnvChange={async (id) => { await window.api.setActiveEnvironment(id); setConfig(await window.api.getConfig()); }}
