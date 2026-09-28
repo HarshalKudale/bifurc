@@ -55,9 +55,10 @@ suites → `TESTING.md` · **ports → `plan/17` §1** · edge/mapping → `plan
   test can even load the GUI. Same shell property as the `git fetch` / `refs/remotes/**` rule in
   `~/.workbuddy-ai/MEMORY.md`. **Do not try to fix these.**
 
-**Current: 2,666 tests / 119 files — 2,206 unit + 460 integration, 40 skipped; 0 product failures
-(2026-09-28, after the tab-page unification).** Unit **89 files** (2,165 pass + 40 skipped + 1 hook-timeout
-flake), integration **30 files** (456 pass + 4 `gitRemote` sandbox failures + 4 teardown-only suite timeouts).
+**Current: 2,677 tests / 120 files — 2,217 unit + 460 integration, 40 skipped; 0 product failures
+(2026-09-28, after the right sidebar gained its variables face).** Unit **90 files** (2,176 pass + 40 skipped
++ 1 hook-timeout flake), integration **30 files** (456 pass + 4 `gitRemote` sandbox failures + 4 teardown-only
+suite timeouts).
 **e2e: 11 specs, all rewritten 2026-09-28 for the autosave move — the old 46/46 figure is stale and wants an
 owner run.** (The two non-hermetic tests `engineSmoke` / `hostStartup`, and the `forwardProxyPort` fix, are
 recorded in `TESTING.md`.)
@@ -80,6 +81,22 @@ recorded in `TESTING.md`.)
   Bar's edits on change and confirms with `Done`.
 - **e2e:** `AUTOSAVE_DEBOUNCE_MS` + `awaitAutosave(page)` in `e2e/helpers/index.ts` mirror the 1 s delay — two
   files in different packages, kept in step by comment only.
+
+## The right sidebar is multi-face (2026-09-28)
+
+- **`components/sidebar/RightSidebar.tsx` owns the width, and only it.** `.right-sidebar` (renamed from
+  `.history-sidebar`) animates it; a closed sidebar is **zero-width, not unmounted**. Two faces —
+  `"history"` (`HistorySidebar`, now **content-only**: no `open` prop, returns a fragment) and `"variables"`
+  (`VariablesSidebar`). **⚠ `HistorySidebar` now re-mounts per open** — its load effects lost their `!open`
+  guard because *being mounted is being open*.
+- **⚠ The mode IS the open state** — `RightSidebarMode | null` in `App.tsx`. A separate `open` boolean
+  would be a second source of truth and could express *open with no face*. Both toggle rules fall out of it:
+  press the showing face's control to close, press the other to swap in place. `historyOpen` is derived and
+  still threaded to the panels unchanged.
+- **The variables face keeps two groups on purpose** — `mergeEnvVars` overlays env on `__global__`, so a
+  shadowed global is marked `overridden` rather than dropped; a merged list hides the one fact you need when
+  a substitution surprises you. Title-bar toggle sits beside `EnvSelector`; `aria-pressed` carries the state.
+  Pinned by `tests/renderer/rightSidebar.test.tsx` (11 cases, mutation-checked).
 
 ## Phase state
 

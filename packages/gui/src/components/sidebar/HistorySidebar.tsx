@@ -4,13 +4,20 @@ import { X, ChevronRight, ChevronDown, GitCommit } from "@/lib/icons";
 import { formatFieldLabel } from "@/lib/utils";
 import { strings } from "@/lib/strings";
 
+/**
+ * The **history** face of the right sidebar — the audit trail of one entity's file.
+ *
+ * Since the sidebar became multi-face this is **content, not a sidebar**: `RightSidebar` owns the
+ * width, the left border and the open/close transition, and mounts this only while its mode is
+ * `"history"`. So there is no `open` prop — being mounted *is* being open — and the reload effects
+ * below run on mount rather than on an open/closed edge.
+ */
 interface Props {
   filePath: string;
   workspaceId: string;
   onClose(): void;
   /** Increment to trigger a reload (e.g. after a save). */
   reloadKey?: number;
-  open: boolean;
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -31,7 +38,7 @@ function absoluteTime(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
-export default function HistorySidebar({ filePath, workspaceId, onClose, reloadKey, open }: Props) {
+export default function HistorySidebar({ filePath, workspaceId, onClose, reloadKey }: Props) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -55,15 +62,16 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
     }
   }, []);
 
-  // Load whenever sidebar is open and filePath/workspaceId changes, or when sidebar opens
+  // Load on mount, and again whenever the entity changes. Being mounted *is* being open — the shell
+  // only renders this face while its mode is `"history"`.
   useEffect(() => {
-    if (!open || !filePath) return;
+    if (!filePath) return;
     load(filePath, workspaceId);
-  }, [open, filePath, workspaceId, load]);
+  }, [filePath, workspaceId, load]);
 
   // Reload when reloadKey increments (e.g. after a save or sync)
   useEffect(() => {
-    if (!open || !filePath || reloadKey === undefined || reloadKey === 0) return;
+    if (!filePath || reloadKey === undefined || reloadKey === 0) return;
     load(filePath, workspaceId);
   }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -100,11 +108,7 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
   const historyTitle = strings.history.title.replace("{kind}", kindLabel);
 
   return (
-    <div
-      className="history-sidebar"
-      style={{ width: open ? 280 : 0, opacity: open ? 1 : 0 }}
-    >
-    <div className="flex flex-col h-full bg-surface border-l border-border" style={{ width: 280, minWidth: 280 }}>
+    <>
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0">
         <GitCommit size={13} className="text-signal flex-shrink-0" />
@@ -226,8 +230,7 @@ export default function HistorySidebar({ filePath, workspaceId, onClose, reloadK
           );
         })}
       </div>
-    </div>
-    </div>
+    </>
   );
 }
 

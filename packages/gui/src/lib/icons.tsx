@@ -46,6 +46,7 @@ export {
   Unlock,        // http
   Terminal,      // curl import
   Hash,          // port
+  Variable,      // environment variables sidebar
   Layers,        // workspaces
   Cpu,           // server
   ClipboardList, // audit log
