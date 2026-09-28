@@ -234,7 +234,6 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                         actionDisabled={!state.serverAddress || !state.serviceName || !state.methodName}
                         onAction={handleSend}
                         onEnter={handleSend}
-                        activeEnv={activeEnv}
                     />
                 </TabToolbarRow>
                 <TabToolbarRow>

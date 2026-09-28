@@ -218,7 +218,6 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                         actionDisabled={!state.endpointUrl.trim()}
                         onAction={handleSend}
                         onEnter={handleSend}
-                        activeEnv={activeEnv}
                     />
                 </TabToolbarRow>
             </TabToolbar>
