@@ -157,29 +157,35 @@ describe("entity.publish — a mapping, through the command the button issues", 
     expect(await tracked()).not.toContain("mappings/names.json");
   });
 
-  it("reports a refusal rather than a silent no-op when the path names nothing", async () => {
+  /**
+   * A path that names nothing is a **failure**, not a no-op.
+   *
+   * This case used to pin `{ok: true, commit: null}` — the engine's old contract, which folded "git
+   * refused to stage this" into "there was nothing to stage". That fold is what let a broken publish
+   * present itself to the user as *"this entity is already committed"* while the card above it said
+   * "Not published". The distinction is now enforced: nothing staged **and** a requested path that git
+   * does not hold is an error, and the error names the path.
+   */
+  it("reports a failure, with the path, when git stages nothing for a path it does not hold", async () => {
     const result = await registry.invoke(
       "entity.publish",
       { workspaceId: WS_ID, paths: ["mappings/does-not-exist.json"] },
       ctx,
     );
 
-    // The engine stages nothing and returns success — that is `publishEntities`'s contract for a
-    // no-op, and it is why the *renderer* must never compute a path the engine cannot find. Pinned
-    // here so the contract is visible from the engine side too.
-    expect(result).toEqual({ ok: true, commit: null });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("mappings/does-not-exist.json");
+    expect(result.error).toContain("does not exist");
     expect(await subjects()).not.toContain("create mapping undefined");
   });
 
   /**
-   * `committed: false` is what makes a no-op distinguishable from a commit — both report `ok: true`.
-   *
-   * Added 2026-09-28 after the report *"clicking publish in mappings does nothing … it still says not
-   * published"*: a publish that reaches the engine and stages nothing is a **success**, and the UI had
-   * no way to know that, so it showed no feedback at all. The flag is asserted from the engine side so
-   * the renderer's message can never be a guess.
+   * The other side of that rule, and the one that keeps the distinction honest: an **unchanged, tracked**
+   * file stays a silent success, because there the two agree — git holds the file and there is genuinely
+   * nothing to do. It is also where the commit **id** is first asserted: a real publish must name its
+   * commit, since the hash is the proof and `ok` is only a claim.
    */
-  it("distinguishes 'committed' from 'there was nothing to commit'", async () => {
+  it("names the commit it made, and reports no commit for an unchanged file", async () => {
     const created = await createMapping("noop.localhost");
     const relPath = `mappings/${created.id}.json`;
 
