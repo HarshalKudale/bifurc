@@ -6,6 +6,19 @@ import { getSyncConfig } from "./syncManager";
 import { wsDir } from "../store/workspaceFs";
 import { unquoteGitPath } from "./statusTracker";
 
+/**
+ * Revert has exactly **one** implementation, and it is `gitOps.discardChanges()`.
+ *
+ * A second one used to live here — `restoreEntity()`, which did `git checkout HEAD -- <path>` and,
+ * when that failed, unlinked the untracked file. It was never called (`entity.restore` has always
+ * routed to `discardChanges`), and that was lucky rather than tidy: it skipped the three things
+ * `discardChanges` does and this one did not — clearing the pending-deletion record, re-syncing
+ * `names.json`, and invalidating the status cache. Any caller that had reached for the closer-looking
+ * name would have left a reverted entity still marked deleted and still missing from the sidebar.
+ *
+ * Deleted 2026-09-28 while unifying publish/sync/revert/delete across entity types; `TESTING.md`'s
+ * dead-code note had already recorded it as unused.
+ */
 export interface PublishOptions {
   wsId: string;
   /** Relative paths (files or directories) to git add and commit */
@@ -14,17 +27,65 @@ export interface PublishOptions {
   message?: string;
 }
 
+/**
+ * What a publish actually did.
+ *
+ * ## `commit` is the proof; `ok` is only a claim
+ *
+ * Publish and Sync are the same two git commands — `git add` then `git commit` — so both produce a
+ * commit, and the **hash** is the one thing that says a git operation really happened. `{ok: true}`
+ * could not: `publishEntities()` returns it when it staged nothing, which is correct for an
+ * already-committed file (and test-pinned: "does not create an empty commit when nothing changed") but
+ * was indistinguishable at the UI from a commit. That is what *"clicking publish does nothing"* was —
+ * correct behaviour, reported as nothing.
+ *
+ * | result | means |
+ * | --- | --- |
+ * | `{ok: true, commit: "<sha>"}` | a commit was created; this is its id |
+ * | `{ok: true, commit: null}` | nothing was staged — the entity was already committed |
+ * | `{ok: false, error}` | a step failed; the repo may still have changed, see below |
+ *
+ * ## The key is present only when the operation is commit-producing
+ *
+ * A revert is `git checkout HEAD -- <path>` and creates no commit, so it carries no `commit` key at
+ * all — rather than `commit: null`, which would read as "a commit was expected and did not happen".
+ * The two are different statements, and only the caller knows which operation it asked for.
+ *
+ * ## `{ok: false}` does not mean "nothing happened"
+ *
+ * `publishEntities()` stages *before* it commits and pushes, so a failure at the push step leaves a
+ * real commit behind. Callers must refresh their view on failure too — see
+ * `useEntityGitActions.write()`.
+ */
+export interface PublishResult {
+  ok: boolean;
+  error?: string;
+  /** The created commit's id, or `null` when there was nothing to commit. */
+  commit?: string | null;
+}
+
 function deviceName(): string {
   return os.hostname() || "unknown";
 }
 
-/** Derive a display name from a workspace-relative file path by reading the JSON name field */
+/**
+ * Derive a display name from a workspace-relative file path by reading the JSON name field.
+ *
+ * **`label` before `domain`**, and the order is the point: a mapping is the one kind whose card is
+ * titled by `label` and identified by `domain`, so a commit subject built from `domain` alone read
+ * `create mapping app.localhost` for a card the user knows as "My App". The History sidebar and the
+ * Audit Log both show this string, so the two disagreed about the entity's name for exactly one kind.
+ * `label` is absent on every other kind, so the extra link in the chain changes nothing for them.
+ *
+ * `getNameEntry` for `mappings` (`store/kinds/crudKinds.ts`) already prefers the label — this is that
+ * same rule, in the second place that has to agree with it.
+ */
 function readEntityName(wsId: string, relPath: string): string | null {
   try {
     const abs = path.join(wsDir(wsId), relPath);
     const raw = fs.readFileSync(abs, "utf-8");
     const parsed = JSON.parse(raw);
-    return parsed.name || parsed.domain || parsed.urlPattern || null;
+    return parsed.name || parsed.label || parsed.domain || parsed.urlPattern || null;
   } catch {
     return null;
   }
@@ -54,7 +115,7 @@ function entityIdFromPath(relPath: string): string | null {
 }
 
 /** Publish (git add → commit → push) one or more file/folder paths */
-export async function publishEntities(opts: PublishOptions): Promise<{ ok: boolean; error?: string }> {
+export async function publishEntities(opts: PublishOptions): Promise<PublishResult> {
   try {
     const g = getGit(opts.wsId);
     const actor = deviceName();
@@ -89,7 +150,7 @@ export async function publishEntities(opts: PublishOptions): Promise<{ ok: boole
       status.deleted.length > 0 ||
       status.renamed.length > 0;
 
-    if (!hasStagedChanges) return { ok: true };
+    if (!hasStagedChanges) return { ok: true, commit: null };
 
     // Build commit message
     let message = opts.message;
@@ -159,7 +220,10 @@ export async function publishEntities(opts: PublishOptions): Promise<{ ok: boole
     }
 
     const fullMessage = body ? `${message}\n\n${body}` : message;
-    await g.commit(fullMessage);
+    // `simple-git`'s `commit()` resolves to the commit it created. `|| null` guards the one shape it
+    // can take when git reports nothing was written — a success with no id must not be reported as an
+    // id, because the id is what the caller is checking.
+    const committed = await g.commit(fullMessage);
 
     // Push if remote is configured
     const config = getSyncConfig(opts.wsId);
@@ -167,28 +231,7 @@ export async function publishEntities(opts: PublishOptions): Promise<{ ok: boole
       await g.push("origin", `HEAD:${config.branch}`);
     }
 
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-/** Restore an entity to its last committed state (git checkout -- path) */
-export async function restoreEntity(wsId: string, relPath: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const g = getGit(wsId);
-    try {
-      await g.raw(["checkout", "HEAD", "--", relPath]);
-      return { ok: true };
-    } catch (checkoutErr) {
-      // If the file is untracked (never committed to HEAD), remove the untracked file
-      const fullPath = path.join(wsDir(wsId), relPath);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        return { ok: true };
-      }
-      throw checkoutErr;
-    }
+    return { ok: true, commit: committed.commit || null };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }

@@ -95,5 +95,9 @@ export function registerCoreKinds() {
     configKey: "environments",
     isFlat: true,
     gateKind: "environment",
+    // Environments are publishable like every other entity, so a tracked deletion needs a
+    // pending-deletion record to stay visible until it is committed. See the same field on
+    // `mappings` in `crudKinds.ts` and the delete site in `entityCrudCommands.ts`.
+    getNameEntry: (e) => ({ name: e.name }),
   });
 }

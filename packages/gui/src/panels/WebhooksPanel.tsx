@@ -37,7 +37,11 @@ interface Props {
   historyOpen?: boolean;
   onAfterSave?: () => void;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
   onPublishItem?: (id: string) => void;
+  /** Publish a whole selection in one commit. */
+  onPublishPaths?: (paths: string[]) => void;
   onPublishFolder?: (folderId: string | null) => void;
   onRestoreItem?: (id: string) => void;
 }
@@ -45,7 +49,7 @@ interface Props {
 export default function WebhooksPanel({
   config, onConfigChange,
   onHistoryOpen, onEntityPathChange, historyOpen = false,
-  onAfterSave, entitySyncStatus, onPublishItem, onPublishFolder, onRestoreItem,
+  onAfterSave, entitySyncStatus, workspaceGitState, onPublishItem, onPublishPaths, onPublishFolder, onRestoreItem,
 }: Props) {
 
   const deregisterWebhook = useCallback(async (tabId: string) => {
@@ -238,7 +242,9 @@ export default function WebhooksPanel({
             onHistoryOpen={onHistoryOpen}
             getEntityFilePath={getEntityFilePath}
             entitySyncStatus={entitySyncStatus}
+            workspaceGitState={workspaceGitState}
             onPublishItem={onPublishItem}
+            onPublishPaths={onPublishPaths}
             onPublishFolder={onPublishFolder}
             onRestoreItem={onRestoreItem}
             folderStatusMap={folderStatusMap}

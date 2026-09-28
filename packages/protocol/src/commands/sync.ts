@@ -52,7 +52,39 @@ export interface SyncSetAutoSyncResult {
 
 export const SyncGetEntityStatusParams = z.object({ workspaceId: z.string() }).strict();
 export type SyncGetEntityStatusParams = z.infer<typeof SyncGetEntityStatusParams>;
-export type SyncGetEntityStatusResult = Record<string, "clean" | "modified" | "new" | "deleted">;
+
+/** One entity file's position relative to HEAD. */
+export type EntitySyncStatusValue = "clean" | "modified" | "new" | "deleted";
+
+/**
+ * The workspace's position relative to its **remote** — the second axis of "is this entity synced?".
+ *
+ * `EntitySyncStatusValue` only ever answers "does this file differ from HEAD?", which cannot
+ * distinguish *committed and pushed* from *committed and not pushed*. Without that distinction a
+ * committed-but-unpushed entity reads `clean` and the UI offers it no button at all, so it can only
+ * be pushed from the panel-level footer control. Measured locally, never by fetching — see
+ * `packages/engine/src/sync/gitState.ts` for why, and for what staleness that accepts.
+ */
+export interface WorkspaceGitState {
+  /** An `origin` remote is configured. `ahead`/`behind` are both `false` when it is not. */
+  hasRemote: boolean;
+  branch: string | null;
+  /** HEAD has commits the remote-tracking ref does not — there is something to push. */
+  ahead: boolean;
+  /** The remote-tracking ref has commits HEAD does not — there is something to pull. */
+  behind: boolean;
+}
+
+/**
+ * Both axes in one payload, and deliberately **one** command rather than two.
+ *
+ * They are read at the same instant from the same repo, so splitting them would let the renderer hold
+ * a file map and a git state that disagree — which is exactly the class of bug this work removes.
+ */
+export type SyncGetEntityStatusResult = {
+  files: Record<string, EntitySyncStatusValue>;
+  git: WorkspaceGitState;
+};
 
 export const GitDiffParams = z.object({
   workspaceId: z.string(),

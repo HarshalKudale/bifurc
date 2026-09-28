@@ -20,12 +20,21 @@ export const FolderTreeItemNode = memo(function FolderTreeItemNode({ item, depth
   const isActive = !!item.isActive;
   const isEnabled = item.isEnabled !== false;
   const isSel = ctx.selectedItemIds.has(item.id);
-  const syncSt = ctx.getItemStatus(item);
+  /**
+   * The uniform view, not the raw status.
+   *
+   * The row itself only needs two things from it (`status` for the glyph, `stateLabel` for the
+   * tooltip), but taking them from the same object the context menu renders from is what keeps the
+   * glyph and the menu from disagreeing — which is how a row could show a pencil while the menu
+   * offered nothing, or vice versa.
+   */
+  const view = ctx.getItemView(item);
+  const syncSt = view.status;
   const isDeleted = syncSt === "deleted";
 
   return (
     <div
-      title={item.name}
+      title={isDeleted ? `${item.name} — ${view.stateLabel}` : item.name}
       draggable={!item.isRunner && !item.isBlock && !!ctx.hasMoveItems}
       style={{
         position: "relative", display: "flex", alignItems: "center",
@@ -51,6 +60,9 @@ export const FolderTreeItemNode = memo(function FolderTreeItemNode({ item, depth
         } else if (e.ctrlKey || e.metaKey) {
           ctx.onSelectItem(item.id, true, false);
         } else if (isDeleted) {
+          // A deleted-but-uncommitted entity is **not** openable: its file is gone, so there is nothing
+          // to load. Clicking it offers the only two outcomes there are — recover, or commit the
+          // deletion — which is the spec's "trying to interact with it shows a modal".
           ctx.setDeletedItemPopup(item);
         } else {
           ctx.onSelectItem(item.id, false, false);

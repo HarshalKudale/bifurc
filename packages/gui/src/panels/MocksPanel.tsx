@@ -33,7 +33,11 @@ interface Props {
   historyOpen?: boolean;
   onAfterSave?: () => void;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
   onPublishItem?: (id: string) => void;
+  /** Publish a whole selection in one commit. */
+  onPublishPaths?: (paths: string[]) => void;
   onPublishFolder?: (folderId: string | null) => void;
   onRestoreItem?: (id: string) => void;
 }
@@ -51,7 +55,9 @@ export default function MocksPanel({
   historyOpen = false,
   onAfterSave,
   entitySyncStatus,
+  workspaceGitState,
   onPublishItem,
+  onPublishPaths,
   onPublishFolder,
   onRestoreItem,
 }: Props) {
@@ -225,8 +231,10 @@ export default function MocksPanel({
             onHistoryOpen={onHistoryOpen}
             getEntityFilePath={getEntityFilePath}
             entitySyncStatus={entitySyncStatus}
+            workspaceGitState={workspaceGitState}
             folderStatusMap={folderStatusMap}
             onPublishItem={onPublishItem}
+            onPublishPaths={onPublishPaths}
             onPublishFolder={onPublishFolder}
             onRestoreItem={onRestoreItem}
             handleBeforeDeleteFolder={handleBeforeDeleteFolder}

@@ -33,9 +33,26 @@ export const SyncStatusEventSchema = z.object({
 });
 export type SyncStatusEvent = z.infer<typeof SyncStatusEventSchema>;
 
+export const WorkspaceGitStateSchema = z.object({
+  hasRemote: z.boolean(),
+  branch: z.string().nullable(),
+  ahead: z.boolean(),
+  behind: z.boolean(),
+});
+
+/**
+ * `git` is **optional**, and that is a compatibility decision rather than a convenience.
+ *
+ * The field was added 2026-09-28 alongside the publish/sync/revert unification, and the file map
+ * alone was the whole contract before it. A subscriber written against the old shape must keep
+ * working — and, more importantly, a *producer* that cannot read git state (a workspace with no
+ * repo) must be able to say "no opinion" rather than assert `hasRemote: false`, which a consumer
+ * would read as "there is definitely no remote". Absent means unknown; present means known.
+ */
 export const SyncEntityStatusEventSchema = z.object({
   wsId: z.string(),
   status: z.record(z.string(), z.enum(["clean", "modified", "new", "deleted"])),
+  git: WorkspaceGitStateSchema.optional(),
 });
 export type SyncEntityStatusEvent = z.infer<typeof SyncEntityStatusEventSchema>;
 

@@ -63,9 +63,15 @@ vi.mock("@/hooks/useWorkspaceView", () => ({
   }),
 }));
 
-vi.mock("@/hooks/usePublishHandlers", () => ({
-  usePublishHandlers: () => ({
-    handlePublishPanel: vi.fn(),
+vi.mock("@/hooks/useEntityGitActions", () => ({
+  useEntityGitActions: () => ({
+    publish: vi.fn(async () => ({ ok: true })),
+    revert: vi.fn(async () => ({ ok: true })),
+    publishPanel: vi.fn(async () => ({ ok: true })),
+    isBusy: () => false,
+    lastError: null,
+    clearError: vi.fn(),
+    keyFor: () => "key",
   }),
 }));
 
