@@ -3,6 +3,7 @@ import HeaderTable from "@/components/common/HeaderTable";
 import BodyEditor, { BodyEditorHandle } from "@/components/common/BodyEditor";
 import BinaryViewer from "@/components/common/BinaryViewer";
 import { TabStrip } from "@/components/editor/RequestTab";
+import { ResponseStripSuffix } from "@/components/editor/TabPage";
 import { strings } from "@/lib/strings";
 import { Environment } from "@/types";
 import { statusColor, headersToRows } from "@/lib/utils";
@@ -11,7 +12,6 @@ import { ResponsePaneProps, EditorMode } from "./EditorTab";
 import ScriptEditor from "./ScriptEditor";
 import TestsPanel from "./TestsPanel";
 import { TokenToolbar, appendTokenToFocusedRow, insertAtActiveInput } from "./TokenToolbar";
-import { Columns2, Rows2 } from "@/lib/icons";
 
 interface ResponsePaneComponentProps extends ResponsePaneProps {
   mode: EditorMode;
@@ -200,31 +200,15 @@ export default function ResponsePane({
           ]}
           active={resTab}
           onChange={onResTabChange}
+          // The layout toggle and the status code live in the strip, not in a row of their own.
+          // That is the one place all four protocols now put them — see `TabPage.tsx`.
           suffix={
-            <div className="flex items-center gap-2 pr-3">
-              {onToggleSplitOrientation && (
-                <button
-                  type="button"
-                  onClick={onToggleSplitOrientation}
-                  title={strings.editor.splitLayoutToggle}
-                  aria-label={strings.editor.splitLayoutToggle}
-                  data-testid="split-orientation-toggle"
-                  className="p-1.5 rounded border transition-colors cursor-pointer flex-shrink-0 border-border text-muted-foreground hover:text-foreground hover:bg-surface-2"
-                >
-                  {splitOrientation === "horizontal" ? <Rows2 size={14} /> : <Columns2 size={14} />}
-                </button>
-              )}
-              {result && (
-                <span className="text-sm font-bold font-mono" style={{ color: statusColor(result.status) }}>
-                  {result.status}
-                </span>
-              )}
-              {result && durationMs != null && (
-                <span className="text-xs font-mono text-muted-foreground">
-                  {durationMs}ms
-                </span>
-              )}
-            </div>
+            <ResponseStripSuffix
+              orientation={splitOrientation}
+              onToggleOrientation={onToggleSplitOrientation}
+              status={result?.status}
+              durationMs={durationMs}
+            />
           }
         />
         <div className="flex-1 overflow-y-auto min-h-0">
