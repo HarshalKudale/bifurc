@@ -1,87 +1,40 @@
-import { ipcMain, dialog, BrowserWindow, app } from "electron";
-import * as fs from "fs";
-import * as path from "path";
-import { loadSettings, saveSettings } from "@/store/appSettings";
-import { stopServer, startServer } from "@/proxy/server";
-import { loadConfig } from "@/store/config";
-import { getMainWindow } from "@/main";
-
-function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
-  return themeId === "light"
-    ? { color: "#eff2f6", symbolColor: "#151b21" }
-    : { color: "#090e12", symbolColor: "#eef2f7" };
-}
+/**
+ * The shell's remaining system handler — **one channel**, `app:checkUpdate`.
+ *
+ * ## What used to be here, and why it is not (P6 reduction, fifth group, 2026-09-21)
+ *
+ * Four channels left this file: `server:start` / `server:stop` / `server:restart` and
+ * `capture:shareJson`. All four were unreachable — `window.api` *is* the client
+ * (`src/preload.ts:110`) and `packages/client/src` names no channel — and all four had a twin that
+ * carries their behaviour:
+ *
+ *  - the three `server:*` bodies were **self-contained** (`loadConfig()` → `stopServer()` /
+ *    `startServer(cfg.port)`), not `commandRegistry.invoke()` delegates. Their engine halves in
+ *    `@bifurc/engine/proxy/serverCommands.ts` are exact equivalents — that file's header says so
+ *    character by character — so deleting them lost nothing. **This deletion is what dissolves that
+ *    module's "do NOT re-point the legacy channels at this module yet" trap**, which existed only
+ *    because these bodies duplicated it.
+ *  - `capture:shareJson` owned a `dialog.showSaveDialog` plus the write, which is the one thing a
+ *    shell channel may legitimately own. The client's `shareCaptureJson` owns the same two steps
+ *    through `local.writeArtifact`, and its ordering — artifact-first, deliberately, unlike the
+ *    channel's dialog-first — is pinned in `packages/client/tests/client.test.ts`.
+ *
+ * ## Why `app:checkUpdate` stays, and why this file is not deleted with the rest
+ *
+ * It is **client-local**, not legacy. `currentVersion` is the version of the thing the *user* runs
+ * and the download URL must be the asset for the *user's* platform, so no engine can answer it
+ * correctly on the client's behalf — an engine matching its own `process.platform` hands a Windows
+ * user the AppImage. `packages/protocol` no longer declares `app.checkUpdate`; `src/preload.ts:87`
+ * is the only caller, and `plan/07`'s "local handlers stay local" table is the ledger. Local
+ * channels are not a reduction target, so this file outlives the group that shrank it.
+ *
+ * `import * as fs from "fs"` used to sit at the top of this file and was referenced by nothing —
+ * not by `app:checkUpdate`, and not by any of the four bodies above either. It was removed with
+ * them, because four channel bodies made the file look like it needed it.
+ */
+import { ipcMain, app } from "electron";
 
 export function registerSystemHandlers() {
-  // ── Zoom ────────────────────────────────────────────────────────────────────
-  ipcMain.handle("zoom:get", () => {
-    const s = loadSettings();
-    return s.zoomLevel ?? 0;
-  });
-
-  ipcMain.handle("zoom:set", (_e, level: number) => {
-    const clamped = Math.max(-5, Math.min(9, level));
-    const s = loadSettings();
-    saveSettings({ ...s, zoomLevel: clamped, zoomLevelSetByUser: true });
-    const overlayHeight = Math.round(35 * Math.pow(1.2, clamped));
-    const overlayTheme = getTitleBarOverlayTheme(s.themeId);
-    BrowserWindow.getAllWindows().forEach((w) => {
-      if (!w.isDestroyed()) {
-        w.webContents.setZoomLevel(clamped);
-        try {
-          w.setTitleBarOverlay({
-            color: overlayTheme.color,
-            symbolColor: overlayTheme.symbolColor,
-            height: overlayHeight,
-          });
-        } catch { }
-      }
-    });
-    return { ok: true, zoomLevel: clamped };
-  });
-
-  // ── Theme ───────────────────────────────────────────────────────────────────
-  ipcMain.handle("theme:get", () => {
-    const s = loadSettings();
-    return s.themeId ?? null;
-  });
-
-  ipcMain.handle("theme:set", (_e, themeId: string) => {
-    const s = loadSettings();
-    saveSettings({ ...s, themeId });
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      const zoomLevel = win.webContents.getZoomLevel();
-      const height = Math.round(35 * Math.pow(1.2, zoomLevel));
-      const overlayTheme = getTitleBarOverlayTheme(themeId);
-      win.setTitleBarOverlay({
-        color: overlayTheme.color,
-        symbolColor: overlayTheme.symbolColor,
-        height,
-      });
-      win.setBackgroundColor(overlayTheme.color);
-    }
-    return { ok: true };
-  });
-
-  ipcMain.handle("server:restart", () => {
-    const cfg = loadConfig();
-    stopServer();
-    startServer(cfg.port);
-    return { ok: true };
-  });
-
-  ipcMain.handle("server:stop", () => {
-    stopServer();
-    return { ok: true };
-  });
-
-  ipcMain.handle("server:start", () => {
-    const cfg = loadConfig();
-    startServer(cfg.port);
-    return { ok: true };
-  });
-
   ipcMain.handle("app:checkUpdate", async () => {
     try {
       let currentVersion = "0.1.0";
@@ -200,88 +153,4 @@ export function registerSystemHandlers() {
       };
     }
   });
-
-  ipcMain.handle("shell:openExternal", (_e, url: string) => {
-    const { shell } = require("electron");
-    shell.openExternal(url);
-  });
-
-  // ── Path pickers for run configurations ────────────────────────────────
-  ipcMain.handle("dialog:pickFilePath", async (_evt, title: string, filters?: Electron.FileFilter[]) => {
-    const win = BrowserWindow.getFocusedWindow();
-    if (!win) return null;
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: title || "Select File",
-      filters: filters ?? [{ name: "All Files", extensions: ["*"] }],
-      properties: ["openFile"],
-    });
-    return canceled || !filePaths[0] ? null : filePaths[0];
-  });
-
-  ipcMain.handle("dialog:pickFolderPath", async (_evt, title: string) => {
-    const win = BrowserWindow.getFocusedWindow();
-    if (!win) return null;
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: title || "Select Folder",
-      properties: ["openDirectory", "createDirectory"],
-    });
-    return canceled || !filePaths[0] ? null : filePaths[0];
-  });
-
-  // ── File picker for binary body uploads ────────────────────────────────
-  ipcMain.handle("dialog:openFile", async () => {
-    const win = BrowserWindow.getFocusedWindow();
-    const { filePaths, canceled } = await dialog.showOpenDialog(win!, {
-      title: "Select File",
-      properties: ["openFile"],
-    });
-    if (canceled || !filePaths[0]) return null;
-    const filePath = filePaths[0];
-    const stat = fs.statSync(filePath);
-    if (stat.size > 1024 * 1024) {
-      return { error: "File exceeds 1 MB limit" };
-    }
-    const buffer = fs.readFileSync(filePath);
-    const ext = path.extname(filePath).toLowerCase().slice(1);
-    const mimeMap: Record<string, string> = {
-      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
-      webp: "image/webp", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp",
-      pdf: "application/pdf", zip: "application/zip", gz: "application/gzip",
-      mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
-      mp4: "video/mp4", webm: "video/webm",
-      woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
-    };
-    return {
-      name: path.basename(filePath),
-      size: stat.size,
-      base64: buffer.toString("base64"),
-      mimeType: mimeMap[ext] ?? "application/octet-stream",
-    };
-  });
-
-  ipcMain.handle("shell:setTitleBarOverlay", (_e, color: string, symbolColor: string) => {
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      const zoomLevel = win.webContents.getZoomLevel();
-      const height = Math.round(35 * Math.pow(1.2, zoomLevel));
-      win.setTitleBarOverlay({ color, symbolColor, height });
-    }
-    return { ok: true };
-  });
-
-  ipcMain.handle("capture:shareJson", async (_e, entries: unknown[], suggestedName?: string) => {
-    try {
-      const { filePath, canceled } = await dialog.showSaveDialog({
-        title: "Share Captured Requests",
-        defaultPath: suggestedName || "captured-requests.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (canceled || !filePath) return { ok: false, canceled: true };
-      fs.writeFileSync(filePath, JSON.stringify(entries, null, 2), "utf-8");
-      return { ok: true, filePath };
-    } catch (err: any) {
-      return { ok: false, error: err?.message ?? "Share failed" };
-    }
-  });
-
 }

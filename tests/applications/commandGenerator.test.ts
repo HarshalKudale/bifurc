@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateResolvedCommand } from "@/applications/commandGenerator";
-import { DEFAULT_DEBUG_PORTS, type ApplicationConfig, type RunConfigType } from "@/applications/types";
+import { generateResolvedCommand } from "@bifurc/engine/applications/commandGenerator";
+import { DEFAULT_DEBUG_PORTS, type ApplicationConfig, type RunConfigType } from "@bifurc/engine/applications/types";
 
 /**
  * `generateResolvedCommand` runs at config-save time and its output is persisted

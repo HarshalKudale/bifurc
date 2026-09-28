@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openPanel } from "./helpers";
+import { openPanel, openEnvironmentsManager, chooseProtocol, renameTab } from "./helpers";
 
 test.describe("Application Launch", () => {
     test("window opens with correct title", async ({ page }) => {
@@ -50,26 +50,73 @@ test.describe("Navigation", () => {
         await expect(page.getByRole("button", { name: /Add Rule/i }).first()).toBeVisible();
     });
 
+    /**
+     * The manager is **not** a titlebar button: it lives inside the environment dropdown, so the
+     * dropdown has to be opened first (`openEnvironmentsManager`). This test previously clicked the
+     * "Manage Environments…" label directly, which matches nothing until the menu is open.
+     *
+     * The panel anchor is unchanged and still the real one: `EnvironmentsPanel`'s sidebar footer
+     * button, `strings.environments.newEnvironment` = "New Environment".
+     */
     test("can open the environments manager", async ({ page }) => {
-        await page.getByRole("button", { name: /^Manage Environments/i }).first().click();
+        await openEnvironmentsManager(page);
         await expect(page.getByRole("button", { name: /New Environment/i }).first()).toBeVisible({
             timeout: 10_000,
         });
     });
 
     test("common tab keybinds work on tabbed panels", async ({ page }) => {
-        await page.getByRole("button", { name: /^REST 3$/i }).nth(1).click();
-        await page.waitForTimeout(400);
+        /**
+         * Every step of this test had to be re-derived from the code, because **nothing it did touched
+         * the UI it claimed to**:
+         *
+         * 1. It began with `getByRole("button", { name: /^REST 3$/i }).nth(1)`. That label has never
+         *    existed — `git log -S "REST 3" -- e2e/app.spec.ts` shows it was written here in bae3732
+         *    (2026-09-14) and appears nowhere else in the tree — so it could only ever time out.
+         * 2. The next attempt clicked the seeded request by name. **The tree row is not a button**:
+         *    `FolderTreeItemNode.tsx:28` renders a plain `<div title={item.name} onClick={...}>`, so its
+         *    role is `generic` and its accessible name comes from `title`. `getByRole("button", ...)`
+         *    matched nothing. It was also the wrong idea even had it matched — a seeded row opens a
+         *    *second* tab, and the last assertion counts the tab strip down to **zero**, which needs
+         *    the panel to end with no tabs at all.
+         * 3. `Ctrl+T` was assumed to open the request form. It does not: `openNewTabInFolder`
+         *    (`useRequestsPanelState.ts`) leaves `draftProtocols[tabId]` null, so a new tab opens on
+         *    the **protocol chooser** and the form only exists once a protocol is picked. That missing
+         *    `chooseProtocol` step is why the `fill` below had nothing to fill.
+         *
+         * What each keybind is asserted against, and why each assertion can actually fail:
+         *
+         *   Ctrl+T — the tab strip, counted by `[data-tab-id]`. The empty state is now the same
+         *            protocol chooser a new tab shows, so the tab count is what distinguishes them:
+         *            0 before the keybind, 1 after.
+         *   Ctrl+S — the Create button disappearing. There is no Save button left to watch: the
+         *            shortcut now means "write now, do not wait for the debounce" (`saveNow` in
+         *            `useProtocolEditor`). A draft renders `Create Request`, and a successful write
+         *            replaces the draft id with the saved one, which is what takes the label away — so
+         *            the disappearance *is* the evidence that a save happened.
+         *   Ctrl+W — the same count, back to 0.
+         *
+         * A request needs only a URL to be creatable: `RestTab.tsx`'s `canSaveBase` gates on
+         * `state.url.trim()` for `tabType === "request"` — the response-body rule is the mock branch.
+         * The name is filled because it is what the tree and the tab label display, not because it is
+         * required.
+         */
+        await openPanel(page, "Requests");
+        await expect(page.locator("[data-tab-id]")).toHaveCount(0);
 
         await page.keyboard.press("ControlOrMeta+T");
-        await expect(page.getByText("New Request").first()).toBeVisible();
+        await expect(page.locator("[data-tab-id]")).toHaveCount(1);
+        await chooseProtocol(page, /REST Request/i);
 
-        await page.getByRole("textbox", { name: /Request name \(optional\)/i }).fill("Keyboard Save Test");
-        await page.getByPlaceholder("https://example.localhost/endpoint").fill("https://example.localhost/keybind-save-test");
+        await renameTab(page, "Keyboard Save Test");
+        await page
+            .getByPlaceholder("https://example.localhost/endpoint")
+            .fill("https://example.localhost/keybind-save-test");
+
         await page.keyboard.press("ControlOrMeta+S");
-        await expect(page.getByRole("button", { name: /Update Request/i })).toBeVisible();
+        await expect(page.getByRole("button", { name: /Create Request/i })).toHaveCount(0);
 
         await page.keyboard.press("ControlOrMeta+W");
-        await expect(page.getByText("No requests open")).toBeVisible();
+        await expect(page.locator("[data-tab-id]")).toHaveCount(0);
     });
 });

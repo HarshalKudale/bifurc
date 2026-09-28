@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { urlSegments, compressNode, buildTrieItems, collectLeafIds } from "@/lib/urlTrie";
 import type { TrieNode } from "@/lib/urlTrie";
 
-describe("renderer/lib/urlTrie.ts", () => {
+describe("packages/gui/src/lib/urlTrie.ts", () => {
   describe("urlSegments()", () => {
     it("splits a URL into host + path segments", () => {
       const segs = urlSegments("http://example.com/api/v1/users");

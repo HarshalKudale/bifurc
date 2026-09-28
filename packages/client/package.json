@@ -1,0 +1,38 @@
+{
+  "name": "@bifurc/client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed RPC client that reconstructs the `window.api` surface over any Transport, so the renderer needs zero changes when the shell switches over. P5 of the decoupling plan.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.mjs",
+      "require": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bifurc/protocol": "*"
+  },
+  "devDependencies": {
+    "@bifurc/engine": "*",
+    "@types/node": "^20.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.4.0"
+  }
+}

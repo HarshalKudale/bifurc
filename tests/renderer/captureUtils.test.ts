@@ -1,6 +1,6 @@
 /**
  * Happy-path workflow test for the **Capture** screen's pure logic —
- * `renderer/components/capture/captureUtils.ts`.
+ * `packages/gui/src/components/capture/captureUtils.ts`.
  *
  * This module is what turns a captured `RequestLogEntry` into something the user can keep:
  * `buildMockInitial()` builds the mock, `reqToHeadersBody()` builds the saved request, and
@@ -8,7 +8,7 @@
  * regression here silently produces wrong mocks (wrong status, body base64-vs-text, headers
  * that should have been stripped) — and nothing asserted it.
  *
- * NOTE ON COVERAGE SCOPE: `captureUtils.ts` is a `.ts` file under `renderer/components/`,
+ * NOTE ON COVERAGE SCOPE: `captureUtils.ts` is a `.ts` file under `packages/gui/src/components/`,
  * but the coverage `include` glob only matched `.tsx` files there — so it was invisible to
  * the report even once this suite existed. `vitest.config.ts` now includes
  * `renderer/components` `.ts` files as well.

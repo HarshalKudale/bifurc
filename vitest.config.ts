@@ -4,17 +4,21 @@ import path from "path";
 import fs from "fs";
 
 /**
- * Custom resolve plugin: @/ resolves to src/ first, then renderer/ as fallback.
- * This allows test files to import from both src/ and renderer/ using @/ alias.
+ * Custom resolve plugin: `@/` resolves to the shell's `src/` first, then to `packages/gui/src`.
+ *
+ * Those two roots are the two things `@/` has ever meant. It began as "the renderer", which is why test
+ * files can import from both `src/` and the UI under one alias; since D18 the renderer's UI lives in
+ * `packages/gui`, so the second root moved with it and nothing else did — the UI's own 647 `@/…` imports
+ * resolve through this same branch.
  *
  * A directory must NOT be returned as a resolved id — Vite cannot load one. Without the
- * `isDirectory()` guards, `@/lib/strings` matched `renderer/lib/strings/` on the empty
+ * `isDirectory()` guards, `@/lib/strings` matched the `lib/strings/` **directory** on the empty
  * extension and shadowed the `index.ts` fallback below, so any module importing the
  * `strings` barrel was untestable.
  */
 function dualAliasPlugin() {
   const srcDir = path.resolve(__dirname, "src");
-  const rendererDir = path.resolve(__dirname, "renderer");
+  const guiDir = path.resolve(__dirname, "packages/gui/src");
   const isDir = (p: string): boolean => {
     try { return fs.statSync(p).isDirectory(); } catch { return false; }
   };
@@ -30,9 +34,9 @@ function dualAliasPlugin() {
         if (ext === "" && isDir(full)) break;
         if (fs.existsSync(full)) return full;
       }
-      // Try renderer/ second
+      // Try packages/gui/src second
       for (const ext of extensions) {
-        const full = path.join(rendererDir, rel + ext);
+        const full = path.join(guiDir, rel + ext);
         if (ext === "" && isDir(full)) break;
         if (fs.existsSync(full)) return full;
       }
@@ -42,7 +46,7 @@ function dualAliasPlugin() {
         if (fs.existsSync(full)) return full;
       }
       for (const ext of extensions) {
-        const full = path.join(rendererDir, rel, "index" + ext);
+        const full = path.join(guiDir, rel, "index" + ext);
         if (fs.existsSync(full)) return full;
       }
       return null;
@@ -50,7 +54,48 @@ function dualAliasPlugin() {
   };
 }
 
+/**
+ * `@bifurc/engine/*` must resolve to the engine package's **source**, not its build output.
+ *
+ * This has to be a `resolve.alias` rather than a `resolveId` plugin, and that is a measured
+ * conclusion, not a preference. `@bifurc/engine` is a real npm workspace package, so Node can
+ * resolve it unaided; Vitest therefore treated it as an *external* dependency and loaded the
+ * **built** `dist/*.mjs` through native `import()`. A plugin's `resolveId` is never consulted for an
+ * externalized specifier — confirmed with a temporary probe, which did not fire once — and
+ * `server.deps.inline` alone does not change that either. `resolve.alias` is applied inside Vite's
+ * core resolver *before* the externalization decision, so the rewritten id is a source path outside
+ * `node_modules` and is processed like any other project file.
+ *
+ * Two reasons source matters, both load-bearing:
+ *  - tests must exercise the real code, and `coverage.include` must be able to instrument it.
+ *    Resolving to `dist/` reported all 14 engine files as 0% covered while testing compiled JS.
+ *  - resolving to `dist/` means a source edit that was not rebuilt is silently *not tested* — the
+ *    suite passes green against stale output, which is the worst possible failure mode.
+ *
+ * Production resolves the same specifier to the built package instead — see the `paths` note in the
+ * root `tsconfig.json`.
+ */
+const engineSrc = path.resolve(__dirname, "packages/engine/src").replace(/\\/g, "/");
+const engineAlias = [
+  { find: /^@bifurc\/engine$/, replacement: `${engineSrc}/index.ts` },
+  { find: /^@bifurc\/engine\/(.+)$/, replacement: `${engineSrc}/$1` },
+];
+
 const plugins = [react(), dualAliasPlugin()];
+
+/**
+ * Vite options must be redeclared inside every project, not just at the root.
+ *
+ * This is measured, not stylistic. `resolve.alias` placed only at the root `defineConfig`
+ * level is **never applied** to the project runs: with the alias target deliberately corrupted
+ * to a non-existent directory the suite still passed and still loaded `dist/`, proving no
+ * resolver ever saw the specifier. `plugins` was already duplicated into each project for the
+ * same reason — the `dualAliasPlugin` only works because of it.
+ */
+const viteOptions = {
+  plugins,
+  resolve: { alias: engineAlias },
+};
 
 /**
  * Shared defaults for every project. Each project redeclares these because Vitest
@@ -64,7 +109,7 @@ const shared = {
 };
 
 export default defineConfig({
-  plugins,
+  ...viteOptions,
   test: {
     ...shared,
     /**
@@ -74,17 +119,21 @@ export default defineConfig({
      */
     projects: [
       {
-        plugins,
+        ...viteOptions,
         test: {
           ...shared,
           name: "unit",
-          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+          include: [
+            "tests/**/*.test.ts",
+            "tests/**/*.test.tsx",
+            "packages/**/*.test.ts",
+          ],
           // Integration tests live under tests/integration and bind real ports.
           exclude: ["tests/integration/**"],
         },
       },
       {
-        plugins,
+        ...viteOptions,
         test: {
           ...shared,
           name: "integration",
@@ -104,13 +153,29 @@ export default defineConfig({
       reportsDirectory: "coverage",
       include: [
         "src/**/*.ts",
-        "renderer/lib/**/*.ts",
+        // The engine package (P2 work item 8). Its source is still exercised through the
+        // `@bifurc/engine/*` alias in tests, so it belongs in the report exactly as `src/**`
+        // did before the move — omitting it would silently drop ~11 files of coverage.
+        "packages/engine/src/**/*.ts",
+        // The client package (P5). Same reasoning as the engine entry above: it is exercised
+        // through source in tests, and omitting it would report the whole package as uncovered
+        // while it has a suite of its own.
+        "packages/client/src/**/*.ts",
+        // The browser client package (P7). Same reasoning as the two entries above, and this is the one
+        // easiest to forget because the package is new: without it `channel.ts` and `local.ts` are
+        // exercised by two suites and still reported as uncovered — §4.8's mistake in a new costume.
+        "packages/web-client/src/**/*.ts",
+        // The shared UI (D18). Same reasoning as the engine, client and web-client entries above: it is
+        // exercised through source in tests, so omitting it would report all 211 files as uncovered.
+        // These three globs are the same three that pointed at `renderer/` before the move — **the scope
+        // did not change, only the path**, which is what keeps the measured figure below comparable.
+        "packages/gui/src/lib/**/*.ts",
         // Both extensions: the capture/search/tab-reducer logic lives in `.ts` files under
-        // renderer/components, and matching only `.tsx` hid it from the report entirely —
+        // `components`, and matching only `.tsx` hid it from the report entirely —
         // even modules that already had passing tests.
-        "renderer/components/**/*.ts",
-        "renderer/components/**/*.tsx",
-        "renderer/panels/**/*.tsx",
+        "packages/gui/src/components/**/*.ts",
+        "packages/gui/src/components/**/*.tsx",
+        "packages/gui/src/panels/**/*.tsx",
       ],
       exclude: [
         // Process entry points — exercised by launching the app, not by unit tests.
@@ -118,18 +183,24 @@ export default defineConfig({
         "src/preload.ts",
         // Type-only modules.
         "**/*.d.ts",
-        "src/store/types.ts",
-        "src/sync/types.ts",
-        "src/applications/types.ts",
-        "src/ipc/importExport/types.ts",
-        "renderer/components/modals/import-export/types.ts",
-        "renderer/components/search/searchTypes.ts",
-        "renderer/components/sidebar/FolderTree.types.ts",
+        "packages/engine/src/store/types.ts",
+        "packages/engine/src/sync/types.ts",
+        // Moved here from `src/ipc/importExport/types.ts` in the layer-5 move. Re-checked, not merely
+        // relocated: all ten exports are `type` / `interface` declarations, with no runtime values.
+        "packages/engine/src/importExport/types.ts",
+        // NOT excluded: `packages/engine/src/applications/types.ts`. Despite the name it is not a
+        // type-only module — it exports `DEFAULT_DEBUG_PORTS`, `RUN_CONFIG_TYPE_LABELS` and
+        // `RUN_CONFIG_TYPE_ICONS` as real runtime values. The old `src/applications/types.ts` entry
+        // was excluding live code from the report purely on the strength of its filename. It is
+        // loaded by `applicationHandlers.ts`, so it reports as covered.
+        "packages/gui/src/components/modals/import-export/types.ts",
+        "packages/gui/src/components/search/searchTypes.ts",
+        "packages/gui/src/components/sidebar/FolderTree.types.ts",
         // Barrel file with no logic.
-        "renderer/components/ui/index.ts",
+        "packages/gui/src/components/ui/index.ts",
         // Pure constant / presentational modules with no logic worth asserting.
-        "renderer/lib/strings/**",
-        "renderer/lib/icons.tsx",
+        "packages/gui/src/lib/strings/**",
+        "packages/gui/src/lib/icons.tsx",
       ],
       /**
        * Coverage thresholds act as a ratchet: they are set just below the level the
@@ -138,14 +209,31 @@ export default defineConfig({
        * of the renderer. Raise these numbers as gaps are closed; never lower them to
        * make CI pass.
        *
-       * Current actuals (see TESTING.md): statements 46.14%, branches 31.30%,
-       * functions 34.34%, lines 48.39%.
+       * Actuals when these floors were set (see TESTING.md §4.1): statements 49.07%,
+       * branches 32.66%, functions 37.26%, lines 51.52% — measured 2026-09-16, at the end of
+       * P3 work item 1. **Re-measured 2026-09-22, with `packages/web-client/src` and `apps/web/src`
+       * newly included: 56.37–56.39 / 39.15–39.16 / 44.54 / 58.88–58.91 across two runs** — the spread
+       * is V8's own noise, ~0.05 pt between identical runs, which is §4.1's footnote 2. So the floors
+       * now sit ~7–9 pts below the actuals, and raising them is a deliberate decision rather than an
+       * oversight: the policy below says to raise them as gaps close, and this is the point at which
+       * that becomes available.
+       *
+       * ⚠ **The `web/**` entry was removed on 2026-09-26 with the browser host**, so the figure above is
+       * historical. Its two files were well covered — each had its own suite — so dropping them moves the
+       * percentage by a fraction of a point, far inside the margin the floors already have. Left to the
+       * next coverage run rather than guessed at here.
+       *
+       * Set ~2 pts below the actuals, with one exception: `branches` stays at 31 because
+       * 2 pts below 32.66 is 30, and ratcheting *down* is exactly what the policy forbids.
+       * A floor that sits on the actual would be a flaky build rather than a stricter one —
+       * V8 instrumentation moves a figure by ~0.05 pt between identical runs, and the
+       * real-git suites oscillate more than that (§4.8).
        */
       thresholds: {
-        statements: 46,
+        statements: 47,
         branches: 31,
-        functions: 34,
-        lines: 48,
+        functions: 35,
+        lines: 49,
       },
     },
   },

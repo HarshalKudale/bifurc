@@ -3,12 +3,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // config.ts is now an adapter over appSettings + workspaceFs.
 // We mock those two dependencies so tests don't touch the filesystem.
 
-vi.mock("../../src/store/appSettings", () => ({
+// **Partial, not total.** The intent is "do not touch the filesystem", which is `loadSettings` /
+// `saveSettings` — but a bare object literal replaces the *whole* module, so every other export disappears.
+// That is not hypothetical: `config.ts` reads `DEFAULT_WEBHOOK_PORT` / `DEFAULT_FORWARD_PROXY_PORT` /
+// `DEFAULT_COMPANION_PORT` from here, and when those were added (2026-09-25) all ten cases in this file
+// died at `loadConfig()` with `No "DEFAULT_WEBHOOK_PORT" export is defined on the ... mock`. Spreading the
+// real module means a *future* constant cannot break this file the same way.
+vi.mock("@bifurc/engine/store/appSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/store/appSettings")>()),
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));
 
-vi.mock("../../src/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/store/workspaceFs", () => ({
   readAllEntities: vi.fn(() => []),
   readEntityStubs: vi.fn(() => []),
   readIndex: vi.fn(() => ({ folders: [], order: [] })),
@@ -35,8 +42,8 @@ vi.mock("../../src/store/workspaceFs", () => ({
 
 // electron is mocked globally in tests/setup.ts
 
-import { loadSettings, saveSettings } from "@/store/appSettings";
-import { readAllEntities, readIndex, autoSyncFsDirectories } from "@/store/workspaceFs";
+import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
+import { readAllEntities, readIndex, autoSyncFsDirectories } from "@bifurc/engine/store/workspaceFs";
 
 const makeDefaultSettings = () => ({
   port: 80,
@@ -45,9 +52,9 @@ const makeDefaultSettings = () => ({
   activeWorkspaceId: "default",
 });
 
-describe("src/store/config.ts", () => {
-  let loadConfig: () => import("../../src/store/config").AppConfig;
-  let saveConfig: (cfg: import("../../src/store/config").AppConfig) => void;
+describe("@bifurc/engine/store/config", () => {
+  let loadConfig: () => import("@bifurc/engine/store/config").AppConfig;
+  let saveConfig: (cfg: import("@bifurc/engine/store/config").AppConfig) => void;
   let generateId: () => string;
 
   beforeEach(async () => {
@@ -58,7 +65,7 @@ describe("src/store/config.ts", () => {
     vi.mocked(readAllEntities).mockReturnValue([]);
     vi.mocked(readIndex).mockReturnValue({ folders: [], order: [] });
 
-    const mod = await import("../../src/store/config");
+    const mod = await import("@bifurc/engine/store/config");
     loadConfig = mod.loadConfig;
     saveConfig = mod.saveConfig;
     generateId = mod.generateId;

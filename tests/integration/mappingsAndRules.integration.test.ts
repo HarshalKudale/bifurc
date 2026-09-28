@@ -11,12 +11,13 @@
  */
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { logEmitter } from "@/proxy/server";
+import { logEmitter } from "@bifurc/engine/proxy/server";
 import {
   createWorkspace,
   startProxy,
   startUpstream,
   proxyRequest,
+  edgeRequest,
   mappingFixture,
   ruleFixture,
   type UpstreamServer,
@@ -55,7 +56,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, {
+    const res = await edgeRequest(proxy.edgePort, {
       target: "/api/users",
       host: "app.localhost",
     });
@@ -71,7 +72,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    await proxyRequest(proxy.port, {
+    await edgeRequest(proxy.edgePort, {
       method: "POST",
       target: "/api/items?page=2&sort=asc",
       host: "app.localhost",
@@ -90,7 +91,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     ws = createWorkspace({ mappings: [] });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/", host: "nope.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/", host: "nope.localhost" });
 
     expect(res.status).toBe(404);
     expect(res.body).toContain("Not Mapped");
@@ -105,7 +106,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/", host: "app.localhost" });
 
     expect(res.status).toBe(404);
     expect(upstreamA.requests).toHaveLength(0);
@@ -117,7 +118,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/", host: "localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/", host: "localhost" });
 
     expect(res.status).toBe(200);
     expect(res.body).toContain("app.localhost");
@@ -133,7 +134,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     });
     proxy = await startProxy();
 
-    const res = await proxyRequest(proxy.port, { target: "/", host: "dead.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/", host: "dead.localhost" });
 
     expect(res.status).toBe(502);
   });
@@ -148,7 +149,7 @@ describe("mappings — *.localhost routing (end-to-end)", () => {
     const listener = (e: any) => entries.push(e);
     logEmitter.on("request", listener);
 
-    await proxyRequest(proxy.port, { target: "/api", host: "app.localhost" });
+    await edgeRequest(proxy.edgePort, { target: "/api", host: "app.localhost" });
     // Give the async log emit a tick to land.
     await new Promise((r) => setTimeout(r, 50));
 

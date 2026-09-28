@@ -1,0 +1,179 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Bifurc — "Signal" Design Tokens
+   Warm charcoal surfaces + signal amber accent (network-hardware inspired).
+   OKLCH color system with dark (default) and light modes.
+   Tokens are stored as OKLCH channel values (L C H) so Tailwind can
+   interpolate alpha via oklch(var(--token) / <alpha-value>).
+   Full computed values are available as --c-<name> aliases.
+
+   Accent = action + state only (buttons, active nav, toggles, focus rings).
+   Semantic colors (success/warning/danger/info) carry meaning only.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dark mode (default) ────────────────────────────────────────────────── */
+
+:root {
+  /* Core surfaces (warm charcoal, never pure black) */
+  --background:   0.205 0.014 80;
+  --surface:      0.240 0.014 78;
+  --card:         0.258 0.015 78;
+  --surface-2:    0.285 0.016 82;
+  --secondary:    0.310 0.018 82;
+  --accent:       0.350 0.020 82;
+  --border:       0.330 0.020 82;
+
+  /* Text */
+  --foreground:         0.945 0.012 88;
+  --muted-foreground:   0.690 0.018 80;
+  --subtle-text:        0.550 0.018 80;
+  --primary-foreground: 0.260 0.050 62;
+
+  /* Signal amber — the one accent (was emerald) */
+  --signal:             0.820 0.158 74;
+  --signal-foreground:  0.260 0.050 62;
+
+  /* Semantic (meaning only, never brand) */
+  --success:      0.800 0.150 172;
+  --warning:      0.750 0.150 60;
+  --info:         0.700 0.135 240;
+  --violet:       0.720 0.160 300;
+  --amber:        0.750 0.150 60;
+  --blue:         0.660 0.150 240;
+  --destructive:  0.630 0.210 22;
+
+  /* HTTP method hues */
+  --method-get:    0.820 0.090 235;
+  --method-post:   0.870 0.120 170;
+  --method-put:    0.780 0.100 300;
+  --method-patch:  0.870 0.140 85;
+  --method-delete: 0.780 0.100 20;
+  --method-ws:     0.800 0.140 335;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius:    0.5rem;
+
+  /* Typography */
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── Computed full-value aliases (for inline styles & CSS direct use) ──── */
+
+:root {
+  --c-background:         oklch(var(--background));
+  --c-surface:            oklch(var(--surface));
+  --c-card:               oklch(var(--card));
+  --c-surface-2:          oklch(var(--surface-2));
+  --c-secondary:          oklch(var(--secondary));
+  --c-accent:             oklch(var(--accent));
+  --c-border:             oklch(var(--border));
+
+  --c-foreground:         oklch(var(--foreground));
+  --c-muted-foreground:   oklch(var(--muted-foreground));
+  --c-subtle-text:        oklch(var(--subtle-text));
+  --c-primary-foreground: oklch(var(--primary-foreground));
+
+  --c-signal:             oklch(var(--signal));
+  --c-signal-foreground:  oklch(var(--signal-foreground));
+
+  --c-success:            oklch(var(--success));
+  --c-warning:            oklch(var(--warning));
+  --c-info:               oklch(var(--info));
+  --c-violet:             oklch(var(--violet));
+  --c-amber:              oklch(var(--amber));
+  --c-blue:               oklch(var(--blue));
+  --c-destructive:        oklch(var(--destructive));
+}
+
+/* ── Glow tokens ──────────────────────────────────────────────────────── */
+
+:root {
+  --glow-signal-sm: 0 0 12px color-mix(in oklab, oklch(var(--signal)) 22%, transparent);
+  --glow-signal-md: 0 0 24px color-mix(in oklab, oklch(var(--signal)) 26%, transparent);
+  --glow-signal-lg: 0 0 56px color-mix(in oklab, oklch(var(--signal)) 20%, transparent);
+  --glow-violet-sm: 0 0 16px color-mix(in oklab, oklch(var(--violet)) 22%, transparent);
+  --glow-danger-sm: 0 0 16px color-mix(in oklab, oklch(var(--destructive)) 18%, transparent);
+}
+
+/* ── Syntax highlighting ──────────────────────────────────────────────── */
+
+:root {
+  --syn-keyword:   var(--c-signal);
+  --syn-bool:      var(--c-amber);
+  --syn-string:    var(--c-blue);
+  --syn-number:    var(--c-amber);
+  --syn-comment:   var(--c-subtle-text);
+  --syn-property:  var(--c-signal);
+  --syn-tag:       var(--c-signal);
+  --syn-attr-name: var(--c-foreground);
+  --syn-attr-val:  var(--c-blue);
+  --syn-bracket:   var(--c-muted-foreground);
+  --syn-variable:  var(--c-foreground);
+  --syn-defn:      var(--c-amber);
+  --syn-type:      var(--c-violet);
+  --syn-operator:  var(--c-muted-foreground);
+  --syn-regexp:    var(--c-amber);
+  --syn-escape:    var(--c-violet);
+  --syn-invalid:   var(--c-destructive);
+}
+
+/* ── HTTP method & status colors ──────────────────────────────────────── */
+
+:root {
+  --c-method-get:     oklch(var(--method-get));
+  --c-method-post:    oklch(var(--method-post));
+  --c-method-put:     oklch(var(--method-put));
+  --c-method-patch:   oklch(var(--method-patch));
+  --c-method-delete:  oklch(var(--method-delete));
+  --c-method-ws:      oklch(var(--method-ws));
+  --c-method-head:    var(--c-violet);
+  --c-method-options: var(--c-violet);
+
+  --c-method-head-bg: oklch(var(--violet) / 0.13);
+}
+
+/* ── Git sync status ──────────────────────────────────────────────────── */
+
+:root {
+  --c-sync-new:      var(--c-destructive);
+  --c-sync-modified: var(--c-amber);
+  --c-sync-clean:    var(--c-success);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Light mode overrides — warm paper
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.light {
+  /* Surfaces: warm paper */
+  --background:   0.970 0.008 90;
+  --surface:      1.000 0.000 90;
+  --card:         1.000 0.000 90;
+  --surface-2:    0.930 0.012 85;
+  --secondary:    0.900 0.015 85;
+  --accent:       0.860 0.018 85;
+  --border:       0.830 0.025 82;
+
+  /* Text: warm near-black */
+  --foreground:         0.250 0.015 78;
+  --muted-foreground:   0.410 0.018 78;
+  --subtle-text:        0.570 0.018 80;
+  --primary-foreground: 1.000 0.000 90;
+
+  /* Signal: deeper amber for contrast on paper */
+  --signal:             0.550 0.130 65;
+  --signal-foreground:  1.000 0.000 90;
+
+  /* Semantic: darkened one step for contrast */
+  --success:      0.600 0.130 165;
+  --warning:      0.620 0.160 55;
+  --info:         0.550 0.120 245;
+  --violet:       0.520 0.160 300;
+  --amber:        0.620 0.160 55;
+  --blue:         0.500 0.140 240;
+  --destructive:  0.550 0.190 28;
+}
