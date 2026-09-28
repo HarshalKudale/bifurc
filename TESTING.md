@@ -1,8 +1,47 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-28 · suite: **2,647 tests / 116 files** — 2,607 passed, **0 failures of any kind**, 40
-skipped. Unit **2,187 / 86 files**, integration **460 / 30 files** (`2,187 + 460 = 2,647` ✓, both halves
-measured separately, not derived).
+_Last reviewed: 2026-09-28 · suite: **2,658 tests / 117 files** — 2,618 passed, **0 failures of any kind**, 40
+skipped. Unit **2,158 / 87 files**, integration **460 / 30 files** (`2,158 + 460 = 2,618` ✓, both halves
+measured separately, not derived)._
+
+**The last move was the autosave conversion — the Save / Update button removed from every entity type,
+2026-09-28.** `2,647 → 2,658` is **`+11` tests and `+1` file, and the new file is the whole delta**: unit moved
+`2,187 → 2,198` total (`2,158` passed + `40` skipped) while integration stayed at `460 / 30`, which is what says
+no existing case changed behaviour. The eleven cases are `tests/renderer/debouncedAutosave.test.tsx`, driving
+the new `useDebouncedAutosave` hook with fake timers.
+
+**The hook has three properties that are load-bearing, and each is a case rather than a comment.** *Silent
+arming* — the first snapshot seen while `enabled` becomes the baseline without writing, so a draft whose id is
+swapped for the saved one on create cannot write straight back. *Baseline advances only on success* — a failed
+write leaves the edit dirty, so a later flush retries it. *Unmount flushes* — leaving a tab mid-debounce does
+not drop the edit. `flush()` cancels the pending timer, so `Ctrl+S` / Sync cannot write the same edit twice.
+**Checked by mutation, and the first two attempts were false negatives worth recording:** deleting the explicit
+`clearTimer()` from the timer path changed nothing, and deleting the effect's returned cleanup alone changed
+nothing either — because **the returned cleanup *is* the debounce reset**, so either one on its own is
+redundant. Deleting **both** failed **exactly one** case (`expected "vi.fn()" to not be called at all, but
+actually been called 3 times`) with the other ten green. The explicit call was then removed rather than left in
+as a second mechanism hiding the first.
+
+**One unit case failed on the first run, and it is not a regression.** `tests/store/gitStore.test.ts`'s
+`beforeEach` timed out at 10 s under the safe-delete shim (`EBUSY: resource busy or locked, rmdir` on a `%TEMP%`
+directory, `node-safe-delete-shim.cjs:616`), which took the one case in that file with it. Re-run alone it is
+**24/24 green**. Nothing in this change goes near the git store — the mechanism is named, so this is a flake
+rather than a finding.
+
+**The same move rewrote every e2e spec that drove a Save / Update button — `requests-rest`, `mocks-rest`,
+`proxy-rules`, `mappings`, `environments`, `app` and `happy-path-workflows`.** Those are **the user's to run**,
+so any e2e total below is stale until an owner run; `npm run typecheck:e2e` covers all of them and exits 0.
+Three of the rewrites are not mechanical. `mappings` lost its Edit button *and* its `tr:has-text(...)` handle,
+because a row's domain and label are `<Input>` values now and the only text a row still carries is the
+`.localhost` suffix — rows are matched on `input[value="…"]` instead. `environments` lost both of its `Save`
+clicks, because `handleAdd` creates the environment up front and the name and variables autosave. And
+`requests-rest` / `mocks-rest` now assert persistence through `window.api.getConfig()` rather than on page text:
+the entity name also appears in the **tab label**, which renames locally the instant `Enter` is pressed, so the
+old text assertion passed even when nothing had been written.
+
+---
+
+### Earlier record (same day) — the requests empty state becomes the new-tab page, 2026-09-28
 
 **The last move was the requests panel's empty state becoming the new-tab page, 2026-09-28.** `2,638 → 2,647`
 is **`+9` tests and `+1` file, and the new file is the whole delta** — unit moved `2,178 → 2,187` while

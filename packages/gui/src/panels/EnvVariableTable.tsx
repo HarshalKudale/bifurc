@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { Environment, EnvVariable } from "@/types";
-import { Globe, X, History } from "@/lib/icons";
+import { Globe, X, History, AlertCircle, CheckCircle2 } from "@/lib/icons";
 import { IconButton } from "@/components/ui";
 import { strings } from "@/lib/strings";
 import ActiveDot from "@/components/ui/ActiveDot";
+import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
 
 const mkVid = (() => {
   let _vid = 0;
@@ -67,35 +68,33 @@ export function EnvVariableTable({
 }) {
   const [name, setName] = useState(env.name);
   const [vars, setVars] = useState<EnvVariable[]>(() => env.variables.map((v) => ({ ...v })));
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-
-  const markDirty = () => setDirty(true);
 
   const updateVar = (id: string, patch: Partial<EnvVariable>) => {
     setVars((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-    markDirty();
   };
 
   const deleteVar = (id: string) => {
     setVars((prev) => prev.filter((v) => v.id !== id));
-    markDirty();
   };
 
   const addVar = () => {
     setVars((prev) => [...prev, { id: mkVid(), key: "", value: "" }]);
-    markDirty();
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await onSave({ ...env, name: name.trim() || env.name, variables: vars.filter((v) => v.key.trim()) });
-      setDirty(false);
-    } finally {
-      setSaving(false);
-    }
-  };
+  /**
+   * Autosave. There is no `enabled` gate to flip here, unlike the tabbed editors: an environment
+   * always exists — "Add" creates it up front and there is no draft — so every edit is a change to
+   * a row that is already on the server.
+   *
+   * Blank-keyed rows are filtered out of the payload exactly as the old Save button did: a row the
+   * user has added but not filled in yet must not be persisted as an empty variable.
+   */
+  const envSnapshot = JSON.stringify({ name, vars: vars.filter((v) => v.key.trim()) });
+  const { savedAt: autoSavedAt, error: autoSaveError } = useDebouncedAutosave({
+    snapshot: envSnapshot,
+    enabled: true,
+    onSave: () => onSave({ ...env, name: name.trim() || env.name, variables: vars.filter((v) => v.key.trim()) }),
+  });
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -112,7 +111,7 @@ export function EnvVariableTable({
           <input
             className="flex-1 bg-transparent text-sm font-semibold text-foreground outline-none placeholder:text-muted-foreground min-w-0"
             value={name}
-            onChange={(e) => { setName(e.target.value); markDirty(); }}
+            onChange={(e) => setName(e.target.value)}
             placeholder={strings.environments.environmentName}
           />
         )}
@@ -135,15 +134,17 @@ export function EnvVariableTable({
               {strings.environments.active}
             </span>
           )}
-          {dirty && (
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-2.5 py-1 rounded border border-signal/40 bg-signal/10 hover:bg-signal/20 text-signal text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
-            >
-              {saving ? strings.server.saving : strings.common.save}
-            </button>
-          )}
+          {autoSaveError ? (
+            <span title={autoSaveError} className="flex items-center gap-1.5 text-[11px] font-medium text-destructive">
+              <AlertCircle size={12} className="flex-shrink-0" />
+              <span>{strings.common.saveFailed}</span>
+            </span>
+          ) : autoSavedAt ? (
+            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+              <CheckCircle2 size={12} className="flex-shrink-0" />
+              <span>{strings.common.saved}</span>
+            </span>
+          ) : null}
           {onHistory && (
             <IconButton
               icon={<History size={12} />}

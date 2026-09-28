@@ -5,7 +5,7 @@ import FolderPicker from "@/components/sidebar/FolderPicker";
 import { Environment, Folder } from "@/types";
 import { methodColor } from "@/lib/utils";
 import { strings } from "@/lib/strings";
-import { RefreshCw, RotateCcw, Loader2, History } from "@/lib/icons";
+import { RefreshCw, RotateCcw, Loader2, History, CheckCircle2, AlertCircle } from "@/lib/icons";
 
 // -- UrlBar -----------------------------------------------------------------
 // Method dropdown + URL input + EnvVarHint + action button in one row.
@@ -140,18 +140,30 @@ export function TabStrip<T extends string>({ tabs, active, onChange, prefix, suf
 }
 
 // -- BottomBar --------------------------------------------------------------
-// Shared footer: folder picker on the left, cancel + save on the right.
+// Shared footer: the folder picker and this entity's git actions on the left, autosave status
+// and the Create button on the right.
+//
+// **There is no Save button.** An existing entity is written by `useDebouncedAutosave` one
+// second after the user stops editing. The only button here that writes is Create, and it
+// exists because a draft has no server id yet — creation is deliberate, saving is not.
+// Sync / Revert / History stay deliberate.
 
 export interface BottomBarProps {
   folders?: Folder[];
   folderId: string | null;
   onFolderChange(id: string | null): void;
-  onCancel(): void;
-  onSave(): void;
-  saveLabel: string;
+  /** Draft only — discards it. An existing entity has Revert instead. */
+  onCancel?: () => void;
+  /** Draft only — creates the entity. */
+  onSave?: () => void;
+  saveLabel?: string;
   saveDisabled?: boolean;
   saving?: boolean;
   savingLabel?: string;
+  /** Autosave state of an existing entity — rendered in place of the old Save button. */
+  autoSaving?: boolean;
+  autoSavedAt?: number | null;
+  autoSaveError?: string | null;
   /** Commit and push current state of entity */
   onSync?: () => void | Promise<void>;
   /** Revert local changes to last synced version */
@@ -176,6 +188,7 @@ export interface BottomBarProps {
 export function BottomBar({
   folders = [], folderId, onFolderChange, onCancel, onSave,
   saveLabel, saveDisabled, saving, savingLabel,
+  autoSaving, autoSavedAt, autoSaveError,
   onSync, onRevert, onHistory, syncDisabled, revertDisabled, historyDisabled, syncing, reverting,
   syncTitle, revertTitle, historyTitle, extraLeft,
   onCreateMock, createMockDisabled = true,
@@ -244,22 +257,66 @@ export function BottomBar({
             <span>{strings.requests.createMock}</span>
           </button>
         )}
-        <button
-          onClick={onCancel}
-          className="px-3 py-1.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-surface-2/60 text-xs font-medium transition-all cursor-pointer"
-        >
-          {strings.common.cancel}
-        </button>
-        <button
-          onClick={onSave}
-          disabled={saveDisabled || saving}
-          className="px-4 py-1.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
-        >
-          {saving
-            ? <><span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />{savingLabel ?? saveLabel}</>
-            : saveLabel}
-        </button>
+        <AutosaveStatus saving={autoSaving} savedAt={autoSavedAt} error={autoSaveError} />
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-surface-2/60 text-xs font-medium transition-all cursor-pointer"
+          >
+            {strings.common.cancel}
+          </button>
+        )}
+        {onSave && saveLabel && (
+          <button
+            onClick={onSave}
+            disabled={saveDisabled || saving}
+            className="px-4 py-1.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            {saving
+              ? <><span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />{savingLabel ?? saveLabel}</>
+              : saveLabel}
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Quiet proof that the editor is not the only copy of the user's work.
+ *
+ * The Save button used to be that proof, so removing it without a replacement would leave the
+ * user guessing whether a keystroke survived. Deliberately text-only until something is worth
+ * saying: an idle "All changes saved" on every tab would be noise, not reassurance.
+ */
+function AutosaveStatus({
+  saving, savedAt, error,
+}: {
+  saving?: boolean;
+  savedAt?: number | null;
+  error?: string | null;
+}) {
+  if (error) {
+    return (
+      <span title={error} className="flex items-center gap-1.5 text-[11px] font-medium text-destructive">
+        <AlertCircle size={12} className="flex-shrink-0" />
+        <span>{strings.common.saveFailed}</span>
+      </span>
+    );
+  }
+  if (saving) {
+    return (
+      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <Loader2 size={12} className="animate-spin flex-shrink-0" />
+        <span>{strings.common.saving}</span>
+      </span>
+    );
+  }
+  if (!savedAt) return null;
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+      <CheckCircle2 size={12} className="flex-shrink-0" />
+      <span>{strings.common.saved}</span>
+    </span>
   );
 }
