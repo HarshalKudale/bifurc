@@ -55,7 +55,7 @@ export function useCaptureContextMenu({
       const allBlocked = selected.length > 0 && selected.every((e) => blockedKeys.has(blockKey(e.method, e.url)));
       return [
         { label: strings.capture.ctxMockMany, icon: <Zap size={14} />, action: run(() => mockEntries(selected, true)) },
-        { label: strings.capture.ctxSaveMany, icon: <Download size={14} />, action: run(() => saveEntries(selected, true)) },
+        { label: strings.capture.ctxCreateMany, icon: <Download size={14} />, action: run(() => saveEntries(selected, true)) },
         allBlocked
           ? { label: strings.capture.ctxUnblockMany, icon: <Ban size={14} />, action: run(() => unblockEntries(selected)) }
           : { label: strings.capture.ctxBlockMany, icon: <Ban size={14} />, action: run(() => blockEntries(selected)) },
@@ -69,7 +69,7 @@ export function useCaptureContextMenu({
     return [
       { label: strings.capture.ctxMock, icon: <Zap size={14} />, action: run(() => onOpenInMocks(buildMockInitial(e))) },
       { label: strings.capture.ctxOpen, icon: <ArrowUpRight size={14} />, action: run(() => onOpenInRequests(reqToHeadersBody(e))) },
-      { label: strings.capture.ctxSave, icon: <Download size={14} />, action: run(() => saveEntries([e], false)) },
+      { label: strings.capture.ctxCreate, icon: <Download size={14} />, action: run(() => saveEntries([e], false)) },
       { sep: true },
       isBlocked
         ? { label: strings.capture.ctxUnblock, icon: <Ban size={14} />, action: run(() => unblockEntries([e])) }

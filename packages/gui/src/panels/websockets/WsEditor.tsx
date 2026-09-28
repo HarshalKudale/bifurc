@@ -18,6 +18,7 @@ import RandomizerHint from '@/components/editor/RandomizerHint';
 import { resolveVars } from '@/lib/resolveVars';
 import { KVRow, mkRowId, headersToRows, rowsToHeaders, tryFormat } from '@/lib/utils';
 import { useDraftPersist, loadDraft, clearDraft, getDraftIds } from '@/hooks/useDraftPersist';
+import { useDebouncedAutosave } from '@/hooks/useDebouncedAutosave';
 import { useWebSocket, MAX_WS_CONNECTIONS, WsMessage } from '@/hooks/useWebSocket';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Play, Send, Radio } from '@/lib/icons';
@@ -137,9 +138,31 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
     }
   }, [name, url, headers, folderId, onSave, markSaved]);
 
+  /**
+   * Autosave. Disabled for a draft: it has no id yet, so the user creates it explicitly with the
+   * footer's Create button, and autosave takes over from the next edit.
+   */
+  const wsSnapshot = JSON.stringify({ name, url, folderId, headers: rowsToHeaders(headers) });
+  const {
+    saving: autoSaving,
+    savedAt: autoSavedAt,
+    error: autoSaveError,
+    flush: flushSave,
+  } = useDebouncedAutosave({
+    snapshot: wsSnapshot,
+    enabled: !isNew,
+    onSave: handleSave,
+  });
+
+  /** Ctrl+S. A draft is created; an existing socket flushes its pending autosave. */
+  const saveNow = useCallback(
+    () => (isNew ? handleSave() : flushSave()),
+    [isNew, handleSave, flushSave],
+  );
+
   useImperativeHandle(ref, () => ({
     save() {
-      return handleSave();
+      return saveNow();
     },
     refresh(conn: SavedWsConnection) {
       setName(conn.name ?? "");
@@ -147,7 +170,7 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
       setFolderId(conn.folderId ?? null);
       setHeaders(headersToRows(conn.headers ?? {}));
     },
-  }), [handleSave]);
+  }), [saveNow]);
 
   const [syncing, setSyncing] = useState(false);
   const [reverting, setReverting] = useState(false);
@@ -158,7 +181,8 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
     try {
       let targetId = tabId;
       if (isDirtyWs || isNew) {
-        const saved: any = await handleSave();
+        // `saveNow` cancels the pending debounce too, so the edit is not written twice.
+        const saved: any = await saveNow();
         if (saved && typeof saved === "object" && saved.id) {
           targetId = saved.id;
         }
@@ -167,7 +191,7 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
     } finally {
       setSyncing(false);
     }
-  }, [onSync, syncing, isDirtyWs, isNew, handleSave, tabId]);
+  }, [onSync, syncing, isDirtyWs, isNew, saveNow, tabId]);
 
   const hasChanges = !isNew && Boolean(isDirtyWs || (syncStatus && syncStatus !== "clean"));
 
@@ -295,17 +319,21 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
         inEndRef={inEndRef}
       />
 
-      {/* Bottom bar */}
+      {/* Bottom bar — Cancel and Create exist only for a draft: an existing socket autosaves
+          every edit and has Revert for undo. */}
       <BottomBar
         folders={folders}
         folderId={folderId}
         onFolderChange={setFolderId}
-        onCancel={onClose}
-        onSave={handleSave}
-        saveLabel={isNew ? strings.sockets.saveSocket : strings.sockets.updateSocket}
-        saveDisabled={!url.trim() || (!isNew && !isDirtyWs)}
+        onCancel={isNew ? onClose : undefined}
+        onSave={isNew ? handleSave : undefined}
+        saveLabel={isNew ? strings.sockets.createSocket : undefined}
+        saveDisabled={!url.trim()}
         saving={saving}
         savingLabel={strings.server.saving}
+        autoSaving={autoSaving}
+        autoSavedAt={autoSavedAt}
+        autoSaveError={autoSaveError}
         onSync={onSync ? handleSyncClick : undefined}
         onRevert={onRevert ? handleRevertClick : undefined}
         onHistory={onHistory}

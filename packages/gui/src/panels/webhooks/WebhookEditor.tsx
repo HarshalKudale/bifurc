@@ -6,6 +6,7 @@ import { SavedWebhook, Folder, WebhookPayload } from '@/types';
  */
 import type { WebhookDraft } from '@/panels/WebhooksPanel';
 import { loadDraft, useDraftPersist } from '@/hooks/useDraftPersist';
+import { useDebouncedAutosave } from '@/hooks/useDebouncedAutosave';
 import { Webhook } from '@/lib/icons';
 import { methodBadgeClass } from '@/lib/utils';
 import { strings } from '@/lib/strings';
@@ -106,16 +107,38 @@ const WebhookEditor = forwardRef<WebhookEditorHandle, WebhookEditorProps>(functi
     }
   }, [name, urlSuffix, folderId, onSave, markSaved]);
 
+  /**
+   * Autosave. Disabled for a draft: it has no id yet, so the user creates it explicitly with the
+   * footer's Create button, and autosave takes over from the next edit.
+   */
+  const whSnapshot = JSON.stringify({ name, urlSuffix, folderId });
+  const {
+    saving: autoSaving,
+    savedAt: autoSavedAt,
+    error: autoSaveError,
+    flush: flushSave,
+  } = useDebouncedAutosave({
+    snapshot: whSnapshot,
+    enabled: !isNew,
+    onSave: handleSave,
+  });
+
+  /** Ctrl+S. A draft is created; an existing webhook flushes its pending autosave. */
+  const saveNow = useCallback(
+    () => (isNew ? handleSave() : flushSave()),
+    [isNew, handleSave, flushSave],
+  );
+
   useImperativeHandle(ref, () => ({
     save() {
-      return handleSave();
+      return saveNow();
     },
     refresh(hook: SavedWebhook) {
       setName(hook.name ?? "");
       setUrlSuffix(hook.urlSuffix ?? "");
       setFolderId(hook.folderId ?? null);
     },
-  }), [handleSave]);
+  }), [saveNow]);
 
   const [syncing, setSyncing] = useState(false);
   const [reverting, setReverting] = useState(false);
@@ -126,7 +149,8 @@ const WebhookEditor = forwardRef<WebhookEditorHandle, WebhookEditorProps>(functi
     try {
       let targetId = tabId;
       if (isDirtyWh || isNew) {
-        const saved: any = await handleSave();
+        // `saveNow` cancels the pending debounce too, so the edit is not written twice.
+        const saved: any = await saveNow();
         if (saved && typeof saved === "object" && saved.id) {
           targetId = saved.id;
         }
@@ -135,7 +159,7 @@ const WebhookEditor = forwardRef<WebhookEditorHandle, WebhookEditorProps>(functi
     } finally {
       setSyncing(false);
     }
-  }, [onSync, syncing, isDirtyWh, isNew, handleSave, tabId]);
+  }, [onSync, syncing, isDirtyWh, isNew, saveNow, tabId]);
 
   const hasChanges = !isNew && Boolean(isDirtyWh || (syncStatus && syncStatus !== "clean"));
 
@@ -295,16 +319,20 @@ const WebhookEditor = forwardRef<WebhookEditorHandle, WebhookEditorProps>(functi
         </div>
       </div>
 
+      {/* Bottom bar — Cancel and Create exist only for a draft: an existing webhook autosaves
+          every edit and has Revert for undo. */}
       <BottomBar
         folders={folders}
         folderId={folderId}
         onFolderChange={setFolderId}
-        onCancel={onClose}
-        onSave={handleSave}
-        saveLabel={isNew ? strings.webhooks.saveWebhook : strings.webhooks.updateWebhook}
-        saveDisabled={!isNew && !isDirtyWh}
+        onCancel={isNew ? onClose : undefined}
+        onSave={isNew ? handleSave : undefined}
+        saveLabel={isNew ? strings.webhooks.createWebhook : undefined}
         saving={saving}
         savingLabel={strings.server.saving}
+        autoSaving={autoSaving}
+        autoSavedAt={autoSavedAt}
+        autoSaveError={autoSaveError}
         extraLeft={saveErr ? <span className="text-xs text-destructive">{saveErr}</span> : undefined}
         onSync={onSync ? handleSyncClick : undefined}
         onRevert={onRevert ? handleRevertClick : undefined}

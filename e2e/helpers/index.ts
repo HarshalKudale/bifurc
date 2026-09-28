@@ -25,6 +25,28 @@ export async function pause(page: Page, ms = 400): Promise<void> {
 }
 
 /**
+ * The editor's autosave debounce, in milliseconds.
+ *
+ * Mirrors `AUTOSAVE_DELAY_MS` in `packages/gui/src/hooks/useDebouncedAutosave.ts`. The GUI cannot
+ * import this file and this file cannot import the GUI, so the two are kept in step by this comment
+ * alone — if that constant moves, move this one, or every "edit a saved entity" spec starts
+ * asserting before the write has landed.
+ */
+export const AUTOSAVE_DEBOUNCE_MS = 1000;
+
+/**
+ * Wait out the autosave debounce **and** the write round-trip.
+ *
+ * Editing a saved entity has no Save button any more: the write fires one second after the last
+ * change. A spec that asserts straight after a `fill` is racing that timer — invisible on an idle
+ * machine, a flake on a loaded one. Use this instead of a bare `pause`, and only for edits to
+ * entities that already exist; a **create** is still an explicit click.
+ */
+export async function awaitAutosave(page: Page, extraMs = 700): Promise<void> {
+    await pause(page, AUTOSAVE_DEBOUNCE_MS + extraMs);
+}
+
+/**
  * Open a left-sidebar panel by its visible label and wait for the transition.
  * Fails if the panel entry point does not exist.
  */
