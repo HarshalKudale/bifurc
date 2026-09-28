@@ -1,6 +1,6 @@
 # Bifurc — Project Memory
 
-**Read `TRAPS.md` first** (**111** failure modes — `grep -c '^## '`). Authorities: state → `plan/README.md`
+**Read `TRAPS.md` first** (**112** failure modes — `grep -c '^## '`). Authorities: state → `plan/README.md`
 §Status · decisions → `plan/00-decisions.md` · suites → `TESTING.md` · **port model → `plan/17`** ·
 edge/mapping → `plan/15` · procedures → the `bifurc-*` skills. **A pointer, not a record.**
 
@@ -44,8 +44,16 @@ edge/mapping → `plan/15` · procedures → the `bifurc-*` skills. **A pointer,
   **⚠ A new suite that binds ports degrades every "the scan lands on `base + N`" assertion** — remedy: the shared
   `holdBaseWithFreeSuccessors()`.
 
-**Current: 2,638 tests / 115 files — 2,598 passed, 0 failures of any kind, 40 skipped (2026-09-26).** Unit
-**2,178 / 85**, integration **460 / 30** (both measured). e2e: 11 specs, 46/46 owner-run.
+**Current: 2,647 tests / 116 files — 2,607 passed, 0 failures of any kind, 40 skipped (2026-09-28).** Unit
+**2,187 / 86**, integration **460 / 30** (both measured). e2e: 11 specs, 46/46 owner-run.
+**⚠ Two integration tests were non-hermetic until 2026-09-28** — `engineSmoke` + `hostStartup` asserted
+`status.running` while binding the forward proxy on the default **8080**, which a running `electron.exe`
+(the app itself) holds alongside the edge's `:80`; a `npm run dev` left open failed them. Both now pin
+`forwardProxyPort` via `getFreePort()` **and de-dupe their three ports explicitly** (`while (x === y) x =
+await getFreePort()`): `getFreePort()` is bind-0-then-close, so what it returns is a *reservation*, not a
+guarantee — the same shape `proxyHarness.ts:435` and `settingsMutations.integration.test.ts:325-328` use.
+If they fail again, check `netstat -ano | grep ':8080 '` and `BIFURC_PROXY_BASE_PORT` before suspecting the
+engine.
 
 ## Phase state
 

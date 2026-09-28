@@ -110,16 +110,26 @@ describe("createEngine — the workspace-host startup shape (P14 WI 3, as amende
   });
 
   it("starts the proxy and the edge, and releases both on stop", async () => {
+    // Three distinct ports, de-duped explicitly. `getFreePort()` binds 0 and reads the assignment
+    // back, so what it returns is a *reservation*, not a guarantee — and nothing makes three
+    // back-to-back calls distinct. The sibling files that need this de-dup the same way: two ports
+    // in `proxyHarness.ts:435`, three in `settingsMutations.integration.test.ts:325-328`. A collision
+    // would surface as an `EADDRINUSE` that reads like a busy machine rather than a defect here.
     const proxyPort = await getFreePort();
-    const edgePort = await getFreePort();
-    const hookPort = await getFreePort();
+    let edgePort = await getFreePort();
+    while (edgePort === proxyPort) edgePort = await getFreePort();
+    let hookPort = await getFreePort();
+    while (hookPort === proxyPort || hookPort === edgePort) hookPort = await getFreePort();
 
     setDataRoot(root);
-    // `port` is the edge's port (`plan/15` §6.2) and `webhookPort` belongs to the webhook receiver;
-    // the forward proxy's port is *not* settable here — it is resolved from D16's base with the
-    // edge's port reserved, which is why the assertion below reads it back from `status()` rather
-    // than comparing it to a port this test chose.
-    saveSettings({ ...loadSettings(), port: edgePort, webhookPort: hookPort });
+    // `port` is the edge's (`plan/15` §6.2), `webhookPort` the webhook receiver's, `forwardProxyPort`
+    // the forward proxy's. The last was omitted here on the belief that it was "not settable" — it is
+    // (`runtime/host.ts:474` reads it straight off settings), and leaving it out made this test depend
+    // on the machine's 8080 being free. Measured 2026-09-28: with a running `electron.exe` (the app
+    // itself) holding 80 and 8080, the proxy failed to bind and `status.running` was false. Pinning it
+    // makes the test hermetic *and* gives the release assertion below its subject — `portIsFree(proxyPort)`
+    // was checking a port nothing had bound.
+    saveSettings({ ...loadSettings(), port: edgePort, webhookPort: hookPort, forwardProxyPort: proxyPort });
 
     const warnings: string[] = [];
     const engine = createEngine({

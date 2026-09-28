@@ -88,19 +88,6 @@ export default function ProtocolSelectorTab({ mode, onSelect }: Props) {
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-8 bg-surface">
-      <div className="w-full max-w-2xl text-center mb-8">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-signal/10 text-signal border border-signal/30 mb-3">
-          {mode === "request" ? "New Request" : "New Mock"}
-        </div>
-        <h2 className="text-xl font-bold text-foreground mb-1.5">
-          Select {mode === "request" ? "Request" : "Mock"} Protocol
-        </h2>
-        <p className="text-xs text-muted-foreground max-w-md mx-auto">
-          Choose the protocol for this {mode}. The relevant editor will load immediately.
-          Once saved, the protocol type is fixed and cannot be changed.
-        </p>
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
         {/*
           `mode === "mock"` shows the REST card **only**. Mocks became REST-only in `plan/17` work

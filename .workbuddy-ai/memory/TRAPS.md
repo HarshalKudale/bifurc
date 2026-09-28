@@ -3269,3 +3269,21 @@ Two facts that together produced one wrong record:
 **Rule:** read a process's status from `spawnSync().status` or its own log, never from a shell's `$?` inside a
 compound command — and when the platform cannot deliver the signal, write **"not measurable here"** rather than
 a number. Same family as the standing rule: an environment's number is not the product's behaviour.
+
+## `getFreePort()` returns a reservation, not a guarantee — de-dupe every port after the first
+
+`tests/integration/proxyHarness.ts:66` binds `0`, reads the assignment back, then **closes**. The number it
+returns was free a moment ago and nothing holds it, so two back-to-back calls are **not** guaranteed distinct,
+and nothing in the helper enforces it.
+
+**The suite already knows this, in two places** — `proxyHarness.ts:435` de-dupes a second port with a `while`,
+and `settingsMutations.integration.test.ts:325-328` de-dupes a third against the first two. Measured
+2026-09-28: `engineSmoke.integration.test.ts` and `hostStartup.integration.test.ts` were the **only** two files
+resting on the bare assumption, and only because a port had just been *added* to each (the forward proxy's,
+pinned so the tests stopped depending on the machine's 8080) while the two existing calls were left as they
+were. The change was correct; the third port was not de-duped.
+
+**Rule:** adding a port to a test means adding the de-dup loop with it — copy the three-port form from
+`settingsMutations`, not just the `getFreePort()` call. And do not write "the values are distinct in practice"
+in a comment: a collision surfaces as an `EADDRINUSE` that reads like a busy machine, so the assumption has to
+be **enforced in code**, not asserted in prose.
