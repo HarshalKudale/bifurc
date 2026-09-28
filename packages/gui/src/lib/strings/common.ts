@@ -158,6 +158,14 @@ export const commonStrings = {
       syncedWithCommit: "Synced · {sha}",
       reverted: "Reverted",
       nothingToPublish: "Nothing to publish — this entity is already committed.",
+      /**
+       * The card and the repository contradicting each other.
+       *
+       * Reported instead of "already committed" when the status map still calls the entity
+       * unpublished: a Publish button sitting above the words "this entity is already committed" is a
+       * bug report, not a state, and the two must not be allowed to disagree in silence.
+       */
+      gitStatusDisagreement: "git staged nothing, but this entity still reads as unpublished — the workspace status and the repository disagree. Reopen the workspace to re-read the status.",
       /** The proof, for a caller that wants to name the commit without a sentence around it. */
       commitLabel: "commit {sha}",
       noChangesToSync: "No local changes to sync",

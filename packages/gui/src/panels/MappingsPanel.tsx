@@ -315,10 +315,17 @@ export default function MappingsPanel({
       if (!result.ok) {
         setPublishErrors((prev) => ({ ...prev, [m.id]: result.error ?? "Publish failed" }));
       } else if (!result.commit) {
-        // `commit: null` — the engine staged nothing, because the entity is already committed. A
-        // correct outcome that used to be completely silent, and therefore indistinguishable from a
-        // button that is not wired up.
-        showNotice(m.id, "none", strings.entityGit.nothingToPublish);
+        // `commit: null` means the engine staged nothing. Whether that is *correct* depends on the
+        // status this card is showing, and the two must not disagree in silence: if the card still
+        // reads "Not published", git and the status map contradict each other, and "already committed"
+        // would be a claim the card itself refutes — which is exactly the shape of the report (a
+        // Publish button above the words "this entity is already committed").
+        const stillUnpublished = views.get(m.id)?.primary === "publish";
+        showNotice(
+          m.id,
+          "none",
+          stillUnpublished ? strings.entityGit.gitStatusDisagreement : strings.entityGit.nothingToPublish,
+        );
       } else {
         // The **commit id**, which is the proof the click did something. Labelled Published or Synced
         // to match the button that was pressed, from the same view that chose its label.

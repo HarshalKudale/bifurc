@@ -132,6 +132,22 @@ writes (`publish` / `revert` / `publishPanel` — **two writers, not seven**); e
   commits and pushes, so a failed **push** leaves a real commit behind. `useEntityGitActions.write()`
   therefore refreshes the config **and** the status on **failure** too; refreshing only on success left
   the UI on the pre-write state — "still says not published" with a commit present.
+- **⚠ `git add`'s failure must never be swallowed.** It was (`catch { /* path may not exist */ }`), which
+  folded *"git refused to stage this"* into *"there was nothing to stage"* — so a broken publish
+  announced itself as `commit: null` and the UI said **"already committed"** while its own status map
+  said `new`. Now `findUnstageablePaths()` checks every requested non-folder path against
+  `git ls-files` whenever nothing was staged: **tracked ⇒ a genuine no-op**, **not tracked ⇒
+  `{ok:false}` naming the path**, with the two causes worth checking — a stale **`.git/index.lock`**
+  (`git status` reads fine while every `git add` fails; a killed git process leaves one) or a
+  `.gitignore` rule. A path that does not exist is an error too. **A silent `catch` around a git
+  command is the general trap here**: it converts every failure into the one outcome that looks like
+  success.
+- **⚠ A card must not claim a state its own status contradicts.** `commit: null` says "Nothing to
+  publish" only when the card agrees the entity is tracked; if it still reads unpublished, it reports
+  the *disagreement*. Pinned by `tests/renderer/mappingsPublishRoundTrip.test.tsx` — the file that
+  mounts the real hook and the real panel over **one shared status state**, which is the only way to
+  see whether a write reaches the card. `mappingsPublish.test.tsx` fakes the git actions and
+  `entityGitActions.test.tsx` only asserts the refresh is *called*; neither can.
 - **⚠ Verify the MIDDLE of a chain, not its ends.** The mapping-publish report survived two rounds
   because `tests/renderer/mappingsPublish.test.tsx` *faked* the binder and
   `tests/sync/mappingPublish.test.ts` was *handed* the path — so a wrong path in

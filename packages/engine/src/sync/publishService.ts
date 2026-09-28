@@ -114,6 +114,52 @@ function entityIdFromPath(relPath: string): string | null {
   return base.slice(0, -5);
 }
 
+/**
+ * The requested paths git will not stage, with the reason for each. Empty when every path is either
+ * tracked (so "nothing staged" really does mean "unchanged") or already staged.
+ *
+ * **This exists to keep two very different outcomes apart.** `git add` staging nothing for an unchanged
+ * file is correct and must stay a silent success; `git add` staging nothing for a file the caller named
+ * and the status map calls *untracked* means the two disagree, and only one of them can be right. The
+ * caller needs the second reported, not folded into the first — that fold is what made
+ * *"clicking publish does nothing"* look like *"this entity is already committed"*.
+ *
+ * A **folder** pathspec (trailing separator) is skipped: there is no single file to name, and a folder
+ * with nothing to stage is an ordinary no-op. `folder.publish` passes one.
+ */
+async function findUnstageablePaths(wsId: string, paths: string[]): Promise<string[]> {
+  const g = getGit(wsId);
+  const problems: string[] = [];
+
+  for (const raw of paths) {
+    if (raw.endsWith("/") || raw.endsWith("\\")) continue;
+    const rel = raw.replace(/\\/g, "/");
+
+    let tracked = false;
+    try {
+      tracked = (await g.raw(["ls-files", "--error-unmatch", "--", rel])).trim().length > 0;
+    } catch {
+      tracked = false;
+    }
+    // Tracked and unchanged is the one honest "nothing to publish".
+    if (tracked) continue;
+
+    if (fs.existsSync(path.join(wsDir(wsId), rel))) {
+      // The two causes worth naming, in the order they are worth checking. A stale `index.lock` is the
+      // one that produces this exact pair — `git status` reads happily while every `git add` fails —
+      // and it is left behind by any git process that was killed mid-write, which includes the app
+      // being closed during a push.
+      problems.push(
+        `${rel} exists but git will not stage it — check for a stale .git/index.lock (a killed git process leaves one), or a .gitignore rule`,
+      );
+    } else {
+      problems.push(`${rel} does not exist in this workspace`);
+    }
+  }
+
+  return problems;
+}
+
 /** Publish (git add → commit → push) one or more file/folder paths */
 export async function publishEntities(opts: PublishOptions): Promise<PublishResult> {
   try {
@@ -133,12 +179,20 @@ export async function publishEntities(opts: PublishOptions): Promise<PublishResu
       preStatusMap.set(filePath, xy);
     }
 
-    // Stage all specified paths (handles new/modified files and deletions)
+    // Stage all specified paths (handles new/modified files and deletions).
+    //
+    // ⚠ **The `catch` collects rather than ignores.** It used to be a bare `catch {}` with the comment
+    // "path may not exist (already deleted) — ignore", which silently swallowed *every* failure: a
+    // locked index, a permission error, a pathspec that matches nothing. The consequence was that
+    // "git refused to stage this" and "there was nothing to stage" became the same outcome — a
+    // `{ok: true, commit: null}` — and the UI told the user the entity was "already committed" while
+    // its own status map still said `new`. Collected here, reported below.
+    const stageFailures: string[] = [];
     for (const p of opts.paths) {
       try {
         await g.raw(["add", "-A", "--", p]);
-      } catch {
-        // Path may not exist (already deleted) — ignore
+      } catch (e) {
+        stageFailures.push(`${p}: ${(e instanceof Error ? e.message : String(e)).split("\n")[0]}`);
       }
     }
 
@@ -150,7 +204,16 @@ export async function publishEntities(opts: PublishOptions): Promise<PublishResu
       status.deleted.length > 0 ||
       status.renamed.length > 0;
 
-    if (!hasStagedChanges) return { ok: true, commit: null };
+    if (!hasStagedChanges) {
+      // Nothing staged. That is a legitimate no-op **only** if git already holds every path the caller
+      // named — an unchanged, tracked file. Anything else is a refusal, and reporting it as "nothing to
+      // publish" is how a broken publish came to look like a no-op.
+      const problems = [...stageFailures, ...(await findUnstageablePaths(opts.wsId, opts.paths))];
+      if (problems.length > 0) {
+        return { ok: false, error: `git staged nothing — ${problems.join("; ")}` };
+      }
+      return { ok: true, commit: null };
+    }
 
     // Build commit message
     let message = opts.message;
