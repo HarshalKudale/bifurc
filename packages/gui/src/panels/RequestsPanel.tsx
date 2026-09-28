@@ -4,7 +4,6 @@ import CollectionRunner from "@/components/rest/CollectionRunner";
 import ProtocolSelectorTab from "@/components/editor/ProtocolSelectorTab";
 import { SidebarLayout } from "@/components/ui";
 import { strings } from "@/lib/strings";
-import { Zap } from "@/lib/icons";
 import { useTabKeyBindings } from "@/hooks/useTabKeyBindings";
 import RequestTabContent from "./requests/RequestTabContent";
 import RequestsSidebar from "./requests/RequestsSidebar";
@@ -125,12 +124,9 @@ export default function RequestsPanel({
 
       <div className="flex-1 overflow-hidden relative">
         {openTabs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-2">
-            <div className="opacity-10 mb-1"><Zap size={48} /></div>
-            <div className="text-sm font-medium text-foreground">{strings.requests.noRequestsOpen}</div>
-            <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
-              {strings.requests.noRequestsOpenHint}
-            </p>
+          /* No tabs open ⇒ the new-tab page *is* the empty state. */
+          <div className="absolute inset-0 flex flex-col overflow-hidden">
+            <ProtocolSelectorTab mode="request" onSelect={openNewTabInFolder} />
           </div>
         ) : (
           openTabs.map((tabId) => {

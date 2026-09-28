@@ -106,7 +106,7 @@ export default function TabBar({
       {/* Sticky add button */}
       <button
         type="button"
-        onClick={onNewTab}
+        onClick={() => onNewTab()}
         title={newTabTitle}
         className="flex items-center justify-center w-7 h-[28px] mb-[3px] rounded-md text-muted-foreground hover:text-signal hover:bg-card transition-colors cursor-pointer flex-shrink-0"
       >

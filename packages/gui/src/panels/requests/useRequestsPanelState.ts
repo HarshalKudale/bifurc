@@ -86,12 +86,20 @@ export function useRequestsPanelState({
   const [newTabInitials, setNewTabInitials] = useState<Record<string, { folderId?: string | null }>>({});
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
 
-  const openNewTabInFolder = useCallback(() => {
+  /**
+   * Open a new draft request tab. `protocol` is optional because this doubles as the tab bar's
+   * `+` / Ctrl+T handler, which has no protocol to give: those leave the tab on the in-tab
+   * chooser, while the chooser itself passes the picked protocol so the editor loads straight away.
+   *
+   * `TabBar` must keep calling this as `onClick={() => onNewTab()}` — passing the handler through
+   * directly would forward a `MouseEvent` as the protocol.
+   */
+  const openNewTabInFolder = useCallback((protocol?: ApiProtocol) => {
     const tabId = `${DRAFT_PREFIX}${Date.now()}`;
     if (selectedFolderId) {
       setNewTabInitials((prev) => ({ ...prev, [tabId]: { folderId: selectedFolderId } }));
     }
-    setDraftProtocols((prev) => ({ ...prev, [tabId]: null }));
+    setDraftProtocols((prev) => ({ ...prev, [tabId]: protocol ?? null }));
     openTab(tabId);
   }, [openTab, selectedFolderId, setDraftProtocols]);
 

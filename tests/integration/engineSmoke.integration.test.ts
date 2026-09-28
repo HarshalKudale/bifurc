@@ -100,15 +100,28 @@ describe("createEngine — the bare-Node acceptance criterion", () => {
   });
 
   it("starts headless, serves over a real socket, and shuts down cleanly", async () => {
+    // Three distinct ports, de-duped explicitly. `getFreePort()` binds 0 and reads the assignment
+    // back, so what it returns is a *reservation*, not a guarantee — and nothing makes three
+    // back-to-back calls distinct. The sibling files that need this de-dup the same way: two ports
+    // in `proxyHarness.ts:435`, three in `settingsMutations.integration.test.ts:325-328`. A collision
+    // would surface as an `EADDRINUSE` that reads like a busy machine rather than a defect here.
     const proxyPort = await getFreePort();
-    const edgePort = await getFreePort();
-    const hookPort = await getFreePort();
+    let edgePort = await getFreePort();
+    while (edgePort === proxyPort) edgePort = await getFreePort();
+    let hookPort = await getFreePort();
+    while (hookPort === proxyPort || hookPort === edgePort) hookPort = await getFreePort();
 
     // Persist the ports we want, then let the engine read them back through its own bootstrap.
     // Written with the production `saveSettings`, not a fixture, so the test exercises the same
     // path a real CLI would.
+    //
+    // **All three ports, `forwardProxyPort` included.** It is settable — `runtime/host.ts:474` reads it
+    // straight off settings — and omitting it made this test depend on the machine's 8080 being free.
+    // Measured 2026-09-28: with a running `electron.exe` (the app itself) holding 80 and 8080, the
+    // forward proxy failed to bind and `status.running` was false. Pinning it also gives the release
+    // assertion below its subject, since `portIsFree(proxyPort)` was checking a port nothing bound.
     setDataRoot(root);
-    saveSettings({ ...loadSettings(), port: edgePort, webhookPort: hookPort });
+    saveSettings({ ...loadSettings(), port: edgePort, webhookPort: hookPort, forwardProxyPort: proxyPort });
 
     const warnings: string[] = [];
     const engine = createEngine({

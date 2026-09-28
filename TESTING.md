@@ -1,8 +1,46 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-26 · suite: **2,638 tests / 115 files** — 2,598 passed, **0 failures of any kind**, 40
-skipped. Unit **2,178 / 85 files**, integration **460 / 30 files** (`2,178 + 460 = 2,638` ✓, both halves
+_Last reviewed: 2026-09-28 · suite: **2,647 tests / 116 files** — 2,607 passed, **0 failures of any kind**, 40
+skipped. Unit **2,187 / 86 files**, integration **460 / 30 files** (`2,187 + 460 = 2,647` ✓, both halves
 measured separately, not derived).
+
+**The last move was the requests panel's empty state becoming the new-tab page, 2026-09-28.** `2,638 → 2,647`
+is **`+9` tests and `+1` file, and the new file is the whole delta** — unit moved `2,178 → 2,187` while
+integration stayed at `460 / 30`, which is what says no existing case changed behaviour. The nine cases are
+`tests/renderer/requestsEmptyState.test.tsx`, checked by **two narrow mutations**: reverting `TabBar`'s
+`onClick={() => onNewTab()}` to `onClick={onNewTab}` failed **exactly one** case — the `+` one — because a
+`MouseEvent` then lands in `draftProtocols[tabId]` as a truthy non-protocol and the tab renders blank; and
+widening `ProtocolSelectorTab`'s mock-mode REST-only filter to `() => true` also failed **exactly one** — the
+mock-mode card-count case — which is what says the two mock cases are not riding on the request half.
+
+**The same move cleared the 5 failures the tree had been carrying, and both causes were measured rather than
+guessed.** Three were stale expectations in `tests/renderer/utils.test.ts`: `a618982` ("Minor UX changes")
+moved the 2xx colour to `--c-success` and gave each HTTP method its own `--c-method-*` token, while the test
+still named `var(--c-signal)` / `var(--c-amber)`. The **expectations** were the defect, and `git show a618982
+-- packages/gui/src/lib/utils.ts` is the evidence — not an inference from the source. The other two were
+**non-hermetic integration tests** (`engineSmoke`, `hostStartup`): both assert `status.running === true`, the
+engine binds the forward proxy on `settings.forwardProxyPort` (`runtime/host.ts:474`), `loadSettings()` defaults
+that to **8080**, and a running `electron.exe` — the app itself — holds 8080 *and* the edge's `:80`. Both tests
+pinned `port` and `webhookPort` with `getFreePort()` but not `forwardProxyPort`, so they failed whenever
+anything owned 8080. **Proved rather than argued:** with `BIFURC_PROXY_BASE_PORT=18080` both passed, and after
+pinning `forwardProxyPort: proxyPort` in each `saveSettings` call both pass *with the app still holding 8080*.
+Pinning it also gave each test's `portIsFree(proxyPort)` poll its subject — it had been asserting the freedom
+of a port nothing ever bound.
+
+Those two tests now also **de-dupe their three ports explicitly** (`while (x === y) x = await getFreePort()`),
+the shape `proxyHarness.ts:435` and `settingsMutations.integration.test.ts:325-328` already use. A comment
+claiming the three `getFreePort()` calls "are distinct in practice" would have been the only place in the suite
+resting on an assumption its own siblings guard against — `getFreePort()` binds `0` and reads the assignment
+back, so what it returns is a **reservation, not a guarantee**, and nothing makes three back-to-back calls
+distinct.
+
+---
+
+### Pre-2026-09-28 record — the browser-host decommission, 2026-09-26
+
+_Last reviewed (then): 2026-09-26 · suite: **2,638 tests / 115 files** — 2,598 passed, **0 failures of any
+kind**, 40 skipped. Unit **2,178 / 85 files**, integration **460 / 30 files** (`2,178 + 460 = 2,638` ✓, both
+halves measured separately, not derived)._
 
 **The last move was the decommission of the browser host and the container image, the same day.** The desktop
 app is now the single build target, so three suites went with their subjects — `web/tests/*` (27 cases: 12 + 6

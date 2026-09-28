@@ -77,31 +77,32 @@ test.describe("Navigation", () => {
          *    `FolderTreeItemNode.tsx:28` renders a plain `<div title={item.name} onClick={...}>`, so its
          *    role is `generic` and its accessible name comes from `title`. `getByRole("button", ...)`
          *    matched nothing. It was also the wrong idea even had it matched — a seeded row opens a
-         *    *second* tab, and the last assertion is `No requests open`, which needs the panel to end
-         *    with **zero** tabs.
+         *    *second* tab, and the last assertion counts the tab strip down to **zero**, which needs
+         *    the panel to end with no tabs at all.
          * 3. `Ctrl+T` was assumed to open the request form. It does not: `openNewTabInFolder`
-         *    (`useRequestsPanelState.ts:94`) sets `draftProtocols[tabId] = null`, so a new tab opens on
+         *    (`useRequestsPanelState.ts`) leaves `draftProtocols[tabId]` null, so a new tab opens on
          *    the **protocol chooser** and the form only exists once a protocol is picked. That missing
          *    `chooseProtocol` step is why the `fill` below had nothing to fill.
          *
          * What each keybind is asserted against, and why each assertion can actually fail:
          *
-         *   Ctrl+T — the chooser's heading, `Select Request Protocol`, which exists nowhere else. The
-         *            original asserted `getByText("New Request")`, which *also* matches the panel's own
-         *            "New request" button, so it passed whether or not the keybind did anything.
+         *   Ctrl+T — the tab strip, counted by `[data-tab-id]`. The empty state is now the same
+         *            protocol chooser a new tab shows, so the tab count is what distinguishes them:
+         *            0 before the keybind, 1 after.
          *   Ctrl+S — the save button's label. `RestTab.tsx:271` selects `Save Request` while
          *            `draftTabId` is set and `Update Request` once it is cleared, so the label flipping
          *            is precisely the evidence that a save happened.
-         *   Ctrl+W — the panel's empty state, reachable only by closing the one tab this test opens.
+         *   Ctrl+W — the same count, back to 0.
          *
          * A request needs only a URL to be saveable: `RestTab.tsx:162-163` gates on `state.url.trim()`
          * for `tabType === "request"` — the response-body rule is the mock branch. The name is filled
          * because it is what the tree and the tab label display, not because it is required.
          */
         await openPanel(page, "Requests");
+        await expect(page.locator("[data-tab-id]")).toHaveCount(0);
 
         await page.keyboard.press("ControlOrMeta+T");
-        await expect(page.getByText("Select Request Protocol").first()).toBeVisible();
+        await expect(page.locator("[data-tab-id]")).toHaveCount(1);
         await chooseProtocol(page, /REST Request/i);
 
         await renameTab(page, "Keyboard Save Test");
@@ -113,6 +114,6 @@ test.describe("Navigation", () => {
         await expect(page.getByRole("button", { name: /Update Request/i })).toBeVisible();
 
         await page.keyboard.press("ControlOrMeta+W");
-        await expect(page.getByText("No requests open")).toBeVisible();
+        await expect(page.locator("[data-tab-id]")).toHaveCount(0);
     });
 });
