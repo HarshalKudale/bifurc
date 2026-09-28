@@ -5,6 +5,32 @@ _Last reviewed: 2026-09-28 · suite: **2,677 tests / 120 files** — 2,632 passe
 separately, not derived). **0 product failures.** The two failure groups are both environment, and both are
 named below._
 
+> ### ⚠ 2026-09-28, later — the "0 product failures" line above is wrong, and the totals are stale
+>
+> The uniform git-tracking change (Publish / Sync / Revert / History / Delete for every entity kind)
+> added **24 tests in 2 new files** — `tests/renderer/entityGit.test.ts` (15, pure) and
+> `tests/sync/gitState.test.ts` (9, real git) — so the totals above are **pre-change** and were not
+> re-measured. What *was* measured, after the change:
+>
+> - `tests/sync` + `tests/store` + `tests/renderer` — **34 files / 519 tests: 517 pass, 2 fail**.
+> - `tests/integration/gitSync.integration.test.ts` — **30 / 30**, including the three
+>   `sync:getEntityStatus` cases rewritten for the new `{files, git}` result.
+> - `typecheck:renderer` — **20 errors**, every one on a line this change did not touch. It was **38** at
+>   the first checkpoint, so 18 fewer; 13 of those were pre-existing errors fixed on the way (four dangling
+>   `FolderTreeItem` imports, the `setSidebarPanelVisible` variance chain, a `Switch title`, two undefined
+>   webhook strings, `addRule`'s rejected `workspaceId`, and three `kind="runner"` values passed to
+>   `folder.add` / `rename` / `delete`).
+>
+> **The 2 failures were a test/implementation drift at HEAD, not environment failures — and they are now
+> fixed.** `tests/renderer/rightSidebar.test.tsx` → `TitleBar — the variables toggle` rendered `TitleBar`
+> and looked for a button named "Environment variables", but `TitleBar.tsx` has **no** `variablesOpen`
+> prop at all (`git show HEAD:packages/gui/src/components/layout/TitleBar.tsx | grep -c variablesOpen` →
+> **0**); the toggle and the environment selector are both in `GlobalFooter`, which is the decision — the
+> toggle opens the expansion of the selector's current value. **The two cases were retargeted at
+> `GlobalFooter` and the file is 11/11**, so its "11 cases, mutation-checked" claim is finally true. The
+> claims are unchanged (document order, `aria-pressed`); only the component under test moved.
+
+
 **The last move gave the right sidebar a second face — entity history plus the active environment's
 variables, 2026-09-28.** `2,666 → 2,677` is `+11` tests and `+1` file, and the new file is the whole delta:
 unit moved `2,206 → 2,217` total (`2,176` passed + `40` skipped) while integration stayed at `460 / 30`,
@@ -489,7 +515,7 @@ throwing on every call (§7).
 | `tests/ipc/importExport/registry.test.ts` | 15 | Import/Export registry invariants — most importantly that no format claims support without an implementation, and that only `workspace-zip` uses the path-shaped slots. |
 | `tests/subscription/entityCount.test.ts` | 8 | The licensing gate stubs, pinned so adding a real limit is a deliberate change. |
 | `tests/integration/protocolExecution.integration.test.ts` | 44 | **The "hit Send" path** — `request:replay` (REST), `graphql:execute` + `graphql:introspect`, `soap:execute` + `soap:fetchWsdl`, and `healthbar:checkUrl`, all against real local servers. Also pins the (unimplemented) gRPC contract and the protocol-entity CRUD round trips. |
-| `tests/integration/gitSync.integration.test.ts` | 29 | **Git publish, locally** — `entity:publish` / `git:sync` / `folder:publish` against a real repo: the commit *subject format* the Audit Log parses (`create mock Name`), the bundled folder form, explicit messages, the no-op case, `git:diff` for clean/modified/new/deleted, `git:discard` + `entity:restore` (incl. the `names.json` re-sync), `git:history` / `history:list` / `history:diff`, and `sync:getEntityStatus` dirty markers. |
+| `tests/integration/gitSync.integration.test.ts` | 30 | **Git publish, locally** — `entity:publish` / `git:sync` / `folder:publish` against a real repo: the commit *subject format* the Audit Log parses (`create mock Name`), the bundled folder form, explicit messages, the no-op case, `git:diff` for clean/modified/new/deleted, `git:discard` + `entity:restore` (incl. the `names.json` re-sync), `git:history` / `history:list` / `history:diff`, `sync:getEntityStatus`'s dirty markers **and its `git` half** (`{files, git}` since 2026-09-28 — the file map alone cannot tell *committed and pushed* from *committed and not pushed*), and the **commit id** every publish returns (`{ok:true, commit}` / `{ok:true, commit:null}` — a boolean cannot tell a commit from a no-op). |
 | `tests/integration/gitRemote.integration.test.ts` | 24 | **Git sync, remotely** — `sync:setRemote` in all three of its branches (empty→empty push, empty→non-empty clone, refusal when both sides hold data), against a real **bare repo** as the remote. Plus `sync:push`, `sync:pull` (fast-forward + `updatedIds`), `sync:disconnect`, `sync:setAutoSync`, `getRemoteHead`, and the workspace-identity adoption on clone. |
 | `tests/integration/foldersAndWorkspaces.integration.test.ts` | 25 | **Folder management and workspace CRUD** — `folder:add/rename/move/delete` and `workspace:add/rename/setActive/delete`, asserting the on-disk result (`index.json`, real directories, surviving entities) rather than in-memory config. |
 | `tests/renderer/collectionRunner.test.ts` | 30 | **The Run button's engine** — `runCollection` against the *real* `executeIpcScript` sandbox (only `replayRequest` stubbed): per-request orchestration, `{{var}}` resolution, start/done callbacks, cancellation, error isolation, pre/post/test scripts, and `generateHtmlReport`. |
@@ -1803,9 +1829,11 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
    kill path is intentionally not exercised (destructive); the resolve/free-port branches are.
 6. **Dead code in `src/sync`** — `fetchRemoteHead()` and `performGitClone()`
    (`gitSyncOps.ts`) are exported but never called; `restoreEntity()` (`publishService.ts`)
-   is likewise unused (`entity:restore` goes through `gitOps.discardChanges`). They cap
-   `gitSyncOps.ts` at 50%. Either delete them or wire `setRemote()`/`getRemoteHead()` to use
-   them instead of their inline duplicates.
+   **was likewise unused and was deleted 2026-09-28** — `entity:restore` goes through
+   `gitOps.discardChanges`, and keeping a second, never-called revert implementation that skipped the
+   pending-deletion cleanup, the `names.json` re-sync and the cache invalidation was a live trap. The two
+   `gitSyncOps` helpers remain and cap that file at 50%. Either delete them or wire `setRemote()` /
+   `getRemoteHead()` to use them instead of their inline duplicates.
 7. **The `refresh` contract is now enforced only for the protocol tabs.** `createTabReducer`
    gained `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` handling (see §7, bug 11), so all four
    editors honour it. There is still no test that a *panel* wires `tabRefs.current[id].refresh`

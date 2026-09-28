@@ -12,7 +12,15 @@ interface Props {
   config: AppConfig;
   onConfigChange: (cfg: AppConfig) => Promise<void>;
   onHistoryOpen?: (filePath: string) => void;
+  /**
+   * Called after any git write on a rule. It is what refreshes the History sidebar while it is open —
+   * the rules panel never had it, so publishing a rule left an open History panel showing the
+   * pre-publish list.
+   */
+  onAfterSave?: () => void;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
   onPublishItem?: (id: string) => void;
   onPublishFolder?: (folderId: string | null) => void;
   onRestoreItem?: (id: string) => void;
@@ -24,7 +32,9 @@ export default function ProxyRulesPanel({
   config,
   onConfigChange,
   onHistoryOpen,
+  onAfterSave,
   entitySyncStatus,
+  workspaceGitState,
   onPublishItem,
   onRestoreItem,
   pendingRuleId,
@@ -139,7 +149,6 @@ export default function ProxyRulesPanel({
       ...rest,
       name: full.name ? `${full.name}${strings.proxyRules.copySuffix}` : "",
       enabled: false,
-      workspaceId: config.activeWorkspaceId,
     });
     await reloadRules();
     setSelectedRuleId(newRule.id);
@@ -220,6 +229,7 @@ export default function ProxyRulesPanel({
               selectedRuleId={selectedRuleId}
               isDetailsOpen={isDetailsOpen}
               entitySyncStatus={entitySyncStatus}
+              workspaceGitState={workspaceGitState}
               onSelectRule={handleSelectRule}
               onToggleRule={handleToggle}
               onPublishItem={onPublishItem}

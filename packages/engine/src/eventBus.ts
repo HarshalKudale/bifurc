@@ -16,10 +16,20 @@ import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./proxy/logEmitter";
 import type { WebhookPayload } from "./proxy/webhookServer";
 import { getWorkspaceSyncStatus } from "./sync/statusTracker";
+import { getWorkspaceGitState } from "./sync/gitState";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };
-  "sync.entityStatus": { wsId: string; status: Record<string, string> };
+  /**
+   * `status` is the per-file map (`relPath` → dirty marker); `git` is the workspace's position
+   * relative to its remote. Both are carried because both are needed to decide what a given entity
+   * should be offered — see `sync/gitState.ts` for why the file map alone cannot answer it.
+   */
+  "sync.entityStatus": {
+    wsId: string;
+    status: Record<string, string>;
+    git?: { hasRemote: boolean; branch: string | null; ahead: boolean; behind: boolean };
+  };
   "log.entry": RequestLogEntry;
   "log.chunk": { logId: string; chunk: string; done: boolean };
   "server.error": string;
@@ -94,11 +104,17 @@ export const bus = new EngineEventBus();
  * fourth, slightly different copy in `companionServer.ts`) — each reaching into the shell's open
  * windows directly. One implementation, emitted on the bus; the shell's `rpcBridge.ts` is now the
  * only place that fans an event out to windows (step 3c deleted the `eventBridge.ts` that used to).
+ *
+ * Both halves are read in parallel and emitted together. A subscriber that received the file map
+ * without the git state would have to fetch it separately, and between the two reads a publish could
+ * land — leaving the UI showing a `modified` entity that has nothing left to sync. `getWorkspaceGitState`
+ * cannot reject (it resolves `hasRemote: false` instead), so the `Promise.all` below only ever fails
+ * on the file map, matching the prior behaviour exactly.
  */
 export function emitEntityStatus(wsId: string): void {
-  getWorkspaceSyncStatus(wsId)
-    .then((status) => {
-      bus.emitTyped("sync.entityStatus", { wsId, status: JSON.parse(JSON.stringify(status)) });
+  Promise.all([getWorkspaceSyncStatus(wsId), getWorkspaceGitState(wsId)])
+    .then(([status, git]) => {
+      bus.emitTyped("sync.entityStatus", { wsId, status: JSON.parse(JSON.stringify(status)), git });
     })
     .catch(() => { /* best-effort, matches prior behaviour */ });
 }

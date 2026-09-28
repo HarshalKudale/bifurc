@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { AppConfig, ServiceInfo, SyncStatus } from "@/types";
+import { AppConfig, ServiceInfo, SyncStatus, EntitySyncStatus, WorkspaceGitState } from "@/types";
 
 export const EMPTY_CONFIG: AppConfig = {
   port: 80,
@@ -44,7 +44,17 @@ export function useAppConfigSync() {
   const [services, setServices] = useState<ServiceInfo[]>([]);
   const [serverRunning, setServerRunning] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [entitySyncStatus, setEntitySyncStatus] = useState<Record<string, "clean" | "modified" | "new" | "deleted">>({});
+  const [entitySyncStatus, setEntitySyncStatus] = useState<Record<string, EntitySyncStatus>>({});
+  /**
+   * The workspace's position relative to its remote.
+   *
+   * Held beside `entitySyncStatus` rather than folded into it because the two answer different
+   * questions and every existing consumer of `entitySyncStatus` wants only the file map — 15 props
+   * across the panels. Keeping them separate is what makes this change additive for all of them.
+   * `null` means **unknown** (no status refresh has landed yet), which is distinct from
+   * `hasRemote: false`.
+   */
+  const [workspaceGitState, setWorkspaceGitState] = useState<WorkspaceGitState | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   /**
    * Why the initial load failed, if it did.
@@ -108,8 +118,11 @@ export function useAppConfigSync() {
   }, []);
 
   const refreshEntitySyncStatus = useCallback((wsId: string) => {
-    window.api.getEntitySyncStatus(wsId).then((status) => {
-      setEntitySyncStatus(status);
+    window.api.getEntitySyncStatus(wsId).then((payload) => {
+      setEntitySyncStatus(payload.files ?? {});
+      // A missing `git` is treated as unknown rather than as "no remote": an engine that predates
+      // the field must not make every entity look unpushed and grow a Sync button out of nowhere.
+      if (payload.git) setWorkspaceGitState(payload.git);
     }).catch(() => { });
   }, []);
 
@@ -135,7 +148,8 @@ export function useAppConfigSync() {
     });
     
     const unsubEntityStatus = window.api.onEntitySyncStatus((data) => {
-      setEntitySyncStatus(data.status as Record<string, "clean" | "modified" | "new" | "deleted">);
+      setEntitySyncStatus(data.status as Record<string, EntitySyncStatus>);
+      if (data.git) setWorkspaceGitState(data.git);
     });
     
     const unsubCompanion = window.api.onCompanionRefresh(() => {
@@ -220,6 +234,7 @@ export function useAppConfigSync() {
     serverRunning, setServerRunning,
     serverError, setServerError,
     entitySyncStatus, refreshEntitySyncStatus,
+    workspaceGitState,
     syncStatus,
     handleConfigChange,
     handleWsConfigChange,

@@ -1,10 +1,25 @@
 import React, { useState, useMemo, useCallback } from "react";
-import { Plus, ChevronsUpDown, ArrowUp, ToggleLeft, ToggleRight, Trash2, Play, Square, ExternalLink, History, Copy, Ban, Pencil } from "@/lib/icons";
+import { Plus, ChevronsUpDown, ArrowUp, ToggleLeft, ToggleRight, Trash2, Play, Square, ExternalLink, History, Copy, Ban, Pencil, RotateCcw } from "@/lib/icons";
 import { ContextMenuItem } from "@/components/ui/ContextMenu";
 import { strings } from "@/lib/strings";
-import { FolderTreeItem, EntitySyncStatus, FolderTreeProps } from "./FolderTree.types";
-import { Folder as FolderType } from "@/types";
+import { FolderTreeItem } from "./FolderTree.types";
+import type { EntityGitView, FolderGitRollup } from "@/lib/entityGit";
 
+/**
+ * The tree's context menus.
+ *
+ * ## Every git affordance here comes from `EntityGitView`
+ *
+ * This file used to derive its own conditions from the raw `EntitySyncStatus`, and so did the other two
+ * menus in it — with different answers. The item menu showed History for an *unknown* status; the multi
+ * menu offered no Revert at all; the folder menu offered "Commit & Push Folder" unconditionally, so a
+ * clean folder still had the item. The words were a third vocabulary ("Commit & Push",
+ * "Discard Changes", "Restore") on top of the editors' ("Sync", "Revert") and the mapping cards'
+ * ("Publish", "Revert").
+ *
+ * Now the menus ask `entityGitView()` / `folderGitRollup()` and render the answer, so the *decision*
+ * lives in one place and only the *layout* lives here.
+ */
 interface UseContextMenuProps {
   expandAll: () => void;
   collapseAll: () => void;
@@ -19,9 +34,14 @@ interface UseContextMenuProps {
   clearSelection: () => void;
   onOpenRunner?: (id: string) => void;
   onUnblockItem?: (id: string) => void;
-  getItemStatus: (item: FolderTreeItem) => EntitySyncStatus | undefined;
+  /** The uniform git view for one item. */
+  getItemView: (item: FolderTreeItem) => EntityGitView;
+  /** The git rollup for a folder — or the whole kind when the id is `null`. */
+  getFolderRollup: (folderId: string | null) => FolderGitRollup;
   onOpenItem: (id: string) => void;
   onPublishItem?: (id: string) => void;
+  /** Publish a selection in one commit. */
+  onPublishIds?: (ids: string[]) => void;
   onRestoreItem?: (id: string) => void;
   onToggleItem?: (id: string) => void;
   onStartItem?: (id: string) => void;
@@ -39,9 +59,9 @@ interface UseContextMenuProps {
 export function useFolderTreeContextMenu({
   expandAll, collapseAll, setNewFolderParent, setExpanded, onOpenNewTab, blocksFolderId,
   onPublishFolder, onToggleFolderItems, setRenaming, setPendingDelete, clearSelection,
-  onOpenRunner, onUnblockItem, getItemStatus, onOpenItem, onPublishItem, onRestoreItem,
-  onToggleItem, onStartItem, onStopItem, onDuplicateItem, onHistoryItem, onBlockItem,
-  selectedItemIds, selectedFolderIds, items, onMoveItems, setShowMove
+  onOpenRunner, onUnblockItem, getItemView, getFolderRollup, onOpenItem, onPublishItem,
+  onPublishIds, onRestoreItem, onToggleItem, onStartItem, onStopItem, onDuplicateItem,
+  onHistoryItem, onBlockItem, selectedItemIds, selectedFolderIds, items, onMoveItems, setShowMove
 }: UseContextMenuProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
@@ -49,6 +69,34 @@ export function useFolderTreeContextMenu({
   const sep: ContextMenuItem = useMemo(() => ({ sep: true, action: () => { } }), []);
   const expandAllItem: ContextMenuItem = useMemo(() => ({ label: strings.folderTree.expandAll, icon: <ChevronsUpDown size={11} />, action: () => { expandAll(); closeMenu(); } }), [expandAll, closeMenu]);
   const collapseAllItem: ContextMenuItem = useMemo(() => ({ label: strings.folderTree.collapseAll, icon: <ChevronsUpDown size={11} />, action: () => { collapseAll(); closeMenu(); } }), [collapseAll, closeMenu]);
+
+  /**
+   * The two git write items for one entity, from its view.
+   *
+   * `primary` is Publish for an untracked entity and Sync for anything else outstanding — including a
+   * *clean* entity whose commits are not on the remote yet, which is the case that had no item at all
+   * before (`syncSt !== "clean"` was the gate). Revert appears beside it only when there is a diff
+   * against HEAD to throw away.
+   */
+  const gitItemsFor = useCallback((view: EntityGitView, id: string): ContextMenuItem[] => {
+    const out: ContextMenuItem[] = [];
+    if (view.status === "deleted") {
+      if (onRestoreItem) out.push({ label: strings.entityGit.recover, icon: <RotateCcw size={11} />, action: () => { onRestoreItem(id); closeMenu(); } });
+      if (onPublishItem) out.push({ label: strings.entityGit.syncDelete, icon: <ArrowUp size={11} />, action: () => { onPublishItem(id); closeMenu(); } });
+      return out;
+    }
+    if (onPublishItem && view.primary) {
+      out.push({
+        label: view.primaryLabel,
+        icon: <ArrowUp size={11} />,
+        action: () => { onPublishItem(id); closeMenu(); },
+      });
+    }
+    if (onRestoreItem && view.canRevert) {
+      out.push({ label: strings.entityGit.revert, icon: <RotateCcw size={11} />, action: () => { onRestoreItem(id); closeMenu(); } });
+    }
+    return out;
+  }, [onPublishItem, onRestoreItem, closeMenu]);
 
   const openEmptySpaceMenu = useCallback((x: number, y: number) => {
     const menuItems: ContextMenuItem[] = [
@@ -67,7 +115,23 @@ export function useFolderTreeContextMenu({
     const menuItems: ContextMenuItem[] = [
       { label: strings.folderTree.newSubfolder, icon: <Plus size={11} />, action: () => { setNewFolderParent(folderId); setExpanded((p) => { const s = new Set(p); s.add(folderId === null ? "__root__" : folderId); return s; }); closeMenu(); } },
     ];
-    if (folderId !== null && onPublishFolder) menuItems.push({ label: strings.folderTree.commitPushFolder, icon: <ArrowUp size={11} />, action: () => { onPublishFolder(folderId); closeMenu(); } });
+
+    // ── Publish All / Sync All ────────────────────────────────────────────────
+    //
+    // Gated on the folder's rollup, and offered for the **root** as well. The root row is the "whole
+    // kind" case the spec calls folder details, and the old menu excluded it entirely
+    // (`folderId !== null && onPublishFolder`), so the only way to publish everything at the top level
+    // was the footer button. A clean folder no longer offers the item at all, because there is nothing
+    // for it to do — `folderGitRollup().primary` is `null` exactly then.
+    const rollup = getFolderRollup(folderId);
+    if (onPublishFolder && rollup.primary) {
+      menuItems.push({
+        label: rollup.primary === "publish" ? strings.entityGit.publishAll : strings.entityGit.syncAll,
+        icon: <ArrowUp size={11} />,
+        action: () => { onPublishFolder(folderId); closeMenu(); },
+      });
+    }
+
     if (folderId !== null && onToggleFolderItems) menuItems.push(
       { label: strings.folderTree.enableAllInFolder, icon: <ToggleRight size={11} />, action: () => { onToggleFolderItems(folderId, true); closeMenu(); } },
       { label: strings.folderTree.disableAllInFolder, icon: <ToggleLeft size={11} />, action: () => { onToggleFolderItems(folderId, false); closeMenu(); } },
@@ -79,7 +143,7 @@ export function useFolderTreeContextMenu({
     if (folderId !== null && onOpenRunner) menuItems.push({ label: strings.folderTree.runCollection, icon: <Play size={11} />, action: () => { onOpenRunner(folderId); closeMenu(); } });
     menuItems.push(sep, expandAllItem, collapseAllItem);
     setCtxMenu({ x, y, items: menuItems });
-  }, [blocksFolderId, onPublishFolder, onToggleFolderItems, onOpenRunner, expandAllItem, collapseAllItem, sep, closeMenu, clearSelection, setNewFolderParent, setExpanded, setRenaming, setPendingDelete]);
+  }, [blocksFolderId, onPublishFolder, onToggleFolderItems, onOpenRunner, expandAllItem, collapseAllItem, sep, closeMenu, clearSelection, setNewFolderParent, setExpanded, setRenaming, setPendingDelete, getFolderRollup]);
 
   const openItemMenu = useCallback((x: number, y: number, item: FolderTreeItem) => {
     if (item.isBlock) {
@@ -89,27 +153,31 @@ export function useFolderTreeContextMenu({
       setCtxMenu({ x, y, items: blockMenu });
       return;
     }
+    const view = getItemView(item);
+    const isDeleted = view.status === "deleted";
     const isEnabled = item.isEnabled !== false;
-    const syncSt = getItemStatus(item);
-    const isDeleted = syncSt === "deleted";
-    const isTracked = !syncSt || syncSt === "clean" || syncSt === "modified" || syncSt === "deleted";
-    const isNew = syncSt === "new";
-    const menuItems: ContextMenuItem[] = isDeleted ? [] : [{ label: strings.folderTree.open, icon: <ExternalLink size={11} />, action: () => { onOpenItem(item.id); closeMenu(); } }];
-    if (onPublishItem && syncSt && syncSt !== "clean") menuItems.push({ label: isDeleted ? strings.folderTree.commitDelete : strings.folderTree.commitPush, icon: <ArrowUp size={11} />, action: () => { onPublishItem!(item.id); closeMenu(); } });
-    if (onRestoreItem && syncSt && syncSt !== "clean") menuItems.push({ label: isDeleted ? strings.folderTree.restore : strings.folderTree.discardChanges, icon: <History size={11} />, action: () => { onRestoreItem!(item.id); closeMenu(); } });
+
+    const menuItems: ContextMenuItem[] = isDeleted
+      ? []
+      : [{ label: strings.folderTree.open, icon: <ExternalLink size={11} />, action: () => { onOpenItem(item.id); closeMenu(); } }];
+
+    // The git pair, before the entity-level toggles — one vocabulary, from one place.
+    menuItems.push(...gitItemsFor(view, item.id));
+
     if (!isDeleted && onToggleItem) menuItems.push({ label: isEnabled ? strings.folderTree.disable : strings.folderTree.enable, icon: isEnabled ? <ToggleLeft size={11} /> : <ToggleRight size={11} />, action: () => { onToggleItem(item.id); closeMenu(); } });
     if (!isDeleted && onStartItem) menuItems.push({ label: strings.folderTree.start, icon: <Play size={11} />, action: () => { onStartItem(item.id); closeMenu(); } });
     if (!isDeleted && onStopItem) menuItems.push({ label: strings.folderTree.stop, icon: <Square size={11} />, action: () => { onStopItem(item.id); closeMenu(); } });
     if (!isDeleted && onDuplicateItem) menuItems.push({ label: strings.folderTree.duplicate, icon: <Copy size={11} />, action: () => { onDuplicateItem(item.id); closeMenu(); } });
-    if (!isDeleted && onHistoryItem && isTracked) menuItems.push({ label: strings.folderTree.history, icon: <History size={11} />, action: () => { onHistoryItem(item.id); closeMenu(); } });
+    // History is gated on the entity having commits, from the same view every other surface uses.
+    if (!isDeleted && onHistoryItem && view.canViewHistory) menuItems.push({ label: strings.entityGit.history, icon: <History size={11} />, action: () => { onHistoryItem(item.id); closeMenu(); } });
     if (!isDeleted && onBlockItem) menuItems.push({ label: strings.folderTree.block, icon: <Ban size={11} />, action: () => { onBlockItem(item.id); closeMenu(); } });
     if (!isDeleted) menuItems.push(
-      { label: strings.folderTree.delete, icon: <Trash2 size={11} />, danger: true, action: () => { setPendingDelete({ itemIds: [item.id], folderIds: [], hasTracked: !isNew }); clearSelection(); closeMenu(); } },
+      { label: strings.folderTree.delete, icon: <Trash2 size={11} />, danger: true, action: () => { setPendingDelete({ itemIds: [item.id], folderIds: [], recoverable: view.deleteIsRecoverable }); clearSelection(); closeMenu(); } },
       sep, expandAllItem, collapseAllItem,
     );
     else menuItems.push(sep, expandAllItem, collapseAllItem);
     setCtxMenu({ x, y, items: menuItems });
-  }, [getItemStatus, onOpenItem, onPublishItem, onRestoreItem, onToggleItem, onStartItem, onStopItem, onDuplicateItem, onHistoryItem, onBlockItem, onUnblockItem, expandAllItem, collapseAllItem, sep, closeMenu, clearSelection, setPendingDelete]);
+  }, [getItemView, gitItemsFor, onOpenItem, onToggleItem, onStartItem, onStopItem, onDuplicateItem, onHistoryItem, onBlockItem, onUnblockItem, expandAllItem, collapseAllItem, sep, closeMenu, clearSelection, setPendingDelete]);
 
   const openMultiMenu = useCallback((x: number, y: number) => {
     const itemIds = [...selectedItemIds];
@@ -124,14 +192,44 @@ export function useFolderTreeContextMenu({
 
     const menuItems: ContextMenuItem[] = [];
     if (hasItems && !hasFolders) {
-      const dirtyItems = onPublishItem ? itemIds.filter((id) => { const it = items.find((i) => i.id === id); const st = it ? getItemStatus(it) : undefined; return st && st !== "clean"; }) : [];
-      if (dirtyItems.length > 0 && onPublishItem) menuItems.push({ label: `${strings.folderTree.commitPush} ${items_(dirtyItems.length)}`, icon: <ArrowUp size={11} />, action: () => { dirtyItems.forEach((id) => onPublishItem!(id)); clearSelection(); closeMenu(); } });
+      const views = itemIds
+        .map((id) => { const it = items.find((i) => i.id === id); return it ? { id, view: getItemView(it) } : null; })
+        .filter((v): v is { id: string; view: EntityGitView } => v !== null);
+      const publishable = views.filter((v) => v.view.primary);
+      const revertable = views.filter((v) => v.view.canRevert);
+
+      // One commit for the whole selection — `onPublishIds` resolves every item's path and hands the
+      // array to `entity.publish`. Firing `onPublishItem` per id produced one commit per entity.
+      if (publishable.length > 0) {
+        const label = publishable.every((v) => v.view.primary === "publish")
+          ? `${strings.entityGit.publish} ${items_(publishable.length)}`
+          : `${strings.entityGit.sync} ${items_(publishable.length)}`;
+        menuItems.push({
+          label,
+          icon: <ArrowUp size={11} />,
+          action: () => {
+            const ids = publishable.map((v) => v.id);
+            if (onPublishIds) onPublishIds(ids);
+            else ids.forEach((id) => onPublishItem?.(id));
+            clearSelection(); closeMenu();
+          },
+        });
+      }
+      // Revert for the selection. The multi menu had **no** revert item at all, so a bulk edit could
+      // only be undone one entity at a time from the item menu.
+      if (revertable.length > 0 && onRestoreItem) {
+        menuItems.push({
+          label: `${strings.entityGit.revert} ${items_(revertable.length)}`,
+          icon: <RotateCcw size={11} />,
+          action: () => { revertable.forEach((v) => onRestoreItem(v.id)); clearSelection(); closeMenu(); },
+        });
+      }
       if (onToggleItem) menuItems.push(
         { label: `${strings.folderTree.enable} ${items_(ni)}`, icon: <ToggleRight size={11} />, action: () => { itemIds.forEach(id => { const it = items.find(i => i.id === id); if (it && it.isEnabled === false) onToggleItem(id); }); clearSelection(); closeMenu(); } },
         { label: `${strings.folderTree.disable} ${items_(ni)}`, icon: <ToggleLeft size={11} />, action: () => { itemIds.forEach(id => { const it = items.find(i => i.id === id); if (it && it.isEnabled !== false) onToggleItem(id); }); clearSelection(); closeMenu(); } },
       );
       if (onMoveItems) menuItems.push({ label: `${strings.folderTree.move} ${items_(ni)}…`, action: () => { closeMenu(); setShowMove(true); } });
-      menuItems.push({ label: `${strings.folderTree.delete} ${items_(ni)}`, icon: <Trash2 size={11} />, danger: true, action: () => { closeMenu(); setPendingDelete({ itemIds, folderIds: [] }); } });
+      menuItems.push({ label: `${strings.folderTree.delete} ${items_(ni)}`, icon: <Trash2 size={11} />, danger: true, action: () => { closeMenu(); setPendingDelete({ itemIds, folderIds: [], recoverable: views.some((v) => v.view.deleteIsRecoverable) }); } });
     } else if (hasFolders && !hasItems) {
       menuItems.push(
         { label: `${strings.folderTree.expand} ${folders_(nf)}`, action: () => { setExpanded((p) => { const s = new Set(p); folderIds.forEach(id => s.add(id)); return s; }); closeMenu(); } },
@@ -147,7 +245,7 @@ export function useFolderTreeContextMenu({
     }
     menuItems.push(sep, expandAllItem, collapseAllItem);
     setCtxMenu({ x, y, items: menuItems });
-  }, [selectedItemIds, selectedFolderIds, items, getItemStatus, onPublishItem, onToggleItem, onMoveItems, expandAllItem, collapseAllItem, sep, closeMenu, clearSelection, setExpanded, setPendingDelete, setShowMove]);
+  }, [selectedItemIds, selectedFolderIds, items, getItemView, onPublishItem, onPublishIds, onRestoreItem, onToggleItem, onMoveItems, expandAllItem, collapseAllItem, sep, closeMenu, clearSelection, setExpanded, setPendingDelete, setShowMove]);
 
   return { ctxMenu, setCtxMenu, closeMenu, openEmptySpaceMenu, openFolderMenu, openItemMenu, openMultiMenu };
 }

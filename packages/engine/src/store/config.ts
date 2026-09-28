@@ -200,7 +200,22 @@ export function loadConfig(): AppConfig {
     })),
     activeWorkspaceId: wsId,
     activeEnvironmentId: activeEnv,
-    mappings: mappings.map((m) => ({ ...m, workspaceId: m.workspaceId ?? wsId, enabled: mappingEnabledSet.has(m.id) })),
+    // `enabled: false` on the stubs, and it is load-bearing rather than cosmetic: `edge.ts` matches
+    // a mapping with `cfg.mappings.find((m) => m.enabled && …)` and `pages.ts` lists only enabled
+    // ones, so a deleted-but-uncommitted mapping is invisible to the proxy by the same mechanism
+    // that hides a merely disabled one. `target: ""` is the second guard — `matchProxyRule()` would
+    // resolve it to a falsy target and 502 rather than forward somewhere unintended, and
+    // `deleteEntityCore` cascades away the rules that could have reached it anyway.
+    mappings: [
+      ...mappings.map((m) => ({ ...m, workspaceId: m.workspaceId ?? wsId, enabled: mappingEnabledSet.has(m.id) })),
+      // Pending-deletion mappings: minimal stubs so the panel can show them as deleted
+      ...getPendingDeletions(wsId, "mappings")
+        .filter((p) => !mappings.some((m) => m.id === p.id))
+        .map((p) => ({
+          id: p.id, workspaceId: wsId, domain: p.url ?? "", target: "",
+          label: p.name, enabled: false, createdAt: 0,
+        } as LocalMapping)),
+    ],
     // Rule stubs: id + folderId + display name/pattern from names.json — scripts loaded on tab open
     proxyRules: [
       ...ruleStubs.map((s) => ({
@@ -261,7 +276,16 @@ export function loadConfig(): AppConfig {
       createdAt: 0,
     } as SavedWebhook)),
     webhookFolders: webhookIdx.folders as Folder[],
-    environments: environments.map((e) => ({ ...e, workspaceId: e.workspaceId ?? wsId })),
+    environments: [
+      ...environments.map((e) => ({ ...e, workspaceId: e.workspaceId ?? wsId })),
+      // Pending-deletion environments: stubs with no variables, so nothing can resolve against a
+      // deleted environment while its deletion is still waiting to be committed.
+      ...getPendingDeletions(wsId, "environments")
+        .filter((p) => !environments.some((e) => e.id === p.id))
+        .map((p) => ({
+          id: p.id, name: p.name, variables: [], createdAt: 0, workspaceId: wsId,
+        } as Environment)),
+    ],
     // GraphQL entities
     graphqlRequests: (() => {
       const stubs = readEntityStubs(wsId, "graphqlRequests");

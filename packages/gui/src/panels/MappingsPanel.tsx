@@ -1,13 +1,16 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { AppConfig, LocalMapping } from "@/types";
 import Modal from "@/components/common/Modal";
 import PanelHeader from "@/components/layout/PanelHeader";
 import { strings } from "@/lib/strings";
 import { flatEntityRelPath } from "@/lib/utils";
-import { ArrowLeftRight, History, AlertCircle, CheckCircle2, Plus, Globe, Server, RotateCcw } from "@/lib/icons";
+import { entityGitView, entityGitDotColor, shortCommit } from "@/lib/entityGit";
+import { ArrowLeftRight, History, AlertCircle, CheckCircle2, Plus, Globe, Server, RotateCcw, ArrowUp } from "@/lib/icons";
 import { Button, IconButton, Input, FormField, EmptyState, ModalFooter, StatusDot, Switch } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
+import { DeletedItemDialog } from "@/components/sidebar/modals/DeletedItemDialog";
+import type { GitWriteResult } from "@/hooks/useEntityGitActions";
 
 
 interface Props {
@@ -17,9 +20,20 @@ interface Props {
   prefillTarget?: string;
   onPrefillConsumed?: () => void;
   onHistoryOpen?: (filePath: string) => void;
+  /** Refresh the History sidebar — a mapping edit while it is open must not leave it stale. */
+  onAfterSave?: () => void;
   entitySyncStatus?: Record<string, "clean" | "modified" | "new" | "deleted">;
-  onPublish?: (entityId: string) => Promise<void> | void;
-  onRevert?: (entityId: string) => void;
+  /** The workspace's position relative to its remote — needed for "committed but not pushed". */
+  workspaceGitState?: import("@/types").WorkspaceGitState | null;
+  /**
+   * Commit and push. Backs **Publish** and **Sync** — which of the two is a labelling decision made by
+   * `entityGitView()`, not a second code path.
+   */
+  onPublish?: (entityId: string) => Promise<GitWriteResult>;
+  /** Discard local changes. Also backs **Recover** for a deleted mapping. */
+  onRevert?: (entityId: string) => Promise<GitWriteResult>;
+  /** Whether a publish for this mapping is in flight, from the shared git-action hook. */
+  isPublishing?: (entityId: string) => boolean;
 }
 
 /** The create modal's form. */
@@ -70,9 +84,12 @@ export default function MappingsPanel({
   prefillTarget,
   onPrefillConsumed,
   onHistoryOpen,
+  onAfterSave,
   entitySyncStatus,
+  workspaceGitState,
   onPublish,
   onRevert,
+  isPublishing,
 }: Props) {
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
 
@@ -89,8 +106,56 @@ export default function MappingsPanel({
    */
   const [edits, setEdits] = useState<Record<string, MappingEdit>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, Partial<FormState>>>({});
-  const [publishingIds, setPublishingIds] = useState<Record<string, boolean>>({});
   const [publishErrors, setPublishErrors] = useState<Record<string, string>>({});
+  /** The mapping whose pending-deletion dialog is open. */
+  const [deletedPopup, setDeletedPopup] = useState<LocalMapping | null>(null);
+
+  /**
+   * What the last git action on this mapping actually did.
+   *
+   * Added because "clicking publish does nothing" was *accurate*: a successful publish produced no
+   * feedback beyond a subtle status-label change, and a publish that staged nothing — the engine
+   * correctly returns `ok: true, committed: false` for an already-committed entity — produced **none
+   * at all**. The two were indistinguishable, so a no-op read as a broken button.
+   *
+   * A `none` notice has no timeout: it is a statement about the entity's state, and it should stay
+   * until the state changes. An `ok` notice is transient feedback and clears itself.
+   */
+  const [gitNotice, setGitNotice] = useState<Record<string, { kind: "ok" | "none"; text: string; sha?: string }>>({});
+  const noticeTimers = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const showNotice = React.useCallback((id: string, kind: "ok" | "none", text: string, sha?: string) => {
+    setGitNotice((prev) => ({ ...prev, [id]: { kind, text, sha } }));
+    if (noticeTimers.current[id]) clearTimeout(noticeTimers.current[id]);
+    if (kind === "ok") {
+      noticeTimers.current[id] = setTimeout(() => {
+        setGitNotice((prev) => { const next = { ...prev }; delete next[id]; return next; });
+        delete noticeTimers.current[id];
+      }, 3000);
+    }
+  }, []);
+
+  // A timer that outlives the panel would set state on an unmounted component.
+  useEffect(() => () => { Object.values(noticeTimers.current).forEach(clearTimeout); }, []);
+
+  /**
+   * The uniform git view per mapping, plus the set of mappings whose file is gone.
+   *
+   * **`deletedIds` is load-bearing, not cosmetic.** A deleted-but-uncommitted mapping stays in
+   * `config.mappings` (that is how `loadConfig()` keeps it visible — see its pending-deletion merge),
+   * so without this guard the autosave below would happily `updateMapping()` a file that no longer
+   * exists and **resurrect the deletion** the user just made.
+   */
+  const { views, deletedIds } = useMemo(() => {
+    const views = new Map<string, ReturnType<typeof entityGitView>>();
+    const deletedIds = new Set<string>();
+    for (const m of config.mappings) {
+      const v = entityGitView(entitySyncStatus?.[flatEntityRelPath("mappings", m.id)], workspaceGitState);
+      views.set(m.id, v);
+      if (v.status === "deleted") deletedIds.add(m.id);
+    }
+    return { views, deletedIds };
+  }, [config.mappings, entitySyncStatus, workspaceGitState]);
 
   useEffect(() => {
     if (prefillTarget) {
@@ -127,6 +192,7 @@ export default function MappingsPanel({
     await onConfigChange({ ...config, mappings: [...config.mappings, newM] });
     setModalOpen(false);
     onRefreshServices();
+    onAfterSave?.();
   };
 
   // -- Inline edit + autosave ----------------------------------------------
@@ -135,6 +201,7 @@ export default function MappingsPanel({
     edits[m.id] ?? { subdomain: subdomainOf(m), target: m.target, label: m.label ?? "" };
 
   const setRowField = (id: string, patch: Partial<MappingEdit>) => {
+    if (deletedIds.has(id)) return;
     const m = config.mappings.find((x) => x.id === id);
     if (!m) return;
     setEdits((prev) => ({
@@ -157,7 +224,7 @@ export default function MappingsPanel({
    * Only the rows actually written are dropped, so a rejected row survives the save.
    */
   const applyEdits = async () => {
-    const ids = Object.keys(edits);
+    const ids = Object.keys(edits).filter((id) => !deletedIds.has(id));
     if (ids.length === 0) return;
 
     const nextErrors: Record<string, Partial<FormState>> = {};
@@ -187,6 +254,7 @@ export default function MappingsPanel({
       return next;
     });
     onRefreshServices();
+    onAfterSave?.();
   };
 
   const { savedAt: autoSavedAt, error: autoSaveError } = useDebouncedAutosave({
@@ -198,8 +266,15 @@ export default function MappingsPanel({
   // -- Row actions ----------------------------------------------------------
 
   const remove = async (id: string) => {
-    const ok = await confirm("Delete this mapping? This cannot be undone.");
-    if (!ok) return;
+    const view = views.get(id);
+    const m = config.mappings.find((x) => x.id === id);
+    const what = m?.label || m?.domain || "this mapping";
+    // The confirmation says which of the two outcomes this actually is, from the same view that
+    // decides the button labels — a tracked mapping stays recoverable, an untracked one does not.
+    const message = view?.deleteIsRecoverable
+      ? strings.entityGit.deleteConfirmRecoverable.replace("{what}", what)
+      : strings.entityGit.deleteConfirmPermanent.replace("{what}", what);
+    if (!await confirm(message)) return;
     await window.api.deleteMapping(id);
     const mappings = config.mappings.filter((m) => m.id !== id);
     const proxyRules = config.proxyRules.filter((r) => r.targetMappingId !== id);
@@ -211,6 +286,7 @@ export default function MappingsPanel({
       return next;
     });
     onRefreshServices();
+    onAfterSave?.();
   };
 
   const toggleEnabled = async (m: LocalMapping, enabled: boolean) => {
@@ -219,7 +295,7 @@ export default function MappingsPanel({
   };
 
   const publish = async (m: LocalMapping) => {
-    if (!onPublish || publishingIds[m.id]) return;
+    if (!onPublish || isPublishing?.(m.id)) return;
     const pending = edits[m.id];
     if (pending) {
       const errors = {
@@ -231,23 +307,41 @@ export default function MappingsPanel({
         return;
       }
     }
-    setPublishingIds((prev) => ({ ...prev, [m.id]: true }));
     setPublishErrors((prev) => { const next = { ...prev }; delete next[m.id]; return next; });
     try {
       // Persist in-progress card edits before committing the entity file.
       await applyEdits();
-      await onPublish(m.id);
+      const result = await onPublish(m.id);
+      if (!result.ok) {
+        setPublishErrors((prev) => ({ ...prev, [m.id]: result.error ?? "Publish failed" }));
+      } else if (!result.commit) {
+        // `commit: null` — the engine staged nothing, because the entity is already committed. A
+        // correct outcome that used to be completely silent, and therefore indistinguishable from a
+        // button that is not wired up.
+        showNotice(m.id, "none", strings.entityGit.nothingToPublish);
+      } else {
+        // The **commit id**, which is the proof the click did something. Labelled Published or Synced
+        // to match the button that was pressed, from the same view that chose its label.
+        const template =
+          views.get(m.id)?.primary === "sync"
+            ? strings.entityGit.syncedWithCommit
+            : strings.entityGit.publishedWithCommit;
+        showNotice(m.id, "ok", template.replace("{sha}", shortCommit(result.commit)), result.commit);
+      }
     } catch (error) {
       setPublishErrors((prev) => ({ ...prev, [m.id]: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setPublishingIds((prev) => ({ ...prev, [m.id]: false }));
     }
   };
 
-  const syncDotColor = (syncSt: string | undefined) => {
-    if (syncSt === "new" || syncSt === "deleted") return "red" as const;
-    if (syncSt === "modified") return "yellow" as const;
-    return "green" as const;
+  const revert = async (m: LocalMapping) => {
+    if (!onRevert) return;
+    setPublishErrors((prev) => { const next = { ...prev }; delete next[m.id]; return next; });
+    // Drop any half-typed edit first: reverting to the committed version while a keystroke is
+    // still pending would let the autosave write the edit back over the restored file.
+    setEdits((prev) => { if (!(m.id in prev)) return prev; const next = { ...prev }; delete next[m.id]; return next; });
+    const result = await onRevert(m.id);
+    if (!result.ok) setPublishErrors((prev) => ({ ...prev, [m.id]: result.error ?? "Revert failed" }));
+    else showNotice(m.id, "ok", strings.entityGit.reverted);
   };
 
   const emptyNode = <EmptyState
@@ -289,40 +383,104 @@ export default function MappingsPanel({
             <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
               {config.mappings.map((m) => {
                 const value = rowValue(m);
-                const syncSt = entitySyncStatus?.[flatEntityRelPath("mappings", m.id)];
-                const hasSavedVersion = syncSt === "clean" || syncSt === "modified";
-                const changed = syncSt === "new" || syncSt === "modified";
-                const statusText = syncSt === "new" ? strings.mappings.syncNew : syncSt === "modified" ? strings.mappings.syncModified : syncSt === "clean" ? strings.mappings.syncClean : "";
+                const view = views.get(m.id);
+                const isDeleted = view?.status === "deleted";
                 return (
-                  <article key={m.id} className="group rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-border/80">
+                  <article
+                    key={m.id}
+                    className="group rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-border/80"
+                    onClick={isDeleted ? () => setDeletedPopup(m) : undefined}
+                    style={isDeleted ? { cursor: "pointer", opacity: 0.85 } : undefined}
+                  >
                     <div className="flex items-start gap-3 border-b border-border/70 px-4 py-4">
                       <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-signal/10 text-signal"><Globe size={17} /></div>
                       <div className="min-w-0 flex-1">
-                        <Input className="w-full border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-foreground shadow-none hover:border-border focus:border-border" value={value.label} placeholder={strings.mappings.titlePlaceholder} aria-label={strings.mappings.columnLabel} onChange={(e) => setRowField(m.id, { label: e.target.value })} />
+                        {isDeleted ? (
+                          <span className="block px-1 py-0.5 text-sm font-semibold text-foreground line-through truncate">
+                            {value.label || value.subdomain || m.id}
+                          </span>
+                        ) : (
+                          <Input className="w-full border-transparent bg-transparent px-1 py-0.5 text-sm font-semibold text-foreground shadow-none hover:border-border focus:border-border" value={value.label} placeholder={strings.mappings.titlePlaceholder} aria-label={strings.mappings.columnLabel} onChange={(e) => setRowField(m.id, { label: e.target.value })} />
+                        )}
                       </div>
                       <div className="flex items-center gap-2 pt-1">
-                        {syncSt && <span title={statusText} className="flex items-center gap-1.5 text-[10px] text-muted-foreground"><StatusDot color={syncDotColor(syncSt)} />{statusText}</span>}
-                        <Switch checked={m.enabled} onChange={(v) => toggleEnabled(m, v)} />
+                        {view && (
+                          <span title={view.stateLabel} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <StatusDot color={entityGitDotColor(view.status)} />{view.stateLabel}
+                          </span>
+                        )}
+                        <Switch checked={m.enabled} onChange={(v) => toggleEnabled(m, v)} disabled={isDeleted} />
                       </div>
                     </div>
-                    <div className="space-y-3 px-4 py-4">
-                      <FormField label={strings.mappings.subdomainLabel} error={rowErrors[m.id]?.subdomain}>
-                        <div className="flex items-center"><Input className="min-w-0 flex-1 rounded-r-none font-mono text-xs" value={value.subdomain} error={!!rowErrors[m.id]?.subdomain} aria-label={strings.mappings.columnDomain} onChange={(e) => setRowField(m.id, { subdomain: e.target.value })} /></div>
-                        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"><span className="font-mono text-signal">{fullDomain(value.subdomain)}</span></div>
-                      </FormField>
-                      <FormField label={strings.mappings.targetCardLabel} error={rowErrors[m.id]?.target}>
-                        <div className="relative"><Server size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><Input className="w-full pl-9 font-mono text-xs" value={value.target} error={!!rowErrors[m.id]?.target} aria-label={strings.mappings.columnTarget} onChange={(e) => setRowField(m.id, { target: e.target.value })} /></div>
-                      </FormField>
-                    </div>
+                    {isDeleted ? (
+                      <div className="px-4 py-4 text-xs text-muted-foreground">
+                        {strings.entityGit.pendingDeletionBody}
+                      </div>
+                    ) : (
+                      <div className="space-y-3 px-4 py-4">
+                        <FormField label={strings.mappings.subdomainLabel} error={rowErrors[m.id]?.subdomain}>
+                          <div className="flex items-center"><Input className="min-w-0 flex-1 rounded-r-none font-mono text-xs" value={value.subdomain} error={!!rowErrors[m.id]?.subdomain} aria-label={strings.mappings.columnDomain} onChange={(e) => setRowField(m.id, { subdomain: e.target.value })} /></div>
+                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground"><span className="font-mono text-signal">{fullDomain(value.subdomain)}</span></div>
+                        </FormField>
+                        <FormField label={strings.mappings.targetCardLabel} error={rowErrors[m.id]?.target}>
+                          <div className="relative"><Server size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><Input className="w-full pl-9 font-mono text-xs" value={value.target} error={!!rowErrors[m.id]?.target} aria-label={strings.mappings.columnTarget} onChange={(e) => setRowField(m.id, { target: e.target.value })} /></div>
+                        </FormField>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between border-t border-border/70 px-3 py-2">
-                      <div className="flex items-center gap-1">
-                        {onPublish && changed && <Button variant="secondary" size="sm" disabled={publishingIds[m.id]} onClick={() => void publish(m)}>{publishingIds[m.id] ? strings.footer.publishing : strings.mappings.publish}</Button>}
-                        {onRevert && syncSt === "modified" && <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => onRevert(m.id)}>{strings.mappings.revert}</Button>}
-                        {onHistoryOpen && hasSavedVersion && <IconButton icon={<History size={13} />} title={strings.mappings.viewHistory} onClick={() => onHistoryOpen(`mappings/${m.id}.json`)} className="hover:text-signal" />}
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        {isDeleted ? (
+                          <>
+                            {onRevert && (
+                              <Button variant="secondary" size="sm" icon={<RotateCcw size={13} />} title={strings.entityGit.recoverTooltip} onClick={() => void revert(m)}>
+                                {strings.entityGit.recover}
+                              </Button>
+                            )}
+                            {onPublish && (
+                              <Button variant="danger" size="sm" icon={<ArrowUp size={13} />} title={strings.entityGit.syncDeleteTooltip} onClick={() => void publish(m)}>
+                                {strings.entityGit.syncDelete}
+                              </Button>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {/* One primary button, labelled Publish or Sync by the entity's state. */}
+                            {onPublish && view?.primary && (
+                              <Button variant="secondary" size="sm" disabled={isPublishing?.(m.id)} title={view.primaryTitle} onClick={() => void publish(m)}>
+                                {isPublishing?.(m.id) ? strings.entityGit.publishing : view.primaryLabel}
+                              </Button>
+                            )}
+                            {onRevert && view?.canRevert && (
+                              <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} title={strings.entityGit.revertTooltip} onClick={() => void revert(m)}>
+                                {strings.entityGit.revert}
+                              </Button>
+                            )}
+                            {onHistoryOpen && view?.canViewHistory && (
+                              <IconButton icon={<History size={13} />} title={strings.entityGit.historyTooltip} onClick={() => onHistoryOpen(`mappings/${m.id}.json`)} className="hover:text-signal" />
+                            )}
+                          </>
+                        )}
                       </div>
-                      <Button variant="danger" size="sm" onClick={() => remove(m.id)}>{strings.common.delete}</Button>
+                      <Button variant="danger" size="sm" onClick={() => void remove(m.id)}>{strings.common.delete}</Button>
                     </div>
                     {publishErrors[m.id] && <p role="alert" className="border-t border-destructive/20 px-4 py-2 text-xs text-destructive">{publishErrors[m.id]}</p>}
+                    {gitNotice[m.id] && (
+                      <p
+                        role="status"
+                        // The full id, on hover: the notice shows the 7-character form because a
+                        // 40-character hash in a narrow card wraps, and the short form is what
+                        // `git log --oneline` prints — but truncating without offering the whole
+                        // value would lose it.
+                        title={gitNotice[m.id].sha}
+                        className={`border-t px-4 py-2 text-xs font-mono ${
+                          gitNotice[m.id].kind === "ok"
+                            ? "border-signal/20 text-signal"
+                            : "border-amber/20 text-amber"
+                        }`}
+                      >
+                        {gitNotice[m.id].text}
+                      </p>
+                    )}
                   </article>
                 );
               })}
@@ -382,6 +540,16 @@ export default function MappingsPanel({
             confirmLabel={strings.common.create}
           />
         </Modal>
+
+        {/* Interacting with a deleted mapping opens the same dialog the folder tree uses. */}
+        {deletedPopup && (
+          <DeletedItemDialog
+            name={deletedPopup.label || deletedPopup.domain || deletedPopup.id}
+            onRecover={() => { void revert(deletedPopup); setDeletedPopup(null); }}
+            onCommitDelete={() => { void publish(deletedPopup); setDeletedPopup(null); }}
+            onClose={() => setDeletedPopup(null)}
+          />
+        )}
       </div>
     </>
   );
