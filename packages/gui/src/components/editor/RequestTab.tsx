@@ -8,15 +8,43 @@ import { strings } from "@/lib/strings";
 import { RefreshCw, RotateCcw, Loader2, History, CheckCircle2, AlertCircle } from "@/lib/icons";
 
 // -- UrlBar -----------------------------------------------------------------
-// Method dropdown + URL input + EnvVarHint + action button in one row.
+// Method (or fixed verb) + URL input + EnvVarHint + action button in one row.
+//
+// **This is the shared address row for every protocol**, not just REST. GraphQL and SOAP pass a
+// `leading` verb badge instead of a method dropdown; gRPC passes `leading` for the address and its
+// service/method pair through `beforeAction`, so the whole target stays on one line. Before that,
+// three of the four protocols had hand-rolled their own version of this row and had drifted —
+// different paddings, different button sizes, one of them stacked three bars deep.
 
 export interface UrlBarProps {
-  method: string;
-  onMethodChange(m: string): void;
+  /**
+   * Rendered in place of the method dropdown — a fixed verb badge (`POST`, `gRPC`).
+   *
+   * Mutually exclusive with `method`/`methods` in practice: a protocol whose verb is not a choice
+   * should not render a one-option `<select>`, which reads as a broken dropdown.
+   */
+  leading?: React.ReactNode;
+  /** Omit when `leading` is given. */
+  method?: string;
+  onMethodChange?(m: string): void;
+  methods?: string[];
   url: string;
   onUrlChange(u: string): void;
-  methods: string[];
   urlPlaceholder: string;
+  /**
+   * Drop the bar's own padding and bottom border, and **stretch to fill the row**.
+   *
+   * Set when the bar sits inside a `TabToolbarRow`, which owns the band's frame — otherwise the page
+   * gets the padding twice and two stacked borders, which is exactly how the SOAP tab ended up
+   * looking like it had an extra divider under its address row.
+   *
+   * ⚠ `bare` also means "this is a flex item in a **row**", so it carries `flex-1 min-w-0`. Dropping
+   * the padding without the width was a real bug: the bar collapsed to its content width and left
+   * dead space to the right of the Send button, which is what the first revision of this refactor
+   * shipped. Do not use `bare` as a child of a column flex container — `flex-1` would then grow
+   * *height*.
+   */
+  bare?: boolean;
   /** Button label when idle */
   actionLabel: string;
   /** Button label when loading */
@@ -31,33 +59,68 @@ export interface UrlBarProps {
   showRandomizer?: boolean;
   /** Extra node(s) rendered inside the input box after the URL input (e.g. regex toggle) */
   inputSuffix?: React.ReactNode;
+  /**
+   * Extra controls rendered **after the address group and before the action button**.
+   *
+   * gRPC uses it for its service/method pair, so "what am I calling" reads as one line ending in
+   * Send. It has to be *before* the button: anything placed after it lands on the far side of Send,
+   * which leaves the primary action stranded in the middle of the row.
+   */
+  beforeAction?: React.ReactNode;
   /** Extra node(s) rendered after the action button */
   afterButton?: React.ReactNode;
 }
 
+/**
+ * A fixed protocol verb, styled to occupy the same footprint as the method dropdown.
+ *
+ * `minWidth: 84` is copied from the `<select>` below on purpose: the four protocols' URL inputs
+ * start at the same x only because the two variants are the same width. Change one, change both.
+ */
+export function UrlBarVerb({ verb }: { verb: string }) {
+  return (
+    <span
+      className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 flex-shrink-0 flex items-center"
+      style={{ color: methodColor(verb), minWidth: 84 }}
+    >
+      {verb}
+    </span>
+  );
+}
+
 export function UrlBar({
-  method, onMethodChange, url, onUrlChange, methods, urlPlaceholder,
+  leading, method, onMethodChange, methods, url, onUrlChange, urlPlaceholder, bare = false,
   actionLabel, actionLoadingLabel, actionLoading, actionDisabled, onAction, onEnter,
-  activeEnv, showRandomizer = true, inputSuffix, afterButton,
+  activeEnv, showRandomizer = true, inputSuffix, beforeAction, afterButton,
 }: UrlBarProps) {
   const urlRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="px-4 py-2.5 border-b border-border flex-shrink-0 flex items-center gap-2">
+    <div
+      className={
+        bare
+          // `flex-1 min-w-0` is what makes the bar fill the toolbar row. Without it the bar is only
+          // as wide as its contents and the row keeps the remainder as dead space.
+          ? "flex flex-1 min-w-0 items-center gap-2"
+          : "px-4 py-2.5 border-b border-border flex-shrink-0 flex items-center gap-2"
+      }
+    >
       <div
-        className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1"
+        className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1 min-w-0"
         style={{ background: "var(--c-card)" }}
       >
-        <select
-          value={method}
-          onChange={(e) => onMethodChange(e.target.value)}
-          className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 outline-none cursor-pointer appearance-none flex-shrink-0"
-          style={{ color: methodColor(method), minWidth: 84 }}
-        >
-          {methods.map((m) => (
-            <option key={m} value={m} style={{ color: methodColor(m), background: "var(--c-card)" }}>{m}</option>
-          ))}
-        </select>
+        {leading ?? (
+          <select
+            value={method}
+            onChange={(e) => onMethodChange?.(e.target.value)}
+            className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 outline-none cursor-pointer appearance-none flex-shrink-0"
+            style={{ color: methodColor(method ?? ""), minWidth: 84 }}
+          >
+            {(methods ?? []).map((m) => (
+              <option key={m} value={m} style={{ color: methodColor(m), background: "var(--c-card)" }}>{m}</option>
+            ))}
+          </select>
+        )}
         <input
           ref={urlRef}
           className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-foreground outline-none placeholder:text-muted-foreground min-w-0"
@@ -92,6 +155,7 @@ export function UrlBar({
           onUrlChange(url + token);
         }
       }} />}
+      {beforeAction}
       <button
         onClick={onAction}
         disabled={actionLoading || actionDisabled}

@@ -1,14 +1,30 @@
 # Bifurc — Testing Guide & Coverage Report
 
-_Last reviewed: 2026-09-28 · suite: **2,658 tests / 117 files** — 2,618 passed, **0 failures of any kind**, 40
-skipped. Unit **2,158 / 87 files**, integration **460 / 30 files** (`2,158 + 460 = 2,618` ✓, both halves
-measured separately, not derived)._
+_Last reviewed: 2026-09-28 · suite: **2,666 tests / 119 files** — 2,621 passed, 40 skipped. Unit
+**2,206 / 89 files**, integration **460 / 30 files** (`2,206 + 460 = 2,666` ✓, both halves measured
+separately, not derived). **0 product failures.** The two failure groups are both environment, and both are
+named below._
 
-**The last move was the autosave conversion — the Save / Update button removed from every entity type,
-2026-09-28.** `2,647 → 2,658` is **`+11` tests and `+1` file, and the new file is the whole delta**: unit moved
-`2,187 → 2,198` total (`2,158` passed + `40` skipped) while integration stayed at `460 / 30`, which is what says
-no existing case changed behaviour. The eleven cases are `tests/renderer/debouncedAutosave.test.tsx`, driving
-the new `useDebouncedAutosave` hook with fake timers.
+**The last move was the tab-page unification, 2026-09-28** — `TabPage.tsx` now owns the frame of three of
+the four bands (title bar / toolbar / split / footer) for REST, GraphQL, gRPC, SOAP *and* the collection
+runner. Ten GUI files changed, one added, and **nothing outside `packages/gui/src/`** — no engine, protocol,
+client, reducer, `window.api` call or save payload. `2,658 → 2,666` is `+8` tests and `+2` files:
+`tests/renderer/tabPageLayout.test.tsx` (5 cases, this move) and `tests/renderer/requestsRunnerTab.test.tsx`
+(3 cases, the runner-tab call-site fix earlier the same day). Integration stayed at `460 / 30`, which is what
+says no existing case changed behaviour.
+
+**The five cases in `tabPageLayout.test.tsx` pin a regression that shipped and was caught by the user, not by
+the suite.** `UrlBar` moved from "block-level child of a column" to "flex item inside a `TabToolbarRow`"; the
+new `bare` variant dropped the padding *and the width*, so the bar collapsed to its content width — a short
+URL input and dead space to the right of Send, on every protocol. jsdom has no layout engine, so the
+assertion is on the **mechanism** (`flex-1 min-w-0`) rather than a measured width, and the file says so.
+**Checked by mutation: reverting the class fails exactly one case** and leaves the other four green.
+
+**The move before that was the autosave conversion — the Save / Update button removed from every entity
+type, 2026-09-28.** `2,647 → 2,658` was `+11` tests and `+1` file, and the new file was the whole delta: unit
+moved `2,187 → 2,198` total (`2,158` passed + `40` skipped) while integration stayed at `460 / 30`. The
+eleven cases are `tests/renderer/debouncedAutosave.test.tsx`, driving the new `useDebouncedAutosave` hook
+with fake timers.
 
 **The hook has three properties that are load-bearing, and each is a case rather than a comment.** *Silent
 arming* — the first snapshot seen while `enabled` becomes the baseline without writing, so a draft whose id is
@@ -22,11 +38,20 @@ redundant. Deleting **both** failed **exactly one** case (`expected "vi.fn()" to
 actually been called 3 times`) with the other ten green. The explicit call was then removed rather than left in
 as a second mechanism hiding the first.
 
-**One unit case failed on the first run, and it is not a regression.** `tests/store/gitStore.test.ts`'s
-`beforeEach` timed out at 10 s under the safe-delete shim (`EBUSY: resource busy or locked, rmdir` on a `%TEMP%`
-directory, `node-safe-delete-shim.cjs:616`), which took the one case in that file with it. Re-run alone it is
-**24/24 green**. Nothing in this change goes near the git store — the mechanism is named, so this is a flake
-rather than a finding.
+**The one unit failure is a flake, and it is a different file each run — the mechanism is the same.** On
+2026-09-28 it was `tests/store/gitStore.test.ts`'s `beforeEach`, then `tests/proxy/serverUtils.test.ts`'s
+`beforeEach` (`Error: Hook timed out in 10000ms`). Both are temp-directory work racing the sandbox's
+safe-delete shim (`node-safe-delete-shim.cjs`); both pass in isolation (`serverUtils` **15/15 in 1.35 s**
+against 10.4 s under full-suite load). `CODEBUDDY_SAFE_DELETE_ENABLED=0` does *not* help, which is itself the
+evidence that it is contention rather than the shim. **Run the failing file alone before believing a
+full-suite failure.**
+
+**Four integration suites fail *teardown only*, and four `gitRemote` tests fail for a sandbox reason.** Both
+groups are recorded in `.workbuddy-ai/memory/MEMORY.md` under "Measuring the suite". `fileOps`,
+`importExport`, `importExportBlob` and `importExportFormats` each report `Hook timed out in 20000ms` in their
+`afterAll` while **all 116 of their tests pass**; `gitRemote`'s four assert a remote ref that `git push` does
+not write in this shell. Neither is attributable to any change — `grep -rn "packages/gui" tests/integration/`
+matches only a comment, so no integration test can even load the GUI.
 
 **The same move rewrote every e2e spec that drove a Save / Update button — `requests-rest`, `mocks-rest`,
 `proxy-rules`, `mappings`, `environments`, `app` and `happy-path-workflows`.** Those are **the user's to run**,

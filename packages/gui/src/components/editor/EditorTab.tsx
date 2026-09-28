@@ -1,18 +1,20 @@
 import React from "react";
-import { Group as PanelGroup, Panel, Separator as ResizeHandle } from "react-resizable-panels";
 import { Environment } from "@/types";
-import { strings } from "@/lib/strings";
 import { KVRow } from "@/lib/utils";
 import { BodyMode } from "@/lib/bodyUtils";
-import { usePersistedState } from "@/hooks/usePersistedState";
 
+import { SplitPane, useSplitOrientation, type SplitOrientation } from "./TabPage";
 import RequestPane from "./RequestPane";
 import ResponsePane from "./ResponsePane";
 
-export type EditorMode = "request" | "mock";
+/**
+ * Re-exported so the module's public shape is unchanged. The type now lives in `TabPage.tsx`,
+ * beside the `SplitPane` and the toggle that consume it — one orientation vocabulary for all five
+ * tab pages rather than one per protocol.
+ */
+export type { SplitOrientation };
 
-/** Orientation of the request/response split pane. */
-export type SplitOrientation = "horizontal" | "vertical";
+export type EditorMode = "request" | "mock";
 
 export interface RequestPaneProps {
   reqTab: "params" | "headers" | "body" | "pre-script";
@@ -84,37 +86,20 @@ export interface EditorTabProps extends RequestPaneProps, ResponsePaneProps {
   activeEnv?: Environment | null;
 }
 
-const STATUS_OPTIONS = [
-  { v: 200, label: strings.editor.status200 },
-  { v: 201, label: strings.editor.status201 },
-  { v: 204, label: strings.editor.status204 },
-  { v: 301, label: strings.editor.status301 },
-  { v: 302, label: strings.editor.status302 },
-  { v: 304, label: strings.editor.status304 },
-  { v: 400, label: strings.editor.status400 },
-  { v: 401, label: strings.editor.status401 },
-  { v: 403, label: strings.editor.status403 },
-  { v: 404, label: strings.editor.status404 },
-  { v: 405, label: strings.editor.status405 },
-  { v: 409, label: strings.editor.status409 },
-  { v: 422, label: strings.editor.status422 },
-  { v: 429, label: strings.editor.status429 },
-  { v: 500, label: strings.editor.status500 },
-  { v: 502, label: strings.editor.status502 },
-  { v: 503, label: strings.editor.status503 },
-];
-
+/**
+ * The REST editor's two panes, in the shared split.
+ *
+ * This component used to own the orientation itself, with its own `usePersistedState` call and its
+ * own `PanelGroup`. Both now come from `TabPage.tsx`, which is what lets the GraphQL, gRPC and SOAP
+ * pages offer the same toggle without each growing a second copy of the resize handle's classes.
+ *
+ * `mode === "mock"` still returns the response pane alone — a mock has no request to send, so there
+ * is no second pane and nothing to orient. It is deliberately *not* wrapped in a `SplitPane`; a
+ * single-panel `PanelGroup` would add a resize handle for a divider that cannot move.
+ */
 export default function EditorTab(props: EditorTabProps) {
   const { mode, activeEnv = null } = props;
-
-  const [splitOrientation, setSplitOrientation] = usePersistedState<SplitOrientation>(
-    "bifurc:editor-split-orientation",
-    "horizontal",
-    (v) => (v === "vertical" ? "vertical" : "horizontal"),
-  );
-  const toggleSplitOrientation = () =>
-    setSplitOrientation((o) => (o === "horizontal" ? "vertical" : "horizontal"));
-  const isHorizontal = splitOrientation === "horizontal";
+  const [splitOrientation, toggleSplitOrientation] = useSplitOrientation();
 
   if (mode === "mock") {
     return (
@@ -125,29 +110,17 @@ export default function EditorTab(props: EditorTabProps) {
   }
 
   return (
-    <PanelGroup
-      key={splitOrientation}
+    <SplitPane
       orientation={splitOrientation}
-      className="flex flex-1 min-h-0 overflow-hidden"
-    >
-      <Panel defaultSize={isHorizontal ? 40 : 50} minSize={20} className="flex flex-col overflow-hidden">
-        <RequestPane {...props} activeEnv={activeEnv} />
-      </Panel>
-      <ResizeHandle
-        className={
-          isHorizontal
-            ? "w-1 bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-col-resize flex-shrink-0"
-            : "h-1 w-full bg-border hover:bg-signal/40 active:bg-signal/60 transition-colors cursor-row-resize flex-shrink-0"
-        }
-      />
-      <Panel defaultSize={isHorizontal ? 60 : 50} minSize={20} className="flex flex-col overflow-hidden">
+      left={<RequestPane {...props} activeEnv={activeEnv} />}
+      right={
         <ResponsePane
           {...props}
           activeEnv={activeEnv}
           splitOrientation={splitOrientation}
           onToggleSplitOrientation={toggleSplitOrientation}
         />
-      </Panel>
-    </PanelGroup>
+      }
+    />
   );
 }
