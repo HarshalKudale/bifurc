@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useCallback } from "react";
 import { AppConfig, SavedRequest, MockRule, Environment, ApiProtocol } from "@/types";
 import CollectionRunner from "@/components/rest/CollectionRunner";
+import { CollectionRunReport } from "@/lib/collectionRunner";
 import ProtocolSelectorTab from "@/components/editor/ProtocolSelectorTab";
 import { SidebarLayout } from "@/components/ui";
 import { strings } from "@/lib/strings";
@@ -102,6 +103,18 @@ export default function RequestsPanel({
 
   useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab: openNewTabInFolder });
 
+  /**
+   * Persist a finished run into the collection folder's `.runs/` history. `useCollectionRunner` calls
+   * this once per run, after the report is assembled — so a run is never left only in component state.
+   * Restored alongside the runner tab's other props in the `b594c51` regression below.
+   */
+  const handleSaveRunnerReport = useCallback(
+    async (report: CollectionRunReport) => {
+      await window.api.saveRunnerReport(config.activeWorkspaceId, report);
+    },
+    [config.activeWorkspaceId],
+  );
+
   const mainContent = (
     <div className="flex flex-col flex-1 overflow-hidden min-w-0 h-full">
       <RequestTabs
@@ -132,6 +145,14 @@ export default function RequestsPanel({
           openTabs.map((tabId) => {
             if (isRunner(tabId)) {
               const folderId = runnerFolderIds[tabId];
+              const folder = folders.find((f) => f.id === folderId);
+              /**
+               * The collection is the folder's **REST** requests, and only its direct children —
+               * `runCollection` executes them through `replayRequest`, and the shared folder tree is
+               * also home to the GraphQL/gRPC/SOAP kinds, which it cannot run. This is the filter the
+               * pre-`b594c51` call site used (`restRequests.filter((r) => r.folderId === fId)`).
+               */
+              const folderRequests = (config.requests ?? []).filter((r) => r.folderId === folderId);
               return (
                 <div
                   key={tabId}
@@ -141,9 +162,12 @@ export default function RequestsPanel({
                   {folderId && (
                     <CollectionRunner
                       folderId={folderId}
-                      folders={folders}
+                      folderName={folder?.name ?? "Collection"}
+                      requests={folderRequests}
                       activeEnv={activeEnv}
+                      wsId={config.activeWorkspaceId}
                       onClose={() => closeTab(tabId)}
+                      onSaveReport={handleSaveRunnerReport}
                     />
                   )}
                 </div>
