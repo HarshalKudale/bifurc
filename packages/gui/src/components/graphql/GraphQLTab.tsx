@@ -2,8 +2,11 @@ import React, {
     forwardRef, useImperativeHandle, useReducer, useCallback, useEffect, useState,
 } from "react";
 import { SavedGraphQLRequest, Folder, Environment } from "@/types";
-import EditorTitleBar from "@/components/editor/EditorTitleBar";
-import { BottomBar, TabStrip } from "@/components/editor/RequestTab";
+import { BottomBar, TabStrip, UrlBar, UrlBarVerb } from "@/components/editor/RequestTab";
+import {
+    TabPage, TabTitleBar, TabToolbar, TabToolbarRow, SplitPane, useSplitOrientation,
+    ResponseStripSuffix, PROTOCOL_TONE,
+} from "@/components/editor/TabPage";
 import {
     graphqlTabReducer, initGraphQLState, stateToRequestPayload,
     stateToDraft, isDraftEmpty,
@@ -14,7 +17,6 @@ import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import CodeEditor from "@/components/common/CodeEditor";
 import HeaderTable from "@/components/common/HeaderTable";
 import { KVRow, mkRowId, headersToRows, rowsToHeaders } from "@/lib/utils";
-import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { strings } from "@/lib/strings";
 import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import SchemaExplorer from "@/components/graphql/SchemaExplorer";
@@ -99,11 +101,22 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         onDirtyChange,
     });
 
+    // The split is shared with every other protocol tab, and persisted under one global key.
+    const [splitOrientation, toggleSplitOrientation] = useSplitOrientation();
+
     // -- Request pane sub-tabs ----------------------------------------------
 
     type ReqSubTab = "query" | "variables" | "headers" | "pre-script" | "post-script" | "schema";
     const [reqSubTab, setReqSubTab] = useState<ReqSubTab>("query");
-    const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
+
+    // -- Response pane sub-tabs ---------------------------------------------
+    //
+    // New, and layout-only: `resHeaders` has been in the reducer since the beginning — `handleSend`
+    // dispatches `headers: result.headers` on every successful call — it simply had nowhere to be
+    // shown. REST, gRPC and SOAP all expose the response headers, so a GraphQL tab that could not
+    // was the odd one out rather than the simple one.
+    type ResSubTab = "body" | "headers";
+    const [resSubTab, setResSubTab] = useState<ResSubTab>("body");
 
     const headerRows: KVRow[] = headersToRows(state.headers);
 
@@ -163,6 +176,11 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         { id: "schema", label: strings.graphql.tabSchema },
     ];
 
+    const resTabs: { id: ResSubTab; label: string }[] = [
+        { id: "body", label: strings.editor.response },
+        { id: "headers", label: strings.editor.resHeaders },
+    ];
+
     // -- Format response body -----------------------------------------------
 
     const formattedResBody = (() => {
@@ -172,47 +190,45 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
     // -- Render -------------------------------------------------------------
 
     return (
-        <div className="flex flex-col h-full overflow-hidden">
-            <EditorTitleBar
-                label={label ?? "GRAPHQL"}
-                namePlaceholder={strings.graphql.requestNamePlaceholder}
+        <TabPage>
+            {/* Band 1 — title bar. Was `EditorTitleBar`; the chip now matches the tab strip's own
+                badge, so the tab and its page agree about which protocol this is. */}
+            <TabTitleBar
+                chip={label ?? "GQL"}
+                tone={PROTOCOL_TONE.graphql}
                 name={state.name}
+                namePlaceholder={strings.graphql.requestNamePlaceholder}
                 onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}
-                onClose={onClose}
             />
 
-            {/* URL bar */}
-            <div className="px-4 py-2.5 border-b border-border flex-shrink-0 flex items-center gap-2">
-                <div
-                    className="flex items-stretch rounded border border-border focus-within:border-signal transition-colors overflow-hidden flex-1"
-                    style={{ background: "var(--c-card)" }}
-                >
-                    <span className="bg-surface-2 border-r border-border text-xs font-bold font-mono px-3 py-2.5 flex-shrink-0 text-signal">
-                        {strings.graphql.methodPost}
-                    </span>
-                    <input
-                        className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-foreground outline-none placeholder:text-muted-foreground min-w-0"
-                        placeholder="https://api.example.com/graphql"
-                        value={state.endpointUrl}
-                        onChange={(e) => dispatch({ type: "SET_FIELD", field: "endpointUrl", value: e.target.value })}
-                        onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+            {/* Band 2 — address row. Was a hand-rolled copy of `UrlBar` with a hard-coded POST badge;
+                it is now literally `UrlBar` with that badge passed as `leading`, so the input, the
+                helper buttons and the Send button are the same elements REST uses. */}
+            <TabToolbar>
+                <TabToolbarRow>
+                    <UrlBar
+                        bare
+                        leading={<UrlBarVerb verb={strings.graphql.methodPost} />}
+                        url={state.endpointUrl}
+                        onUrlChange={(v) => dispatch({ type: "SET_FIELD", field: "endpointUrl", value: v })}
+                        urlPlaceholder="https://api.example.com/graphql"
+                        actionLabel={strings.server.send}
+                        actionLoadingLabel={strings.graphql.sending}
+                        actionLoading={state.sending}
+                        actionDisabled={!state.endpointUrl.trim()}
+                        onAction={handleSend}
+                        onEnter={handleSend}
+                        activeEnv={activeEnv}
                     />
-                </div>
-                <button
-                    onClick={handleSend}
-                    disabled={state.sending || !state.endpointUrl.trim()}
-                    className="px-4 py-2.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex-shrink-0 flex items-center gap-1.5"
-                >
-                    {state.sending
-                        ? <><span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />{strings.graphql.sending}</>
-                        : strings.server.send}
-                </button>
-            </div>
+                </TabToolbarRow>
+            </TabToolbar>
 
-            {/* Split panes */}
-            <PanelGroup orientation="horizontal" className="flex-1 overflow-hidden">
-                {/* Left pane */}
-                <Panel defaultSize={50} minSize={25}>
+            {/* Band 3 — the split. The orientation was hard-coded `horizontal` here, so this tab was
+                one of the three you could not stack. */}
+            <SplitPane
+                orientation={splitOrientation}
+                minSize={25}
+                left={
                     <div className="flex flex-col h-full overflow-hidden">
                         <TabStrip
                             tabs={reqTabs}
@@ -268,40 +284,51 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                             )}
                         </div>
                     </div>
-                </Panel>
-
-                <PanelResizeHandle className="w-px bg-border hover:bg-signal transition-colors cursor-col-resize" />
-
-                {/* Right pane */}
-                <Panel defaultSize={50} minSize={25}>
+                }
+                right={
                     <div className="flex flex-col h-full overflow-hidden">
-                        {/* Response header bar */}
-                        <div className="flex items-center gap-3 px-4 py-2 border-b border-border flex-shrink-0 bg-background/40">
-                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{strings.graphql.response}</span>
-                            {state.resStatus !== null && (
-                                <>
-                                    <span className={`text-xs font-mono font-bold ${state.resStatus < 300 ? "text-success" : state.resStatus < 400 ? "text-amber" : "text-destructive"}`}>
-                                        {state.resStatus}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">{state.resDuration}ms</span>
-                                </>
-                            )}
-                            {state.resError && <span className="text-xs text-destructive">{state.resError}</span>}
-                        </div>
+                        {/* The response had its own bespoke header bar with the status code inside it.
+                            It is now the same TabStrip every other protocol uses, with the status and
+                            the layout toggle in the suffix — see `ResponseStripSuffix`. */}
+                        <TabStrip
+                            tabs={resTabs}
+                            active={resSubTab}
+                            onChange={(t) => setResSubTab(t as ResSubTab)}
+                            suffix={
+                                <ResponseStripSuffix
+                                    orientation={splitOrientation}
+                                    onToggleOrientation={toggleSplitOrientation}
+                                    status={state.resStatus}
+                                    durationMs={state.resDuration}
+                                />
+                            }
+                        />
                         <div className="flex-1 overflow-hidden">
-                            <CodeEditor
-                                value={formattedResBody}
-                                language="json"
-                                readOnly
-                                placeholder={strings.graphql.responsePlaceholder}
-                                className="h-full"
-                            />
+                            {state.resError && (
+                                <div className="p-4">
+                                    <div className="px-3 py-2 rounded border border-destructive/30 bg-destructive/5 text-xs text-destructive font-mono">
+                                        {state.resError}
+                                    </div>
+                                </div>
+                            )}
+                            {!state.resError && resSubTab === "body" && (
+                                <CodeEditor
+                                    value={formattedResBody}
+                                    language="json"
+                                    readOnly
+                                    placeholder={strings.graphql.responsePlaceholder}
+                                    className="h-full"
+                                />
+                            )}
+                            {!state.resError && resSubTab === "headers" && (
+                                <HeaderTable rows={headersToRows(state.resHeaders)} onChange={() => { }} readOnly />
+                            )}
                         </div>
                     </div>
-                </Panel>
-            </PanelGroup>
+                }
+            />
 
-            {/* Bottom bar — Cancel and Create exist only for a draft: an existing entity
+            {/* Band 4 — Bottom bar. Cancel and Create exist only for a draft: an existing entity
                 autosaves every edit and has Revert for undo. */}
             <BottomBar
                 folders={folders}
@@ -327,7 +354,7 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                 syncTitle={syncTitle}
                 revertTitle={revertTitle}
             />
-        </div>
+        </TabPage>
     );
 });
 
