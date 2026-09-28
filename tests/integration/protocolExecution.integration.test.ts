@@ -14,7 +14,14 @@
  * It drives the REAL registered IPC handlers against REAL local HTTP servers and
  * asserts the bytes the user would see in the response pane. The only things mocked
  * are Electron itself (there is no Electron in a Vitest process) and `@/main`
- * (`coreHandlers` imports `updateTrayMenu` from it).
+ * (the engine half of the shell's `coreHandlers` used to import `updateTrayMenu` from it).
+ *
+ * **The nine protocol-client cases now drive the registry, not a channel.** P6 stage 3b
+ * deleted `graphql:introspect` / `graphql:execute` / `soap:execute` / `soap:fetchWsdl` and
+ * the five `grpc:*` channels — each was a one-line `commandRegistry.invoke()` adapter with
+ * no behaviour of its own — so those cases call `invokeCommand("<command>", params)`
+ * instead. See that helper's docblock for the one thing the deletion could have got wrong
+ * silently (the argument shape). Every other case here still drives a live channel.
  *
  * Runs in the integration project: it binds real sockets and the workspace fixture
  * swaps a process-global data-root override, hence `fileParallelism: false`.
@@ -24,6 +31,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as http from "http";
 import * as zlib from "zlib";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
+import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { bus } from "@bifurc/engine/eventBus";
 
 // ── Capture the handlers the features register ────────────────────────────────
 // Same technique as tests/ipc/handlers.test.ts and applications.integration.test.ts:
@@ -47,16 +56,118 @@ vi.mock("electron", () => ({
   },
 }));
 
-// `coreHandlers` imports `updateTrayMenu` from `@/main`; importing the real main
-// process module would try to build windows and a tray.
+// The engine half of the shell's `coreHandlers` used to import `updateTrayMenu` from `@/main` —
+// that call became a `settings.changed` bus emission in P2 and the file is now `coreKinds.ts`, so
+// nothing under test imports it any more. The mock stays because a transitively imported real `main`
+// would try to build windows and a tray.
 vi.mock("@/main", () => ({ updateTrayMenu: vi.fn() }));
 
-/** Invoke a registered handler the way ipcMain would (first arg is the event). */
+/**
+ * Invoke a registered handler the way ipcMain would (first arg is the event), with the P6 reduction's
+ * deleted channels translated back to the commands that replaced them.
+ *
+ * Two groups reached this suite, and both are handled here rather than in the call sites because the
+ * call sites are the *evidence* — they still read as `invoke("request:replay", …)`, which is precisely
+ * the shell signature the renderer used, and rewriting twelve of them into `commandRegistry.invoke`
+ * would leave nothing in the file that records what was deleted.
+ *
+ *   - **`src/ipc/handlers/coreHandlers.ts`** — the reduction's sixth group (`plan/07`
+ *     §5b-septendecies, 2026-09-21) deleted `config:get` and `request:replay` and the rest of its
+ *     seventeen. This suite drives `request:replay` (eleven call sites) and `config:get` transitively
+ *     through the REST-send setup.
+ *   - **the step-3b `*Handlers.ts` → `*Kinds.ts` renames** deleted `healthbar:checkUrl` /
+ *     `healthbar:getServices` / `healthbar:saveServices` and `entity:load` from this suite's path too.
+ *
+ * The translation keeps the **positional** shape the channels used (`healthbar:saveServices` took
+ * `(workspaceId, services)`, `entity:load` took `(workspaceId, kind, id)`) and maps into each command's
+ * named payload. The one entry that is not a plain rename is `entity:load`: the channel's `kind` was a
+ * **protocol** name and the command translates it (`toEngineKind`), so the field is passed straight
+ * through and the translation happens inside the engine — see `coreCommands.ts:98`.
+ */
+const DELETED_CHANNELS: Record<string, (args: any[]) => { command: string; payload: any }> = {
+  "config:get": () => ({ command: "config.get", payload: {} }),
+  // `request:replay` is the one entry here whose channel took a **positional tuple of four** rather than
+  // a single object — `(method, url, headers, body)` — and the command takes one named payload. A first
+  // draft wrote `([params]) => ({ command: "request.replay", payload: params })`, which passed the method
+  // string through as the whole payload and failed as `Invalid payload for command "request.replay":
+  // expected object, received string`. The error arrives as a thrown `EngineError` from
+  // `registry.invoke`'s `safeParse`, i.e. it surfaces in the middle of the *test*, not at the call.
+  "request:replay": ([method, url, headers, body]) =>
+    ({ command: "request.replay", payload: { method, url, headers, body } }),
+  // `config:save` **does** need an entry, and the reason is worth keeping: §5c moved the channel's body
+  // into `configCommands.ts`, so the channel name has been dead since P2 — but the call sites' *shape*
+  // is still the channel's, i.e. one plain object (`invoke("config:save", config)`), and the command
+  // takes `{ config }` rather than the config itself (`ConfigSaveParams`). So this is the case where a
+  // name that predates the reduction still needs a translation line added by it.
+  "config:save": ([config]) => ({ command: "config.save", payload: { config } }),
+  "entity:load": ([workspaceId, kind, id]) => ({ command: "entity.load", payload: { workspaceId, kind, id } }),
+  "healthbar:checkUrl": ([url]) => ({ command: "healthbar.checkUrl", payload: { url } }),
+  "healthbar:getServices": ([workspaceId]) => ({ command: "healthbar.getServices", payload: { workspaceId } }),
+  "healthbar:saveServices": ([workspaceId, services]) =>
+    ({ command: "healthbar.saveServices", payload: { workspaceId, services } }),
+};
+
 function invoke<T = any>(channel: string, ...args: any[]): T {
+  const deleted = DELETED_CHANNELS[channel];
+  if (deleted) {
+    const { command, payload } = deleted(args);
+    return commandRegistry.invoke(command as never, payload, { bus }) as T;
+  }
   const fn = handlers.get(channel);
   if (!fn) throw new Error(`No handler registered for "${channel}"`);
   return fn({}, ...args) as T;
 }
+
+/**
+ * Invoke a registered **command** directly — the replacement for `invoke("<channel>", …)` on the nine
+ * protocol-client channels, which were deleted in P6 step 3 (`plan/07` §5b-ter).
+ *
+ * They were **not all the same shape**, and that is why `params` is explicit here rather than forwarded
+ * from a rest-args list: five were literal passthroughs (`graphql.introspect`, `graphql.execute`,
+ * `soap.execute`, `grpc.execute`, `grpc.reflect`), `soap:fetchWsdl` **wrapped** its bare `url` argument
+ * as `{ url }`, and the three argument-less gRPC channels passed `{}` while ignoring whatever they were
+ * called with. So each call site below passes the command's real params object — which is precisely what
+ * the channel produced — and the default covers the three that dropped their arguments.
+ *
+ * This is the one thing the deletion could have got wrong silently: a channel whose body is a single
+ * `commandRegistry.invoke()` has no behaviour of its own to lose, *except* the argument shape, and that
+ * shape is now visible at the call site instead of hidden inside a deleted adapter.
+ */
+const invokeCommand = <T = any>(command: string, params: unknown = {}) =>
+  commandRegistry.invoke(command, params, { bus }) as Promise<T>;
+
+/**
+ * The collapsed `entity.*` commands, driven directly — the per-kind channels below are the step-3
+ * reduction's target (`plan/07` §5b-ter) and each was only ever a one-line `commandRegistry.invoke()`
+ * adapter, so calling the command is what the channel did, minus the channel.
+ *
+ * **`create` unwraps `{id, entity}`, and that is not optional.** The channel unwrapped it
+ * (`entityCrudFactory.ts:72`) and every assertion below reads the created entity's own fields; without
+ * the unwrap they would compare against the envelope and pass on `id` alone. `list` unwraps `{entities}`
+ * for the same reason. `plan/07` §5b-quater is the same defect one layer up, on the client.
+ *
+ * Kinds are the **protocol** names, which is what the channel sent after `toProtocolKind()`. Only
+ * `rules`/`sockets` are renamed by that map, so the kinds used here pass through unchanged.
+ */
+const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
+  const r: any = await commandRegistry.invoke(
+    "entity.create",
+    // `workspaceId` is passed through as-is, not defaulted: the channel sent `entity.workspaceId`
+    // (usually `undefined`), and `entity.create` then falls back to the **active** workspace. Defaulting
+    // it here would pin these cases to `TEST_WS` and hide a workspace-resolution regression.
+    { kind, entity, workspaceId: entity.workspaceId },
+    { bus },
+  );
+  return ("entity" in r ? r.entity : r) as T;
+};
+const updateEntity = (kind: string, entity: any) =>
+  commandRegistry.invoke("entity.update", { kind, entity }, { bus });
+const deleteEntity = (kind: string, id: string) =>
+  commandRegistry.invoke("entity.delete", { kind, id }, { bus });
+const listEntities = async <T = any>(kind: string): Promise<T[]> => {
+  const r: any = await commandRegistry.invoke("entity.list", { kind, workspaceId: TEST_WS }, { bus });
+  return r.entities as T[];
+};
 
 const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
 const unb64 = (s: string) => Buffer.from(s, "base64").toString("utf-8");
@@ -204,15 +315,57 @@ beforeAll(async () => {
     res.end('<?xml version="1.0"?><definitions name="TestService"/>');
   });
 
-  const { registerCoreHandlers } = await import("@/ipc/handlers/coreHandlers");
-  const { registerGraphqlHandlers } = await import("@/ipc/handlers/graphqlHandlers");
-  const { registerSoapHandlers } = await import("@/ipc/handlers/soapHandlers");
-  const { registerGrpcHandlers } = await import("@/ipc/handlers/grpcHandlers");
+  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerGraphqlKinds } = await import("@bifurc/engine/store/kinds/graphqlKinds");
+  const { registerSoapKinds } = await import("@bifurc/engine/store/kinds/soapKinds");
+  const { registerGrpcKinds } = await import("@bifurc/engine/store/kinds/grpcKinds");
+  // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine — and the
+  // reduction's sixth group then deleted that file's channels and renamed it to `coreKinds.ts`
+  // (`plan/07` §5b-septendecies). `registerCoreKinds()` is now the shell's `environments` kind and
+  // nothing else; the *commands* still need wiring, which is the line below.
+  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  // P6 §5c slice 4: the nine protocol-client commands left the three handler files' module scope as
+  // well. Every channel in those files *delegates* through `commandRegistry.invoke()`, so without
+  // these calls the channels below exist with nothing behind them — a `No handler registered` at
+  // invocation time, which is why the suite is green-looking either way until it isn't.
+  const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
+  const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
+  const { registerGrpcCommands } = await import("@bifurc/engine/protocols/grpcCommands");
+  // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
+  // All three handler groups registered below reach that factory, so without this call their channels
+  // exist with nothing behind them.
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  // `request.replay` and the three `healthbar.*` commands are registered by `miscCommands`, and until the
+  // reduction's sixth group this suite never had to wire it: `coreHandlers.ts`'s `request:replay` channel
+  // *was* the registration, so deleting that channel removed this suite's route to a command it drives
+  // eleven times. Without this line the failure is `[INTERNAL] No handler registered for command
+  // "request.replay"` — a routed-surface failure, not a transport one, and it surfaces as an envelope
+  // error exactly like the `soap.execute` case below. The `healthbar:*` channels belong to the step-3b
+  // `*Kinds.ts` renames and were already gone; they are in the fixture table for the same reason.
+  //
+  // The general rule this is the second instance of today (the spike needed `registerServerCommands()`
+  // for the same reason): **a command whose only registration came from a handler file the reduction
+  // deleted must be wired explicitly by every suite that drives it.** `src/ipc/handlers.ts` is the
+  // authority for the full set — compare against its `register*Commands()` calls, not against the
+  // previous version of this list.
+  const { registerMiscCommands } = await import("@bifurc/engine/miscCommands");
+  // `config.save` is the other command this suite drives by the name of a channel that §5c already
+  // deleted — `invoke("config:save", …)` resolves through the `handlers.get()` fallback to a plain
+  // command, so it needs its registering module wired rather than a table entry.
+  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
 
-  registerCoreHandlers();
-  registerGraphqlHandlers();
-  registerSoapHandlers();
-  registerGrpcHandlers();
+  registerCoreKinds();
+  registerCoreCommands(commandRegistry);
+  registerMiscCommands(commandRegistry);
+  registerConfigCommands(commandRegistry);
+  registerGraphqlCommands(commandRegistry);
+  registerSoapCommands(commandRegistry);
+  registerGrpcCommands(commandRegistry);
+  registerEntityCrudCommands(commandRegistry);
+  registerGraphqlKinds();
+  registerSoapKinds();
+  registerGrpcKinds();
 });
 
 afterAll(async () => {
@@ -319,9 +472,9 @@ describe("request:replay — REST Send", () => {
 
 // ── GraphQL ───────────────────────────────────────────────────────────────────
 
-describe("graphql:execute — GraphQL Send", () => {
+describe("graphql.execute — GraphQL Send", () => {
   it("POSTs a JSON body and returns status, headers, body and durationMs", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "", operationName: "",
     });
 
@@ -333,7 +486,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("sets content-type: application/json and a byte-accurate content-length", async () => {
-    await invoke("graphql:execute", {
+    await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "", operationName: "",
     });
 
@@ -344,7 +497,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("parses the variables JSON string into an object and forwards operationName", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`,
       headers: {},
       query: "query ($id: ID!) { user(id: $id) { name } }",
@@ -358,7 +511,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("omits variables and operationName when they are blank", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "   ", operationName: "",
     });
 
@@ -368,7 +521,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("ignores malformed variables JSON instead of failing the request", async () => {
-    const res = await invoke("graphql:execute", {
+    const res = await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: {}, query: "query { me }", variables: "{not json", operationName: "",
     });
 
@@ -377,7 +530,7 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 
   it("forwards custom headers such as an auth token", async () => {
-    await invoke("graphql:execute", {
+    await invokeCommand("graphql.execute", {
       url: `${gql.origin}/graphql`, headers: { authorization: "Bearer t" },
       query: "query { me }", variables: "", operationName: "",
     });
@@ -386,9 +539,9 @@ describe("graphql:execute — GraphQL Send", () => {
   });
 });
 
-describe("graphql:introspect", () => {
+describe("graphql.introspect", () => {
   it("POSTs the introspection query and returns the raw response", async () => {
-    const res = await invoke("graphql:introspect", { url: `${gql.origin}/graphql`, headers: {} });
+    const res = await invokeCommand("graphql.introspect", { url: `${gql.origin}/graphql`, headers: {} });
 
     expect(res.ok).toBe(true);
     expect(res.sdl).toContain("__schema");
@@ -399,7 +552,7 @@ describe("graphql:introspect", () => {
 
   it("returns { ok:false, error } instead of throwing when the server is down", async () => {
     const port = await deadPort();
-    const res = await invoke("graphql:introspect", { url: `http://127.0.0.1:${port}/graphql`, headers: {} });
+    const res = await invokeCommand("graphql.introspect", { url: `http://127.0.0.1:${port}/graphql`, headers: {} });
 
     expect(res.ok).toBe(false);
     expect(typeof res.error).toBe("string");
@@ -408,11 +561,11 @@ describe("graphql:introspect", () => {
 
 // ── SOAP ──────────────────────────────────────────────────────────────────────
 
-describe("soap:execute — SOAP Send", () => {
+describe("soap.execute — SOAP Send", () => {
   const envelope = "<soap:Envelope><soap:Body><GetUser><id>1</id></GetUser></soap:Body></soap:Envelope>";
 
   it("POSTs the envelope with text/xml and the SOAPAction header", async () => {
-    const res = await invoke("soap:execute", {
+    const res = await invokeCommand("soap.execute", {
       endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser", headers: {}, body: envelope,
     });
 
@@ -429,7 +582,7 @@ describe("soap:execute — SOAP Send", () => {
 
   it("uses the UTF-8 byte length for content-length, not the string length", async () => {
     const unicode = "<soap:Envelope><soap:Body>✓ Ünïcode — ☕</soap:Body></soap:Envelope>";
-    await invoke("soap:execute", { endpointUrl: `${soap.origin}/ws`, soapAction: "", headers: {}, body: unicode });
+    await invokeCommand("soap.execute", { endpointUrl: `${soap.origin}/ws`, soapAction: "", headers: {}, body: unicode });
 
     const seen = soap.requests.at(-1)!;
     // Guard the premise: the fixture must actually be multi-byte.
@@ -439,7 +592,7 @@ describe("soap:execute — SOAP Send", () => {
   });
 
   it("omits SOAPAction when blank and merges custom headers", async () => {
-    await invoke("soap:execute", {
+    await invokeCommand("soap.execute", {
       endpointUrl: `${soap.origin}/ws`, soapAction: "", headers: { "x-tenant": "acme" }, body: envelope,
     });
 
@@ -449,7 +602,7 @@ describe("soap:execute — SOAP Send", () => {
   });
 
   it("reports durationMs", async () => {
-    const res = await invoke("soap:execute", {
+    const res = await invokeCommand("soap.execute", {
       endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser", headers: {}, body: envelope,
     });
 
@@ -460,14 +613,14 @@ describe("soap:execute — SOAP Send", () => {
   it("rejects when the endpoint is unreachable", async () => {
     const port = await deadPort();
     await expect(
-      invoke("soap:execute", { endpointUrl: `http://127.0.0.1:${port}/ws`, soapAction: "", headers: {}, body: envelope }),
+      invokeCommand("soap.execute", { endpointUrl: `http://127.0.0.1:${port}/ws`, soapAction: "", headers: {}, body: envelope }),
     ).rejects.toThrow();
   });
 });
 
-describe("soap:fetchWsdl", () => {
+describe("soap.fetchWsdl", () => {
   it("GETs the WSDL and returns its content", async () => {
-    const res = await invoke("soap:fetchWsdl", `${wsdl.origin}/svc?wsdl`);
+    const res = await invokeCommand("soap.fetchWsdl", { url: `${wsdl.origin}/svc?wsdl` });
 
     expect(res.ok).toBe(true);
     expect(res.content).toContain("definitions");
@@ -477,7 +630,7 @@ describe("soap:fetchWsdl", () => {
   });
 
   it("returns { ok:false, error } when the WSDL cannot be fetched", async () => {
-    const res = await invoke("soap:fetchWsdl", "http://127.0.0.1:1/svc?wsdl");
+    const res = await invokeCommand("soap.fetchWsdl", { url: "http://127.0.0.1:1/svc?wsdl" });
 
     expect(res.ok).toBe(false);
     expect(typeof res.error).toBe("string");
@@ -489,8 +642,8 @@ describe("soap:fetchWsdl", () => {
 // change to a test rather than a silent behaviour swap.
 
 describe("grpc — current (unimplemented) contract", () => {
-  it("grpc:execute reports the runtime is not configured instead of throwing", async () => {
-    const res = await invoke("grpc:execute", {
+  it("grpc.execute reports the runtime is not configured instead of throwing", async () => {
+    const res = await invokeCommand("grpc.execute", {
       serverAddress: "127.0.0.1:50051", serviceName: "S", methodName: "M",
       requestBody: "{}", metadata: {}, protoFileId: null, useReflection: false,
     });
@@ -499,21 +652,23 @@ describe("grpc — current (unimplemented) contract", () => {
     expect(res.error).toMatch(/not yet configured/i);
   });
 
-  it("grpc:reflect reports that reflection is unavailable", async () => {
-    const res = await invoke("grpc:reflect", { serverAddress: "127.0.0.1:50051" });
+  it("grpc.reflect reports that reflection is unavailable", async () => {
+    const res = await invokeCommand("grpc.reflect", { serverAddress: "127.0.0.1:50051" });
 
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/not yet configured/i);
   });
 
-  it("grpc:mockServerStatus defaults to stopped on port 9102", async () => {
-    expect(await invoke("grpc:mockServerStatus")).toEqual({ running: false, port: 9102 });
-  });
-
-  it("grpc:startMockServer is unimplemented while stopMockServer is a no-op success", async () => {
-    expect((await invoke("grpc:startMockServer")).ok).toBe(false);
-    expect(await invoke("grpc:stopMockServer")).toEqual({ ok: true });
-  });
+  /**
+   * `grpc.mockServerStatus`, `grpc.startMockServer` and `grpc.stopMockServer` were pinned here until
+   * 2026-09-25. `plan/17` work item 8 **deleted** all three rather than leaving them `wontfix`, so
+   * there is nothing left to pin: `grpc.execute` and `grpc.reflect` above are now the whole of the
+   * gRPC command surface, and the mock server's port default (`9102`) went with them.
+   *
+   * Deliberately not replaced by an "is now unregistered" assertion — that would pin
+   * `UNKNOWN_COMMAND`, which the registry covers generically, and it would re-introduce the three
+   * command *names* this work item exists to remove.
+   */
 });
 
 // ── Health Bar: add a service, then poll it ───────────────────────────────────
@@ -592,8 +747,8 @@ describe("healthbar — service monitoring", () => {
 // ── Entity CRUD for the protocol panels (happy path, read back off disk) ──────
 
 describe("protocol entity CRUD", () => {
-  it("graphql:addRequest round-trips through entity:load", async () => {
-    const created = await invoke("graphql:addRequest", {
+  it("a graphql request round-trips through entity:load", async () => {
+    const created = await createEntity("graphqlRequests", {
       name: "GetUser", endpointUrl: `${gql.origin}/graphql`, headers: { "x-a": "1" },
       query: "query { me }", variables: "", operationName: "", workspaceId: TEST_WS,
     });
@@ -606,41 +761,49 @@ describe("protocol entity CRUD", () => {
     expect(loaded.entity.headers).toEqual({ "x-a": "1" });
   });
 
-  it("graphql:updateRequest persists the change, graphql:deleteRequest removes it", async () => {
-    const created = await invoke("graphql:addRequest", {
+  it("an edit persists the change and a delete removes it", async () => {
+    const created = await createEntity("graphqlRequests", {
       name: "Temp", endpointUrl: `${gql.origin}/graphql`, headers: {},
       query: "query { a }", variables: "", operationName: "", workspaceId: TEST_WS,
     });
 
-    await invoke("graphql:updateRequest", { ...created, name: "Renamed", query: "query { b }" });
+    await updateEntity("graphqlRequests", { ...created, name: "Renamed", query: "query { b }" });
     const updated = await invoke("entity:load", TEST_WS, "graphqlRequests", created.id);
     expect(updated.entity.name).toBe("Renamed");
     expect(updated.entity.query).toBe("query { b }");
 
-    await invoke("graphql:deleteRequest", created.id);
+    await deleteEntity("graphqlRequests", created.id);
     expect((await invoke("entity:load", TEST_WS, "graphqlRequests", created.id)).ok).toBe(false);
   });
 
-  it("graphql:addMock requires an endpointPattern", async () => {
-    await expect(
-      invoke("graphql:addMock", {
-        name: "m", endpointPattern: "  ", useRegex: false, operationType: "query", operationName: "",
-        responseStatus: 200, responseHeaders: {}, responseBody: "{}", workspaceId: TEST_WS,
-      }),
-    ).rejects.toThrow(/endpointPattern/);
-  });
+  /**
+   * "a graphql mock requires an endpointPattern" stood here until 2026-09-25, when `plan/17` work
+   * item 8 removed the `graphqlMocks` kind.
+   *
+   * It was **not** retargeted to the surviving REST mock, and the reason is worth keeping: this
+   * suite's `beforeAll` registers only `registerCoreKinds()` plus the three *protocol* kind files
+   * (`graphqlKinds` / `soapKinds` / `grpcKinds`) — `registerCrudKinds()` is deliberately not among
+   * them, so `mocks` has never been routable here. The old case passed only because
+   * `registerGraphqlKinds()` registered `graphqlMocks`; now that those three files register no mock
+   * kind at all, an `entity.create({kind:"mocks"})` here fails with
+   * `kind "mocks" is not routed through the CommandRegistry yet` — which is a fact about this
+   * harness, not about mocks.
+   *
+   * The coverage therefore moved to `tests/ipc/handlers.test.ts`'s `entity.create — mocks` block,
+   * which registers through the shell and does reach `crudKinds.ts`'s `validate`.
+   */
 
   it("graphql schemas round-trip through add → list → delete", async () => {
-    const schema = await invoke("graphql:addSchema", { name: "s1", content: "type Query { a: String }", workspaceId: TEST_WS });
+    const schema = await createEntity("graphqlSchemas", { name: "s1", content: "type Query { a: String }", workspaceId: TEST_WS });
 
-    expect((await invoke("graphql:listSchemas")).map((s: any) => s.id)).toContain(schema.id);
+    expect((await listEntities("graphqlSchemas")).map((s: any) => s.id)).toContain(schema.id);
 
-    await invoke("graphql:deleteSchema", schema.id);
-    expect((await invoke("graphql:listSchemas")).map((s: any) => s.id)).not.toContain(schema.id);
+    await deleteEntity("graphqlSchemas", schema.id);
+    expect((await listEntities("graphqlSchemas")).map((s: any) => s.id)).not.toContain(schema.id);
   });
 
   it("soap requests round-trip through add → entity:load", async () => {
-    const created = await invoke("soap:addRequest", {
+    const created = await createEntity("soapRequests", {
       name: "GetUser", endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser",
       headers: {}, body: "<x/>", workspaceId: TEST_WS,
     });
@@ -651,31 +814,31 @@ describe("protocol entity CRUD", () => {
   });
 
   it("soap WSDLs round-trip through add → list → delete", async () => {
-    const doc = await invoke("soap:addWsdl", { name: "svc", content: "<definitions/>", workspaceId: TEST_WS });
+    const doc = await createEntity("wsdls", { name: "svc", content: "<definitions/>", workspaceId: TEST_WS });
 
-    expect((await invoke("soap:listWsdls")).map((w: any) => w.id)).toContain(doc.id);
+    expect((await listEntities("wsdls")).map((w: any) => w.id)).toContain(doc.id);
 
-    await invoke("soap:deleteWsdl", doc.id);
-    expect((await invoke("soap:listWsdls")).map((w: any) => w.id)).not.toContain(doc.id);
+    await deleteEntity("wsdls", doc.id);
+    expect((await listEntities("wsdls")).map((w: any) => w.id)).not.toContain(doc.id);
   });
 
-  it("grpc:addRequest requires serviceName and methodName", async () => {
+  it("a grpc request requires serviceName and methodName", async () => {
     const base = {
       name: "r", serverAddress: "127.0.0.1:50051", requestBody: "{}", metadata: {},
       protoFileId: null, useReflection: false, streamingType: "unary", workspaceId: TEST_WS,
     };
-    await expect(invoke("grpc:addRequest", { ...base, serviceName: "", methodName: "M" })).rejects.toThrow(/serviceName/);
-    await expect(invoke("grpc:addRequest", { ...base, serviceName: "S", methodName: " " })).rejects.toThrow(/methodName/);
+    await expect(createEntity("grpcRequests", { ...base, serviceName: "", methodName: "M" })).rejects.toThrow(/serviceName/);
+    await expect(createEntity("grpcRequests", { ...base, serviceName: "S", methodName: " " })).rejects.toThrow(/methodName/);
   });
 
   it("grpc protos round-trip through add → list → delete", async () => {
-    const proto = await invoke("grpc:addProto", {
+    const proto = await createEntity("protoFiles", {
       name: "svc.proto", content: 'syntax = "proto3";', workspaceId: TEST_WS,
     });
 
-    expect((await invoke("grpc:listProtos")).map((p: any) => p.id)).toContain(proto.id);
+    expect((await listEntities("protoFiles")).map((p: any) => p.id)).toContain(proto.id);
 
-    await invoke("grpc:deleteProto", proto.id);
-    expect((await invoke("grpc:listProtos")).map((p: any) => p.id)).not.toContain(proto.id);
+    await deleteEntity("protoFiles", proto.id);
+    expect((await listEntities("protoFiles")).map((p: any) => p.id)).not.toContain(proto.id);
   });
 });

@@ -4,15 +4,15 @@ import {
   parsePostmanRequests,
   exportMocksToPostman,
   parsePostmanMocks,
-} from "@/ipc/importExport/formats/postman";
+} from "@bifurc/engine/importExport/formats/postman";
 import {
   b64Decode,
   b64Encode,
   hToRecord,
   bodyToText,
   urlRaw,
-} from "@/ipc/importExport/formats/postmanHelpers";
-import type { SavedRequest, MockRule, Folder } from "@/store/config";
+} from "@bifurc/engine/importExport/formats/postmanHelpers";
+import type { SavedRequest, MockRule, Folder } from "@bifurc/engine/store/config";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

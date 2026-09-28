@@ -15,7 +15,7 @@ function makeEnv(vars: Record<string, string>): Environment {
 
 // ── resolveVars ───────────────────────────────────────────────────────────────
 
-describe("renderer/lib/resolveVars.ts", () => {
+describe("packages/gui/src/lib/resolveVars.ts", () => {
   describe("resolveVars()", () => {
     it("returns the original text when env is null", () => {
       expect(resolveVars("hello {{NAME}}", null)).toBe("hello {{NAME}}");

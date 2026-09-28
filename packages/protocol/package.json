@@ -1,0 +1,32 @@
+{
+  "name": "@bifurc/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Versioned, schema-first engine<->client wire protocol for Bifurc (P1 of the decoupling plan). Environment-agnostic: no Node built-ins, importable from Node, Bun, and a browser bundle.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

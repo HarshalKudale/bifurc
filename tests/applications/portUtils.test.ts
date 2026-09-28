@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as net from "net";
-import { checkPortInUse, killProcessOnPort } from "@/applications/portUtils";
+import { checkPortInUse, killProcessOnPort } from "@bifurc/engine/applications/portUtils";
 
 /**
  * Port checking backs the "this port is already in use" guard shown before

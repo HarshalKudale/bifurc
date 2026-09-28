@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildExpect, buildConsoleMock } from "@/proxy/scriptContext";
+import { buildExpect, buildConsoleMock } from "@bifurc/engine/proxy/scriptContext";
 
 /**
  * `buildExpect()` is a hand-rolled chai-like assertion library that backs

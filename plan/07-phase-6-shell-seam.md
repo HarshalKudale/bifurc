@@ -1,0 +1,3922 @@
+# 07 — Phase 6: Shell seam ✅ SHIP MILESTONE
+
+**Goal:** switch the Electron shell from in-process IPC to the RPC client, ship it as a normal release,
+and change nothing the user can see.
+
+**Effort:** 2–3 weeks. **Depends on:** P5. **Blocks:** P7, P8, P9, P11, P12.
+
+> **This is the milestone the entire programme exists to reach.** Everything before it is on the
+> critical path; everything after it is additive and independently schedulable. Once this ships, the
+> shell is disposable and the Tauri migration becomes a low-risk, deferrable project.
+
+---
+
+## Preconditions
+
+- P5 gate green: client satisfies `WindowApi`; key-diff script reports zero differences.
+- Conformance suite green on `stdio` and `ws`.
+- A green baseline: **97 unit suites / 2,418 tests**, 11 e2e specs, all passing **before** any change in
+  this phase. *(Corrected 2026-09-18 — "35 unit suites" was written before P2–P5 added the engine,
+  blob, fileOps and client suites. The e2e figure of 11 was verified: `ls e2e/*.spec.ts | wc -l` = 11 —
+  which is 11 spec files / **46 tests** as Playwright counts them.)*
+
+> **The e2e baseline cannot be captured from an agent shell — run it from your own terminal.**
+>
+> Attempting it produced **46 failed, 0 passed**, every test dying in ~850 ms with
+> `electronApplication.firstWindow: Target page, context or browser has been closed`. The cause is that
+> Electron cannot start a Chromium GPU process when spawned from the agent shell and **hard-exits**:
+>
+> ```
+> FATAL:content\browser\gpu\gpu_data_manager_impl_private.cc:417]
+> GPU process isn't usable. Goodbye.        → exit code 3
+> ```
+>
+> **This is not a defect in Bifurc.** Three controls establish that:
+>
+> 1. `npm run dev` (`npm run build && electron .` — the same binary, the same `dist/main.js`) launches
+>    fine from a normal terminal.
+> 2. A **minimal 5-line Electron app** with no Bifurc code fails identically from the agent shell.
+> 3. `dangerouslyDisableSandbox: true` changes nothing — the limit is the shell's **process context**,
+>    not the sandbox flag.
+>
+> The machine itself is healthy: two adapters, `AMD Radeon(TM) Graphics` and
+> `NVIDIA GeForce RTX 4080 SUPER`, both `Status: OK`.
+>
+> **So no launch flags are needed — not in dev, not in a packaged build.** The two switches already in
+> `main.ts` (`disable-gpu-shader-disk-cache`, `disable-gpu`) predate this and are unrelated hardening.
+> Do not add workarounds to `main.ts` or to `e2e/fixtures/electronApp.ts` for this.
+>
+> Two secondary traps found while probing, both worth keeping:
+> - **`timeout <n> ./electron.exe --no-sandbox …` fails with `bad option: --no-sandbox`** — coreutils'
+>   `timeout` parses the Chromium switches as its own. Chromium switches must go **after** the app path.
+> - **Wrapping the launch in a shell function produces a different, misleading error**
+>   (`TypeError: … reading 'commandLine'`, i.e. `require("electron")` returning a path string = Node
+>   mode). Run each probe as a **plain sequential command**.
+>
+> **Re-measured 2026-09-20, unchanged.** `npx playwright test` reproduced **46 failed, 0 passed**, same
+> `firstWindow()` error, same ~850 ms. The count matching the figure above *is* the confirmation. One
+> addition for anyone re-running it: Playwright wipes `test-results/` before the first spec, which is now
+> **139 entries** and trips the agent shell's bulk-delete guard —
+> `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] … "targets": ["…\test-results"]`. That failure arrives
+> **before** any spec runs and masks the GPU one, so it reads as a new bug. Prefix with
+> `CODEBUDDY_SAFE_DELETE_ENABLED=0` to get past it. Skip the rebuild too if `dist/` is current:
+> `find src renderer packages/*/src -type f -newer dist/main.js` returning nothing means
+> `npx playwright test` alone is enough (`test:e2e`'s `npm run build` is the slow half).
+>
+> Consequence for the gate: the **unit** baseline is solid and is what step 2 is judged by. The e2e
+> criterion (*"11 e2e specs pass, unmodified"*) must be run by the user or on a machine whose shell can
+> host a GUI process — record the counts then.
+
+### The TOS gate is the *real* e2e blocker — fixed in the fixture 2026-09-18
+
+Separate from the agent-shell limitation above, the reason the suite fails on a normal machine is
+**first-launch Terms of Service**, and it is worth writing down because the fix is not where you would
+look for it.
+
+`packages/gui/src/App.tsx:23` gates the *entire* shell:
+
+```ts
+const [tosAccepted, setTosAccepted] = usePersistedState<boolean>("app:tos-accepted", false);
+if (!tosAccepted) return <TermsAcceptanceScreen onAccept={() => setTosAccepted(true)} />;
+```
+
+`usePersistedState` is backed by plain **`localStorage`** (`packages/gui/src/lib/storage.ts` — `getItem` /
+`setItem`, JSON-encoded). So the flag is **per-profile renderer state, not `app.json`**, which means
+`writeSampleWorkspace()` cannot reach it however much you add to it. `sampleData.ts` already writes
+`hasSeenWelcome: true`, and that is *correct but irrelevant* — it drives `app:isFirstLaunch`, a different
+gate. The fixture creates a fresh `--user-data-dir` per test, so `localStorage` starts empty and every
+test lands on the TOS screen.
+
+**Fix:** `e2e/fixtures/electronApp.ts`'s `page` fixture now seeds the key with `addInitScript` and then
+`reload()`s. The reload is load-bearing — `addInitScript` only applies to the *next* navigation, and the
+seed has to be in place before `App.tsx` reads the key.
+
+**Two constraints that shape the fix:**
+- It has to live in the **fixture**, not `sampleData.ts`. The specs stay unmodified (work item 5);
+  the harness is ours to change.
+- It must **not** be solved by editing the renderer (e.g. making the TOS gate read `app.json`). The rule
+  at the top of this document forbids renderer edits in P1–P6, and this would be exactly the
+  "edit the renderer to make it work" failure the risks table lists as **High** likelihood.
+
+---
+
+## Findings from the code, before the first edit
+
+Four things the plan above does not say, all established by reading the shell and the engine on
+2026-09-18. The first two are **blocking** for work item 1 and are not visible from the plan text.
+
+### 1. The three log events never reach the bus — a transport-only P6 goes silently blind ✅ resolved 2026-09-18
+
+> **Resolved.** `wireLogEventsToBus()` now lives in `packages/engine/src/eventBus.ts` and is called
+> from **both** `createEngine()`'s `doStart()` and `registerIpcHandlers()`. See
+> *Finding 1 — what landed* below for the verification table.
+
+`EngineEvents` (`packages/engine/src/eventBus.ts`) declares `log.entry`, `log.chunk` and `server.error`.
+`ENGINE_EVENT_NAMES` lists all three. `BUS_NAME_BY_WIRE_NAME` maps them, `assertBridgeIsTotal()` asserts
+them at import time, and the conformance suite has cases for them.
+
+**Nothing ever emits them on the bus.** They travel only through the separate `logEmitter`
+EventEmitter (`packages/engine/src/proxy/logEmitter.ts`), and `src/ipc/eventBridge.ts` — the file this
+phase deletes — subscribes to `logEmitter` **directly**. `handlers.ts:44–46` says so in a comment:
+
+> `log:entry` / `log:chunk` / `server:error` no longer need a forwarder here — `logEmitter` is already
+> Electron-free, so the shell's `eventBridge.ts` subscribes to it directly.
+
+So the moment the renderer's subscriptions move onto the transport, `onLogEntry`, `onLogChunk` and
+`onServerError` have nothing to deliver: the capture panel, the request-log panel and the server-error
+banner all go dead. Every unit test stays green, because they test the bridge's *mapping*, not its
+*traffic*.
+
+**The fix belongs in the engine**, as a `wireLogEventsToBus()` alongside `emitEntityStatus()`'s
+precedent, so P7/P8/P9 inherit it rather than each re-solving it. **It must reach the
+`registerIpcHandlers()` path, not just `createEngine()`** — the shell uses the module singletons
+(`commandRegistry`, `bus`, `logEmitter`) and never calls `createEngine()`, so wiring it into the factory
+alone would leave today's only client unserved.
+
+### 2. Electron's IPC loses `err.code`, and the client's retry policy branches on it
+
+A rejection crossing `ipcMain.handle` → `ipcRenderer.invoke` arrives at the renderer as a plain `Error`
+with the message flattened into a string. `EngineError.code` does not survive.
+
+That matters because `packages/client/src/retry.ts` decides whether to retry with
+`isRetryable(err.code)` — the whole three-term policy. Flatten the code and every failure reads as
+unclassified, so the policy either retries everything or nothing.
+
+**The bridge must therefore return a discriminated result** rather than letting the handler reject:
+
+```ts
+{ ok: true, value } | { ok: false, error: RpcError }   // RpcError = {code, message, details?}
+```
+
+and the renderer side must rebuild the error. `toRpcError` (main side) and `remoteErrorToEngineError`
+(renderer side) already exist in `packages/engine/src/transport/types.ts` and are the right halves —
+this is the same problem `stdio` and `ws` solved, one hop earlier.
+
+### 3. `TransportKind` has no `"ipc"` member
+
+`TransportKind = "in-process" | "stdio" | "ws" | "socket"`. The renderer-side bridge is a fifth kind.
+Nothing switches on the union — the only read is `auth.test.ts:712`'s
+`expect(transport.kind).toBe(inner.kind)`, and `session.ts:91` merely stores it — so **adding `"ipc"` is
+safe and is a one-line change** to `packages/engine/src/transport/types.ts`. The alternative, labelling
+the bridge `"in-process"`, is a lie that will cost someone an afternoon.
+
+### 4. Work item 2 is larger than the phase's framing suggests
+
+The phase reads as a *wiring* change, and work item 1 is. But work item 2 ("spawn the engine binary",
+resolve `--data-dir`, pick a socket, handshake, supervise, watchdog the orphan case) replaces the
+process model. The plan's own "How to start" step 2 is the smaller, correct first cut: **keep the
+engine in-process**, build the IPC bridge over `createInProcessTransport(commandRegistry, {bus})`, and
+prove the seam. The process split then becomes a change of transport *behind* a proven seam.
+
+That ordering is also what makes the rollback flag meaningful: `BIFURC_ENGINE_RPC=0` restores
+`registerIpcHandlers()` only while both paths exist.
+
+> **Superseded 2026-09-20.** The ordering held, but the flag's premise did not: step 3 re-pointed
+> `registerIpcHandlers()`'s bodies at the registry, so after it there was only one path. The flag was
+> therefore never written and is now **dropped** — see work item 6 and Rollback. The sentence above is
+> left standing because it is the correct condition for a transport-selection flag, and that condition
+> returns with the process split.
+
+### 5. Step 3 is not mechanical: 25 of the 93 commands have no registry implementation
+
+Measured 2026-09-18, after step 3a. `plan/07`'s step 3 reads as a mechanical flip — "route all methods
+through the bridge, delete `registerIpcHandlers()`" — and warns only to "expect failures in the
+shell-only handlers first". The failures are not a handful of shell concerns. They are **25 missing
+engine implementations**:
+
+```
+app.checkUpdate   audit.list        config.save          healthbar.checkUrl
+healthbar.getServices  healthbar.saveServices         proxy.status
+request.replay    runner.loadConfig runner.saveConfig   runner.saveReport
+script.execute    server.restart    server.start        server.status
+server.stop       services.discover webhook.registerActive
+webhook.unregisterActive            webhookServer.start  webhookServer.status
+webhookServer.stop                  workspace.add        workspace.delete
+workspace.rename
+```
+
+68 of the 93 are registered and route trivially. The 25 above are served **only** by a shell
+`ipcMain.handle` body on their legacy channel, so `registry.invoke("<command>")` answers
+`UNKNOWN_COMMAND`. Verified two ways: a test over the real `registerIpcHandlers()` (`tests/ipc/handlers.test.ts`'s
+"registry coverage" block) and by grep — `grep '"runner.saveReport"' src/ packages/engine/src/` finds
+three references (the protocol table, the scope table, the shell handler) and **zero** registrations.
+
+**Why this matters more than a to-do list.** `@bifurc/client` classifies **all 25** as
+`{kind: "transport"}` — a 1:1 mapping onto a protocol command. So `client.serverStatus()` calls
+`registry.invoke("server.status")`, which the real shell cannot answer. The client therefore does not
+merely lack 25 methods; it **advertises 25 it cannot deliver against the real engine**, and nothing
+noticed because P5 tested it against the conformance suite's *stub* registry and step 2 routes only
+`config:get`. The surface test cannot see this either — every key is exposed correctly; only the
+implementation behind 25 of them is missing.
+
+The one entry the plan and the client disagree about is `app.checkUpdate`: the "Local handlers stay
+local" table calls it a shell half, the client classifies it `transport`. One is wrong, and the
+decision belongs with whoever implements it.
+
+**Consequences for the plan.**
+
+1. **Step 3 splits.** 3b-1 routes the 68 registered commands (mechanical, and safe while
+   `registerIpcHandlers()` still runs). 3b-2 implements the 25 in the engine. Only then can the legacy
+   handlers be deleted.
+2. **`registerIpcHandlers()` cannot be deleted before 3b-2.** Deleting it while a command has neither a
+   registry entry nor a channel would break that method on **both** paths at once, and the surface test
+   would still pass — the key stays exposed. This is the phase's one genuinely silent failure mode, so
+   the inventory is now a **ratchet** in `tests/ipc/handlers.test.ts`: implementing a command fails the
+   test until its name leaves the list, and a new command that lands unregistered fails immediately.
+3. **The `plan/07` "Local handlers stay local" table is incomplete.** It lists 13 local members and
+   they match `ClientLocal` exactly — but it does not mention that 25 *routable* commands are
+   unimplemented, which is the larger half of the work.
+
+**3b-2 is complete.** Five slices landed, **21 of the 25** moved; the other four are `NARROWED` /
+`BLOCKED` / `SPLIT` and are not moves at all (§5b). The ratchet went **25 → 19 → 15 → 10 → 5 → 4**.
+
+| Slice | Commands | Module | Ratchet |
+| --- | --- | --- | --- |
+| 1 | `server.status` / `server.start` / `server.stop` / `server.restart` / `proxy.status` / `services.discover` | `packages/engine/src/proxy/serverCommands.ts` | 25 → 19 |
+| 2 | `config.save` + `workspace.add` / `workspace.rename` / `workspace.delete` | `packages/engine/src/store/configCommands.ts` | 19 → 15 |
+| 3 | `webhook.registerActive` / `webhook.unregisterActive` / `webhookServer.start` / `webhookServer.status` / `webhookServer.stop` | `packages/engine/src/proxy/webhookCommands.ts` | 15 → 10 |
+| 4 | `healthbar.getServices` / `healthbar.saveServices` / `healthbar.checkUrl` / `request.replay` / `script.execute` | `packages/engine/src/miscCommands.ts` | 10 → 5 |
+| 5 | `runner.saveReport` | `packages/engine/src/runner/runnerCommands.ts` | 5 → 4 |
+
+Each module is the only registration site for its commands. The engine's own
+`transport/auth/scopes.ts` had already assigned **every one of the 21** scopes before the modules
+existed — independent evidence, in all five slices, that these were always engine commands.
+
+**Two slices were not literal copies, and both reasons generalise.**
+
+- *Slice 3, `webhookServer.start`.* The shell body read `cfg.webhookPort ?? 9101` and ignored any
+  argument, because its channel took none; `WebhookServerStartParams` declares `port` as optional. The
+  engine half honours it and falls back to the config chain, so every existing caller — all of which
+  pass nothing — gets exactly the old behaviour. Honouring a declared parameter is not a behaviour
+  change; ignoring one would leave a schema the implementation contradicts.
+- *Slice 4, `healthbar.checkUrl`.* The shell body used `require("https")` / `require("http")`
+  **inside** the handler. `require` does not exist in the engine's **ESM** build output (`tsup` emits
+  `.mjs` alongside `.cjs`), so a verbatim copy would have thrown at call time on the ESM entry point
+  while typechecking and every unit test passed. Both modules are now imported statically, as
+  `serverReplay.ts` and `webhookServer.ts` already do. **This is a class to watch for in every
+  remaining move**: `require` inside a function body is invisible to `tsc` and to the test runner.
+
+**One gap carried over deliberately.** `RequestReplayResult` declares `durationMs` and `replayRequest`
+does not return it, so `request.replay` has never carried a field its own frozen contract advertises.
+It is moved as-is, for the same reason `configCommands.ts` left `workspace.add`'s odd failure shape
+alone — changing a command's result shape while moving it hides the move behind a contract change. The
+renderer does not read it (it times the call itself).
+
+**`runner.saveReport` needed a check that is not obvious.** `RunReport` is a plain `z.object()`, and
+zod's `z.object()` **strips unknown keys** — so "the schema accepts the payload" is not the same as
+"the schema preserves it". The question was whether parsing loses any field the renderer sends. It does
+not: `CollectionRunReport`'s 9 fields and `RunnerRequestResult`'s 11 are all present. Had it stripped,
+this would have been a **data-loss bug in saved run history**, not a type error — the exact failure
+`RunResult`'s own header describes for P1.
+
+### 3b-1 — the preload flip (2026-09-18)
+
+**`src/preload.ts` is no longer a channel table.** It was 136 hand-written `ipcRenderer.invoke`
+calls; it is now `{ ...client }` plus **eight explicit overrides**. **136 of the 144 keys route
+through the bridge.**
+
+The reason the table could just be deleted is that `packages/gui/src/types/window.ts` was never the contract
+— `src/preload.ts` was — and `@bifurc/client` was built in P5 to satisfy that contract exactly,
+**positional arguments included** (`loadEntity: (wsId, kind, id) => call("loadEntity", { workspaceId:
+wsId, kind, id })`). So the client's methods are drop-in replacements for the old bodies, which is
+what P5's `shape.test-d.ts` proves and what makes the flip mechanical rather than a rewrite.
+
+#### The thirteen held back, in two groups that need two different fixes
+
+**Four have no registry implementation** (`§5b`): `checkUpdate` (SPLIT), `listAudit` (NARROWED),
+`saveRunnerConfig` / `loadRunnerConfig` (BLOCKED). Routing them converts a working method into an
+`UNKNOWN_COMMAND`, so they stay on their channels until the protocol moves. Not a backlog —
+`app.checkUpdate` is P12's, and the two `runner.*Config` are blocked by a **passing test**.
+
+> **All four resolved — nothing here is outstanding.** The three non-`checkUpdate` keys were **schema**
+> problems rather than routing problems and were retired by widening, not by moving (step 3d,
+> `plan/protocol-changes.md`). The fourth was resolved by **deleting `app.checkUpdate` from the
+> protocol** and making the key client-local (step 3f, §5b) — so it was never P12's, and the routing
+> hazard described above no longer applies to any key. Left standing as the step-3b record of what the
+> four were.
+
+#### The two `ClientLocal` hooks, and the five they unlocked
+
+`clientHandlers.ts` gained `client:writeArtifact` (a save dialog plus a write) and the preload now
+supplies `readArtifactFile` (a pass-through to `dialog:openFile`, which already returns exactly
+`LocalFileContent`). Both are **client** channels — deliberately not protocol commands, because a
+remote engine must never choose a path on the user's machine. That is why `@bifurc/client` takes them
+as injected hooks at all: P7's browser downloads instead.
+
+They unlocked five of the nine: `exportAudit`, `tlsExportCert`, `shareCaptureJson`, `tlsImportCert`,
+`tlsImportKey`.
+
+#### Four artifact methods held back, each for a specific defect in the *client*
+
+Auditing the four that remained turned up three real problems, and **none of them is a shell problem**
+— they are gaps in the client's egress path that routing would have exposed as user-visible
+regressions:
+
+- **`exportData` would corrupt the binary `workspace-zip`.** `ClientLocal.writeArtifact` takes a
+  **decoded string**, and the client base64-decodes into a utf-8 string before handing it over. A ZIP
+  routed through the bridge is corrupt on arrival. This needs a binary variant of `writeArtifact` (or
+  one that takes base64) before `exportData` can move — a change to `@bifurc/client`, not to the shell.
+- **`exportRunnerReport` would drop the HTML choice.** The client hardcodes `format: "json"`, while
+  `runnerHandlers.ts` derives the format from the extension the user picked (`.html` is the default).
+  Routing it silently removes HTML export.
+- **`preflightImport` / `importData` may open a second dialog.** The client opens its *own* picker and
+  ignores any path in `req`. That is right for a blob-based client, but it is a second dialog unless
+  the renderer never supplied a path. Unverified — it stays on the known-good channel until the e2e
+  import spec confirms it.
+
+The general lesson, and the reason this was worth auditing rather than flipping: **"the command is
+registered" is not "the client's method is equivalent."** The registry says nothing about what the
+client does with the result, and three of these four break *after* the engine has done its job
+correctly.
+
+#### Follow-up (2026-09-18): the binary one is fixed, and the other three are one gap, not three
+
+Acting on the three findings turned up two more, both in `artifactToFile` and both affecting the five
+egress methods 3b-1 had **already** routed — so this was shipped behaviour, not a prerequisite:
+
+- **`writeArtifact` is now base64 in, bytes out** (`26d2d32`). It took a decoded `string` and the
+  shell wrote it back as `"utf-8"`, which corrupts anything that is not text. That was `exportData`'s
+  blocker; it is gone.
+- **The blob branch was worse than the text branch.** It read `read.content` / `read.base64`, but
+  `BlobReadResult` is `{data, eof}` — so it decoded `""` and wrote an **empty file**, with no error.
+  It also issued a single un-offset `blob.read`, which caps at `BLOB_READ_CHUNK_BYTES` (512 KB) and
+  has no terminator other than `eof`. `BLOB_INLINE_THRESHOLD_BYTES` is 1 MB, so almost every real
+  export took that path. Neither was caught because the client's fake transport answers every request
+  with `{ok:true, echoed:cmd}` and no test ever reached either branch.
+
+With the binary objection gone, the remaining three collapse into **one** missing primitive: *the
+dialog has to run before the command.* `File_Ops_Protocol.md` §3.2 requires it and the reason is not
+cosmetic — the shell's `importExport:export` comment says it plainly: fail fast on cancel, so the
+engine never renders a 200 MB workspace archive the user then abandons. `ClientLocal.writeArtifact`
+bundles "ask where" and "write" into one call, which forces the dialog *after* the render. A
+`pickSavePath` hook is what lets `exportData` and `exportRunnerReport` move.
+
+The two imports need a second, separate primitive, and the earlier "may open a second dialog" is now
+**confirmed and worse than that**. `ImportExportModal.tsx` calls preflight with no path, takes
+`res.filePath` from the result, and feeds that same path back into `importData`:
+
+1. The client's `preflightImport` returns `import.preflight`'s result verbatim, and the engine only
+   ever knew a `blobId` — so `res.filePath` is `undefined`, and the collision branch hands
+   `undefined` to `applyImport`.
+2. The client's `importData` **ignores** `req.filePath` and calls `uploadLocalFile()`, which opens a
+   dialog — a second one, for a file the user already picked.
+
+So: `readArtifactFile` needs an optional path (reuse, don't re-ask), and `preflightImport` needs to
+return the path it chose. Neither is a shell change.
+
+#### Two preconditions that were checked rather than assumed
+
+1. **`config.save` no longer calls `updateTrayMenu()`.** The registry handler emits
+   `settings.changed` on the bus instead. That is only equivalent because `src/main.ts:299`
+   subscribes — `bus.onTyped("settings.changed", () => updateTrayMenu())`. Without that
+   subscription, routing `saveConfig` would have silently stopped updating the tray.
+2. **`event.log.entry` arrives as a batch; the renderer expects one entry.** `eventPump.ts` coalesces
+   under the same wire name, so a pass-through would hand the capture panel `{entries}` at exactly
+   the moment there was most traffic to show. `onLogEntry` is the one subscription the client does
+   **not** pass through — it unwraps the batch and calls back once per entry, matching the legacy
+   `log:entry` channel.
+
+#### What this does and does not prove
+
+The suite is **unchanged** — 2,430 passed / 40 skipped / 1 failed (the `soap.execute` flake), byte
+for byte the pre-flip figure — and the surface test still reports **144 keys**. But that is weaker
+evidence here than it was for 3b-2: the unit suite tests *handlers*, not the preload, and the
+preload's only coverage is the key count. A wrong argument mapping would pass everything and break
+the app. **The e2e suite is the real gate for this step and it cannot be run from the agent shell.**
+
+The one piece of genuinely new shell code here — `client:writeArtifact` — does have its own tests
+(`tests/ipc/clientHandlers.test.ts`), because it is new rather than moved: it asserts the bytes and
+path handed to `fs`, that the picker is pre-filled from the engine's suggested name, and that *cancel*
+stays distinguishable from *failure*.
+
+### 5b. The remaining 15 are not one category — audited, not assumed
+
+The first version of the ratchet said every remaining command was "engine work that has not been
+moved yet". **Auditing all 19 against their frozen schemas showed that is false.** `runnerHandlers.ts`
+had already recorded the reason for three of them, and the audit generalised it. The entries split by
+*why* they are unimplemented, because the four reasons need four different responses:
+
+| Category | Count | Meaning | Response |
+| --- | --- | --- | --- |
+| `MOVABLE` | **0 — all moved** | The schema accepts every payload the handler accepts. | Move it. ✅ **done.** |
+| `NARROWED` | 1 | The schema accepts a **strict subset**, and `.strict()` makes the difference a `BAD_REQUEST`. | A decision, not a move. |
+| `BLOCKED` | 2 | The schema rejects payloads a **currently passing test** uses. | Cannot move until the frozen protocol changes. |
+| `SPLIT` | 1 | The protocol declares an engine-half contract that **deliberately differs** from the shell implementation. | Not a move at all. |
+
+**`MOVABLE` is 0 as of 2026-09-18** — all 21 have a registry implementation, so the ratchet's movable
+half is deleted from `tests/ipc/handlers.test.ts` rather than left empty. That deletion is deliberate
+signalling: an empty `MOVABLE` array invites the next reader to file the next unimplemented command
+there by default, whereas deleting it forces the classification to be argued again. What remains is
+one `NARROWED`, two `BLOCKED` and one `SPLIT`, each pinned with its own reason.
+
+**`NARROWED` — `audit.list`.** `AuditListParams` has no `filePath` / `fromTs` / `toTs`, but
+`QueryLogOptions`, the type the handler actually takes, does. So a caller passing `filePath` gets
+`BAD_REQUEST` through the registry where the legacy channel answered it. The honest caveat: nothing
+currently passes those — `listAudit` is on `window.api` and no renderer code calls it — so the
+narrowing is **latent, not live**. That is why it is neither `MOVABLE` (moving it silently reduces the
+command's accepted params) nor `BLOCKED` (nothing is actually broken). P9's whole point is *new*
+clients, and a remote client is exactly the caller that would find the missing fields.
+
+**`BLOCKED` — `runner.saveConfig` / `runner.loadConfig`.** Blocked by a **passing test**, which is the
+strongest evidence available: `tests/integration/runnerStorage.integration.test.ts:207` saves
+`{delayMs: 250, stopOnFailure: true, iterations: 3}` and line 210 asserts an exact round-trip — while
+`RunnerConfigSchema` **requires** `requestOrder` and `RunnerLoadConfigResult` *declares* that fixed
+shape as what a load returns. So neither the request nor the response can satisfy the frozen schema.
+The ratchet now asserts this block directly (parsing the real config through the schema must fail), so
+if anyone later widens `RunnerConfigSchema` the test fails and says these two have become movable —
+rather than leaving them filed as "unimplemented" forever.
+
+**`SPLIT` — `app.checkUpdate`.** The disagreement this plan recorded ("shell half" per the local-handlers
+table, `transport` per the client) is **resolved by the protocol's own comment**: `misc.ts` marks it
+SPLIT, with the schema as "the interim engine-half contract" and a note that **P12 moves it fully
+client-side**. Neither side was simply wrong — the GitHub fetch is engine-safe outbound network, while
+`app.getVersion()` and the `process.platform` asset match are client-local. The concrete consequence is
+that `AppCheckUpdateResult` has **no `currentVersion` and no `hasUpdate`** — the two fields the shell
+handler's success branch returns — so the engine half cannot be produced by moving that body. It needs
+the split written.
+
+> **Resolved 2026-09-20 — the split was written by deleting the command.** `app.checkUpdate` is gone from
+> the protocol and `checkUpdate` is a `ClientLocal` member. The audit immediately below records the
+> three designs that satisfied this paragraph, why B was chosen, and the step-3 consequence none of them
+> had recorded.
+
+#### Audited 2026-09-20 — the split is a three-way choice, and it decides `registerIpcHandlers()`
+
+Above is settled. What was *not* recorded is that three different designs satisfy it, that they are not
+equally cheap, and that **one of them silently controls whether step 3 can ever finish**. This section
+exists so the choice is made deliberately rather than by whoever edits the file first.
+
+**First, a latent defect worth naming, because it is what the ratchet is protecting.** `index.ts:476` is
+`checkUpdate: () => call("checkUpdate", {}) as ReturnType<BifurcApi["checkUpdate"]>`. The cast is a lie:
+`AppCheckUpdateResult` carries `tagName`, while the renderer's `UpdateCheckResult` reads `hasUpdate`,
+`currentVersion`, `latestVersion` and `releaseUrl`. Route it as-is and the renderer receives
+`hasUpdate: undefined` — falsy — so it renders the **"you're up to date"** branch with
+`latestVersion` undefined. A silent wrong answer, not an error, which is precisely the failure class this
+phase keeps finding. The pin is load-bearing; it is not bookkeeping.
+
+| # | Design | Where the fetch runs | Engine command | `registerIpcHandlers()` |
+| --- | --- | --- | --- | --- |
+| **A** | Local channel delegating to an engine command | engine | **added** — `app.checkUpdate` | **still needs the channel** |
+| **B** | Local channel, shell fetches (status quo, reclassified) | shell | deleted from the protocol | **still needs the channel** |
+| **C** | Pure preload function, no IPC at all | preload | deleted from the protocol | **unblocked** — the channel disappears |
+
+**The consequence nobody recorded:** `src/ipc/handlers.ts:155` says `registerIpcHandlers()` "cannot be
+deleted yet: `app.checkUpdate` (SPLIT → P12) still needs a channel". That is true for A and B and **false
+for C** — because A and B keep a local `ipcMain.handle` channel, and a local channel needs a registration
+point for as long as it exists. So under A or B, resolving this split does **not** unblock step 3, and the
+honest statement becomes *"`registerIpcHandlers()` is not deleted but **reduced** — it becomes the
+local-handler entry point, and only the legacy command bodies go."* Under C the original claim survives.
+
+**Cost, measured by inspection rather than guessed:**
+
+- **B is the smallest.** The shell body already does fetch + platform + version and already returns the
+  renderer's shape. Nothing moves; the key is *reclassified* `transport` → `local`. Touches `surface.ts`,
+  `BifurcApi`/`BifurcClient`/`ClientLocal`, `index.ts`, `retry.ts`, `preload.ts`, the protocol command +
+  `scopes.ts` + fixtures, and the ratchet. No behaviour change.
+- **A is the largest and the only one that adds engine surface** — a new engine module, plus the params
+  widening the client needs to declare its platform. It buys the fetch moving behind engine auth, audit
+  and egress policy, which is what a containerised (P9) or browser (P7) client would want. It does not
+  buy step 3.
+- **C is the only one that unblocks step 3**, and it is the literal reading of "moved fully client-side".
+  Its risk is real and specific: the fetch leaves the main process, so it is subject to the renderer's
+  origin (CORS) and to per-user GitHub rate limits with no `User-Agent` control — and a regression there
+  is invisible in the unit suite.
+
+**Recommendation: B now, C considered separately.** B resolves the contradiction, removes the lying cast,
+completes the classification at 144/144 keys with zero `SPLIT`, and changes no behaviour — all verifiable.
+C's benefit is a step-3 unblock that is *already* available by the cheaper route of reducing
+`registerIpcHandlers()` to the local-handler entry point, which step 3 needs regardless of this decision.
+Choosing C to get that unblock would take on a network-behaviour risk to buy something a refactor gives
+away for free.
+
+**Decided 2026-09-20: B — reclassify as local.** Put to the owner with the three designs above, and B
+chosen. Implemented the same day: `checkUpdate` is a `ClientLocal` member; `packages/protocol` no longer
+declares `app.checkUpdate` (nor `scopes.ts`, nor the fixtures table); `@bifurc/client` delegates to
+`local.checkUpdate()` instead of `call("checkUpdate")`; and `src/preload.ts`'s override is gone, so the
+whole surface is `{ ...client }` with no exceptions.
+
+**What it bought, verified rather than asserted:**
+
+- **The lying cast is gone.** `index.ts` no longer casts `AppCheckUpdateResult` to `UpdateCheckResult`, so
+  the silent "always up to date" failure is no longer one refactor away from shipping.
+- **144 of 144 keys are classified, with zero `SPLIT`.** At step 3f the split was 72 `transport` + 48
+  `entity` + 7 `subscribe` + 3 `shim` + 14 `local` — asserted by count in `surface.test.ts`, where the
+  sum is what proves no key was dropped in the move. **Two `transport` entries moved to `local` later the
+  same day** (`tlsRemoveCert`, `tlsCertStatus` — §5b-bis), so the current figures are **70 + 48 + 7 + 3 +
+  16**. The total is what this bullet is about, and it did not change.
+- **Behaviour is unchanged.** The shell's `app:checkUpdate` handler still does the fetch, the platform
+  match and the version comparison. Nothing moved; only the classification did.
+
+**What it did not buy, and why that is the right answer anyway:** step 3's deletion of
+`registerIpcHandlers()`. The local channel remains, so what step 3 actually needs is a *reduction* —
+`registerIpcHandlers()` becomes the local-handler entry point. Recorded on the local-handlers table
+above, because the original claim was wrong and would otherwise be rediscovered as a surprise at the
+gate.
+
+**The tests were the hard half, and the reason is worth keeping.** Two of the four assertions guarding
+this were built around the pinned list, so with the list empty they would have **iterated nothing and
+passed** — the "a guard that can silently match nothing is worse than no guard" failure `TRAPS.md`
+records. Both were rewritten around the *invariant* rather than the list, with explicit non-vacuity
+floors:
+
+- *no command is both unregistered and unreachable* — replaces "still serves every unregistered command
+  on a legacy channel".
+- *every `transport`/`shim` surface entry names a registered command* — replaces "confirms the client
+  claims every pinned command is routable". This is the **stronger** form: it now catches a
+  newly-added routed key whose command nobody implemented, which the list-based version structurally
+  could not.
+
+The non-vacuity floors were first written as `> 80` and failed immediately at the real figure, **75** —
+the guard doing its job on its author before it ever guarded the code.
+
+**The corollary worth carrying forward:** "unimplemented in the registry" is not a synonym for "engine
+work outstanding". Three of the 25 were blocked by the frozen protocol and one was a split, so step 3
+cannot end with all 93 registered — it ends with **89 registered + 2 blocked + 1 narrowed + 1 split**,
+and the ratchet is what keeps that honest.
+
+> **Superseded 2026-09-20 — the prediction was wrong in the direction that matters, and all four landed
+> as *fewer* commands rather than more implementations.** The three blocked/narrowed ones were retired by
+> **widening their schemas**, and the split by **deleting the command**. So step 3 ends with **92
+> registered**, not 89 + 4 pinned, and the count is 92 rather than 93 because `app.checkUpdate` is no
+> longer a protocol command at all. The ratchet did keep it honest — every one of those four movements
+> failed the ratchet first and required it to be updated deliberately, which is the whole design.
+
+### 5b-bis. The legacy channels are not uniformly dead — audited 2026-09-20
+
+Step 3 ends by "reducing `registerIpcHandlers()` to the local-handler entry point". That sentence is
+wrong twice, and both corrections came from measuring the thing rather than reading the plan.
+
+**Correction 1 — the local-handler entry point already exists, beside it.** `registerClientHandlers()`
+lives in `src/ipc/handlers/clientHandlers.ts` and is called from `src/main.ts:294`, one line after
+`registerIpcHandlers()` at `:293`; that file's own header says `registerIpcHandlers()` "does not call
+this file, and it must stay that way". So the function does not need to *become* the local entry point.
+What step 3 reduces it to is **{the 25 engine `register*Commands()` calls, the event wiring, the RPC
+bridge}**, and the only local channel inside it is `app:checkUpdate`, one of `systemHandlers.ts`'s five.
+
+**Correction 2 — the channels are not one class, so "delete the legacy bodies" is not a safe
+instruction.** Measured:
+
+| Measure | Count |
+| --- | --- |
+| Literal-named channels across the 12 legacy files | **84** |
+| Generated by `entityCrudFactory` — 13 `registerEntityCrudHandlers` kinds × 3 ops, plus 3 `registerSimpleEntityHandlers` kinds × 3 | **48** |
+| **Total legacy channels** | **132** |
+| Already local, in `clientHandlers.ts` (the separate entry point) | 15 |
+
+The 48 generated ones are not an estimate: they are exactly the surface's 48 `entity` keys, which is
+what makes `16 kinds × 3 ops` reconcile against `packages/client/src/surface.ts`. `entityCrudFactory`
+has six `ipcMain.handle` sites and **zero** literal names, so a grep for `ipcMain.handle("` misses all
+48 — the same undercount shape as §5c's "five commands, actually 51".
+
+**The criterion, applied per channel:** does the body do work only the shell can do — `dialog.*`,
+`shell.*`, `BrowserWindow`, `app.getVersion()` — or does it only reach the registry and return? Three
+classes fall out.
+
+1. **DEAD PASSTHROUGH.** The body calls `commandRegistry.invoke(...)` or an engine function and nothing
+   else. Nothing invokes the channel: `src/preload.ts` is `{ ...client }`, so all 144 keys travel
+   client → transport → `engine:rpc`. This is the bulk of the 132.
+2. **SUPERSEDED SHELL HALF — 9 channels**, each owning a genuinely shell-side step that the client now
+   performs *through a different channel*: `app:checkUpdate` (`app.getVersion()`), and
+   `capture:shareJson`, `audit:export`, `runner:exportReport`, `tls:exportCert` (a
+   `dialog.showSaveDialog` each), `tls:importCert` / `tls:importKey` (a shared `dialog.showOpenDialog`
+   via `importTlsFile`), and `importExport:export` / `importExport:preflight` (a save and an open
+   dialog). These are the **reference implementations** of flows the client now performs via
+   `ClientLocal.pickSavePath` / `readArtifactFile`. Deleting one is a different act from deleting a
+   passthrough, and each needs its client-side twin confirmed first.
+3. **LOCAL, ALREADY ELSEWHERE.** `clientHandlers.ts`'s 15 channels. Untouched by this reduction.
+
+**What the audit found that the plan did not have: a second lying cast, of the `checkUpdate` class.**
+`tls:certStatus` composes **eight** fields — `generated`, `certPath`, `keyPath`, `fingerprint`,
+`trustedFingerprint`, `trustState`, `firefoxDetected`, `firefoxProfiles` — by joining the engine's
+fingerprint with `certLifecycle.readTrustSummary()`, which reads the *client's* trust store. The client's
+`tlsCertStatus` is `call("tlsCertStatus", {})` routed to `tls.certStatus`, which returns the engine half
+only, and it carries `as ReturnType<BifurcApi["tlsCertStatus"]>` — the same cast shape step 3f removed
+from `checkUpdate`. So `trustState`, `firefoxDetected` and `firefoxProfiles` arrive as `undefined`:
+`undefined` is neither `"trusted"` nor `"stale"`, so the drift warning cannot render, and `undefined` is
+falsy, so the Firefox note cannot either — silently, with no error anywhere.
+
+> **A third instance of this class, and the widest, was found the same day — §5b-quater.** It is the same
+> cast shape across **all 16 `add*` keys** (`entity.create`'s `{id, entity}` envelope, never unwrapped on
+> the routed path), and its distinguishing feature is that a real integration test was passing *because
+> of* it. Read §5b-quater before touching any `add*` key: the class is now three instances, not two, and
+> the third was invisible to both audits that found the first two.
+
+**`tls:removeCert` is the same cast shape and *not* the same severity — it loses an action, not a display
+field, and it is live.** The shell's `tls:removeCert` is `certLifecycle.uninstallEngineCa()`, which is
+**two-sided by design** (`File_Ops_Protocol.md` §6.1): it deletes the engine's keypair *and* un-trusts the
+certificate in the host's OS store, reading back the record `AppSettings.tlsTrustedCa` exists to hold for
+exactly this purpose. Its own docblock names the failure the two-sided shape prevents — "which is how a
+user ends up believing they removed a certificate their browser still trusts". The client routes to
+`tls.removeCert` and gets `engineRemoved` alone, so the un-trust never happens. **It is reachable**:
+`packages/gui/src/panels/settings/TlsSettingsSection.tsx:57` calls `window.api.tlsRemoveCert()` from the "remove
+certificate" button and then clears the panel's `tlsEnabled` / `tlsCaCertPath` / `tlsCaKeyPath`, so the UI
+reports success while the OS store goes on trusting a CA whose keypair is gone. And since step 3f removed
+the last preload override, `window.api` **is** `{ ...client }` — so the shell channel that did this
+correctly is now unreachable, and the short path is the only path.
+
+**Disposition, and the two halves differed.** `tls:certStatus` is **latent**: rendering the drift warning
+and the Firefox note is P7's by non-negotiable #3, nothing reads those fields yet, and the engine half
+that *is* delivered (`generated`, `certPath`, `keyPath`, `fingerprint`) is correct — the same disposition
+step 3d gave `audit:list`. `tls:removeCert` is **live and user-visible in effect**, which is a different
+answer: it was not waiting on P7 for anything.
+
+**Decided and implemented 2026-09-20 — both keys are `local`.** Held for the owner because the fix needs
+the host's OS trust store, which the client cannot reach, so it is an interface decision rather than a
+call-site fix. Two mechanisms were on the table: *add the host half to `ClientLocal` and let the client
+keep routing and compose*, or *move the whole key to `local` and let the shell implement it as today's
+`certLifecycle` composition*. **The second was chosen**, on the `tlsInstallCA` precedent — that key is
+already `local` for exactly this reason, so the whole trust-store surface now uses one mechanism, and the
+client stops needing to know how to read a trust store at all. What changed:
+
+- `surface.ts` — `tlsRemoveCert` / `tlsCertStatus` are `transport` → `local`. Counts move
+  `transport` 72 → 70 and `local` 14 → 16, total **144 unchanged**, and `surface.test.ts` pins both
+  figures *and* lists both keys in `mustBeLocal`, so the reclassification cannot be quietly undone.
+- `local.ts` — `ClientLocal` gains the two members; `preload.ts` wires them to new
+  `client:tlsCertStatus` / `client:tlsRemoveCert` channels in `clientHandlers.ts`, beside `tls:installCA`.
+- **The engine halves are untouched and still cross the wire** — `certLifecycle.readTrustSummary()` calls
+  `tls.certStatus` and `uninstallEngineCa()` calls `tls.removeCert` through the registry — so what moved
+  is only *who composes*. That is what keeps this correct for a remote engine (P9): the client still
+  reaches the engine, and the host still owns the store.
+- `certLifecycle.readCertStatus()` is **new**: the eight-field composition was extracted out of
+  `tlsHandlers.ts`'s channel body. Leaving it inside the channel is what allowed the routed twin to
+  deliver half of it with nothing pointing at the other half, so both callers now share one function.
+- `tlsHandlers.ts`'s `tls:certStatus` / `tls:removeCert` are **superseded, not deleted** — class 2 of this
+  audit goes **9 → 11** superseded shell halves — and each now carries a note saying so. They are
+  unreachable, because `window.api` is `{ ...client }`, and they die in the step-3 reduction.
+
+**What this changes for the deletion.** Two preconditions, neither of which was in the plan:
+
+1. The 9 superseded shell halves each need their client-side twin confirmed, and the `tls:certStatus` /
+   `tls:removeCert` shape decision has to land first — **deleting `tls:certStatus`'s channel today would
+   delete the only implementation that produces `trustState`**.
+2. `src/ipc/fileOpsClient.ts` **survives the reduction; it is not dead.** It is a live shared library
+   with seven referrers, and two of them — `clientHandlers.ts`'s `mimeFor` and `certLifecycle.ts`'s
+   `installEngineCa` / `writeArtifact` — sit on **live** paths. Its other five referrers are the
+   superseded halves, so it dies only with the last of those.
+
+**Verified, and not.** Verified: the counts; the three-way split; the 9 superseded halves by matching
+every `dialog.` / `shell.` / `app.` occurrence to its enclosing channel; and the `tls:certStatus` /
+`tls:removeCert` divergences by reading both implementations *and* following each key to its renderer
+caller — which is what turned the second one from a latent shape difference into a live one
+(`TlsSettingsSection.tsx:57`). **Not verified: that every one of the ~120 class-1 channels
+is *only* a passthrough.** The discriminator was a grep for four shell-side call patterns, which proves
+the 9 but does not individually clear the remainder — a channel doing shell-side work through a helper
+that matches none of them would be misclassified. So the deletion pass must re-derive the class per file
+as it goes rather than trust this table's remainder, which is why this is an audit and not a work list.
+
+#### The 9 twins, verified per key — 2026-09-20
+
+The audit above listed the 9 superseded halves as needing "their client-side twin confirmed". Done, by
+reading each key's implementation in `packages/client/src/index.ts` against the shell channel it
+replaces. **Eight are equivalent or better; one was a regression, and it was found and fixed in the same
+pass — along with the docblock that sanctioned it.**
+
+| Shell channel | Client twin | Ordering | Verdict |
+| --- | --- | --- | --- |
+| `importExport:export` | `exportData` — `pickSavePath` → `export.create` → `artifactToFile(…, dest)` | dialog first | equivalent |
+| `importExport:preflight` / `:import` | `preflightImport` / `importData` — `blob.put` → `import.preflight` / `import.commit` | three-step | equivalent |
+| `audit:export` | `exportAudit` — `pickSavePath` → `call("exportAudit")` → `artifactToFile(…, dest)` | dialog first | **regression — fixed 2026-09-20** |
+| `runner:exportReport` | `exportRunnerReport` — `pickSavePath` → `exportRunnerReport` → `artifactToFile(…, dest)` | dialog first | **better than the shell** |
+| `capture:shareJson` | `shareCaptureJson` — `artifactToFile(await call(…), …)` | artifact first | acceptable — cheap artifact |
+| `tls:exportCert` | `tlsExportCert` — `artifactToFile(await call(…), …)` | artifact first | **correct** — P3 chose this deliberately |
+| `tls:importCert` / `tls:importKey` | upload → `call(…, { blobId })` | — | equivalent |
+| `app:checkUpdate` | client-local (step 3f) | — | resolved |
+
+**The one regression, found live.** `audit:export` was made dialog-first by P3 **explicitly so that
+cancelling stops paying for the query**: the pre-P3 handler ran `queryLog({ limit: 0 })` — the whole
+`git log` — before asking where to put the result. The client's twin evaluated
+`await call("exportAudit", { format })` as an *argument* to `artifactToFile`, so the command ran first and
+the dialog second; `artifactToFile`'s dialog-first case is selected by passing its third argument
+(`destPath`), which that call omitted. It was reachable — `packages/gui/src/panels/AuditLogPanel.tsx:106` calls
+`window.api.exportAudit(format)` and the preload is `{ ...client }` — so the cost P3 removed was back.
+**Fixed** by giving the key the same three-step `pickSavePath` → command → `artifactToFile(…, dest)` shape
+`exportData` already had.
+
+**The finding is the docblock, not the call.** `packages/client/src/local.ts`'s `writeArtifact` docblock
+is the authority a reader consults before writing any of these callers, and it named `exportAudit` in the
+*cheap* group — "the other egress methods (`exportAudit`, `tlsExportCert`, `shareCaptureJson`) hand over
+bytes the engine has already produced, so reordering them buys nothing". That is false for `exportAudit`
+alone: its artifact is the one egress payload with no natural size ceiling, because `audit.export` runs
+`queryLog({ limit: 0 })` — the workspace's *entire* `git log`. So the regression did not look like a
+mistake; it looked like the documented design. **Three other places in the tree already said the
+opposite** — the shell channel's own comment, `packages/engine/src/fileOps/commands.ts`'s
+"the one egress artifact with no natural size ceiling", and §5b-bis itself — and the client took the
+default anyway, which is what a wrong docblock buys you. Corrected there, and the correction now names
+the three `destPath` callers and the two genuine artifact-first ones with the reason for each.
+
+**The mechanism is worth naming too**, because it is what makes this easy to miss: `artifactToFile`'s
+*default* is artifact-first — "the hook shows the dialog itself … the right default for the methods whose
+artifact is cheap and already produced" — so the ordering is chosen by **omitting an argument**. The one
+caller that must not take the default is therefore the one that looks most ordinary, and a reviewer
+reading the call sees nothing to object to.
+
+**The same read also shows the client is not uniformly a regression.** `exportRunnerReport`'s twin is
+*stronger* than the shell body: it derives the format from the chosen extension
+(`dest.toLowerCase().endsWith(".json")`), which the shell could not express — P3 recorded that the shell
+hardcoded `json` and so silently removed HTML export. So "the client replaced the shell" is not a claim
+about quality in either direction; each key has to be read, which is the audit's own conclusion.
+
+#### 5b-ter. The deletion pass's real shape — found by starting it (2026-09-20)
+
+Opening the pass on the three protocol-client files found two things this audit could not have. Neither
+is a defect in the audit; both are what the **"Not verified"** paragraph above predicted — that the
+deletion pass would have to re-derive the class per file rather than trust the class-1 remainder. It took
+one file to falsify the remainder's model twice.
+
+**1. The 48 generated channels cannot be deleted without splitting the factory first, and the failure
+mode is silent.** `registerEntityCrudHandlers(opts)` does **two** jobs: `registerCrudKind(opts)`, which
+populates the container the engine's four `entity.*` commands dispatch through at invoke time, and three
+`ipcMain.handle` calls. **Only the second half is dead.** Deleting the function leaves those commands
+consulting an **empty map** — each throwing `"<kind>" is not routed through the CommandRegistry yet`,
+which is *the same message a genuinely unregistered kind throws* (`TRAPS.md`). So for these 48 the slice
+is a **split**, not a deletion: keep the `register*Kind()` call, drop the channels.
+`registerSimpleEntityHandlers` is identical. These two functions are also the only place the population
+direction is inverted — §5c slice 7 inverted it *into* the shell deliberately, and the reduction has to
+invert it back. Callers: `coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`,
+`soapHandlers`. The wrappers' `toProtocolKind` translation and `entity.create` unwrapping exist **only**
+to keep the channels' wire shape, so they die with the channels and the callers end up calling
+`registerCrudKind` / `registerSimpleKind` directly — after which `CrudFactoryOpts`'s `ipcAdd` /
+`ipcUpdate` / `ipcDelete` / `ipcPrefix` fields are vestigial and want removing from the engine type.
+
+**2. The pass is a test migration, not a deletion — and that is the honest cost.** **Eight** integration
+suites register the legacy handler *groups* by hand and drive the channels directly: `applications`
+(`registerApplicationHandlers`), `capture` (`registerSystemHandlers`), `entityConflictScope` and
+`foldersAndWorkspaces` (`registerCrudHandlers`, plus `registerCoreHandlers` / `registerFolderHandlers`),
+`gitRemote` and `gitSync` (`registerSyncHandlers`), `protocolExecution` (`registerCoreHandlers`,
+`registerGraphqlHandlers`, `registerSoapHandlers`, `registerGrpcHandlers`), `runnerStorage`
+(`registerRunnerHandlers`). Measured by `invoke("` count: `foldersAndWorkspaces` **45**,
+`protocolExecution` **62**. So deleting a group removes the entry point those suites use, and each has to
+be re-pointed at `commandRegistry.invoke()` **in the same slice**. That is also an improvement rather
+than a cost to be minimised: a suite that drives the channel is a channel test that happens to reach the
+engine, and `TRAPS.md` records that such a suite is structurally blind to the wiring it thinks it covers.
+Re-pointed, they become registry-driven, which is what P9 needs anyway.
+
+**Measured 2026-09-20, and corrected the same day: the slice's channels are driven from 4 test files, 85
+literal occurrences** — `tests/ipc/handlers.test.ts` **63**, `protocolExecution` 13, `settingsMutations`
+5, `foldersAndWorkspaces` 4. By family: `mock:*` 33, `request:*` 17, `env:*` 14, `graphql:*` 12,
+`mapping:*` 11, `rule:*` 10, `ws:*` 10, `grpc:*` 8, `soap:*` 7, `webhook:*` 0.
+
+> **The first version of this measurement said "6 files, 97 occurrences" and both numbers were wrong.**
+> `companionServer.integration.test.ts` (10) and `companion/allowedActions.test.ts` (2) matched the same
+> channel-name strings but drive the **companion server's v1 HTTP action surface** —
+> `ask(client, { id, action: "mock:add", payload })` — which is a *different* surface (P4 item 1) and is
+> untouched by this slice. A grep for channel-shaped strings cannot tell an IPC channel from an action
+> name, and it silently counted 12 of them. The lesson is the file's own: **scope a measurement to the
+> transport it belongs to, not to the string.**
+
+**The factory is indivisible, which is why there is no small slice here.** The 48 channels are generated
+from the 13 `CrudFactoryOpts` / 3 `SimpleEntityOpts` registrations by two loops; there is no way to drop
+one kind's three channels without dropping all 48 (or adding a per-kind flag, which is worse than the
+problem). So `crudHandlers` (6 kinds), `coreHandlers` (1), `soap` (2), `graphql` (2) and `grpc` (2) must
+be converted in the **same** change — and every one of them is gated on the test migration below.
+
+**`handlers.test.ts` is 75 of those cases, and they are not uniformly deletable.** The region that drives
+these adapters is **75 `it` blocks across 37 `describe` blocks** — 61% of the file's 123 tests. The
+`entityConflictScope` header records that this file's mocked-config suite stayed green while the real disk
+was wrong, which is the argument for **deleting** the cases whose subject is the adapter's plumbing. But
+that argument does not extend to the ones asserting **`validate` messages** and **not-found branches**:
+those live *only* here — `grep` for `"urlPattern is required"` / `"is required for mocks"` / `"endpointPattern
+is required"` finds no engine-level twin, and `companionServer`'s single `urlPattern is required` assertion
+goes through the v1 action path, not `entity.create`. So the disposition is **per case**: delete where
+`entityConflictScope` / `entityCrudCommands`'s suite already covers the behaviour, re-point the rest at
+`commandRegistry.invoke("entity.create", …)`. That judgement — not the 57 deletions — is the slice, and it
+is why the slice gets a session of its own rather than the tail of one.
+
+**One detail the re-points must not miss:** the channel **unwrapped** `entity.create`'s `{id, entity}`
+envelope, so a re-pointed case that reads the result needs `.entity` (or the same helper the client now
+uses — §5b-quater). A re-point that returns the envelope will assert against the wrong object and may still
+pass.
+
+#### 5b-quinquies. Stage 1 — the three mechanical suites are registry-driven (2026-09-20)
+
+**Owner's call: full slice, staged commits.** Stage 1 is done and committed: the three suites outside
+`handlers.test.ts` no longer drive a single per-kind channel — `protocolExecution` (16 sites),
+`settingsMutations` (5), `foldersAndWorkspaces` (4). Each drives the collapsed `entity.*` commands through
+small local `createEntity` / `updateEntity` / `deleteEntity` / `listEntities` helpers, which is what the
+channel was: a one-line `commandRegistry.invoke()` adapter.
+
+Two details are load-bearing rather than incidental, and both are recorded in the helpers' docblocks:
+
+ - **`createEntity` unwraps `{id, entity}`**, because the channel did (`entityCrudFactory.ts:72`) and these
+   cases read the created entity's `id` to locate its file on disk. Without the unwrap they would assert
+   against the envelope and pass on `id` alone — §5b-quater's defect one layer up.
+ - **`workspaceId` is passed through as-is, never defaulted to `TEST_WS`.** The channel sent
+   `entity.workspaceId` (usually `undefined`), and `entity.create` then falls back to the *active*
+   workspace. `foldersAndWorkspaces`'s scoped-workspace case asserts exactly that, so a default here would
+   have made it vacuous — and it would still have passed. Found while writing the helper, not by a failure.
+
+The test **titles** that named the old channels were renamed too (`"graphql:addRequest round-trips…"` →
+`"a graphql request round-trips…"`, plus three in `settingsMutations`). A title naming a channel the case
+no longer drives is the same lying-name trap as a docblock that sanctions a bug.
+
+**Reconciliation: 101 files / 2,511 tests / 2,470 passed / 40 skipped / 1 failed — identical to the
+pre-Stage-1 baseline.** Behaviour-neutral by construction: no test added or removed, only the transport the
+assertions travel over changed. Typecheck clean (`typecheck:packages` + `tsc --noEmit`).
+
+**Stage 2 — `handlers.test.ts` is registry-driven too (same day, same shape).** All **54** in-scope call
+sites now drive `entity.*` through `createEntity` / `updateEntity` / `deleteEntity` / `listEntities`
+helpers; the file's 167 tests are unchanged in count and all pass. The 23 `describe` titles that named a
+handler (`"mock:add handler"`, `"rule:update handler — not-found branch"`, …) became
+`"entity.create — mocks"`, `"entity.update — proxyRules, not-found branch"`, …, and six `it` titles in the
+collapse block were reworded for the same reason.
+
+**The one judgement call this stage turned on, and it is a narrowing rather than a loss.** The
+`rule:*` / `ws:*` cases exist to pin the `rules ↔ proxyRules` / `sockets ↔ wsConnections` translation, and
+that translation is **two-sided**: the channel applied `toProtocolKind()` on the way in, the engine applies
+`toEngineKind()` on the way out. Re-pointing removes the first half from the test's path — so these cases
+now pin `toEngineKind()` alone. That is the right half to keep: `toProtocolKind()` lives in the factory and
+dies with the channels, so a test that pinned it would have had to be deleted in Stage 3 anyway. The
+collapsed block's header records this explicitly rather than leaving it to be rediscovered.
+
+The `// ── mapping:add ──` section markers were **left as they are, deliberately**: they label the
+*action* a section covers, the same way `// ── config:get ──` labels a command channel elsewhere in the
+file, and Stage 3 restructures these sections anyway when the channels go.
+
+**Reconciliation: 101 files / 2,511 tests / 2,470 passed / 40 skipped / 1 failed — again identical to the
+pre-stage baseline.** Behaviour-neutral: no test added or removed, only the transport the assertions travel
+over. Typecheck clean.
+
+**Stage 3 is the deletion** — 57 channels, `entityCrudFactory.ts` split, the vestigial `ipc*` fields
+removed, the three protocol files reduced to kind registration (and renamed, since `registerSoapHandlers()`
+would then register no handlers), and `handlers.test.ts`'s `expectedChannels` inventory trimmed to what the
+shell actually registers.
+
+**So the pass's unit is the handler group, and a slice is: delete the group's channels (splitting the
+factory where the group *is* a factory), re-point the suites that drove them, verify, commit.** The 12
+files are not 12 equal slices. `soapHandlers` / `graphqlHandlers` / `grpcHandlers` are each the factory
+(three kind groups) **plus** their own pure `commandRegistry.invoke()` passthroughs, so they belong with
+the factory slice rather than alone — which is the opposite of how they first looked, and is the reason
+this section exists. **Corrected 2026-09-20: that is 2 + 2 + 5 = 9 passthroughs, not "two each".**
+`grpcHandlers` has five (`execute`, `reflect`, `mockServerStatus`, `startMockServer`, `stopMockServer`);
+`soap` and `graphql` have two each. So the slice is **48 generated + 9 passthrough = 57 channels**, and the
+earlier "6 pure passthroughs" figure — which the owner's grouping decision was made against — understated
+it by a third.
+
+**Stage 3a — the engine stopped reading shell vocabulary (2026-09-20).** Starting Stage 3 turned up
+something the earlier measurement had wrong, and it changes what "the vestigial `ipc*` fields removed"
+means. `ipcAdd` / `ipcUpdate` / `ipcDelete` / `ipcList` **are** vestigial — only the factory's channel
+bodies read them. `ipcPrefix` is **not**: the **engine** read it at three sites as a behavioural
+discriminator, and had done since the CRUD collapse.
+
+| site | predicate as written | effect |
+| --- | --- | --- |
+| `createEntityCore` | `opts.ipcPrefix === "rule" \|\| opts.ipcPrefix === "mock"` | `unshift` instead of `push` |
+| `createEntityCore` | `["mock","request"].includes(opts.ipcPrefix ?? "")` | emit `entity.changed` |
+| `deleteEntityCore` | `opts.ipcPrefix === "mapping"` | cascade-delete the targeting `proxyRules` |
+
+So an engine-side decision was keyed off a **shell IPC channel prefix** — a name that only means anything
+inside Electron. It worked because the shell happened to name its channels after the kinds, which is
+exactly the coupling a containerised engine (P9) cannot carry. Deleting the field outright would have
+silently killed all three behaviours. The earlier note "nothing else reads them — verified" was a grep of
+`src/`, and these three reads are in `packages/engine/`.
+
+**The fix is a translation, not a deletion**, and the equivalence is exact rather than approximate:
+`ipcPrefix` was `"rule"` / `"mock"` / `"request"` / `"mapping"` on exactly the `rules` / `mocks` /
+`requests` / `mappings` registrations and on no others (`crudHandlers.ts`), so the three predicates select
+the same kinds when spelled with `opts.kind`. `kind` is also what the rest of the file already branches on
+(`opts.kind === "environments"`, twice).
+
+**Proving it needed tests that were actually load-bearing, and one of the three did not exist.** Site 3
+was already pinned non-vacuously (`entity.delete — mappings > "also removes proxy rules that target the
+deleted mapping"`). Site 2's positive side is pinned end-to-end by `companionServer` (`refreshes` length 1
+after a `mock:add`). But:
+
+ - the **ordering** pin was **vacuous**. `"prepends the new mock to the front of the list"` seeded
+   `{...baseMock}` — *also* named `"Test Mock"` — so `mocks[0].name` read `"Test Mock"` whether the new
+   mock was prepended or appended. **It passed on a `push`.** Rewritten to assert by `id` and to check
+   index 1. Same class of defect as the `transports.test.ts` fixture in §5b-quater, and the second one
+   found this way in two days.
+ - site 2 had **no boundary pin**: nothing asserted that a kind *outside* `{mocks, requests}` stays quiet,
+   so a translation that widened the set — or that fired for everything — would have been invisible.
+
+Three pins were added: `rules` prepends (the branch's extent), `requests` appends (the branch's other
+side, so "prepends" cannot be satisfied by a rule that prepends everything), and the `entity.changed`
+boundary with `proxyRules` as the control. **Non-vacuity proved by mutation**: mis-translating site 1 to
+`opts.kind === "mocks"` and site 2 to `if (true)` fails exactly those two new cases and nothing else.
+
+**Reconciliation: 101 files / 2,514 tests / 2,473 passed / 40 skipped / 1 failed** — baseline **+3 tests,
++3 passed**, exactly the three new pins. The 1 is `soap.execute`. Typecheck clean.
+
+`ipcPrefix` **stays in the type for one more commit, deliberately**: the factory still builds its channel
+names from it, so removing it here would not compile. Stage 3b removes all five together with the channels
+that read them.
+
+#### 5b-quater. The third lying cast — and the fixture that asserted it (2026-09-20)
+
+Found by starting §5b-ter's factory split, and it is the **widest instance of the class §5b-bis named**.
+The engine's `entity.create` answers the frozen **`{id, entity}`** envelope
+(`entityCrudCommands.ts:413`); the surface declares the **raw** entity; and the shell channel unwrapped it
+by hand (`entityCrudFactory.ts:72`, `return "entity" in result ? result.entity : result`). The client
+never did. So on the routed path **all 16 `add*` keys** handed their caller `{id, entity}` where
+`packages/gui/src/types/window.ts` declares `Promise<LocalMapping>` — and the panels consume it directly:
+`MappingsPanel.tsx:120` pushes the result straight into `config.mappings`, `ProxyRulesPanel.tsx:155` files
+it as a loaded entity. Nothing failed, because the `as ReturnType<BifurcApi[…] >` cast made the compiler
+agree with the **declaration** rather than with the runtime. `checkUpdate` (step 3f) and `tlsCertStatus`
+(§5b-bis) were the same shape and both were caught by reading; this one is 16 keys at once, and it was
+caught only because the factory split made the unwrap visible.
+
+**The tell was already in the file.** `entity.list`'s `{entities}` envelope **is** unwrapped on the routed
+path, three lines away (`listWsdls`, `listProtoFiles`, `listGraphQLSchemas`). One envelope family, half
+handled — which is exactly why the asymmetry survived review.
+
+**Fixed** by an `unwrapCreated` helper in `packages/client/src/index.ts` and 16 converted keys. The
+`update*` / `delete*` / `list*` keys are untouched: `entity.update` and `entity.delete` return what their
+channels always did. Two results are deliberately **not** unwrapped, both verified against the engine
+rather than assumed: the gate-blocked create (`environments` is the only kind with a `gateKind`, and a
+blocked create returns `{error:"limit_reached", ...gate}` with no `.entity` — `entityCrudCommands.ts:410`),
+and `folder.add` / `workspace.add`, which return the entity itself with no envelope at all
+(`folderCommands.ts:89`, `configCommands.ts:84`).
+
+**The evidence that it was live, not theoretical: a test was asserting the bug.** `transports.test.ts` —
+the P5 acceptance case, "client works over `in-process`, `stdio` and `ws`" — failed in **all three**
+transports the moment the unwrap landed. Its registry modelled `entity.create` as
+`({ id: "created", ...params })`, which puts `entity` **and** `kind` at the top level, and its assertion
+was `toMatchObject({ id: "created" })` alone. So the envelope happened to carry the id the assertion
+looked for, and the case was green *because of* the defect it existed to catch. Fixed by modelling the
+engine's real shape (`{ id: "created", entity: { ...entity, id: "created" } }`) and asserting `name` as
+well as `id` — `name` is what goes `undefined` when the unwrap is missing, so the case can now fail. That
+is the sharpest form of §5b-bis's lesson: **a fixture is a claim about the thing it fakes, and a wrong
+claim is indistinguishable from a passing test.** Both new guards were confirmed non-vacuous by reverting
+the unwrap and watching them go red.
+
+**Reconciliation:** 101 files / 2,511 tests / **2,470 passed** / 40 skipped / 1 failed, against the
+2,509 / 2,468 / 40 / 1 baseline — **+2 tests, +2 passed**, the 2 being the new `client.test.ts` pair that
+pins the unwrap and the gate pass-through. The 1 failure is `soap.execute`, the environmental one.
+
+#### 5b-sexies. Stage 3b, first slice — the nine passthroughs are gone (2026-09-20)
+
+**What landed.** The nine protocol-client channels — `graphql:introspect`, `graphql:execute`,
+`soap:fetchWsdl`, `soap:execute`, `grpc:execute`, `grpc:reflect`, `grpc:mockServerStatus`,
+`grpc:startMockServer`, `grpc:stopMockServer` — are deleted from `graphqlHandlers.ts`, `soapHandlers.ts`
+and `grpcHandlers.ts`. What remains in those three files is the *other* half: the entity kinds they own,
+which `entityCrudFactory.ts` generates and which are still live. **This is 9 of stage 3b's 57 channels**;
+the 48 generated ones are untouched and still gated on the factory split (§5b-ter item 1) plus the
+`handlers.test.ts` migration.
+
+**The rule that makes the deletion safe, stated once** (in `soapHandlers.ts`, referenced from the other
+two): *a channel whose body is a single `commandRegistry.invoke()` carries no behaviour of its own.* Each
+of the nine was exactly that, so the channel was a second name for the same operation — able to drift from
+it and able to do nothing else. That is the test for the remaining 48: they are **not** this shape, which
+is why they need the split rather than the same treatment.
+
+**The one thing the deletion could have got wrong silently, and the test that now pins it.** A
+one-line adapter has no behaviour to lose *except its argument shape*, and the nine were not uniform:
+five were literal passthroughs, `soap:fetchWsdl` **wrapped** its bare `url` argument as `{ url }`, and the
+three argument-less gRPC channels passed `{}` while ignoring whatever they were called with. A re-point
+that forwarded a rest-args list would have been right for five and wrong for four, and three of the four
+would still have passed. So `protocolExecution.integration.test.ts` grew an explicit
+`invokeCommand(command, params)` helper whose docblock names the asymmetry, and each of the 20 call sites
+passes the command's real params object — which is what the channel produced. The shape is now visible at
+the call site instead of hidden inside a deleted adapter.
+
+**Reconciliation: 101 files / 2,514 tests / 2,473 passed / 40 skipped / 1 failed — identical to stage 3a's
+checkpoint, and the identity is the point.** Deleting nine channels cost **zero** tests, because the 19
+cases that drove them were re-pointed rather than deleted; a −19 would have meant the deletion removed
+coverage. The 1 failure is `soap.execute`, the environmental one.
+
+**Two collateral repairs this slice forced, both of which were unrecorded deviations:**
+
+1. **`tests/spike/protocolPoc.test.ts` had been deleted** (330 lines, 12 tests) in the same edit batch as
+   the channel deletion, with no note in this plan or in the memory. It is the **runtime half of P0 spike
+   4** and `plan/spike-results.md` records it explicitly as *"kept in version control as the record of this
+   de-risking work"*, so deleting it contradicts a written phase decision — and it would have silently
+   removed the baseline's documented 1 failure, changing the number every later reconciliation is measured
+   against. Restored, and two of its ten channels (`graphql:introspect`, `soap:execute`) re-attached in
+   `beforeAll` with **the exact bodies the channels had**. The spike's subject is the *envelope*, not the
+   routing, so that keeps all ten commands answering identically by a shorter path for two of them — which
+   doubles as the check that the deletion lost nothing. `spike/protocol/commands.ts`'s `LEGACY_CHANNEL` map
+   is left verbatim as the spike's own record of the legacy surface, with a note that two names are gone.
+   **Whether the spike's throwaway code should be retired now that P4's real conformance suite exists is a
+   separate decision, and it is not stage 3b's to make** — retiring it means `spike/protocol/` goes too,
+   plus five plan docs that cite it.
+   > **→ That decision was taken 2026-09-21: the spike was RETIRED** (`spike/README.md`, `plan/14` §12.6).
+   > Worth noting how this reads in hindsight, because it is the argument *for* the discipline recorded
+   > here: stage 3b's deletion was **unrecorded**, and the reason it was a defect rather than a judgement
+   > call is that it contradicted a written phase decision and would have silently changed the baseline
+   > number every later reconciliation is measured against. Restoring it, and *recording* that the
+   > retirement was owed to a later phase, is what made the eventual retirement a decision instead of an
+   > accident. The "five plan docs" estimate above was re-derived at retirement time: **nine** documents
+   > cite the spike's code (sixteen mention the word, but seven of those name other spikes). Same failure
+   > mode as the count in `plan/14` §12.6 — a plausible number that was never re-measured.
+2. **The tree was broken mid-slice.** The helper had been added but the 20 call sites not yet converted, so
+   19 cases died with `No handler registered`. Recorded because the failure mode is instructive: the
+   deletion and its migration are one atomic change, and a half-landed stage 3b is not a smaller stage 3b —
+   it is a red suite that reads as a code defect rather than as an unfinished edit.
+
+#### 5b-septies. Stage 3b, second slice — the 48 generated channels are gone, and stage 3b is complete (2026-09-20)
+
+**What landed.** `src/ipc/handlers/entityCrudFactory.ts` is **deleted** (115 lines). It generated the 48
+per-kind channels — 16 kinds × 3 ops, from 13 `registerEntityCrudHandlers` registrations plus 3
+`registerSimpleEntityHandlers` ones — and those channels died with it. The five callers (`crudHandlers`,
+`coreHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`) now call the engine's
+`registerCrudKind()` / `registerSimpleKind()` directly, which is what the factory was doing anyway, one
+wrapper deeper. **Stage 3b is complete: 57 of 57 channels deleted — 9 passthroughs (§5b-sexies) + 48
+generated.**
+
+**The split §5b-ter predicted was needed, and it was a *split*, not a deletion.** The factory did two
+unrelated things: `registerCrudKind(opts)` — the container insert, without which all 16 kinds throw
+`"<kind>" is not routed through the CommandRegistry yet` — and three `ipcMain.handle` calls. Only the
+second half is the dead half, so deleting the function outright would have been a plausible-looking edit
+that silently broke 16 kinds. The wrapper's channel half is what went; its container insert stayed, one
+call deeper, and the callers were re-pointed to it.
+
+**The five `ipc*` fields are gone from `CrudFactoryOpts`** (`ipcPrefix` / `ipcAdd` / `ipcUpdate` /
+`ipcDelete`, and `SimpleEntityOpts`' three), together with their only reader. Their docblock now keeps the
+history, because it is the trap the interface carried: `ipcPrefix` was a *behavioural discriminator* the
+engine branched on, and **deleting it before stage 3a translated those three reads to `opts.kind` would
+have silently killed the prepend, the `entity.changed` ping and the mapping cascade.**
+
+**Reconciliation: 101 files / 2,496 tests / 2,455 passed / 40 skipped / 1 failed.** The delta from stage
+3a's checkpoint (101 / 2,514 / 2,473 / 40 / 1) is **exactly −18 tests and −18 passed, with the failure
+count unchanged** — and the mechanism is nameable rather than inferred:
+
+> `tests/ipc/handlers.test.ts`'s `describe("registerIpcHandlers()")` builds `expectedChannels` and then
+> generates **one `it` per entry** (`for (const channel of expectedChannels) it(\`registers a handler for
+> "${channel}"\`, …)`). The 18 factory-generated names were removed from that list, so their 18 generated
+> tests went with them. This is the correct outcome, not lost coverage: the channels do not exist, so a
+> test asserting a handler for them would assert the *absence* of the thing the list exists to check. The
+> behaviour those channels fronted is covered at engine level by `entityCrudCommands`' suite and
+> `entityConflictScope`.
+
+**A mid-slice red suite, and why it was informative.** After the factory deletion the suite showed
+**3 failures**, not 1: `mock.add` and `mock.delete` in `tests/spike/protocolPoc.test.ts` answered `no
+legacy handler`. Those are the two channels of the ten that spike drives which the *factory* generated
+(the other eight are hand-written), so this is §5b-sexies' fixture growing exactly as designed — it now
+re-attaches **4 of 10** with the bodies they had, and reaches 10 of 10 precisely when the legacy surface is
+gone. Recorded because the count is a *measure of the pass*: 4/10 today is the honest figure, and the file
+becomes a pure envelope test at 10/10 — which is where the spike-retirement question (§5b-sexies item 1)
+lands.
+
+**Two corrections this slice forced, both of the same kind — a doc that had become false:**
+
+1. **`registerSimpleKind<T>` did not exist.** The three `registerSimpleEntityHandlers<SavedWsdl>`-style
+   calls became `registerSimpleKind<SavedWsdl>(…)`, which does not compile: `SimpleEntityOpts` is
+   `{ kind: string }`, so the function declares **no** type parameter. `registerCrudKind<T>` *is* generic,
+   because `CrudFactoryOpts<T>` genuinely consumes `T` (`validate`, `getNameEntry`, `onAddConflict`) —
+   while the simple path stores a kind *name* and never a shape. That asymmetry is real, so the three
+   type arguments and the three now-orphaned local interfaces (`SavedWsdl`, `SavedGraphQLSchema`,
+   `SavedProtoFile`) were deleted rather than the interface widened to keep the call compiling. Nothing
+   reads them: `noUnusedLocals` is off and there is no ESLint config, so an orphan would have been
+   **silent** — which is the reason to remove it rather than leave it.
+2. **`entityCrudCommands.ts`'s header described a world where the wrappers still existed.** Its own text
+   said `registerEntityCrudHandlers` / `registerSimpleEntityHandlers` "stay in the shell (they own
+   `ipcMain`)", and `registerCrudKind`'s docblock said "the shell keeps the three `ipcMain.handle`
+   channels". Both were true when written and false after this slice. Corrected in place, past-tense, with
+   the reason the split had to precede the delete. `scripts/p6-stage3b-slice2-docs.py` holds the exact
+   before/after for all six sentences, and asserts exactly one match each so a silent no-op is impossible.
+
+**What stage 3b left behind, deliberately.** The three files are now **named for something they no longer
+do**: `soapHandlers.ts` / `graphqlHandlers.ts` / `grpcHandlers.ts` register *kinds, not handlers*, and
+their entry points are still `registerSoapHandlers()` / `registerGraphqlHandlers()` /
+`registerGrpcHandlers()`. The names are now a lie and each file's docblock says so. Renaming them is a
+mechanical follow-up slice — it touches `src/ipc/handlers.ts`'s call sites and the by-hand registration
+lists in eight integration suites — and it was kept separate so that the *deletion* and the *rename* do
+not land in one commit, where a rename would bury a deletion in diff noise.
+
+#### 5b-octies. The rename slice — the three files stop lying, and "six" becomes five (2026-09-20)
+
+**What landed.** `src/ipc/handlers/{soap,graphql,grpc}Handlers.ts` → `{soap,graphql,grpc}Kinds.ts`, and their
+entry points `register{Soap,Graphql,Grpc}Handlers()` → `register{Soap,Graphql,Grpc}Kinds()`. They have
+registered **kinds, not handlers** since stage 3b deleted their channels: each has exactly three
+`registerCrudKind` / `registerSimpleKind` calls and **zero** `ipcMain.handle` calls (the only `ipcMain`
+mentions left in them are comments about the wrappers they used to have). `git mv` preserved history.
+
+**The blast radius was 24 references across three files**, not the eight suites §5b-septies predicted:
+`src/ipc/handlers.ts` (3 imports + 3 calls), `tests/integration/protocolExecution.integration.test.ts`
+(3 + 3), `tests/spike/protocolPoc.test.ts` (2 + 2). Measured, only those two test files touch these modules;
+the other suites that hand-register handler groups wire *different* groups. The earlier estimate came from
+"the suites that register handlers by hand" without checking which handlers — the same shape of error as the
+"132 legacy channels" undercount, in the other direction.
+
+**`crudHandlers.ts` deliberately keeps its name — *for now*.** It registers six kinds **and** five live
+`webhook*` channels (`webhook:registerActive`, `webhook:unregisterActive`,
+`webhookServer:start|stop|status`), so "handlers" is still half-true there. Renaming it would have been the
+same mistake in reverse.
+
+> **Superseded 2026-09-21 by §5b-quindecies.** The reduction's fourth group deleted the five channels, so the
+> premise above expired and the file became `crudKinds.ts` / `registerCrudKinds()`. The decision was right
+> while it lasted, and it is recorded rather than edited away because the *reason* is the useful part: a
+> file name is a claim, and this one was true until the channels went.
+
+**The "six caller files" claim was wrong, and P6 had repeated it four times.** It is **five** —
+`coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`. The sentence disproved
+itself: `plan/07` said *"none of the **six** caller files needed an edit"* and then listed exactly those
+five names. Verified rather than re-counted — `git log -S registerEntityCrudHandlers` and
+`git log -S registerSimpleEntityHandlers` return those five files and no others across the entire history,
+so six was never true, not even before some file was merged away. Corrected in five places (three in
+`entityCrudCommands.ts`, one each in `plan/07` and `plan/13`), and the correction is *recorded at the site*
+rather than silently applied, because the older docs still say six and someone will otherwise "restore" it.
+
+**Reconciliation: 101 files / 2,496 tests / 2,455 passed / 40 skipped / 1 failed — identical to §5b-septies,
+because a rename moves no test.** That is the expected outcome for this slice and the reason it was worth
+isolating: a pure rename with a *changed* suite count would have meant the rename broke something.
+
+#### 5b-nonies. The reduction's inventory, measured — 93 literal channels, and the docs' figures do not survive contact (2026-09-20)
+
+**Stage 3b changed what a `grep` can see.** Before it, `grep ipcMain.handle("` missed all **48** channels that
+`entityCrudFactory` generated — the undercount §5b-bis records, and the same shape as §5c's "five, actually
+51". Those channels are now deleted, so for the CRUD surface the literal grep is finally **complete**, and
+this is the first honest reading of what the reduction still has to deal with.
+
+**Measured: 93 literal `ipcMain.handle(` channels across 10 files.**
+
+| File | Channels |
+| --- | --- |
+| `src/ipc/handlers/syncHandlers.ts` | 19 |
+| `src/ipc/handlers/coreHandlers.ts` | 17 |
+| `src/ipc/handlers/clientHandlers.ts` | 17 |
+| `src/ipc/applicationHandlers.ts` | 10 |
+| `src/ipc/handlers/tlsHandlers.ts` | 6 |
+| `src/ipc/handlers/runnerHandlers.ts` | 6 |
+| `src/ipc/handlers/systemHandlers.ts` | 5 |
+| `src/ipc/handlers/crudHandlers.ts` | 5 |
+| `src/ipc/importExportHandlers.ts` | 4 |
+| `src/ipc/handlers/folderHandlers.ts` | 4 |
+
+(`src/ipc/rpcBridge.ts` registers `RPC_CHANNEL` as well, but that is the bridge itself, not a legacy
+channel — the reduction's subject, not its target.)
+
+**This reconciles with no figure currently in the plan, and that is the finding.** §5b-bis records *"132
+legacy channels (84 literal + 48 generated)"*. The 48 is now zero, so the literal remainder should be 84; it
+is **93**. Nine channels are unaccounted for. Two candidate mechanisms, neither verified: the audit's
+"literal" grep may have excluded the two files that sit one level up (`src/ipc/applicationHandlers.ts`,
+`src/ipc/importExportHandlers.ts`), or the surface moved between the audit and now.
+
+**So the reduction must not start from the documented figures.** Re-derive the classification from this
+inventory, and treat every number quoted out of §5b-bis as a *reading with a date*, not an invariant — which
+is the rule `TRAPS.md` now carries after this plan produced its third instance of the class. The classes
+themselves (DEAD PASSTHROUGH / SUPERSEDED SHELL HALF / LOCAL ALREADY ELSEWHERE) are still the right
+decomposition; only their sizes are in question, and the sizes are what decides the slicing.
+
+#### 5b-decies. The reduction's classification, measured — 93 = 18 live + 75 dead, with a 7-channel risk subset (2026-09-20)
+
+**The method is the finding: this is decidable by construction, and §5b-bis did not need to read the
+channels to decide it.** `src/preload.ts:110` is `contextBridge.exposeInMainWorld("api", { ...client })`, so
+`window.api` **is** the client. And `packages/client/src` contains **no `:`-separated channel literal at
+all** — measured, zero — because the client reaches the engine through one transport channel, `engine:rpc`.
+So the only renderer-reachable path that can still *name* a legacy channel is the `local` block in
+`src/preload.ts`, and it names exactly 18:
+
+```
+zoom:get · zoom:set · theme:get · theme:set · shell:openExternal · shell:setTitleBarOverlay
+dialog:pickFilePath · dialog:pickFolderPath · dialog:openFile · app:isFirstLaunch · app:completeFirstLaunch
+tls:installCA · client:tlsCertStatus · client:tlsRemoveCert · client:pickSavePath · client:writeArtifact
+client:readArtifactFile · app:checkUpdate
+```
+
+**Therefore 93 literal channels = 18 live + 75 dead**, and the split is by file and clean — no file is
+mixed except one:
+
+| File | dead | live |
+| --- | --- | --- |
+| `src/ipc/handlers/syncHandlers.ts` | 19 | 0 |
+| `src/ipc/handlers/coreHandlers.ts` | 17 | 0 |
+| `src/ipc/handlers/clientHandlers.ts` | **0** | **17** |
+| `src/ipc/applicationHandlers.ts` | 10 | 0 |
+| `src/ipc/handlers/runnerHandlers.ts` | 6 | 0 |
+| `src/ipc/handlers/tlsHandlers.ts` | 6 | 0 |
+| `src/ipc/handlers/crudHandlers.ts` | 5 | 0 |
+| `src/ipc/handlers/systemHandlers.ts` | 4 | 1 (`app:checkUpdate`) |
+| `src/ipc/handlers/folderHandlers.ts` | 4 | 0 |
+| `src/ipc/importExportHandlers.ts` | 4 | 0 |
+
+`clientHandlers.ts` is **17 live / 0 dead** — it is the `local` surface itself, and it is the one file the
+reduction must not touch. There are also **no `ipcMain.on(` registrations anywhere in `src/`** (measured), so
+there is no event-based legacy surface hiding behind the 7 `subscribe` keys: those are all main→renderer
+`webContents.send`, which is not a channel. `src/ipc/rpcBridge.ts` registers exactly one channel,
+`RPC_CHANNEL` — the bridge, i.e. the reduction's *subject*, not its target.
+
+**This reconciles §5b-bis, and it is the first time those numbers have.** §5b-bis's classes were not
+disjoint as written — "DEAD PASSTHROUGH ~120 / SUPERSEDED SHELL HALF 9 / LOCAL ALREADY ELSEWHERE 15" sums to
+144 against a stated 132. The measured decomposition is disjoint and complete: **75 dead + 18 live = 93**,
+and stage 3b deleted the 48 generated channels, so 93 + 48 = 141 — within the same slack as "~120".
+
+**The risk subset is 7 channels, and reachability cannot decide them.** A dead channel is not automatically
+a *behaviour-free* channel. 7 of the 75 own a shell-side step that the client has to already provide — the
+lesson `tlsRemoveCert` taught, where deleting the channel deleted the engine's keypair and left the OS trust
+store trusting the CA. Found by mapping every `dialog.showSaveDialog` / `showOpenDialog` /
+`app.getVersion()` site to its enclosing handler:
+
+| Channel | Owns |
+| --- | --- |
+| `runner:exportReport` | `dialog.showSaveDialog` |
+| `audit:export` | `dialog.showSaveDialog` |
+| `capture:shareJson` | `dialog.showSaveDialog` |
+| `tls:exportCert` | `dialog.showSaveDialog` |
+| `tls:importKey` | `dialog.showOpenDialog` |
+| `importExport:export` | `dialog.showSaveDialog` |
+| `importExport:preflight` | `dialog.showOpenDialog` |
+
+**§5b-bis's "9 superseded shell halves" is exactly these 7 plus the 2 `tls` channels** — and the `tls` pair
+is now `local` (live), which is why that audit's class-2 count moved 9 → 11 while the *dead* subset is 7.
+That reconciliation is what makes this measurement usable where the earlier one was not.
+
+**So the reduction is three decidable steps — and step 1 is already done, because it was the last read-only
+part.**
+
+1. **All 7 twins exist, and the ordering is deliberate.** `surface.ts` declares a counterpart for each
+   (`exportAudit: t("audit.export", "returns an artifact; the CLIENT writes the file, not the engine")`), and
+   `packages/client/src/local.ts` documents *why there are two forms*: **three are dialog-first** —
+   `exportData`, `exportRunnerReport`, `exportAudit` — because the command renders something expensive the user
+   might abandon (`File_Ops_Protocol.md` §3.2: a 200 MB workspace archive, the runner's report, the workspace's
+   *entire* `git log`), and **two are artifact-first** — `tlsExportCert`, `shareCaptureJson` — because they hand
+   over bytes already produced at no real cost, so reordering would buy nothing and would cost the engine's own
+   suggestion as the dialog's default name, which the user can see. `tlsImportKey` and `preflightImport` are
+   ingress: dialog → `blob.put` → command. **Checked against the call sites, not the prose** — `pickSavePath`
+   precedes `call(…)` in `exportData` (`index.ts:536` → `548`), `exportAudit` (`725` → `732`) and
+   `exportRunnerReport` (`850` → `864`), and the two artifact-first methods genuinely pass no `destPath`. Doc
+   and code agree *now*; they did not before, which is exactly how `audit.export` was found.
+   `local.ts:236-240` even records the intent: splitting the ask out "is what lets `exportData` and
+   `exportRunnerReport` move off the shell's legacy channels."
+2. **68 pure passthroughs remain to be deleted**, per file, re-pointing the suites that drive them — §5b-ter's
+   test-migration rule, the unit being the handler group.
+3. **`clientHandlers.ts` is not touched.** It holds 17 of the 18 live channels; they are what `window.api`
+   actually invokes.
+
+**So no question is open before the reduction starts** — which is the point of having measured rather than
+read it. What remains is mechanical but not small: 68 deletions across 9 files, each with its suite to
+re-point, which is why it is the next slice rather than a footnote to this one.
+
+> **Corrected 2026-09-21 — see §5b-undecies.** The risk subset above is **one channel short**: its criterion
+> was *owns a `dialog.*`*, and `tls:generate` owns a **path** instead. The group that channel belongs to was
+> the first slice attempted, and it was not deletable until that was found — the shell half being deleted was
+> the last correct implementation of a field the client had already dropped. **The widened subset is
+> therefore 8, and §5b-sedecies carries its full accounting (8 → 5 → 4 → 4 → 4 → 3).** Read the subset from
+> the *latest* §5b-* section: this table's 7 is the historical measurement, not the current count.
+
+#### 5b-undecies. The risk subset was one channel short — `tls:generate`, and the reduction would have erased the fix (2026-09-21)
+
+**§5b-decies' risk criterion — "owns a shell-side `dialog.*` step" — is too narrow.** The step that makes a
+dead channel unsafe to delete is not the dialog: it is **any step the engine does not perform**. A dialog is
+the loud instance; the quiet one is *synthesising a field the engine deliberately refuses to report*, and the
+TLS family is where that lives.
+
+Found by starting the reduction on `tlsHandlers.ts` — the group §5b-decies' own table shows as 6 dead / 0 live
+— and asking §5b-ter's question of each of the six in turn: *what does this body do that the client twin does
+not?*
+
+| Channel | Shell-side step | Client twin | Verdict |
+| --- | --- | --- | --- |
+| `tls:certStatus` | none — delegates to `readCertStatus()` | `local` → `client:tlsCertStatus` → `readCertStatus()` | safe |
+| `tls:removeCert` | none — delegates to `uninstallEngineCa()` | `local` → `client:tlsRemoveCert` | safe |
+| `tls:exportCert` | `dialog.showSaveDialog` | `tlsExportCert` → `artifactToFile` | safe — and artifact-first is *sanctioned*, `local.ts:195` names it |
+| `tls:importCert` | dialog + `path: caCertPath()` | `tlsImportCert` | **the path is dropped** |
+| `tls:importKey` | dialog + `path: caKeyPath()` | `tlsImportKey` | **the path is dropped** |
+| `tls:generate` | `certPath: caCertPath()` + `keyPath: caKeyPath()` | `tlsGenerate` | **both paths are dropped** |
+
+**The three "dropped" rows are a live regression, not a latent one, and it was already in the tree.**
+`File_Ops_Protocol.md` §8 keeps the engine's directory layout out of the protocol — `tls.generate` answers
+`{ok, fingerprint}` and `tls.importCert` / `tls.importKey` answer `{ok}`
+(`packages/engine/src/fileOps/commands.ts:42,142`) — while the renderer records the paths from those results
+and reads a missing one as "not configured":
+
+```
+packages/gui/src/panels/settings/TlsSettingsSection.tsx:36,48   if (result.ok && result.path)                        // import
+packages/gui/src/panels/settings/TlsSettingsSection.tsx:67      if (result.ok && result.certPath && result.keyPath)  // generate
+```
+
+So the user clicks *Generate with mkcert*, the CA is written into the engine's data dir, `handleGlobalChange`
+is never reached, `config.tlsCaCertPath` stays null, and the panel goes on saying "not configured". From the
+user's side the button is a no-op. The import pair behaves identically.
+
+**It was introduced by P6 step 3b-1, and the evidence is the pre-routing preload.**
+`git show 8d0b81a^:src/preload.ts` has `tlsGenerate: () => ipcRenderer.invoke("tls:generate")` — the channel
+that computed the paths — and `8d0b81a` replaced the table with `{ ...client }`, whose `tlsGenerate` was
+`() => call("tlsGenerate", {})`. The channel kept working for anyone who called it directly, and nothing did.
+**The dead channel was the last correct implementation and the live one was the wrong one**, which is the
+general shape this whole section exists to warn about.
+
+**The classification was the cause, not a symptom.** All three keys were filed `transport` — "a 1:1 mapping
+onto a protocol command" — and that filing *is* the claim that nothing needs to happen beyond the call.
+`shim` is the kind that says otherwise. This is the second time in P6 that a wrong filing produced a wrong
+**behaviour** rather than merely a wrong note; `checkUpdate`'s `SPLIT` was the first, and it too was resolved
+by reclassifying the key rather than by moving code.
+
+**Fixed 2026-09-21 by making the filing true.** The three keys are `shim` in `surface.ts` now, and each body
+appends the path the **shell** computes — `caCertPath()` / `caKeyPath()`, read from the `tlsCertStatus` local
+hook, which is where `certLifecycle.ts:336` already reports them:
+
+```
+tlsGenerate   → call("tls.generate")  → + certPath, keyPath   from local.tlsCertStatus()
+tlsImportCert → upload → call(…)      → + path: certPath
+tlsImportKey  → upload → call(…)      → + path: keyPath
+```
+
+No new channel and no new `ClientLocal` member: `tlsCertStatus` already reports both paths, so the synthesis
+stays in the one place that owns it rather than gaining a second copy. `window.api` is unchanged in **shape**
+— same 144 keys, same arities — and the fix restores the result shape `packages/gui/src/types/window.ts:182-185`
+declares and the pre-P6 build delivered.
+
+**Two consequences worth stating.**
+
+1. **The risk criterion is now "owns a step the engine does not perform", and `tlsHandlers.ts` is deletable.**
+   All six channels have a twin carrying their behaviour — three of them only since this fix. The dialog-only
+   test would have passed the whole group and deleted the fix along with the channels: the `tlsRemoveCert`
+   failure mode one level up, where the deletion does not lose a behaviour so much as the **only record** of
+   one the live path had already lost.
+2. **No test in the suite could have caught this.** `surface.test.ts` asserts 144 keys and per-kind totals, so
+   a reclassification that keeps the total is invisible to it, and a dropped *field* was invisible to
+   everything else. Hence the four assertions added to `packages/client/tests/client.test.ts` under *"the TLS
+   path shims (step 3b-1 regression)"* — they assert the returned **shape**, which is the thing that broke.
+   `transport` 70 → 67 and `shim` 3 → 6, while the 73 routed entries are unchanged, so
+   `tests/ipc/handlers.test.ts`'s guard did not move.
+
+#### 5b-duodecies. The reduction, first group — `tlsHandlers.ts` is deleted, and the criterion widens (2026-09-21)
+
+**The first handler group is gone: all six `tls:*` channels, and `src/ipc/handlers/tlsHandlers.ts` with them.**
+It is the group §5b-decies' table lists as 6 dead / 0 live, so it looked like the easy place to start — and it
+turned out to be the one group that needed a fix *first* (§5b-undecies). Worth stating plainly, because the
+next eight groups will be chosen on the same basis: **"all dead" is a statement about reachability, and the
+question that decides deletability is what the body does.**
+
+`registerIpcHandlers()` loses one import and one call. Three comments that named the file as a *live*
+implementation are corrected in the same pass, because a comment pointing at a deleted file is the same
+defect class as a doc quoting a stale count:
+
+- `src/ipc/certLifecycle.ts` — now says outright that `readCertStatus()` is the **only** source of
+  `certPath` / `keyPath`, which is the fact the three client shims depend on.
+- `src/ipc/handlers/clientHandlers.ts` — past tense for the `tls:certStatus` / `tls:removeCert` twins.
+- `tests/integration/fileOps.integration.test.ts`'s item-6 assertion — it pointed at the deleted file as its
+  counter-example and now names the client's shim instead, which is *sharper*: the shim's `path` is the
+  client's fact and never crosses the wire, which is precisely what that assertion protects.
+
+**Reconciliation: 101 files / 2,500 tests / 2,459 passed / 40 skipped / 1 failed — unchanged, delta 0.** That
+is the **re-point** signature from §5b-septies' trap, not the generated-list one, and the mechanism is named
+rather than inferred: `tests/ipc/handlers.test.ts`'s `expectedChannels` never listed these six — they were
+hand-written `ipcMain.handle` literals, not generated from that array — so nothing generated a per-channel
+test for them. The one channel this spike drives, `tls:generate`, is re-pointed in the retired-channel
+fixture, which now covers **5 of the 10**.
+
+That fixture entry is the table's **only body that is not a bare `invoke()` adapter**, and reproducing it
+verbatim — paths included — is what keeps the spike's `certPath` / `keyPath` assertions meaningful. It is the
+same discovery as §5b-undecies reached from the test side: the channel was not a passthrough, so neither the
+deletion order nor the fixture could treat it as one.
+
+**The inventory, re-measured 2026-09-21** (`ipcMain.handle(` *call sites*, not lines — a line count misses a
+registration whose channel name sits on the next line, and misses nothing else):
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the 9 handler files | 93 | **87** |
+| live | 18 | 18 |
+| dead | 75 | **69** |
+
+`src/ipc/rpcBridge.ts` holds 2 more and is excluded, as §5b-decies excluded it — it is the reduction's
+*subject*, not its target. **So 69 dead channels remain, in 8 files**, and the next group's file is chosen
+from §5b-decies' table with §5b-undecies' criterion applied.
+
+**And a correction to §5b-decies' own arithmetic, because it is the trap this plan keeps recording.** That
+section's "**68 pure passthroughs remain to be deleted**" and its "75 dead" are **two different partitions**,
+not two views of one number: 68 counts only the channels whose body is literally a one-line
+`commandRegistry.invoke()` adapter, and excludes the 7 dialog-owners, which is why 68 + 7 = 75. The six `tls`
+channels were in **neither** subset — two delegated to a helper, four owned a step — so "6 of the 68" would
+have been wrong in the same way the plan's other stale counts were. 68 + 7 = 75 dead, and 75 − 6 = the 69
+above. Stated because the next reader will otherwise try to reconcile 68 with 87.
+
+#### 5b-terdecies. The reduction, second group — `syncHandlers.ts` is deleted, and the first group that cost tests (2026-09-21)
+
+**The largest single file is gone: `src/ipc/handlers/syncHandlers.ts`, 19 channels, all dead.** It is the
+group §5b-decies' table lists as 19 dead / 0 live, and unlike the `tls` group it needed no fix first — the
+widened criterion (*owns a step the engine does not perform*, §5b-undecies) found no such step in 18 of the
+19.
+
+The 19th is why the criterion is the right one rather than a restatement of "owns a dialog". `audit:list` is
+the file's **only** body that is not a `commandRegistry.invoke()` adapter — it called `queryLog` directly,
+because §5a kept it un-re-pointed: a delegating legacy body would acquire a hidden ordering dependency on
+`registerAuditCommands()`, which runs from `registerIpcHandlers()`. **Deleting the channel dissolves that
+concern rather than answering it.** The `audit.list` command becomes the only implementation, and it was
+already the only one the client reached — `window.api.listAudit` → `audit.list`, never the channel.
+
+| # | what the group needed | result |
+| --- | --- | --- |
+| 17 | nothing — one-line `invoke()` delegates, every twin confirmed | deleted |
+| 1 | `audit:list` — the non-delegation §5a is about | deleted; the command is now the implementation |
+| 1 | `audit:export` — a `dialog.showSaveDialog` | deleted; the client's `exportAudit` is dialog-first **and asserted** |
+
+**The delta is −5, and the mechanism is named rather than inferred.** `tests/ipc/handlers.test.ts`'s
+`expectedChannels` listed exactly five of the nineteen — `audit:list`, `audit:diff`, `audit:export`,
+`history:list`, `history:diff` — and that file generates **one `it` per entry**, so removing the five entries
+is exactly −5. The other fourteen generated nothing: they were hand-written `ipcMain.handle` literals, and
+`expectedChannels` is the only thing in the suite that turns a channel name into a test. This is the
+**generated-list** signature from §5b-septies' trap — and the opposite of the `tls` group's *re-point*
+signature (delta 0) for the same nominal operation, which is why the count alone never identifies the
+mechanism.
+
+**Reconciliation: 101 files / 2,495 tests / 2,454 passed / 40 skipped / 1 failed.** Baseline
+2,500 / 2,459 / 40 / 1 → **−5 tests, −5 passed**, the one failure unchanged (`soap.execute`, environmental,
+`ECONNREFUSED 127.0.0.1:1`).
+
+**The "failures up" signal fired first, and resolving it is what keeps the delta at −5 rather than −10.**
+Before the re-point the five affected suites read **6 failed / 219 passed**: five *real* failures —
+`describe("history:list handler")` (3) and `describe("history:diff handler")` (2) called
+`getHandler("history:list")` / `("history:diff")` **by name**, and a deleted channel is exactly what
+`getHandler` looks up — plus the environmental `soap.execute`. §5b-ter's rule is that a suite driving a
+deleted channel is **re-pointed, not deleted**, and this file already had the idiom: the `entity.*` helpers
+stage 3b added drive the collapsed commands directly. The five cases now call `historyList()` / `historyDiff()`,
+which is what the channels did minus the channel. The re-point is not cosmetic: the assertions pin behaviour
+that lives **only** in the command — `workspaceId` falling back to the active workspace, `limit`/`offset`
+defaulting to 100/0 (`sync/syncCommands.ts:196-200`) — because the channel forwarded its argument object
+whole and never touched those fields.
+
+**Two integration suites drove these channels by name, and the fix is a harness rather than 62 rewrites.**
+`gitRemote.integration.test.ts` and `gitSync.integration.test.ts` call `invoke("sync:push", …)` and its
+siblings **62 times** across 16 channels, and their subject is real git behaviour, not the shell's routing. A
+new `tests/integration/deletedChannelHarness.ts` holds the positional → payload mapping the deleted bodies
+performed, and both suites now read `const invoke = invokeDeletedChannel`. It is explicitly **not a second
+contract**: the production mapping is the client's (`packages/client/src/index.ts`) and is asserted in
+`client.test.ts`; the harness exists so that deleting a shell channel does not require rewriting 62 assertions
+about git. `channel.replace(":", ".")` is exact for all 16 — checked against the deleted bodies, not assumed.
+
+**And the correction this group produced: the spike's fixture needed no entry.** §5b-duodecies' note that the
+retired-channel fixture "grows with each slice" is true only when the spike drives the channel. This spike
+drives **ten** channels and none is a `sync.*` / `git.*` / `audit.*` / `history.*` one, so the fixture stays
+at **5 of 10**. Adding `audit:list` would have been an entry nothing ever looks up. Stated because "the table
+grows with each slice" reads as a rule and is not one — the rule is "the table grows with each *driven*
+channel", and a deleted channel that nothing drives is verified by the deletion compiling, not by a fixture.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 87 (9 files) | **68 (8 files)** |
+| live | 18 | 18 |
+| dead | 69 | **50** |
+
+**50 dead channels remain in 7 files**, one handler group per commit. `clientHandlers.ts` is still
+17 live / 0 dead and still untouchable; the other seven all-dead-or-mixed files are `coreHandlers.ts` (17),
+`applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
+`app:checkUpdate`), `folderHandlers.ts` (4) and `importExportHandlers.ts` (4). **The dialog-owner risk subset
+shrinks 5 → 4** — `audit:export` was one of §5b-decies' seven, and group 1 had already taken the widened
+subset 8 → 5 by deleting the three `tls` channels that own a step. `audit:export`'s dialog-first ordering now
+lives in the client's `exportAudit`, which `client.test.ts` asserts *by order* (`"exportAudit asks where BEFORE
+it asks the engine to render"`) rather than by intent.
+
+> **Corrected 2026-09-21 — see §5b-sedecies.** This paragraph first read "**shrinks 7 → 6**", computed from
+> §5b-decies' seven without subtracting the three `tls` channels group 1 had just deleted (§5b-duodecies did
+> not restate the subset, so the count was carried forward rather than re-derived). The correct sequence is
+> **8 → 5 → 4**, and the subset is **3** after the fifth group.
+
+#### 5b-quaterdecies. The reduction, third group — `folderHandlers.ts` is deleted, and the §5c guard fails for working (2026-09-21)
+
+**`src/ipc/handlers/folderHandlers.ts` is gone: 4 channels, all dead, every one a one-line
+`commandRegistry.invoke()` delegate** (`folder.add` / `folder.rename` / `folder.move` / `folder.delete`). The
+criterion found no step the engine does not perform in any of them — no dialog, no path — so this group
+needed no fix first. It is the smallest all-dead file, and the first one taken in the plain order the
+criterion suggests.
+
+**The one difference that looked like a regression and is not.** The channel's `folder:add` body was
+`{ kind, ...folder }` — a **spread** — while the client's `addFolder` picks `name` and `parentId`
+explicitly. A spread that carries a field the twin drops is exactly the `tlsGenerate` shape (§5b-undecies),
+so it was checked rather than waved through. It is inert because the **contract** excludes the field:
+`packages/gui/src/types/window.ts:63` types the argument `Omit<Folder, "id" | "createdAt" | "workspaceId">`, and
+every renderer call site passes only `{ name, parentId }`. `FolderAddParams` is not `.strict()`, so the
+schema does not care either way.
+
+**But the equivalence is contract-specific, and the suite that drives it is the counter-example.**
+`tests/integration/foldersAndWorkspaces.integration.test.ts`'s `addFolder()` helper deliberately passes
+`workspaceId: TEST_WS`, which the spread carried and the client would drop. Its translation therefore keeps
+the spread, and its docblock says what the alternative would have cost: the folder would land in the
+*active* workspace — which in that suite happens to be `TEST_WS`, so **the suite would have gone on passing
+while testing something else.** That is the generalisable point, and it is the same one §5b-undecies made
+from the other direction: when a re-point looks "obviously equivalent", find the caller that makes it not
+so — or write down which contract makes it so.
+
+**The delta is −3, and the mechanism is a *different* mix from the last two groups.** `expectedChannels`
+listed three of the four (`folder:add`, `folder:rename`, `folder:delete` — `folder:move` was never in it), so
+removing them is −3. The file's **fourteen** `getHandler("folder:…")` call sites were re-pointed at the
+commands through new helpers, following the `entity.*` / `history.*` idiom — a *re-point*, so they
+contribute 0. So this group is a generated-list shrink (−3) *and* a re-point (0) at once, which is why the
+signature has to be read per-file rather than per-group.
+
+**Reconciliation: 101 files / 2,492 tests / 2,451 passed / 40 skipped / 1 failed.** Baseline
+2,495 / 2,454 / 40 / 1 → **−3 tests, −3 passed**, the one failure unchanged (`soap.execute`).
+
+**And the §5c guard failed — because the reduction worked.** `tests/ipc/handlers.test.ts`'s static guard
+(§5c-viii) opens with an anti-vacuity check so a broken glob cannot make the whole guard pass against
+nothing. It asserted `Object.keys(shell).length > 20`, which held while `src/` had 22 `.ts` files. Deleting
+`syncHandlers.ts` took it to 21; deleting `folderHandlers.ts` took it to **20 — and the assertion is
+`> 20`**. Six more handler files are still to be deleted, leaving 14, so the floor was going to fail six more
+times.
+
+> **A guard whose floor is a file count fails as the tree shrinks — and the tree shrinking is the work.**
+
+Fixed by expressing anti-vacuity as **presence, not a count**: assert the reader found `src/preload.ts`,
+`src/ipc/handlers.ts` and `src/ipc/rpcBridge.ts`, normalised because Vite's glob keys are
+platform-dependent. That tests the actual claim ("the reader resolved `src/`") and cannot drift. The
+engine's floor stays, because the engine tree is not eroding — the reduction moves *into* it — and the
+positive control below it independently proves content loaded.
+
+**The fixture grew this time, and that is the rule cutting the other way.** `tests/spike/protocolPoc.test.ts`
+drives `folder:add` and `folder:move` through the client, so both were re-attached: the retired-channel
+fixture goes **5 of 10 → 7 of 10**. This is the counterpart to §5b-terdecies' correction — the second group
+added nothing because the spike drives none of its channels, and the third adds two because it drives half
+of them. The rule is "grows with each **driven** channel", and it is worth having seen it do both.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 68 (8 files) | **64 (7 files)** |
+| live | 18 | 18 |
+| dead | 50 | **46** |
+
+**46 dead channels remain in 6 files**, one handler group per commit: `coreHandlers.ts` (17),
+`applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `crudHandlers.ts` (5), `systemHandlers.ts` (4 dead +
+`app:checkUpdate`) and `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The
+dialog-owner risk subset is unchanged at **4**, since this group owned no dialog.
+
+→ **Superseded the same day by §5b-quindecies** (fourth group): `crudHandlers.ts` is gone, leaving **41 dead
+in 5 files**. Read the inventory in the *latest* §5b-* section, not the nearest one.
+
+#### 5b-quindecies. The reduction, fourth group — `crudHandlers.ts` becomes `crudKinds.ts`, and the first group that cost nothing (2026-09-21)
+
+**`src/ipc/handlers/crudHandlers.ts` is gone: 5 channels, all dead** (`webhook:registerActive`,
+`webhook:unregisterActive`, `webhookServer:start|stop|status`). It is the first group whose channels are
+**not** `commandRegistry.invoke()` delegates — every one of the five calls its engine function directly
+(`registerActiveWebhook`, `unregisterActiveWebhook`, `startWebhookServer`, `stopWebhookServer`,
+`isWebhookServerRunning` / `getWebhookPort` / `getWebhookServerError`), which is the shape §5a left them in
+and the reason §5b-decies' classification had to be re-derived rather than inherited. The widened criterion
+(*owns a step the engine does not perform*, §5b-undecies) found none: the engine half is exact, and in one
+case strictly more capable — `webhookServer.start` accepts an optional `port`, which the shell body ignored
+(`proxy/webhookCommands.ts`).
+
+**The delta is 0, and that is the third distinct signature in four groups.** The five channels were never in
+`handlers.test.ts`'s `expectedChannels`, so no generated `it` was lost; and no suite drives them **by name**,
+so nothing had to be re-pointed. Their behaviour is asserted at the **command** level already —
+`handlers.test.ts`'s "slice 3" block pins the port-resolution chain (explicit `port` → `cfg.webhookPort` →
+`9101`) and the three-field status shape, and it does so against `commandRegistry.invoke()`. So a group can
+cost zero either because its cases were *re-pointed* (the `tls` signature, §5b-duodecies) or because **it
+never had any** — and the count alone cannot tell those apart, which is the same lesson §5b-terdecies drew
+from the opposite direction.
+
+**The file was renamed, and the exception that kept its name has expired.** §5b-octies recorded a deliberate
+decision *not* to rename it, on the grounds that it registered six kinds **and** five live `webhook*`
+channels, so "handlers" was still half-true. Deleting the five channels removes the premise, so the exception
+goes with it: the file is now `crudKinds.ts` with `registerCrudKinds()`, matching `soapKinds.ts` /
+`graphqlKinds.ts` / `grpcKinds.ts`. **The blast radius is five files** — `src/ipc/handlers.ts` (import +
+call), `tests/integration/entityConflictScope.integration.test.ts`,
+`tests/integration/foldersAndWorkspaces.integration.test.ts`,
+`tests/integration/settingsMutations.integration.test.ts` and `tests/spike/protocolPoc.test.ts` — and each
+test file also carried a comment saying `registerCrudHandlers()` "wires the *channels* and the per-kind
+options". **That comment is now false in its first half**, which is why it was fixed in the same commit: the
+call is what populates the per-kind registry the four collapsed `entity.*` commands dispatch through, and it
+registers no channels at all. A stale comment on a *renamed* function is worse than a stale comment on a
+deleted one — the deleted one fails loudly, this one reads as current.
+
+**And the spike's fixture did not grow, which is the rule cutting the same way as the second group.**
+`tests/spike/protocolPoc.test.ts` drives **ten** channels and none of them is `webhook:*` or
+`webhookServer:*` (measured: the file contains no occurrence of "webhook"), so the retired-channel fixture
+stays at **7 of 10**. The rule is "grows with each **driven** channel": third group, two driven, fixture grew;
+second and fourth, none driven, fixture unchanged.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 64 (7 files) | **59 (6 files)** |
+| live | 18 | 18 |
+| dead | 46 | **41** |
+
+(`src/ipc/rpcBridge.ts` still holds 2 `ipcMain.handle(` call sites and is excluded as before: it registers
+`RPC_CHANNEL` and the step-3a push channel — the bridge, i.e. the reduction's *subject* rather than its
+target.)
+
+**41 dead channels remain in 5 files**, one handler group per commit: `coreHandlers.ts` (17),
+`applicationHandlers.ts` (10), `runnerHandlers.ts` (6), `systemHandlers.ts` (4 dead + `app:checkUpdate`) and
+`importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead. The dialog-owner risk subset
+stays at **4**, since this group owned no dialog.
+
+→ **Superseded the same day by §5b-sedecies** (fifth group): `systemHandlers.ts` is reduced to one channel,
+leaving **37 dead in 4 files**, all of them all-dead. Read the inventory in the *latest* §5b-* section, not the
+nearest one.
+
+**One thing the next group must check, and it is the shape this group just established.** `systemHandlers.ts`
+holds four dead channels of two different kinds, and the difference decides the order:
+
+  - its three `server:*` bodies (`server:start` / `server:stop` / `server:restart`) are **self-contained** in
+    exactly the way these five were — they call `startServer` / `stopServer` directly rather than through the
+    registry — so they need the same confirmation that the `server.*` commands are exact equivalents. They
+    are, and §5a's trap is why they were left that way; the check is cheap and it is not optional.
+  - `capture:shareJson` owns a `dialog.showSaveDialog` and is one of §5b-decies' remaining six, so it is
+    **not** cleared by the criterion until the client's dialog-first ordering is confirmed the way
+    `audit:export`'s was (§5b-terdecies).
+
+That is the "SUPERSEDED SHELL HALF" class, and it is the last class that can still hide a lost step.
+
+#### 5b-sedecies. The reduction, fifth group — `systemHandlers.ts` shrinks to one channel, and the "trap" is dissolved rather than answered (2026-09-21)
+
+**Four channels are gone and the file is not.** `server:start` / `server:stop` / `server:restart` and
+`capture:shareJson` left `src/ipc/handlers/systemHandlers.ts`, which now registers exactly **one** channel —
+`app:checkUpdate`. This is the reduction's first *reduction* rather than a whole-file deletion, and the reason
+is the fact that kept this file out of the all-dead list since §5b-decies: `app:checkUpdate` is
+**client-local, not legacy**, so it was never a reduction target. `packages/protocol` no longer declares
+`app.checkUpdate`; `src/preload.ts:87` is its only caller. **`systemHandlers.ts` therefore leaves the
+reduction's scope**, and every remaining group is a whole-file deletion.
+
+**The group held the two shapes §5b-quindecies named as its first question, and both resolved the way the
+criterion says they must.**
+
+  - **The three `server:*` bodies were self-contained** — `loadConfig()` → `stopServer()` /
+    `startServer(cfg.port)` — the same shape as the `crud` group's five, so §5b-ter's question had to be asked
+    per channel by reading the command rather than inherited from the classification. The check was against
+    `packages/engine/src/proxy/serverCommands.ts`'s bodies: `server.start` loads the config itself and starts
+    on `cfg.port`; `server.stop` calls `stopServer()`; `server.restart` is stop-then-start, in that order.
+    Nothing else. The commands take no payload, so the translation is argument-free — what the channel did
+    *was* call the command.
+  - **`capture:shareJson` owned the dialog, and its twin's ordering is deliberately the opposite one.** The
+    channel was dialog-first (`File_Ops_Protocol.md` §3.2); the client's `shareCaptureJson` is
+    **artifact-first**, because the artifact is a `JSON.stringify` of entries the renderer already holds, so
+    rendering before the user commits costs nothing — whereas asking first would discard the engine's own
+    `suggestedName` as the dialog's default. That makes it the **counterpart to `audit.export`** rather than a
+    repetition of it: there the client *had* to become dialog-first (§5b-terdecies), here it must not. So the
+    difference is not a lost step — and it is now pinned rather than asserted in prose.
+    `packages/client/tests/client.test.ts`'s *"shareCaptureJson renders BEFORE it asks — the deliberate
+    exception to dialog-first"* asserts the call **order** (`["capture.shareJson",
+    "writeArtifact:captured-requests.json"]`) and that the hook is handed the *artifact's* name rather than
+    the caller's fallback. **That is the `exportAudit` lesson applied pre-emptively:** a docblock and a call
+    site that disagree is how that bug survived, so the docblock's claim became a test instead.
+
+**The delta is −8, and it decomposes exactly: −9 deleted, +1 added.** It is the largest delta of the five
+groups and the first whose *arithmetic* was predicted wrong — worth recording, because the error was in the
+decomposition and not in the mechanism.
+
+  - **−9 in `tests/ipc/handlers.test.ts`.** Three generated `expectedChannels` cases (one `it` per entry,
+    §5b-septies' signature) **plus six hand-written cases.** The six are the correction: three `describe`s
+    stood there — `server:restart`, `server:stop`, `server:start` — and **each held two `it`s**, one
+    asserting `registeredHandlers.has(channel)` and one driving `getHandler(channel)`. The prediction carried
+    forward from §5b-quindecies said "three behaviour cases", i.e. it counted the *channels* and not the
+    *cases*. The mechanism was right; the count was half.
+  - **+1 in `packages/client/tests/client.test.ts`**, the ordering test above.
+  - **0 from re-points.** The two integration suites that drove these channels by name
+    (`settingsMutations`, `capture`) re-pointed them through **local tables** in their own `invoke` — the
+    third group's shape, chosen over the shared `deletedChannelHarness` for the same reason
+    `foldersAndWorkspaces` chose it: a suite that drives eleven channels and lost three does not want a
+    harness modelling channels the reduction has not reached.
+
+**Reconciliation: 101 files / 2,484 tests / 2,443 passed / 40 skipped / 1 failed — delta −8**, and the one
+failure is the standing environmental `soap.execute` (`ECONNREFUSED 127.0.0.1:1`, §5b-ter's note), so the pass
+count moves by exactly the −8 the decomposition predicts. The group's **first** run failed twice, and the
+second failure was this group's own fixture bug (the argument shift below) — recorded rather than tidied away,
+because the delta was −8 *and* the suite was red, and neither fact was inferred from the other.
+
+**The six server cases were deleted rather than re-pointed, and this is the first group where §5b-septies'
+rule cut in the *delete* direction.** Every one of the six duplicated something already asserted:
+
+  - the three `has()` cases asserted what `expectedChannels` generates a case for **and** what the "registry
+    coverage" block asserts by iterating every protocol command (*"implements every protocol command — the
+    pinned list is empty"*) — the same fact three times over;
+  - the three behaviour cases asserted `startServer` / `stopServer` were called and `{ok:true}` returned,
+    which the *"delivers the 21 moved commands through the registry"* block asserts against the same mocks —
+    and asserts **more**, namely the stop-before-start order, which is the actual contract.
+
+**And the one assertion that block did not make was folded into it, not dropped.** The deleted
+`server:restart` case set `currentConfig.port = 9090` and asserted `startServer` was called with it; the
+command-level block asserted the order but not the port. So
+`expect(startServer).toHaveBeenCalledWith(currentConfig.port)` now sits in that block. **That fold is the
+difference between deleting a duplicate and
+deleting coverage**, and it is the check to run on every remaining group: re-point the cases whose assertions
+live only in the channel, delete the ones a suite already makes, and *move* the residue rather than discarding
+it with the case.
+
+**The "trap" in `serverCommands.ts` is dissolved, not answered — and the distinction is the generalisable
+part.** That header carried a "**do NOT re-point the legacy channels at this module yet**" warning: a
+delegating body would have acquired a hidden ordering dependency on `registerIpcHandlers()`, because
+`coreHandlers.ts` registers at module scope while this module is registered by an explicit call — and two
+suites deliberately register handler *groups* without ever calling `registerIpcHandlers()`, so re-pointing
+broke six of their tests with `UNKNOWN_COMMAND`. **The warning was right.** Deleting the channels removes the
+duplication it protected against, so it retires **without any new coupling at all** — and the two suites did
+not have to change their registration shape: they kept registering the same handler groups and re-pointed the
+three `server:*` calls inside their own `invoke`. **The lesson: "duplication kept deliberately to avoid a
+hidden coupling" is a temporary answer that a deletion can retire, and the deletion is cheaper than the
+coupling it declines.**
+
+**A fixture-reproduction trap this group produced, caught by the suite rather than by review.** The capture
+suite's local table was first written with the deleted body's `(_e, entries, suggestedName)` signature — and
+that is wrong, because the table's branch *replaces* the `fn({}, ...args)` call that used to inject the event,
+so every argument shifts by one. The suite failed with `BAD_REQUEST: Invalid input: expected array, received
+string` on `entries`, which had arrived as the suggested filename. The convention is visible in both existing
+tables (`deletedChannelHarness.ts`, `foldersAndWorkspaces`' folder table): they take the caller's
+**positional** arguments and **no event**. **The generalisable part: a positional call is split across two
+places — the wrapper injects the event, the table builds the payload — so a table standing in for the
+wrapper's whole body must not reproduce the half the wrapper supplies.** Getting that seam wrong is a silent
+*shift* rather than a missing value, so nothing about the failure looks like a signature problem.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 59 (6 files) | **55 (6 files)** |
+| live | 18 | 18 |
+| dead | 41 | **37** |
+
+The file total does not move with the channel count, and that is this group's signature: `app:checkUpdate`
+stays, so the live 18 is unchanged and the file is **reduced rather than deleted** — the only group of the five
+whose file survives. (`src/ipc/rpcBridge.ts` still holds its one `ipcMain.handle(RPC_CHANNEL, …)` call site and
+is excluded as before — the reduction's *subject*, not its target. Note the trap §5b-duodecies' header
+records: counting *lines* rather than *call sites* misses a registration whose channel name sits on the next
+line, which is why this is a call-site count — `client:writeArtifact` and `applications:start` are both written
+that way.)
+
+**37 dead channels remain, in 4 files, and every one of those files is now all-dead** — so the remaining
+groups are whole-file deletions with no mixed case left: `coreHandlers.ts` (17), `applicationHandlers.ts`
+(10), `runnerHandlers.ts` (6), `importExportHandlers.ts` (4). `clientHandlers.ts` is still 17 live / 0 dead.
+
+**And the dialog-owner risk subset is 3 — not the 6 that three earlier sections state, because that count
+propagated without ever being re-derived, which is TRAPS.md's own trap arriving from the other side.**
+Re-derived from the tree rather than from prose:
+
+| After | Subset | Change |
+| --- | --- | --- |
+| §5b-decies | 7 | the measured `dialog.*` owners |
+| §5b-undecies | **8** | criterion widens — `tls:generate` owns a *path*, not a dialog |
+| group 1 (`tlsHandlers`) | **5** | `tls:generate`, `tls:exportCert`, `tls:importKey` — three of the eight |
+| group 2 (`syncHandlers`) | **4** | `audit:export` |
+| groups 3, 4 | 4 | neither owned a dialog |
+| group 5 (this one) | **3** | `capture:shareJson` |
+
+The three that remain are `runner:exportReport`, `importExport:export` and `importExport:preflight` — i.e.
+exactly the three groups still to go, one dialog-owner per remaining file, except `coreHandlers.ts` and
+`applicationHandlers.ts`, which own none. **Group 1's omission is where the error entered**: §5b-duodecies did
+not restate the subset, and §5b-terdecies then computed from §5b-decies' 7 without subtracting the three
+channels its immediate predecessor had just deleted — so "7 → 6" was written, and groups 3, 4 and 5 inherited
+"6". **The rule this plan keeps rediscovering, now from the ledger side: a count that is *carried forward*
+must be re-derived at the point it is used, and the cheapest way is to re-measure the tree rather than to read
+the previous paragraph.** The corrections are applied to §5b-terdecies, §5b-quaterdecies and §5b-quindecies in
+the same pass.
+
+**The spike's fixture did not grow** — the third non-growth, after groups 2 and 4. `protocolPoc` drives ten
+channels and none of them is `server:*` or `capture:shareJson` (the file contains no occurrence of either
+name), so the fixture stays at **7 of 10**. The rule "grows with each **driven** channel" has now been
+observed in both directions three times.
+
+#### 5b-septendecies. The reduction, sixth group — `coreHandlers.ts` becomes `coreKinds.ts`, the largest group, and the one that found a live bug (2026-09-21)
+
+**Seventeen channels are gone and the file is not.** `src/ipc/handlers/coreHandlers.ts` — the reduction's
+largest remaining group — was reduced to a single `registerCrudKind<Environment>()` call plus the header,
+renamed to **`coreKinds.ts`**, and `registerCoreHandlers()` became **`registerCoreKinds()`**. The name
+follows the rule `crudHandlers.ts` → `crudKinds.ts` established one group earlier: a file named
+`*Handlers` that registers no handlers is a lie. §5b-sedecies predicted that "every remaining group is a
+whole-file deletion after this"; **that prediction was wrong for this file for the same reason it was
+wrong for `systemHandlers.ts`** — a non-channel registration kept it alive. The seventeen *channels* are
+gone; the file is reduced. Folding the one `environments` kind into `crudKinds.ts` is a **merge**, a
+different change with a different blast radius, and it is recorded as a follow-up rather than smuggled in
+with a deletion.
+
+**The group opened with a fix-first commit, and it is the `tls` shape arriving a second time —
+except this one was a live bug that had already shipped.** `entity:load`'s body applied
+`toProtocolKind()` (the map whose only non-identity entries are `rules → proxyRules` and
+`sockets → wsConnections`) before invoking the command; the client twin forwarded the caller's `kind`
+verbatim. Two renderer panels pass the **engine-internal** names — `ProxyRulesPanel.tsx`'s `"rules"` and
+`WebSocketsPanel.tsx`'s `"sockets"` — and `EntityLoadParams.kind` is the strict `EntityKind` enum, so both
+were being answered `BAD_REQUEST`. Both wrap the call in `.catch(() => {})`, so the failure surfaced as
+*"the entity has no fields"* rather than as an error.
+
+Verified empirically before touching anything, with a throwaway probe against the **built** protocol
+package rather than by reading the schema:
+
+| payload | old behaviour | cause |
+| --- | --- | --- |
+| `entity.load {kind:"rules"}` | **REJECTED** | strict `EntityKind` enum |
+| `entity.load {kind:"sockets"}` | **REJECTED** | strict `EntityKind` enum |
+| `entity.load {kind:"proxyRules"\|"wsConnections"\|"mocks"}` | OK | in the enum |
+| `entity.setEnabled {kind:"sockets"}` | REJECTED | gateway needs `wsConnections` |
+| `entity.setEnabled {kind:"rules"\|"mocks"}` | OK | in the enum |
+
+**The dead channel was the only correct implementation of that half.** Deleting it first would have
+destroyed a live behaviour and shipped the bug permanently — which is precisely what §5b-duodecies'
+`tls:generate` correction said, and the reason the procedure now *starts* with the criterion question
+rather than the deletion.
+
+**So the fix landed as `174a01d`, its own commit, before any channel was removed.** `loadEntity` and
+`setEntityEnabled` were reclassified `transport` → **`shim`** in `packages/client/src/surface.ts` (a
+`transport` filing *is* the claim that nothing happens beyond the call, and two things now do), and the
+steps moved into `packages/client/src/index.ts`:
+`ENGINE_TO_PROTOCOL_KIND` + `toProtocolKind()` for the load path, and a `safeParse` against
+`EntitySetEnabledParams.shape.kind` for the guard. Surface counts move **transport 67 → 65, shim 6 → 8**,
+total 144 unchanged — a reclassification cannot change what the contract covers, which is exactly what
+`handlers.test.ts`'s routed-surface guard asserts.
+
+**The renderer was not touched, and that is the point.** Non-negotiable #1 says a renderer edit during P6
+means something upstream is wrong, and the two panels are legitimately relying on `window.api` fidelity —
+they always passed engine-internal names and always worked. The step belonged to the client.
+
+**`entity:setEnabled`'s `invalid_kind` guard travelled too, although it is unreachable today.** All four
+renderer call sites pass valid kinds (`ProxyRulesPanel.tsx` `"rules"`, `MappingsPanel.tsx` `"mappings"`,
+and `useMocksPanelState`'s `resolveEntityKind`, which yields only the mock kinds in mock mode), and
+`useRequestsPanelState` has no `setEntityEnabled` at all. It was carried over anyway because
+`packages/gui/src/types/window.ts:41` declares `Promise<{ok: boolean; error?: string}>` and
+`store/coreCommands.ts` records the guard as client-facing behaviour. **The rule this establishes: a
+channel's owned step moves to the twin — the move is not conditional on the step's current
+reachability.** A latent contract and a live bug are the same shape at deletion time; only the evidence
+differs.
+
+**The delta is −25, and the decomposition is −5 generated + −20 hand-written — with the arithmetic
+*done by measurement*, not by counting the diff.** Measured: **101 files / 2,461 tests / 2,420 passed /
+40 skipped / 1 failed**, against a true pre-deletion baseline of **2,486** (see the correction below).
+The one failure is the standing environmental `soap.execute` (`ECONNREFUSED 127.0.0.1:1`).
+
+> **Correction (2026-09-21, at the verification gate): the first draft of this section claimed −41
+> against §5b-sedecies' 2,484, and *all three parts of that were wrong.** It is recorded rather than
+> quietly fixed because the way it was wrong is the reusable part.
+>
+> 1. **2,484 was the wrong baseline.** It was measured at `35ba2ff`, but this group opened with a
+>    fix-first commit — `174a01d`, §5b-undecies' `entity:load`/`entity:setEnabled` repair — and that
+>    commit added **two `it()`s to `packages/client/tests/client.test.ts`** (`+2 -0`, verified from the
+>    commit's own diff). So the baseline the deletion is measured against is **2,486**, not 2,484. A
+>    group that opens with a fix-first commit has a baseline that moves *before* the deletion starts, and
+>    the ledger has to re-measure it rather than reuse the previous group's number.
+> 2. **`expectedChannels` does not generate one `it` per entry — it generates one `it` per entry *inside
+>    a single loop*, so its own length is not a test count.** The old "−14 generated" figure came from
+>    counting the array's 16 → 4 entries and treating the difference as cases. The array is consumed by
+>    `for (const channel of expectedChannels) { it(...) }`, so removing five *entries* removes five
+>    generated `it`s — but the *remaining* entries' `it`s still exist. The generated contribution is
+>    **−5** (7 entries → 2), and §5b-septies' "one `it` per entry" phrasing describes the loop's shape,
+>    not a licence to read file size as coverage.
+> 3. **Counting `it(` lines in the diff is not a test count either.** The diff shows 18 removed and 4
+>    added — a naive −14 — but reformatted blocks hide their `it(`, and the file's real count moved
+>    135 → 110. **The only trustworthy number is the one a run reports**, which is why the reconciliation
+>    below is stated per-file from vitest output.
+>
+> The reconciled per-file measurement (`handlers.test.ts` 135 → 110; the four other suites 25 / 44 / 30 /
+> 12 all unchanged, net 0) gives −25, and 2,486 − 25 = 2,461 exactly. **When the measured delta and the
+> decomposition disagree, the decomposition is wrong** — this is the third time that rule has paid off in
+> the reduction, and the first time the error was +2 rather than −N.
+
+**Five assertions were folded into the "21 moved commands" block rather than deleted with their cases** —
+and this is the largest application of §5b-septies' rule so far. The block is the delete-direction test:
+re-point the cases whose assertions live only in the channel, delete the ones a suite already makes, and
+*move* the residue.
+
+| folded assertion | from which deleted case | why the block did not already make it |
+| --- | --- | --- |
+| `settingsChanged` has been called | `config:save` — "emits settings.changed" | the tray-update hook was asserted nowhere else; losing it would stop the tray following a settings change with every test green |
+| `discoverServices` returns a **non-empty** list | `services:discover` — "returns the list" | the block asserted `toEqual([])` against a mock returning `[]`, which cannot tell pass-through from replaced-with-empty |
+| `request.replay`'s **result** | `request:replay` — "returns its result" | the block asserted only the call slots; a handler that called the engine and discarded the answer would pass |
+| `entity.load` accepts `"proxyRules"` / `"wsConnections"` | `entity:load` ×2 | the cases drove the channel by name; the assertion is that the *protocol* names resolve, which is the half that stays here |
+| `server.restart` starting on `currentConfig.port` | (group 5, listed for completeness) | — |
+
+**And `entity.load`'s two re-pointed cases are deliberately weaker than the ones they replace, which is
+worth stating rather than hiding.** The deleted cases asserted that the **channel** translated `"rules"` →
+`"proxyRules"`; the re-pointed ones assert that the **command** accepts `"proxyRules"` — because the
+translation half now lives in the client, which is where the bug was. Pinning it here as well would be
+pinning it in the one place it cannot occur. The payload assertion lives in
+`packages/client/tests/client.test.ts` (*"loadEntity translates the two engine-internal kinds its callers
+pass — the live bug, 2026-09-21"*), which asserts `rules` → `proxyRules`, `sockets` → `wsConnections`, and
+`mappings` as the identity control.
+
+**The stale prediction was found and corrected rather than left to read as current.** `handlers.test.ts`
+carried a 2026-09-20 comment saying `toProtocolKind()` "lives in the factory and **dies with the
+channels**". It was true that the factory died; it was **false that the step was dead weight**, and the
+comment's confidence is exactly how the bug survived a day. It now records that the 2026-09-20 reading
+"was wrong about what dying would cost". Three engine docblocks that repeated the same claim were
+corrected in the same pass: `store/coreCommands.ts` (the `invalid_kind` guard's "stays where the channel
+is"), `store/configCommands.ts` ("`config.get` would answer `UNKNOWN_COMMAND`" — it no longer has a shell
+twin), and `runner/runnerCommands.ts` (whose trap is **still live**, since `runnerHandlers.ts` has not
+been reduced; its paragraph now says so instead of describing a registration that no longer exists).
+`commands/registry.ts`'s §5c history paragraph got the same treatment: its "**44 module-scope
+registrations remain**" is preserved as the mid-pass reading it was, with the fact that it went to zero
+recorded beside it.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 55 (6 files) | **38 (5 files)** |
+| live | 18 | 18 |
+| dead | 37 | **20** |
+
+**20 dead channels remain, in three files, and all three are all-dead:** `applicationHandlers.ts` (10),
+`runnerHandlers.ts` (6), `importExportHandlers.ts` (4). `clientHandlers.ts` stays 17 live / 0 dead, and
+`systemHandlers.ts` holds the one live client-local channel.
+
+> **Superseded 2026-09-21 by §5b-octodecies** (seventh group): `applicationHandlers.ts` is deleted,
+> leaving **18 dead in 2 files**, both all-dead. Read the inventory in the *latest* §5b-* section,
+> not the nearest one.
+
+**The dialog-owner risk subset is still 3** — unchanged by this group, because `coreHandlers.ts` owned
+none. It is `runner:exportReport`, `importExport:export`, `importExport:preflight`: **exactly the three
+groups still to go, one dialog-owner per remaining file.** Re-derived from the tree rather than carried
+forward, which is the rule §5b-sedecies was corrected into.
+
+**The spike's fixture reaches 10 of 10 — and the prediction it was waiting on turned out to be a
+non-sequitur.** `tests/spike/protocolPoc.test.ts` drives ten channels, three of which were this file's
+(`config:get`, `server:status`, `entity:setEnabled`), so the fixture grew **7 → 10 of 10**. The docblock
+used to say the table reaches 10 of 10 "exactly when the legacy surface is gone"; it now records that the
+inference was **wrong in a way worth keeping**: the spike drives ten *specific* channels, and twenty dead
+ones remain that it never touches. "This file is complete" and "the legacy surface is gone" are different
+claims, and the first is true while the second is not. What completeness *does* settle is §5b-ter's open
+question — the ten commands answer identically through a channel-free path, so this file's remaining value
+is the envelope and it no longer depends on the shell at all.
+
+#### 5b-octodecies. The reduction, seventh group — `applicationHandlers.ts` is deleted, and the delta is 0 for the second time (2026-09-21)
+
+**Ten channels, all dead, all one-line delegates — and the file goes with them.** `applications:list` /
+`:save` / `:delete` / `:start` / `:stop` / `:getState` / `:getAllStates` / `:getLogs` / `:checkPort` /
+`:killPort` left `src/ipc/applicationHandlers.ts`, which is now **deleted** rather than reduced, along
+with its import and call in `src/ipc/handlers.ts`. This is the first whole-file deletion since the
+second group, and — unlike the fourth, fifth and sixth — it needed no rename, because the file
+registered no kinds either.
+
+**The criterion cleared all ten without a fix first, and the reason is on the record from §5c slice 5.**
+Each body was `commandRegistry.invoke("<command>", {…}, ctx)` and nothing else: `ctx` is `{ bus }`, the
+payload is the caller's arguments re-shaped, and no body touched `dialog`, `app.*`, a trust store or any
+field the engine refuses to report. That is the `tls` / `entity.load` class **absent** rather than
+missed — and the reason it is absent is worth stating, because it is not luck: §5c slice 5 is the slice
+the ledger already calls *"the cleanest of the pass — nothing had to travel"*, since every dependency
+(`workspaceFs`'s entity readers, `applications/processSpawner`, `commandGenerator`, `portUtils`) was
+already inside `packages/engine`, and the shell file was a pure adapter from the day it was written.
+The only shell-side thing in it was `electron`'s `ipcMain`.
+
+**Delta 0, and it is the fourth group's cause rather than the `tls` group's** — which is why the number
+alone is not the finding. Two independent reasons, both checked:
+
+  - **No case was in `expectedChannels`**, so no generated `it` was lost. The array never listed an
+    `applications:*` channel.
+  - **No suite drove one by name.** `tests/integration/applications.integration.test.ts` was the only
+    importer of `registerApplicationHandlers`, and it drove all ten — so under §5b-ter's rule this was a
+    **re-point**, and a re-point preserves the count.
+
+Both halves matter: §5b-quindecies' "delta 0 has two causes and the count cannot separate them" is
+exactly this group's shape, and the separation came from reading the suite, not the number.
+
+**The suite now drives the commands, and the mapping is the deleted bodies' mapping reproduced
+verbatim.** `invoke("applications:save", appConfig)` became
+`invokeCommand("application.save", { application: appConfig })`; `invoke("applications:start", ws, id,
+"run")` became `invokeCommand("application.start", { workspaceId: ws, appId: id, mode: "run" })`; and
+`applications:stop` / `:getState` / `:getLogs` / `:checkPort` / `:killPort` — which took their argument
+**positionally** — became one-field payloads. That is §5b-quindecies' argument-shift trap in the
+direction that avoids it: the mapping is written from the *call sites*, not inferred from the command's
+parameter list, which is the sixth group's `workspace:add` lesson applied pre-emptively.
+
+Three incidental consequences of driving commands instead of channels, all recorded rather than
+discovered later:
+
+  - **The `waitFor` helper became async.** The commands return promises where the channels were
+    synchronous, so `waitFor(() => …status === "exited")` would have polled the value `undefined`
+    forever and failed on the timeout rather than on the assertion. The one-line widening
+    (`() => boolean | Promise<boolean>`) is load-bearing, not cosmetic.
+  - **The `has(channel)` case became `isRegistered(command)`.** The case asserted *registration*, and
+    under the reduction the thing that must be registered is the command — the same substitution
+    `handlers.test.ts` made for `folder:*` in the third group. It asserts the **namespace** rather than
+    the ratchet's whole set, because this suite's failure mode is a command that silently is not there.
+  - **The `afterAll` cleanup re-points too** (`application.stop`), or the suite leaks a child process
+    when a case fails mid-run.
+
+**The spike's fixture did not grow — the fifth non-growth, and it confirms the corrected rule in the
+other direction.** `tests/spike/protocolPoc.test.ts` drives ten channels and none is an
+`applications:*` one, so the fixture stays **10 of 10**. §5b-duodecies' "grows with each slice" was
+corrected by the second group to *"grows with each **driven** channel"*, and this group is a driven
+channel that is simply not in its ten.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 38 (5 files) | **28 (4 files)** |
+| live | 18 | 18 |
+| dead | 20 | **18** |
+
+> **Superseded 2026-09-21 by §5b-novendecies.** `runnerHandlers.ts`'s six channels are now deleted,
+> so the remaining surface is **12 dead channels in one file** (`importExportHandlers.ts`). The
+> paragraph below is kept as the seventh group's measurement, which is what the eighth group's
+> "before" column compares against.
+
+**18 dead channels remain in two files, and both are all-dead:** `runnerHandlers.ts` (6) and
+`importExportHandlers.ts` (4). The other 12 channels are `clientHandlers.ts`'s 17-channel live set
+minus nothing and `systemHandlers.ts`'s one client-local channel, plus `importExportHandlers.ts`'s four
+live-by-contract ones — re-derived from the tree rather than carried, which is the rule §5b-sedecies
+was corrected into.
+
+**The dialog-owner risk subset is still 3, and this group owned none of them.** Re-derived with
+`grep -n "dialog\." src/ipc src/ipc/handlers`: `runner:exportReport`, `importExport:export`,
+`importExport:preflight`. **Those are exactly the two groups still to go** — one dialog-owner in
+`runnerHandlers.ts`, two in `importExportHandlers.ts` — which makes the remaining work the reduction's
+highest-risk part rather than its tail.
+
+#### 5b-novendecies. The reduction, eighth group — `runnerHandlers.ts` is deleted, and the criterion finally has a channel that owns a step (2026-09-21)
+
+**Six channels, all dead, and the file goes with them.** `runner:saveReport`, `runner:exportReport`,
+`runner:getHistory`, `runner:saveConfig`, `runner:loadConfig` and `runner:listFolderIds` left
+`src/ipc/handlers/runnerHandlers.ts`, which is now **deleted** rather than reduced, along with its
+import and call in `src/ipc/handlers.ts`. `src/` goes 19 → 18 `.ts` files.
+
+**This is the first group where the criterion had real work to do, and it is worth being precise about
+which of the three shapes was present.** §5b-septendecies established that a body can be unsafe for
+three different reasons: it owns a step the twin drops (`tlsGenerate`), it owns a step the twin
+*forgot* (`entity:load`'s `toProtocolKind()`), or the client composes the same steps in a different
+order (`audit:export`). All three are "owns a step the engine does not perform"; they are distinguished
+by where the step went wrong. Applying the criterion channel by channel:
+
+  - **`runner:getHistory` and `runner:listFolderIds` — pure delegates.** Each body was one line,
+    `commandRegistry.invoke("runner.getHistory", { workspaceId, folderId }, ctx)`, and `ctx` is
+    `{ bus }`. Both engine implementations are in `runnerCommands.ts` (moved there in step 3e slice 2,
+    the §5c pair). Nothing owned, nothing to move.
+  - **`runner:saveReport`, `runner:saveConfig`, `runner:loadConfig` — self-contained duplicates, not
+    delegates.** These are the group's actual hazard, and they are *not* the `tls` shape: the shell body
+    and the engine command are **both complete implementations of the same behaviour**, written twice.
+    `runnerCommands.ts`'s header records that the obvious DRY fix — re-point the channel at the command
+    — was tried in `serverCommands.ts` and **reverted**, because a channel that delegates to a module
+    registered only inside `registerIpcHandlers()` acquires a hidden ordering dependency, and the
+    failure is a `No handler registered` at *invocation* time. Here the duplication was a **coverage**
+    hazard instead, which is the more dangerous of the two: `expectedChannels` never listed a
+    `runner:*` channel, so delta 0 could not be evidence of anything, and
+    `runnerStorage.integration.test.ts` drove the **shell copies** — it would have stayed fully green
+    with the engine halves rotted. Deleting the shell copies is the fix, because it removes the second
+    implementation the suite could have been testing.
+  - **`runner:exportReport` — the client half, and the only channel in the group that owned a step the
+    engine does not perform.** The body was: show the save dialog → derive the format from the chosen
+    extension → `call("runner.exportReport", …)` → `writeArtifact(artifact, filePath)`. The engine's
+    `runnerExportReport` (`packages/engine/src/fileOps/commands.ts:164`) renders and publishes; it
+    **cannot** show a dialog, and it **cannot** know the format, which is why `format` is a parameter the
+    client supplies. That is a genuine step-ownership, and the twin is
+    `packages/client/src/index.ts:927` — `exportRunnerReport`, which performs the same four steps through
+    `local.pickSavePath` and `artifactToFile`. **Checked rather than assumed**, step by step: same dialog
+    title, same `defaultName` (`${folderName}-report-${ts}.html`), same two filters, same `?? "collection"`
+    and `?? Date.now()` fallbacks, same `toISOString().replace(/[:.]/g, "-")`, same
+    `.endsWith(".json") → "json" : "html"`, same bare `{ok:false}` on cancel (no `canceled` key, because
+    the declared type has none). The client twin is *not* byte-identical in mechanism — it passes
+    `destPath` to the write hook, where the shell called `writeArtifact` directly — and that difference is
+    the fix `File_Ops_Protocol.md` §3.2 exists for, not a drift.
+
+**So the group cleared without a fix-first commit, and delta 0 has a third cause.** The three causes so
+far: *re-point* (Δ0, a suite drove the channel), *never had cases* (Δ0, nothing listed it), and now
+**both at once plus a duplicated implementation** (Δ0, and neither the generated list nor the suite can
+see the engine half at all). Read per-file, as §5b-quindecies insists — the count separates none of them.
+
+**The suite was re-pointed, and one block was folded rather than deleted.** The old file had two layers:
+four `describe` blocks driving `runner:*` channels, and a fifth — "runner.saveConfig /
+runner.loadConfig through the registry" — whose only purpose was to compare the **two live copies** of
+those commands against each other ("agrees with the shell channel on the file it reads, in both
+directions"). With one implementation there is nothing left to compare, so under §5b-septies' rule the
+residue **moved into the block it was shadowing**:
+
+  - The verbatim-write assertion (`onDisk` equals the config, keys `["delayMs","iterations","stopOnFailure"]`)
+    moved into the `runner.saveConfig / runner.loadConfig` block. It is about the **store's** fidelity —
+    the `z.object()` field-stripping that `plan/protocol-changes.md` records — not about the routing, so
+    it survives the reduction intact.
+  - The corrupt-config case (`null`, not `{}`) moved with it.
+  - The cross-implementation case (`viaRegistry` then `invoke("runner:loadConfig")`, and back) was
+    **deleted**, because its assertion — "the engine and the channel address the same bytes" — was a
+    claim about two implementations coexisting, and that claim is now vacuous rather than false.
+  - The export block moved from the channel's dialog composition to the **engine half** (three cases:
+    html, json, and the `?? "collection"` fallback), with a comment naming
+    `packages/client/tests/client.test.ts`'s two `exportRunnerReport` cases as where the dialog-first
+    half is pinned. That pairing is what makes deleting the shell copy safe; the client's cases were
+    **already there** (they are the regression tests for the hardcoded `format: "json"` bug), so nothing
+    had to be added to prove it.
+  - The registration check became `registry.isRegistered(command)` over the six-command namespace —
+    the same substitution `handlers.test.ts` made for `folder:*` (third group) and `application.*`
+    (seventh).
+
+Two cases are **new**, which is why the suite goes 21 → 22 rather than staying put:
+
+  - **The corrupt-run case** ("drops only the corrupt entry, not the whole folder"). `runnerCommands.ts`'s
+    docblock calls the nested `try` load-bearing — "a single corrupt `report.json` must drop that one
+    entry, not fail the whole folder" — and no test asserted it. A single flat `try` passes every other
+    case in the file.
+  - **The malformed-report casing** was split in two, because the old single case conflated two different
+    failure paths. A schema-invalid payload is rejected **at the registry boundary** and *throws out of
+    `invoke()`* (the body's `catch` never sees it); a payload that reaches the body but cannot be written
+    resolves `{ok:false, error}`. The old test asserted `{ok:false}`, which the registry cannot produce for
+    the payload it sent. Both are now asserted for what they are.
+
+**Delta nought, and this time it is measured rather than inferred — the suite's own baseline moved first.**
+The eighth group's gate opened at **101 files / 2,462 tests / 2,421 passed / 40 skipped / 1 failed**, a
+**+1 test** over the seventh group's 2,461. That is the new corrupt-run case, which was written into the
+suite during the re-point and therefore present on both sides of the measurement — so the delta *is* 0 and
+the +1 is the group's opening state, not its effect. The 1 failure remains the standing environmental
+`soap.execute` (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`).
+
+**The spike's fixture did not grow — the sixth non-growth, and the first one that is a *consequence* of
+this group rather than incidental to it.** `tests/spike/protocolPoc.test.ts` drives ten channels and the
+comment there names `runnerHandlers.ts` (6) among the dead ones the spike never touches, so the fixture
+stays **10 of 10**. The ten channels it drives are `config:get`, `server:status`, `entity:setEnabled`,
+`graphql:introspect`, `soap:execute`, `mock:add`, `mock:delete`, `folder:add`, `folder:move` and
+`tls:generate` — re-derived from `deletedChannelBodies`, not carried. Its surrounding comment was
+**updated** rather than left at "the legacy surface still holds twenty dead ones", because that sentence
+was an inventory claim and the inventory moved: ten of the twenty are now gone, and this spike drove none
+of them.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 28 (4 files) | **21 (3 files)** |
+| live | 10 | 10 |
+| dead | 18 | **11** |
+
+**The count is measured with `grep -c 'ipcMain.handle('`, and that is `src/ipc/rpcBridge.ts`'s own
+channel excluded** — it is bridged through the `RPC_CHANNEL` / `EVENT_CHANNEL` constants rather than a
+literal string, so it does not appear in a name-level grep. Counting it gives 22. The 21 is quoted
+because it is the reading that decomposes: `clientHandlers.ts` 17 + `systemHandlers.ts` 1 +
+`importExportHandlers.ts` 4 = 22, less the one `systemHandlers.ts` channel that is **client-local**
+(`app:checkUpdate`, which stays) = 21 in the dead/live accounting.
+
+**11 dead channels remain in one file, with one labelling judgement.** `importExportHandlers.ts`'s four
+are `importExport:formats`, `:export`, `:preflight` and `:import`. `:export` and `:preflight` are the
+dead ones under the criterion beyond argument — both own a `dialog.*` step (`showSaveDialog` at `:90`,
+`showOpenDialog` at `:123`). `:import` is dead by the same routing test as every other deleted channel
+(`packages/client/src` names no channel). **`:formats` is the one channel whose label is a judgement
+rather than a count**: it returns a static table and routes nowhere, but it may be genuinely
+client-local in the `app:checkUpdate` sense — so the reduction's last group must *decide* it rather
+than assume it, and a bare "12 dead" would have hidden that. `importExport:formats`,
+`:export`, `:preflight`, `:import`) are the whole remaining reduction — and they are the file §5b-decies
+classified as the one whose bodies are **not delegates**: they are the P3 client half (dialog + bytes +
+the `pendingUploads` map), two of them dialog-owners, and `surface.ts` files the client keys as
+`transport`/`shim`. The other 10 channels are `clientHandlers.ts`'s 17-channel live set, re-derived from
+the tree rather than carried.
+
+**The dialog-owner risk subset is now 2, and it is exactly the next group.** Re-derived with
+`grep -n "dialog\." src/ipc src/ipc/handlers`: `importExport:export` and `importExport:preflight`.
+`runner:exportReport` leaves the set by being deleted. The reduction therefore ends on its highest-risk
+file rather than on its easiest — which is the right order for it to end in, because the last group is the
+one where "the client twin is equivalent" has to be *shown* rather than assumed, and there is no
+remaining group after it to catch a mistake.
+
+#### 5b-vicendecies. The reduction, ninth and last group — `importExportHandlers.ts` is deleted, the strongest delta of the whole reduction, and the surface is closed (2026-09-21)
+
+**Four channels, the file deleted, and the only group that cost the ratchet anything.**
+`importExport:formats`, `:export`, `:preflight` and `:import` left
+`src/ipc/importExportHandlers.ts`, which is now **deleted** rather than reduced, along with its import
+and call in `src/ipc/handlers.ts`. `src/` goes 18 → 17 `.ts` files.
+
+**Delta −4, and it is the reduction's only genuine ratchet shrink — every earlier group's delta came
+from somewhere else.** The four names *were* in `tests/ipc/handlers.test.ts`'s `expectedChannels`, so
+four generated `it("registers a handler for …")` cases went with them: **110 → 106 tests**. §5b-decies
+… §5b-novendecies recorded Δ0 four times and Δ−5, Δ−3, −8, −25 for the others, and every one of those
+had to be *explained* (a re-point, a generated-list shrink from a different mechanism, a suite that
+was re-pointed wholesale). This one needs no explanation beyond the list itself, which is what makes it
+the cleanest measurement the reduction produced — and it is worth noting that it arrives *last*,
+because the file that was easiest to see was the one that was hardest to delete safely.
+
+**This is the group the whole criterion was built for, and the reason it went last.** §5b-decies
+classified `importExportHandlers.ts` as the **only** file whose bodies are not delegates, and
+§5b-novendecies left it as the last work with the note that *"the reduction ends on its highest-risk
+file rather than its easiest"*. The file opened with its own one-line statement of the shape: it is
+**the P3 client half** — dialog, bytes, and the `pendingUploads` map — not an adapter. Applying the
+criterion per channel:
+
+  - **`importExport:formats` — the judgement §5b-novendecies flagged, and it resolves to dead.** It was
+    the one channel whose label was a judgement rather than a count: it returns a static table, routes
+    nowhere, and could have been client-local in the `app:checkUpdate` sense. It is not. Its body is
+    `call("export.formats", {})` — a one-line delegate to an engine command — and
+    `packages/engine/src/importExport/commands.ts:59` registers that command. That file's header even
+    records the history: *"this module does register `export.formats` — the shell used to register that
+    one itself, and it moved here so all four `export.*`/`import.*` commands have a single owner and a
+    single call site."* So the body owns nothing, and the **reason it looked ambiguous is that it is the
+    only one of the four whose engine command returns data rather than an artifact** — a cheap read has
+    the shape of a client-local query and the shape of a delegate at the same time. The difference is
+    decided by whether a protocol command exists, not by the cost of the call.
+  - **`importExport:export` — a genuine step-owner, and the reduction's second dialog-first egress.**
+    Dialog → `export.create` (filename only crosses, never the path) → `writeArtifact`. Twin:
+    `packages/client/src/index.ts:585`'s `exportData`, which its own comment ties to
+    `File_Ops_Protocol.md` §3.2's ordering rule and to `pickSavePath`'s existence.
+  - **`importExport:preflight` — a step-owner with *four* steps.** Dialog → read + size-cap →
+    `blob.put` → `import.preflight` → and then it **remembers the upload** (`rememberUpload`). The last
+    step is the one a reader is most likely to miss, because it is not a call:
+    `pendingUploads.set(localPath, blobId)` is what lets the *next* channel avoid re-uploading the file.
+    Twin: `packages/client/src/index.ts:626`, which performs all four.
+  - **`importExport:import` — a step-owner that *reads* what preflight wrote.** `uploadFor(filePath)` is
+    the map lookup with a re-upload fallback (an app restart between the two steps), then
+    `import.commit`, then a `finally` that both forgets the upload and releases the blob. Twin:
+    `index.ts:653`, same `finally`, same order.
+
+**The `pendingUploads` map was the specific thing that could have been lost silently — and the check is
+that the client has its own copy, not that the channel is unreachable.** The map is the only piece of
+state P3 added to the shell, and it is cross-channel: `:preflight` writes it, `:import` reads it, so
+deleting either alone would have broken the pair in a way no single-channel test could see. Verified
+rather than assumed: `packages/client/src/index.ts:493` declares **its own** `pendingUploads =
+new Map<string, string>()`, with `rememberUpload` / `forgetUpload` / `uploadOnce` as closures at `:499`
+and `:512` — same key (the local path), same replace-and-release-the-displaced-entry behaviour, same
+fallback. That is the `tls` group's lesson applied in the direction that avoids it: the question is not
+"is the channel dead" but "does the twin carry the **state**, not just the calls".
+
+**The client's own comment named this deletion before it happened.** `packages/client/src/index.ts:354`:
+*"A copy of the shell's `kindLabel` in `src/ipc/importExportHandlers.ts`. That file is now dead … and it
+goes at step 3's final deletion, at which point this becomes the only copy. Copied rather than moved for
+one commit, because moving it would mean editing a file that is about to be deleted."* That is the
+pattern the reduction kept rediscovering the hard way — the twin was written first, its divergence
+documented, and the shell file retired after. It is worth naming as the **correct order**, because every
+group that went wrong (§5b-undecies' `tlsGenerate`, §5b-septendecies' `entity:load`) went wrong by
+deleting before the twin was complete.
+
+**The suite cost was one list, and the coverage argument is the strongest of the nine groups.** No suite
+drives an `importExport:*` channel by name — the two integration files that mention the path do so in
+**comments only** (`importExportHarness.ts:13`, `importExportBlob.integration.test.ts:179`), and both
+were updated to point at the client. `handlers.test.ts`'s `expectedChannels` lost its four names, and
+the `vi.mock("@bifurc/engine/importExport/registry")` block above it was **removed**: its comment
+justified it by *"its handlers register via the captured mockIpcMain"*, and with those handlers gone it
+was stubbing five functions nothing in the graph called. Removing it was verified, not assumed — the
+suite passes 106 without it, and the mock's only remaining effect would have been to keep a dead
+expectation alive.
+
+The equivalence rests on `packages/client/tests/client.test.ts`, which carries **two `describe` blocks
+and 22 references** for these four methods — including exactly the assertions this file could not make:
+*"exportData asks where BEFORE it asks the engine to render"*, *"exportData writes to the path the user
+chose and does not open a second dialog"*, *"preflightImport returns the path it chose, so the next step
+can reuse it"*, and *"importData reuses the path and the blob — no second dialog, no second upload"*.
+Those are **ordering and count** assertions, which is what the shell file's behaviour consisted of.
+Nothing had to be added to prove the twin: like group 8's `runner:exportReport`, the client was already
+better tested than the shell copy it replaced.
+
+**Inventory, re-measured 2026-09-21 (`ipcMain.handle(` call sites):**
+
+| | before | after |
+| --- | --- | --- |
+| literal channels in the handler files | 21 (3 files) | **17 (2 files)** |
+| live | 10 | **10** |
+| dead | 11 | **0** |
+
+**The reduction is closed: every remaining channel is a keeper.** To state the numbers without the
+ambiguity that has caught earlier groups: `grep -c 'ipcMain.handle('` gives **17 in
+`clientHandlers.ts` and 1 in `systemHandlers.ts` — 18 total**, against 21 before this group. All of the
+17 are live (the client reaches them through `local.*`), and the 1 is `app:checkUpdate`, which is
+**client-local by classification** rather than live-legacy. So the table's "17 (2 files)" row counts
+`clientHandlers.ts` plus `systemHandlers.ts`'s survivor, and the live/dead split is 10 + 0 against a
+remainder of 1 client-local — three labels for 18 channels, which is exactly why §5b-sedecies was
+corrected into "re-derive per file" rather than quoting one total. **Zero dead channels remain**, and
+`registerIpcHandlers()` is now **the local-handler entry point** the plan said it would be reduced to.
+
+**`registerIpcHandlers()` is reduced, not deleted — and that is now a finished state rather than a
+pending one.** The function registers the engine command surface, calls the two remaining local handler
+entry points (`registerClientHandlers()` in `src/main.ts:294`, `registerSystemHandlers()` here), and
+calls `registerRpcBridge()`. Everything the reduction set out to remove has been removed; what is left
+is the set the plan's "Local handlers stay local" table names. The rollback flag in `plan/07` work item
+6 is correspondingly weaker than it was — there is no longer a legacy path to revert *to* — which is
+worth flagging for anyone reading that item as still current.
+
+**The dialog-owner risk subset is now empty.** Re-derived with `grep -n "dialog\." src/ipc
+src/ipc/handlers`: the only hits are inside `clientHandlers.ts`'s own fourteen local channels
+(`dialog:openFile`, `dialog:pickFilePath`, `dialog:pickFolderPath`, `client:pickSavePath`,
+`client:writeArtifact`, `client:readArtifactFile`), which are the local surface and not reduction
+targets. The three that were tracked — `runner:exportReport` (group 8), `importExport:export` and
+`importExport:preflight` (this group) — are all gone, and in each case the dialog moved to the client
+where the plan's architecture puts it.
+
+**The spike's fixture did not grow — the seventh non-growth, and its comment is now stale in a way worth
+recording.** `tests/spike/protocolPoc.test.ts` drives ten channels and none is an `importExport:*` one,
+so it stays **10 of 10**. Its paragraph names `importExportHandlers.ts`'s four among the dead ones it
+never touches, and that sentence is now **historical**: it was updated in group 8 to say the surface was
+down to eighteen dead in two files, and this group empties it. The file is left correct-by-context
+rather than edited a second time in one day, but the next reader should know the paragraph describes the
+state at the eighth group, not the ninth.
+
+### 5c. The mirror problem: five engine commands are registered *from the shell*
+
+**Status: the pass is COMPLETE (2026-09-19), and guarded since 2026-09-20.** It turned out to be **51**
+commands, not five, moved across seven slices (`§5c-i` … `§5c-vii`). **Zero module-scope
+`commandRegistry.register(` calls remain in `src/`** — and a static test now fails if one reappears
+(`§5c-viii`), so the class cannot come back silently. The five below are the ones this section
+originally named; the count was the first thing the pass corrected.
+
+Found while writing `store/configCommands.ts`, and deliberately **not** fixed there.
+
+`packages/protocol/src/commands/config.ts` declares `config.get`, `env.setActive` and
+`workspace.setActive`; `entity.ts` adds `entity.load` and `entity.setEnabled`. All five are registered
+— but at **module scope in `src/ipc/handlers/coreHandlers.ts`**, i.e. in the *shell*, not in
+`packages/engine`.
+
+That is finding 5 on the other side of the seam. On a containerised engine (P9),
+`createEngine()` + a transport would have **none** of the five registered, so `config.get` would answer
+`UNKNOWN_COMMAND` — the same failure, reached from the opposite direction. They are invisible to the
+current ratchet because it only asks whether a command is registered *in this process*, and in this
+process the shell has registered them.
+
+Not fixed here because it is a different change with a different blast radius: P6 is about commands the
+registry cannot serve at all, and moving an already-registered command between packages can break
+callers that currently work. It needs its own pass — and the ratchet will not catch it, so it should be
+written down rather than rediscovered.
+
+#### 5c-i. Slice 1 — the five §5c commands moved into the engine (2026-09-19)
+
+**§5c's count is wrong: the number is 51, not 5.** A grep for `^commandRegistry.register(` across
+`src/` finds **51** module-scope registrations in nine shell files — `syncHandlers.ts` 17,
+`applicationHandlers.ts` 10, `coreHandlers.ts` 5, `grpcHandlers.ts` 5, `entityCrudFactory.ts` 4,
+`folderHandlers.ts` 4, `graphqlHandlers.ts` 2, `soapHandlers.ts` 2, `runnerHandlers.ts` 2. §5c named
+the five in `coreHandlers.ts` because that is the file `configCommands.ts` was written next to; the
+other 46 are the same defect, and they are the remaining slices rather than a footnote.
+
+Slice 1 moves the five §5c named — `config.get`, `env.setActive`, `workspace.setActive`,
+`entity.load`, `entity.setEnabled` — into `packages/engine/src/store/coreCommands.ts` behind
+`registerCoreCommands(registry)`, called from `src/ipc/handlers.ts` beside the other
+`register*Commands` modules. Every body moved **verbatim**, and `coreHandlers.ts`'s channel adapters
+were already thin `commandRegistry.invoke()` delegations, so the wire behaviour is the same code
+reached through a different door. **46 module-scope registrations remain.**
+
+**One dependency had to travel, and it was triplicated.** `syncEnabledSet` existed three times —
+`handlers/utils.ts`, `entityCrudFactory.ts`, and a private copy in the engine's
+`transport/legacyCompanion.ts` — all semantically identical (the engine's `??` and the shell's
+`if (!set)` are the same thing, because `readEnabledSet()` returns `Set<string> | null` and an empty
+`Set` is truthy). It now lives in `packages/engine/src/store/enabledSet.ts`. This function decides
+whether a mock, mapping or rule is **served by the proxy**, and the enabled-set is written to
+`enabled.json` rather than held in memory — so two copies disagreeing by one branch would mean an
+entity behaving differently depending on which path toggled it, *persistently*. `handlers/utils.ts`
+became dead (zero importers) but is **deliberately still on disk**: `git rm` correlated 2-for-2 with
+the whole `src/` tree vanishing from the working tree (see `MEMORY.md`), and an unimported file is
+harmless.
+
+**§5a's trap now applies to these five.** §5a records that re-pointing legacy bodies broke
+`protocolPoc` and `settingsMutations` because they register handler *groups* without
+`registerIpcHandlers()`. Moving the five has the same shape: importing `coreHandlers.ts` no longer
+populates them, so **five suites now call `registerCoreCommands(commandRegistry)` themselves** —
+`entityConflictScope` (which had relied on a bare side-effect `import "@/ipc/handlers/coreHandlers"`),
+`foldersAndWorkspaces`, `protocolExecution`, `settingsMutations` and `protocolPoc`. That is the cost
+of an explicit call site, and it is the point: a module side effect cannot be seen by a ratchet, an
+explicit call can. None of the five calls `registerIpcHandlers()`, so none of them double-registers —
+checked, because `register()` throws on a duplicate.
+
+**Verification — and the honest gap.** The vitest suite **could not be run**. All 101 files failed at
+collection with the signature `TESTING.md` §8 already records — `TypeError: Cannot read properties of
+undefined (reading 'config')` / *"Vitest failed to find the runner"* — reproduced by an **untouched**
+file (`packages/protocol/src/commands/index.test.ts`), so nothing here is implicated. Re-ruled-out
+this time: a cold `node_modules/.vite`, `--pool=threads`, `--pool=forks`, `--no-isolate`,
+`NODE_OPTIONS` unset, and orphaned workers (there are none). `--pool=vmThreads` "passes" and is **not**
+evidence — §8 explains that it silently does not apply `vi.mock`. The mechanism is legible in
+`@vitest/runner`: `createDefaultSuite()` reads `runner.config.sequence` off a `runner` that was never
+installed, i.e. the test files are seeing a **second instance** of the runner's module state. What was
+verified instead:
+
+- `npm run typecheck` → **EXIT=0** (all three packages and the root shell).
+- A standalone probe against the **built** engine, no vitest, **7/7**: importing the engine registers
+  nothing (the §5c property); all five are `UNKNOWN_COMMAND` before registration and registered after;
+  an invalid payload yields `BAD_REQUEST` rather than `UNKNOWN_COMMAND` — which proves *registered and
+  schema-checked* while touching no filesystem; a valid `entity.load` resolves `{ok:false}`; a second
+  `registerCoreCommands()` throws `already registered`, so a future double call fails loudly; and
+  `env.setActive("__global__")` / `workspace.setActive(<unknown>)` keep their documented `{ok:false}`
+  returns.
+- Static: `coreHandlers.ts` has zero `commandRegistry.register(` calls, `handlers.ts:99` makes the
+  explicit call, and the remaining count is **46 = 51 − 5**.
+
+**Slice 1 is implemented, not verified.** The suite must be re-run before it is called done. No test
+count change is expected — the five suites were already reaching these commands — so any delta is a
+signal rather than noise. Also worth knowing: the engine's `.mjs` output is **not loadable by plain
+Node**, because `tsup` is configured `bundle: false` and emits extensionless relative specifiers
+(`import "./config"`); the probe had to use the CJS build. That is the path the Electron shell takes,
+so it is not a live defect — but any future child process that imports the ESM entry will hit
+`ERR_MODULE_NOT_FOUND`, which is worth checking before P9 builds one.
+
+#### 5c-ii. Slice 2 — the `runnerHandlers` pair (2026-09-19)
+
+`runner.getHistory` and `runner.listFolderIds` moved from module scope in
+`src/ipc/handlers/runnerHandlers.ts` into `packages/engine/src/runner/runnerCommands.ts`, which already
+held `runner.saveReport` / `saveConfig` / `loadConfig` — so `registerRunnerCommands()` now owns the whole
+`runner.*` namespace. **44 module-scope registrations remain.**
+
+**This slice was free, and the reason is the one worth carrying forward.** `runnerHandlers.ts`'s own
+comment called these two "the reason they cannot move into `packages/engine`", because §5c's trap is
+real: a module-scope registration takes effect on *import*, so relocating one behind an explicit
+`register*Commands()` call silently unregisters it for every suite that imports the handler group
+without running `registerIpcHandlers()` — and the failure is a `No handler registered` at *invocation*
+time, invisible to the compiler. Here the affected set was **empty**:
+`tests/integration/runnerStorage.integration.test.ts` is the only file that imports `runnerHandlers`,
+and it already called `registerRunnerCommands(commandRegistry)` — added in step 3d for the config pair.
+So slice 2 needed no suite edits at all, where slice 1 needed five. **Check the importer set before
+assuming a slice is mechanical; that check is what distinguishes the two.**
+
+Worth noting too that these two channels *delegate* (`commandRegistry.invoke(...)`) where
+`runner:saveReport` / `runner:saveConfig` / `runner:loadConfig` are self-contained duplicates. A
+delegating adapter is the one that breaks when the registry is empty — which is exactly why this slice
+carried a suite risk that the step-3d config move did not.
+
+**Verified** the same way as slice 1, and more strongly. `npm run typecheck` → EXIT=0, plus a standalone
+probe against the built engine that now drives the moved bodies against a **throwaway data root** via
+`setDataRoot()` — the documented P8/P9 entry hook — so nothing touched the real profile and the
+containerised-engine story was exercised end to end (set a data root → register → invoke). **14/14**,
+including the behaviour the shell bodies had: `listFolderIds` returns only folders carrying
+`runner.json` and ignores a stray file in `.runs`; `getHistory` sorts newest-first, **drops a corrupt
+`report.json` without failing the folder**, and maps `totalTests`/`passedTests`/`failedTests` into the
+summary; history is readable for a folder that has no `runner.json` (history ≠ configured); a missing
+folder or workspace resolves `[]` rather than throwing; `loadConfig` returns the object for a configured
+folder and `null` otherwise — the contract `listFolderIds` depends on. The suite still could not run
+(see §5c-i), so this remains **implemented, not suite-verified**.
+
+#### 5c-iii. Slice 3 — the four `folder.*` commands, and the suite comes back (2026-09-19)
+
+`folder.add` / `rename` / `move` / `delete` moved from module scope in
+`src/ipc/handlers/folderHandlers.ts` into `packages/engine/src/store/folderCommands.ts` behind
+`registerFolderCommands()`. **40 module-scope registrations remain.** Bodies verbatim, and the
+now-redundant local `FolderKind` union went with them — `packages/protocol/src/commands/folder.ts`'s
+`FolderKindValue` is the same 11-value enum, so the channel parameter is typed as the protocol's
+directly and the `as FolderKindValue` casts disappear. That is what P2 work item 7 meant by a "clean
+1:1", and it is the only slice so far where a type could be *deleted* rather than moved.
+
+**The channels delegate, so this slice carried the risk slice 2 did not.** `folderHandlers.ts`'s four
+`ipcMain.handle` bodies are thin `commandRegistry.invoke()` delegations. A delegating channel is only
+ever as alive as the registry behind it, so a suite that registers this handler group by hand *must*
+also call `registerFolderCommands()` — otherwise the channel exists with nothing behind it and fails
+as `No handler registered` at **invocation** time, which no compiler can see. Two suites register it by
+hand, so two needed the call (`foldersAndWorkspaces`, `protocolPoc`); both already had the pattern from
+slice 1. This is the same check slice 2 was decided by — **read the importer set first** — and here it
+came back non-empty.
+
+**The file is a two-store invariant, and that is why it is documented rather than merely moved.** Every
+one of the four has to keep `AppConfig`'s folder array (`FOLDER_CONFIG[kind].configKey` — what the
+renderer draws the sidebar from) in step with `index.json` in the workspace
+(`readIndex`/`writeIndex` — folders *and* the manual drag `order`, what the on-disk tree is derived
+from). `fsKind` is not derivable from `kind` (`ws` → `sockets`, `rule` → `rules`), so the table is
+copied rather than computed. Two behaviours are preserved deliberately: `folder.rename` and
+`folder.move` resolve `{ok: true}` **even when the id matches no folder** (the `if (f)` guards skip the
+work without telling the caller; the renderer's declared result is `{ok: boolean}`, so reporting a
+failure would be a contract change smuggled in under a move), and `rename`'s `renameSync` → `cpSync` +
+`rmSync` fallback stays verbatim, because on Windows a rename can fail across a lock.
+
+**The suite came back, and it immediately found a real defect in slice 1.** Slice 1 was committed
+during the outage and had never been suite-verified; on the first green run, 29 of
+`settingsMutations.integration.test.ts`'s 30 tests died with `Command "config.get" is already
+registered.` Slice 1 had added `registerCoreCommands(commandRegistry)` to that suite's **`beforeEach`**
+— and the registry is a module-level singleton with no `clear()`, while `register()` throws on a
+duplicate *on purpose* to catch double-registration. So it passes the first test and fails every one
+after. The channel layer is the opposite (the electron mock's `handlers` map is keyed by channel, so a
+second `ipcMain.handle` just overwrites), which is what makes the mistake look harmless. Fixed in
+`0160188` by moving the call to `beforeAll`, which is what the other four suites slice 1 touched
+already did. **This is the concrete cost of shipping a slice unverified, and the reason the step-3e
+entries below say "verified" or "not" explicitly.**
+
+**Measured, and it is the cleanest verification in the phase:** `npm run typecheck` → EXIT=0; full
+suite **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented environmental
+`soap.execute`). That is the recorded step-3d baseline **exactly**, so slices 1, 2 and 3 together
+produce **no test-count delta** — which is the evidence that three slices of "move the body, keep the
+channel" were behaviour-preserving. A delta here would have been a signal, not noise.
+
+#### 5c-iv. Slice 4 — the nine protocol-client commands (2026-09-19)
+
+`graphql.introspect` / `graphql.execute`, `soap.fetchWsdl` / `soap.execute` and the five `grpc.*`
+stubs moved out of the three `src/ipc/handlers/{graphql,soap,grpc}Handlers.ts` module scopes into
+`packages/engine/src/protocols/` — three new files, one `register*Commands()` each, all called from
+`src/ipc/handlers.ts`. **31 module-scope registrations remain** (`syncHandlers` 17,
+`applicationHandlers` 10, `entityCrudFactory` 4).
+
+The three files were grouped into one slice because they are one theme — the protocol request editors'
+Send buttons — and because the importer set is nearly identical: `protocolExecution` imports all three,
+`protocolPoc` imports two. Two suites to edit, both already `beforeAll` + dynamic-import from slices
+1 and 3. The shell-side CRUD collapse stays where it is in all three files: `add*`/`update*`/`delete*`
+route through `registerEntityCrudHandlers()` and the `add*`/`delete*`/`list*` trio through
+`registerSimpleEntityHandlers()`, and §5c's `^commandRegistry.register(` grep never counted those.
+
+**Two of the nine needed more than a cut-and-paste, and the hazard is one the compiler cannot see.**
+`graphql.*` and `soap.*` reached for their transport with `require("https")` / `require("http")`
+*inside the handler body*. That is fine in the shell, which is CJS — but `require` **does not exist in
+this package's ESM build output**, so a verbatim copy would have compiled, typechecked and passed every
+unit test, then thrown at *call* time in `dist/*.mjs`. This is exactly the defect `healthbar.checkUrl`
+was fixed for in the 3b-2 misc slice, and the same fix applies: static builtin imports. **Checked at
+the artifact rather than the source** — `grep -c 'require(' packages/engine/dist/protocols/*.mjs` is
+**0**, which is a check the source cannot give you, because the source is what lies.
+
+**This slice is verifiable in a way slice 2's was not, and the reason is the delegating channel.**
+`runnerHandlers.ts`'s three self-contained duplicates meant `runnerStorage.integration.test.ts` would
+have passed with the engine half wrong. Here every channel is a thin `commandRegistry.invoke()`, so a
+channel-driven test **is** a registry-driven test. `protocolExecution.integration.test.ts` drives all
+nine by channel against real local HTTP servers (GraphQL, SOAP, a WSDL GET) — 44/44 — and
+**mutation-checked**: commenting out `registerGrpcCommands(commandRegistry)` fails 4 tests with
+`No handler registered for command "grpc.execute"`. So the green is not vacuous; the suite really is
+reaching the registry and not a legacy duplicate. The general rule, now with evidence on both sides:
+*a delegating channel makes a move riskier (it can silently unregister) and simultaneously makes it
+testable (the channel test reaches the implementation).*
+
+Behaviours preserved deliberately, each documented in its module. `graphql.introspect` and
+`soap.fetchWsdl` **catch** and resolve `{ok:false, error}`, while `graphql.execute` and `soap.execute`
+**throw** — and because the transport hands a handler's value back *uninspected*, a resolved
+`{ok:false}` is an envelope **success** carrying a failed result, while a throw becomes a
+transport-level error. That asymmetry is also the whole explanation for the phase's one standing
+failure: `soap.execute` against a dead endpoint rejects, surfacing as `[INTERNAL] connect
+ECONNREFUSED 127.0.0.1:1`, whereas the sandbox the test was written in answered `127.0.0.1:1` with a
+synthetic 404 — so the request *succeeded* and the body carried a numeric `status`, which is what
+`tests/spike/protocolPoc.test.ts` asserts. Recorded in `plan/baseline.md` "Environment caveats"; not
+"fixed", because changing which of the two shapes `soap.execute` uses is a contract change. In the
+gRPC module: `grpc.mockServerStatus` resolves `{running:false, port:9102}` with **no `ok` field at
+all** and `9102` a hardcoded placeholder, and `grpc.stopMockServer` reports success for a server that
+was never started while `grpc.startMockServer` reports failure — asymmetric, and kept, because the
+renderer's Stop button depends on not being told it failed. All five gRPC bodies are deliberate stubs
+(`Cleanup_plan.md` §1.5 D6 disposition: wontfix), so moving them is not an invitation to implement
+them.
+
+**Measured:** `npm run typecheck` → EXIT=0; full suite **101 files / 2,508 tests — 2,467 passed, 40
+skipped, 1 failed**, again the exact baseline. **31 remain.**
+
+#### 5c-v. Slice 5 — the ten `application.*` commands, and the ratchet turns out to guard the *move* (2026-09-19)
+
+All ten (`list`, `save`, `delete`, `start`, `stop`, `getState`, `getAllStates`, `getLogs`, `checkPort`,
+`killPort`) moved from module scope in `src/ipc/applicationHandlers.ts` into
+`packages/engine/src/applications/applicationCommands.ts` behind `registerApplicationCommands()`.
+**21 module-scope registrations remain** — `syncHandlers` 17 and `entityCrudFactory` 4.
+
+**The cleanest slice of the pass, because nothing had to travel.** Every dependency was already in
+`packages/engine`: `store/workspaceFs`'s `readAllEntities` / `writeEntity` / `deleteEntityFile`,
+`applications/processSpawner`, `commandGenerator`'s `generateResolvedCommand`, and `portUtils`'s
+`checkPortInUse` / `killProcessOnPort`. The shell file imported them all from `@bifurc/engine/...` and
+added nothing but an `ipcMain.handle` per command. **A file whose entire body is "import from the
+engine + register + delegate" is §5c in its purest form** — the shell never had a reason to own it, so
+the move is a relocation rather than a decision, and there is no shell behaviour to lose. That makes it
+the natural contrast with slices 3 and 4, where the *body* was fine but a dependency (a two-store
+invariant, a `require`) had to be dealt with first. **The heuristic that predicts a slice's difficulty
+is therefore not the command count but how much of the body is the shell's own.**
+
+One dependency is a **singleton**, and importing it is the point: `applications/processSpawner.ts`
+exports a single `ProcessSpawner` instance, so the process started through this module is the same one
+`stop()` reaches. That is exactly what `tsup`'s `bundle: false` protects — bundling would inline a
+private copy of the module into every entry point, and a spawned child would become unreachable, with
+no error to say so. `application.save`'s **mutation of the object it was handed** (assigning `id` and
+`createdAt` when absent) is also preserved and documented: an in-process `registry.invoke()` caller
+sees its own object mutated, which the integration suite does, even though an IPC caller only ever sees
+a structured clone. And `application.delete` stops the process **before** deleting the file, because on
+Windows a live child can hold it open.
+
+`generateId` collapsed on the way in — the file's private copy was **byte-identical** to the exported
+one in `store/config.ts`, which `store/folderCommands.ts` already imports. Worth noting *why* this is
+hygiene rather than a fix, in contrast with slice 1: `syncEnabledSet` mattered because a divergent copy
+would persist disagreement to `enabled.json`, whereas `generateId` is **pure** — a divergent copy could
+only produce a differently-shaped id. **Collapse a duplicated helper when it is byte-identical and
+already exported; escalate to a correctness concern only when it holds or writes state that outlives
+the process.** A further private copy survives in `store/appSettings.ts`; left alone, because
+collapsing it is not part of a §5c move.
+
+**The ratchet caught a mistake in this slice — which corrects how §5c describes it.** §5c and §5c-i
+both say the ratchet "cannot see" the shell-registered commands, and that is true of the *defect*: a
+command registered at module scope in the shell looks registered in this process, so the ratchet is
+silent. But the first attempt at this slice added the import to `src/ipc/handlers.ts` and lost the call
+site (a tooling race — two edits to the same file in one message, where the second write clobbers the
+first), and `tests/ipc/handlers.test.ts`'s *"implements every protocol command except the pinned list"*
+failed immediately with all ten `application.*` names in the **missing** list. So the ratchet is blind
+to the defect and **sharp on the move**: once a command's only registration is an explicit call,
+forgetting the call makes it unregistered, and the ratchet says so. That is the same asymmetry §5c-i
+noted from the other side — an explicit call site is checkable and a module side effect is not — and it
+means the pass has a safety net after all, just not the one §5c assumed.
+
+**Measured:** `npm run typecheck` → EXIT=0; `applications.integration.test.ts` **12/12**, including
+real child-process spawns with log streaming; `tests/ipc/handlers.test.ts` **166/166**; full suite
+**101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed** (the documented environmental
+`soap.execute`), the exact baseline again. **Mutation-checked:** commenting out
+`registerApplicationCommands()` fails 11 of the 12 suite tests with `No handler registered for command
+"application.save"`; the twelfth only asserts the channel map, so it correctly still passes — which is
+also a reminder that a "registers every channel" test proves nothing about delivery. **21 remain.**
+
+#### 5c-vi. Slice 6 — the 17 `sync.*` / `git.*` / `history.*` commands, and the self-sufficient suite (2026-09-19, `4c6d8ab`)
+
+The largest single slice by count: all 17 moved from module scope in `src/ipc/handlers/syncHandlers.ts`
+into `packages/engine/src/sync/syncCommands.ts` behind `registerSyncCommands()`. They are `sync.*` (7),
+`git.*` (4), `entity.publish` / `folder.publish` / `entity.restore` (3), `audit.diff` (1) and
+`history.*` (2). **4 module-scope registrations remain** — `entityCrudFactory`'s four `entity.*`.
+
+The shell file keeps **19** channels: the 17 plus `audit:list` and `audit:export`, both of which were
+already delegating and neither of which is part of §5c. `audit:list` is the case §5a is about — its
+body still calls `queryLog` directly rather than through the registry, and per §5a it is **not**
+re-pointed, because the `register*Commands()` modules run from `registerIpcHandlers()` and a
+delegating legacy body would acquire a hidden ordering dependency. `audit:export` is the opposite and
+worth noting as the *legitimate* shape: the channel owns a `dialog.showSaveDialog` (a genuinely
+shell-side concern) and delegates the artifact through `call("audit.export", …)`, which resolves to an
+engine registration in `fileOps/commands.ts`. **The distinction is not "delegates vs. duplicates" but
+"who owns the part the engine cannot have."**
+
+> **Update 2026-09-21 — §5b-terdecies: the shell file and all 19 channels are gone.** The reduction's
+> second group deleted them. The §5a ordering concern that kept `audit:list` un-re-pointed became moot
+> with the channel: the `audit.list` **command** is now the only implementation, registered by
+> `registerAuditCommands()` from `registerIpcHandlers()`, and the client's `listAudit` was already its
+> only caller. `audit:export`'s dialog-first shape is the client's `exportAudit` (`local.ts`), where the
+> ordering is asserted rather than merely intended — and `audit.diff` had already moved to
+> `sync/syncCommands.ts` in this slice's own move, which is why the "19 channels" above outlived its
+> accuracy by a day in one respect (the count) and by a pass in another (the location).
+
+**Nothing had to travel** — the second slice in a row where every dependency was already in
+`packages/engine` (`sync/syncManager`, `sync/autoSync`, `sync/gitOps`, `sync/statusTracker`,
+`store/config`, `store/gitStore`, `proxy/server`, `eventBus`). That is the §5c shape in its purest
+form, as in slice 5.
+
+**One helper that looks collapsible and must not be.** `folder.publish` declares a local
+`sanitizeDirName`, and `store/workspaceFs` exports a function of that exact name which
+`store/folderCommands.ts` already imports — so collapsing them is the obvious tidy-up. They are not
+the same function:
+
+| | `store/workspaceFs.sanitizeDirName` | the local one in `folder.publish` |
+| --- | --- | --- |
+| pattern | `[<>:"/\|?*\x00-\x1f]` | `[<>:"/\|?*]+` |
+| replacement | `""` — stripped | `"-"` |
+| fallback | `\|\| "unnamed"` | none |
+
+`"a:b"` becomes `"ab"` under one and `"a-b"` under the other, and a name made only of illegal
+characters becomes `"unnamed"` versus `"-"`. Collapsing would have silently changed the git path a
+folder publish writes to, for exactly the names a user is most likely to have typed by accident. **Kept
+local and verbatim.** The generalisable rule: **grep the helper's *body*, not its name** — a
+same-named function in the same package is not evidence of sameness, and here the two are used for
+different things anyway (a filesystem directory versus a git pathspec prefix).
+
+**Three bodies that look like one, deliberately left as three.** `git.sync`, `entity.publish` and
+`folder.publish` share a shape — `syncChanges` → `emitEntityStatus` → a best-effort
+`updateLastKnownHead`. They are not identical (only `folder.publish` builds a pathspec prefix), and
+they are kept as three registrations rather than factored into one helper. **Factoring is a
+behaviour-affecting refactor and this is a move**; the same reasoning keeps `git.discard` and
+`entity.restore` as two commands with one body, since the shell's own comment calls the `entity.*` /
+`folder.*` names "backward-compatible … delegating to generic git ops" and both names are in the
+contract the renderer already calls. The silent `catch { }` around `updateLastKnownHead` is preserved
+too — it is unbound and unlogged on purpose, because reading the remote head is bookkeeping and must
+not turn a publish that already happened into a failed one.
+
+**Three load-bearing conditionals, each of which a "clean-up" would flatten:**
+`sync.setRemote` reloads the config only when `result.ok`; `sync.pull` reloads, invalidates the status
+cache and emits an entity status only when `result.ok && result.updated` (a pull that changed nothing
+must not churn the renderer's entity list, and the `updated` half is what makes that true); and
+`sync.setAutoSync` starts or stops the poller from the **requested** `enabled`, not from `result.ok`,
+so the toggle leaves the poller matching what the user asked for even if persisting the setting
+failed. `audit.diff` resolves `{before: null, after: null}` when the commit changed nothing — a
+resolved value, so an envelope **success**, not a throw. `history.list` defaults `limit ?? 100` /
+`offset ?? 0` and falls back to the active workspace; `history.diff` does neither. That asymmetry is
+the shell's and was kept.
+
+**The mutation check is the most informative one of the pass, because it separates three audiences.**
+Commenting out `registerSyncCommands()` produced two distinct failures and one non-failure:
+
+- The ratchet (*"implements every protocol command except the pinned list"*) failed with **exactly the
+  17** names in its missing list — the cleanest possible proof that the call site is the only
+  registration, since the received array *is* the slice's command list.
+- Two `history:list` tests failed with `No handler registered for command "history.list"`, thrown
+  through the delegating channel at `syncHandlers.ts:111`. This is §5a's failure mode observed
+  directly: a delegating channel is only ever as alive as the registry behind it, and the error
+  arrives at **invocation** time, invisible to the compiler.
+- **`gitRemote.integration.test.ts` stayed 24/24 green.** It calls `registerSyncCommands()` itself in
+  `beforeAll`, so it is *self-sufficient* — which is exactly why it cannot detect a missing call site.
+  Before the move this suite was populated by an import side effect (it imports `registerSyncHandlers`
+  statically), so the explicit call reproduces a property it never asserted.
+
+That third bullet is the sharpest thing this slice establishes: **a suite that registers the engine
+half itself is structurally blind to the wiring, and its green is not evidence about the wiring.**
+Slices 3–5 each added such a call to keep suites working; this is the first time the consequence was
+measured rather than inferred.
+
+**Measured:** `npm run typecheck` → EXIT=0; `gitRemote` + `gitSync` + `tests/ipc/handlers.test.ts`
+**219/219**; full suite **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed**, the exact
+baseline (the documented environmental `soap.execute`). Verified after the move that `require(`
+appears **only in comments** across `packages/engine/src` — the `graphql.*` / `soap.*` conversions in
+slice 4 are the last real ones. **4 remain.**
+
+#### 5c-vii. Slice 7 — the four `entity.*` CRUD commands, and the pass is complete (2026-09-19, `b48c65e`)
+
+The last four — `entity.create` / `update` / `delete` / `list` — moved from module scope in
+`src/ipc/handlers/entityCrudFactory.ts` into `packages/engine/src/store/entityCrudCommands.ts` behind
+`registerEntityCrudCommands()`. **Zero module-scope `commandRegistry.register(` calls remain in
+`src/`**, so §5c's pass is structurally complete: all 51 commands it turned out to be are registered by
+an explicit `register*Commands()` call from `registerIpcHandlers()`.
+
+**Structurally unlike slices 1–6, and that is the whole of its difficulty.** Each earlier slice moved a
+*file of commands* — registrations on one side, channels on the other, separable by cutting between
+them. This file is a **factory split across the seam**. The four commands dispatch at invoke time
+through `entityCrudRegistry` / `simpleEntityKinds`, and those containers were populated by the six
+**shell** files calling `registerEntityCrudHandlers()` / `registerSimpleEntityHandlers()`. The
+dependency ran the wrong way, which makes this the one slice where the naive cut is *actively
+dangerous*: moving the four registrations without the containers leaves them consulting an **empty**
+map, so every one of them throws
+
+```
+entity.create: kind "rule" is not routed through the CommandRegistry yet
+```
+
+— the same message a genuinely unregistered kind throws. A plausible error, whose real cause is the
+move itself, pointing the reader at the wrong file. **When a slice's commands read state that the shell
+populates, the slice is not a move of commands; it is a move of the container plus an inversion of who
+writes to it.**
+
+The inversion: the containers went to the engine; the shell calls `registerCrudKind()` /
+`registerSimpleKind()` (the engine half) and keeps three `ipcMain.handle` channels per kind (the shell
+half). **Both factory signatures are byte-identical, so none of the five caller files needed an edit** —
+`coreHandlers`, `crudHandlers`, `graphqlHandlers`, `grpcHandlers`, `soapHandlers`. That is the property
+to check first when what has to move is a factory rather than a command list: *can the exported
+signature survive unchanged?* If yes, the importer set stops mattering.
+
+`entityCrudRegistry`, `simpleEntityKinds`, `isGitTracked` and the six `*Core` helpers were `export`ed
+but had **no consumer outside the file** — verified by grep across `src/`, `tests/` and `packages/`,
+not assumed — so they are module-private in the engine behind the two registration functions. Worth
+flagging because it is the one thing in this slice that is **not** a pure relocation: an encapsulation
+change. It is unobservable, but "unobservable" is a claim that has to be checked rather than asserted,
+which is what the grep was for.
+
+**Behaviours preserved verbatim, several of which a clean-up would flatten:**
+
+- **`gateCreate()` ahead of `createEntityCore()`**, so a blocked create never touches config or disk.
+  Only `environments` sets `gateKind`, and it returns `{error: "limit_reached", ...gate}` exactly as
+  the pre-collapse `env:add` did. `EntityCreateResult`'s frozen `{id, entity}` has no room for that,
+  which is safe only because the registry validates **params** and not return values — the same
+  trade-off `entity.setEnabled`'s `invalid_kind` guard already made.
+- **`onAddConflict`'s sibling-disable is diffed and written through `syncEnabledSet`.** The lambda
+  mutates `cfg`, but `saveConfig()` cannot persist that: `writeEntity()` strips `enabled` on the way
+  out, because enabled state lives exclusively in `enabled.json`. Before the diff existed the mutation
+  was silently lost — the sibling stayed enabled on disk and switched itself back on the moment the new
+  entity was deleted. `entity.setEnabled`'s equivalent loop always wrote through `syncEnabledSet`,
+  which is why the two sites disagreed about the same rule. Only `mocks` and `rules` set
+  `onAddConflict`, so for every other kind the flag changes nothing.
+- **`mayResolveConflicts` is a required parameter, not a defaulted one**, so a new caller has to decide
+  rather than inherit the privileged path. It is `mayAffectUnnamedEntities(ctx)` at the one call site.
+- **`reloadConfig()` runs LAST in all three writers, for a different reason each time.** On create:
+  it snapshots the enabled-sets from `enabled.json`, so running it before `syncEnabledSet()` left the
+  proxy with a stale set, `workspaceCfg()` filtered the brand-new entity out of routing, and it only
+  started working after some unrelated action happened to reload. On delete: `saveConfig()` does not
+  unlink files for entities removed from the config, so reloading before the file was deleted (and
+  before the enabled-set was updated) kept the deleted entity live in the routing tables.
+- **`invalidateCache()` on delete only** — the status cache is keyed by workspace, and only a removal
+  can make a previously-reported entity stale.
+- **The tracked-vs-untracked name-entry branch.** A git-tracked entity with a name entry becomes an
+  `addPendingDeletion` (the deletion has to be *published*, so the name entry must survive until the
+  commit lands); an untracked one is `removeNameEntry` immediately. Getting this backwards makes a
+  published deletion either unreplayable or resurrectable.
+- **`entity.list` serves only simple kinds, and `entity.update` has no simple path at all** —
+  `graphqlSchemas` / `protoFiles` / `wsdls` are written straight to disk with nothing mirroring them
+  into an `AppConfig` array, and there is no "update" concept for any of them. Both asymmetries are the
+  shell's.
+
+**The importer set, and why the skill's prediction was wrong.** §5c-vii's scoping note predicted seven
+affected suites, deriving them from the six factory *callers*. The measured set is **five**:
+`entityConflictScope`, `foldersAndWorkspaces`, `settingsMutations`, `protocolPoc`, `protocolExecution`.
+The two predicted extras (`gitRemote`, `gitSync`) never imported anything reaching the factory — their
+`syncHandlers` import was a comment, not a dependency. The prediction came from a grep for the *file
+name* across the consumers; the truth came from asking which suites **register a handler group that
+reaches the factory**, which is one step further down the import graph. **Derive the affected set from
+the registration calls a suite makes, not from the files it mentions.**
+
+One placement detail with a bug behind it: in `settingsMutations` the call had to go in the existing
+`beforeAll`, **not** next to `registerCrudHandlers()` in the `beforeEach`. The channel layer is
+per-test and re-registering is harmless (the electron mock's map is keyed by channel), but the registry
+is a singleton with no `clear()` and `register()` throws on duplicates by design — which is exactly the
+bug slice 1 shipped, 29 of this file's 30 tests dead.
+
+**Measured:** `npm run typecheck` → EXIT=0. The six affected suites **285/286** — the single failure is
+the documented environmental `soap.execute`, and `settingsMutations` at **30/30** confirms the
+`beforeAll` placement. Full suite **101 files / 2,508 tests — 2,467 passed, 40 skipped, 1 failed**, the
+exact baseline, so **seven slices produced no test-count delta** — which is the evidence that seven
+slices of "move the body, keep the channel" were behaviour-preserving.
+
+**Mutation-checked, and the sharpest result of the whole pass.** Commenting out
+`registerEntityCrudCommands()` produced **52 failures, and every one of them was in
+`tests/ipc/handlers.test.ts`**:
+
+- the ratchet, with **exactly the four** `entity.*` names in its missing list; and
+- 51 more, because this file drives the per-kind channels — `mapping:update`, `mapping:delete`, … — and
+  each of those **delegates** into one of the four, so a channel test is a registry test. The failure
+  is `EngineError: No handler registered for command "entity.update"`, thrown from
+  `CommandRegistry.invoke` through the channel.
+
+Meanwhile `entityConflictScope` stayed **9/9 green**, because it registers the engine half itself.
+That is §5c-vi's finding confirmed a third time, and it now has the cleanest possible statement:
+**the mutation's blast radius is a map of which suites actually reach the registry, and the suites that
+stay green are exactly the ones that cannot tell you anything about the wiring.**
+
+**§5c closes here.** The pass moved 51 commands across seven slices and seven new engine modules
+(`store/coreCommands`, `runner/runnerCommands`, `store/folderCommands`, `protocols/{graphql,soap,grpc}Commands`,
+`applications/applicationCommands`, `sync/syncCommands`, `store/entityCrudCommands`). What it does
+**not** do is delete `registerIpcHandlers()`: `app.checkUpdate` (SPLIT → P12) still needs a channel, and
+`src/ipc/importExportHandlers.ts` is dead but dies with it. That is step 3, and it is now unblocked on
+the §5c side.
+
+> **Superseded 2026-09-20 (step 3f).** "`app.checkUpdate` (SPLIT → P12) still needs a channel" was right
+> about the blocker and wrong about the fix. The command is gone from the protocol, but `app:checkUpdate`
+> remains a **local** channel — the shell owns `app.getVersion()` and the platform match — so step 3
+> **reduces** `registerIpcHandlers()` to the local-handler entry point rather than deleting it. The
+> "unblocked on the §5c side" half of the sentence above stands, and the key half is now closed too.
+
+#### 5c-viii. The guard §5c needed, and did not have (2026-09-20)
+
+§5c's own complaint was that the class was invisible: *"they are invisible to the current ratchet
+because it only asks whether a command is registered in this process, and in this process the shell has
+registered them."* The pass was the manual substitute. This is the mechanism.
+
+`tests/ipc/handlers.test.ts` → *"registers nothing at module scope — the §5c guard"* asserts the
+**architectural rule** rather than the historical bug:
+
+> registration goes through `register*Commands(registry)`, so the `commandRegistry` singleton is never
+> registered directly.
+
+That is not a style preference. It is what makes the engine containerisable: a consumer that supplies
+its own registry — P9's Docker engine, a test's own registry, `createInProcessTransport(registry)` — can
+only ever see commands registered **explicitly against it**. `createEngine()` registering no commands by
+design is the same statement from the other side.
+
+It reads every `.ts` under `src/` and `packages/engine/src/` through
+`import.meta.glob(..., { query: "?raw", import: "default" })` and requires
+`/^\s*commandRegistry\.register\(/m` to match nothing.
+
+**It is strictly stronger than the grep the pass itself used, and that was measured rather than
+argued.** The pattern matches a *statement* — a line whose first non-whitespace content is the call —
+so it catches module scope at column 0 **and** a module-scope call wrapped in a top-level `if`/`try`
+block. Mutation-verified: the `grep -rn '^commandRegistry.register(' src/` that every slice's
+verification used **misses** the indented variant (`exit 1`, no match), while this guard fails on it and
+names the file. Two shapes it still does not catch, stated in the test rather than left implied: a call
+preceded by other code on the same line (`if (x) commandRegistry.register(...)`), and an indirect alias
+(`const r = commandRegistry; r.register(...)`).
+
+**The anti-vacuity guards are the part worth carrying forward.** A wrong glob returns `{}`, so
+`Object.values(...).join("\n")` is `""`, `"".match(...)` is `null`, and every assertion passes — a guard
+that reads as coverage while covering nothing, which is worse than no guard because it is trusted. So
+the test asserts three things before it asserts the real one:
+
+1. the reader found **>20 files** in each tree;
+2. a **positive control**: `/^\s*registry\.register\(/gm` matches **>30** times in the engine — the
+   parameterised form is plentiful, so the reader demonstrably sees real registration code;
+3. therefore a zero for the *singleton* form means "not written that way", not "content never loaded".
+
+**Mutation-checked both ways:** a module-scope registration in a scratch `src/` file fails the guard and
+names that file; the same call indented inside a top-level `if` also fails it; deleting the file
+restores green. Full suite **101 files / 2,509 tests — 2,468 passed, 40 skipped, 1 failed**, i.e. **+1
+over the baseline, and the +1 is this test and nothing else** — the same "measure the delta" discipline
+every slice of the pass used.
+
+### 5a. The trap in 3b-2: do not re-point the legacy bodies yet
+
+The natural follow-up — and it looks like pure DRY — is to replace the shell's `ipcMain.handle` bodies
+with `commandRegistry.invoke("<command>", {}, ctx)`, the way `config:get` already does. **It was tried
+and reverted. It is a regression, not a style question.**
+
+The difference is *how the command got registered*. `config.get` / `env.setActive` /
+`workspace.setActive` are registered at **module scope** in `coreHandlers.ts`, so importing that file
+populates them. The `register*Commands(registry)` modules are called **explicitly from
+`registerIpcHandlers()`**, so a legacy body delegating to one acquires a hidden ordering dependency on
+a function in a different file — and on a function callers are not obliged to run.
+
+They are not obliged, and two suites already didn't:
+`tests/spike/protocolPoc.test.ts` and `tests/integration/settingsMutations.integration.test.ts`
+register handler *groups* (`registerCoreHandlers()` / `registerSystemHandlers()`) without
+`registerIpcHandlers()`. Re-pointing broke **six** of their tests with `UNKNOWN_COMMAND` —
+`server.status` among them — because the registry they reached was empty. Nothing catches this at
+build time and the shell's own handler file looks untouched; the failure is
+`No handler registered` at *invocation* time.
+
+So the duplication is deliberate and bounded: six one-line bodies, behaviourally identical to the
+handlers in `serverCommands.ts`. It is removed by **step 3**, which deletes the shell's handler groups
+— one implementation, no second entry point to keep in sync. Re-pointing early trades a temporary,
+visible duplication for a permanent, invisible coupling.
+
+> **Corrected 2026-09-20 (step 3f).** This paragraph read "deletes `registerIpcHandlers()` and the
+> shell's handler groups together". Step 3 **reduces** `registerIpcHandlers()` to the local-handler
+> entry point rather than deleting it: `app:checkUpdate` remains a local channel, because the shell owns
+> `app.getVersion()` and the platform match. The six bodies here still go; the entry point does not. See
+> §5b for the three-design audit that forced the correction, and work item 4 for the local-handlers
+> table it applies to.
+
+---
+
+## The rule for this phase
+
+> **`window.api` stays byte-identical. The renderer is not edited.**
+
+If a renderer edit becomes necessary, stop. The cause is upstream (P1–P5) and belongs there. Editing the
+renderer here destroys the regression signal you spent five phases building, and it hides the very
+problems this phase is supposed to expose.
+
+**Only three files may change in the shell:** `src/main.ts`, `src/preload.ts`, and the shell-only handler
+module. Nothing under `renderer/` — except the two blob-related files already changed in P3.
+
+---
+
+## Work item 1 — Reimplement `preload.ts` as a client bridge
+
+`src/preload.ts` currently makes 136 `ipcRenderer.invoke` calls. It becomes a bridge: the renderer still
+calls `window.api.*`, the bridge forwards to the RPC client.
+
+```ts
+// src/preload.ts — after
+import { createClient } from "@bifurc/client";
+import { createIpcTransport } from "./ipcTransport";   // talks to main via ipcRenderer
+
+const client = createClient(createIpcTransport());
+const local  = createLocalApi();                        // dialogs, zoom, theme, titlebar, platform
+
+contextBridge.exposeInMainWorld("api", { ...client, ...local });
+```
+
+Two transports stacked:
+```
+renderer  →  (Electron IPC, unchanged)  →  main  →  (RPC)  →  engine
+```
+
+**Why keep the Electron IPC hop rather than connecting the renderer directly to the engine?** Because
+`contextIsolation: true` and `nodeIntegration: false` are set (`main.ts:170–174`), so the renderer cannot
+open a socket. The IPC hop stays. It is also what makes this phase a wiring change rather than a
+renderer rewrite.
+
+### Local handlers stay local
+
+Per the P5 shim table, these are implemented in the shell and never cross the RPC boundary:
+
+| Group | Handlers |
+|---|---|
+| Dialogs | `dialog:openFile`, `dialog:pickFilePath`, `dialog:pickFolderPath` |
+| Zoom | `zoom:get`, `zoom:set` (+ the `Ctrl+=/-/0` shortcuts in `main.ts:200`) |
+| Theme | `theme:get`, `theme:set` |
+| Titlebar | `shell:setTitleBarOverlay` (+ `syncTitleBarOverlay`) |
+| External | `shell:openExternal` |
+| Launch state | `app:isFirstLaunch`, `app:completeFirstLaunch` |
+| Platform | `window.api.platform` |
+| CA install | `tls:installCA` (per `File_Ops_Protocol.md` §6.2) |
+| Update check | `app:checkUpdate` — shell half. **Resolved 2026-09-20: the *whole* operation is client-local and the protocol no longer declares `app.checkUpdate`.** It is now the fourteenth `ClientLocal` member, so this table finally does match that interface exactly — see §5b and the audit below |
+
+> **This table is the smaller half of step 3.** It lists the keys that must *never* be routed — and as
+> of 2026-09-20 it **does** match `ClientLocal` exactly, at fourteen members. It did not before: the
+> table listed fourteen rows while `ClientLocal` had thirteen, and the odd row out was `app:checkUpdate`,
+> which was the surface's only `SPLIT`. Resolving it (below) is what made the two agree.
+>
+> What the table still does not say is the larger half of step 3: **25 of the 93 protocol commands had
+> no registry implementation at all**, so they could not be routed even though the client classified
+> them as routable. That backlog is now **closed** — every protocol command is registered — and finding
+> 5 above is the record of how.
+>
+> **And one correction this resolution forced on step 3's own framing.** `src/ipc/handlers.ts` says
+> `registerIpcHandlers()` "cannot be deleted yet" because `app.checkUpdate` still needs a channel.
+> That is now half true in a way worth stating: `app:checkUpdate` remains a **local channel** — it has
+> to, since the shell owns `app.getVersion()` and the platform match — so deleting the split does *not*
+> remove the need for a registration point. Step 3 therefore does not end by deleting
+> `registerIpcHandlers()`; it ends by **reducing** it to the local-handler entry point, with the legacy
+> command bodies gone. The local channels are not legacy, and no amount of routing removes them.
+
+---
+
+## Work item 2 — Engine lifecycle
+
+> ### ⚠ DOWNGRADED 2026-09-20 by **D14** — read [`14-workspace-runtime.md`](14-workspace-runtime.md) §3, §7
+>
+> The four acceptance criteria at the end of this work item (spawn, restart-with-backoff, no orphan,
+> self-terminate) were already carried out of P6's gate on 2026-09-20. **D14 now downgrades the work
+> itself:** the desktop app keeps running the engine **in-process** — which is what it does today — and
+> supervision becomes a property of the **workspace host**, where Docker's `SIGTERM` plus a socket-close
+> watchdog satisfy the same four criteria.
+>
+> **This is not a waiver of the properties, it is a relocation of them.** "An in-process engine cannot be
+> orphaned" was already recorded as the reason they left P6's gate; D14 makes that the answer rather than
+> a deferral. The criteria are still worth reading — they are now the workspace host's gate.
+>
+> **P6's own status is unchanged:** *done in scope*, with criterion 2 ("11 e2e specs pass, unmodified")
+> still **carried, not waived**.
+
+```ts
+// src/main.ts
+async function startEngine(): Promise<EngineHandle>
+```
+
+```
+1. Resolve the data dir:  app.getPath("userData")   → pass as --data-dir
+2. Pick a transport:
+     - socket path (D3 = b)  e.g. \\.\pipe\bifurc-<pid>  |  $XDG_RUNTIME_DIR/bifurc-<pid>.sock
+     - or ephemeral port     (D3 = a)
+3. Spawn the engine binary with --data-dir, --transport, --token
+4. Wait for the ready handshake (stdout line, or poll the socket) with a timeout
+5. Connect the client, send `hello` with the token
+6. Register the client with the IPC bridge
+```
+
+### Supervision
+
+Tauri's sidecar does not auto-restart, and neither does Electron. You need this now, not in P11.
+
+| Condition | Behaviour |
+|---|---|
+| Engine exits non-zero | Restart with exponential backoff (1s, 2s, 4s, capped at 30s) |
+| 3 failures within 60s | Stop retrying; show a UI error with the engine's stderr |
+| Shell quits | `SIGTERM`, wait up to 5s, then `SIGKILL`. Never leave an orphan. |
+| Shell crashes | Engine must self-terminate — pass the shell's PID and have the engine watch it, or use a socket-close watchdog. |
+
+**The orphan case matters.** If the shell crashes and the engine survives, the next launch hits a
+port/socket collision and the user sees a broken app with no explanation. The socket-close watchdog is
+the robust answer: when the last client disconnects and a grace period expires, the engine exits.
+
+### Single instance
+
+`app.requestSingleInstanceLock()` (`main.ts:239`) already ensures one shell. One shell → one engine.
+Keep that invariant; do not let a second engine start.
+
+### Acceptance criteria for this work item — *moved here 2026-09-20*
+
+These four were criteria 5–8 of P6's gate. Finding 4 deferred the process split, which left them
+describing work this phase does not do; they are **relocated verbatim rather than deleted**, and they
+become this work item's gate. The audit and the reasoning are in
+[Acceptance criteria → Moved out of this gate](#moved-out-of-this-gate-2026-09-20--the-process-splits-criteria).
+
+- [ ] App launches, **engine spawns**, handshake completes, UI is functional.
+- [ ] Engine crash → automatic restart with backoff; UI shows an error after 3 failures.
+- [ ] Shell quit → engine exits; **no orphaned process** (`ps`/Task Manager verified).
+- [ ] Shell killed forcibly → engine self-terminates within the grace period.
+
+Two things this work item inherits from work item 4, both already landed, so the split starts from a
+verified base rather than re-deriving it:
+
+- The packaged bundle resolves and loads the engine from inside the asar (measured; CI-guarded).
+- `extraResources` is **this** work item's concern, not P6's — the plan re-scoped that checklist item on
+  2026-09-20. Nothing needs to leave the asar until there is a binary to place.
+
+---
+
+## Work item 3 — Preserve the `ready-to-show` and startup ordering
+
+`main.ts:185` shows the window on `ready-to-show`, then applies persisted zoom and syncs the titlebar
+overlay. The engine is now a dependency of a working UI, so decide the ordering explicitly:
+
+**Recommended:** show the window on `ready-to-show` as today, but render a "connecting to engine"
+state until the handshake completes. Do **not** block window creation on the engine — a slow or failing
+engine would then present as a hung app with no window at all, which is the worst possible failure mode.
+
+---
+
+## Work item 4 — Packaging change for the seam
+
+`package.json` currently bundles only `dist/**/*`:
+
+```json
+"files": ["dist/**/*", "package.json"]
+```
+
+The engine binary must ship alongside. Add it to `extraResources`:
+
+```json
+"extraResources": [
+  { "from": "build/tray-icon.png", "to": "tray-icon.png" },
+  { "from": "build/icon.png",      "to": "icon.png" },
+  { "from": "../packages/engine/dist/engine", "to": "engine" }
+]
+```
+
+**Note the existing precedent:** `main.ts:36–39` already resolves `extraResources` correctly for the
+tray and app icons, with a dev-mode fallback:
+
+```ts
+return app.isPackaged
+  ? path.join(process.resourcesPath, file)
+  : path.join(__dirname, "..", "build", file);
+```
+
+Reuse `iconPath()` for the engine binary — same dev-vs-packaged problem, same solution. **Do not
+introduce a second path-resolution convention.**
+
+### Measured 2026-09-20 — no `files` change is needed, and the real defect was elsewhere
+
+The section above predicts two changes: the engine in `extraResources`, and `files` updated "now that
+deps live in `packages/*`". **The first measurement of the current tree says the second is not needed,
+and that the thing which *is* broken was never in `files` at all.**
+
+`plan/12`'s note — *"a packaged build cannot resolve either specifier"* — was measured 2026-09-15
+against an asar built **2026-09-10**, i.e. *before* `@bifurc/protocol` and `@bifurc/engine` were
+declared as dependencies. `node_modules/@bifurc` was absent because nothing depended on it, not because
+electron-builder drops workspace links. Re-measured with a fresh `npm run build:main` and one
+`electron-builder --dir` run against the current tree:
+
+| Fact | 2026-09-10 asar | 2026-09-20 |
+| --- | --- | --- |
+| asar entries | 6,440 | 8,068 |
+| `dist/*.js` files in the bundle | 128 | 24 |
+| `node_modules/@bifurc/{engine,protocol,client}` | absent | **present, `package.json` included** |
+| distinct `@bifurc/...` specifiers the bundle requires | 0 | 44 |
+| …that resolve **inside** the archive | n/a | **44 of 44** |
+
+electron-builder 26.8.1 detects the workspace root (`detected workspace root … pm=npm`) and copies the
+linked packages in, each with its `package.json` — which is what makes the `exports` map, and therefore
+the deep `@bifurc/engine/store/config` imports, resolve. So **`build.files` is untouched**: both options
+`plan/12` offered (vendor the dist, or rewrite the specifier) describe a problem that does not exist.
+
+**What the same run did find** — two defects, one root cause:
+
+1. **The `tsconfig.json` docblock for `@bifurc/engine/*` was false.** It claimed `tsc-alias` rewrites the
+   specifier to a relative `../packages/engine/dist/...`, "so `dist/**` requires … no reliance on
+   workspace symlinks inside the packaged asar". Measured: **no rewrite happens.** All 50 specifiers in
+   `dist/` are bare, while `@/` aliases *are* rewritten (0 remain) — so `tsc-alias` runs and skips this
+   mapping, silently. The claim could not have held anyway: `@bifurc/protocol` and `@bifurc/client` are
+   not in `paths`, and the packages' *own* emitted files require `@bifurc/protocol` bare. Corrected.
+2. **`dist/` ships 92 stale files.** `tsc` never deletes output, so every module P2 moved into
+   `packages/engine` left a compiled copy behind: **92 of 116** `dist/*.js`, **447 KB**, inside the asar.
+   They are unreachable today — walking relative `require`s from `dist/main.js` and `dist/preload.js`
+   reaches 23 files, **0** of them stale — but they are not harmless. `dist/shutdown.js`, the pre-move
+   copy of `packages/engine/src/shutdown.ts`, requires `@bifurc/engine/companion/companionServer`, a
+   module that **no longer exists under any name** (the companion server is now
+   `transport/legacyCompanion.ts`). It was the one specifier that failed to resolve in the packaged
+   bundle. It is also the hazard `bundle: false` exists to prevent: a second copy of `store/paths.ts` is
+   a second `_dataRootOverride`.
+
+**What landed.**
+
+| Change | Why |
+| --- | --- |
+| `scripts/clean-main-dist.mjs`, wired into `build:main` as `clean:main` | Removes everything in `dist/` except `dist/renderer/` (Vite owns that; it is not tsc output, and a "delete what has no source" heuristic would classify the whole UI bundle as stale) before `tsc` re-emits. |
+| `scripts/assert-packaged.mjs` | The assertion this document and `plan/12` ask for — a script, not a unit test, because the property is about the **artifact**. It walks the **whole require graph** from `dist/main.js` and `dist/preload.js` using Node's own resolution (`createRequire(<the requiring file>)`), requiring every specifier of every file reached to land inside the extracted archive — a specifier-only scan would miss a *relative* require pointing at a file `files` dropped, which is the shape a packaging change actually breaks in. It also loads `@bifurc/client` for real. **464 files reached** on the current bundle. |
+| `release.yml` → *Assert the packaged app resolves the engine* | Runs the above against `release/win-unpacked` **before** the artifact is uploaded, so a missing engine fails the build rather than the user's first launch. |
+| `scripts/pkg-check-reachability.mjs` | The instrument behind the "0 reachable" claim — it is what distinguishes dead weight from a live duplicate-singleton bug. |
+| corrected `tsconfig.json` docblock | It asserted a rewrite that does not happen; a reader would have concluded the asar is self-contained. |
+
+**The walk is scoped by *ownership*, not by a guard heuristic.** First-party specifiers (`dist/` and
+`node_modules/@bifurc/`) must resolve; a third party's optional dependency is its own business. Measured:
+our emitted output has **no** `try`-guarded `require`, so a first-party specifier has no legitimate reason
+to be unresolvable — while four third-party ones legitimately are (`ws`'s `bufferutil` / `utf-8-validate`,
+`debug`'s `supports-color`, `unzipper`'s `@aws-sdk/client-s3`, the last reached only through an S3 code
+path Bifurc never takes). They are **reported on every run, never fatal** — visible rather than silent, so
+a genuinely missing first-party module cannot hide among them.
+
+**Verification — every direction observed, not assumed:**
+
+```
+positive   release/pkgtest/win-unpacked    464 files walked, all resolve, client loads       EXIT 0
+negative   same archive, @bifurc renamed   90 failures                                       EXIT 0
+mutation   same archive, one file dropped  exactly 1 failure, naming that file               EXIT 0
+control    release/win-unpacked (09-10)    no @bifurc requires found → non-vacuity guard     EXIT 1
+```
+
+The last is the one worth keeping. The 2026-09-10 artifact has 128 `dist` files and **zero** `@bifurc`
+requires, so the probe reports "found nothing" instead of passing — the difference between a guard and a
+guard that *reads as* coverage while covering nothing (`TRAPS.md`). The `mutation` row is the new one: it
+drops `dist/ipc/rpcBridge.js` and fails with **exactly one** failure naming that file, which is what proves
+the relative-require half is precise rather than merely present. The probe cannot launch the app (no
+desktop session from an agent shell, see Preconditions), so it proves resolution and module loading, not a
+running UI; the packaged-launch criterion still needs a normal terminal.
+
+**Still open, deliberately.** The engine binary in `extraResources` is a **process-split** concern:
+while the engine is in-process it is an ordinary npm package inside the asar and there is no binary to
+ship. Work item 2 is deferred behind the proven seam, so this stays deferred with it. The CI assertion
+covers Windows only — `linux-unpacked/resources/app.asar` is the equivalent path for the AppImage job,
+unverified from here, so it is recorded for P12 rather than added blind.
+
+---
+
+## Work item 5 — Update the e2e harness
+
+`e2e/fixtures/electronApp.ts` launches Electron with `LOCALAPPDATA` overridden to a temp dir. The engine
+now derives its data dir from `app.getPath("userData")`, which that override already controls — so the
+isolation should hold.
+
+**Verify it explicitly.** If the engine resolves its data dir before Electron's `userData` override
+applies, every e2e test will share one data dir and produce cross-test contamination that looks like
+flakiness. Assert in the fixture that the engine's data dir is inside the temp dir.
+
+The 11 specs must pass **unmodified**. If a spec needs changing to pass, that is a finding — investigate
+before editing.
+
+### ✅ Done 2026-09-20 — and the premise above is only half true
+
+**The paragraph above names one input. There are two, and on Windows the second one wins.** The plan says
+the engine "derives its data dir from `app.getPath("userData")`". `src/main.ts:256` does hand that path to
+`setDataRoot()` — but `store/workspaceFs.ts#dataRoot()` and `store/appSettings.ts#settingsPath()` both
+short-circuit on `%LOCALAPPDATA%` on win32 **before** consulting the data root:
+
+```ts
+export function dataRoot(): string {
+  if (_dataRootOverride) return _dataRootOverride;
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    return path.join(process.env.LOCALAPPDATA, "Bifurc", "data");
+  }
+  return path.join(dataDir(), "data");
+}
+```
+
+So the Electron path has exactly two inputs — Electron's `userData` and `%LOCALAPPDATA%` — and they resolve
+to **different directories**, measured on this machine with the fixture's env:
+
+| resolver | resolves to |
+| --- | --- |
+| `workspaceFs.dataRoot()` (entity data) | `<temp>\Bifurc\data` |
+| `paths.dataDir()` (settings, `app.json`) | `<temp>\electron-userdata` |
+
+Both are inside the temp dir, so isolation holds — but they are not the same directory. That divergence is
+the documented Windows defect in `packages/engine/src/index.ts`'s `EngineOptions.dataDir` docblock and
+**`plan/03` work item 8**; it is deliberately left alone here, because changing the resolution order would
+move existing Windows users' data. It is worth knowing because it means the fixture's seeded sample data
+(`<temp>/Bifurc/data/<wsId>/…` plus `<temp>/Bifurc/app.json`) is written to `dataRoot()`'s and
+`settingsPath()`'s locations respectively — which is why the sample data is found at all.
+
+**What landed.** A containment assertion in the `electronApp` fixture — in the fixture *setup*, not a
+separate opt-in fixture, so it cannot be forgotten by a new spec. It probes the app process once with
+`app.evaluate(({ app }) => …)` for `app.getPath("userData")`, `process.env.LOCALAPPDATA` and
+`process.platform`, and requires every one of them to be inside the temp dir.
+
+**Why containment of the *inputs* rather than a re-derived path.** Both consumers only ever `path.join`
+relative segments (`"Bifurc"`, `"data"`, `"app.json"`, `<wsId>`, `<kind>`) onto one of the two inputs, so
+if both inputs are inside the temp dir then every path derived from them is too. Re-deriving the formula in
+the fixture would duplicate it, and a copy can drift from the original silently. `main.ts` consults neither
+`--data-dir` nor `BIFURC_DATA_DIR` (`resolveDataDir` is for the CLI/Docker entrypoints, P8/P9), so those
+two branches are not on this path and are not probed.
+
+**Scope, stated because the guard is narrower than "the engine's data dir is correct".** This asserts the
+**shell wiring** — that the overrides reach the app process. The engine's own resolution order is covered
+by `tests/store/paths.test.ts` (all four `resolveDataDir` branches, `platformDefaultDataDir`,
+`setDataRoot`/`dataDir`) and `tests/store/workspaceFs.test.ts`. e2e proves the wiring; the unit suites prove
+the order.
+
+**Verification, since the e2e suite cannot run in this sandbox.** `npm run typecheck:e2e` → **EXIT=0**. The
+property was then checked against the engine's **real built resolvers** by a throwaway script (not
+committed) driving `packages/engine/dist/store/workspaceFs.js` and `.../paths.js` under the fixture's env:
+`dataRoot()` → `<temp>\Bifurc\data`, `dataDir()` → `<temp>\electron-userdata`, `wsDir("default")` →
+`<temp>\Bifurc\data\default`, `platformDefaultDataDir()` → `<temp>\Bifurc` — all inside. The **negative
+case** is what proves the guard is not vacuous: with the override removed, `dataRoot()` resolves to
+`C:\Users\wrath\AppData\Local\Bifurc\data`, i.e. the developer's real profile, and the predicate rejects it.
+Five boundary cases on the predicate (root, descendant, sibling, parent, real profile) also pass.
+
+**One unset-`LOCALAPPDATA` case is a failure rather than a skip:** on win32, a missing `%LOCALAPPDATA%`
+makes the engine fall back to the real profile, which is exactly the contamination this guards against — so
+the fixture pushes an explicit error instead of silently dropping the candidate.
+
+**The 11 specs are untouched** (`git status` shows only `e2e/fixtures/electronApp.ts` modified), as the plan
+requires. The e2e *run* remains uncaptured — see the checklist's "11 e2e specs pass, unmodified" item, which
+is still open and is the real gate.
+
+---
+
+## Work item 6 — Rollback plan
+
+> **Resolved 2026-09-20 — this work item is void, and the flag is dropped.** The plan below assumed two
+> live paths coexisting: the old `registerIpcHandlers()` bodies and the new RPC route, with the flag
+> choosing between them. That never happened. Finding 4 deferred the process split, so the "old path" and
+> the "new path" were the *same in-process engine* reached two ways, and once `registerIpcHandlers()`'s
+> bodies were re-pointed (step 3) there was nothing left for the flag to restore. `BIFURC_ENGINE_RPC`
+> appears nowhere in the tree and never did.
+>
+> **Decided: drop it.** Writing the flag now would be dead code guarding a path that does not exist —
+> strictly worse than no flag, because it reads as a safety net. **`git revert` of the phase is the single
+> rollback layer**, and it is a complete one: the phase is a bounded set of commits, `renderer/` is
+> untouched by all of them, and the seam is provably reachable only through `src/main.ts`.
+>
+> The original plan is kept below because it becomes **correct again the moment the process split lands**
+> — at that point there genuinely are two transports (in-process and spawned), and a transport-selection
+> flag is the right instrument. Its home is work item 2, not P6.
+
+The plan as written, preserved for the process split:
+
+```ts
+// src/main.ts
+const useRpc = process.env.BIFURC_ENGINE_RPC !== "0";
+```
+
+The old `registerIpcHandlers()` path stays intact for one release. If the seam misbehaves in the field,
+users can be told to set `BIFURC_ENGINE_RPC=0` and get the previous behaviour immediately, without a
+rollback release.
+
+Delete the flag in the next release, once the seam has survived real usage.
+
+---
+
+## How to start — the first three things
+
+1. **Capture a baseline.** Run the full suite and the e2e suite, and record the exact pass counts. You
+   need a known-good number to compare against, and you need it before the first edit.
+2. **Build the IPC transport and connect it to the client, but keep `registerIpcHandlers()` running.**
+   Route one method (`config:get`) through the RPC path and everything else through the old path. Run the
+   suite. If it is green, the bridge works.
+3. **Route all methods through the bridge, delete `registerIpcHandlers()`, run everything.** Expect
+   failures in the shell-only handlers first — that is the expected shape of the work.
+
+   **Corrected 2026-09-18 (finding 5):** the failures are not a handful of shell concerns but **25
+   unimplemented engine commands**, so this step is two steps:
+
+   - **3b-1** — route the registered commands. ✅ **done 2026-09-18: 131 of 144 keys** go through the
+     client; the thirteen held back are listed in *3b-1 — the preload flip* above. (The plan used to
+     say "the 68"; it is 89 registered now, minus the four with no implementation, minus the nine
+     artifact-egress ones.)
+   - **3b-2** — implement the **25** missing commands in the engine. ✅ **done 2026-09-18: 21 moved;**
+     the remaining four are `NARROWED` / `BLOCKED` / `SPLIT` and are **not** moves (§5b). Do **not**
+     re-point the shell bodies at the registry while doing it — see §5a; that trap applies to all five
+     slices.
+   - **3b-1 → 3c** — route the now-89 registered commands through the bridge, **then** delete
+     `registerIpcHandlers()` + `eventBridge.ts`. ✅ **3c done 2026-09-18** — the event half only.
+   - **3b-3** — the four artifact-egress methods that needed the dialog to run *before* the command.
+     ✅ **done 2026-09-19: 140 of 144 keys route.** The client gained `pickSavePath` and a
+     path-accepting `readArtifactFile`, and `writeArtifact` gained an optional destination. See
+     *Step 3b-3* above.
+   - **3d** — unblock the pinned keys. ✅ **keys 1–2 done 2026-09-19.** Three of the four were **schema**
+     problems rather than routing problems and were resolved by widening the schema they were pinned on
+     (`listAudit`, then `saveRunnerConfig` / `loadRunnerConfig`), not by moving them. See *Step 3d* above.
+   - **3f** — the last key. ✅ **done 2026-09-20: 144 of 144 keys are classified, zero `SPLIT`.** The
+     fourth pinned key was `checkUpdate`, and it was resolved by **deleting `app.checkUpdate` from the
+     protocol** — not by moving it and not by widening a schema. The whole operation is client-local, so
+     there was no engine half to contract with (§5b). It is now the surface's only key that is not a
+     protocol command at all.
+   - **then** reduce `registerIpcHandlers()`. **This is no longer blocked on a key** — but it is also
+     **not a deletion**, and that correction came out of resolving 3f. `app:checkUpdate` remains a
+     *local* channel, because the shell owns `app.getVersion()` and the platform match; local channels
+     are not legacy and no amount of routing removes them. So step 3 ends by **reducing**
+     `registerIpcHandlers()` to the local-handler entry point, with the legacy command bodies gone. The
+     original claim — "cannot be deleted yet, `checkUpdate` still needs a channel" — was right about the
+     blocker and wrong about the fix. Deleting it *early* would still have broken that key on **both**
+     paths at once, with the surface test green because the key stays exposed.
+     **Then read §5b-bis before starting, because it corrects this paragraph twice**: the local-handler
+     entry point already exists (`registerClientHandlers()`, `src/main.ts:294`), so the reduction target is
+     the **engine-registration + event-wiring + bridge** entry point; and the 132 legacy channels are not
+     uniformly dead — **11** are superseded shell halves (the 9, plus `tls:certStatus` / `tls:removeCert`
+     once both became `local` on 2026-09-20). **None of the 11 loses anything on the routed path any more**:
+     that was true of the tls pair when §5b-bis was written and was fixed the same day (§5b-bis, "Decided
+     and implemented").
+
+---
+
+## Step 2 — what landed (2026-09-18)
+
+**The seam carries traffic.** `config:get` — and only `config:get` — now goes
+`client → ipcTransport → ipcRenderer.invoke("engine:rpc") → rpcBridge → registry.invoke("config.get")`,
+while the legacy `config:get` channel stays registered and serving. The other 143 keys are untouched.
+
+| File | Role |
+|---|---|
+| `packages/engine/src/transport/types.ts` | `TransportKind` gains `"ipc"` |
+| `src/ipc/rpcContract.ts` | the channel name + the discriminated frame; imported by **both** halves |
+| `src/ipc/rpcBridge.ts` | main half — `createInProcessTransport(commandRegistry, { bus })` behind `ipcMain.handle` |
+| `src/ipcTransport.ts` | preload half — `kind: "ipc"`, unwraps the result, rebuilds `EngineError` |
+| `src/ipc/handlers.ts` | calls `registerRpcBridge()` last |
+| `src/preload.ts` | builds the client; `getConfig` routed |
+| `package.json` | the `@bifurc/client` dependency (see below) |
+
+### Two things the plan's own snippet gets wrong
+
+1. **`createClient(createIpcTransport())` does not compile.** `CreateClientOptions.local` is
+   **required** — `client/src/local.ts` is explicit that there is no sensible default for a native
+   picker or an OS trust store. And the snippet's `{...client, ...local}` is redundant: the client
+   *already* delegates all 13 local members to `local` (`client/src/index.ts:481–493`). The correct
+   shape is `createClient(createIpcTransport(), { local: { …13 } })`, spread once.
+
+2. **`@bifurc/client` was not linked, so the preload could not have loaded.** `node_modules/@bifurc/`
+   held symlinks for `engine` and `protocol` only, and the root `package.json` did not depend on the
+   client. `build:main` is `tsc && tsc-alias` — **no bundling** — so the import survives as a bare
+   `require("@bifurc/client")` in `dist/preload.js`, and an unresolvable require there means
+   `exposeInMainWorld` never runs: `window.api` is `undefined` and *the whole renderer dies*. The
+   dependency was added and the link created.
+
+   **`npm install` cannot be used to create the link.** The root `prepare` script runs
+   `build:packages`, whose `tsup` cleanup deletes the previous output and trips this environment's
+   safe-delete guard (`SAFE_DELETE_BULK_CONFIRM_REQUIRED`). Create the link directly — a Windows
+   junction, because Git Bash's `ln -s` silently produces an **empty directory** instead.
+
+### A new finding: `@bifurc/client` has no vitest alias
+
+`vitest.config.ts` aliases `@bifurc/engine/*` to source and nothing else, so a **bare** import of
+`@bifurc/client` resolves through `node_modules` to `packages/client/dist/`. The client's own suites
+import `../src/…` relatively and therefore do test source; but `src/preload.ts`'s import — and so
+`packages/client/tests/surface.test.ts`'s view of it — reads the **built** package. This is the same
+silent-staleness class `MEMORY.md` records for `@bifurc/protocol`: **rebuild the client after editing
+its source, or the preload is tested against a stale build.** Deliberately not changed here — adding an
+alias is a separate decision with its own blast radius.
+
+### What step 2 deliberately does not do
+
+**No events.** `ipcTransport.subscribe()` throws `UNSUPPORTED`, which the transport contract requires
+rather than accepting a subscription it can never fire. That is safe only because the client's hub is
+**lazy**: nothing calls `subscribe()` until a listener registers, and the preload's seven `on*` methods
+still use the legacy channels. `tests/ipc/ipcTransport.test.ts` pins that assumption — if the hub ever
+becomes eager, it fails at client-construction time rather than in the field. The **push channel** is
+still step 3's problem, not this one's. (Finding 1, which shared this sentence, was pulled forward and
+fixed on its own — see below. It was a *correctness* defect that already existed, not a consequence of
+this step.)
+
+### How step 2 was verified — and the limit of that verification
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | clean — protocol, engine, client |
+| root `tsc --noEmit` (covers `src/**`) | clean |
+| the two new suites (`rpcBridge`, `ipcTransport`) | **18 passed** |
+| full suite | **2,395 passed** / 40 skipped / **1 failed** — the documented `soap.execute` flake, unchanged |
+| `dist/preload.js` requires | resolve; the compiled bridge graph loads and `kind === "ipc"` |
+| **the exposed surface** | **144 keys**, both-direction diff against `SURFACE_KEYS` clean |
+
+That last row is stronger than it looks. `packages/client/tests/surface.test.ts` imports the **real**
+`src/preload.ts` under a mocked Electron and captures the object handed to
+`contextBridge.exposeInMainWorld`. So *"the renderer's surface is unchanged"* is asserted against the
+actual object rather than against a type — which is the only version of that claim worth having, given
+`packages/gui/src/types/window.ts` is known to under-declare.
+
+**What none of this proves: that Electron's real IPC round trip works.** `ipcRenderer.invoke` is mocked
+on one side and `ipcMain.handle` on the other, so the wire *between* them is the one thing untested
+here. That is the e2e suite's job, and it has to be run from a normal terminal (see Preconditions).
+
+---
+
+## Finding 1 — what landed (2026-09-18)
+
+Finding 1 was pulled forward out of step 3 because it is a **pre-existing correctness defect**, not a
+consequence of moving the renderer onto the transport: the three log events were declared, mapped and
+conformance-tested but never emitted on the bus, so any bus-based subscriber was already blind to them.
+
+| File | Role |
+|---|---|
+| `packages/engine/src/eventBus.ts` | `wireLogEventsToBus(target?, source?)` — the shared implementation |
+| `packages/engine/src/index.ts` | wired in `doStart()` (before `startServer`), detached in `stop()` |
+| `src/ipc/handlers.ts` | wired on the shell path, which never calls `createEngine()` |
+| `packages/engine/tests/eventBus.logWiring.test.ts` | 9 cases, all about **traffic** rather than mapping |
+
+### Four decisions worth stating
+
+1. **The name mapping is hand-written and cannot be derived.** `logEmitter` emits `"request"` /
+   `"chunk"` / `"server-error"`; the bus calls them `"log.entry"` / `"log.chunk"` / `"server.error"`.
+   Unlike `transport/types.ts`'s bus↔wire bridge — where the two sets differ by a uniform `event.`
+   prefix and the map is therefore checked by `assertBridgeIsTotal()` — `"request"` and `"log.entry"`
+   share nothing to strip. The bus names win because they are the ones the transport already knows;
+   `logEmitter` is engine-internal and has emitted these three names since before the bus existed.
+
+2. **`log.entry` carries ONE `RequestLogEntry`, not a `{entries: […]}` batch.** Batching is a *wire*
+   concern owned by `eventPump.ts`'s `toClientEvent`, which every serialising transport applies. Putting
+   the batch shape on the bus would hand every in-process subscriber an envelope no engine code
+   produces, and the conformance suite's batch case would be asserting a shape the engine never emits.
+
+3. **Idempotent per bus, via a `WeakSet`, because two callers are expected.** `createEngine()` and
+   `registerIpcHandlers()` both wire it. Today only one runs, but a consumer that does both must not
+   receive every entry twice — and the symptom would be duplicated rows in the capture panel, which
+   reads as a UI bug rather than a wiring one. A module-level boolean instead of a `WeakSet` would have
+   wrongly suppressed wiring a *second, distinct* bus. Detaching clears the flag, so `stop()` followed
+   by a fresh engine in the same process works; a one-shot flag would silently stop all logging forever.
+
+4. **`source` is injectable, for the reason `createInProcessTransport`'s `bus` is.** `logEmitter` is a
+   process-wide singleton and Vitest shares a module registry across every file in a worker, so a test
+   using the default would leave three listeners attached for whatever ran next. The last case asserts
+   the **default** path by traffic on the real singletons, and detaches in `finally`.
+
+### The call site ordering is load-bearing
+
+`wireLogEventsToBus(bus)` is placed **before** `startServer(settings.port)` in `doStart()`. The proxy is
+the only emitter of these three events, and a **bind failure** — the `listen()` error branch — emits
+`server.error`. Wiring after the start would make that the one event that got away, i.e. the failure
+mode would be "the port is busy and the UI says nothing".
+
+### Additive, not a replacement
+
+`eventBridge.ts` subscribes to the **bus** for six events (`sync.status`, `sync.entityStatus`,
+`entity.changed`, `webhook.payload`, `process.output`, `process.statusChange`) but to `logEmitter`
+**directly** for these three. So wiring the bus cannot double-deliver to the renderer: the legacy
+channels keep coming from `logEmitter`, and the bus now *additionally* carries them for the transport.
+Both paths run side by side until step 3 deletes the legacy one — and this call is what makes that
+deletion possible instead of silently fatal.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| the new suite | **9 passed** |
+| `npm run typecheck` | clean — protocol, engine, client |
+| full suite | **2,404 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the step-2 baseline (2,395) | **exactly +9**, no other movement |
+| `packages/*/dist` entry points | present — engine 720 files, client 32, protocol 6 |
+| `wireLogEventsToBus` in the build | present in `dist/index.js` and `dist/eventBus.js` |
+| `git diff --stat renderer/` | **empty** |
+
+The two things this still does **not** prove are the same two step 2 left open: that Electron's real
+IPC round trip works (both ends are mocked), and that a **bus-based** subscriber now receives the three
+events end to end — the wiring is unit-verified, but nothing consumes the bus for them yet. That is
+step 3, when `eventBridge.ts` is deleted and the transport becomes the only path.
+
+---
+
+## Step 3a — the push channel (2026-09-18)
+
+**Events now have a real path.** `ipcTransport.subscribe()` no longer throws; it attaches one
+`ipcRenderer.on(EVENT_CHANNEL)` and dispatches by `envelope.event`, and the main half keeps one engine
+subscription per wire name and broadcasts each envelope to every live window.
+
+This is the piece **step 3 cannot be done without**. `registerIpcHandlers()` and `wireEventBridge()` go
+together, so the moment the legacy handlers stop serving, all nine event channels stop with them. An event
+path that has never carried a frame is not something to discover a problem in on the day the fallback
+disappears.
+
+> **Corrected 2026-09-20.** This read "are deleted together". `wireEventBridge()` was indeed deleted
+> (step 3c); `registerIpcHandlers()` is **reduced** to the local-handler entry point, not deleted, so the
+> two do not share a fate — see §5b. The paragraph's point is unaffected: the event path had to carry
+> real frames *before* the legacy handlers stopped serving them, and it does.
+
+| File | Role |
+|---|---|
+| `src/ipc/rpcContract.ts` | `EVENT_CHANNEL`, `EventFrame`, and the two control-action names |
+| `src/ipc/rpcBridge.ts` | per-name refcount, broadcast, `subscribe`/`unsubscribe` control frames |
+| `src/ipcTransport.ts` | the dispatcher, the local name check, `close()` releases everything |
+| `tests/ipc/eventChannel.test.ts` | 12 cases, main half |
+| `tests/ipc/ipcTransport.test.ts` | 9 → **16**; the `UNSUPPORTED`-refusal case is replaced |
+
+### Why a second channel, and why `RPC_CHANNEL` cannot serve
+
+`ipcMain.handle` / `ipcRenderer.invoke` is a request/response pair — one invoke, one resolve. An event
+has no request to answer, so there is nothing to resolve and no `invoke` to hang it on. The push
+direction is `webContents.send` → `ipcRenderer.on`, a different Electron API and therefore a different
+channel. The frame that crosses it is a plain `EventEnvelope`, the same type `EventLog` emits and
+`eventPump` writes, so nothing new is invented at this boundary.
+
+### Five decisions
+
+1. **One channel, not one per event.** The legacy side uses nine (`sync:status`, `log:chunk`, …), which
+   is why `eventBridge.ts` needs nine subscriptions. Here the event name travels *inside* the envelope,
+   exactly as on every other transport, so the preload needs one `ipcRenderer.on`.
+
+2. **A per-name count of *renderers*, not of callbacks.** The preload refcounts too, but the two answer
+   different questions: the preload's says "how many callbacks in this renderer want this name", this
+   one says "how many renderers want it". Only the second can decide whether the engine should still be
+   delivering — and a single window closing must not unsubscribe a second window still listening, which
+   is what a `Set` keyed by name would have done.
+
+3. **Broadcast to all windows, and let the preload filter.** This matches `eventBridge.ts`'s existing
+   semantics, so the engine side is genuinely process-wide and one subscription per name is the whole
+   need. A renderer that did not ask for a name has no callback registered and drops the frame.
+   Per-window subscriptions would mean per-window `send` — a different feature (targeted delivery) that
+   nothing asks for and the legacy path never had.
+
+4. **Control frames are recognised before commands.** `subscribe`/`unsubscribe` are the protocol's
+   `RESERVED_ACTIONS`, and `transport/types.ts` refuses to load if the protocol ever grows a real
+   command by either name — so the branch cannot shadow anything. A test asserts the bridge's two
+   duplicated strings against `RESERVED_ACTIONS`, because the contract duplicates them deliberately (a
+   value import would put a second copy of the wire-name table in the renderer bundle).
+
+5. **A batch of names is all-or-nothing, validated against the name table.** Without a pre-flight,
+   `["event.sync.status", "nonsense"]` would subscribe the first, fail on the second, and return a
+   rejected request — leaving a live subscription with **no handle to release it**, since the detacher
+   is only returned on success. That is a leak, not an inconvenience. The check is against
+   `BUS_NAME_BY_WIRE_NAME`, *not* a dry run through the transport: `EventLog`'s retention listeners are
+   attached on the first subscribe for a name and deliberately outlive their subscribers, so a dry run
+   would permanently retain a name the batch then rejected.
+
+### The one thing `subscribe()` cannot do, and why that is acceptable
+
+The contract says `subscribe()` throws **synchronously**. `ipcRenderer.invoke` is asynchronous, so a
+rejection from the main half cannot become a synchronous throw. Two things make this a documented
+limitation rather than a hole:
+
+- **The realistic failure is synchronous anyway.** An unknown wire name is refused locally against the
+  same table `inProcess.ts` uses, with the same code and the same wording — so the common mistake throws
+  where the contract says it should.
+- **A dead bridge is not silent.** Every `request()` already fails loudly with `ENGINE_ERROR`, so a
+  subscribe that quietly does nothing cannot be the *first* symptom. The alternative — letting the
+  rejection escape a `void`ed promise — is an unhandled rejection in the preload, which is worse than a
+  documented no-op on an already-broken transport.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `tests/ipc/eventChannel.test.ts` | **12 passed** |
+| `tests/ipc/ipcTransport.test.ts` | **16 passed** (was 9) |
+| `npm run typecheck` | clean — protocol, engine, client |
+| full suite | **2,423 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the finding-1 baseline (2,404) | **exactly +19** = 7 + 12, no other movement |
+| `git diff --stat renderer/` | **empty** |
+
+**The case that matters most** is *"carries `log.entry` end to end"*: it spans `logEmitter` →
+`wireLogEventsToBus()` → `EventLog` → `EVENT_CHANNEL`, and it is the only test in the repo that
+exercises finding 1's fix through a consumer. It was **confirmed non-vacuous** rather than assumed — it
+failed with an empty `sent` until the wiring was added, which is precisely the shape of the original
+defect. It also asserts the wire projection (`ts` → `timestamp`, capture bodies dropped) and that
+`event.log.entry` arrives as a **batch of one**, since that shape belongs to `@bifurc/protocol` rather
+than to the coalescing.
+
+**What step 3a does not do, deliberately:** it changes nothing the renderer can see. The preload's seven
+`on*` methods still use the legacy channels and `eventBridge.ts` still broadcasts them, so the phase
+stays revertable and the new path can be deleted with nothing to unpick. Wiring the renderer onto it is
+step 3b.
+
+**Still unproven:** the real Electron round trip for events, exactly as for commands — both ends are
+mocked here, so `webContents.send` → `ipcRenderer.on` across a real process boundary remains the e2e
+suite's job.
+
+---
+
+## Step 3c — delete the legacy event path (2026-09-18, `eb4c207`)
+
+`eventBridge.ts` was the temporary *middle hop*: it read `logEmitter` directly and broadcast the legacy
+`log:entry` / `log:chunk` / `server:error` channels, so the renderer could keep receiving events over
+`ipcRenderer.on(...)` unchanged while emission sites moved to the bus one at a time. Step 3a gave
+events a real path and 3b-1 flipped the preload onto it, so the middle hop was dead — confirmed rather
+than assumed, by grepping each of its seven channels for listeners outside the file itself (all zero).
+
+### Why this had to be its own step
+
+Step 3's description was "route all methods, then delete `registerIpcHandlers()` + `eventBridge.ts`
+**together**." They are not the same deletion, and only one of them was ready:
+
+- The **event** path is fully replaced. Nothing listens on the legacy channels any more.
+- The **command** path is not: four of the 144 keys have no registry implementation, and four more are
+  the artifact-egress methods above. Deleting `registerIpcHandlers()` today would break all eight on
+  both paths.
+
+So 3c deletes the half that is genuinely dead and leaves the other half standing.
+
+### The consequence that matters
+
+Deleting it makes `wireLogEventsToBus()` the **only** path for the three log events rather than merely
+an additive one. Finding 1's comment said "additive, not a replacement" — that is now wrong, and the
+comment in `handlers.ts` was updated with it. This call is what keeps the capture panel, the
+request-log panel and the server-error banner alive.
+
+### Two consumers died with it
+
+- `tests/integration/companionServer.integration.test.ts` observed `companion:refresh` /
+  `sync:entityStatus` via `webContents.send` — i.e. *through* the bridge. It now observes
+  `bus.onTyped("entity.changed")` / `bus.onTyped("sync.entityStatus")` directly, which is what it
+  actually meant to assert; the bridge hop was incidental.
+- `tests/ipc/handlers.test.ts` had a four-test block asserting `logEmitter` reached `BrowserWindow`.
+  All four tested the deleted middle hop, and two were vacuous (`not.toHaveBeenCalled()`). Deleted
+  rather than re-pointed: the *traffic* is covered by
+  `packages/engine/tests/eventBus.logWiring.test.ts` and the bus → `EVENT_CHANNEL` hop by
+  `tests/ipc/eventChannel.test.ts`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `npx vitest run tests/integration/companionServer.integration.test.ts tests/ipc/` | **10 files / 350 passed** |
+| `npm run typecheck` | clean |
+| full suite | **2,430 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the 3b-1 baseline (2,475) | **exactly −4** = the four deleted tests, no other movement |
+
+---
+
+## Finding 6 — artifact egress was binary-lossy and the blob pull was broken (2026-09-18, `26d2d32`)
+
+Recorded in full under §3b-1's follow-up above. Summary: `writeArtifact` now takes base64 and writes
+bytes; the blob branch of `artifactToFile` now loops over `blob.read` with `offset`, reads the correct
+`data`/`eof` fields, accumulates bytes, and releases in a `finally`. Six new tests, two confirmed
+non-vacuous by mutation.
+
+| Check | Result |
+|---|---|
+| `packages/client/tests` + `tests/ipc/clientHandlers.test.ts` | **89 passed** |
+| `npm run typecheck` | clean |
+| full suite | **2,436 passed** / 40 skipped / **1 failed** — the same `soap.execute` flake |
+| delta against the 3c baseline (2,471) | **exactly +6**, no other movement |
+| mutation check (`if (read?.eof) break;` → `break;`) | both blob tests fail — they are live |
+
+---
+
+## Step 3b-3 — the last four artifact methods (2026-09-19, `d89ab79`)
+
+**140 of the 144 keys now route.** The four that needed a *third* primitive are off the shell's legacy
+channels, and the primitive they needed was the one `File_Ops_Protocol.md` §3.2 has been asking for
+since P3: **the dialog has to run before the command.**
+
+`ClientLocal.writeArtifact` bundled "ask where" with "write there", which forces the dialog *after* the
+render. That is fine for the five egress methods whose artifact the engine has already produced, and
+wrong for the two that make the engine render something expensive the user might abandon. So the ask
+was split out, and the ingress mirror was widened.
+
+| Hook | Shape | Why this shape |
+| --- | --- | --- |
+| `pickSavePath(opts)` | ask, return a path, write nothing | egress is *dialog → command → write*, so the ask must be separable |
+| `writeArtifact(…, destPath?)` | bundled when omitted, write-only when present | keeps the five already-routed methods on the form that shows the engine's own `suggestedName` |
+| `readArtifactFile(opts?)` | ask **or** reuse `opts.path`, return the path it read | ingress is *dialog → read → upload → command*, so ask and read can share a call |
+
+The dialog's chrome is built from the engine's own `export.formats` table rather than a second
+hard-coded list of the 17 formats and their extensions — the same reasoning `blob/publish.ts` uses for
+holding the inline-vs-blob decision once. One visible consequence, stated plainly because it is a
+behaviour change: **with no engine there is no dialog.** That is correct rather than regrettable —
+there is nothing to export either way — but it does mean `exportData` now fails before the user picks a
+destination instead of after.
+
+### Two client-side regressions, both of which routing would have exposed
+
+Neither is a shell problem. Both are gaps in the client that only became reachable when the preload
+stopped overriding the method — which is the same lesson 3b-1 recorded, in its second form.
+
+1. **`exportRunnerReport` hardcoded `format: "json"`.** The shell's dialog offers **HTML or JSON** and
+   derives the format from the extension the user picked. Choosing the extension *is* choosing the
+   format, so this could not be repaired after the fact: routing it as it stood would have silently
+   deleted HTML export, which is the dialog's **default**. The starkest case of why the dialog cannot
+   run after the render.
+2. **`importData` ignored `req.filePath` and re-opened a picker.** Confirmed, and worse than the
+   "may open a second dialog" 3b-1 recorded: `ImportExportModal.tsx` takes `res.filePath` from
+   preflight and feeds it back, and the old client returned `import.preflight`'s result verbatim —
+   which the engine built from a `blobId`, so `filePath` was `undefined` and the collision branch
+   handed `undefined` to `applyImport`. Now the path is reused, and the staged blob is reused with it
+   through a `pendingUploads` map, so the bytes cross the wire **once** (§5, "uploaded ONCE"). The map
+   is bounded by construction: one entry per file picked since the last preflight, cleared on commit,
+   and a re-run of preflight on the same file releases the entry it displaces rather than leaving it
+   for the sweep.
+
+**A third defect, in a hook rather than a method.** `readArtifactFile` was a pass-through to
+`dialog:openFile`, which caps at **1 MB** because it feeds binary request bodies — while the legacy
+`importExport:preflight` accepted `BLOB_MAX_INGRESS_BYTES` (100 MB). Reusing that channel would have
+silently rejected **every import between 1 MB and 100 MB**, which is most real collections. The new
+handler caps at the protocol constant and returns the path `dialog:openFile` never had. Two things
+follow from that cap being *ours* now: it is the protocol's number rather than a second one, and the
+handler is the only place that reads a file for import.
+
+**And a fourth, in `exportData`'s argument mapping.** It read `req.workspaceId`; `ExportRequest` has
+`wsId`. Nothing noticed because the preload overrode the method entirely — routed as written, **every
+export would have been a `BAD_REQUEST`.** Same shape as finding 5: the surface test cannot see it,
+because every key is exposed correctly and only the payload behind one is wrong.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | clean — protocol, engine, client |
+| full suite | **101 files / 2,503** — 2,462 passed, 40 skipped, **1 failed** (the `soap.execute` flake) |
+| delta against finding 6 (2,436) | **exactly +26** = 12 + 11 + 3, no other movement |
+| `git diff --stat renderer/` | **empty** |
+| surface test | 144 keys, both directions clean |
+| mutation: hardcode `format: "json"` | the two HTML rows of the `it.each` fail |
+| mutation: disable the remembered-blob lookup | "reuses the path and the blob" fails |
+
+The +26 is measured, not inferred, and it decomposes exactly: 12 in `packages/client/tests/client.test.ts`
+(9 plain + one `it.each` with 3 rows), 11 in `tests/ipc/clientHandlers.test.ts`, and 3 from the
+`for (const channel of expectedChannels)` loop that generates one test per registered channel — the
+three new `client:*` channels are the third term. The file count is unchanged.
+
+Both new claims were mutation-checked rather than trusted, because the assertions are about **ordering
+and count** and a value-only assertion passes either way.
+
+### What this unlocks, and what it does not
+
+`src/ipc/importExportHandlers.ts` is now **dead**: nothing in `src/`, `renderer/` or `e2e/` references
+any of its four channels. It is the `kindLabel` copy in the client that is now the only one. It dies
+with `registerIpcHandlers()`, which is the remaining work in step 3 — and that is now blocked on
+**one key, not eight** (see *Step 3d* below).
+
+**Still unproven, and unchanged by this step:** the real Electron IPC round trip. Both ends are mocked,
+so the wire *between* them remains the e2e suite's job, from a normal terminal.
+
+---
+
+## Step 3d — unblocking the pinned keys (2026-09-19)
+
+**Three of the four pinned keys were not routing problems. They were schema problems**, and that is the
+finding worth carrying forward: "the command is not in the registry" was never the same claim as "the
+engine cannot serve it". §5b had already split the four by *why* they were unimplemented — `NARROWED`,
+`BLOCKED`, `BLOCKED`, `SPLIT` — and only the `SPLIT` turned out to need a split.
+
+| Key | Category | Resolution |
+|---|---|---|
+| `listAudit` | `NARROWED` | **done 2026-09-19** (`fcd6d0d`) — widen `AuditListParams`, then move. |
+| `saveRunnerConfig` / `loadRunnerConfig` | `BLOCKED` | **done 2026-09-19** — widen `RunnerConfigSchema`, then move. |
+| `checkUpdate` | `SPLIT` | **still open.** The one genuine split, resolved by P12. |
+
+### Why widening was the right response rather than moving
+
+Both widenings are recorded in `plan/protocol-changes.md` with their justifications, and both follow the
+precedent `entity.ts` set: a large, evolving, **caller-owned** shape stays `z.record` at the wire
+boundary and the domain layer owns validation. `AppConfig` and `ApplicationConfig` were already that
+call. `RunnerConfigSchema` was the outlier — a fixed `{requestOrder, delayMs}` object describing a
+payload no caller sends, in a store whose own shell body is `JSON.stringify(config)` with `config: any`.
+
+The `BLOCKED` category's value showed up here. It existed so that a schema mismatch would be *asserted*
+rather than left filed as "unimplemented", and its assertion checked the block **directly** — parsing the
+real config through the frozen schema had to fail. So widening the schema failed that test and announced
+the two commands had become movable. That is the ratchet working as designed, on the one category where
+the fix was a protocol change.
+
+### The two defects in a frozen schema, and why only one was visible
+
+`RunnerConfigSchema` was wrong twice: it **rejected** what real callers save (`stopOnFailure`,
+`iterations`, no `requestOrder`), and — because `z.object()` drops unknown keys — it would have
+**stripped** them from any payload that did pass. The second is the more dangerous and the one no
+`BLOCKED` entry could express, because a dropped field is silent data loss rather than a validation
+error. The replacement guard asserts `toEqual` on the whole config, which is the assertion the block
+never could make: it only ever proved rejection.
+
+### A widening invalidates fixtures, not just callers
+
+Found by running the suite rather than by reading it. `COMMAND_FIXTURES["runner.saveConfig"].invalid`
+was `config: {}` — a near-miss only because the old schema *required* `requestOrder`. An empty record is
+a valid record under `z.record`, so the every-command matrix in the conformance suite (which asserts each
+fixture's `invalid` is rejected, across **all four transports**) would have failed four suites for a
+reason with no visible connection to the change. Confirmed by mutation: restoring `config: {}` fails
+`run-in-process` with *"promise resolved `{reached: 'runner.saveConfig'}` instead of rejecting"*.
+
+The generalisation is worth stating because it will recur: **`z.record` widens a schema's acceptance, so
+every `invalid` fixture targeting that field must be re-derived rather than trusted.**
+
+### The integration suite could not see any of this
+
+`tests/integration/runnerStorage.integration.test.ts` drove `runner:saveConfig` / `runner:loadConfig` —
+the **shell channels** — and every assertion in it would have kept passing if the engine implementation
+were wrong, because those channels are served by self-contained `ipcMain.handle` bodies that never
+consult the registry. The conformance suite cannot cover it either: its every-command matrix registers
+`() => ({ reached: cmd })` over each command *deliberately*, so it tests the transport and the schema
+rather than any implementation.
+
+So the file gained a block that drives both commands **on the registry** — the path a containerised
+engine has — asserting the on-disk round-trip, that the raw file preserves every field (the data-loss
+half), that the registry and the channel address the *same bytes* in both directions, and the
+`null`-for-missing/corrupt and `{ok:false}`-rather-than-throw branches. This is the integration-suite
+twin of the "unit suite is weak evidence for the preload flip" trap recorded earlier in this phase.
+
+**Measured:** full suite **101 files / 2,508 tests — 2,467 passed**, 40 skipped, 1 failed (the same
+documented `soap.execute` flake). Delta from the step-3b-3 baseline of 2,503 is **+5**, decomposed as
+**+1** for key 1's `audit.list` widening guard and **+4** for this step's registry block. Typecheck
+clean across all three packages.
+
+---
+
+## Acceptance criteria
+
+- [x] **Unit suites pass.** Baseline after **step 3d (keys 1–2 of the four pinned)**:
+      **101 files / 2,508 tests** — **2,467 passed**, 40 skipped, and the one documented `soap.execute`
+      flake (`ECONNREFUSED 127.0.0.1:1`, `tests/spike/protocolPoc.test.ts`). After **step 3b-3 (the last
+      four artifact methods)**: 101 / 2,503 — 2,462. After **finding 6 (egress
+      fix)**: 101 / 2,477 — 2,436. After step 3c: 101 / 2,471 — 2,430. After **step 3b-1 (the flip +
+      the two hooks)**: 101 / 2,475 — 2,434. After step 3b-2: 101 / 2,471 — 2,430. After the step-3b
+      inventory: 101 / 2,467 — 2,426. After step 3a: 101 / 2,464 — 2,423. After finding 1: 100 / 2,445
+      — 2,404. After step 2: 99 / 2,436 — 2,395. Before step 2: 97 / 2,418. The "35 unit suites" this
+      criterion used to say predated P2–P5 entirely.
+      *(3b-3 is **+26**: 12 in the client suite, 11 in the shell-handler suite, 3 from the
+      channel-registration loop. 3c is **−4**: the deleted vacuous forwarding tests. Finding 6 is
+      **+6**. All measured, not inferred.)*
+      *(3b-1 added **exactly +4** — the `client:writeArtifact` cases, the only genuinely new code in
+      the step. Everything else moved rather than being written, and the flip itself added none, so
+      the flip's own delta is zero. Measured, not inferred.)*
+- [x] **11 e2e specs pass, unmodified.** Same count as baseline. **MET 2026-09-22 — the carry is
+      discharged, by the instrument it named.** Owner-run: **11 specs / 46 tests — 46 expected, 0
+      unexpected, 0 flaky, 0 skipped**, read from `report.json` inside the run's own
+      `playwright-report/index.html` rather than re-run. It was carried from 2026-09-20 because it needs a
+      normal terminal (see Preconditions, whose three controls establish that the shell's failure was
+      environmental — **46 failed / 0 passed**, every test dying at `firstWindow()` in ~850 ms, a
+      *constant* rather than a measurement). **This checkbox read `[ ]` until 2026-09-22 evening while the
+      table fifteen lines above already said MET** — the checkbox/table drift `plan/14` §8 records.
+- [x] The renderer is **unchanged** (`git diff --stat renderer/` shows only the P3 blob files).
+- [x] `window.api` is identical to baseline. The instrument is
+      **`packages/client/tests/surface.test.ts`**, which imports the real `src/preload.ts` under a
+      mocked Electron and diffs the exposed keys against `SURFACE_KEYS` in both directions. It is a
+      test, not the standalone script this criterion used to name.
+- [x] Two launches → exactly one engine (single-instance preserved). **Met by construction** —
+      `app.requestSingleInstanceLock()` (`main.ts:239`); one shell, and the engine is inside it.
+- [x] **Packaged build resolves the engine from inside the asar, and runs.** *(Reworded 2026-09-20.)*
+      This read "contains the engine **binary** and runs", which cannot be true while the engine is
+      in-process — there is no binary to contain. The property that is both meaningful and checkable is
+      that the packaged bundle resolves and loads the engine, and that is now **measured and guarded**:
+      44 of 44 `@bifurc/...` specifiers resolve inside the archive, and `scripts/assert-packaged.mjs`
+      runs in CI *before* the artifact is uploaded. **The NSIS installer and a real packaged launch
+      remain unverified** — carried to P12, not dropped.
+- [x] **No user-visible change.** Same UI, same behaviour, same performance. Met in code; the e2e run is
+      its instrument, and **that instrument ran green on 2026-09-22** — see criterion 2 above, which is no
+      longer a carried item.
+
+### Moved out of this gate 2026-09-20 — the process split's criteria
+
+Four criteria described the **process split**, which finding 4 explicitly deferred: *"keep the engine
+in-process, build the IPC bridge over `createInProcessTransport(commandRegistry, {bus})`, and prove the
+seam. The process split then becomes a change of transport behind a proven seam."* They were written
+before that decision and never revisited, so they made the milestone un-closable for reasons that have
+nothing to do with the seam.
+
+**Relocated, not deleted.** The wording is preserved verbatim in
+[Work item 2](#work-item-2--engine-lifecycle), where the work they measure actually lives:
+
+| Original criterion | Why it cannot hold while the engine is in-process |
+|---|---|
+| App launches, **engine spawns**, handshake completes, UI is functional | There is no engine process and no handshake. |
+| Engine crash → automatic restart with backoff; UI shows an error after 3 failures | Nothing to supervise. |
+| Shell quit → engine exits; **no orphaned process** | An in-process engine cannot be orphaned. |
+| Shell killed forcibly → engine self-terminates within the grace period | Same. |
+
+**`BIFURC_ENGINE_RPC=0` is resolved as a decision, not carried as a task.** The flag exists nowhere in the
+tree and never will: this phase never had two live paths to switch between, so it would have been dead
+code from its first commit. **Decided 2026-09-20 — drop it.** `git revert` of the phase is the only
+rollback layer; see Rollback.
+
+### Audit 2026-09-20 — the state of each criterion at the re-scope
+
+| # | Criterion | State 2026-09-20 |
+| --- | --- | --- |
+| 1 | Unit suites pass | **Met** — 101 files / **2,507** tests, **2,466** passed, 40 skipped, 1 documented `soap.execute` flake, re-measured on the committed state after step 3f. The numbers *in* the criterion are stale twice over: 2,508 at step 3d, 2,509 after §5c-viii's guard, 2,507 after step 3f — the −2 being the two per-command schema tests `packages/protocol/src/commands/index.test.ts` generates for the deleted `app.checkUpdate`. |
+| 2 | 11 e2e specs pass, unmodified | **MET 2026-09-22** — owner-run: **11 specs / 46 tests, 46 expected, 0 unexpected, 0 flaky, 0 skipped**, read from `report.json` inside the run's own `playwright-report/index.html`. Was carried from 2026-09-20. |
+| 3 | Renderer unchanged | **Met** — nothing under `renderer/` is modified. |
+| 4 | `window.api` identical | **Met** — `packages/client/tests/surface.test.ts` diffs the real `src/preload.ts` against `SURFACE_KEYS` in both directions, and runs in the suite. |
+| 5 | App launches, **engine spawns**, handshake completes | **Moved** → work item 2. |
+| 6 | Engine crash → restart with backoff | **Moved** → work item 2. |
+| 7 | Shell quit → engine exits, no orphan | **Moved** → work item 2. |
+| 8 | Shell killed → engine self-terminates | **Moved** → work item 2. |
+| 9 | Two launches → exactly one engine | **Met by construction** — `app.requestSingleInstanceLock()`. |
+| 10 | Packaged build contains the engine binary and runs | **Reworded and met in part** — "contains the engine binary" is unmeetable in scope; "resolves the engine from the asar" is measured and CI-guarded. NSIS + real launch → P12. |
+| 11 | Rollback flag `BIFURC_ENGINE_RPC=0` | **Decided: dropped.** There was never a second path for it to restore. |
+| 12 | No user-visible change | **Met in code**; the e2e run is its instrument and is the carried item (see 2). |
+
+**Status: P6 is closed on 2026-09-22, with no item carried.** The seam is proven, the packaging is
+verified end to end from the entry points, and the four process-split criteria live with the work that
+will satisfy them (the workspace host, `plan/14` §7). **Criterion 2 — the last one open — closed
+2026-09-22 at 11/11 specs, 46/46 tests**, owner-run and read from the run's own report artifact. It was
+carried from 2026-09-20 because no agent shell can host a GUI process (see Preconditions, with three
+controls establishing that the shell's failure was environmental); **the carry is now discharged by the
+instrument it named**, which is the point of having named one rather than waiving the criterion.
+
+**What the carry cost, and what it bought.** Seven failures across four owner-run rounds, **every one
+test- or fixture-side; no product code changed for any of them** — three stale tests, two stale locators,
+one stale fixture and one stale nav helper. The most useful property of the exercise is that the unit
+suite could not have found any of them: ~2,600 unit and integration tests were green throughout, because
+they build their own fixtures from `src/`, so the e2e fixture's **on-disk shape** was exercised by nothing
+but a real Electron run. That gap now has a guard —
+`tests/integration/e2eFixtureContract.integration.test.ts` runs `writeSampleWorkspace()` and reads it back
+through the engine's own `loadConfig()`. **A gate that no cheap instrument can run is worth carrying only
+if it leaves a cheap instrument behind.**
+
+---
+
+## Rollback
+
+**One layer: `git revert` the phase.** *(Corrected 2026-09-20 — this section used to specify two layers,
+the first being `BIFURC_ENGINE_RPC=0`.)*
+
+The flag was never written and is now dropped; work item 6 records why. The reasoning is worth stating
+here because the old text called it *"the safety net for the highest-risk change in the programme"*, and
+that judgement was right about the risk while being wrong about the mechanism. A flag is a safety net only
+when it selects between two **live** implementations. Here the two implementations were never both live —
+the process split was deferred, so both routes reached the same in-process engine. `BIFURC_ENGINE_RPC=0`
+would have been a branch that changed nothing, which is worse than no net at all.
+
+`git revert` is a complete rollback for this phase, and that is not an assumption:
+
+- The phase is a bounded set of commits on a linear history.
+- `renderer/` is untouched by every one of them, so there is no user-facing state to reconcile.
+- The seam is reachable only through `src/main.ts`, and the preload flip is the single entry point.
+
+**The flag returns with the process split**, where two transports genuinely coexist — see work item 2.
+Do not write it before then.
+
+---
+
+## Risks
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| Someone edits the renderer "just to make it work" | **High** | Hard rule stated at the top of this document; review `git diff --stat renderer/` at the gate |
+| e2e data-dir isolation silently breaks → phantom flakiness | **High** | ✅ **In place 2026-09-20** — the `electronApp` fixture asserts both resolution inputs (`userData`, `%LOCALAPPDATA%`) are inside its temp dir; see work item 5 |
+| Orphaned engine after a shell crash | Medium | **Moved to the process split** (work item 2) — an in-process engine cannot be orphaned. Socket-close watchdog + explicit criterion travel with it |
+| Startup race: UI shows before the handshake, errors are opaque | Medium | **Moved to the process split** (work item 2) — no handshake exists in-process |
+| Shell-only handlers are forgotten and routed over RPC | Medium | The P5 shim table is the checklist; verify each is served locally |
+| Perf regression from the added IPC hop | Low | Measure startup time before/after; the hop is one in-process call |
+| The app's `dist/` ships stale modules a refactor moved away | **High** | ✅ **In place 2026-09-20** — `clean:main` wipes `dist/` (minus `renderer/`) before `tsc`; 92 stale files / 447 KB were inside the asar, and one of them required a module that no longer exists. See work item 4 |
+| A packaged bundle silently fails to resolve the engine (blank window, no error) | Medium | ✅ **In place 2026-09-20** — `scripts/assert-packaged.mjs` walks the whole require graph from the entry points and runs in CI **before** the artifact is uploaded. Proven non-vacuous in four directions: positive, negative, mutation, control |
+| Engine binary not included in the packaged build | Medium | **Moved to the process split** (work item 2) — there is no binary while the engine is in-process. Reuse `iconPath()`; verify the NSIS artifact explicitly, then |

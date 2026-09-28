@@ -8,9 +8,10 @@
  * the whole Audit Log silently empty, and nothing asserted it before.
  *
  * Before this suite the path was covered only in mocked-unit form:
- * `src/sync/publishService.ts` sat at 54%, `src/sync/gitOps.ts` at 74% (branches 32%),
- * and `src/ipc/handlers/syncHandlers.ts` at 25%. These drive the REAL registered IPC
- * handlers against a REAL git repository in a temp workspace and assert the commits,
+ * `packages/engine/src/sync/publishService.ts` sat at 54%, `packages/engine/src/sync/gitOps.ts` at 74% (branches 32%),
+ * and `src/ipc/handlers/syncHandlers.ts` at 25% (that shell file was deleted in the P6 reduction, second
+ * group, 2026-09-21). These drive the REAL git machinery behind those channels against a REAL git
+ * repository in a temp workspace and assert the commits,
  * diffs and files that actually land on disk. Only Electron itself is mocked.
  *
  * Runs in the integration project (shared process-global data-root override ⇒
@@ -21,8 +22,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, TEST_WS_NAME, type WorkspaceFixture } from "./proxyHarness";
-import { initWorkspaceDir } from "@/store/workspaceFs";
-import { initWorkspaceRepo, setDataDirOverride, queryLog, getGit } from "@/store/gitStore";
+import { initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
+import { initWorkspaceRepo, setDataDirOverride, queryLog, getGit } from "@bifurc/engine/store/gitStore";
 
 // ── Electron: capture the real handlers instead of registering them ───────────
 
@@ -46,13 +47,16 @@ vi.mock("electron", () => ({
     },
 }));
 
-import { registerSyncHandlers } from "@/ipc/handlers/syncHandlers";
+import { invokeDeletedChannel } from "./deletedChannelHarness";
 
-async function invoke<T = any>(channel: string, ...args: any[]): Promise<T> {
-    const fn = handlers.get(channel);
-    if (!fn) throw new Error(`No handler registered for "${channel}"`);
-    return await fn({}, ...args);
-}
+/**
+ * The channels this suite drove were deleted on 2026-09-21 — `syncHandlers.ts`, the P6 reduction's second
+ * handler group — so the call shape now resolves through `deletedChannelHarness`, which holds the
+ * positional → payload mapping the deleted bodies performed. **The call sites below are deliberately
+ * unchanged**: their subject is real git behaviour, not the shell's routing layer, and rewriting them
+ * would bury the deletion in diff noise.
+ */
+const invoke = invokeDeletedChannel;
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -126,7 +130,17 @@ beforeAll(async () => {
     initWorkspaceDir(TEST_WS, TEST_WS_NAME);
     await initWorkspaceRepo(TEST_WS);
 
-    registerSyncHandlers();
+    // P6 §5c slice 6: the 17 `sync.*` / `git.*` / `entity.publish` / `folder.publish` /
+    // `entity.restore` / `audit.diff` / `history.*` commands left `syncHandlers.ts`'s module scope and
+    // now live in the engine. Without this call they answer `No handler registered` at invocation time.
+    //
+    // Since 2026-09-21 this is the **only** registration the suite needs: the channels that wrapped these
+    // commands were deleted (P6's reduction, second group), so `deletedChannelHarness` invokes the
+    // registry directly and there is no longer a channel layer whose absence would surface as
+    // `No handler registered` for a *channel* rather than for a command.
+    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
+    registerSyncCommands(commandRegistry);
 });
 
 afterAll(() => {
@@ -142,7 +156,10 @@ describe("git publish — turning a change into a commit", () => {
 
         const res = await invoke("entity:publish", TEST_WS, ["mocks/mock-pub-create.json"]);
 
-        expect(res).toEqual({ ok: true });
+        // The **commit id**, not a boolean. `{ok: true}` is also what a publish that staged nothing
+        // returns, so the hash is the only thing that says git actually did something — which is why
+        // it is asserted rather than `ok`.
+        expect(res).toMatchObject({ ok: true, commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
         expect((await subjects())[0]).toBe("create mock Sync Mock mock-pub-create");
     });
 
@@ -180,7 +197,11 @@ describe("git publish — turning a change into a commit", () => {
 
         const res = await invoke("entity:publish", TEST_WS, ["mocks/mock-pub-create.json"]);
 
-        expect(res).toEqual({ ok: true });
+        // `commit: null` is a **success with nothing to do**, reported since 2026-09-28 so the UI can
+        // say "nothing to publish" instead of showing no feedback at all — which is what made a no-op
+        // indistinguishable from a button that is not wired up. The commit **id** is what a real
+        // publish returns; this case has none to return.
+        expect(res).toEqual({ ok: true, commit: null });
         expect(await head()).toBe(before);
     });
 
@@ -209,7 +230,7 @@ describe("git publish — turning a change into a commit", () => {
             "mocks/index.json",
         ]);
 
-        expect(res).toEqual({ ok: true });
+        expect(res).toMatchObject({ ok: true, commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
         expect((await subjects())[0]).toBe("update 2 files");
     });
 
@@ -219,7 +240,7 @@ describe("git publish — turning a change into a commit", () => {
 
         const res = await invoke("entity:publish", TEST_WS, ["mocks/Bundle Folder/"]);
 
-        expect(res).toEqual({ ok: true });
+        expect(res).toMatchObject({ ok: true, commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
         expect((await subjects())[0]).toBe('update mock folder "Bundle Folder"');
 
         // The bundled body lists every entity id so the History sidebar can still link them.
@@ -244,7 +265,7 @@ describe("git publish — turning a change into a commit", () => {
 
         const res = await invoke("folder:publish", TEST_WS, "mocks", "Handler Folder");
 
-        expect(res).toEqual({ ok: true });
+        expect(res).toMatchObject({ ok: true, commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
         expect((await subjects())[0]).toBe("create mock Handler One");
     });
 
@@ -253,7 +274,7 @@ describe("git publish — turning a change into a commit", () => {
 
         const res = await invoke("folder:publish", TEST_WS, "mocks", null);
 
-        expect(res).toEqual({ ok: true });
+        expect(res).toMatchObject({ ok: true, commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
         expect((await subjects())[0]).toMatch(/^(create|update|delete) mock/);
     });
 
@@ -262,7 +283,7 @@ describe("git publish — turning a change into a commit", () => {
 
         const res = await invoke("git:sync", TEST_WS, ["mocks/mock-pub-generic.json"]);
 
-        expect(res).toEqual({ ok: true });
+        expect(res).toMatchObject({ ok: true, commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
         expect((await subjects())[0]).toBe("create mock Generic Publish");
     });
 });
@@ -439,27 +460,42 @@ describe("sync:getEntityStatus — the per-entity dirty markers", () => {
         await invoke("entity:publish", TEST_WS, ["mocks/mock-status-del.json"]);
         fs.unlinkSync(wsPath("mocks", "mock-status-del.json"));
 
-        const status = await invoke("sync:getEntityStatus", TEST_WS);
+        const { files } = await invoke("sync:getEntityStatus", TEST_WS);
 
-        expect(status["mocks/mock-status-clean.json"]).toBe("clean");
-        expect(status["mocks/mock-status-mod.json"]).toBe("modified");
-        expect(status["mocks/mock-status-new.json"]).toBe("new");
-        expect(status["mocks/mock-status-del.json"]).toBe("deleted");
+        expect(files["mocks/mock-status-clean.json"]).toBe("clean");
+        expect(files["mocks/mock-status-mod.json"]).toBe("modified");
+        expect(files["mocks/mock-status-new.json"]).toBe("new");
+        expect(files["mocks/mock-status-del.json"]).toBe("deleted");
     });
 
     it("clears the dirty marker once the change is published", async () => {
         await invoke("entity:publish", TEST_WS, ["mocks/mock-status-mod.json"]);
 
-        const status = await invoke("sync:getEntityStatus", TEST_WS);
+        const { files } = await invoke("sync:getEntityStatus", TEST_WS);
 
-        expect(status["mocks/mock-status-mod.json"]).toBe("clean");
+        expect(files["mocks/mock-status-mod.json"]).toBe("clean");
     });
 
     it("never reports bookkeeping files as entities", async () => {
-        const status = await invoke("sync:getEntityStatus", TEST_WS);
+        const { files } = await invoke("sync:getEntityStatus", TEST_WS);
 
-        expect(status["mocks/index.json"]).toBeUndefined();
-        expect(status["mocks/enabled.json"]).toBeUndefined();
-        expect(status["mocks/names.json"]).toBeUndefined();
+        expect(files["mocks/index.json"]).toBeUndefined();
+        expect(files["mocks/enabled.json"]).toBeUndefined();
+        expect(files["mocks/names.json"]).toBeUndefined();
+    });
+
+    /**
+     * The second axis. A file map alone cannot tell *committed and pushed* from *committed and not
+     * pushed* — both read `clean` — so an entity that only needs a push used to be offered no button
+     * at all. This workspace has no `origin`, so the honest answer is `hasRemote: false` with both
+     * counters `false`: there is nowhere to push, and "synced" is already true.
+     */
+    it("reports the remote state, and reports no remote rather than guessing", async () => {
+        const { git } = await invoke("sync:getEntityStatus", TEST_WS);
+
+        expect(git).toBeDefined();
+        expect(git.hasRemote).toBe(false);
+        expect(git.ahead).toBe(false);
+        expect(git.behind).toBe(false);
     });
 });
