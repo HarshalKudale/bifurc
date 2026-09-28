@@ -233,10 +233,6 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
       actionDisabled={actionDisabled}
       onAction={handleAction}
       onEnter={isRequest ? handleSend : undefined}
-      activeEnv={activeEnv}
-      // Request mode only. A mock's URL is a match pattern, so a randomizer token would be nonsense
-      // there — this is the original `tabType !== "mock"` condition, kept.
-      showRandomizer={isRequest}
       // Inside a `TabToolbar` the band owns the frame; a mock tab renders the bar on its own.
       bare={isRequest}
       // Request mode only: a mock renders `RestCurlImport` above the bar with its own toggle, so a

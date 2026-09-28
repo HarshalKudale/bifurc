@@ -1,14 +1,12 @@
 import React, { useRef } from "react";
-import EnvVarHint from "@/components/editor/EnvVarHint";
-import RandomizerHint from "@/components/editor/RandomizerHint";
 import FolderPicker from "@/components/sidebar/FolderPicker";
-import { Environment, Folder } from "@/types";
+import { Folder } from "@/types";
 import { methodColor } from "@/lib/utils";
 import { strings } from "@/lib/strings";
 import { RefreshCw, RotateCcw, Loader2, History, CheckCircle2, AlertCircle } from "@/lib/icons";
 
 // -- UrlBar -----------------------------------------------------------------
-// Method (or fixed verb) + URL input + EnvVarHint + action button in one row.
+// Method (or fixed verb) + URL input + action button in one row.
 //
 // **This is the shared address row for every protocol**, not just REST. GraphQL and SOAP pass a
 // `leading` verb badge instead of a method dropdown; gRPC passes `leading` for the address and its
@@ -54,9 +52,6 @@ export interface UrlBarProps {
   onAction(): void;
   /** Called on Enter key in the URL field */
   onEnter?(): void;
-  activeEnv?: Environment | null;
-  /** Show the {{random.*}} hint button (default true - set false for mock URLs which use pattern matching) */
-  showRandomizer?: boolean;
   /** Extra node(s) rendered inside the input box after the URL input (e.g. regex toggle) */
   inputSuffix?: React.ReactNode;
   /**
@@ -91,7 +86,7 @@ export function UrlBarVerb({ verb }: { verb: string }) {
 export function UrlBar({
   leading, method, onMethodChange, methods, url, onUrlChange, urlPlaceholder, bare = false,
   actionLabel, actionLoadingLabel, actionLoading, actionDisabled, onAction, onEnter,
-  activeEnv, showRandomizer = true, inputSuffix, beforeAction, afterButton,
+  inputSuffix, beforeAction, afterButton,
 }: UrlBarProps) {
   const urlRef = useRef<HTMLInputElement>(null);
 
@@ -131,30 +126,6 @@ export function UrlBar({
         />
         {inputSuffix}
       </div>
-      <EnvVarHint env={activeEnv ?? null} onInsert={(token) => {
-        const el = urlRef.current;
-        if (el) {
-          const s = el.selectionStart ?? url.length;
-          const e2 = el.selectionEnd ?? url.length;
-          const next = url.slice(0, s) + token + url.slice(e2);
-          onUrlChange(next);
-          setTimeout(() => { el.setSelectionRange(s + token.length, s + token.length); el.focus(); }, 0);
-        } else {
-          onUrlChange(url + token);
-        }
-      }} />
-      {showRandomizer && <RandomizerHint onInsert={(token) => {
-        const el = urlRef.current;
-        if (el) {
-          const s = el.selectionStart ?? url.length;
-          const e2 = el.selectionEnd ?? url.length;
-          const next = url.slice(0, s) + token + url.slice(e2);
-          onUrlChange(next);
-          setTimeout(() => { el.setSelectionRange(s + token.length, s + token.length); el.focus(); }, 0);
-        } else {
-          onUrlChange(url + token);
-        }
-      }} />}
       {beforeAction}
       <button
         onClick={onAction}

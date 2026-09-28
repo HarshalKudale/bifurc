@@ -1,10 +1,9 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { AppConfig, Workspace } from "@/types";
 import { Panel } from "@/lib/panelRegistry";
 import WorkspaceSelector from "@/components/layout/WorkspaceSelector";
-import EnvSelector from "@/components/sidebar/EnvSelector";
 import { strings } from "@/lib/strings";
-import { Settings, Search, Variable } from "@/lib/icons";
+import { Settings, Search } from "@/lib/icons";
 import iconUrl from "@/icon.png";
 import HelpTooltip from "@/components/common/HelpTooltip";
 
@@ -17,8 +16,6 @@ interface Props {
   helpText: string;
   onServerStart: () => Promise<void>;
   onServerStop: () => Promise<void>;
-  onEnvChange: (id: string | null) => Promise<void>;
-  onManageEnvs: () => void;
   workspaces: Workspace[];
   activeWorkspaceId: string;
   onWorkspaceChange: (id: string) => void;
@@ -28,9 +25,6 @@ interface Props {
   activePanel: Panel;
   onOpenWorkspaceSettings: () => void;
   onOpenSearch: (mode?: "current" | "global") => void;
-  /** True while the right sidebar is showing the variables face — drives the button's pressed state. */
-  variablesOpen: boolean;
-  onToggleVariables: () => void;
 }
 
 export default function TitleBar({
@@ -40,8 +34,6 @@ export default function TitleBar({
   helpText,
   onServerStart,
   onServerStop,
-  onEnvChange,
-  onManageEnvs,
   workspaces,
   activeWorkspaceId,
   onWorkspaceChange,
@@ -51,16 +43,8 @@ export default function TitleBar({
   activePanel,
   onOpenWorkspaceSettings,
   onOpenSearch,
-  variablesOpen,
-  onToggleVariables,
 }: Props) {
-  const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
   const [serverBusy, setServerBusy] = useState(false);
-  const envDropdownRef = useRef<HTMLDivElement>(null);
-
-  const wsEnvironments = (config.environments ?? []).filter(
-    (e) => e.workspaceId === activeWorkspaceId
-  );
   const serverLabel = serverError
     ? strings.titleBar.portInUse.replace("{port}", String(config.port))
     : serverRunning
@@ -152,46 +136,6 @@ export default function TitleBar({
       <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <HelpTooltip text={helpText} />
       </div>
-
-      {/* Environment selector */}
-      <EnvSelector
-        environments={wsEnvironments}
-        activeId={config.activeEnvironmentId ?? null}
-        open={envDropdownOpen}
-        dropdownRef={envDropdownRef}
-        onToggle={() => setEnvDropdownOpen((v) => !v)}
-        onClose={() => setEnvDropdownOpen(false)}
-        onSelect={async (id) => {
-          await onEnvChange(id);
-          setEnvDropdownOpen(false);
-        }}
-        onManage={() => {
-          onManageEnvs();
-          setEnvDropdownOpen(false);
-        }}
-      />
-
-      {/*
-        The variables toggle, placed *beside the environment selector* on purpose: what it opens is
-        the expansion of that selector's current value — every `{{VAR}}` the active environment can
-        resolve. The pressed state is what tells the user which face of the right sidebar is showing,
-        because the sidebar itself is shared with entity history.
-      */}
-      <button
-        type="button"
-        onClick={onToggleVariables}
-        title={strings.rightSidebar.toggleVariables}
-        aria-label={strings.rightSidebar.toggleVariables}
-        aria-pressed={variablesOpen}
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer select-none flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${
-          variablesOpen
-            ? "border-signal/40 bg-signal/15 text-signal"
-            : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"
-        }`}
-      >
-        <Variable size={13} />
-      </button>
 
       <button
         type="button"
