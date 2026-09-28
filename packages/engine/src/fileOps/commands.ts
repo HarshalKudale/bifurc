@@ -69,7 +69,7 @@ import type {
   TlsImportKeyParams,
   TlsImportResult,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import { blobContentPath, describeBlobError, statBlob } from "../blob/store";
 import { publishArtifact } from "../blob/publish";
 import { caCertPath, caKeyPath } from "../proxy/certManager";

@@ -68,12 +68,12 @@ let registry: any;
 let ctx: any;
 
 beforeAll(async () => {
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
   const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
   const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
   const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
-  const { bus } = await import("@bifurc/engine/eventBus");
+  const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
   registerCrudKinds();
   registerCoreKinds();

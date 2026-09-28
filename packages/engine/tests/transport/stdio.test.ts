@@ -27,8 +27,8 @@
 import { describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 import { EngineError, isKnownCommand } from "@bifurc/protocol";
-import { CommandRegistry } from "../../src/commands/registry";
-import { EngineEventBus } from "../../src/eventBus";
+import { CommandRegistry } from "../../src/kernel/registry";
+import { EngineEventBus } from "../../src/kernel/eventBus";
 import { encodeFrame } from "../../src/transport/framing";
 import { createStdioServer, createStdioTransport, RESERVED_ACTIONS } from "../../src/transport/stdio";
 import type { Transport } from "../../src/transport/types";

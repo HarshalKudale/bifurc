@@ -82,8 +82,8 @@ import {
   type EventName,
   type RpcResponse,
 } from "@bifurc/protocol";
-import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEvents } from "../eventBus";
-import type { CommandContext, CommandRegistry } from "../commands/registry";
+import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEvents } from "../kernel/eventBus";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { createFrameDecoder, encodeFrame, frameFailure, type FrameDecoder } from "./framing";
 import { createEventPump } from "./eventPump";
 import {

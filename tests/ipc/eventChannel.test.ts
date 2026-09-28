@@ -76,9 +76,9 @@ function addWindow(destroyed = false) {
  */
 async function loadBridge() {
   vi.resetModules();
-  const engineBus = await import("@bifurc/engine/eventBus");
-  const registryModule = await import("@bifurc/engine/commands/registry");
-  const logModule = await import("@bifurc/engine/proxy/logEmitter");
+  const engineBus = await import("@bifurc/engine/kernel/eventBus");
+  const registryModule = await import("@bifurc/engine/kernel/registry");
+  const logModule = await import("@bifurc/engine/kernel/telemetry");
   const protocolModule = await import("@bifurc/protocol");
   const bridgeModule = await import("@/ipc/rpcBridge");
 

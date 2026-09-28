@@ -22,8 +22,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Capture the handlers the features register ────────────────────────────────
 
@@ -177,7 +177,7 @@ beforeAll(async () => {
   // to `coreKinds.ts` (`plan/07` §5b-septendecies), so `registerCoreKinds()` is the shell's
   // `environments` kind alone — a suite that registers handler groups by hand still has to wire the
   // commands, which is the `registerCoreCommands()` call below.
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
   // P6 §5c slice 3: the four `folder.*` commands left `folderHandlers.ts`'s module scope. Every channel
   // in that file *delegated* through `commandRegistry.invoke()`, so the channel was only ever as alive as

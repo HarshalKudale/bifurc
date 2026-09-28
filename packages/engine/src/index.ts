@@ -44,11 +44,11 @@ import { startServer, isRunning, getPort, getServerError } from "./proxy/server"
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./proxy/edge";
 // `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
 import { loadConfig } from "./store/config";
-import { bus, wireLogEventsToBus } from "./eventBus";
+import { bus, wireLogEventsToBus } from "./kernel/eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
 import { shutdownEngine } from "./shutdown";
 import { startBlobSweeper } from "./blob/sweep";
-import { commandRegistry, type CommandRegistry } from "./commands/registry";
+import { commandRegistry, type CommandRegistry } from "./kernel/registry";
 import { EventLog } from "./transport/eventLog";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -508,9 +508,9 @@ export * as config from "./store/config";
 export * as workspaceFs from "./store/workspaceFs";
 export * as gitStore from "./store/gitStore";
 export * as subscription from "./subscription/entityCount";
-export * as randomNames from "./lib/randomNames";
-export * as randomizer from "./lib/randomizer";
-export * as eventBus from "./eventBus";
+export * as randomNames from "./utils/randomNames";
+export * as randomizer from "./utils/randomizer";
+export * as eventBus from "./kernel/eventBus";
 export * as proxy from "./proxy/server";
 export * as webhookServer from "./proxy/webhookServer";
 // P14 WI 3 — the workspace **host**: the composition a deployable unit runs. It owns one listener per port
@@ -535,7 +535,7 @@ export { registerAllEngineCommands, registerAllEngineKinds } from "./registerAll
 export * as ports from "./runtime/portAllocator";
 export * as sync from "./sync/syncManager";
 export * as applications from "./applications/processSpawner";
-export * as commands from "./commands/registry";
+export * as commands from "./kernel/registry";
 export * as startup from "./startup";
 export * as shutdown from "./shutdown";
 export * as blob from "./blob/store";

@@ -33,7 +33,7 @@ const { mockIpcMain, registeredHandlers } = vi.hoisted(() => {
 vi.mock("electron", () => ({ ipcMain: mockIpcMain }));
 
 import type { CommandAction } from "@bifurc/protocol";
-import type { CommandRegistry } from "@bifurc/engine/commands/registry";
+import type { CommandRegistry } from "@bifurc/engine/kernel/registry";
 import { RPC_CHANNEL, type RpcResult } from "@/ipc/rpcContract";
 
 const EVENT = {} as never;
@@ -66,7 +66,7 @@ async function loadBridge(
   register: (r: CommandRegistry, protocol: typeof import("@bifurc/protocol")) => void,
 ) {
   vi.resetModules();
-  const registryModule = await import("@bifurc/engine/commands/registry");
+  const registryModule = await import("@bifurc/engine/kernel/registry");
   const protocolModule = await import("@bifurc/protocol");
   const bridgeModule = await import("@/ipc/rpcBridge");
 

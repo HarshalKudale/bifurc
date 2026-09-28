@@ -79,10 +79,10 @@ import type {
     RequestReplayParams,
     ScriptExecuteParams,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "./commands/registry";
+import type { CommandRegistry } from "./kernel/registry";
 import { wsDir } from "./store/workspaceFs";
 import { invalidateCache } from "./sync/statusTracker";
-import { emitEntityStatus } from "./eventBus";
+import { emitEntityStatus } from "./kernel/eventBus";
 import { replayRequest } from "./proxy/serverReplay";
 import { executeIpcScript } from "./proxy/scriptExecutor";
 

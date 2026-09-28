@@ -78,7 +78,7 @@ import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { createWorkspaceHost } from "@bifurc/engine/runtime/host";
 import { createSocketTransport } from "@bifurc/engine/transport/socket";
-import { CommandRegistry, commandRegistry } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
 

@@ -251,6 +251,79 @@ function targetFor(sub) {
 }
 
 // ---------------------------------------------------------------------------
+// The second surface: RELATIVE imports *inside* `packages/engine/src`.
+//
+// ⚠ `@bifurc/engine/*` is only half the rewrite. Every file in the engine imports its neighbours
+// relatively (`../eventBus`, `./commands/registry`), so moving a file breaks every one of those too —
+// and a `@bifurc/engine`-only codemod would leave the package uncompilable while reporting success.
+//
+// The rule is a resolve-then-recompute, not a string substitution: resolve the specifier against the
+// file's **current** directory to get an absolute target, map that target through the phase's move
+// table, then re-derive the specifier from the file's **new** directory. That is what makes it correct
+// when the importing file *also* moves, and idempotent when it does not.
+// ---------------------------------------------------------------------------
+const RELATIVE_FORMS = [
+  [/from\s*(["'])(\.{1,2}\/[^"'\n]+)\1/g, "static-from"],
+  [/import\(\s*(["'])(\.{1,2}\/[^"'\n]+)\1\s*\)/g, "dynamic-import"],
+  [/require\(\s*(["'])(\.{1,2}\/[^"'\n]+)\1\s*\)/g, "require"],
+];
+
+/**
+ * Resolve `spec` from `fromAbs`, honouring extensionless and directory-index specifiers.
+ *
+ * ⚠ The second loop is load-bearing, not belt-and-braces. A specifier may name a path this phase has
+ * **already moved**: the tree is rewritten before it is moved, but a re-run (or a file the first pass
+ * skipped) still names the old path, and `fs.existsSync` on the old path then returns false. Without
+ * the fallback the rewrite silently reports "nothing to do" and the import stays broken.
+ */
+function resolveSpecifier(fromAbs, spec, moveMap) {
+  const base = path.resolve(path.dirname(fromAbs), spec);
+  const cands = [base, `${base}.ts`, `${base}.tsx`, path.join(base, "index.ts")];
+  for (const cand of cands) {
+    if (fs.existsSync(cand) && fs.statSync(cand).isFile()) return cand;
+  }
+  for (const cand of cands) {
+    const rel = path.relative(SRC, cand).split(path.sep).join("/").replace(/\.tsx?$/, "");
+    const to = moveMap.get(rel);
+    if (to) return path.join(SRC, `${to}.ts`);
+  }
+  return null;
+}
+
+/** Re-derive a specifier from `fromAbs` to `targetAbs`, preserving the original's shape. */
+function deriveSpecifier(fromAbs, targetAbs, originalSpec) {
+  let r = path.relative(path.dirname(fromAbs), targetAbs).split(path.sep).join("/");
+  if (!r.startsWith(".")) r = `./${r}`;
+  r = r.replace(/\.tsx?$/, "");
+  // Keep an explicit `/index` only if the original asked for it.
+  if (!/\/index$/.test(originalSpec)) r = r.replace(/\/index$/, "");
+  return r;
+}
+
+/** Rewrite every relative specifier in `content` that points at a file this phase moves. */
+function rewriteRelative(fileAbs, content, moveMap) {
+  const fileRel = path.relative(SRC, fileAbs).split(path.sep).join("/").replace(/\.tsx?$/, "");
+  const fileNewAbs = moveMap.has(fileRel) ? path.join(SRC, moveMap.get(fileRel)) : fileAbs;
+  let out = content;
+  let n = 0;
+  for (const [re] of RELATIVE_FORMS) {
+    out = out.replace(re, (full, q, spec) => {
+      const targetAbs = resolveSpecifier(fileAbs, spec, moveMap);
+      if (!targetAbs) return full;
+      const targetRel = path.relative(SRC, targetAbs);
+      if (targetRel.startsWith("..")) return full; // outside the engine — not our business
+      const targetRelNoExt = targetRel.split(path.sep).join("/").replace(/\.tsx?$/, "");
+      const targetNewAbs = path.join(SRC, (moveMap.get(targetRelNoExt) ?? targetRelNoExt));
+      const next = deriveSpecifier(fileNewAbs, targetNewAbs, spec);
+      if (next === spec) return full;
+      n++;
+      return full.replace(`${q}${spec}${q}`, `${q}${next}${q}`);
+    });
+  }
+  return { out, n };
+}
+
+// ---------------------------------------------------------------------------
 // Scan
 // ---------------------------------------------------------------------------
 const allFiles = walk(ROOT).filter((p) => !isSkippedFile(p));
@@ -421,36 +494,83 @@ if (MODE === "apply") {
     process.exit(2);
   }
   const inPhase = FILES.filter((f) => f.phase === PHASE && f.to !== null && f.to !== f.from);
-  const rename = new Map(inPhase.map((f) => [f.from, f.to]));
-  console.log(`\n=== APPLY phase ${PHASE} — ${rename.size} path(s) ===`);
-  for (const [a, b] of rename) console.log(`  ${a}  ->  ${b}`);
+  const moveMap = new Map(inPhase.map((f) => [f.from, f.to]));
+  console.log(`\n=== APPLY phase ${PHASE} — ${moveMap.size} path(s) ===`);
+  for (const [a, b] of moveMap) console.log(`  ${a}  ->  ${b}`);
 
   const pending = FILES.filter((f) => f.phase === PHASE && f.to === null);
   if (pending.length) console.log(`  ⚠ ${pending.length} split target(s) in this phase need hand work: ${pending.map((p) => p.from).join(", ")}`);
 
-  let rewrites = 0;
+  let subpathRewrites = 0;
+  let relativeRewrites = 0;
   let touched = 0;
+  const writes = [];
+
   for (const p of allFiles) {
     const before = fs.readFileSync(p, "utf8");
-    if (!before.includes("@bifurc/engine/")) continue;
     let after = before;
-    for (const [re, form, subGroup] of FORMS) {
-      if (form === "mention" && !MENTIONS) continue;
-      after = after.replace(re, (full, q, subRaw) => {
-        if (subGroup !== 2) return full;
-        const sub = normaliseSub(subRaw);
-        const to = rename.get(sub);
-        if (!to) return full;
-        rewrites++;
-        const suffix = subRaw.slice(sub.length);
-        return full.replace(`@bifurc/engine/${subRaw}`, `@bifurc/engine/${to}${suffix}`);
-      });
+
+    // (1) `@bifurc/engine/<sub>` — all five forms.
+    if (before.includes("@bifurc/engine/")) {
+      for (const [re, form, subGroup] of FORMS) {
+        if (form === "mention" && !MENTIONS) continue;
+        after = after.replace(re, (full, q, subRaw) => {
+          if (subGroup !== 2) return full;
+          const sub = normaliseSub(subRaw);
+          const to = moveMap.get(sub);
+          if (!to) return full;
+          subpathRewrites++;
+          const suffix = subRaw.slice(sub.length);
+          return full.replace(`@bifurc/engine/${subRaw}`, `@bifurc/engine/${to}${suffix}`);
+        });
+      }
     }
+
+    // (2) relative imports into the engine — from ANY file, not only the engine's own.
+    // ⚠ Scoping this to `packages/engine/src` is the bug this line used to have, and it broke
+    // `packages/engine/tests/`: those suites import the engine relatively (`../../src/commands/registry`),
+    // so a guard on the *importing* file's location skips exactly the files that need rewriting. The
+    // resolver does the guarding instead — it returns null for anything outside the engine.
+    {
+      const r = rewriteRelative(p, after, moveMap);
+      after = r.out;
+      relativeRewrites += r.n;
+    }
+
     if (after === before) continue;
     touched++;
+    writes.push([p, after]);
     console.log(`  ${WRITE ? "write" : "would write"}  ${path.relative(ROOT, p).split(path.sep).join("/")}`);
+    if (has("--verbose")) {
+      const bl = before.split("\n");
+      const al = after.split("\n");
+      for (let i = 0; i < Math.max(bl.length, al.length); i++) {
+        if (bl[i] !== al[i]) console.log(`      L${i + 1}: ${(bl[i] ?? "").trim()}\n           -> ${(al[i] ?? "").trim()}`);
+      }
+    }
     if (WRITE) fs.writeFileSync(p, after);
   }
-  console.log(`\n${WRITE ? "rewrote" : "would rewrite"} ${rewrites} reference(s) across ${touched} file(s)`);
-  if (!WRITE) console.log("(dry run — pass --write to apply)");
+
+  console.log(
+    `\n${WRITE ? "rewrote" : "would rewrite"} ${subpathRewrites} \`@bifurc/engine/*\` reference(s) ` +
+      `and ${relativeRewrites} relative import(s) across ${touched} file(s)`,
+  );
+
+  // (3) the moves themselves — last, so every file was rewritten at its old path.
+  if (WRITE) {
+    console.log(`\n=== MOVING ${moveMap.size} file(s) ===`);
+    for (const [from, to] of moveMap) {
+      const fromAbs = path.join(SRC, `${from}.ts`);
+      const toAbs = path.join(SRC, `${to}.ts`);
+      if (!fs.existsSync(fromAbs)) {
+        console.log(`  skip (already moved?)  ${from}`);
+        continue;
+      }
+      fs.mkdirSync(path.dirname(toAbs), { recursive: true });
+      fs.renameSync(fromAbs, toAbs);
+      console.log(`  moved  ${from}  ->  ${to}`);
+    }
+  } else {
+    console.log("(dry run — pass --write to apply and move)");
+  }
 }

@@ -54,7 +54,7 @@ import * as net from "net";
 import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
 import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
 import { runWorkspaceHost } from "@bifurc/engine/runtime/host";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 
 const HOST_TOKEN = "host-signal-token";

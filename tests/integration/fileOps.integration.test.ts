@@ -63,7 +63,7 @@ import {
     type TlsImportResult,
     type TlsRemoveCertResult,
 } from "@bifurc/protocol";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";

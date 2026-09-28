@@ -93,7 +93,7 @@ import * as net from "net";
 import * as http from "http";
 import { loadConfig, type AppConfig } from "@bifurc/engine/store/config";
 import { createEdgeRouter, DEFAULT_EDGE_BIND_HOST } from "@bifurc/engine/proxy/edge";
-import { logEmitter } from "@bifurc/engine/proxy/logEmitter";
+import { logEmitter } from "@bifurc/engine/kernel/telemetry";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

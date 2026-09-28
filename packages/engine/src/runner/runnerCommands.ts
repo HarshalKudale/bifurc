@@ -92,7 +92,7 @@ import type {
     RunnerSaveConfigParams,
     RunnerSaveReportParams,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 import { wsDir } from "../store/workspaceFs";
 import { renderRunnerHtml } from "./reportHtml";
 

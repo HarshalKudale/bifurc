@@ -138,7 +138,7 @@ beforeAll(async () => {
     // commands were deleted (P6's reduction, second group), so `deletedChannelHarness` invokes the
     // registry directly and there is no longer a channel layer whose absence would surface as
     // `No handler registered` for a *channel* rather than for a command.
-    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
     const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
     registerSyncCommands(commandRegistry);
 });

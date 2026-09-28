@@ -60,7 +60,7 @@ import {
     type ImportCommitResult,
     type ImportPreflightResult,
 } from "@bifurc/protocol";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
 import { blobRoot, statBlob } from "@bifurc/engine/blob/store";
