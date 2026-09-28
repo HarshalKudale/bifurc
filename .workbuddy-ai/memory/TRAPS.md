@@ -3287,3 +3287,75 @@ were. The change was correct; the third port was not de-duped.
 `settingsMutations`, not just the `getFreePort()` call. And do not write "the values are distinct in practice"
 in a comment: a collision surfaces as an `EADDRINUSE` that reads like a busy machine, so the assumption has to
 be **enforced in code**, not asserted in prose.
+
+## Piping a command destroys its exit code — so a real build failure reads as a pass
+
+Measured 2026-09-28.
+
+`npm run build:renderer 2>&1 | tail -4 && npm run test:unit` reported the unit results and read as though the
+build had succeeded. It had not. **A pipeline's exit status is the exit status of its last command**, so
+`| tail`, `| head` and `| grep` all return **0** no matter what the left-hand side did — and `&&` is gated on
+that 0, not on the build. The failure appeared only as a vite error object in the output:
+
+```
+    at async Object.buildApp (file:///…/vite/dist/node/chunks/node.js:33552:153)
+    at async CAC.<anonymous> (file:///…/vite/dist/node/cli.js:777:3) {
+  errors: [Getter/Setter]
+}
+```
+
+**A tail of a failure is not a signal you can trust, and a pipeline is not a check.** For anything you intend to
+judge by exit code — a build, a mutation run, a typecheck — redirect to a file and read `$?`:
+
+```bash
+npm run build:renderer > /tmp/build_out.txt 2>&1; echo "EXIT CODE: $?"; tail -12 /tmp/build_out.txt
+```
+
+Re-measured that way three times, the build exits **0**, prints `✓ built in 18.21s`, and emits **no** line
+matching `Error|error:|buildApp`. The stack trace above never reproduced, and the same tree built green minutes
+later — so the trace was not evidence of a defect. **What was a defect was the measurement**, and this entry
+exists because the first reading of it was wrong.
+
+**How to apply.** `cmd | grep -q …` and `cmd | tail -n` both *look* like checks and neither is one. Before you
+write "the build passed", the command that told you so must have had its exit code read from the **command**, not
+from a filter downstream of it. `set -o pipefail` fixes it in bash when you must pipe.
+
+## A correct component mounted with the wrong props crashes, and the stack names the component
+
+`CollectionRunner` (`packages/gui/src/components/rest/CollectionRunner.tsx`) requires
+`{folderId, folderName, requests, activeEnv, wsId, onSaveReport}`. Its **only** call site
+(`RequestsPanel.tsx`) passed `{folderId, folders, activeEnv, onClose}`: `b594c51` ("Very major refactor. Some
+things might be broken will be fixed in future passes") rewrote the runner-tab branch, dropped four props and
+added one that does not exist. Opening "Run Collection" on any folder then died with:
+
+```
+TypeError: Cannot read properties of undefined (reading 'length')
+    at fA (useCollectionRunner.ts:90:153)
+    at yA (CollectionRunner.tsx:45:7)
+```
+
+The stack names the component; the defect is one directory up. No single link in the chain is visible from it:
+
+- `useCollectionRunner` seeds `useState<SavedRequest[]>(requests)`, so `requests === undefined` makes
+  `orderedRequests` undefined **without a throw at that line**;
+- line 90's `moveDown` is a `useCallback` whose **dependency array** `[handleReorder, orderedRequests.length]`
+  is evaluated **during render** — line 89's `moveUp` is safe, its deps are `[handleReorder]` — so the failure
+  surfaces on *open*, before anything runs, at a column that reads as an internal detail;
+- the panel has no error boundary, so the entire Requests panel goes blank rather than degrading.
+
+**The typecheck had already reported it.** `npm run typecheck --workspace @bifurc/gui` emits
+`RequestsPanel.tsx(144,23): error TS2322 … Property 'folders' does not exist on type 'IntrinsicAttributes &
+CollectionRunnerProps'` — inside the **33 pre-existing errors across 21 files** that `packages/gui` is kept out
+of `npm run typecheck` to avoid. So the gate read green, the signal sat in a list treated as noise, and three of
+the four dropped props fail **silently** even without the crash: `wsId` is invisible in the UI, a missing
+`onSaveReport` never persists a run, and a missing `folderName` renders "Collection" for every folder.
+
+**How to apply.** When a stack names a component, check its **call site's prop shape before its body**.
+`git log -S"<CollectionRunner"` finds the commit that introduced the call site and
+`git show <sha> -- '*RequestsPanel.tsx'` prints the original, working props — comparing the two lists is what
+identified all four. **Do not read a fix here as a regression from the P7 move**: `cc9ae23^`'s
+`renderer/panels/RequestsPanel.tsx` has the same broken props, so this predates the move and survived it
+byte-identical. After a GUI fix, re-run the gui typecheck and compare the **error list, not the count** — a delta
+of exactly one line is the proof; 32 vs 33 alone is not. And because `packages/gui` has no `dist` (the renderer
+bundle is built from its **source**), a fix reported from a built app needs `npm run build:renderer` before it
+can be observed at all.
