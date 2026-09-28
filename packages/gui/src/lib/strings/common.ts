@@ -1,6 +1,9 @@
 export const commonStrings = {
   common: {
-      save: "Save",
+      /** The only write button left: it creates a draft that has no server id yet. */
+      create: "Create",
+      /** A rename dialog's confirm — a one-shot value, not an autosaved entity. */
+      rename: "Rename",
       cancel: "Cancel",
       delete: "Delete",
       close: "Close",
@@ -23,6 +26,12 @@ export const commonStrings = {
       syncing: "Syncing…",
       revert: "Revert",
       reverting: "Reverting…",
+      /** Autosave indicator — the replacement for the Save button's feedback. */
+      saving: "Saving…",
+      saved: "Saved",
+      saveFailed: "Save failed",
+      /** Confirms a modal whose fields already autosaved: there is nothing left to write. */
+      done: "Done",
       syncTooltip: "Sync (commit & push)",
       revertTooltip: "Revert local changes to last synced version",
       noChangesToRevert: "No local changes to revert",

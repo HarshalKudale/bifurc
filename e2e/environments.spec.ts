@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/electronApp";
-import { openEnvironmentsManager } from "./helpers";
+import { openEnvironmentsManager, awaitAutosave } from "./helpers";
 
 /**
  * The Environments manager is reached through the titlebar's environment **dropdown**
@@ -30,6 +30,13 @@ import { openEnvironmentsManager } from "./helpers";
  * 2. **The panel opens on its empty state.** `selectedEnvId` defaults to `GLOBAL_ENV_ID`
  *    (`__global__`), which `writeSampleWorkspace` does not define, so no environment is selected
  *    until one is clicked — `EnvVariableTable` is not rendered before then.
+ *
+ * ## There is no Save button here any more
+ *
+ * "New Environment" **is** the create: `EnvironmentsPanel.handleAdd` asks the engine for the
+ * environment up front, so it exists before the user has typed anything. The name and the variables
+ * then autosave one second after the last edit, which is why the last test waits out the debounce
+ * rather than clicking anything.
  */
 test.describe("Environments Panel", () => {
     test.beforeEach(async ({ page }) => {
@@ -70,19 +77,18 @@ test.describe("Environments Panel", () => {
         await expect(page.getByPlaceholder("VARIABLE_NAME")).toHaveCount(4);
     });
 
-    test("cannot create environment with empty name", async ({ page }) => {
+    test("does not persist an empty environment name", async ({ page }) => {
         // There is no empty-name path to begin with: `EnvironmentsPanel.handleAdd` asks the engine
-        // for a pre-named environment, and `EnvVariableTable.handleSave` falls back to the existing
-        // name when the field is cleared (`name.trim() || env.name`). This asserts that fallback.
+        // for a pre-named environment, and `EnvVariableTable`'s autosave payload falls back to the
+        // existing name when the field is cleared (`name.trim() || env.name`). This asserts that
+        // fallback — the write is now automatic, so there is no Save click to make it visible.
         await page.getByRole("button", { name: /^Development$/ }).last().click();
 
         const nameInput = page.getByPlaceholder("Environment name").first();
         await expect(nameInput).toHaveValue("Development");
 
         await nameInput.fill("");
-
-        // The Save button only renders once the form is dirty.
-        await page.getByRole("button", { name: /^Save$/ }).first().click();
+        await awaitAutosave(page);
 
         // The titlebar toggle re-reads the active environment from the reloaded config, so an
         // empty name reaching disk would show up here as a blank toggle.

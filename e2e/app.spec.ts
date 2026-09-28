@@ -89,14 +89,17 @@ test.describe("Navigation", () => {
          *   Ctrl+T — the tab strip, counted by `[data-tab-id]`. The empty state is now the same
          *            protocol chooser a new tab shows, so the tab count is what distinguishes them:
          *            0 before the keybind, 1 after.
-         *   Ctrl+S — the save button's label. `RestTab.tsx:271` selects `Save Request` while
-         *            `draftTabId` is set and `Update Request` once it is cleared, so the label flipping
-         *            is precisely the evidence that a save happened.
+         *   Ctrl+S — the Create button disappearing. There is no Save button left to watch: the
+         *            shortcut now means "write now, do not wait for the debounce" (`saveNow` in
+         *            `useProtocolEditor`). A draft renders `Create Request`, and a successful write
+         *            replaces the draft id with the saved one, which is what takes the label away — so
+         *            the disappearance *is* the evidence that a save happened.
          *   Ctrl+W — the same count, back to 0.
          *
-         * A request needs only a URL to be saveable: `RestTab.tsx:162-163` gates on `state.url.trim()`
-         * for `tabType === "request"` — the response-body rule is the mock branch. The name is filled
-         * because it is what the tree and the tab label display, not because it is required.
+         * A request needs only a URL to be creatable: `RestTab.tsx`'s `canSaveBase` gates on
+         * `state.url.trim()` for `tabType === "request"` — the response-body rule is the mock branch.
+         * The name is filled because it is what the tree and the tab label display, not because it is
+         * required.
          */
         await openPanel(page, "Requests");
         await expect(page.locator("[data-tab-id]")).toHaveCount(0);
@@ -111,7 +114,7 @@ test.describe("Navigation", () => {
             .fill("https://example.localhost/keybind-save-test");
 
         await page.keyboard.press("ControlOrMeta+S");
-        await expect(page.getByRole("button", { name: /Update Request/i })).toBeVisible();
+        await expect(page.getByRole("button", { name: /Create Request/i })).toHaveCount(0);
 
         await page.keyboard.press("ControlOrMeta+W");
         await expect(page.locator("[data-tab-id]")).toHaveCount(0);

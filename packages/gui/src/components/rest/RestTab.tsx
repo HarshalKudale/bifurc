@@ -89,7 +89,11 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
     reverting,
     handleSyncClick,
     handleRevertClick,
-    hasLocalChanges
+    hasLocalChanges,
+    autoSaving,
+    autoSavedAt,
+    autoSaveError,
+    saveNow,
   } = useProtocolEditor({
     tabType,
     tabId,
@@ -107,8 +111,10 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
     onDirtyChange,
   });
 
-  const handleSaveRef = useRef(handleSave);
-  useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
+  // Ctrl+S must reach the *latest* save closure without re-registering the imperative handle on
+  // every keystroke — hence the ref rather than a direct dependency.
+  const saveNowRef = useRef(saveNow);
+  useEffect(() => { saveNowRef.current = saveNow; }, [saveNow]);
 
   // -- cURL parsing ------------------------------------------------------
 
@@ -151,7 +157,8 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
       handleRefresh(entity);
     },
     save() {
-      return handleSaveRef.current();
+      // Ctrl+S: a draft is created, an existing entity flushes its pending autosave.
+      return saveNowRef.current();
     },
     rename(name: string) {
       dispatch({ type: "SET_FIELD", field: "name", value: name });
@@ -167,8 +174,10 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
   const canSaveBase = tabType === "request"
     ? !!state.url.trim()
     : !!(state.url.trim() && !(state.useRegex && state.regexError) && (state.resMode === "none" || state.resBody.trim()));
-  // For saved (non-draft) tabs, also require actual changes before enabling save
-  const canSave = canSaveBase && (!!draftTabId || isDirty);
+  // Gates the Create button. Dirtiness is deliberately absent: it used to gate Save, but autosave
+  // now writes every edit without asking, so the only question left is whether the form is
+  // complete enough to create.
+  const canSave = canSaveBase;
 
   const actionLabel = tabType === "request" ? strings.server.send : strings.server.test;
   const actionLoading = tabType === "request" ? state.loading : state.testLoading;
@@ -299,17 +308,21 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         resBodyText={resBodyText}
       />
 
-      {/* Bottom bar */}
+      {/* Bottom bar — Cancel and Create exist only for a draft: an existing entity autosaves
+          every edit and has Revert for undo, so a Cancel button would have nothing to cancel. */}
       <BottomBar
         folders={folders}
         folderId={state.folderId}
         onFolderChange={(v) => dispatch({ type: "SET_FIELD", field: "folderId", value: v })}
-        onCancel={onClose}
-        onSave={handleSave}
-        saveLabel={draftTabId ? (tabType === "request" ? strings.editor.saveRequest : strings.mocks.saveMock) : (tabType === "request" ? strings.editor.updateRequest : strings.editor.updateMock)}
+        onCancel={draftTabId ? onClose : undefined}
+        onSave={draftTabId ? handleSave : undefined}
+        saveLabel={draftTabId ? (tabType === "request" ? strings.editor.createRequest : strings.editor.createMock) : undefined}
         saveDisabled={!canSave}
         saving={state.saving}
         savingLabel={strings.server.saving}
+        autoSaving={autoSaving}
+        autoSavedAt={autoSavedAt}
+        autoSaveError={autoSaveError}
         onSync={onSync ? handleSyncClick : undefined}
         onRevert={onRevert ? handleRevertClick : undefined}
         onHistory={onHistory}

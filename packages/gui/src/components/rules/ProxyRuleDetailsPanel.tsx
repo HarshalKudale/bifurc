@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppConfig, ProxyRule } from "@/types";
 import { strings } from "@/lib/strings";
 import { Switch, Button, IconButton } from "@/components/ui";
-import { X, History, Trash2, Copy, GitCommit } from "@/lib/icons";
+import { X, History, Trash2, Copy, GitCommit, AlertCircle, CheckCircle2 } from "@/lib/icons";
+import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
 import ProxyRuleForm, { RuleFormState } from "./ProxyRuleForm";
 
 export interface RuleSavePayload {
@@ -69,7 +70,17 @@ export default function ProxyRuleDetailsPanel({
   const [reverting, setReverting] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof RuleFormState, string>>>({});
 
+  /**
+   * A save round-trips through the store and comes back as a **new `rule` object**, which would
+   * otherwise trip the reset below and clobber a keystroke made while the write was in flight.
+   * This flag swallows exactly that one echo.
+   */
+  const swallowNextResetRef = useRef(false);
   useEffect(() => {
+    if (swallowNextResetRef.current) {
+      swallowNextResetRef.current = false;
+      return;
+    }
     setForm(stateFromRule(rule));
     setErrors({});
   }, [rule, isNew]);
@@ -100,7 +111,8 @@ export default function ProxyRuleDetailsPanel({
     );
   }, [form, rule, isNew]);
 
-  const validate = (): boolean => {
+  /** Field errors for the current form. Pure — it does not touch React state. */
+  const collectErrors = (): Partial<Record<keyof RuleFormState, string>> => {
     const errs: Partial<Record<keyof RuleFormState, string>> = {};
     if (!form.pattern.trim()) {
       errs.pattern = s.patternRequired;
@@ -118,30 +130,59 @@ export default function ProxyRuleDetailsPanel({
     if (form.targetType === "external" && !form.targetExternal.trim()) {
       errs.targetExternal = s.enterHostPort;
     }
+    return errs;
+  };
 
+  const validate = (): boolean => {
+    const errs = collectErrors();
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
+  const buildPayload = (): RuleSavePayload => ({
+    name: form.name.trim(),
+    pattern: form.pattern.trim(),
+    useRegex: form.useRegex,
+    targetType: form.targetType,
+    targetMappingId: form.targetMappingId,
+    targetExternal: form.targetExternal.trim(),
+    requestScript: form.requestScript,
+    responseScript: form.responseScript,
+    folderId: rule?.folderId ?? null,
+  });
+
+  /** The explicit write: the Create button, and the pre-step of a Sync. */
   const handleSaveClick = async () => {
-    if (!validate()) return;
+    if (!validate()) return undefined;
     setSaving(true);
     try {
-      await onSave({
-        name: form.name.trim(),
-        pattern: form.pattern.trim(),
-        useRegex: form.useRegex,
-        targetType: form.targetType,
-        targetMappingId: form.targetMappingId,
-        targetExternal: form.targetExternal.trim(),
-        requestScript: form.requestScript,
-        responseScript: form.responseScript,
-        folderId: rule?.folderId ?? null,
-      });
+      const res = await onSave(buildPayload());
+      swallowNextResetRef.current = true;
+      return res;
     } finally {
       setSaving(false);
     }
   };
+
+  /**
+   * Autosave. Disabled for a new rule — it has no id yet, so the user creates it explicitly.
+   *
+   * Two deliberate differences from `handleSaveClick`. It **skips an invalid form rather than
+   * painting errors**: refusing to write a half-typed regex is right, but flashing "Invalid regex
+   * pattern" one second after every keystroke is not, so those errors stay attached to the Create
+   * button's explicit attempt. And it leaves `saving` alone, which now only spins that button.
+   */
+  const ruleSnapshot = JSON.stringify(form);
+  const { savedAt: autoSavedAt, error: autoSaveError, flush: flushRule } = useDebouncedAutosave({
+    snapshot: ruleSnapshot,
+    enabled: !isNew,
+    onSave: async () => {
+      if (Object.keys(collectErrors()).length > 0) return undefined;
+      const res = await onSave(buildPayload());
+      swallowNextResetRef.current = true;
+      return res;
+    },
+  });
 
   const handleSyncClick = async () => {
     if (!onSync || syncing) return;
@@ -149,7 +190,8 @@ export default function ProxyRuleDetailsPanel({
     try {
       if (isDirty) {
         if (!validate()) return;
-        await handleSaveClick();
+        // `flushRule` cancels the pending debounce, so the rule is not written twice.
+        await (isNew ? handleSaveClick() : flushRule());
       }
       await onSync();
     } finally {
@@ -256,12 +298,29 @@ export default function ProxyRuleDetailsPanel({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            {strings.common.cancel}
-          </Button>
-          <Button variant="primary" size="sm" onClick={handleSaveClick} disabled={saving}>
-            {saving ? strings.server.saving : isNew ? s.saveRule : s.updateRule}
-          </Button>
+          {autoSaveError ? (
+            <span title={autoSaveError} className="flex items-center gap-1.5 text-[11px] font-medium text-destructive">
+              <AlertCircle size={12} className="flex-shrink-0" />
+              <span>{strings.common.saveFailed}</span>
+            </span>
+          ) : autoSavedAt ? (
+            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+              <CheckCircle2 size={12} className="flex-shrink-0" />
+              <span>{strings.common.saved}</span>
+            </span>
+          ) : null}
+          {/* Cancel and Create belong to the create flow only. An existing rule autosaves every
+              edit and has Revert for undo; the header's X closes the panel. */}
+          {isNew && (
+            <>
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                {strings.common.cancel}
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleSaveClick} disabled={saving}>
+                {saving ? strings.server.saving : s.createRule}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </div>

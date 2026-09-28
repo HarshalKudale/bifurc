@@ -68,7 +68,11 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
         reverting,
         handleSyncClick,
         handleRevertClick,
-        hasLocalChanges
+        hasLocalChanges,
+        autoSaving,
+        autoSavedAt,
+        autoSaveError,
+        saveNow,
     /* All six spelled out — see the note in `SoapTab.tsx`; TypeScript cannot infer `TabType`, and a partial
        list is rejected outright ("Expected 5-6 type arguments"), so it is all six or the casts this replaced. */
     } = useProtocolEditor<
@@ -134,12 +138,13 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
             handleRefresh(entity);
         },
         save() {
-            return handleSave();
+            // Ctrl+S: a draft is created, an existing entity flushes its pending autosave.
+            return saveNow();
         },
         rename(name: string) {
             dispatch({ type: "SET_FIELD", field: "name", value: name });
         },
-    }), [handleRefresh, handleSave]);
+    }), [handleRefresh, saveNow]);
 
     const canSave = !!(state.name || state.endpointUrl);
     const syncDisabled = !hasLocalChanges || (!canSave && isDirty) || syncing;
@@ -296,17 +301,21 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
                 </Panel>
             </PanelGroup>
 
-            {/* Bottom bar */}
+            {/* Bottom bar — Cancel and Create exist only for a draft: an existing entity
+                autosaves every edit and has Revert for undo. */}
             <BottomBar
                 folders={folders}
                 folderId={state.folderId}
                 onFolderChange={(id) => dispatch({ type: "SET_FIELD", field: "folderId", value: id })}
-                onCancel={onClose}
-                onSave={handleSave}
-                saveLabel={draftTabId ? strings.common.save : strings.graphql.update}
-                saveDisabled={!state.name && !state.endpointUrl}
+                onCancel={draftTabId ? onClose : undefined}
+                onSave={draftTabId ? handleSave : undefined}
+                saveLabel={draftTabId ? strings.common.create : undefined}
+                saveDisabled={!canSave}
                 saving={state.saving}
                 savingLabel={strings.server.saving}
+                autoSaving={autoSaving}
+                autoSavedAt={autoSavedAt}
+                autoSaveError={autoSaveError}
                 onSync={onSync ? handleSyncClick : undefined}
                 onRevert={onRevert ? handleRevertClick : undefined}
                 onHistory={onHistory}

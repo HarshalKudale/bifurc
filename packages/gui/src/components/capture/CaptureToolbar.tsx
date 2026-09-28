@@ -64,7 +64,7 @@ export function CaptureToolbar({
                 {strings.capture.mockAll}
               </Button>
               <Button variant="secondary" onClick={onSaveAll} icon={<Download size={10} />}>
-                {strings.capture.saveAll}
+                {strings.capture.createAll}
               </Button>
             </>
           )}

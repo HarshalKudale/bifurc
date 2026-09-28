@@ -85,7 +85,11 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         reverting,
         handleSyncClick,
         handleRevertClick,
-        hasLocalChanges
+        hasLocalChanges,
+        autoSaving,
+        autoSavedAt,
+        autoSaveError,
+        saveNow,
     } = useProtocolEditor({
         tabType,
         tabId,
@@ -152,7 +156,8 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
 
     useImperativeHandle(ref, () => ({
         save() {
-            return handleSave();
+            // Ctrl+S: a draft is created, an existing entity flushes its pending autosave.
+            return saveNow();
         },
         refresh(entity: SavedGrpcRequest) {
             handleRefresh(entity);
@@ -162,7 +167,7 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         rename(name: string) {
             set("name")(name);
         },
-    }), [handleSave, handleRefresh]);
+    }), [saveNow, handleRefresh]);
 
     const canSave = Boolean(state.serviceName && state.methodName);
     const syncDisabled = !hasLocalChanges || (!canSave && state.dirty) || syncing;
@@ -279,17 +284,21 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                 </PanelGroup>
             </div>
 
-            {/* Bottom bar */}
+            {/* Bottom bar — Cancel and Create exist only for a draft: an existing entity
+                autosaves every edit and has Revert for undo. */}
             <BottomBar
                 folders={folders}
                 folderId={state.folderId}
                 onFolderChange={(id) => set("folderId")(id)}
-                onCancel={onClose}
-                onSave={handleSave}
-                saveLabel={isNew ? strings.common.save : strings.grpc.update}
-                saveDisabled={!state.serviceName || !state.methodName}
+                onCancel={isNew ? onClose : undefined}
+                onSave={isNew ? handleSave : undefined}
+                saveLabel={isNew ? strings.common.create : undefined}
+                saveDisabled={!canSave}
                 saving={state.saving}
                 savingLabel={strings.server.saving}
+                autoSaving={autoSaving}
+                autoSavedAt={autoSavedAt}
+                autoSaveError={autoSaveError}
                 onSync={onSync ? handleSyncClick : undefined}
                 onRevert={onRevert ? handleRevertClick : undefined}
                 onHistory={onHistory}
