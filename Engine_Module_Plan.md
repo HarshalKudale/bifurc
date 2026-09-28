@@ -1,0 +1,512 @@
+# Engine module layout — a plan
+
+**Status:** proposal. **No code has been changed.** Every number below is measured from the tree at
+`standalone-engine` on 2026-09-28, not estimated.
+
+**Scope:** `packages/engine/src` — 140 files, 23,443 lines. Nothing outside the engine package is
+restructured, except the import statements that point into it.
+
+---
+
+## 1. What I measured
+
+### 1.1 The shape today
+
+| Area | Files | LOC | What it actually is |
+|---|---|---|---|
+| `transport/` | 13 | 4,636 | four RPC transports + auth + event log |
+| `proxy/` | 22 | 4,002 | **two servers** (reverse + forward) + mocks + TLS + webhooks + certs |
+| `store/` | 23 | 3,353 | **three things** — persistence, generic CRUD commands, git repo handle |
+| `importExport/` | 39 | 3,208 | importers / exporters / formats |
+| `sync/` | 11 | 1,669 | git ops, publish, status, auto-sync |
+| `runtime/` | 4 | 1,508 | host, host CLI, host args, port allocator |
+| root (6 files) | 6 | 1,418 | composition root, lifecycle, event bus, **a command grab bag** |
+| `blob/` | 4 | 1,061 | content-addressed store + sweep |
+| `applications/` | 5 | 1,017 | child-process supervision |
+| `runner/` | 2 | 319 | collection runner + HTML report |
+| `fileOps/` | 1 | 318 | file operations commands |
+| `commands/` | 3 | 315 | registry, kind map, echo workspace |
+| `lib/` | 3 | 309 | net, random names, randomizer |
+| `protocols/` | 3 | 289 | `graphql.*` / `grpc.*` / `soap.*` execute commands |
+| `subscription/` | 1 | 21 | entity-count subscription |
+
+### 1.2 The dependency graph (cross-area relative imports, measured)
+
+```
+store          <-- importExport 67, root 24, sync 17, proxy 13, applications 3, fileOps 2,
+                   runtime 2, blob 1, runner 1        ≈ 130 inbound edges
+commands/registry  <-- store 7, transport 6, proxy 5, protocols 3, + 6 more × 1
+eventBus           <-- root, applications, commands, proxy, runtime, store, sync, transport
+proxy/edge         <-- root, runtime, store
+proxy/logEmitter   <-- root, proxy, transport
+proxy/certManager  <-- proxy, fileOps
+```
+
+Three things fall out of this immediately:
+
+1. **`store/` is the hub.** ~130 inbound edges. Any plan that scatters it per feature creates N copies of
+   `loadConfig` and is a regression, not a cleanup.
+2. **`commands/registry` is already a clean leaf contract.** Everything imports it; it imports nothing but
+   the protocol package and `eventBus`. The user's "global registry" instinct is correct and already
+   half-built.
+3. **`eventBus`, `logEmitter`, `certManager`, `edge` are consumed across areas** — they are not private to
+   the module they are filed under today.
+
+### 1.3 The one edge that is a bug in waiting
+
+**`importExport → proxy` is 17 edges, and all 17 are the single symbol `reloadConfig` from
+`proxy/server`.** Verified by reading every site.
+
+The same concern appears again in `store → proxy` (5 edges: `configCommands` → `edge`/`server`/`webhookServer`,
+`coreCommands` → `server`, `entityCrudCommands` → `server`), and in `sync → proxy` (1 edge:
+`syncCommands` → `server`), and in `store/configCommands` importing `isEdgeRunning`/`restartEdge` from
+`proxy/edge`.
+
+So **23 cross-module edges exist for one reason: "after a config write, rebuild the listeners."** That is a
+composition concern. It does not belong to the proxy, and it does not belong to the store. Naming it is the
+single largest structural win available, and it is a dependency inversion rather than a file move (§4.1).
+
+### 1.4 The kind vocabulary is already the module map
+
+`entity.create` is **one** command serving **16 kinds**. Today those kinds are registered from five files in
+`store/kinds/`, while the behaviour behind each kind lives somewhere else entirely:
+
+| Kind (protocol name) | Registered today in | Behaviour lives in |
+|---|---|---|
+| `requests` | `crudKinds.ts` | `store/workspaceFs.ts` + `miscCommands.ts` (`request.replay`) + `runner/` |
+| `mappings` | `crudKinds.ts` | `proxy/edge.ts` |
+| `rules` → `proxyRules` | `crudKinds.ts` | `proxy/server.ts` |
+| `mocks` | `crudKinds.ts` | `proxy/mockHandler.ts` |
+| `webhooks` | `crudKinds.ts` | `proxy/webhookServer.ts` |
+| `sockets` → `wsConnections` | `crudKinds.ts` | *(nothing — reserved)* |
+| `environments` | `coreKinds.ts` | `store/coreCommands.ts` (`env.setActive`) |
+| `graphqlRequests`, `graphqlSchemas` | `graphqlKinds.ts` | `protocols/graphqlCommands.ts` |
+| `grpcRequests`, `protoFiles` | `grpcKinds.ts` | `protocols/grpcCommands.ts` |
+| `soapRequests`, `wsdls` | `soapKinds.ts` | `protocols/soapCommands.ts` |
+
+**This is the strongest argument for the proposal.** The 16 kinds are already the feature boundaries; the
+layout just refuses to admit it, splitting each feature across `store/kinds/`, `protocols/`, `proxy/` and the
+root. `graphql` is the clearest case: its commands are in `protocols/`, its kinds are in `store/kinds/`, and
+neither file mentions the other.
+
+---
+
+## 2. Verdict on the proposal
+
+**It is the right shape.** Six of the eight named modules are already latent in the code and the split is
+supported by the measurements. Two adjustments are needed, and both are consequences of the graph above.
+
+| Proposed | Verdict |
+|---|---|
+| `reverseproxy` / `proxy` split | ✅ **Correct and already half-done.** `plan/15` WI 3 physically split the two halves; `edge.ts`'s own header records it. The directories never followed. |
+| `rest`, `graphql`, `grpc`, `soap` | ✅ **Correct — and this is the biggest win.** Each should own its *commands + kinds + behaviour* as one vertical. |
+| `websocket` | ⚠️ **Correct as a placeholder, empty as a module.** `wsConnections` is a registered kind with no behaviour, and `edge.ts`'s `upgrade` branch is reserved and deliberately has no body. Do not invent content for it. |
+| `environments` | ✅ Correct, small. `environments` kind + `env.setActive`. |
+| `gitops` | ✅ Correct. `sync/` (11 files) + `store/gitStore.ts` are one concern split across two directories. |
+| `fileops`, `importexport`, `utils` | ✅ Already exist as `fileOps/`, `importExport/`, `lib/`. Rename/normalise only. |
+| global registry (`registerAll.ts`) | ✅ Correct, and **keep its current character** — one explicit function, not an import side effect (P6 §5c). |
+| **not in the list:** `mocks` | ➕ **Needed.** `mockHandler.ts` + `scriptContext.ts` + `scriptExecutor.ts` are imported by **both** `edge.ts` (reverse) *and* `proxyHandler.ts`/`routingUtils.ts`/`responseUtils.ts` (forward). Filing them under either half creates an inverted dependency. They get their own module. |
+| **not in the list:** `transport`, `runtime`, `blob`, `applications`, `runner`, `certificates`, `webhooks`, `workspace` | ➕ Needed — these exist and must land somewhere. |
+
+**The one thing I would push back on.** "Modules can import and use common functions from `utils`" is right
+for *pure* helpers, but the measurements say `store/` (the persistence hub) will be every module's heaviest
+import. If `utils` is defined loosely, `loadConfig` and `workspaceFs` migrate into it and the hub becomes an
+untyped junk drawer. So: **`utils` is for pure, stateless helpers only; persistence stays in `workspace/`**
+(§5).
+
+---
+
+## 3. Target module map
+
+```
+packages/engine/src/
+├── index.ts                  composition root — createEngine() + the public barrel
+├── registerAll.ts            THE global registry (see §4.3)
+├── lifecycle/                ← startup.ts, shutdown.ts
+├── kernel/                   the contract layer: imports nothing from the engine
+│   ├── registry.ts           ← commands/registry.ts
+│   ├── eventBus.ts           ← eventBus.ts
+│   ├── kinds.ts              ← commands/entityKindMap.ts
+│   └── telemetry.ts          ← proxy/logEmitter.ts   (3 areas consume it)
+├── utils/                    pure + stateless only
+│   ├── net.ts randomNames.ts randomizer.ts        ← lib/
+│   ├── http.ts               ← proxy/constants.ts (HOP_BY_HOP; both proxy halves use it)
+│   ├── decompress.ts response.ts server.ts        ← proxy/decompressUtils|responseUtils|serverUtils
+│   └── echoWorkspace.ts      ← commands/echoWorkspace.ts
+├── workspace/                THE HUB — persistence. One copy, never per feature.
+│   ├── paths.ts types.ts config.ts appSettings.ts workspaceFs.ts
+│   ├── enabledSet.ts kindNameEntries.ts workspace/*.ts   ← store/
+│   ├── entities/             ← store/{entityCrud,core,folder,config,audit}Commands.ts
+│   │   └── kinds/            ← store/kinds/*Kinds.ts   (generic CRUD machinery only)
+│   └── environments/         the `environments` kind + env.setActive
+├── reverseproxy/             ← proxy/edge.ts, proxy/pages.ts   (mappings)
+├── proxy/                    ← proxy/{server,proxyHandler,routingUtils,tlsIntercept,serverReplay,
+│                               service-discovery,serverCommands}.ts   (rules)
+├── mocks/                    ← proxy/{mockHandler,scriptContext,scriptExecutor}.ts  (mocks)
+├── certificates/             ← proxy/{certManager,certCommands,tlsCert}.ts   (shared: proxy + fileops)
+├── webhooks/                 ← proxy/{webhookServer,webhookCommands}.ts
+├── websocket/                reserved — the `wsConnections` kind; no behaviour yet
+├── rest/                     the `requests` kind + request.replay  (+ runner/ ? see §9)
+├── graphql/                  graphqlCommands.ts + graphqlKinds.ts, merged
+├── grpc/                     grpcCommands.ts + grpcKinds.ts, merged
+├── soap/                     soapCommands.ts + soapKinds.ts, merged
+├── gitops/                   ← sync/*.ts  +  store/gitStore.ts
+├── fileops/                  ← fileOps/            (normalised capitalisation)
+├── importexport/             ← importExport/
+├── blob/                     unchanged
+├── applications/             unchanged
+├── runner/                   unchanged
+├── subscription/             → folds into workspace/
+├── transport/                unchanged — do NOT touch in the same pass (§9)
+└── runtime/                  host, hostCli, hostArgs, portAllocator, + instances.ts (§4.1)
+```
+
+**Count:** 14 directories + 6 root files → **~24 modules + 2 root files**. The growth is deliberate: each new
+directory is a boundary the compiler and a lint rule can enforce, and the alternative (one `store/`, one
+`proxy/`) is exactly the "code all over the place" the request names.
+
+### 3.1 What belongs in `runtime/`, and what does not
+
+**Server logic stays in its module. `runtime/` composes; it never serves.** This is already true of the code
+and the reorganisation should preserve it rather than blur it:
+
+| | Owns | Does not |
+|---|---|---|
+| `reverseproxy/`, `proxy/`, `webhooks/`, *(later)* `mqtt/`, `vault/` | the factory (`createProxyServer()`, `createEdgeRouter()`, `createWebhookServer()`), the request path, the instance's own state | know which instances exist, which port they took, or who started them |
+| `runtime/` | composing the engine — calling the factories, **binding** the instances, wiring transport, the host CLI, port allocation | touch a request, parse a rule, resolve a mock |
+
+`createProxyServer()` is a pure factory: it returns an instance that owns its own server, config snapshot,
+enabled sets and error state, and `runtime/host.ts` calls it, binds it, and steps out of the way. That is the
+right boundary and the plan keeps it.
+
+**⚠ The one place this is subtle: `bind*Instance` lives in the server modules, not in `runtime/` — and it has
+to.** The binding is *read* by the server module's own module-level functions (`startServer()`,
+`isRunning()`, `reloadConfig()` in `proxy/server.ts`). If `runtime/` owned that state, `proxy/server.ts` would
+have to import `runtime/` to read it — and `runtime/host.ts` imports `proxy/server.ts` **as a value**. That
+closes the loop. So the arrow is one-way by construction: **runtime → proxy, never proxy → runtime.** The
+binding stays where the state is; `runtime/` is the caller.
+
+---
+
+## 4. The five moves that are more than renames
+
+Renaming directories is the visible part and the least valuable. These five are what makes the layout
+load-bearing.
+
+### 4.1 Name the rebind fan-out — and keep the arrow one-way
+
+**This is the item the first draft of this plan got wrong, so it is worth stating precisely.**
+
+Only `ProxyServerInstance` has a `reloadConfig()`. The edge router deliberately has none — `edge.ts` says so
+twice, *"there is no `reloadConfig()` on the instance below: there is nothing to reload"* — and neither does
+the webhook receiver. So `store/configCommands.ts` **hand-writes the fan-out**, importing three separate proxy
+modules in one file:
+
+```ts
+import { isRunning, reloadConfig, startServer } from "../proxy/server";
+import { isEdgeRunning, restartEdge } from "../proxy/edge";
+import { isWebhookServerRunning, startWebhookServer } from "../proxy/webhookServer";
+```
+
+Add `mqtt/` or `vault/` and that file grows a fourth import — and so does every other caller that means "the
+config changed". **The coupling scales with the number of listener kinds**, which is exactly the problem the
+request is about.
+
+**The seam: `runtime/instances.ts` owns the fan-out, not the state.**
+
+```ts
+// runtime/instances.ts — the one place a listener kind is registered
+export function notifyConfigChanged(): void {
+  reloadConfig();   // proxy
+  // edge:     nothing to reload — a port is owned by its workspace, not by the active one
+  // webhook:  nothing to reload — its active maps are registered, not derived from config
+  // mqtt, vault, …: one line each, and no caller changes
+}
+```
+
+`workspace/entities/configCommands.ts`, `coreCommands.ts`, `entityCrudCommands.ts`, `gitops/syncCommands.ts`
+and the 17 `importexport/importers/*` sites call **`notifyConfigChanged()`**. A new listener kind then costs
+one line in one file and zero edits at any call site.
+
+**Honest effect, measured rather than asserted:** this does **not** delete 23 edges. `importexport` still
+imports something — it imports the fan-out point instead of the proxy. What it removes is the coupling to a
+**specific listener kind**, which is the part that grows. 17 importer sites stop naming `proxy/`; one file
+becomes the registry of listeners.
+
+**⚠ A stale docblock to fix while you are in there.** `proxy/server.ts` explains the current arrangement with
+*"why this module does not import `runtime/`: `runtimeRegistry.ts`'s header records that its graph must stay
+acyclic, and `runtime/workspaceRuntime.ts` imports this module as a value."* **Both of those files were
+deleted** — `runtime/host.ts` says *"this replaces `runtimeRegistry.ts`"*. The conclusion still holds, but the
+stated reason cites two files that no longer exist, and the next reader will go looking for them.
+
+### 4.2 `kernel/` — the contract layer
+
+`eventBus`, `registry`, `kinds`, `telemetry` move out of the root and out of `commands/`. `kernel/` is the
+one module with **no engine imports**, which makes the layering rule in §5 mechanically checkable rather
+than aspirational.
+
+`registry.ts`'s own docblock already makes this argument for the `Scope` type: *"`transport/` imports
+`commands/` and never the reverse… One vocabulary, no inverted dependency."* `kernel/` generalises a rule
+that is already being applied by hand in one file.
+
+### 4.3 The registry stays explicit — and gets one job
+
+`registerAll.ts` keeps its current character: **an explicit function, never an import side effect** (P6 §5c,
+and its own docblock explains why at length). It moves to the root next to `index.ts` and becomes the only
+file permitted to import every feature module.
+
+**But it must register the kinds, not just the commands** — that is the defect its docblock records being
+found twice (`plan/15` WI 10). When each feature module owns its own kind, `registerAllEngineKinds()` stops
+being five calls into `store/kinds/` and becomes "ask each module to register itself". The two drift-guard
+tests in `tests/integration/workspaceHost.integration.test.ts` (command names **and** kinds) become the
+regression test for the whole reorganisation.
+
+### 4.4 Protocol modules own their whole vertical
+
+`graphql/` absorbs `protocols/graphqlCommands.ts` **and** `store/kinds/graphqlKinds.ts`. Same for `grpc/` and
+`soap/`. Today neither file references the other, which is how a feature ends up split across two
+directories with no link between them.
+
+**⚠ The kind vocabulary must not be duplicated by this.** `ALL_ENTITY_KINDS` / `FLAT_ENTITY_KINDS` in
+`store/workspaceFs.ts` are the one list; four copies had already drifted once. Protocol modules **register**
+their kinds against the shared vocabulary; they do not own a private list of kind names.
+
+### 4.5 `miscCommands.ts` dissolves
+
+Its five commands have obvious homes once the modules exist:
+
+| Command | Goes to |
+|---|---|
+| `request.replay` | `rest/` |
+| `script.execute` | `mocks/` (it calls `scriptExecutor`, which `proxy` already shares) |
+| `healthbar.getServices` / `.saveServices` / `.checkUrl` | `workspace/` (it reads/writes a workspace file) |
+
+A 10.6 KB file named "misc" at the root is the clearest symptom the request is describing, and it is the
+cheapest one to remove.
+
+---
+
+## 5. The layering rule
+
+### 5.1 The rule
+
+```
+kernel  →  utils  →  workspace  →  { feature modules }  →  transport | runtime  →  index | lifecycle
+```
+
+- **`kernel/`** imports nothing from the engine.
+- **`utils/`** imports only `kernel/` and Node builtins. **Pure and stateless** — no module-level caches, no
+  filesystem, no config reads.
+- **`workspace/`** is the only persistence layer. Everything may import it; it imports only `kernel/` +
+  `utils/`.
+- **Feature modules** may import `kernel/`, `utils/`, `workspace/` — and **never each other**. Where two
+  features genuinely share behaviour (the mock engine, the certificate manager, the rebind seam), that
+  behaviour is extracted *down* into a shared module rather than imported sideways.
+- **`registerAll.ts`** is the single exception: it may import every feature module, because enumerating them
+  is its entire job.
+
+### 5.2 Enforcement — a ratchet, not a convention
+
+This repository already enforces design rules with tests rather than documentation (§5c's module-scope
+guard, the workspaceHost drift guards, the client-surface count). The layout should be enforced the same way:
+
+- **`tests/engine/layout.test.ts`** — parse every relative import in `src/`, map each file to its module, and
+  assert the layer order above. Fails with the offending `file → file` pair. This is ~60 lines and it is the
+  difference between a layout and a layout *rule*.
+- **An ESLint `no-restricted-imports` rule** generated from the same module table, so the error appears in
+  the editor rather than only in CI.
+
+Both must be added **in the same phase as the first move**, or the rule decays.
+
+**The ratchet must assert in both directions, and this repo has already paid for knowing why.** A
+*negative* assertion ("no feature module imports another") only reads what is there. `TRAPS.md`'s
+*"the third copy was already there"* entry is the counter-example: `session.ts` was extracted because
+`stdio.ts` and `ws.ts` had each grown a copy of the same state machine, `socket.ts` was converted, and
+**`ws.ts` was not** — and nothing said so, because the file compiles and its tests pass. It became visible
+only when the shared module was *moved* and "who imports this?" had to be answered. So the test must also
+assert the **positive** direction:
+
+- every module in the layer table is imported by something (an orphan module is a finding);
+- every module that owns a `register*Commands` is reached from `registerAll.ts` (the §4.3 drift guard);
+- after §4.1, **no file outside `runtime/` names `reloadConfig`** — and every consumer that used to is now
+  listed as calling `notifyConfigChanged()`. **`bind*Instance` is the opposite case and must stay in its
+  module** (§3.1): assert that only `runtime/` imports it, never that it moved.
+
+**An extraction is not finished when the new module works; it is finished when the old copies are gone.**
+
+---
+
+## 6. Module contracts
+
+| Module | Owns | May import | Public surface |
+|---|---|---|---|
+| `kernel/` | registry contract, event bus, kind name map, telemetry types | *(nothing engine-internal)* | types + `commandRegistry` |
+| `utils/` | net, random, HTTP constants, decompression, echo | `kernel/` | pure functions |
+| `workspace/` | paths, config, app settings, `workspaceFs`, enabled sets, names index, pending deletions, generic CRUD commands, all 16 kind registrations | `kernel/`, `utils/` | `loadConfig`, `writeEntity`, `register*Kinds` |
+| `reverseproxy/` | edge router, home page, mapping dispatch | `kernel/`, `utils/`, `workspace/`, `mocks/` | `createEdgeRouter`, `bindEdgeInstance` |
+| `proxy/` | forward proxy, TLS interception, routing, replay | `kernel/`, `utils/`, `workspace/`, `mocks/`, `certificates/` | `createProxyServer`, `bindProxyInstance` |
+| `mocks/` | mock resolution, script context, script executor | `kernel/`, `utils/`, `workspace/` | `matchMock`, `serveMock`, `executeScript` |
+| `certificates/` | CA generation, identification, leaf certs | `kernel/`, `utils/`, `workspace/` | `certManager`, `registerCertCommands` |
+| `webhooks/` | webhook receiver | `kernel/`, `utils/`, `workspace/` | `createWebhookServer` |
+| `graphql/` `grpc/` `soap/` | commands + kinds for that protocol | `kernel/`, `utils/`, `workspace/` | `register*Commands`, `register*Kinds` |
+| `rest/` | the `requests` kind, replay | `kernel/`, `utils/`, `workspace/` | `registerMiscCommands`-successor |
+| `gitops/` | git handle, ops, publish, status, auto-sync, sync commands | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
+| `transport/` | the four transports, auth, event log | `kernel/` | `create*Transport` |
+| `runtime/` | host, CLI, port allocator, **the listener fan-out** (`notifyConfigChanged`) | everything except `index` | `createWorkspaceHost`, `notifyConfigChanged` |
+
+---
+
+## 7. Migration
+
+### 7.1 Why this is mostly mechanical, and where the cost actually is
+
+> **⚠ Corrected 2026-09-28 — the first draft of this section was wrong, and wrong in the way that
+> matters.** It counted only `from` imports. Measured by `scripts/engine-layout-codemod.mjs --check`
+> (now the instrument; reproducible, not asserted):
+
+| Form | Count | Seen by a `from`-only rewrite? |
+|---|---|---|
+| `from "@bifurc/engine/<sub>"` | 263 | ✅ |
+| `import("@bifurc/engine/<sub>")` | 193 | ❌ |
+| `vi.mock(...)` / `vi.doMock(...)` | 33 | ❌ |
+| prose mentions inside code comments | 35 | ❌ |
+| `typeof import("@bifurc/engine/<sub>")` | 7 | ❌ |
+| `require("@bifurc/engine/<sub>")` | 1 | ❌ |
+| **total** | **532 across 102 files, 81 unique subpaths** | |
+
+| Consumer | Files |
+|---|---|
+| `tests/` (root) | 77 |
+| `src/` (Electron shell) | 10 |
+| `packages/client` | 6 |
+| `packages/engine` (incl. its own `tsup.config.ts`) | 5 |
+| `packages/gui`, `packages/web-client` | 2 |
+| `scripts/*.mjs` | 2 |
+
+**⚠ The two large under-counted classes fail at RUNTIME, not at compile time.** A stale dynamic
+`import()` specifier throws when that branch runs — and a stale `vi.mock` specifier either throws or,
+worse, mocks nothing while the real module loads, which reads as an unrelated test defect. That is why
+the rewrite is a script that knows all five forms rather than a find/replace on `from`.
+
+**The cost is the import rewrite, not the moves** — and the rewrite is scriptable provided the old→new
+map is a reviewed data file rather than a series of hand edits. It now is: `plan/engine-layout-map.json`,
+generated and validated by `scripts/engine-layout-codemod.mjs` (which asserts totality — all 140 files
+are in the table, and every referenced subpath resolves to a real file).
+
+### 7.2 Phases
+
+Each phase ends with `npm run build:packages`, the full suite, and a comparison against the re-measured
+baseline **by mechanism, not count** (per the project's own rule).
+
+| Phase | What | Moves | Why in this order |
+|---|---|---|---|
+| **0 — freeze** | Commit. Capture the baseline. Emit the old→new path map as `plan/engine-layout-map.json`. **No file moves.** | 0 | The map is reviewable on its own, and it is the input to every later phase. |
+| **1 — kernel + utils** | `commands/registry`→`kernel/`, `eventBus`→`kernel/`, `entityKindMap`→`kernel/kinds`, `logEmitter`→`kernel/telemetry`, `lib/`→`utils/`, `commands/echoWorkspace`→`utils/` | ~8 | Smallest, highest leverage, zero behaviour change. Proves the codemod on a safe subset. |
+| **2 — the rebind fan-out** | **§4.1. No file moves.** Add `runtime/instances.ts` (`notifyConfigChanged`), repoint 23 call sites. | 0 | Removes the most coupling for the least churn, and it is verifiable on its own. |
+| **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 23 | The hub moves first so feature modules have a stable target. |
+| **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 22 | The largest single directory; `plan/15` already decided the split. |
+| **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. |
+| **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. |
+| **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. |
+| **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. |
+
+**Phases 1–2 are the recommendation to start with.** They are ~8 file moves and 0 respectively, they remove
+the largest single class of bad dependency, and if the plan is abandoned after phase 2 the tree is still
+better than it is today. Phases 4–6 are the ones that carry real churn and can be deferred indefinitely.
+
+### 7.3 Mechanics that this repository specifically requires
+
+- **⚠ Never `git rm` in this repository.** `git rm src/ipc/handlers/tlsHandlers.ts` reported success and left
+  **all 22 tracked files under `src/` deleted** — reproduced twice, and `env -u` on the safe-delete variables
+  did not help. Plain `rm <file>` then `git add <file>` does exactly what was intended. Use
+  `python -c "import os; os.remove(...)"` if the safe-delete shim interferes, and **commit before starting**
+  so any restore is lossless. A refactor made of file moves is the worst possible place to learn this.
+- **File-level `git mv` works; directory renames are blocked in the agent shell.** Either move files
+  individually, or have the user run the directory moves. Verify the containing directory's file count after
+  **each** batch.
+- **⚠ The stale-`dist/` trap is the one this refactor is most likely to trip, and it is invisible.** `tsc`
+  never deletes output, and `dist/` is gitignored, so **every module this plan moves leaves a compiled copy
+  behind** — measured once at **92 of 116 `dist/*.js` with no counterpart in `src/`, 447 KB of a second frozen
+  engine inside the asar**. Nothing fails: the suite runs `src/`, and the stale files are unreachable by
+  walking relative `require`s from the app's entry points. It is precisely the hazard `bundle: false` exists
+  to prevent — a second copy of `store/paths.ts` is a second `_dataRootOverride`. So: `tsup`'s `clean: true`
+  covers `packages/engine/dist`, and the **app's** `dist/` needs `npm run clean:main` before its build
+  (`scripts/clean-main-dist.mjs`, whose `dist/renderer` exclusion is load-bearing — that directory is Vite's
+  content-hashed output, not tsc's). Instrument: **`node scripts/pkg-check-reachability.mjs`** after each
+  phase.
+- **One `Edit` per file per message** — two same-file edits silently revert each other. The import rewrite
+  should be a script, not 529 edits.
+- **A deletion pass is atomic with its test migration.** A half-landed move reads as a code defect —
+  `No handler registered`, `Cannot find module` — never as an unfinished edit, and the instinct is to debug
+  the code rather than check `git status`. **If a phase cannot be finished, revert it rather than leave it
+  staged.**
+- **⚠ `vitest.config.ts`'s coverage `exclude` list names three engine files by path** —
+  `packages/engine/src/store/types.ts`, `sync/types.ts`, `importExport/types.ts`. Moving them **silently
+  changes the coverage denominator**. Update the list in the same commit as the move.
+- **`tsup.config.ts`'s `entry: ["src/**/*.ts"]` and `package.json`'s `"./*"` export wildcard need no change**
+  — both are globs. But `bundle: false` means **the `dist/` layout mirrors `src/`**, so the shell's 53
+  imports resolve against `dist` and are broken until `build:packages` runs. The `@bifurc/engine/*` alias
+  points at `src` for tests, so **a path that is green in tests can still be broken in the app** — and the
+  engine's ESM output is not loadable by plain Node either (extensionless specifiers under `bundle: false`),
+  so probe the **CJS** build, which is the shell's path.
+- **`src/ipc/handlers.ts` keeps its own 19 explicit command calls and 5 kind calls**, deliberately, as
+  load-bearing documentation of the P6 reduction. Those import paths change; the comments must not be
+  collapsed.
+
+---
+
+## 8. Risks
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| **Stale `dist/` copies of every moved module ship in the asar** — invisible, and a second copy of `store/paths.ts` is a second `_dataRootOverride` | **High** | `npm run clean:main` before the app build; `node scripts/pkg-check-reachability.mjs` after every phase (§7.3) |
+| A path that is correct in tests but wrong in the built app | **High** | `build:packages` + a smoke run after **every** phase; never trust a green vitest run alone |
+| The kind vocabulary is duplicated per protocol module | **High** | §4.4 — one list in `workspace/`; protocol modules register, never declare |
+| `utils/` becomes a junk drawer and absorbs persistence | **High** | §5.1 — `utils` is pure/stateless; the ratchet test enforces the direction |
+| An old copy of a shared helper survives the extraction, because nothing that reads only what is *present* can see it | **High** | §5.2's positive-direction assertions; ask "who imports the shared module?" rather than assuming the sweep |
+| Coverage denominators shift silently | Medium | Update `vitest.config.ts`'s exclude list in the same commit |
+| A silent partial deletion during a bulk move | Medium | Small batches, count the directory, commit first, and **never `git rm`** |
+| A half-landed phase reads as a code defect | Medium | A phase is atomic with its import rewrite; revert rather than leave it staged |
+| Churn with no behaviour change makes review impossible | Medium | One phase per PR, and phases 1–2 are the only ones that must land now |
+| `transport/` and `runtime/` get dragged in | Low | Explicitly out of scope (§9) |
+
+---
+
+## 9. What not to do
+
+- **Do not scatter `workspace/` per feature.** ~130 inbound edges; per-feature `loadConfig` copies would be
+  the worst possible outcome of a "cleanup".
+- **Do not move `transport/` or `runtime/` in this pass.** They are already coherent, and `transport/` is
+  4,636 lines with its own auth model.
+- **Do not give `websocket/` invented content.** The `upgrade` branch in `edge.ts` is reserved and
+  deliberately has no body — a branch returning "not built yet" is a routing decision nobody made.
+- **Do not expect `rest/` to be a big move.** REST today is one CRUD kind, one `request.replay` command, and
+  whatever `runner/` shares. The module is mostly a *home* for future work, and pretending otherwise inflates
+  the estimate.
+- **Do not rename `store/` → `workspace/` if the churn isn't judged worth it.** The split of commands from
+  persistence is the valuable part; the name is cosmetic and can stay `store/`.
+- **Do not convert `registerAll.ts` to an import side effect.** P6 §5c exists because that was the bug.
+- **Do not do this as one commit.** Eight phases, each green, each reversible.
+
+---
+
+## 10. Acceptance criteria
+
+1. `tests/engine/layout.test.ts` passes, asserting the layer order for every file in `src/` — **in both
+   directions** (§5.2): no forbidden import exists, *and* every module is imported by something, *and* every
+   `register*Commands` is reached from `registerAll.ts`.
+2. `registerAllEngineCommands()` still registers a **superset** of the shell's set, on **both** axes
+   (command names and kinds) — `tests/integration/workspaceHost.integration.test.ts` unchanged and green.
+3. No feature module imports another feature module (except `registerAll.ts`).
+4. No module outside `runtime/` imports `reloadConfig` directly — every "the config changed" caller goes
+   through `notifyConfigChanged()`. **And `bind*Instance` is still imported only by `runtime/`** (§3.1: it
+   must not move). Adding a listener kind is one line in `runtime/instances.ts` and **no change at any call
+   site**.
+5. `npm run build:packages && npm run typecheck` clean; the suite matches the re-measured baseline by
+   **mechanism** — the four teardown-only timeouts and the four `gitRemote` failures are still the only
+   failures, and are still attributable.
+6. **`node scripts/pkg-check-reachability.mjs` reports no stale module**, and the app's `dist/` has been
+   rebuilt from a `clean:main` at least once after the last move.
+7. Adding `mqtt/` or `vault/` requires: a new directory, a `register*Commands`, a `register*Kinds`, and one
+   line in `registerAll.ts`. **That is the test of the whole exercise** — if a new module needs a change
+   anywhere else, the boundary is wrong.
