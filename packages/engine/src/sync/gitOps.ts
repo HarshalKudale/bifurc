@@ -15,6 +15,7 @@ import {
 } from "../store/workspaceFs";
 import { getKindNameEntry } from "../store/kindNameEntries";
 import { publishEntities, type PublishResult } from "./publishService";
+import { withIndexLockRetry } from "./gitLock";
 import {
   getWorkspaceSyncStatus,
   invalidateCache,
@@ -126,7 +127,9 @@ export async function discardChanges(
 
     // 1. Try checking out from HEAD
     try {
-      await g.raw(["checkout", "HEAD", "--", normalized]);
+      // A checkout writes the index, so it takes the same lock a publish does — retried for the same
+      // reason. See `gitLock.ts`.
+      await withIndexLockRetry(wsId, () => g.raw(["checkout", "HEAD", "--", normalized]));
       checkoutSucceeded = true;
     } catch {
       // Maybe git tracks it under a different subfolder path?
@@ -138,7 +141,7 @@ export async function discardChanges(
             .filter(Boolean);
           if (trackedFiles.length > 0) {
             normalized = trackedFiles[0].replace(/\\/g, "/");
-            await g.raw(["checkout", "HEAD", "--", normalized]);
+            await withIndexLockRetry(wsId, () => g.raw(["checkout", "HEAD", "--", normalized]));
             checkoutSucceeded = true;
           }
         } catch {

@@ -21,7 +21,25 @@ function resolvedWsDir(wsId: string): string {
 
 export function getGit(wsId: string): SimpleGit {
   const dir = resolvedWsDir(wsId);
-  if (!_gitCache.has(wsId)) _gitCache.set(wsId, simpleGit(dir));
+  if (!_gitCache.has(wsId)) {
+    /**
+     * **`GIT_OPTIONAL_LOCKS=0` is load-bearing, not tidiness.**
+     *
+     * `git status` refreshes the index and **writes it back**, which takes `.git/index.lock`. The
+     * renderer polls the status on every write and on every `sync.entityStatus` event, so a status read
+     * can collide with a publish's `git add` and lose — `Unable to create '…/.git/index.lock': File
+     * exists.` The app was racing itself.
+     *
+     * This env var is git's own switch for it (`--no-optional-locks` is the flag form): optional locks
+     * are skipped, while the **mandatory** ones `add` / `commit` / `checkout` take are unaffected. It
+     * has to be the env rather than a per-call flag because `simple-git`'s `status()` builds its own
+     * argv, so a flag could not reach it.
+     *
+     * `GIT_OPTIONAL_LOCKS` does not cover a lock left behind by a **killed** process — see
+     * `sync/gitLock.ts`, which retries past one and then removes it.
+     */
+    _gitCache.set(wsId, simpleGit(dir).env({ ...process.env, GIT_OPTIONAL_LOCKS: "0" }));
+  }
   return _gitCache.get(wsId)!;
 }
 

@@ -5,6 +5,7 @@ import { getGit } from "../store/gitStore";
 import { getSyncConfig } from "./syncManager";
 import { wsDir } from "../store/workspaceFs";
 import { unquoteGitPath } from "./statusTracker";
+import { withIndexLockRetry } from "./gitLock";
 
 /**
  * Revert has exactly **one** implementation, and it is `gitOps.discardChanges()`.
@@ -190,7 +191,9 @@ export async function publishEntities(opts: PublishOptions): Promise<PublishResu
     const stageFailures: string[] = [];
     for (const p of opts.paths) {
       try {
-        await g.raw(["add", "-A", "--", p]);
+        // Retried, because a lock held by a *live* git process is transient — see `gitLock.ts`. The
+        // one left by a killed process is removed there rather than reported as a broken workspace.
+        await withIndexLockRetry(opts.wsId, () => g.raw(["add", "-A", "--", p]));
       } catch (e) {
         stageFailures.push(`${p}: ${(e instanceof Error ? e.message : String(e)).split("\n")[0]}`);
       }
@@ -285,8 +288,9 @@ export async function publishEntities(opts: PublishOptions): Promise<PublishResu
     const fullMessage = body ? `${message}\n\n${body}` : message;
     // `simple-git`'s `commit()` resolves to the commit it created. `|| null` guards the one shape it
     // can take when git reports nothing was written — a success with no id must not be reported as an
-    // id, because the id is what the caller is checking.
-    const committed = await g.commit(fullMessage);
+    // id, because the id is what the caller is checking. Retried on an index lock: the commit takes it
+    // too, so a collision here is the same failure one step later.
+    const committed = await withIndexLockRetry(opts.wsId, () => g.commit(fullMessage));
 
     // Push if remote is configured
     const config = getSyncConfig(opts.wsId);
