@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from "react";
-import { GitBranch, RefreshCw, Cloud } from "@/lib/icons";
+import React, { useState, useMemo, useRef } from "react";
+import { GitBranch, RefreshCw, Cloud, Settings, Variable } from "@/lib/icons";
 import { Button } from "@/components/ui";
+import EnvSelector from "@/components/sidebar/EnvSelector";
 import { strings } from "@/lib/strings";
-import type { SyncStatus, Workspace } from "@/types";
+import type { Environment, SyncStatus, Workspace } from "@/types";
 
 // -- Panel -> git path prefix ------------------------------------------------
 
@@ -41,6 +42,12 @@ interface Props {
     onPublishPanel: () => Promise<void>;
     /** Optional right-aligned panel-specific stats */
     rightContent?: React.ReactNode;
+    environments: Environment[];
+    activeEnvironmentId: string | null;
+    onEnvChange: (id: string | null) => Promise<void>;
+    onManageEnvs: () => void;
+    variablesOpen: boolean;
+    onToggleVariables: () => void;
 }
 
 // -- Component --------------------------------------------------------------
@@ -52,8 +59,16 @@ export default function GlobalFooter({
     syncStatus,
     onPublishPanel,
     rightContent,
+    environments,
+    activeEnvironmentId,
+    onEnvChange,
+    onManageEnvs,
+    variablesOpen,
+    onToggleVariables,
 }: Props) {
     const [publishing, setPublishing] = useState(false);
+    const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
+    const envDropdownRef = useRef<HTMLDivElement>(null);
 
     const syncConfig = workspace?.syncConfig ?? null;
     // Use the configured remote branch when connected, otherwise fall back to "local"
@@ -172,11 +187,45 @@ export default function GlobalFooter({
 
 
             {/* Right: panel-specific stats */}
-            {rightContent && (
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono flex-shrink-0">
-                    {rightContent}
-                </div>
-            )}
+            <div className="flex items-center gap-2 flex-shrink-0 min-w-0">
+                {rightContent && (
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono min-w-0">
+                        {rightContent}
+                    </div>
+                )}
+                <EnvSelector
+                    environments={environments.filter((e) => e.workspaceId === workspace?.id && e.id !== "__global__")}
+                    activeId={activeEnvironmentId}
+                    open={envDropdownOpen}
+                    dropdownRef={envDropdownRef}
+                    onToggle={() => setEnvDropdownOpen((v) => !v)}
+                    onClose={() => setEnvDropdownOpen(false)}
+                    onSelect={async (id) => {
+                        await onEnvChange(id);
+                        setEnvDropdownOpen(false);
+                    }}
+                />
+                <button
+                    type="button"
+                    onClick={onToggleVariables}
+                    title={strings.rightSidebar.toggleVariables}
+                    aria-label={strings.rightSidebar.toggleVariables}
+                    aria-pressed={variablesOpen}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${variablesOpen ? "border-signal/40 bg-signal/15 text-signal" : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"}`}
+                >
+                    <Variable size={13} />
+                </button>
+                <button
+                    type="button"
+                    onClick={onManageEnvs}
+                    title={strings.titleBar.manageEnvironments}
+                    aria-label={strings.titleBar.manageEnvironments}
+                    aria-current={panel === "environments" ? "page" : undefined}
+                    className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/35 ${panel === "environments" ? "border-signal/40 bg-signal/15 text-signal" : "border-border/80 bg-card/60 text-muted-foreground hover:bg-surface-2 hover:text-foreground"}`}
+                >
+                    <Settings size={13} />
+                </button>
+            </div>
         </div>
     );
 }

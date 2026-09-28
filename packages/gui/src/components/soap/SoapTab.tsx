@@ -210,7 +210,6 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
                         actionDisabled={!state.endpointUrl}
                         onAction={handleSend}
                         onEnter={handleSend}
-                        activeEnv={activeEnv}
                     />
                 </TabToolbarRow>
                 <TabToolbarRow>

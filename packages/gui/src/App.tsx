@@ -392,8 +392,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
           setServerRunning(status.running); setServerError(status.error);
         }}
         onServerStop={async () => { await window.api.stopServer(); setServerRunning(false); setServerError(null); }}
-        onEnvChange={async (id) => { await window.api.setActiveEnvironment(id); setConfig(await window.api.getConfig()); }}
-        onManageEnvs={() => setPanel("environments")}
         workspaces={config.workspaces ?? []} activeWorkspaceId={config.activeWorkspaceId}
         onWorkspaceChange={async (id) => {
           clearWorkspaceContext("Switching workspace…");
@@ -418,8 +416,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
         }}
         activePanel={panel} onOpenWorkspaceSettings={() => setPanel("workspace")}
         onOpenSearch={(m) => { setSearchModalMode(m ?? "current"); setSearchModalOpen(true); }}
-        variablesOpen={rightSidebar === "variables"}
-        onToggleVariables={toggleVariables}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <nav className="w-[92px] bg-surface border-r border-border flex flex-col flex-shrink-0 overflow-hidden">
@@ -442,6 +438,12 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
         entitySyncStatus={entitySyncStatus}
         syncStatus={syncStatus}
         onPublishPanel={publishHandlers.handlePublishPanel}
+        environments={wsConfig.environments ?? []}
+        activeEnvironmentId={wsConfig.activeEnvironmentId ?? null}
+        onEnvChange={async (id) => { await window.api.setActiveEnvironment(id); setConfig(await window.api.getConfig()); }}
+        onManageEnvs={() => setPanel("environments")}
+        variablesOpen={rightSidebar === "variables"}
+        onToggleVariables={toggleVariables}
         rightContent={
           /*
            * The endpoint, shown only when a host chose it at runtime.
