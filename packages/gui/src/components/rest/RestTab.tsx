@@ -5,6 +5,7 @@ import { SavedRequest, MockRule, Folder, Environment, ReplayResult } from "@/typ
 import EditorTitleBar from "@/components/editor/EditorTitleBar";
 import EditorTab from "@/components/editor/EditorTab";
 import { UrlBar, BottomBar } from "@/components/editor/RequestTab";
+import { TabPage, TabTitleBar, TabToolbar, TabToolbarRow, PROTOCOL_TONE } from "@/components/editor/TabPage";
 import {
   tabReducer, initState, stateToSavePayload, stateToDraft, isDraftEmpty,
   TabType, TabState,
@@ -179,18 +180,20 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
   // complete enough to create.
   const canSave = canSaveBase;
 
-  const actionLabel = tabType === "request" ? strings.server.send : strings.server.test;
-  const actionLoading = tabType === "request" ? state.loading : state.testLoading;
-  const actionLoadLabel = tabType === "request" ? strings.server.sending : strings.server.testing;
+  const isRequest = tabType === "request";
+
+  const actionLabel = isRequest ? strings.server.send : strings.server.test;
+  const actionLoading = isRequest ? state.loading : state.testLoading;
+  const actionLoadLabel = isRequest ? strings.server.sending : strings.server.testing;
   const isValidAbsoluteUrl = (() => { try { return !!new URL(state.url.trim()); } catch { return false; } })();
-  const actionDisabled = tabType === "request" ? !state.url.trim() : (state.useRegex || !isValidAbsoluteUrl);
-  const handleAction = tabType === "request" ? handleSend : handleTest;
-  const methods = tabType === "request" ? METHODS : MOCK_METHODS;
+  const actionDisabled = isRequest ? !state.url.trim() : (state.useRegex || !isValidAbsoluteUrl);
+  const handleAction = isRequest ? handleSend : handleTest;
+  const methods = isRequest ? METHODS : MOCK_METHODS;
 
-  const titleLabel = label ?? (tabType === "request" ? "REST" : "REST MOCK");
+  const titleLabel = label ?? (isRequest ? "REST" : "REST MOCK");
 
-  const namePlaceholder = tabType === "request" ? strings.requests.requestNamePlaceholder : strings.mocks.mockName;
-  const urlPlaceholder = tabType === "request" ? strings.requests.urlPlaceholder : strings.mocks.urlPatternPlaceholder;
+  const namePlaceholder = isRequest ? strings.requests.requestNamePlaceholder : strings.mocks.mockName;
+  const urlPlaceholder = isRequest ? strings.requests.urlPlaceholder : strings.mocks.urlPatternPlaceholder;
 
   const errorMsg = state.sendErr ?? state.saveErr ?? state.regexError ?? state.testError ?? null;
 
@@ -199,13 +202,86 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
   const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
   const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
 
+  /** The cURL toggle that rides beside Send. Identical in both modes, so it is built once. */
+  const curlToggle = showCurlImport ? (
+    <button
+      type="button"
+      onClick={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
+      title={strings.requests.importFromCurl}
+      aria-label={strings.requests.importFromCurl}
+      className={`p-2.5 rounded border transition-colors cursor-pointer flex-shrink-0 ${
+        state.showCurl
+          ? "border-signal/50 bg-signal/10 text-signal"
+          : "border-border text-muted-foreground hover:text-foreground hover:bg-surface-2"
+      }`}
+    >
+      <Terminal size={14} />
+    </button>
+  ) : undefined;
+
+  const urlBar = (
+    <UrlBar
+      method={state.method}
+      onMethodChange={(v) => dispatch({ type: "SET_FIELD", field: "method", value: v })}
+      url={state.url}
+      onUrlChange={handleUrlChange}
+      methods={methods}
+      urlPlaceholder={urlPlaceholder}
+      actionLabel={actionLabel}
+      actionLoadingLabel={actionLoadLabel}
+      actionLoading={actionLoading}
+      actionDisabled={actionDisabled}
+      onAction={handleAction}
+      onEnter={isRequest ? handleSend : undefined}
+      activeEnv={activeEnv}
+      // Request mode only. A mock's URL is a match pattern, so a randomizer token would be nonsense
+      // there — this is the original `tabType !== "mock"` condition, kept.
+      showRandomizer={isRequest}
+      // Inside a `TabToolbar` the band owns the frame; a mock tab renders the bar on its own.
+      bare={isRequest}
+      // Request mode only: a mock renders `RestCurlImport` above the bar with its own toggle, so a
+      // second one here would be the same control twice.
+      afterButton={isRequest ? curlToggle : undefined}
+      inputSuffix={
+        !isRequest ? (
+          <label
+            className="flex items-center gap-1.5 px-3 border-l border-border cursor-pointer select-none flex-shrink-0 hover:bg-card transition-colors"
+            title={strings.editor.matchUrlAsRegex}
+          >
+            <input
+              type="checkbox"
+              checked={state.useRegex}
+              onChange={(e) => handleRegexToggle(e.target.checked)}
+              className="accent-signal"
+            />
+            <span className="font-mono text-[11px] text-muted-foreground">.*</span>
+          </label>
+        ) : undefined
+      }
+    />
+  );
+
   // -- Render -------------------------------------------------------------
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-surface">
-      {/* Title bar — request tabs rename via double-click on the tab instead;
-          mock tabs keep the inline name field */}
-      {tabType !== "request" && (
+    <TabPage>
+      {/*
+        Band 1 — the title bar.
+        The request tab had none: its name was editable only by double-clicking the tab strip. This
+        renders the same `state.name` that the tab rename already writes to, so nothing new is
+        stored — it is the existing field made visible, which is what puts this tab's name in the
+        same place as every other protocol's. The mock tab keeps `EditorTitleBar`, which carries the
+        enabled Switch.
+      */}
+      {isRequest ? (
+        <TabTitleBar
+          chip={titleLabel}
+          tone={PROTOCOL_TONE.rest}
+          name={state.name}
+          namePlaceholder={namePlaceholder}
+          onNameChange={(v) => dispatch({ type: "SET_FIELD", field: "name", value: v })}
+        />
+      ) : (
         <EditorTitleBar
           label={titleLabel}
           namePlaceholder={namePlaceholder}
@@ -217,9 +293,18 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         />
       )}
 
-      {/* cURL import - compact icon button next to Send for requests (textarea below);
-          always-open section for mocks */}
-      {tabType === "mock" && showCurlImport && (
+      {/*
+        Band 2 — the address band.
+        Row 1 is the same shape on every protocol. Row 2 is for a protocol's *connection* fields: on
+        SOAP the SOAPAction, on gRPC the service/method pair. REST has none, so its toolbar has one
+        row — the band's height is set by the row, not by the protocol.
+
+        The cURL textarea is deliberately **not** a toolbar row, even though it renders in the same
+        place. It is a three-line paste target, and `RestCurlImport` brings its own `px-4` and
+        bottom border; nesting it inside the band would double both, which is the very thing this
+        pass removes. It keeps its own band, as before.
+      */}
+      {!isRequest && showCurlImport && (
         <RestCurlImport
           tabType={tabType}
           showCurl={state.showCurl}
@@ -229,67 +314,24 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         />
       )}
 
-      {/* URL bar */}
-      <UrlBar
-        method={state.method}
-        onMethodChange={(v) => dispatch({ type: "SET_FIELD", field: "method", value: v })}
-        url={state.url}
-        onUrlChange={handleUrlChange}
-        methods={methods}
-        urlPlaceholder={urlPlaceholder}
-        actionLabel={actionLabel}
-        actionLoadingLabel={actionLoadLabel}
-        actionLoading={actionLoading}
-        actionDisabled={actionDisabled}
-        onAction={handleAction}
-        onEnter={tabType === "request" ? handleSend : undefined}
-        activeEnv={activeEnv}
-        showRandomizer={tabType !== "mock"}
-        afterButton={
-          tabType === "request" && showCurlImport ? (
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
-              title={strings.requests.importFromCurl}
-              aria-label={strings.requests.importFromCurl}
-              className={`p-2.5 rounded border transition-colors cursor-pointer flex-shrink-0 ${
-                state.showCurl
-                  ? "border-signal/50 bg-signal/10 text-signal"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-surface-2"
-              }`}
-            >
-              <Terminal size={14} />
-            </button>
-          ) : undefined
-        }
-        inputSuffix={
-          tabType === "mock" ? (
-            <label
-              className="flex items-center gap-1.5 px-3 border-l border-border cursor-pointer select-none flex-shrink-0 hover:bg-card transition-colors"
-              title={strings.editor.matchUrlAsRegex}
-            >
-              <input
-                type="checkbox"
-                checked={state.useRegex}
-                onChange={(e) => handleRegexToggle(e.target.checked)}
-                className="accent-signal"
-              />
-              <span className="font-mono text-[11px] text-muted-foreground">.*</span>
-            </label>
-          ) : undefined
-        }
-      />
-
-      {/* cURL textarea (compact) - shown below the URL bar when toggled */}
-      {tabType === "request" && showCurlImport && state.showCurl && (
-        <RestCurlImport
-          bare
-          tabType={tabType}
-          showCurl={state.showCurl}
-          curlInput={state.curlInput}
-          onToggleShowCurl={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
-          onCurlChange={handleCurlChange}
-        />
+      {isRequest ? (
+        <>
+          <TabToolbar>
+            <TabToolbarRow>{urlBar}</TabToolbarRow>
+          </TabToolbar>
+          {showCurlImport && state.showCurl && (
+            <RestCurlImport
+              bare
+              tabType={tabType}
+              showCurl={state.showCurl}
+              curlInput={state.curlInput}
+              onToggleShowCurl={() => dispatch({ type: "SET_FIELD", field: "showCurl", value: !state.showCurl })}
+              onCurlChange={handleCurlChange}
+            />
+          )}
+        </>
+      ) : (
+        urlBar
       )}
 
       {/* Error banner */}
@@ -299,7 +341,7 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         </div>
       )}
 
-      {/* Split-pane editor body */}
+      {/* Band 3 — the split pane */}
       <RestEditorPane
         tabType={tabType}
         state={state as any}
@@ -308,7 +350,7 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         resBodyText={resBodyText}
       />
 
-      {/* Bottom bar — Cancel and Create exist only for a draft: an existing entity autosaves
+      {/* Band 4 — Bottom bar. Cancel and Create exist only for a draft: an existing entity autosaves
           every edit and has Revert for undo, so a Cancel button would have nothing to cancel. */}
       <BottomBar
         folders={folders}
@@ -316,7 +358,7 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         onFolderChange={(v) => dispatch({ type: "SET_FIELD", field: "folderId", value: v })}
         onCancel={draftTabId ? onClose : undefined}
         onSave={draftTabId ? handleSave : undefined}
-        saveLabel={draftTabId ? (tabType === "request" ? strings.editor.createRequest : strings.editor.createMock) : undefined}
+        saveLabel={draftTabId ? (isRequest ? strings.editor.createRequest : strings.editor.createMock) : undefined}
         saveDisabled={!canSave}
         saving={state.saving}
         savingLabel={strings.server.saving}
@@ -333,17 +375,17 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
         reverting={reverting}
         syncTitle={syncTitle}
         revertTitle={revertTitle}
-        onCreateMock={tabType === "request" && onCreateMock ? handleCreateMock : undefined}
+        onCreateMock={isRequest && onCreateMock ? handleCreateMock : undefined}
         createMockDisabled={!state.result || state.loading}
         extraLeft={
-          tabType === "mock" ? (
+          !isRequest ? (
             !state.resBody.trim()
               ? <span className="text-[10px] text-muted-foreground italic">{strings.mocks.addResponseBody}</span>
               : <span className="text-[10px] text-muted-foreground">{strings.mocks.mocksNote}</span>
           ) : undefined
         }
       />
-    </div>
+    </TabPage>
   );
 });
 

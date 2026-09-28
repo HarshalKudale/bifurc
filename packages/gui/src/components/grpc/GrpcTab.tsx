@@ -1,10 +1,7 @@
 import React, { forwardRef, useImperativeHandle, useReducer, useCallback, useEffect, useState } from "react";
-import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { SavedGrpcRequest, Folder, Environment } from "@/types";
-import CodeEditor from "@/components/common/CodeEditor";
-import HeaderTable from "@/components/common/HeaderTable";
-import EditorTitleBar from "@/components/editor/EditorTitleBar";
-import { TabStrip, BottomBar } from "@/components/editor/RequestTab";
+import { BottomBar, TabStrip, UrlBar, UrlBarVerb } from "@/components/editor/RequestTab";
+import { TabPage, TabTitleBar, TabToolbar, TabToolbarRow, SplitPane, useSplitOrientation, PROTOCOL_TONE } from "@/components/editor/TabPage";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { KVRow, mkRowId } from "@/lib/utils";
 import { resolveVars } from "@/lib/resolveVars";
@@ -60,13 +57,6 @@ function rowsToMetadata(rows: KVRow[]): Record<string, string> {
     return result;
 }
 
-const STREAMING_BADGES: Record<string, string> = {
-    unary: strings.grpc.streamUnary,
-    server: strings.grpc.streamServer,
-    client: strings.grpc.streamClient,
-    bidi: strings.grpc.streamBidirectional,
-};
-
 // -- Component --------------------------------------------------------------
 
 const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
@@ -109,6 +99,9 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         syncStatus,
     });
 
+    // The split is shared with every other protocol tab, and persisted under one global key.
+    const [splitOrientation, toggleSplitOrientation] = useSplitOrientation();
+
     const [reqTab, setReqTab] = useState<ReqSubTab>("message");
     const [resTab, setResTab] = useState<ResSubTab>("response");
 
@@ -119,6 +112,9 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
     useEffect(() => {
         dispatch({ type: "SET_METADATA", metadata: rowsToMetadata(metaRows) });
     }, [metaRows]);
+
+    /** Field setter. Declared before the imperative handle, which reaches for `set("name")`. */
+    const set = (field: keyof GrpcTabState) => (value: unknown) => dispatch({ type: "SET_FIELD", field, value });
 
     // Send gRPC request
     const handleSend = useCallback(async () => {
@@ -175,116 +171,125 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
     const syncTitle = !hasLocalChanges ? strings.common.noChangesToSync : strings.common.syncTooltip;
     const revertTitle = !hasLocalChanges ? strings.common.noChangesToRevert : strings.common.revertTooltip;
 
-    const set = (field: keyof GrpcTabState) => (value: unknown) => dispatch({ type: "SET_FIELD", field, value });
-
     // -- Render -------------------------------------------------------------
 
     return (
-        <div className="flex flex-col h-full overflow-hidden">
-            {/* Title bar */}
-            <EditorTitleBar
-                label="GRPC"
-                namePlaceholder={strings.grpc.requestNamePlaceholder}
+        <TabPage>
+            {/* Band 1 — title bar. */}
+            <TabTitleBar
+                chip="gRPC"
+                tone={PROTOCOL_TONE.grpc}
                 name={state.name}
+                namePlaceholder={strings.grpc.requestNamePlaceholder}
                 onNameChange={(v) => set("name")(v)}
-                onClose={onClose}
                 autoFocus={isNew}
             />
 
-            {/* Connection bar */}
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 bg-background/30">
-                <input
-                    className="flex-1 bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground"
-                    placeholder="localhost:50051"
-                    value={state.serverAddress}
-                    onChange={(e) => set("serverAddress")(e.target.value)}
-                />
-                <input
-                    className={cn(
-                        "bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground",
-                        "w-48"
-                    )}
-                    placeholder="ServiceName"
-                    value={state.serviceName}
-                    onChange={(e) => set("serviceName")(e.target.value)}
-                />
-                <input
-                    className={cn(
-                        "bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground",
-                        "w-48"
-                    )}
-                    placeholder="MethodName"
-                    value={state.methodName}
-                    onChange={(e) => set("methodName")(e.target.value)}
-                />
-                <span className="text-[10px] font-semibold px-2 py-1 rounded bg-surface-2 text-muted-foreground whitespace-nowrap">
-                    {STREAMING_BADGES[state.streamingType] ?? strings.grpc.streamUnary}
-                </span>
-                <button
-                    onClick={handleSend}
-                    disabled={state.sending || !state.serverAddress || !state.serviceName || !state.methodName}
-                    className="px-4 py-1.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                    {state.sending ? (
-                        <span className="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : strings.server.send}
-                </button>
-            </div>
+            {/*
+                Band 2 — address band.
+                The address, the service and the method are **one line**, because together they are
+                "what am I calling". An earlier revision of this refactor split the service/method
+                pair onto a second row in the name of consistency; that was wrong — it made the
+                target harder to read and pushed the tab taller for no gain. They ride the address
+                row through `UrlBar`'s `beforeAction` slot, which lands them before Send rather than
+                after it.
 
-            {/* Streaming type + reflection toggle */}
-            <div className="flex items-center gap-3 px-4 py-1.5 border-b border-border flex-shrink-0">
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>{strings.grpc.type}</span>
-                    <select
-                        className="bg-card border border-border rounded px-2 py-1 text-xs text-foreground outline-none"
-                        value={state.streamingType}
-                        onChange={(e) => set("streamingType")(e.target.value)}
-                    >
-                        <option value="unary">{strings.grpc.streamUnary}</option>
-                        <option value="server">{strings.grpc.streamServerStreaming}</option>
-                        <option value="client">{strings.grpc.streamClientStreaming}</option>
-                        <option value="bidi">{strings.grpc.streamBidirectional}</option>
-                    </select>
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                    <input
-                        type="checkbox"
-                        checked={state.useReflection}
-                        onChange={(e) => set("useReflection")(e.target.checked)}
-                        className="accent-signal"
+                The streaming type and the reflection toggle stay on row 2, where this tab always had
+                them. The streaming *badge* that used to sit on row 1 is gone: it repeated the value
+                the select was already showing.
+            */}
+            <TabToolbar>
+                <TabToolbarRow>
+                    <UrlBar
+                        bare
+                        leading={<UrlBarVerb verb="gRPC" />}
+                        url={state.serverAddress}
+                        onUrlChange={set("serverAddress")}
+                        urlPlaceholder="localhost:50051"
+                        beforeAction={
+                            <>
+                                <input
+                                    className={cn(
+                                        "bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground",
+                                        "w-48"
+                                    )}
+                                    placeholder="ServiceName"
+                                    value={state.serviceName}
+                                    onChange={(e) => set("serviceName")(e.target.value)}
+                                />
+                                <input
+                                    className={cn(
+                                        "bg-card border border-border focus:border-signal rounded px-3 py-1.5 text-sm text-foreground outline-none font-mono placeholder:text-muted-foreground",
+                                        "w-48"
+                                    )}
+                                    placeholder="MethodName"
+                                    value={state.methodName}
+                                    onChange={(e) => set("methodName")(e.target.value)}
+                                />
+                            </>
+                        }
+                        actionLabel={strings.server.send}
+                        actionLoadingLabel={strings.grpc.sending}
+                        actionLoading={state.sending}
+                        actionDisabled={!state.serverAddress || !state.serviceName || !state.methodName}
+                        onAction={handleSend}
+                        onEnter={handleSend}
+                        activeEnv={activeEnv}
                     />
-                    {strings.grpc.useReflection}
-                </label>
-            </div>
-
-            {/* Split pane */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-                <PanelGroup orientation="horizontal" className="h-full">
-                    {/* Left panel: request body / metadata / scripts */}
-                    <Panel defaultSize={50} minSize={30}>
-                        <GrpcLeftPane
-                            state={state}
-                            dispatch={dispatch}
-                            set={set}
-                            reqTab={reqTab}
-                            setReqTab={setReqTab}
-                            metaRows={metaRows}
-                            setMetaRows={setMetaRows}
+                </TabToolbarRow>
+                <TabToolbarRow>
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{strings.grpc.type}</span>
+                        <select
+                            className="bg-card border border-border rounded px-2 py-1 text-xs text-foreground outline-none"
+                            value={state.streamingType}
+                            onChange={(e) => set("streamingType")(e.target.value)}
+                        >
+                            <option value="unary">{strings.grpc.streamUnary}</option>
+                            <option value="server">{strings.grpc.streamServerStreaming}</option>
+                            <option value="client">{strings.grpc.streamClientStreaming}</option>
+                            <option value="bidi">{strings.grpc.streamBidirectional}</option>
+                        </select>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={state.useReflection}
+                            onChange={(e) => set("useReflection")(e.target.checked)}
+                            className="accent-signal"
                         />
-                    </Panel>
+                        {strings.grpc.useReflection}
+                    </label>
+                </TabToolbarRow>
+            </TabToolbar>
 
-                    <PanelResizeHandle className="w-px bg-border hover:bg-signal/50 transition-colors cursor-col-resize" />
-                    <Panel defaultSize={50} minSize={25}>
-                        <GrpcResponsePane
-                            state={state}
-                            resTab={resTab}
-                            onResTabChange={setResTab}
-                        />
-                    </Panel>
-                </PanelGroup>
-            </div>
+            {/* Band 3 — the split. Orientation was hard-coded `horizontal`. */}
+            <SplitPane
+                orientation={splitOrientation}
+                minSize={25}
+                left={
+                    <GrpcLeftPane
+                        state={state}
+                        dispatch={dispatch}
+                        set={set}
+                        reqTab={reqTab}
+                        setReqTab={setReqTab}
+                        metaRows={metaRows}
+                        setMetaRows={setMetaRows}
+                    />
+                }
+                right={
+                    <GrpcResponsePane
+                        state={state}
+                        resTab={resTab}
+                        onResTabChange={setResTab}
+                        splitOrientation={splitOrientation}
+                        onToggleSplitOrientation={toggleSplitOrientation}
+                    />
+                }
+            />
 
-            {/* Bottom bar — Cancel and Create exist only for a draft: an existing entity
+            {/* Band 4 — Bottom bar. Cancel and Create exist only for a draft: an existing entity
                 autosaves every edit and has Revert for undo. */}
             <BottomBar
                 folders={folders}
@@ -310,7 +315,7 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
                 syncTitle={syncTitle}
                 revertTitle={revertTitle}
             />
-        </div>
+        </TabPage>
     );
 });
 

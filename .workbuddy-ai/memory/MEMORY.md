@@ -30,7 +30,9 @@ suites → `TESTING.md` · **ports → `plan/17` §1** · edge/mapping → `plan
 ## Measuring the suite
 
 - **A *delta* is the signal; name its mechanism.** Baseline **re-measured, never carried forward**. **There is
-  no standing failure — every failure is a flake to identify.** Judge a mutation by **exit code, not count**.
+  no standing *product* failure — every failure is a flake to identify.** Judge a mutation by **exit code, not
+  count**. ⚠ The qualifier is new (2026-09-28): there **are** standing *environment* failures — see the
+  `gitRemote` entry below — and they are deterministic, not flakes.
 - **⚠ Freeze the tree while a run is in flight.** **⚠ A single-project run is NOT the full run** — reconcile
   **unit + integration = the full total**.
 - **⚠ A fixture's `cleanup()` is not local** — a second fixture un-points the store for every case after it.
@@ -39,11 +41,26 @@ suites → `TESTING.md` · **ports → `plan/17` §1** · edge/mapping → `plan
 - **⚠ `gitStore.test.ts`'s `beforeEach` can time out at 10 s** under the safe-delete shim (`EBUSY … rmdir` on a
   `%TEMP%` dir, `node-safe-delete-shim.cjs`). Took one unit case down 2026-09-28; the file passes **24/24 in
   isolation**. Environment, not product.
+- **⚠ Same shim, same signature, in `afterAll`: four integration suites fail *teardown only*.** Measured
+  2026-09-28 — `fileOps`, `importExport`, `importExportBlob`, `importExportFormats` each report
+  `Hook timed out in 20000ms` in their `afterAll` (the `f.cleanup()` + `fs.rmSync(outDir)` block), while
+  **all 116 of their tests pass**, in a full run *and* alone. So a suite-level `FAIL` with `Tests N passed`
+  beside it is this, not a regression. `CODEBUDDY_SAFE_DELETE_ENABLED=0` does not help — that is the
+  evidence it is contention rather than the shim.
+- **⚠ `tests/integration/gitRemote.integration.test.ts` fails 4/4 in this sandbox, deterministically.**
+  `remoteHead()` shells out to `git --git-dir <remote> rev-parse refs/heads/<branch>`; `git push` here
+  reports success **without writing the remote's `refs/heads/*`**, so the value is `null`. **Reproduces with
+  the file run alone** (with `gitSync` passing beside it), so it is *not* a flake and *not* attributable to
+  any change — and `grep -rn "packages/gui" tests/integration/` matches only a comment, so no integration
+  test can even load the GUI. Same shell property as the `git fetch` / `refs/remotes/**` rule in
+  `~/.workbuddy-ai/MEMORY.md`. **Do not try to fix these.**
 
-**Current: 2,658 tests / 117 files — 2,158 unit passed + 460 integration = 2,618, 40 skipped, 0 real failures
-(2026-09-28).** Unit **87 files**, integration **30 files** (both measured). **e2e: 11 specs, all rewritten
-2026-09-28 for the autosave move — the old 46/46 figure is stale and wants an owner run.** (The two
-non-hermetic tests `engineSmoke` / `hostStartup`, and the `forwardProxyPort` fix, are recorded in `TESTING.md`.)
+**Current: 2,666 tests / 119 files — 2,206 unit + 460 integration, 40 skipped; 0 product failures
+(2026-09-28, after the tab-page unification).** Unit **89 files** (2,165 pass + 40 skipped + 1 hook-timeout
+flake), integration **30 files** (456 pass + 4 `gitRemote` sandbox failures + 4 teardown-only suite timeouts).
+**e2e: 11 specs, all rewritten 2026-09-28 for the autosave move — the old 46/46 figure is stale and wants an
+owner run.** (The two non-hermetic tests `engineSmoke` / `hostStartup`, and the `forwardProxyPort` fix, are
+recorded in `TESTING.md`.)
 
 ## The autosave move (2026-09-28)
 
