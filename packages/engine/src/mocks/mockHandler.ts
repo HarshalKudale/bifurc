@@ -1,6 +1,6 @@
 import * as net from "net";
 import { MockRule, Environment } from "../workspace/config";
-import { HOP_BY_HOP } from "./constants";
+import { HOP_BY_HOP } from "../utils/http";
 import { resolveRandomizers } from "../utils/randomizer";
 
 export interface ResolvedMockResponse {

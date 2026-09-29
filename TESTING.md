@@ -813,7 +813,14 @@ first six now live under `packages/engine/src/`): `applications` 1.1% → 87.5%,
 `renderer/panels` is still ~0%: the panels are covered by the Playwright E2E suite instead
 (see `HAPPY_PATH_COVERAGE.md`), which is not measured here.
 
-### 4.3 The routing path specifically
+## 4.3 The routing path specifically
+
+> **Path note (engine-layout phase 4, 2026-09-29).** This table records a **past measurement**; the engine-layout
+> reorganisation has since moved five of the eight rows. `proxy/` now holds only the forward half, so
+> `proxy/serverUtils.ts` → `utils/server.ts`, `proxy/mockHandler.ts` → `mocks/mockHandler.ts`,
+> `proxy/tlsCert.ts` → `certificates/tlsCert.ts`, while `proxyHandler.ts`, `routingUtils.ts`, `server.ts`,
+> `serverReplay.ts` and `tlsIntercept.ts` stay put. The numbers are unchanged and still describe these files —
+> only the paths are historical.
 
 | File | Statements before | Statements after |
 |---|---:|---:|
@@ -866,6 +873,11 @@ a real repository and a real bare remote.
 
 ### 4.6 The capture path specifically
 
+> **Path note (engine-layout phase 4, 2026-09-29).** Like §4.3 above, this table is a **past measurement** and
+> two rows have since moved: `proxy/tlsCert.ts` → `certificates/tlsCert.ts`. The retired companion row is
+> doubly historical — `companion/companionServer.ts` was deleted on 2026-09-23 (`plan/15` §6.4) and is
+> described under its second path in the note below the table.
+
 Capture is in-memory: the proxy builds a `RequestLogEntry` per request and emits it on
 `logEmitter`, which the Capture screen renders and turns into a mock or a saved request.
 Both halves are now covered — the emitter against real traffic, and the conversions directly.
@@ -905,7 +917,9 @@ method, and because the retired code's 94% is part of the record.
 > `packages/engine/src/transport/legacyCompanionActions.ts`. **`src/companion/` no longer exists.** The
 > numbers are unchanged and still describe these two files — only the paths are historical.
 > **Engine-module-layout phase 3 (2026-09-29)** moves `subscription/entityCount.ts` to
-> `packages/engine/src/workspace/entityCount.ts`.
+> `packages/engine/src/workspace/entityCount.ts`; **phase 4 (same day)** moves `proxy/tlsCert.ts` to
+> `packages/engine/src/certificates/tlsCert.ts` and `proxy/mockHandler.ts` to
+> `packages/engine/src/mocks/mockHandler.ts`.
 >
 > The move deliberately did **not** rewrite the four action bodies, and the reason is recorded in
 > `legacyCompanion.ts`'s header and `plan/05`'s "Item 1": aliasing them onto `config.get` /
@@ -1725,7 +1739,9 @@ nothing about the line you changed".
   uncovered code.
   **Engine-module-layout phase 3 (2026-09-29) is the first re-check since:** the entry is now
   `packages/engine/src/workspace/types.ts` (`store/` → `workspace/`); `sync/types.ts` and
-  `importExport/types.ts` stay as written until their own phases (6 and 7). The codemod **cannot**
+  `importExport/types.ts` stay as written until their own phases (6 and 7). **Phase 4 (same day) added no
+  proxy entry** — the split touched no file named in the exclude list, so there was nothing to re-check,
+  which is itself the answer. The codemod **cannot**
   rewrite these — they are bare path strings in a config array, not import specifiers — so each
   move phase has to update them by hand. `tests/runtime/singleDataRoot.test.ts` carries the same
   class of hand-maintained path, in a `toEqual` assertion rather than an exclude.
@@ -1791,7 +1807,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > `importExportFormats.integration`, `registry.test`, and — added in the eighth pass, once the
 > P3 blob layer existed to test against — `importExportBlob.integration` plus the `blob/**`
 > store, sweep and command suites), `packages/engine/src/applications/**` (87%),
-> `packages/engine/src/workspace/entityCount.ts` (100%), `packages/engine/src/companion/allowedActions.ts` (100%), the
+> `packages/engine/src/workspace/entityCount.ts` (100%), `packages/engine/src/~~companion/allowedActions.ts~~` (100%; the companion was retired 2026-09-23 — `plan/15` §6.4), the
 > Audit Log screen (`auditLog.integration`), **the "hit Send" path**
 > (`protocolExecution.integration` — REST replay, GraphQL execute/introspect, SOAP
 > execute/fetchWsdl, Health Bar polling), **folder management** and **workspace CRUD**
@@ -1863,7 +1879,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
     `screenshots.spec.ts` (1, zero assertions). Harden them the same way as the ones already
     converted, then delete `screenshots.spec.ts`'s `test()` wrapper or mark it clearly as a
     screenshot generator rather than a test.
-12. **`mkId()` collision risk** — `packages/engine/src/proxy/serverUtils.ts` appends only 4 base-36 random
+12. **`mkId()` collision risk** — `packages/engine/src/utils/server.ts` appends only 4 base-36 random
     characters (~1.6M space) to a millisecond timestamp, so a burst of ids within one
     millisecond has a small real collision probability. Widen the random suffix.
 13. **E2E binds port 80** — `e2e/fixtures/sampleData.ts` writes `port: 80`, which needs root
@@ -1939,7 +1955,7 @@ is why neither could be found by reading the code, only by asserting on the data
 | **Exporting a collection run as JSON silently truncated the report.** `RunReport` in `@bifurc/protocol` was typed from the HTML renderer's field *usage* rather than from the renderer's real `CollectionRunReport`, so `requestId`, `url`, `testLogs`, `preScriptError`, `postScriptError` and `TestResultEntry.durationMs` were absent. `z.object()` **strips unknown keys** — it does not reject them — so routing a real report through the schema dropped those fields without a word. The HTML export was unaffected *because* the HTML renderer touches only fields the schema happened to have, which is precisely why this would have shipped unnoticed: the one consumer that existed could not observe the loss | `packages/protocol/src/commands/runner.ts` `RunReport` / `RunResult` | widened to carry every field of the renderer's `RunnerRequestResult`, and asserted field by field in `tests/integration/fileOps.integration.test.ts` rather than by a round-trip `toEqual` — a round-trip against a schema that strips would compare two equally-truncated objects and pass. **Same class as the `collisionStrategy` defect:** a wire type that disagrees with its only caller, where the compiler is satisfied either way |
 | **`tls.importCert` leaked an absolute engine filesystem path in a protocol result.** It read `blobContentPath(blobId)` directly, and that helper validates the id's *shape* (`^blob_[0-9a-f]{32}$`) but never checks that the blob exists. So a blob that had been released, or swept past `BLOB_TTL_MS`, produced a raw `ENOENT: no such file or directory, open 'I:\…\blobs\blob_…\content'` — an engine-side path, in a result the client receives, from a channel whose entire purpose is that no path crosses the boundary (`File_Ops_Protocol.md` §8). It is also not a *typed* error, so P4's transport could not have classified it | `packages/engine/src/fileOps/commands.ts` `tlsImport` | read through `statBlob()` first, which converts absence into a `BlobError("blob-not-found")` and therefore into a path-free `blob-not-found: …` message. `statBlob` deliberately does **not** slide the lease, which is correct here — the bytes are consumed immediately after. **The generalisable lesson:** the item-6 acceptance criterion is checked by grepping for `filePath` in *types*, and this leak was a runtime string, so no grep could have found it |
 | **`certutil -delstore` reports success for a certificate it did not remove.** Measured, not assumed: `certutil -delstore -user Root "00112233445566778899AABBCCDDEEFF00112233"` — a thumbprint that is **not in the store** — prints `CertUtil: -delstore command completed successfully.` and exits **0**. An un-trust result built on that exit code would tell the user their CA had been removed from the OS trust store when it had not: a security-relevant lie rather than an ordinary bug, and invisible to any test that asserts on the command's status. The mirror-image query *is* discriminating — `certutil -store -user Root <thumbprint>` exits **0** when present and **17** (`NTE_NOT_FOUND`) when absent — so the two are not interchangeable, and only measurement tells you which is which | `src/ipc/certTrust.ts` (`probeTrust`, `uninstallCA`) | `probeTrust()` split out from `run()` as a separate concept — "what does the store say?" is a different question from "did the command succeed?", and a non-zero exit is the *expected answer* half the time. `TrustResult.verified` is a separate field from `TrustResult.ok`, `uninstallCA()` re-queries after deleting instead of trusting the exit status, and `probeTrust()` returns `true \| false \| null` so Linux can say *cannot answer* rather than `false`. Pinned in both directions, including *"reports ok but not verified when the delete command exits 0 and the store still has it"* |
-| **`generateCA()` could return an `ENOENT` carrying the engine's absolute path** — the same class as the `tls.importCert` leak above, reachable with no blob involved. `fs.writeFileSync` does not create parent directories, and `appDataDir()` only exists once `loadSettings()` has written the settings file at least once; a `tls.generate` before that would produce `{ok: false, error: "ENOENT: no such file or directory, open 'C:\\Users\\…\\Bifurc\\ca-cert.pem'"}`. **Latent, not demonstrated** — in the app `loadSettings()` runs at startup, so the directory is there by the time a user can click the button, and no test provoked it | `packages/engine/src/proxy/certManager.ts` `generateCA` | `fs.mkdirSync(dataDir, { recursive: true })` before writing, plus a test that generates into a non-existent nested directory. Creating the directory is cheaper than sanitising the message, and it removes the failure rather than the evidence of it — which is also why it is a one-line fix rather than a new error branch |
+| **`generateCA()` could return an `ENOENT` carrying the engine's absolute path** — the same class as the `tls.importCert` leak above, reachable with no blob involved. `fs.writeFileSync` does not create parent directories, and `appDataDir()` only exists once `loadSettings()` has written the settings file at least once; a `tls.generate` before that would produce `{ok: false, error: "ENOENT: no such file or directory, open 'C:\\Users\\…\\Bifurc\\ca-cert.pem'"}`. **Latent, not demonstrated** — in the app `loadSettings()` runs at startup, so the directory is there by the time a user can click the button, and no test provoked it | `packages/engine/src/certificates/certManager.ts` `generateCA` | `fs.mkdirSync(dataDir, { recursive: true })` before writing, plus a test that generates into a non-existent nested directory. Creating the directory is cheaper than sanitising the message, and it removes the failure rather than the evidence of it — which is also why it is a one-line fix rather than a new error branch |
 
 ### Build-robustness fixes
 
@@ -2066,7 +2082,7 @@ npx vitest run --project integration tests/integration/capture.integration.test.
 #       so the shared layer always delegates, then:
 npx vitest run --project unit tests/renderer/protocolTabReducers.test.ts
 #    → 7 REFRESH/LOAD tests fail. Revert.
-#    j) In packages/engine/src/proxy/tlsCert.ts, make generateHostCert ignore the loaded CA (issue from a
+#    j) In packages/engine/src/certificates/tlsCert.ts, make generateHostCert ignore the loaded CA (issue from a
 #       throwaway key), then:
 npx vitest run --project integration tests/integration/tlsIntercept.integration.test.ts
 #    → the `rejectUnauthorized: true` handshake fails. Revert.

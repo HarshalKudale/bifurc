@@ -75,13 +75,13 @@ import { EventLog } from "../transport/eventLog";
 // `bindEdgeInstance` is `plan/17` §5 work item 7 — the same treatment the forward proxy and the webhook
 // already get below, one port over: the host *names* its edge to the module-level binding so `config.save`
 // can re-bind it when `settings.port` changes.
-import { bindEdgeInstance, createEdgeRouter, DEFAULT_EDGE_BIND_HOST, type EdgeRouterInstance } from "../proxy/edge";
+import { bindEdgeInstance, createEdgeRouter, DEFAULT_EDGE_BIND_HOST, type EdgeRouterInstance } from "../reverseproxy/edge";
 import { createProxyServer, bindProxyInstance, type ProxyServerInstance } from "../proxy/server";
 import {
   createWebhookServer,
   bindWebhookInstance,
   type WebhookServerInstance,
-} from "../proxy/webhookServer";
+} from "../webhooks/webhookServer";
 // The **single**-port finder and the bound on its scan. The companion is the one listener whose port is
 // *found* rather than bound (`plan/17` §1): the host scans upward from `settings.companionPort`, skipping the
 // ports it has already bound, so the port a client is told to connect to is one that is really free.
@@ -386,7 +386,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
        * a settings file read from somewhere else.
        *
        * The directory is included because **that is the diagnostic**: on Windows `settingsPath()` prefers
-       * `%LOCALAPPDATA%` regardless of `setDataRoot()` (recorded in `proxy/certManager.ts`), so a
+       * `%LOCALAPPDATA%` regardless of `setDataRoot()` (recorded in `certificates/certManager.ts`), so a
        * `--data-dir` run reads the user's real settings. Naming the location turns that into one readable
        * line. Not fatal — the other requested workspaces may still be serveable, which is the same
        * "skip loudly, do not refuse to start" rule D16 applies to a taken port override.
@@ -509,7 +509,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     /**
      * ## Binding the facade is what makes a command reach these two
      *
-     * `proxy/server.ts` and `proxy/webhookServer.ts` each keep a module-level **facade** over a lazily created
+     * `proxy/server.ts` and `webhooks/webhookServer.ts` each keep a module-level **facade** over a lazily created
      * default instance, and the `server.*` / `webhookServer.*` commands go through it. `bindProxyInstance()` /
      * `bindWebhookInstance()` point that facade at an instance the caller owns — the desktop has always used
      * them, and this host now uses the same mechanism.
@@ -804,7 +804,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
        * **The facade binding is undone here, because `start()` made it.**
        *
        * `bindProxyInstance()` / `bindWebhookInstance()` are **process-global** — they set module-level state in
-       * `proxy/server.ts` and `proxy/webhookServer.ts`, and every module function in those files acts on
+       * `proxy/server.ts` and `webhooks/webhookServer.ts`, and every module function in those files acts on
        * whatever is bound. So a host that binds and does not unbind leaves the *next* consumer in the same
        * process talking to **this** host's stopped instances: `startServer()` would resurrect them rather than
        * build a fresh one, and `server.status` would keep reporting a dead instance's last error forever.

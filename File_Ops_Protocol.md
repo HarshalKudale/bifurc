@@ -215,8 +215,8 @@ silently drift apart.
 >
 > | Piece | Where it lives now |
 > |---|---|
-> | the engine half — generate, identify, delete | `packages/engine/src/proxy/certManager.ts` |
-> | the three lifecycle commands | `packages/engine/src/proxy/certCommands.ts` |
+> | the engine half — generate, identify, delete | `packages/engine/src/certificates/certManager.ts` |
+> | the three lifecycle commands | `packages/engine/src/certificates/certCommands.ts` |
 > | the client half — install, un-trust, probe, Firefox | `src/ipc/certTrust.ts` |
 > | the composition — bytes + trust store + drift record | `src/ipc/certLifecycle.ts` |
 >

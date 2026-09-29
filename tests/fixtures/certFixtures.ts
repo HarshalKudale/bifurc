@@ -18,7 +18,7 @@
  * ## Provenance
  *
  * Generated with this repository's own `mkcert` dependency, using the same options
- * `packages/engine/src/proxy/certManager.ts#generateCA` passes:
+ * `packages/engine/src/certificates/certManager.ts#generateCA` passes:
  *
  * ```js
  * createCA({ organization: "Bifurc CA", countryCode: "US", state: "Development",

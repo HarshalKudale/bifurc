@@ -7,7 +7,7 @@
  * They were served by `ipcMain.handle` bodies in `src/ipc/handlers/crudHandlers.ts` — now
  * `crudKinds.ts`, and those bodies are gone (P6 reduction, fourth group, 2026-09-21) — which worked
  * only while the shell and the engine were the same process. They are not shell concerns: every function
- * they call already lives in `packages/engine/src/proxy/webhookServer.ts`, including the listening
+ * they call already lives in `packages/engine/src/webhooks/webhookServer.ts`, including the listening
  * server and the module-level `currentPort` / `lastError` state. P9's container is the case that makes
  * it concrete — a containerised engine that cannot answer `webhookServer.status` cannot be supervised,
  * and one that cannot `webhookServer.start` cannot serve webhooks at all.

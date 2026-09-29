@@ -5,7 +5,7 @@
  * ----------------------------------------------------------
  * `src/main.ts` creates one forward proxy and one webhook receiver, then calls
  * `bindProxyInstance(proxy)` / `bindWebhookInstance(webhook)`. Every module function in `proxy/server.ts`
- * and `proxy/webhookServer.ts` then acts on **that** instance — which is the whole point, because 23 engine
+ * and `webhooks/webhookServer.ts` then acts on **that** instance — which is the whole point, because 23 engine
  * modules import `reloadConfig()` from `proxy/server.ts` and would otherwise be updating a lazily created
  * *phantom* whose config the running proxy never sees.
  *
@@ -65,7 +65,7 @@ import * as path from "path";
 import * as net from "net";
 
 import { createProxyServer, type ProxyServerInstance } from "@bifurc/engine/proxy/server";
-import { createWebhookServer, type WebhookServerInstance } from "@bifurc/engine/proxy/webhookServer";
+import { createWebhookServer, type WebhookServerInstance } from "@bifurc/engine/webhooks/webhookServer";
 import {
   bindProxyInstance,
   startServer,
@@ -80,7 +80,7 @@ import {
   stopWebhookServer,
   isWebhookServerRunning,
   getWebhookPort,
-} from "@bifurc/engine/proxy/webhookServer";
+} from "@bifurc/engine/webhooks/webhookServer";
 import {
   createWorkspace,
   getFreePort,

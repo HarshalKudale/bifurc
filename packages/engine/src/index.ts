@@ -41,7 +41,7 @@ import { startServer, isRunning, getPort, getServerError } from "./proxy/server"
 // `bindEdgeInstance` is `plan/17` §5 work item 7: the edge is per-engine state, so it is *named* to the
 // module-level binding here rather than being found through it — which is what lets `config.save` re-bind it
 // when `settings.port` changes.
-import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./proxy/edge";
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./reverseproxy/edge";
 // `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
 import { loadConfig } from "./workspace/config";
 import { bus, wireLogEventsToBus } from "./kernel/eventBus";
@@ -512,7 +512,7 @@ export * as randomNames from "./utils/randomNames";
 export * as randomizer from "./utils/randomizer";
 export * as eventBus from "./kernel/eventBus";
 export * as proxy from "./proxy/server";
-export * as webhookServer from "./proxy/webhookServer";
+export * as webhookServer from "./webhooks/webhookServer";
 // P14 WI 3 — the workspace **host**: the composition a deployable unit runs. It owns one listener per port
 // for the whole host — the edge, the forward proxy, the webhook receiver and the RPC endpoint — plus the
 // signal handling.

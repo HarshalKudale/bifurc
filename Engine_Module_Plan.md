@@ -1,11 +1,19 @@
 # Engine module layout — a plan
 
-**Status:** in progress on branch `engine_modules`. **Phases 0, 1, 2 and 3 are done and committed**
+**Status:** in progress on branch `engine_modules`. **Phases 0, 1, 2, 3 and 4 are done and committed**
 (`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · `083a026` phase 2 — the rebind
-fan-out · phase 3 — the `workspace/` split).
-**Phase 4 onward is not started.** Every number below is measured from the tree at the time of writing
+fan-out · `99d1444` phase 3 — the `workspace/` split · phase 4 — the proxy family).
+**Phase 5 onward is not started.** Every number below is measured from the tree at the time of writing
 (§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2 row 3's
-count re-measured 2026-09-29), not estimated.
+count re-measured 2026-09-29; §7.2 row 4's count re-measured 2026-09-29), not estimated.
+
+> **Phase 4 deviation from §7.2 row 4 — 14 files moved, not 22.** The row's "22" counted the whole of
+> `proxy/`. Seven of those files are the **forward proxy itself** and stay: `proxyHandler.ts`,
+> `routingUtils.ts`, `server.ts`, `serverCommands.ts`, `serverReplay.ts`, `service-discovery.ts`,
+> `tlsIntercept.ts`. What left is the four named modules (`reverseproxy/` 2, `mocks/` 3, `certificates/` 3,
+> `webhooks/` 2 = 10) plus the four shared helpers §3 already routed to `utils/` (`http`, `decompress`,
+> `response`, `server`). `proxy/` is now the **forward half** only — which is exactly the shape `plan/15`
+> work item 3 drew when it split the reverse half onto its own host-level port.
 
 > **Phase 3 deviation from §7.2 row 3 — 20 files moved, not 23.** The row's "23" counted the whole of
 > `store/`. Three of those files are *protocol leaf kinds* — `store/kinds/{graphql,grpc,soap}Kinds.ts` —
@@ -440,7 +448,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **1 — kernel + utils** | `commands/registry`→`kernel/`, `eventBus`→`kernel/`, `entityKindMap`→`kernel/kinds`, `logEmitter`→`kernel/telemetry`, `lib/`→`utils/`, `commands/echoWorkspace`→`utils/` | ~8 | Smallest, highest leverage, zero behaviour change. Proves the codemod on a safe subset. |
 | **2 — the rebind fan-out** | **§4.1. No file moves.** Add `runtime/instances.ts` (`notifyConfigChanged` + `rebindRuntimePorts`), repoint 29 call sites across 21 files. | 0 | Removes the most coupling for the least churn, and it is verifiable on its own. |
 | **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 20 | The hub moves first so feature modules have a stable target. **Done — the row's "23" counted all of `store/`; the 3 protocol leaf kinds (`store/kinds/{graphql,grpc,soap}Kinds.ts`) stay for phase 5.** |
-| **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 22 | The largest single directory; `plan/15` already decided the split. |
+| **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 14 | The largest single directory; `plan/15` already decided the split. **Done — the row's "22" counted all of `proxy/`; 7 files are the forward half and stay (`proxyHandler`, `routingUtils`, `server`, `serverCommands`, `serverReplay`, `service-discovery`, `tlsIntercept`). 10 moved to the named modules + 4 shared helpers to `utils/`.** |
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. |
 | **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. |
 | **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. |

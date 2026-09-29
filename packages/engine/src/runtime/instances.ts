@@ -27,12 +27,12 @@
  *
  * They are separate functions because they are separate questions. A listener can need one without the other —
  * the edge rebinds on a port change but has nothing to *reload* (a port is not derived from config), which is
- * exactly why `proxy/edge.ts` deliberately has no `reloadConfig()` at all.
+ * exactly why `reverseproxy/edge.ts` deliberately has no `reloadConfig()` at all.
  */
 
 import { isRunning, reloadConfig, startServer } from "../proxy/server";
-import { isEdgeRunning, restartEdge } from "../proxy/edge";
-import { isWebhookServerRunning, startWebhookServer } from "../proxy/webhookServer";
+import { isEdgeRunning, restartEdge } from "../reverseproxy/edge";
+import { isWebhookServerRunning, startWebhookServer } from "../webhooks/webhookServer";
 import type { AppConfig } from "../workspace/config";
 
 /**
@@ -43,7 +43,7 @@ import type { AppConfig } from "../workspace/config";
  *  - **proxy** — `reloadConfig()` re-reads the config and swaps this instance's in-memory dispatch state.
  *    This is the entire body of today's fan-out, and the reason the function exists.
  *  - **edge** — nothing. A port is owned by its workspace, not by the active config, so there is nothing to
- *    reload; the edge's own docblock makes this explicit (`proxy/edge.ts` L52, L108, L166).
+ *    reload; the edge's own docblock makes this explicit (`reverseproxy/edge.ts` L52, L108, L166).
  *  - **webhook** — nothing. Its active maps are *registered* by the webhook commands, not derived from config.
  *
  * A new listener lands here as one line, and **no caller changes** — which is the property §4.1 is buying.

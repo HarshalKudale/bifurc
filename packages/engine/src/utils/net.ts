@@ -38,7 +38,7 @@ export const LOOPBACK_HOSTS: readonly string[] = ["127.0.0.1", "::1", "localhost
  * records the removal and the reasoning). The engine is no longer deployable in the cloud: it runs inside the
  * Electron app or as a locally deployed container, so the name it is addressed as is a fact of the deployment
  * rather than a choice an operator makes. `runtime/host.ts` composes it directly for `status()` and for the
- * RPC's `auth.hostDomain`, and `proxy/edge.ts` defaults its own `hostDomain` to it.
+ * RPC's `auth.hostDomain`, and `reverseproxy/edge.ts` defaults its own `hostDomain` to it.
  *
  * **Kept separate from `LOOPBACK_HOSTS`, which contains the same string.** They are different facts: this one
  * says *what to call yourself*, the other says *what cannot be reached from elsewhere*. Until **2026-09-25** the
@@ -54,7 +54,7 @@ export const DEFAULT_HOST_DOMAIN = "localhost";
 /**
  * Is `host` a loopback address?
  *
- * The predicate every bind guard uses — `transport/ws.ts`'s, `proxy/server.ts`'s and `proxy/edge.ts`'s — and
+ * The predicate every bind guard uses — `transport/ws.ts`'s, `proxy/server.ts`'s and `reverseproxy/edge.ts`'s — and
  * `isAllowedOrigin()` below, which has to tell "this page is on this machine" from "this page is not".
  *
  * It used to have two other callers, both of which decided a bind **policy** before reaching a guard:
@@ -147,11 +147,11 @@ export function isAllowedOrigin(origin: string | undefined, hostDomain: string):
  * (RFC 1034) — so `App.Example.com`, `app.example.com` and `app.example.com.` are **one host with three
  * spellings**. Every *comparison* in this codebase already behaves as though that were true: `isLoopbackHost`
  * lower-cases before testing, and the edge router lower-cases the `Host` header before matching a mapping
- * (`proxy/edge.ts`). What was missing was a place that produced the canonical form — and that matters as soon
+ * (`reverseproxy/edge.ts`). What was missing was a place that produced the canonical form — and that matters as soon
  * as two **stored** names have to be compared, which is what the host's own name was against a mapping's
  * `domain` (`plan/15` §3.3's write-time collision refusal, and §4.3's editor). **The host's name stopped being
  * stored on 2026-09-24** — `--domain` was removed, so it is the constant below — and the remaining production
- * reader is `proxy/edge.ts`'s own-name gate, which canonicalises the parameter it is given.
+ * reader is `reverseproxy/edge.ts`'s own-name gate, which canonicalises the parameter it is given.
  *
  * The trailing dot is stripped rather than preserved because its only function is to *state* that the name is
  * fully qualified; two names differing only in that statement are the same name. Only one dot is removed:
