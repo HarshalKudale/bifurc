@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { getGit, queryLog } from "./gitStore";
+import { getGit, queryLog } from "../workspace/gitStore";
 import {
   wsDir,
   readEntity,

@@ -506,7 +506,7 @@ export * as types from "./workspace/types";
 export * as appSettings from "./workspace/appSettings";
 export * as config from "./workspace/config";
 export * as workspaceFs from "./workspace/workspaceFs";
-export * as gitStore from "./gitops/gitStore";
+export * as gitStore from "./workspace/gitStore";
 export * as subscription from "./workspace/entityCount";
 export * as randomNames from "./utils/randomNames";
 export * as randomizer from "./utils/randomizer";

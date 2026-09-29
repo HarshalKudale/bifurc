@@ -1,4 +1,4 @@
-import { getGit, initWorkspaceRepo } from "./gitStore";
+import { getGit, initWorkspaceRepo } from "../workspace/gitStore";
 import { wsDir } from "../workspace/workspaceFs";
 import { loadSettings, saveSettings } from "../workspace/appSettings";
 import { SyncConfig, SyncMeta, SyncState, SyncStatus } from "./types";

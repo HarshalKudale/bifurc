@@ -86,7 +86,8 @@ import { EngineError } from "@bifurc/protocol";
 import { isLoopbackHost } from "../utils/net";
 import { AppConfig } from "../workspace/config";
 import { HOP_BY_HOP } from "../utils/http";
-import { sendHtml, buildHomePage, buildNotMappedPage, buildUnservedPage } from "./pages";
+import { sendHtml } from "../utils/sendHtml";
+import { buildHomePage, buildNotMappedPage, buildUnservedPage } from "./pages";
 import {
   matchMock,
   serveMock,
@@ -97,7 +98,9 @@ import {
 } from "../mocks/mockHandler";
 import { proxyToUpstream, fetchUpstreamResponse } from "../proxy/proxyHandler";
 import { RequestLogEntry, logEmitter, emitLog } from "../kernel/telemetry";
-import { mkId, activeEnv, hostnameOf } from "../utils/server";
+import { mkId } from "../utils/id";
+import { activeEnv } from "../workspace/dispatch";
+import { hostnameOf } from "../utils/net";
 
 export interface EdgeRouterOptions {
   /**
