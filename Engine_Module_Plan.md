@@ -1,11 +1,16 @@
 # Engine module layout — a plan
 
-**Status:** in progress on branch `engine_modules`. **Phases 0, 1, 2, 3 and 4 are done and committed**
+**Status:** in progress on branch `engine_modules`. **Phases 0, 1, 2, 3, 4 and 5 are done and committed**
 (`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · `083a026` phase 2 — the rebind
-fan-out · `99d1444` phase 3 — the `workspace/` split · phase 4 — the proxy family).
-**Phase 5 onward is not started.** Every number below is measured from the tree at the time of writing
-(§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2 row 3's
-count re-measured 2026-09-29; §7.2 row 4's count re-measured 2026-09-29), not estimated.
+fan-out · `99d1444` phase 3 — the `workspace/` split · `1f748b7` phase 4 — the proxy family · phase 5 —
+the protocol verticals).
+**Phase 6 onward is not started.** Every number below is measured from the tree at the time of writing
+(§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2 rows 3
+and 4's counts re-measured 2026-09-29; row 5 confirmed exact), not estimated.
+
+> **Phase 5 was the first row whose count was right — 6.** `graphql/`, `grpc/`, `soap/` each gained
+> `kinds.ts` (from `store/kinds/*Kinds.ts`) **and** `commands.ts` (from `protocols/*Commands.ts`). After it,
+> `store/` holds exactly one file — `gitStore.ts` (phase 6) — and `protocols/` is **empty and deleted**.
 
 > **Phase 4 deviation from §7.2 row 4 — 14 files moved, not 22.** The row's "22" counted the whole of
 > `proxy/`. Seven of those files are the **forward proxy itself** and stay: `proxyHandler.ts`,
@@ -449,7 +454,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **2 — the rebind fan-out** | **§4.1. No file moves.** Add `runtime/instances.ts` (`notifyConfigChanged` + `rebindRuntimePorts`), repoint 29 call sites across 21 files. | 0 | Removes the most coupling for the least churn, and it is verifiable on its own. |
 | **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 20 | The hub moves first so feature modules have a stable target. **Done — the row's "23" counted all of `store/`; the 3 protocol leaf kinds (`store/kinds/{graphql,grpc,soap}Kinds.ts`) stay for phase 5.** |
 | **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 14 | The largest single directory; `plan/15` already decided the split. **Done — the row's "22" counted all of `proxy/`; 7 files are the forward half and stay (`proxyHandler`, `routingUtils`, `server`, `serverCommands`, `serverReplay`, `service-discovery`, `tlsIntercept`). 10 moved to the named modules + 4 shared helpers to `utils/`.** |
-| **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. |
+| **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. **Done — 6 paths as planned, the plan's first count that was right.** `store/` drains to `gitStore.ts` alone (phase 6); `protocols/` is now **empty and removed**. |
 | **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. |
 | **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. |
 | **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. **⚠ Also decides `packages/engine/tests/`'s shape:** phases 1–3 moved sources without moving their test mirrors, so `tests/commands/registry.test.ts` now tests `src/kernel/registry.ts` and `tests/lib/net.test.ts` tests `src/utils/net.ts`. The tests pass (their imports were rewritten), so this is cosmetic — but the §7.1 ratchet covers `src/` only, so nothing else will catch it. Either mirror the test tree or state explicitly that tests do not mirror. |

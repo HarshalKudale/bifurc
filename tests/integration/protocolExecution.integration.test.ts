@@ -316,9 +316,9 @@ beforeAll(async () => {
   });
 
   const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
-  const { registerGraphqlKinds } = await import("@bifurc/engine/store/kinds/graphqlKinds");
-  const { registerSoapKinds } = await import("@bifurc/engine/store/kinds/soapKinds");
-  const { registerGrpcKinds } = await import("@bifurc/engine/store/kinds/grpcKinds");
+  const { registerGraphqlKinds } = await import("@bifurc/engine/graphql/kinds");
+  const { registerSoapKinds } = await import("@bifurc/engine/soap/kinds");
+  const { registerGrpcKinds } = await import("@bifurc/engine/grpc/kinds");
   // P6 §5c: `entity.load` moved out of `coreHandlers`' module scope into the engine — and the
   // reduction's sixth group then deleted that file's channels and renamed it to `coreKinds.ts`
   // (`plan/07` §5b-septendecies). `registerCoreKinds()` is now the shell's `environments` kind and
@@ -329,9 +329,9 @@ beforeAll(async () => {
   // well. Every channel in those files *delegates* through `commandRegistry.invoke()`, so without
   // these calls the channels below exist with nothing behind them — a `No handler registered` at
   // invocation time, which is why the suite is green-looking either way until it isn't.
-  const { registerGraphqlCommands } = await import("@bifurc/engine/protocols/graphqlCommands");
-  const { registerSoapCommands } = await import("@bifurc/engine/protocols/soapCommands");
-  const { registerGrpcCommands } = await import("@bifurc/engine/protocols/grpcCommands");
+  const { registerGraphqlCommands } = await import("@bifurc/engine/graphql/commands");
+  const { registerSoapCommands } = await import("@bifurc/engine/soap/commands");
+  const { registerGrpcCommands } = await import("@bifurc/engine/grpc/commands");
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
   // All three handler groups registered below reach that factory, so without this call their channels
   // exist with nothing behind them.
