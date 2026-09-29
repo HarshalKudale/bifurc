@@ -35,14 +35,16 @@ diagnosing anything** — most traps are already recorded there.
   run is NOT the full run** — reconcile **unit + integration = the full total**. `getFreePort()` returns a
   **reservation, not a guarantee** — de-dupe every port after the first (TRAPS 112).
 - **⚠ Standing ENVIRONMENT failures — deterministic, NOT to be fixed.** `gitRemote.integration.test.ts`
-  **4/4 fail**: `git push` here reports success **without writing the remote's refs** (same shell property as
+  **fails every case** (10 individual tests; the old "4/4" counted top-level *groups*): `git push` here reports
+  success **without writing the remote's refs** (same shell property as
   `git fetch`/`refs/remotes/**` in `~/.workbuddy-ai/MEMORY.md`). The safe-delete shim (`EBUSY … rmdir` on
   `%TEMP%`) makes `gitStore.test.ts`'s `beforeEach` time out (**24/24 alone**) and leaves **four integration
   suites failing teardown only** — `fileOps`, `importExport`, `importExportBlob`, `importExportFormats`
   (`Hook timed out in 20000ms` in `afterAll`, all 116 tests pass). A suite-level `FAIL` beside
   `Tests N passed` is this, not a regression.
-- **Last full measurement 2026-09-29: 2,737 tests / 127 files** — **re-confirmed unchanged after engine-layout
-  phase 3** (unit 97 / 2,276 incl. 40 skipped; integration 30 / 461). 11 failures, **all environment**:
+- **Last full measurement 2026-09-29: 2,742 tests / 128 files** (unit 98 / 2,281 incl. 40 skipped;
+  integration 30 / 461). **Through engine-layout phase 7 it was 2,737 / 127; phase 8 added exactly +1 file /
+  +5 tests — the layout ratchet — and that delta is by design.** 11 failures, **all environment**:
   `gitRemote` 10 (sandbox `git push` writes no remote refs) + **5 hook timeouts in the
   `tests/store/`+`tests/sync/` family incl. `serverUtils`** (varying set — the shim's contention signature;
   5 this run, 1 in phase 2's), plus **four teardown-only** suite `FAIL`s (`fileOps`, `importExport`,
@@ -57,31 +59,28 @@ Electron half open. **P0–P6, P14 done. P7, P9, P16 decommissioned.** `packages
 `renderer/` is its only consumer. **⚠ P18 adds a SECOND authorization axis — per workspace
 (`PermissionContext`), not per session (`transport/auth/scopes.ts`). Do not merge them** (D19–D21).
 
-## Active work: engine module layout — branch `engine_modules`
+## Engine module layout — ALL 8 PHASES DONE (branch `engine_modules`)
 
-`Engine_Module_Plan.md` (repo root) reorganises `packages/engine/src` (140 files / 23,443 LOC) into feature
-modules behind an enforced layering rule. **Phases 0, 1, 2 and 3 are DONE and committed** (`c531c7c`
-plan/map/codemod, `16161ad` phase 1 — `kernel/` + `utils/`, `083a026` phase 2 — the rebind fan-out,
-`99d1444` phase 3 — the `store/` split). **Phase 4 (proxy family) is next and not started.**
+`Engine_Module_Plan.md` reorganised `packages/engine/src` into feature modules behind a layering rule.
+**Every phase is committed**: `c531c7c` plan/map/codemod · `16161ad` p1 `kernel/`+`utils/` · `083a026` p2
+rebind fan-out · `99d1444` p3 `store/` split · `1f748b7` p4 proxy family (14) · `8bedb72` p5 protocol
+verticals (6) · `1713dec` p6 `gitops/` (12) · `069fe87` p7 leftovers (44 renames + 4 added) · `fbb6fc7` p8
+the ratchet. **The plan's move counts were 2 right / 5 wrong** — measure, never trust the row.
 
-### The engine-layout codemod — see skill `bifurc-engine-layout-phase`
+**⚠ The layering rule is §6's per-module table, NOT §5.1's blanket ban** (they contradict; §6 governs,
+decided 2026-09-29). **`tests/engine/layout.test.ts` enforces it** — 5 assertions, teeth verified by
+mutation. Exemptions: `import type` (erased) and **`runtime/instances` (§4.1's seam — 20 edges)**. **The tree
+had 24 violations when the ratchet landed**; all are in `ALLOWED_VIOLATIONS` with reasons, and a stale entry
+fails the test, so the list can only shrink. **`kernel/eventBus.ts → gitops/` needs a DESIGN DECISION**
+(inject the readers vs. relocate `emitEntityStatus`) — §5.1's "kernel imports nothing" is currently false.
+**§5.2's ESLint half is impossible: this repo has no ESLint.** Tests **do not** mirror `src/`
+(TESTING.md §3.5). **Procedures → skill `bifurc-engine-layout-phase`** (the codemod's six blind spots + the
+Windows case-only-rename trap, the resolve-every-pointer sweep, the per-phase loop).
 
-**Phases 0–3 done** (`c531c7c` plan/map/codemod · `16161ad` p1 `kernel/`+`utils/` · `083a026` p2 rebind
-fan-out · `99d1444` p3 `store/` split). **Phase 4 (proxy family) next.** The codemod's six blind spots, the
-resolve-every-pointer sweep, and the per-phase checklist live in that skill — **load it before starting a
-phase** rather than re-deriving them.
-
-State the skill does not carry:
-
-- **`store/` now holds exactly 4 files** — `gitStore.ts` (phase 6) + `kinds/{graphql,grpc,soap}Kinds.ts`
-  (phase 5). `subscription/` is gone. `store/` never fills again; it drains.
-- **⚠ §7.1's counts were wrong** (529/104/82; only `from` counted). `plan/engine-layout-map.json` has the
-  measured numbers, a **`phaseStatus`** block, and the ratified `store/workspace/*` → `workspace/fs/*`
-  deviation. **⚠ The map's `from` fields deliberately keep the OLD paths** — they are the codemod's input,
-  not a description of the tree. The map is not "wrong" when it names a moved file.
+- **⚠ The map's `from` fields deliberately keep the OLD paths** — they are the codemod's input, not a
+  description of the tree. The map is not "wrong" when it names a moved file, and `--check` drift is expected
+  now that every phase is applied.
 - **The GUI has its own unrelated `reloadConfig`** (a UI callback in `useCaptureActions.tsx` etc.) — never
   touch it in this migration.
-- §7.3 mechanics: never `git rm`; the **stale-`dist/` trap** (`npm run clean:main` before the app build,
-  `node scripts/pkg-check-reachability.mjs` after each phase — engine's own `dist/` self-cleans, so the gate
-  is the app's root `dist/`). **`packages/**/*.test.ts` IS in the `unit` project, and
-  `packages/engine/tsconfig.json` covers `packages/engine/tests/`.**
+- **`packages/**/*.test.ts` IS in the `unit` project, and `packages/engine/tsconfig.json` covers
+  `packages/engine/tests/`.**
