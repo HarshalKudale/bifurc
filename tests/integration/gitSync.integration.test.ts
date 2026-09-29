@@ -8,7 +8,7 @@
  * the whole Audit Log silently empty, and nothing asserted it before.
  *
  * Before this suite the path was covered only in mocked-unit form:
- * `packages/engine/src/sync/publishService.ts` sat at 54%, `packages/engine/src/sync/gitOps.ts` at 74% (branches 32%),
+ * `packages/engine/src/gitops/publishService.ts` sat at 54%, `packages/engine/src/gitops/gitOps.ts` at 74% (branches 32%),
  * and `src/ipc/handlers/syncHandlers.ts` at 25% (that shell file was deleted in the P6 reduction, second
  * group, 2026-09-21). These drive the REAL git machinery behind those channels against a REAL git
  * repository in a temp workspace and assert the commits,
@@ -23,7 +23,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, TEST_WS_NAME, type WorkspaceFixture } from "./proxyHarness";
 import { initWorkspaceDir } from "@bifurc/engine/workspace/workspaceFs";
-import { initWorkspaceRepo, setDataDirOverride, queryLog, getGit } from "@bifurc/engine/store/gitStore";
+import { initWorkspaceRepo, setDataDirOverride, queryLog, getGit } from "@bifurc/engine/gitops/gitStore";
 
 // ── Electron: capture the real handlers instead of registering them ───────────
 
@@ -139,7 +139,7 @@ beforeAll(async () => {
     // registry directly and there is no longer a channel layer whose absence would surface as
     // `No handler registered` for a *channel* rather than for a command.
     const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
-    const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
+    const { registerSyncCommands } = await import("@bifurc/engine/gitops/syncCommands");
     registerSyncCommands(commandRegistry);
 });
 

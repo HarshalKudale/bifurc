@@ -5,7 +5,7 @@ import {
   loadConfig, saveConfig, generateId, Workspace,
 } from "../../workspace/config";
 import { wsDir, initWorkspaceDir } from "../../workspace/workspaceFs";
-import { initWorkspaceRepo } from "../../store/gitStore";
+import { initWorkspaceRepo } from "../../gitops/gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
 import { loadSettings, saveSettings } from "../../workspace/appSettings";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "../types";

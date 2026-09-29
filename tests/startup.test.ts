@@ -3,14 +3,14 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-vi.mock("@bifurc/engine/store/gitStore", () => ({
+vi.mock("@bifurc/engine/gitops/gitStore", () => ({
   checkGitInstalled: vi.fn(),
 }));
 vi.mock("@bifurc/engine/applications/portUtils", () => ({
   checkPortInUse: vi.fn(),
 }));
 
-import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
+import { checkGitInstalled } from "@bifurc/engine/gitops/gitStore";
 import { checkPortInUse } from "@bifurc/engine/applications/portUtils";
 import { preflight } from "@bifurc/engine/startup";
 

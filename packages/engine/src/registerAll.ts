@@ -66,7 +66,7 @@ import { registerGraphqlCommands } from "./graphql/commands";
 import { registerSoapCommands } from "./soap/commands";
 import { registerGrpcCommands } from "./grpc/commands";
 import { registerApplicationCommands } from "./applications/applicationCommands";
-import { registerSyncCommands } from "./sync/syncCommands";
+import { registerSyncCommands } from "./gitops/syncCommands";
 import { registerEntityCrudCommands } from "./workspace/entities/entityCrudCommands";
 import { registerSoapKinds } from "./soap/kinds";
 import { registerGraphqlKinds } from "./graphql/kinds";
@@ -99,7 +99,8 @@ import { registerCoreKinds } from "./workspace/entities/kinds/coreKinds";
  * **`true`** throughout — so `@bifurc/client` advertised a command that could not run, and the error
  * blamed the *kind* rather than the host. That is this file's own bug class one layer down: the commands
  * moved engine-side, the containers they consult did not. The files now live in
- * `packages/engine/src/store/kinds/`.
+ * `packages/engine/src/workspace/entities/kinds/` (phase 5 moved them out of
+ * `packages/engine/src/store/kinds/`).
  *
  * ## The shell keeps its own five explicit calls
  *

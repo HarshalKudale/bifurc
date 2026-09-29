@@ -19,7 +19,7 @@ import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
 import { registerCrudKinds } from "@bifurc/engine/workspace/entities/kinds/crudKinds";
 import { registerCoreKinds } from "@bifurc/engine/workspace/entities/kinds/coreKinds";
 
-import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
+import { onSyncStatusChange } from "@bifurc/engine/gitops/syncManager";
 import { bus, wireLogEventsToBus } from "@bifurc/engine/kernel/eventBus";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
@@ -38,7 +38,7 @@ import { registerGraphqlCommands } from "@bifurc/engine/graphql/commands";
 import { registerSoapCommands } from "@bifurc/engine/soap/commands";
 import { registerGrpcCommands } from "@bifurc/engine/grpc/commands";
 import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
-import { registerSyncCommands } from "@bifurc/engine/sync/syncCommands";
+import { registerSyncCommands } from "@bifurc/engine/gitops/syncCommands";
 import { registerEntityCrudCommands } from "@bifurc/engine/workspace/entities/entityCrudCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 

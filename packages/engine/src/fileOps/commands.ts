@@ -74,7 +74,7 @@ import { blobContentPath, describeBlobError, statBlob } from "../blob/store";
 import { publishArtifact } from "../blob/publish";
 import { caCertPath, caKeyPath } from "../certificates/certManager";
 import { loadConfig } from "../workspace/config";
-import { queryLog } from "../store/gitStore";
+import { queryLog } from "../gitops/gitStore";
 import { renderRunnerHtml } from "../runner/reportHtml";
 
 /**
