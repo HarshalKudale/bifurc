@@ -61,9 +61,9 @@ import {
     type ImportPreflightResult,
 } from "@bifurc/protocol";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
-import { registerBlobCommands } from "@bifurc/engine/blob/commands";
+import { registerBlobCommands } from "@bifurc/engine/workspace/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importexport/commands";
-import { blobRoot, statBlob } from "@bifurc/engine/blob/store";
+import { blobRoot, statBlob } from "@bifurc/engine/workspace/blob/store";
 import { getAllFormats } from "@bifurc/engine/importexport/registry";
 import { loadConfig } from "@bifurc/engine/workspace/config";
 import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";

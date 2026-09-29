@@ -192,15 +192,19 @@ packages/engine/src/
 │   ├── eventBus.ts           ← eventBus.ts
 │   ├── kinds.ts              ← commands/entityKindMap.ts
 │   └── telemetry.ts          ← proxy/logEmitter.ts   (3 areas consume it)
-├── utils/                    pure + stateless only
+├── utils/                    pure + stateless only  (⚠ see the note below — this took two attempts)
 │   ├── net.ts randomNames.ts randomizer.ts        ← lib/
 │   ├── http.ts               ← proxy/constants.ts (HOP_BY_HOP; both proxy halves use it)
-│   ├── decompress.ts response.ts server.ts        ← proxy/decompressUtils|responseUtils|serverUtils
+│   ├── decompress.ts         ← proxy/decompressUtils.ts
+│   ├── id.ts sendHtml.ts     ← split out of utils/server.ts / reverseproxy/pages.ts (cleanup)
 │   ├── replay.ts             ← proxy/serverReplay.ts  (phase 7 — shared by proxy/ and rest/)
 │   └── echoWorkspace.ts      ← commands/echoWorkspace.ts
 ├── workspace/                THE HUB — persistence. One copy, never per feature.
 │   ├── paths.ts types.ts config.ts appSettings.ts workspaceFs.ts
 │   ├── enabledSet.ts kindNameEntries.ts workspace/*.ts   ← store/
+│   ├── dispatch.ts           ← utils/server.ts's config derivations (cleanup — they read enabled.json)
+│   ├── gitStore.ts statusCache.ts   ← gitops/gitStore.ts (cleanup — per-workspace repo handle) + phase 7
+│   ├── blob/                 ← blob/  (cleanup — a disk-backed store with a TTL sweeper is persistence)
 │   ├── entities/             ← store/{entityCrud,core,folder,config,audit}Commands.ts
 │   │   └── kinds/            ← store/kinds/*Kinds.ts   (generic CRUD machinery only)
 │   └── environments/         the `environments` kind + env.setActive
@@ -218,9 +222,11 @@ packages/engine/src/
 ├── grpc/                     grpcCommands.ts + grpcKinds.ts, merged
 ├── soap/                     soapCommands.ts + soapKinds.ts, merged
 ├── gitops/                   ← sync/*.ts  +  store/gitStore.ts
-├── fileops/                  ← fileOps/            (normalised capitalisation)
+├── fileops/                  ← fileOps/  (normalised capitalisation). ⚠ **Two commands, not six** —
+│                               the `tls.*` trio went to `certificates/` and `runner.exportReport` to
+│                               `runner/` in the cleanup; what is left (`audit.export`,
+│                               `capture.shareJson`) is what no other module can own
 ├── importexport/             ← importExport/
-├── blob/                     unchanged
 ├── applications/             unchanged
 ├── runner/                   unchanged
 ├── subscription/             → folds into workspace/
@@ -401,9 +407,25 @@ blanket "never each other" contradicts §6's table, which grants `proxy/` → `m
 
 - **`import type … from` is not a layer violation** — it is erased at compile time and creates no runtime
   edge. (`kernel/eventBus.ts → webhooks/webhookServer.ts` is the only edge that relies on this.)
-- **`runtime/instances` is importable from anywhere.** It is §4.1's seam, and §6's `gitops/` row already
-  said so; the ratchet generalises it. 20 of the engine's edges are this one import — which is the seam
-  working, not a violation.
+- **The two SEAM modules are importable from anywhere** — `runtime/instances` (§4.1's fan-out; 20 of the
+  engine's edges are that one import, which is the seam working) and `runtime/entityStatus` (the
+  read-and-emit composition).
+
+**⚠ THE LESSON THE CLEANUP PAID FOR: "both halves need it" is not a reason to put something in `utils/`.**
+Phase 4 moved `proxy/{responseUtils,serverUtils}.ts` to `utils/` on exactly that reasoning, and both moves
+were wrong for the *same* reason — the rule is about what a module **reads**, not who calls it:
+
+- `utils/response.ts` had **exactly one importer** (`proxy/proxyHandler.ts`). The edge never imported it; it
+  reaches `proxyToUpstream`/`fetchUpstreamResponse` *through* `proxyHandler`. → `proxy/response.ts`.
+- `utils/server.ts` **read `enabled.json`**, so it was persistence sitting in the "pure" layer. → split into
+  `workspace/dispatch.ts` (the config derivations), `utils/id.ts` (`mkId`) and `utils/net.ts` (`hostnameOf`).
+
+**So the test to apply before putting anything in `utils/` is: does it read a file, a config, or a
+sibling module? If yes it is not a `utils/` file, however many modules call it.** And the corollary the
+cleanup also confirmed: *"two features share it"* is a reason to **extract it down** only when it is
+genuinely stateless. When it is not, it belongs in the layer it reads from — which is why the blob store
+(`workspace/blob/`) and the per-workspace git handle (`workspace/gitStore.ts`) ended up in `workspace/`
+rather than as top-level modules with grants.
 - **`registerAll.ts`** is the single exception: it may import every feature module, because enumerating them
   is its entire job.
 
@@ -462,24 +484,23 @@ assert the **positive** direction:
 | Module | Owns | May import | Public surface |
 |---|---|---|---|
 | `kernel/` | registry contract, event bus, kind name map, telemetry types | *(nothing engine-internal)* | types + `commandRegistry` |
-| `utils/` | net, random, HTTP constants, decompression, echo, **replay** (`replay.ts`, phase 7 — shared by `proxy/` and `rest/`) | `kernel/` | pure functions |
-| `workspace/` | paths, config, app settings, `workspaceFs`, enabled sets, names index, pending deletions, generic CRUD commands, all 16 kind registrations, the per-workspace status cache (`statusCache.ts`), the `healthbar.*` commands | `kernel/`, `utils/` | `loadConfig`, `writeEntity`, `register*Kinds` |
-| `reverseproxy/` | edge router, home page, mapping dispatch | `kernel/`, `utils/`, `workspace/`, `mocks/` | `createEdgeRouter`, `bindEdgeInstance` |
+| `utils/` | net, random, HTTP constants, decompression, echo, **replay** (shared by `proxy/` and `rest/`), **`id`** (`mkId`), **`sendHtml`** (the socket writer both proxy halves use) | `kernel/` | pure functions |
+| `workspace/` | paths, config, app settings, `workspaceFs`, enabled sets, names index, pending deletions, generic CRUD commands, all 16 kind registrations, the per-workspace status cache, the `healthbar.*` commands, **`dispatch.ts`** (the per-workspace dispatch config), **`gitStore.ts`** (the per-workspace repository handle + audit log), **`blob/`** (the content-addressed store) | `kernel/`, `utils/` | `loadConfig`, `writeEntity`, `register*Kinds` |
+| `reverseproxy/` | edge router, home page, mapping dispatch | `kernel/`, `utils/`, `workspace/`, `mocks/`, **`proxy/`** | `createEdgeRouter`, `bindEdgeInstance` |
 | `proxy/` | forward proxy, TLS interception, routing, replay | `kernel/`, `utils/`, `workspace/`, `mocks/`, `certificates/` | `createProxyServer`, `bindProxyInstance` |
 | `mocks/` | mock resolution, script context, script executor | `kernel/`, `utils/`, `workspace/` | `matchMock`, `serveMock`, `executeScript` |
-| `certificates/` | CA generation, identification, leaf certs | `kernel/`, `utils/`, `workspace/` | `certManager`, `registerCertCommands` |
+| `certificates/` | CA generation, identification, leaf certs, **and all six `tls.*` commands** (the three egress/ingress ones moved here from `fileops/`) | `kernel/`, `utils/`, `workspace/` | `certManager`, `registerCertCommands` |
 | `webhooks/` | webhook receiver | `kernel/`, `utils/`, `workspace/` | `createWebhookServer` |
 | `graphql/` `grpc/` `soap/` | commands + kinds for that protocol | `kernel/`, `utils/`, `workspace/` | `register*Commands`, `register*Kinds` |
 | `rest/` | the `requests` **feature** — its behaviour (replay); the kind itself registers through the shared `workspace/entities/kinds/crudKinds.ts` table (§4.4) | `kernel/`, `utils/`, `workspace/` | `registerRestCommands` |
-| `gitops/` | git handle, ops, publish, status, auto-sync, sync commands | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
+| `gitops/` | git ops, publish, status, auto-sync, sync commands *(the **handle** is `workspace/gitStore.ts`)* | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
 | `websocket/` | **nothing yet — reserved (§9)**. The `wsConnections` kind registers through the shared CRUD table; `edge.ts`'s `upgrade` branch is deliberately bodiless | `kernel/`, `utils/`, `workspace/` | *(none — placeholder)* |
-| `fileops/` | file dialogs and IO, `tls.*`, `audit.export`, `runner.exportReport` — a **command aggregator** | `kernel/`, `utils/`, `workspace/` *(reaches five other features today — see the ratchet's allowlist)* | `registerFileOpsCommands` |
-| `importexport/` | the format registry, the importers and exporters | `kernel/`, `utils/`, `workspace/` *(same caveat: it consumes `blob/` and `gitops/`)* | `registerImportExportCommands` |
-| `blob/` | the content-addressed blob store, publish, sweep | `kernel/`, `utils/`, `workspace/` | `registerBlobCommands` |
+| `fileops/` | **two egress channels** — `audit.export`, `capture.shareJson`. Was an aggregator holding six; the `tls.*` trio went to `certificates/` and `runner.exportReport` to `runner/` in the layout cleanup | `kernel/`, `utils/`, `workspace/` | `registerFileOpsCommands` |
+| `importexport/` | the format registry, the importers and exporters | `kernel/`, `utils/`, `workspace/` | `registerImportExportCommands` |
 | `applications/` | the managed-process spawner | `kernel/`, `utils/`, `workspace/` | `registerApplicationCommands` |
-| `runner/` | collection runs and the HTML report | `kernel/`, `utils/`, `workspace/` | `registerRunnerCommands` |
+| `runner/` | collection runs, the HTML report, **and `runner.exportReport`** (moved here from `fileops/`: it renders through `renderRunnerHtml`, which `runner.saveReport` in the same module already calls) | `kernel/`, `utils/`, `workspace/` | `registerRunnerCommands` |
 | `lifecycle/` | `startup` (preflight, workspace bootstrap) and `shutdown` — it **composes** the engine | everything | `preflight`, `bootstrapWorkspaces`, `shutdownEngine` |
-| `transport/` | the four transports, auth, event log | `kernel/` | `create*Transport` |
+| `transport/` | the four transports, auth, event log | `kernel/`, **`utils/`** (for `isLoopbackHost`/`hostnameOf`) | `create*Transport` |
 | `runtime/` | host, CLI, port allocator, **the listener fan-out** (`notifyConfigChanged`, `rebindRuntimePorts`) | everything except `index` | `createWorkspaceHost`, `notifyConfigChanged`, `rebindRuntimePorts` |
 
 ---

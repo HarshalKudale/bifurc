@@ -43,11 +43,11 @@ import {
   createStaging,
   describeBlobError,
   statBlob,
-} from "../blob/store";
+} from "../workspace/blob/store";
 // The inline-vs-blob decision is shared with the five other egress artifact commands
 // (`fileOps/commands.ts`) rather than owned here — `File_Ops_Protocol.md` §4 gives all six the same
 // contract, so they must all make the same choice the same way.
-import { publishArtifact } from "../blob/publish";
+import { publishArtifact } from "../workspace/blob/publish";
 import { getAllFormats, getEntry, type FormatEntry } from "./registry";
 import type { CollisionStrategy, EntityKind } from "./types";
 

@@ -14,9 +14,14 @@
  * §5.1 says feature modules may **never** import each other. §6's table grants `proxy/` → `mocks/` +
  * `certificates/` and `reverseproxy/` → `mocks/` outright. The two cannot both be the rule. **§6 governs**
  * (decided 2026-09-29): §5.1's blanket ban is the *default where §6 is silent*, and §6's per-module grants
- * are explicit exceptions. §6 also had **no row at all** for `fileops/`, `importexport/`, `blob/`,
+ * are explicit exceptions. §6 also had **no row at all** for `fileops/`, `importexport/`,
  * `applications/`, `runner/`, `websocket/` or `lifecycle/`, so `CONTRACT` below adds them — each at the
  * §5.1 default (`kernel/`, `utils/`, `workspace/`) unless §6 already said otherwise.
+ *
+ * **`blob/` is not in the table, because it is not a top-level module any more.** The layout cleanup
+ * moved it to `workspace/blob/`: it is a disk-backed store under the data dir with a TTL sweeper, i.e.
+ * persistence, and `fileops/`/`importexport/`/`certificates/`/`runner/` all reach it through the one
+ * import §6 already grants everything.
  *
  * ## Two exemptions, both principled
  *
@@ -63,7 +68,11 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   kernel: [],
   utils: ["kernel"],
   workspace: ["kernel", "utils"],
-  reverseproxy: ["kernel", "utils", "workspace", "mocks"],
+  // `proxy/` is granted: the reverse half dispatches a matched mapping into the forward half's upstream
+  // request machinery (`proxyToUpstream` / `fetchUpstreamResponse`), which is the split `plan/15` WI 3
+  // drew. **One-way** — `proxy/` no longer imports `reverseproxy/` (the shared `sendHtml` was extracted
+  // down to `utils/`), so this is a dependency, not a cycle.
+  reverseproxy: ["kernel", "utils", "workspace", "mocks", "proxy"],
   proxy: ["kernel", "utils", "workspace", "mocks", "certificates"],
   mocks: ["kernel", "utils", "workspace"],
   certificates: ["kernel", "utils", "workspace"],
@@ -78,7 +87,6 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   gitops: ["kernel", "utils", "workspace"],
   fileops: ["kernel", "utils", "workspace"],
   importexport: ["kernel", "utils", "workspace"],
-  blob: ["kernel", "utils", "workspace"],
   applications: ["kernel", "utils", "workspace"],
   runner: ["kernel", "utils", "workspace"],
   // `utils/` is granted for `hostnameOf`/`isLoopbackHost`: §6's row for this module predates `plan/15`
@@ -107,28 +115,14 @@ const ORPHANS_ALLOWED: Record<string, string> = {
  * Edges that break `CONTRACT` today. **Keyed by `src`-relative `file -> file`**, so each entry names the
  * exact import rather than a module pair — a module pair would silently cover the next violation too.
  */
-const ALLOWED_VIOLATIONS: Record<string, string> = {
-  // ── the two proxy halves import each other ────────────────────────────────────────────────────── second caller — see the entry above.", third caller — see the entry above.",
-  "reverseproxy/edge.ts -> proxy/proxyHandler.ts":
-    "The reverse half dispatches matched mappings into the forward half's handler. This is the other side of " +
-    "the cycle named above; §6's `reverseproxy/` row does not grant `proxy/`.",
-
-  // ── fileops/ is a command aggregator, like registerAll.ts ───────────────────────────────────────
-  "fileops/commands.ts -> blob/store.ts":
-    "`fileops/commands.ts` serves `file.*`, `tls.*`, `audit.export` and `runner.exportReport` — a command " +
-    "surface that spans blob storage, certificates, git and the runner. §5.1 reserves the 'may import many " +
-    "features' exception for `registerAll.ts`; this file is a second instance of it and deserves the same " +
-    "explicit treatment rather than a silent exception.",
-  "fileops/commands.ts -> blob/publish.ts": "Same aggregator — see the entry above.",
-  "fileops/commands.ts -> certificates/certManager.ts": "Same aggregator — see the entry above.",
-  "fileops/commands.ts -> runner/reportHtml.ts": "Same aggregator — see the entry above.",
-
-  // ── importexport → blob + gitops ────────────────────────────────────────────────────────────────
-  "importexport/commands.ts -> blob/store.ts":
-    "`import.export`/`import.apply` stream through the blob store, and the workspace importer needs the git " +
-    "handle to re-init a repository. Both are real capabilities this module consumes.",
-  "importexport/commands.ts -> blob/publish.ts": "Same module — see the entry above.",
-};
+/**
+ * **Empty, and that is the goal.** Every one of the 24 violations the ratchet found when it first ran has
+ * been fixed rather than excused — 22 in this cleanup, and the `kernel/eventBus.ts → gitops/` pair before
+ * it. The object stays because the two assertions that read it are what stop the *next* violation from
+ * arriving as an exception: an unknown edge fails `every relative import obeys the §6 contract`, and an
+ * entry here that no longer describes one fails `the allowlist has no stale entries`.
+ */
+const ALLOWED_VIOLATIONS: Record<string, string> = {};
 
 // ── graph construction ────────────────────────────────────────────────────────────────────────────
 
