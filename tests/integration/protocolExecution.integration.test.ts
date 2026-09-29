@@ -336,7 +336,8 @@ beforeAll(async () => {
   // All three handler groups registered below reach that factory, so without this call their channels
   // exist with nothing behind them.
   const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
-  // `request.replay` and the three `healthbar.*` commands are registered by `miscCommands`, and until the
+  // `request.replay` and the three `healthbar.*` commands were registered by `miscCommands` (dissolved
+  // in engine-layout phase 7 — now `rest/` and `workspace/` respectively), and until the
   // reduction's sixth group this suite never had to wire it: `coreHandlers.ts`'s `request:replay` channel
   // *was* the registration, so deleting that channel removed this suite's route to a command it drives
   // eleven times. Without this line the failure is `[INTERNAL] No handler registered for command
@@ -349,7 +350,12 @@ beforeAll(async () => {
   // deleted must be wired explicitly by every suite that drives it.** `src/ipc/handlers.ts` is the
   // authority for the full set — compare against its `register*Commands()` calls, not against the
   // previous version of this list.
-  const { registerMiscCommands } = await import("@bifurc/engine/miscCommands");
+  // **Engine-layout phase 7 dissolved `miscCommands.ts`** (`Engine_Module_Plan.md` §4.5), so the one
+  // import became three — the commands did not change, only the module that registers them. The
+  // `request.replay` half is `rest/`; the three `healthbar.*` are `workspace/`; `script.execute` is
+  // `mocks/` (not driven by this suite).
+  const { registerRestCommands } = await import("@bifurc/engine/rest/commands");
+  const { registerHealthbarCommands } = await import("@bifurc/engine/workspace/healthbarCommands");
   // `config.save` is the other command this suite drives by the name of a channel that §5c already
   // deleted — `invoke("config:save", …)` resolves through the `handlers.get()` fallback to a plain
   // command, so it needs its registering module wired rather than a table entry.
@@ -357,7 +363,8 @@ beforeAll(async () => {
 
   registerCoreKinds();
   registerCoreCommands(commandRegistry);
-  registerMiscCommands(commandRegistry);
+  registerRestCommands(commandRegistry);
+  registerHealthbarCommands(commandRegistry);
   registerConfigCommands(commandRegistry);
   registerGraphqlCommands(commandRegistry);
   registerSoapCommands(commandRegistry);

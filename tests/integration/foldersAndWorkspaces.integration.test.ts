@@ -196,7 +196,8 @@ beforeAll(async () => {
   // envelope reached the registry and the registry had nothing to dispatch to.
   //
   // The general rule, now seen four times in one group (spike → `registerServerCommands`; protocolExecution
-  // → `registerMiscCommands` + `registerConfigCommands`; settingsMutations → `registerConfigCommands`):
+  // → `registerRestCommands` + `registerHealthbarCommands` + `registerConfigCommands`; settingsMutations →
+  // `registerConfigCommands`):
   // **a command whose only registration came from a handler file the reduction deleted must be wired
   // explicitly by every suite that drives it.** Compare against `src/ipc/handlers.ts`'s `register*Commands()`
   // list rather than against the suite's own history.

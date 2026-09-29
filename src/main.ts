@@ -10,8 +10,8 @@ import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/webhook
 import { checkGitInstalled } from "@bifurc/engine/gitops/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 import { setDataRoot, dataDir } from "@bifurc/engine/workspace/paths";
-import { preflight, bootstrapWorkspaces } from "@bifurc/engine/startup";
-import { shutdownEngine } from "@bifurc/engine/shutdown";
+import { preflight, bootstrapWorkspaces } from "@bifurc/engine/lifecycle/startup";
+import { shutdownEngine } from "@bifurc/engine/lifecycle/shutdown";
 
 
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");

@@ -1,10 +1,21 @@
 import { getGit } from "./gitStore";
 import { getPendingDeletions, ALL_ENTITY_KINDS } from "../workspace/workspaceFs";
+import {
+  setCachedStatus,
+  getCachedStatus,
+  invalidateCache,
+  type EntitySyncStatus,
+} from "../workspace/statusCache";
 
-export type EntitySyncStatus = "clean" | "modified" | "new" | "deleted";
-
-// Map of relPath -> status per workspace
-const _cache = new Map<string, Record<string, EntitySyncStatus>>();
+/**
+ * The per-workspace status cache moved **down** into `workspace/statusCache.ts` in engine-layout
+ * phase 7. It is re-exported here (and `invalidateCache` below) so this module's existing callers —
+ * `gitOps.ts` and `syncCommands.ts`, both `gitops`-side — keep importing it from where they always
+ * have. The move exists so `workspace/`-side writers (the generic CRUD commands, and the `healthbar.*`
+ * commands phase 7 relocated) can invalidate it without a `workspace → gitops` import, which
+ * `Engine_Module_Plan.md` §5.1/§6 forbids. See `workspace/statusCache.ts` for the full rationale.
+ */
+export { invalidateCache, type EntitySyncStatus };
 
 function isEntityPath(p: string): boolean {
   const base = p.split(/[/\\]/).pop();
@@ -99,13 +110,9 @@ export async function getWorkspaceSyncStatus(wsId: string): Promise<Record<strin
       }
     }
 
-    _cache.set(wsId, result);
+    setCachedStatus(wsId, result);
     return result;
   } catch {
-    return _cache.get(wsId) ?? {};
+    return getCachedStatus(wsId);
   }
-}
-
-export function invalidateCache(wsId: string): void {
-  _cache.delete(wsId);
 }

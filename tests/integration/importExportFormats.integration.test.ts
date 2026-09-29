@@ -16,7 +16,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { getExporter, getImporter } from "@bifurc/engine/importExport/registry";
+import { getExporter, getImporter } from "@bifurc/engine/importexport/registry";
 import { exportToFile, importFile, preflightFile } from "./importExportHarness";
 import { loadConfig } from "@bifurc/engine/workspace/config";
 import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";

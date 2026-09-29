@@ -115,7 +115,7 @@ import { syncEnabledSet } from "../enabledSet";
 import { registerKindNameEntry } from "../kindNameEntries";
 import { getGit } from "../../gitops/gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
-import { invalidateCache } from "../../gitops/statusTracker";
+import { invalidateCache } from "../statusCache";
 import { bus, emitEntityStatus } from "../../kernel/eventBus";
 import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../../kernel/registry";
 import { toEngineKind } from "../../kernel/kinds";
