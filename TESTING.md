@@ -529,6 +529,78 @@ throwing on every call (§7).
 | `tests/proxy/edge.test.ts` | 47 | **The edge router** (`proxy/edge.ts`, `plan/15` work items 3 and 4) — the reverse half, on the host-level listener. Drives the real `http.Server` by capturing `http.createServer`'s handler: proxying a mapped `*.localhost` to its target, mocks applied **ahead** of mappings, hop-by-hop filtering, array-valued headers, mid-stream errors, the 512 KB log slice, the home page (**including that it never writes through `res`** — the measured basis for the whole design), the unmapped-domain 404, **re-resolving the active workspace per request**, the bind guard, `listen` called **exactly once** (D16: bound, not scanned), and lifecycle. **Work item 4:** any configured domain routes — a mapped `app.example.com` proxies and logs `via=mapping`, a mock applies to it, a LAN `target` reaches the upstream call verbatim, the two `via` labels are asserted **as a pair**, and the **negative** that matters: a host that is neither mapped nor `*.localhost` gets the home page and is neither proxied nor logged. |
 | `tests/integration/edgeSplit.integration.test.ts` | 18 | **The split itself, end to end** — two listeners with two jobs, real I/O. A `*.localhost` request reaches its mapped target **through the edge**; the forward proxy refuses a relative request **naming the edge**; and the assertion no other suite can make — **the same `Host` and path answered on each port gives two different answers**, because that difference *is* `plan/15` work item 3. Plus §3.4's headline: a forward-proxied request can now be **mocked**, with no upstream contacted. **Work item 4:** a mapped non-`.localhost` domain forwards to its target, a mock applies to it, an unmapped one gets the home page **without the upstream being contacted**, and an unmapped `*.localhost` still gets its 404. The request is made from the same machine — the *"from a machine that is not the engine's"* half of that work item's verification step is the deployment half, and is not claimed here. |
 
+### 3.5 Tests do **not** mirror `src/` — and this is the decision, not an oversight
+
+`Engine_Module_Plan.md` §7.2 row 8 left one thing open: phases 1–7 moved engine sources into feature modules
+without moving their test mirrors, so a test's directory no longer names the module it exercises. The plan's
+own words: *"Either mirror the test tree or state explicitly that tests do not mirror."*
+
+**Decision (2026-09-29): tests do not mirror `src/`.** Test directories are organised by **concern** — the
+feature area a suite was written for — and the suite keeps its name when the source moves, because the
+*source path* is not what the test is about. Renaming 25 files to chase directory parity buys nothing the
+table below does not already give, and it is exactly the kind of churn that makes a refactor's diff
+unreadable.
+
+The alternative — mirroring — is not obviously wrong; it is simply not what this suite does, and a
+half-mirrored tree is worse than either. If a future change decides to mirror, this section is the
+inventory of what has to move.
+
+**The mapping, for navigation.** Every row below is a *mismatch*; anything not listed still matches.
+
+| Test path | Actually tests |
+|---|---|
+| `tests/proxy/certManager.test.ts` | `packages/engine/src/certificates/certManager.ts` |
+| `tests/proxy/decompressUtils.test.ts` | `packages/engine/src/utils/decompress.ts` |
+| `tests/proxy/edge.test.ts` | `packages/engine/src/reverseproxy/edge.ts` |
+| `tests/proxy/mockHandler.test.ts` | `packages/engine/src/mocks/mockHandler.ts` |
+| `tests/proxy/proxyHandler.test.ts` | `packages/engine/src/proxy/proxyHandler.ts` |
+| `tests/proxy/responseUtils.test.ts` | `packages/engine/src/utils/response.ts` |
+| `tests/proxy/scriptContext.test.ts` | `packages/engine/src/mocks/scriptContext.ts` |
+| `tests/proxy/scriptExecutor.test.ts` | `packages/engine/src/mocks/scriptExecutor.ts` |
+| `tests/proxy/server.test.ts` | `packages/engine/src/proxy/server.ts` |
+| `tests/proxy/serverUtils.test.ts` | `packages/engine/src/utils/server.ts` |
+| `tests/proxy/service-discovery.test.ts` | `packages/engine/src/proxy/service-discovery.ts` |
+| `tests/proxy/tlsCert.test.ts` | `packages/engine/src/certificates/tlsCert.ts` |
+| `tests/store/appSettings.test.ts` | `packages/engine/src/workspace/appSettings.ts` |
+| `tests/store/config.test.ts` | `packages/engine/src/workspace/config.ts` |
+| `tests/store/gitStore.test.ts` | `packages/engine/src/gitops/gitStore.ts` |
+| `tests/store/paths.test.ts` | `packages/engine/src/workspace/paths.ts` |
+| `tests/store/workspaceFs.test.ts` | `packages/engine/src/workspace/workspaceFs.ts` |
+| `tests/sync/{autoSync,gitLock,gitOps,gitState,mappingPublish,syncManager}.test.ts` | `packages/engine/src/gitops/*` |
+| `tests/ipc/importExport/{postman,registry}.test.ts` | `packages/engine/src/importexport/*` |
+| `packages/engine/tests/commands/registry.test.ts` | `packages/engine/src/kernel/registry.ts` |
+| `packages/engine/tests/lib/net.test.ts` | `packages/engine/src/utils/net.ts` |
+
+`tests/proxy/` is the worst case — one directory spanning five modules (`proxy/`, `utils/`, `mocks/`,
+`certificates/`, `reverseproxy/`) — and it is the clearest illustration of why concern-based naming survived:
+those twelve suites were written as "the proxy's tests" long before the module split gave the word a
+narrower meaning.
+
+**Nothing enforces this table**, and that is deliberate: §7.1's ratchet covers `src/` layout, and a
+test-directory ratchet would be enforcing a naming convention the project has just decided not to have.
+
+### 3.6 The module-layout ratchet — `tests/engine/layout.test.ts`
+
+The one new suite engine-layout phase 8 added, and the reason it exists is in its own docblock: §5.2 says
+enforcement *"must be added in the same phase as the first move, or the rule decays"*, it was not, and the
+cost is now measured — **24 file-level contract violations** accumulated across phases 1–7 with nothing to
+catch them.
+
+Five assertions, each verified fail-able by mutation (planting `blob → gitops` fails with the exact
+`file → file` pair; adding a bogus allowlist entry fails the staleness check):
+
+| Assertion | What it catches |
+|---|---|
+| every contract module is a real directory | a module renamed in `src/` but not in the contract — its files would silently fall outside the rule |
+| every relative import obeys the §6 contract | a new import crossing a layer, reported as `file → file` with both module names |
+| the allowlist has no stale entries | an allowlist that has become a permission slip — it can only shrink |
+| no contract module is orphaned | a module nothing imports (an empty directory that looks wired) |
+| every `register*Commands` owner is reachable from `registerAll.ts` | a command module a headless consumer would answer `UNKNOWN_COMMAND` for |
+
+It is **not** an ESLint rule, and §5.2 asks for one. **This repository has no ESLint at all** — no config,
+no dependency, nothing in `node_modules/.bin` — so that half is recorded in the plan rather than taken
+unilaterally; adding a linter is a toolchain decision. The ratchet is the enforcement in the meantime.
+
 ---
 
 ## 4. Coverage report
