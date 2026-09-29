@@ -1,4 +1,4 @@
-import { registerCrudKind, registerSimpleKind } from "../../workspace/entities/entityCrudCommands";
+import { registerCrudKind, registerSimpleKind } from "../workspace/entities/entityCrudCommands";
 
 // Moved here from `src/ipc/handlers/grpcKinds.ts` on 2026-09-23 (`plan/15` work item 10), with its four
 // siblings. The container these registrations populate is what the **engine-side** `entity.*` commands read,
@@ -18,7 +18,7 @@ interface SavedGrpcRequest {
 // ## `plan/17` work item 8 removed the gRPC MOCK kind, and the mock server with it
 //
 // `grpcMocks` and `grpcMockFolders` are gone, and so are `grpc.mockServerStatus` /
-// `grpc.startMockServer` / `grpc.stopMockServer` (`protocols/grpcCommands.ts`). The owner's decision is
+// `grpc.startMockServer` / `grpc.stopMockServer` (`grpc/commands.ts`). The owner's decision is
 // **REST mocks only**; a gRPC mock is not proxy-routed at all — it was served by that mock server — and
 // with the entity kind gone the server had nothing left to serve.
 //
@@ -31,7 +31,8 @@ interface SavedGrpcRequest {
 // `grpc.execute` / `reflect` / `mockServerStatus` / `startMockServer` / `stopMockServer` used to be
 // registered at **module scope** in this file, which is the `plan/07` §5c defect: a containerised engine
 // (P9) answered `UNKNOWN_COMMAND` for all five. Step 3e slice 4 (2026-09-19) moved them into
-// `packages/engine/src/protocols/grpcCommands.ts` behind `registerGrpcCommands()`, called from
+// `packages/engine/src/~~protocols/grpcCommands.ts~~` behind `registerGrpcCommands()` (now
+// `grpc/commands.ts` — engine-layout phase 5, 2026-09-29), called from
 // `src/ipc/handlers.ts`.
 //
 // The five `ipcMain.handle` wrappers left behind were then **deleted** (P6 step 3, 2026-09-20). Each was
