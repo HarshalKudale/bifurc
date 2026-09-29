@@ -39,6 +39,24 @@ vi.mock("@bifurc/engine/proxy/server", () => ({
   replayRequest: vi.fn(),
 }));
 
+/**
+ * `Engine_Module_Plan.md` §4.1 — the **reload** fan-out now enters through `runtime/instances.ts`.
+ *
+ * **Only `notifyConfigChanged` is stubbed; `rebindRuntimePorts` is left real**, and that split is the whole
+ * point of this mock. The command under test calls *two* things: a reload (whose target is the proxy, mocked
+ * above) and a port rebind (whose targets are the edge / proxy / webhook, each already mocked at *their own*
+ * module). Stubbing both here would make the port assertions below vacuous — they would observe a stub
+ * calling nothing. So this file mocks the seam's *reload* half and lets the *rebind* half run for real against
+ * the listener mocks, which keeps every existing assertion meaningful.
+ *
+ * `importOriginal` is spread in for the same reason `proxy/edge`'s mock below is: a whole-module replacement
+ * makes `rebindRuntimePorts` `undefined` and turns the call into a `TypeError` inside the command.
+ */
+vi.mock("@bifurc/engine/runtime/instances", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/runtime/instances")>()),
+  notifyConfigChanged: vi.fn(),
+}));
+
 vi.mock("@bifurc/engine/kernel/telemetry", () => ({
   logEmitter: mockLogEmitter,
 }));
@@ -212,7 +230,10 @@ vi.mock("@bifurc/engine/store/config", () => ({
 
 import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/store/config";
 import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
-import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@bifurc/engine/proxy/server";
+import { startServer, stopServer, isRunning, getPort, getServerError, replayRequest } from "@bifurc/engine/proxy/server";
+// `Engine_Module_Plan.md` §4.1 — the reload fan-out is asserted at the seam now, not at `proxy/server`. The
+// proxy's own `reloadConfig` stays mocked above because `notifyConfigChanged` (real) calls it.
+import { notifyConfigChanged } from "@bifurc/engine/runtime/instances";
 // `plan/17` §5 work item 7 — `config.save` re-binds the edge, and the edge is the one listener reached through
 // a module-level binding rather than through a facade with a lazy default.
 import { restartEdge } from "@bifurc/engine/proxy/edge";
@@ -2119,13 +2140,13 @@ describe("src/ipc/handlers.ts", () => {
      * The contrast with `env.setActive` below is now **symmetry**, not asymmetry — see that case.
      */
     it("DOES reload the proxy — one host-level proxy follows the selection (plan/17 §1)", () => {
-      vi.mocked(reloadConfig).mockClear();
+      vi.mocked(notifyConfigChanged).mockClear();
 
       const result = workspaceSetActive("ws2");
 
       expect(result.ok).toBe(true);
       expect(currentConfig.activeWorkspaceId).toBe("ws2");
-      expect(reloadConfig).toHaveBeenCalled();
+      expect(notifyConfigChanged).toHaveBeenCalled();
     });
 
     /**
@@ -2139,11 +2160,11 @@ describe("src/ipc/handlers.ts", () => {
      * proxy's config, and a future change that drops one of the two calls should be caught in both places.
      */
     it("env.setActive DOES reload the proxy — environments are proxy state", () => {
-      vi.mocked(reloadConfig).mockClear();
+      vi.mocked(notifyConfigChanged).mockClear();
 
       commandRegistry.invoke("env.setActive", { id: "env-1" }, ENTITY_CTX);
 
-      expect(reloadConfig).toHaveBeenCalled();
+      expect(notifyConfigChanged).toHaveBeenCalled();
     });
   });
 

@@ -1,7 +1,18 @@
 # Engine module layout — a plan
 
-**Status:** proposal. **No code has been changed.** Every number below is measured from the tree at
-`standalone-engine` on 2026-09-28, not estimated.
+**Status:** in progress on branch `engine_modules`. **Phases 0, 1 and 2 are done and committed**
+(`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · phase 2 — the rebind fan-out).
+**Phase 3 onward is not started.** Every number below is measured from the tree at the time of writing
+(§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29), not estimated.
+
+> **Phase 2 deviation from §4.1 — two functions, not one.** §4.1 sketches a single
+> `notifyConfigChanged()`. Measuring the real call sites split the fan-out in two, and both were built:
+> `notifyConfigChanged()` (the **reload** fan-out — a listener whose rules derive from config; 29 call
+> sites / 21 files) and `rebindRuntimePorts(incoming, prev)` (the **port** fan-out — only
+> `store/configCommands.ts`'s `config.save` ever rebinds, and `restartEdge` / `startWebhookServer` have
+> no other caller). Conflating them under one name would have hidden the distinction §4.1 itself draws
+> when it notes *"the edge: nothing to reload — a port is owned by its workspace."* Both live in
+> `packages/engine/src/runtime/instances.ts`.
 
 **Scope:** `packages/engine/src` — 140 files, 23,443 lines. Nothing outside the engine package is
 restructured, except the import statements that point into it.
@@ -212,7 +223,9 @@ Add `mqtt/` or `vault/` and that file grows a fourth import — and so does ever
 config changed". **The coupling scales with the number of listener kinds**, which is exactly the problem the
 request is about.
 
-**The seam: `runtime/instances.ts` owns the fan-out, not the state.**
+**The seam: `runtime/instances.ts` owns the fan-out, not the state.** *(Delivered in phase 2 — and it is
+**two** functions, not the one this section first sketched. See the status note at the top of this file and
+`packages/engine/src/runtime/instances.ts` itself.)*
 
 ```ts
 // runtime/instances.ts — the one place a listener kind is registered
@@ -222,22 +235,37 @@ export function notifyConfigChanged(): void {
   // webhook:  nothing to reload — its active maps are registered, not derived from config
   // mqtt, vault, …: one line each, and no caller changes
 }
+
+// The *other* operation the §4.1 sketch left out: a config write may also move a port. Only
+// `config.save` ever rebinds, and `restartEdge`/`startWebhookServer` have no caller outside it —
+// which is the argument for giving it its own name rather than folding it into the function above.
+export function rebindRuntimePorts(incoming: AppConfig, prev: AppConfig): void { … }
 ```
 
 `workspace/entities/configCommands.ts`, `coreCommands.ts`, `entityCrudCommands.ts`, `gitops/syncCommands.ts`
-and the 17 `importexport/importers/*` sites call **`notifyConfigChanged()`**. A new listener kind then costs
+and the 17 `importexport/importers/*` sites call **`notifyConfigChanged()`**; only
+`config.save` calls **`rebindRuntimePorts()`**. A new listener kind that derives from config then costs
 one line in one file and zero edits at any call site.
 
-**Honest effect, measured rather than asserted:** this does **not** delete 23 edges. `importexport` still
+**Measured, 2026-09-29 (the figure this section's "23 call sites" should have been).** `reloadConfig` had
+**29 call sites across 21 files** that mean the fan-out: 17 × `importExport/importers/*`, `store/configCommands.ts`
+(2), `store/coreCommands.ts` (3), `store/entityCrudCommands.ts` (3), `sync/syncCommands.ts` (4), `startup.ts` (1 —
+passed as a value to `setAutoSyncReloadFn`). Everything else that matched `reloadConfig` was a docblock, the
+definition/export in `proxy/server.ts` itself, or the GUI's unrelated UI callback. After phase 2, **no module
+outside `runtime/` imports `reloadConfig` for the fan-out** (§10 criterion 4).
+
+**Honest effect, measured rather than asserted:** this does **not** delete 29 edges. `importexport` still
 imports something — it imports the fan-out point instead of the proxy. What it removes is the coupling to a
 **specific listener kind**, which is the part that grows. 17 importer sites stop naming `proxy/`; one file
-becomes the registry of listeners.
+becomes the registry of listeners. In `configCommands.ts` the change is a net **−51 lines** (−72/+21), most of
+it the three port-branch rationales relocating verbatim into `instances.ts` along with the code they explain.
 
-**⚠ A stale docblock to fix while you are in there.** `proxy/server.ts` explains the current arrangement with
-*"why this module does not import `runtime/`: `runtimeRegistry.ts`'s header records that its graph must stay
-acyclic, and `runtime/workspaceRuntime.ts` imports this module as a value."* **Both of those files were
-deleted** — `runtime/host.ts` says *"this replaces `runtimeRegistry.ts`"*. The conclusion still holds, but the
-stated reason cites two files that no longer exist, and the next reader will go looking for them.
+**⚠ A stale docblock to fix while you are in there — DONE in phase 2.** `proxy/server.ts` explained the
+arrangement with *"why this module does not import `runtime/`: `runtimeRegistry.ts`'s header records that its
+graph must stay acyclic, and `runtime/workspaceRuntime.ts` imports this module as a value."* **Both files were
+deleted** — `runtime/host.ts` says *"this replaces `runtimeRegistry.ts`"*. The docblock now cites `runtime/host.ts`
+and notes the deletions. Its parallel list of `reloadConfig` importers (which also named a since-deleted
+`transport/legacyCompanion.ts`) was rewritten to the post-phase-2 truth.
 
 ### 4.2 `kernel/` — the contract layer
 
@@ -352,7 +380,7 @@ assert the **positive** direction:
 | `rest/` | the `requests` kind, replay | `kernel/`, `utils/`, `workspace/` | `registerMiscCommands`-successor |
 | `gitops/` | git handle, ops, publish, status, auto-sync, sync commands | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
 | `transport/` | the four transports, auth, event log | `kernel/` | `create*Transport` |
-| `runtime/` | host, CLI, port allocator, **the listener fan-out** (`notifyConfigChanged`) | everything except `index` | `createWorkspaceHost`, `notifyConfigChanged` |
+| `runtime/` | host, CLI, port allocator, **the listener fan-out** (`notifyConfigChanged`, `rebindRuntimePorts`) | everything except `index` | `createWorkspaceHost`, `notifyConfigChanged`, `rebindRuntimePorts` |
 
 ---
 
@@ -402,7 +430,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 |---|---|---|---|
 | **0 — freeze** | Commit. Capture the baseline. Emit the old→new path map as `plan/engine-layout-map.json`. **No file moves.** | 0 | The map is reviewable on its own, and it is the input to every later phase. |
 | **1 — kernel + utils** | `commands/registry`→`kernel/`, `eventBus`→`kernel/`, `entityKindMap`→`kernel/kinds`, `logEmitter`→`kernel/telemetry`, `lib/`→`utils/`, `commands/echoWorkspace`→`utils/` | ~8 | Smallest, highest leverage, zero behaviour change. Proves the codemod on a safe subset. |
-| **2 — the rebind fan-out** | **§4.1. No file moves.** Add `runtime/instances.ts` (`notifyConfigChanged`), repoint 23 call sites. | 0 | Removes the most coupling for the least churn, and it is verifiable on its own. |
+| **2 — the rebind fan-out** | **§4.1. No file moves.** Add `runtime/instances.ts` (`notifyConfigChanged` + `rebindRuntimePorts`), repoint 29 call sites across 21 files. | 0 | Removes the most coupling for the least churn, and it is verifiable on its own. |
 | **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 23 | The hub moves first so feature modules have a stable target. |
 | **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 22 | The largest single directory; `plan/15` already decided the split. |
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. |

@@ -107,7 +107,7 @@ import { getWorkspaceSyncStatus, invalidateCache } from "./statusTracker";
 import { getWorkspaceGitState } from "./gitState";
 import { loadConfig } from "../store/config";
 import { sanitizeDirName } from "../store/workspaceFs";
-import { reloadConfig } from "../proxy/server";
+import { notifyConfigChanged } from "../runtime/instances";
 import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "../store/gitStore";
 import { emitEntityStatus } from "../kernel/eventBus";
 import type { CommandRegistry } from "../kernel/registry";
@@ -115,7 +115,7 @@ import type { CommandRegistry } from "../kernel/registry";
 export function registerSyncCommands(registry: CommandRegistry): void {
     registry.register("sync.setRemote", async ({ workspaceId, remote, branch }: SyncSetRemoteParams) => {
         const result = await setRemote(workspaceId, remote, branch);
-        if (result.ok) reloadConfig();
+        if (result.ok) notifyConfigChanged();
         return result;
     });
 
@@ -126,7 +126,7 @@ export function registerSyncCommands(registry: CommandRegistry): void {
     registry.register("sync.pull", async ({ workspaceId }: SyncPullParams) => {
         const result = await syncPull(workspaceId);
         if (result.ok && result.updated) {
-            reloadConfig();
+            notifyConfigChanged();
             invalidateCache(workspaceId);
             emitEntityStatus(workspaceId);
         }
@@ -158,7 +158,7 @@ export function registerSyncCommands(registry: CommandRegistry): void {
     registry.register("git.discard", async ({ workspaceId, relPath }: GitDiscardParams) => {
         const result = await discardChanges(workspaceId, relPath);
         emitEntityStatus(workspaceId);
-        reloadConfig();
+        notifyConfigChanged();
         return result;
     });
 
@@ -213,7 +213,7 @@ export function registerSyncCommands(registry: CommandRegistry): void {
     registry.register("entity.restore", async ({ workspaceId, relPath }: EntityRestoreParams) => {
         const result = await discardChanges(workspaceId, relPath);
         emitEntityStatus(workspaceId);
-        reloadConfig();
+        notifyConfigChanged();
         return result;
     });
 
