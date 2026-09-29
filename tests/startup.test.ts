@@ -12,7 +12,7 @@ vi.mock("@bifurc/engine/applications/portUtils", () => ({
 
 import { checkGitInstalled } from "@bifurc/engine/gitops/gitStore";
 import { checkPortInUse } from "@bifurc/engine/applications/portUtils";
-import { preflight } from "@bifurc/engine/startup";
+import { preflight } from "@bifurc/engine/lifecycle/startup";
 
 describe("startup/preflight", () => {
   let tmpDir: string;

@@ -6,8 +6,15 @@
   "scope": "Code files only (.ts .tsx .mts .mjs .js .cjs). Documentation is phase 8.",
   "note": "Old→new path map for the engine module reorganisation. `to: null` means the file is SPLIT across modules rather than renamed and needs hand work in its phase. `phase: 0` means the path does not change (already final, or explicitly out of scope). **⚠ `from` fields deliberately keep naming the OLD paths** — they are the input to the codemod, not a description of the current tree. Read `phaseStatus` for what has actually landed.",
   "phaseStatus": {
-    "0": { "status": "done", "commit": "c531c7c" },
-    "1": { "status": "done", "commit": "16161ad", "filesMoved": 8 },
+    "0": {
+      "status": "done",
+      "commit": "c531c7c"
+    },
+    "1": {
+      "status": "done",
+      "commit": "16161ad",
+      "filesMoved": 8
+    },
     "2": {
       "status": "done",
       "commit": "083a026",
@@ -34,14 +41,22 @@
       "filesMoved": 12,
       "note": "The `gitops/` merge. §7.2 row 6's \"12\" is exact (2 for 2 among the mid-phase rows). `store/gitStore.ts` and all 11 `sync/*` files → `gitops/`. Heaviest rewrite so far: 102 `@bifurc/engine/*` refs + 24 relative imports across 40 files. `store/` and `sync/` are both empty and removed. Hand work: the `Sync` `@vite-ignore` table row; `vitest.config.ts`'s `sync/types.ts` exclude entry → `gitops/types.ts` (the comment there said 'Phase 6 target', so it was the planned hand-off); four past-coverage-table rows in TESTING.md §4.5 marked with a path-note; ~6 live findings/mutation rows renamed; two source docblocks (`entityGit.ts`, `protocol/sync.ts`). ⚠ NOTE: `tests/store/` and `tests/sync/` are still named for the OLD layout — the codemod rewrites imports, not directories. Left for phase 8's mirror decision."
     },
-    "7": { "status": "not-started" },
-    "8": { "status": "not-started" }
+    "7": {
+      "status": "done",
+      "filesMoved": 44,
+      "note": "The leftovers. §7.2 row 7 says \"8\" and that is the row's *destination* count, not its file count — measured, this phase moves **44 files**: 42 by the codemod (39 `importExport/*` → `importexport/*`, 1 `fileOps/commands` → `fileops/commands`, 2 `{startup,shutdown}.ts` → `lifecycle/`) plus 2 hand moves (`miscCommands.ts` dissolved into 3 destinations; `proxy/serverReplay.ts` → `utils/replay.ts`), and adds 4 files (`rest/commands.ts`, `mocks/commands.ts` and the other two thirds of the `miscCommands` split, plus `workspace/statusCache.ts` and `websocket/index.ts`). ⚠ **Windows case-only renames are a no-op under `fs.renameSync`** — see the corrections entry; the 40 case-only paths had to be renamed by directory, and the git index by `git update-index`. ⚠ The `@vite-ignore` table (blind spot 6) needed THREE row changes (its `Misc` row became `Rest`+`Mock`+`Healthbar`, and `ImportExport`/`FileOps` carried the case change the codemod could not reach). Layering: §4.5 assigns `healthbar.*` to `workspace/` and `request.replay` to `rest/`, neither of which may import the module that holds its dependency (`gitops/statusTracker`, `proxy/serverReplay`), so per §5.1 the shared behaviour was extracted down — `workspace/statusCache.ts` and `utils/replay.ts`. That extraction also repaired the pre-existing `workspace/entities/entityCrudCommands.ts → gitops/statusTracker` edge. ⚠ NOT fixed, recorded for phase 8: `kernel/eventBus.ts` imports `getWorkspaceSyncStatus`/`getWorkspaceGitState` from `gitops/`, so §5.1's \"kernel imports nothing engine-internal\" is currently false and needs a design decision (injected provider vs. relocation of `emitEntityStatus`), not a move."
+    },
+    "8": {
+      "status": "not-started"
+    }
   },
   "corrections": [
     "§7.1 says \"529 deep-import statements across 104 files\" and \"82 unique paths\". Measured: 532 references across 102 files and 81 unique subpaths (263 static imports).",
     "§7.1 counts only `from` imports. Measured: 193 dynamic `import()`, 33 `vi.mock`/`vi.doMock`, 7 `typeof import()`, 1 `require()`. A `from`-only rewrite misses ~40% of the surface, and the two largest misses fail at RUNTIME, not at compile time.",
     "§7.1's consumer table (77 tests / 10 src / 3 packages = 90 files) does not sum to its own 104-file total, and omits packages/web-client and packages/client's tests.",
-    "Deviation from §3: `store/workspace/*.ts` → `workspace/fs/*.ts`, not `workspace/workspace/*.ts`. The plan's literal target produces a `workspace/workspace/` nesting; `workspace/fs/` says the same thing without the wart. Reversible — one line in the rule table."
+    "Deviation from §3: `store/workspace/*.ts` → `workspace/fs/*.ts`, not `workspace/workspace/*.ts`. The plan's literal target produces a `workspace/workspace/` nesting; `workspace/fs/` says the same thing without the wart. Reversible — one line in the rule table.",
+    "§7.2 row 7 counts *destinations*, not files: it says \"8\" but the phase moves 44 files (42 codemod + 2 hand) and creates 2. Same class of under-count as rows 3/4, opposite direction from rows 5/6.",
+    "⚠ WINDOWS CASE-ONLY RENAME TRAP (measured phase 7, 2026-09-29). `fs.renameSync(from, to)` where only a *directory* component changes case and the filename is identical is a **silent no-op** on NTFS: `mkdirSync(dirname(to))` matches the existing dir case-insensitively, so source and destination resolve byte-identically and MoveFileEx treats it as a self-move. The codemod printed \"moved importExport/commands -> importexport/commands\" for all 40 paths and moved none of them — the import specifiers WERE rewritten, so the tree then said `./importexport/commands` while the directory on disk was `importExport/`, which works on Windows and breaks on any case-sensitive filesystem (CI/Linux/macOS). Fix: rename the *directory* two-step (via a temp name), and force the git index with `git update-index --force-remove <old>` + `git add <new>` because `git add -A` cannot see a case-only change when `core.ignorecase=true`. Note the shim blocks renaming a directory that contains subdirectories, so `importExport/` had to be rebuilt: create the target, move files in, remove the emptied old tree, rename into place."
   ],
   "phases": {
     "0": "freeze — no moves",

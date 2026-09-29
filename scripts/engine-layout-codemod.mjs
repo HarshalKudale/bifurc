@@ -67,7 +67,7 @@ const FILES = [
   F("index", "index", 0),
   F("registerAll", "registerAll", 0),
   F("eventBus", "kernel/eventBus", 1),
-  F("miscCommands", null, 7, "dissolves (§4.5): request.replay→rest/, script.execute→mocks/, healthbar.*→workspace/"),
+  F("miscCommands", null, 7, "dissolves (§4.5): request.replay→rest/commands, script.execute→mocks/commands, healthbar.*→workspace/healthbarCommands — DONE (phase 7, 2026-09-29); the file no longer exists"),
   F("startup", "lifecycle/startup", 7),
   F("shutdown", "lifecycle/shutdown", 7),
 
@@ -101,7 +101,7 @@ const FILES = [
   F("proxy/proxyHandler", "proxy/proxyHandler", 0),
   F("proxy/routingUtils", "proxy/routingUtils", 0),
   F("proxy/tlsIntercept", "proxy/tlsIntercept", 0),
-  F("proxy/serverReplay", "proxy/serverReplay", 0),
+  F("proxy/serverReplay", "utils/replay", 7, "§5.1 extraction — shared by `proxy/` (routingUtils) and `request.replay` (`rest/`); two feature modules may not import each other"),
   F("proxy/service-discovery", "proxy/service-discovery", 0),
   F("proxy/serverCommands", "proxy/serverCommands", 0),
 
@@ -186,6 +186,10 @@ const FILES = [
 const ADDED = [
   { path: "runtime/instances", phase: 2, note: "§4.1 — notifyConfigChanged(), the listener fan-out" },
   { path: "websocket/index", phase: 7, note: "§9 — reserved placeholder for the `wsConnections` kind; no behaviour" },
+  { path: "workspace/statusCache", phase: 7, note: "the per-workspace entity-status cache, extracted down from `gitops/statusTracker` so `workspace/` can invalidate it without a `workspace → gitops` edge (§5.1/§6)" },
+  { path: "rest/commands", phase: 7, note: "§4.5 — `request.replay`, from the dissolved `miscCommands`" },
+  { path: "mocks/commands", phase: 7, note: "§4.5 — `script.execute`, from the dissolved `miscCommands`" },
+  { path: "workspace/healthbarCommands", phase: 7, note: "§4.5 — the three `healthbar.*` commands, from the dissolved `miscCommands`" },
 ];
 
 const byFrom = new Map(FILES.map((f) => [f.from, f]));

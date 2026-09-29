@@ -1,24 +1,37 @@
 /**
- * The five commands `packages/protocol/src/commands/misc.ts` declares that the shell was serving on
- * its own — `healthbar.getServices` / `healthbar.saveServices` / `healthbar.checkUrl`,
- * `request.replay` and `script.execute`.
+ * The three `healthbar.*` commands — `healthbar.getServices`, `healthbar.saveServices` and
+ * `healthbar.checkUrl`.
  *
- * ## Why one file for three unrelated groups
+ * ## Where this file came from
  *
- * Because that is how the protocol groups them. `healthbar.*` is workspace file IO, `request.replay`
- * is an outbound HTTP call and `script.execute` is a sandboxed `vm` run — they share no subsystem, so
- * there is no engine package that honestly owns all three. Inventing one would be worse than mirroring
- * `misc.ts`, which is the grouping every client already reads off the wire. The file is named after
- * that grouping rather than after a subsystem it does not have.
+ * It is one of the three destinations of `packages/engine/src/miscCommands.ts`, which
+ * `Engine_Module_Plan.md` §4.5 dissolved in the engine-layout's phase 7. That file held five commands
+ * that shared nothing but their protocol grouping (`packages/protocol/src/commands/misc.ts`), and its
+ * own docblock argued the grouping was honest precisely because no subsystem owned all five. Once the
+ * feature modules existed, each group had an obvious home; this is the `workspace/` third.
+ *
+ * The other two: `request.replay` → `rest/commands.ts`, `script.execute` → `mocks/commands.ts`.
+ *
+ * ## Why `workspace/` — and why that forced a cache move
+ *
+ * `getServices` / `saveServices` read and write `healthbar/services.json` under the workspace
+ * directory, so `workspace/` is the module that owns them. That was §4.5's assignment, and it is the
+ * reason phase 7 also moved the per-workspace status cache down into `workspace/statusCache.ts`:
+ * `saveServices` calls `invalidateCache()`, which used to live in `gitops/statusTracker.ts`, and
+ * `workspace/` importing `gitops/` would violate §5.1/§6. See that file for the full rationale.
+ *
+ * `checkUrl` is grouped here because the protocol groups it here, not because it is workspace file IO —
+ * it is an outbound HTTP probe with no filesystem involvement at all. The grouping is the client-facing
+ * contract; splitting it would have meant inventing a module for one command.
  *
  * ## Why these moved out of the shell (P6 finding 5)
  *
- * All five were `ipcMain.handle` bodies in `src/ipc/handlers/coreHandlers.ts`, reachable only while
+ * All three were `ipcMain.handle` bodies in `src/ipc/handlers/coreHandlers.ts`, reachable only while
  * the shell and the engine are one process. Every function they call already lives in
- * `packages/engine`: `replayRequest` (`proxy/serverReplay.ts`), `executeIpcScript`
- * (`mocks/scriptExecutor.ts`), `invalidateCache` (`sync/statusTracker.ts`) and `emitEntityStatus`
- * (`eventBus.ts`). `scopes.ts` had already assigned all five scopes (`read` / `write` / `execute`)
- * before this module existed — the same independent evidence `serverCommands.ts` found for its six.
+ * `packages/engine`: `invalidateCache` (`workspace/statusCache.ts`) and `emitEntityStatus`
+ * (`kernel/eventBus.ts`). `transport/auth/scopes.ts` had already assigned all three scopes
+ * (`read` / `write` / `execute`) before the module existed — the same independent evidence
+ * `serverCommands.ts` found for its six.
  *
  * ## The bodies are moved verbatim, with one deliberate exception
  *
@@ -27,46 +40,24 @@
  * engine's **ESM** build output (`tsup` emits `.mjs` alongside `.cjs`), so a verbatim copy would have
  * thrown at call time on the ESM entry point while typechecking and every unit test passed. Both
  * modules are imported statically instead. They are Node builtins with no cycle and no cost, and
- * `serverReplay.ts` and `webhooks/webhookServer.ts` already import them the same way.
- *
- * ## The one gap carried over rather than fixed
- *
- * `RequestReplayResult` declares `durationMs`, and `replayRequest` does not return it — so this
- * command's result has never carried the field its own frozen contract advertises. It is moved as-is
- * for the same reason `configCommands.ts` left `workspace.add`'s odd failure shape alone: changing a
- * command's result shape while moving it hides the move behind a contract change. The renderer does
- * not read it (it times the call itself — see `restTabReducer.ts`'s own `durationMs`), so this is
- * latent, and it is recorded here rather than silently patched.
+ * `utils/replay.ts` and `webhooks/webhookServer.ts` already import them the same way.
  *
  * ## The trap that no longer applies — and why it was right while it did
  *
- * The obvious "DRY" follow-up was to replace the shell's five `ipcMain.handle` bodies with
+ * The obvious "DRY" follow-up was to replace the shell's `ipcMain.handle` bodies with
  * `commandRegistry.invoke("<command>", params, ctx)`. **That was tried in `serverCommands.ts` and
- * reverted, and it is a real regression rather than a style question.**
+ * reverted, and it is a real regression rather than a style question.** The reason was how the module
+ * got registered: the `config.*` commands were registered at **module scope**, so importing that file
+ * populated them, while this module is registered by an **explicit call** — so a legacy body that
+ * delegated here acquired a hidden ordering dependency on a function callers are not obliged to run.
+ * The failure was a `No handler registered` at *invocation* time, invisible to typecheck, to the build,
+ * and to any test that runs `registerIpcHandlers()`.
  *
- * The reason was how this module gets registered. `config.get` / `env.setActive` / `workspace.setActive`
- * were registered at **module scope** in `coreHandlers.ts`, so importing that file populated them. This
- * module is registered by an **explicit call inside `registerIpcHandlers()`**, so a legacy body that
- * delegated here acquired a hidden ordering dependency on a function callers are not obliged to run —
- * and two suites already registered handler *groups* without it:
- * `tests/integration/settingsMutations.integration.test.ts`, and `tests/spike/protocolPoc.test.ts`
- * (retired 2026-09-21 with the rest of the P0 spike — see `spike/README.md`). The failure was a
- * `No handler registered` at *invocation* time, so nothing caught it at build time and the shell's own
- * handler file looked untouched.
- *
- * So the duplication was deliberate and bounded: five bodies, behaviourally identical to the handlers
- * below. **It is dissolved rather than answered.** The reduction's sixth group deleted all seventeen of
- * `coreHandlers.ts`'s channels on 2026-09-21 (`plan/07` §5b-septendecies) and the file became
- * `coreKinds.ts`; this module's five channels went with them, since they were in the same file. There is
- * one implementation and no second entry point — which is what step 3 was going to achieve by deleting
- * both halves together. §5b-sedecies generalised it: **"duplication kept deliberately to avoid a hidden
- * coupling" is a temporary answer that a deletion can retire, and retiring it needs no new coupling.**
- *
- * The generalisable half is the one worth carrying: **the trap was about the *ordering* of an explicit
- * call, and it survived every rewrite of the bodies.** Nothing in a body could have revealed it — it
- * took re-pointing them and watching two suites fail with `UNKNOWN_COMMAND`. A regression that only a
- * suite's *registration shape* can catch is invisible to typecheck, to the build, and to any test that
- * runs `registerIpcHandlers()`.
+ * That duplication was dissolved rather than answered: the P6 reduction's sixth group deleted all
+ * seventeen of `coreHandlers.ts`'s channels on 2026-09-21 (`plan/07` §5b-septendecies) and the file
+ * became `coreKinds.ts`, taking these three channels with it. The generalisable half is worth carrying:
+ * **the trap was about the *ordering* of an explicit call, and it survived every rewrite of the
+ * bodies** — only re-pointing them and watching two suites fail with `UNKNOWN_COMMAND` revealed it.
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -76,21 +67,17 @@ import type {
     HealthbarCheckUrlParams,
     HealthbarGetServicesParams,
     HealthbarSaveServicesParams,
-    RequestReplayParams,
-    ScriptExecuteParams,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "./kernel/registry";
-import { wsDir } from "./workspace/workspaceFs";
-import { invalidateCache } from "./gitops/statusTracker";
-import { emitEntityStatus } from "./kernel/eventBus";
-import { replayRequest } from "./proxy/serverReplay";
-import { executeIpcScript } from "./mocks/scriptExecutor";
+import type { CommandRegistry } from "../kernel/registry";
+import { wsDir } from "./workspaceFs";
+import { invalidateCache } from "./statusCache";
+import { emitEntityStatus } from "../kernel/eventBus";
 
 /** The healthbar's own subdirectory inside a workspace, and the file it keeps its services in. */
 const HEALTHBAR_DIR = "healthbar";
 const HEALTHBAR_FILE = "services.json";
 
-export function registerMiscCommands(registry: CommandRegistry): void {
+export function registerHealthbarCommands(registry: CommandRegistry): void {
     registry.register("healthbar.getServices", (params: HealthbarGetServicesParams) => {
         const file = path.join(wsDir(params.workspaceId), HEALTHBAR_DIR, HEALTHBAR_FILE);
         if (!fs.existsSync(file)) return [];
@@ -197,10 +184,4 @@ export function registerMiscCommands(registry: CommandRegistry): void {
             }
         });
     });
-
-    registry.register("request.replay", (params: RequestReplayParams) =>
-        replayRequest(params.method, params.url, params.headers, params.body),
-    );
-
-    registry.register("script.execute", (params: ScriptExecuteParams) => executeIpcScript(params));
 }

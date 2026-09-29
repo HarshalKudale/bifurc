@@ -65,7 +65,7 @@ import { commandRegistry, type CommandRegistry } from "../kernel/registry";
 import { registerAllEngineCommands } from "../registerAll";
 import { bus as defaultBus, type EngineEventBus } from "../kernel/eventBus";
 import { loadSettings, appDataDir, type AppSettings } from "../workspace/appSettings";
-import { bootstrapWorkspaces } from "../startup";
+import { bootstrapWorkspaces } from "../lifecycle/startup";
 import { setDataRoot, dataDir } from "../workspace/paths";
 import { EventLog } from "../transport/eventLog";
 // `DEFAULT_EDGE_BIND_HOST` is imported rather than defaulted to a literal here: the host needs the same

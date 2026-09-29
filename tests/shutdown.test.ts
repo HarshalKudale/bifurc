@@ -28,7 +28,7 @@ async function harness(): Promise<Harness> {
   const spawner = await import("@bifurc/engine/applications/processSpawner");
   const autoSync = await import("@bifurc/engine/gitops/autoSync");
   const proxy = await import("@bifurc/engine/proxy/server");
-  const shutdown = await import("@bifurc/engine/shutdown");
+  const shutdown = await import("@bifurc/engine/lifecycle/shutdown");
   return {
     shutdownEngine: shutdown.shutdownEngine,
     isShuttingDown: shutdown.isShuttingDown,

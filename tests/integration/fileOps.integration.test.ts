@@ -65,7 +65,7 @@ import {
 } from "@bifurc/protocol";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
-import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
+import { registerFileOpsCommands } from "@bifurc/engine/fileops/commands";
 import { registerCertCommands } from "@bifurc/engine/certificates/certCommands";
 import { identifyCert } from "@bifurc/engine/certificates/certManager";
 import { blobRoot } from "@bifurc/engine/blob/store";

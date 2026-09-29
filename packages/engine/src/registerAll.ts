@@ -51,13 +51,15 @@
  */
 import type { CommandRegistry } from "./kernel/registry";
 import { registerBlobCommands } from "./blob/commands";
-import { registerImportExportCommands } from "./importExport/commands";
-import { registerFileOpsCommands } from "./fileOps/commands";
+import { registerImportExportCommands } from "./importexport/commands";
+import { registerFileOpsCommands } from "./fileops/commands";
 import { registerCertCommands } from "./certificates/certCommands";
 import { registerServerCommands } from "./proxy/serverCommands";
 import { registerWebhookCommands } from "./webhooks/webhookCommands";
 import { registerConfigCommands } from "./workspace/entities/configCommands";
-import { registerMiscCommands } from "./miscCommands";
+import { registerRestCommands } from "./rest/commands";
+import { registerMockCommands } from "./mocks/commands";
+import { registerHealthbarCommands } from "./workspace/healthbarCommands";
 import { registerRunnerCommands } from "./runner/runnerCommands";
 import { registerAuditCommands } from "./workspace/entities/auditCommands";
 import { registerCoreCommands } from "./workspace/entities/coreCommands";
@@ -143,7 +145,9 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerServerCommands(registry);
   registerConfigCommands(registry);
   registerWebhookCommands(registry);
-  registerMiscCommands(registry);
+  registerRestCommands(registry);
+  registerMockCommands(registry);
+  registerHealthbarCommands(registry);
   registerRunnerCommands(registry);
   registerAuditCommands(registry);
   registerCoreCommands(registry);

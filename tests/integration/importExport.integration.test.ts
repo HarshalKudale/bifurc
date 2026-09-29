@@ -27,11 +27,11 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { getExporter, getImporter } from "@bifurc/engine/importExport/registry";
+import { getExporter, getImporter } from "@bifurc/engine/importexport/registry";
 import { exportToFile, importFile, preflightFile, sourceFromFile } from "./importExportHarness";
 import { loadConfig } from "@bifurc/engine/workspace/config";
 import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";
-import type { EntityKind, CollisionStrategy } from "@bifurc/engine/importExport/types";
+import type { EntityKind, CollisionStrategy } from "@bifurc/engine/importexport/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 // `workspaceId` is set on every fixture because that is what the real CRUD
