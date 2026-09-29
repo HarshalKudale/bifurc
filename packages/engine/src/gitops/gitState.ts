@@ -46,7 +46,7 @@
  * draws is between *a change to publish* (a diff) and *a commit to push* (ahead), and neither exists
  * here.
  */
-import { getGit } from "./gitStore";
+import { getGit } from "../workspace/gitStore";
 
 export interface WorkspaceGitState {
   /** An `origin` remote is configured. */

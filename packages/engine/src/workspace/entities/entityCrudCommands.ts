@@ -113,7 +113,7 @@ import {
 } from "../workspaceFs";
 import { syncEnabledSet } from "../enabledSet";
 import { registerKindNameEntry } from "../kindNameEntries";
-import { getGit } from "../../gitops/gitStore";
+import { getGit } from "../gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
 import { invalidateCache } from "../statusCache";
 import { bus } from "../../kernel/eventBus";

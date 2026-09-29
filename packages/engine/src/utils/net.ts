@@ -167,3 +167,37 @@ export function isAllowedOrigin(origin: string | undefined, hostDomain: string):
 export function normalizeHostname(host: string): string {
   return host.toLowerCase().replace(/\.$/, "");
 }
+
+/**
+ * The hostname from a `Host` header, with the port removed — including for an **IPv6 literal**.
+ *
+ * ## Why this is a function rather than a `.split(":")[0]` at each site
+ *
+ * Both listeners used to derive the host with `hostHeader.split(":")[0]`, which is correct for
+ * `example.com:8080` and for a bare `example.com`, and **wrong for every IPv6 literal**: `[::1]:8080` split
+ * on `:` yields `"["`. The two halves then disagreed with each other and with the browser about what the
+ * host was.
+ *
+ * It was harmless while the value was only a log label (`server.ts`'s `target`). It stopped being harmless
+ * when the edge began **routing** on it: `plan/15` work item 5's branch 4 is *"the GUI, by bare IP or
+ * localhost"*, so a user who reached the engine at `http://[::1]/` would have got the home page and no way
+ * to tell why. Fixing it at the point of use would have left the second site with the bug and no marker,
+ * which is the duplication this module records as the thing to avoid — hence one function, two callers.
+ *
+ * **Not a validator.** A malformed header is returned as it arrived rather than rejected: both callers
+ * compare the result against a configured name, so an unmatched host already has an answer (the home page,
+ * or a 404) and there is nothing a rejection could add.
+ *
+ * It lived in `utils/server.ts` until engine-layout's cleanup, which split that file because four of its six
+ * exports read the filesystem. This one is pure `Host`-header parsing, so it belongs beside
+ * `isLoopbackHost()` and `normalizeHostname()` — the module's three answers to "what host is this?".
+ */
+export function hostnameOf(hostHeader: string): string {
+  const lower = hostHeader.toLowerCase();
+  if (lower.startsWith("[")) {
+    // `[::1]:8080` → `::1`. The bracketed form is the only one in which a colon is not a port separator.
+    const close = lower.indexOf("]");
+    return close === -1 ? lower : lower.slice(1, close);
+  }
+  return lower.split(":")[0];
+}

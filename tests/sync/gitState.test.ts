@@ -38,7 +38,7 @@ let tmpDir: string;
 async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-gitstate-test-"));
 
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
 
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
@@ -58,12 +58,12 @@ async function setup() {
   const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
-  const { initWorkspaceRepo } = await import("@bifurc/engine/gitops/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/workspace/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
@@ -111,7 +111,7 @@ describe("getWorkspaceGitState — where the workspace stands relative to its re
 
   it("treats a configured-but-never-pushed branch as ahead", async () => {
     const { getWorkspaceGitState } = await import("@bifurc/engine/gitops/gitState");
-    const { getGit } = await import("@bifurc/engine/gitops/gitStore");
+    const { getGit } = await import("@bifurc/engine/workspace/gitStore");
     await addOrigin();
 
     // The engine's own git handle must see the same remote the setup just added — if these disagree,

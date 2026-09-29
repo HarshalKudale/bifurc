@@ -3,11 +3,11 @@ import * as http from "http";
 import * as https from "https";
 import { ProxyRule, LocalMapping } from "../workspace/config";
 import { HOP_BY_HOP } from "../utils/http";
-import { sendHtml } from "../reverseproxy/pages";
+import { sendHtml } from "../utils/sendHtml";
 import { executeRequestScript, executeResponseScript } from "../mocks/scriptExecutor";
 import { decompressBody, stripContentEncoding } from "../utils/decompress";
 import { emitLogChunk } from "../kernel/telemetry";
-import { handleProxyResponse, parseRawHeaders } from "../utils/response";
+import { handleProxyResponse, parseRawHeaders } from "./response";
 
 export function tcpTunnel(
   socket: net.Socket,
@@ -81,7 +81,7 @@ export {
   passthroughToUpstreamHttps,
   fetchUpstreamResponse,
   BufferedProxyResponse
-} from "../utils/response";
+} from "./response";
 
 export interface RuleMatchResult {
   matched: boolean;

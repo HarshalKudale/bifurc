@@ -81,7 +81,10 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   blob: ["kernel", "utils", "workspace"],
   applications: ["kernel", "utils", "workspace"],
   runner: ["kernel", "utils", "workspace"],
-  transport: ["kernel"],
+  // `utils/` is granted for `hostnameOf`/`isLoopbackHost`: §6's row for this module predates `plan/15`
+  // work item 2, which gave the proxy a second bind guard needing the same answer and extracted
+  // `utils/net.ts` so the two could not drift. The row is the thing that was out of date, not the import.
+  transport: ["kernel", "utils"],
   runtime: "any",
   lifecycle: "any",
 };
@@ -105,45 +108,7 @@ const ORPHANS_ALLOWED: Record<string, string> = {
  * exact import rather than a module pair — a module pair would silently cover the next violation too.
  */
 const ALLOWED_VIOLATIONS: Record<string, string> = {
-  // ── utils/ is not pure for two files phase 4 moved into it ──────────────────────────────────────
-  "utils/response.ts -> workspace/config.ts":
-    "`utils/response.ts` came from `proxy/responseUtils.ts` in phase 4, on the reasoning that both proxy " +
-    "halves need it. It is not pure: it reads the proxy rules to decide what to serve. Either it belongs " +
-    "back in a feature module or `utils/`'s §5.1 definition ('pure and stateless, no filesystem, no config " +
-    "reads') has to change. Phase 4's placement is the thing under question, not this import.",
-  "utils/response.ts -> reverseproxy/pages.ts":
-    "Same file, second dependency — it serves the reverse-proxy home page. See the entry above.",
-  "utils/response.ts -> mocks/scriptExecutor.ts":
-    "Same file, third dependency — it runs request/response scripts. See the entry above.",
-  "utils/server.ts -> workspace/config.ts":
-    "`utils/server.ts` came from `proxy/serverUtils.ts` in phase 4 and reads `loadConfig()` plus the " +
-    "enabled sets, so it is stateful persistence-adjacent code sitting in the 'pure' layer. Same question " +
-    "as `response.ts`: the placement, not the import.",
-  "utils/server.ts -> workspace/workspaceFs.ts": "Same file, second dependency — see the entry above.",
-
-  // ── transport → utils (one line, and the one §6's transport row forbids) ────────────────────────
-  "transport/ws.ts -> utils/net.ts":
-    "`isLoopbackHost` for the transport's bind guard. `utils/net.ts` exists precisely because `plan/15` work " +
-    "item 2 gave the proxy a second bind guard needing the same answer, and it was extracted so the two " +
-    "would not drift. §6's `transport/` row predates that and says `kernel/` only; the honest fix is to " +
-    "widen the row, not to duplicate the two-element list.",
-
-  // ── workspace → gitops: commands need the git handle ────────────────────────────────────────────
-  "workspace/entities/auditCommands.ts -> gitops/gitStore.ts":
-    "`audit.list` reads a workspace's commit history, so the command needs the git handle. The generic CRUD " +
-    "commands are `workspace/`-side because they own persistence, but git access is a `gitops/` capability.",
-  "workspace/entities/configCommands.ts -> gitops/gitStore.ts":
-    "Same shape — `workspace.delete` removes the workspace's repository.",
-  "workspace/entities/entityCrudCommands.ts -> gitops/gitStore.ts":
-    "Same shape — entity delete branches on git-tracking to decide whether the deletion has to be published.",
-
-  // ── the two proxy halves import each other ──────────────────────────────────────────────────────
-  "proxy/proxyHandler.ts -> reverseproxy/pages.ts":
-    "`sendHtml` for the local 404/home response. §6's `proxy/` row grants `mocks/` and `certificates/` but " +
-    "not `reverseproxy/`; the two halves are mutually dependent (see the `reverseproxy → proxy` entry), so " +
-    "one of the pair is a genuine cycle.",
-  "proxy/routingUtils.ts -> reverseproxy/pages.ts": "Same helper, second caller — see the entry above.",
-  "proxy/server.ts -> reverseproxy/pages.ts": "Same helper, third caller — see the entry above.",
+  // ── the two proxy halves import each other ────────────────────────────────────────────────────── second caller — see the entry above.", third caller — see the entry above.",
   "reverseproxy/edge.ts -> proxy/proxyHandler.ts":
     "The reverse half dispatches matched mappings into the forward half's handler. This is the other side of " +
     "the cycle named above; §6's `reverseproxy/` row does not grant `proxy/`.",
@@ -156,7 +121,6 @@ const ALLOWED_VIOLATIONS: Record<string, string> = {
     "explicit treatment rather than a silent exception.",
   "fileops/commands.ts -> blob/publish.ts": "Same aggregator — see the entry above.",
   "fileops/commands.ts -> certificates/certManager.ts": "Same aggregator — see the entry above.",
-  "fileops/commands.ts -> gitops/gitStore.ts": "Same aggregator — see the entry above.",
   "fileops/commands.ts -> runner/reportHtml.ts": "Same aggregator — see the entry above.",
 
   // ── importexport → blob + gitops ────────────────────────────────────────────────────────────────
@@ -164,8 +128,6 @@ const ALLOWED_VIOLATIONS: Record<string, string> = {
     "`import.export`/`import.apply` stream through the blob store, and the workspace importer needs the git " +
     "handle to re-init a repository. Both are real capabilities this module consumes.",
   "importexport/commands.ts -> blob/publish.ts": "Same module — see the entry above.",
-  "importexport/importers/workspace-json.ts -> gitops/gitStore.ts": "Same module — see the entry above.",
-  "importexport/importers/workspace-zip.ts -> gitops/gitStore.ts": "Same module — see the entry above.",
 };
 
 // ── graph construction ────────────────────────────────────────────────────────────────────────────

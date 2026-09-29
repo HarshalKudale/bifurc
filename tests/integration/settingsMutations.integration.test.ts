@@ -79,7 +79,7 @@ import { isCALoaded } from "@bifurc/engine/certificates/tlsCert";
 import { generateCA } from "@bifurc/engine/certificates/certManager";
 import { loadSettings, type AppSettings } from "@bifurc/engine/workspace/appSettings";
 import { loadConfig } from "@bifurc/engine/workspace/config";
-import { setDataDirOverride } from "@bifurc/engine/gitops/gitStore";
+import { setDataDirOverride } from "@bifurc/engine/workspace/gitStore";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 

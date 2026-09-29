@@ -15,7 +15,7 @@ vi.mock("@bifurc/engine/gitops/autoSync", async (importOriginal) => ({
 
 import { bootstrapWorkspaces } from "@bifurc/engine/lifecycle/startup";
 import { startAutoSync } from "@bifurc/engine/gitops/autoSync";
-import { setDataDirOverride } from "@bifurc/engine/gitops/gitStore";
+import { setDataDirOverride } from "@bifurc/engine/workspace/gitStore";
 import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import type { AppSettings } from "@bifurc/engine/workspace/appSettings";
 

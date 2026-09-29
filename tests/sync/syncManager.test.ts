@@ -14,7 +14,7 @@ async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-sync-test-"));
   remoteDir = path.join(tmpDir, "remote.git");
 
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
 
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
@@ -36,12 +36,12 @@ async function setup() {
   const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
-  const { initWorkspaceRepo } = await import("@bifurc/engine/gitops/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/workspace/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
 
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
@@ -166,7 +166,7 @@ describe("syncManager", () => {
     const dir = wsDir(WS_ID);
     fs.mkdirSync(path.join(dir, "mappings"), { recursive: true });
     fs.writeFileSync(path.join(dir, "mappings", "m1.json"), JSON.stringify({ id: "m1", domain: "test.localhost", target: "127.0.0.1:3000", enabled: true, workspaceId: WS_ID }), "utf-8");
-    const { getGit } = await import("@bifurc/engine/gitops/gitStore");
+    const { getGit } = await import("@bifurc/engine/workspace/gitStore");
     await getGit(WS_ID).add(".");
     await getGit(WS_ID).commit("add mapping");
 
