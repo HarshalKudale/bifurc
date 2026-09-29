@@ -76,7 +76,7 @@ import {
     commitMutation,
     initWorkspaceRepo,
     setDataDirOverride,
-} from "@bifurc/engine/gitops/gitStore";
+} from "@bifurc/engine/workspace/gitStore";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 
 const ctx: CommandContext = { bus: {} as CommandContext["bus"] };

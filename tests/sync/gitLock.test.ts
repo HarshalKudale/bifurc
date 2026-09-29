@@ -24,7 +24,7 @@ let tmpDir: string;
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-lock-guard-"));
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
   const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Lock Guard");
@@ -32,7 +32,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* safe-delete shim */ }
 });

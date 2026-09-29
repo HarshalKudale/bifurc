@@ -1,4 +1,4 @@
-import { getGit } from "./gitStore";
+import { getGit } from "../workspace/gitStore";
 import { getPendingDeletions, ALL_ENTITY_KINDS } from "../workspace/workspaceFs";
 import {
   setCachedStatus,

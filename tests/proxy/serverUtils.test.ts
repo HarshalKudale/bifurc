@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { workspaceCfg, activeEnv, loadEnabledSets, mkId } from "@bifurc/engine/utils/server";
+import { workspaceCfg, activeEnv, loadEnabledSets } from "@bifurc/engine/workspace/dispatch";
+import { mkId } from "@bifurc/engine/utils/id";
 import type { AppConfig } from "@bifurc/engine/workspace/config";
 import type { Environment, LocalMapping, MockRule, ProxyRule } from "@bifurc/engine/workspace/types";
 import { createWorkspace, type WorkspaceFixture } from "../integration/proxyHarness";
