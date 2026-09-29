@@ -188,8 +188,9 @@ export default defineConfig({
         // codemod cannot rewrite them: a stale entry silently stops matching and a type-only module quietly
         // returns to the coverage report. Update in the same phase as the move, every phase.
         "packages/engine/src/workspace/types.ts",
-        // Phase 6 target: `sync/` → `gitops/`. Still the old path until that phase runs.
-        "packages/engine/src/sync/types.ts",
+        // Engine phase 6 (`Engine_Module_Plan.md` §7.2): `sync/` + `gitStore` merged into `gitops/`.
+        // Was `packages/engine/src/sync/types.ts` until that phase ran.
+        "packages/engine/src/gitops/types.ts",
         // Moved here from `src/ipc/importExport/types.ts` in the layer-5 move. Re-checked, not merely
         // relocated: all ten exports are `type` / `interface` declarations, with no runtime values.
         // Phase 7 target: `importExport/` → `importexport/` (capitalisation). Still the old path.

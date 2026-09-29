@@ -29,7 +29,11 @@
       "filesMoved": 6,
       "note": "The protocol verticals. §7.2 row 5's \"6\" is the first planned count that was right. `graphql/`, `grpc/`, `soap/` each gained `kinds.ts` (from `store/kinds/*Kinds.ts`) AND `commands.ts` (from `protocols/*Commands.ts`). After it `store/` holds exactly one file (`gitStore.ts`, phase 6) and `protocols/` is empty and deleted. Hand work the codemod cannot reach: the three `@vite-ignore` table rows in `tests/integration/workspaceHost.integration.test.ts` (`Graphql`, `Soap`, `Grpc`) — blind spot 6, again; three dated \"Step 3e slice 4 moved them into <path>\" records in the new `kinds.ts` files, marked not renamed; and a plain `protocols/grpcCommands.ts` pointer in `grpc/kinds.ts` that the sweep missed because it lacked the `packages/engine/src/` prefix. `vitest.config.ts` needed no change (no protocol entry in the coverage exclude list)."
     },
-    "6": { "status": "not-started" },
+    "6": {
+      "status": "done",
+      "filesMoved": 12,
+      "note": "The `gitops/` merge. §7.2 row 6's \"12\" is exact (2 for 2 among the mid-phase rows). `store/gitStore.ts` and all 11 `sync/*` files → `gitops/`. Heaviest rewrite so far: 102 `@bifurc/engine/*` refs + 24 relative imports across 40 files. `store/` and `sync/` are both empty and removed. Hand work: the `Sync` `@vite-ignore` table row; `vitest.config.ts`'s `sync/types.ts` exclude entry → `gitops/types.ts` (the comment there said 'Phase 6 target', so it was the planned hand-off); four past-coverage-table rows in TESTING.md §4.5 marked with a path-note; ~6 live findings/mutation rows renamed; two source docblocks (`entityGit.ts`, `protocol/sync.ts`). ⚠ NOTE: `tests/store/` and `tests/sync/` are still named for the OLD layout — the codemod rewrites imports, not directories. Left for phase 8's mirror decision."
+    },
     "7": { "status": "not-started" },
     "8": { "status": "not-started" }
   },

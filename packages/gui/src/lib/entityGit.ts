@@ -36,7 +36,7 @@
  * inconsistent" report: a committed-but-unpushed entity read `clean`, so it was offered **no
  * button**, and the footer's panel-level Publish was disabled too (it counts non-`clean` entries).
  * An entity could therefore be committed locally and be impossible to push from its own row. The
- * second axis is `WorkspaceGitState.ahead` — see `packages/engine/src/sync/gitState.ts`.
+ * second axis is `WorkspaceGitState.ahead` — see `packages/engine/src/gitops/gitState.ts`.
  *
  * ## Reads fail open, writes fail closed
  *

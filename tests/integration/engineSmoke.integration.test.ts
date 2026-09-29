@@ -35,8 +35,8 @@ import * as net from "net";
 // Everything else runs for real: real temp data root, real directories, real `git init`, real
 // sockets. Mocking the store layer here would test nothing — the point of the extraction is that
 // the same on-disk effects still happen.
-vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/sync/autoSync")>()),
+vi.mock("@bifurc/engine/gitops/autoSync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/gitops/autoSync")>()),
   startAutoSync: vi.fn(),
 }));
 

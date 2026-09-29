@@ -7,7 +7,7 @@ import {
   writeEntity, writeFlatEntity, writeEnabledSet, bootstrapEnabledSet, readEnabledSet,
   upsertNameEntry, initWorkspaceDir,
 } from "../../workspace/workspaceFs";
-import { initWorkspaceRepo } from "../../store/gitStore";
+import { initWorkspaceRepo } from "../../gitops/gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
