@@ -22,7 +22,7 @@ import { registerCoreKinds } from "@bifurc/engine/workspace/entities/kinds/coreK
 import { onSyncStatusChange } from "@bifurc/engine/gitops/syncManager";
 import { bus, wireLogEventsToBus } from "@bifurc/engine/kernel/eventBus";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
-import { registerBlobCommands } from "@bifurc/engine/blob/commands";
+import { registerBlobCommands } from "@bifurc/engine/workspace/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importexport/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileops/commands";
 import { registerCertCommands } from "@bifurc/engine/certificates/certCommands";

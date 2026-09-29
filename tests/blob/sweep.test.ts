@@ -18,8 +18,8 @@ import {
   readBlob,
   releaseBlob,
   stagingRoot,
-} from "@bifurc/engine/blob/store";
-import { BLOB_SWEEP_INTERVAL_MS, startBlobSweeper, sweepBlobs } from "@bifurc/engine/blob/sweep";
+} from "@bifurc/engine/workspace/blob/store";
+import { BLOB_SWEEP_INTERVAL_MS, startBlobSweeper, sweepBlobs } from "@bifurc/engine/workspace/blob/sweep";
 import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 
 const T0 = 1_700_000_000_000;

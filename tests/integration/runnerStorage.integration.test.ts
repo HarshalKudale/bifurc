@@ -128,7 +128,7 @@ beforeAll(async () => {
   //
   // (`runnerHandlers.ts` used to supply this; its dialog+format composition is what
   // `packages/client/tests/client.test.ts` pins for the real surface. See `plan/07` §5b-novendecies.)
-  const { registerBlobCommands } = await import("@bifurc/engine/blob/commands");
+  const { registerBlobCommands } = await import("@bifurc/engine/workspace/blob/commands");
   const { registerFileOpsCommands } = await import("@bifurc/engine/fileops/commands");
   const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerRunnerCommands } = await import("@bifurc/engine/runner/runnerCommands");

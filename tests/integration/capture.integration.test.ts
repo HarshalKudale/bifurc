@@ -22,7 +22,7 @@ import * as os from "os";
 import type { RequestLogEntry } from "@bifurc/engine/kernel/telemetry";
 import { logEmitter } from "@bifurc/engine/kernel/telemetry";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
-import { registerBlobCommands } from "@bifurc/engine/blob/commands";
+import { registerBlobCommands } from "@bifurc/engine/workspace/blob/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileops/commands";
 import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 import {

@@ -86,6 +86,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import type {
+    RunnerExportReportParams,
+    RunnerExportReportResult,
     RunnerGetHistoryParams,
     RunnerListFolderIdsParams,
     RunnerLoadConfigParams,
@@ -95,6 +97,7 @@ import type {
 import type { CommandRegistry } from "../kernel/registry";
 import { wsDir } from "../workspace/workspaceFs";
 import { renderRunnerHtml } from "./reportHtml";
+import { publishArtifact } from "../workspace/blob/publish";
 
 export function registerRunnerCommands(registry: CommandRegistry): void {
     registry.register("runner.saveReport", (params: RunnerSaveReportParams) => {
@@ -139,6 +142,11 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
      * Adding a message would be a contract change smuggled in under a move, and the renderer's
      * declared result is `{ ok: boolean }`.
      */
+    // `runner.exportReport` came here from `fileops/commands.ts` in the layout cleanup: it renders the
+    // report through `renderRunnerHtml` — the same function `runner.saveReport` above uses — and
+    // `fileops/` was an aggregator holding three domains' commands. It is the runner's.
+    registry.register("runner.exportReport", (p: RunnerExportReportParams) => runnerExportReport(p));
+
     registry.register("runner.saveConfig", (params: RunnerSaveConfigParams) => {
         try {
             const runsDir = path.join(wsDir(params.workspaceId), "requests", ".runs", params.folderId);
@@ -236,4 +244,35 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
             return [];
         }
     });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runner.exportReport
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Render a collection-run report as HTML or JSON.
+ *
+ * `format` is supplied by the **client**, because only the client knows what the user chose — the
+ * pre-P3 shell decided it by testing whether the chosen path ended in `.json`, and that test has to
+ * happen before the command is called, not after.
+ *
+ * The report itself arrives over the wire rather than being read back from the workspace: the
+ * renderer can export a run it has not saved yet. That is why `RunReport` is widened in
+ * `@bifurc/protocol` to carry every field the renderer's real `RunnerRequestResult` has — a schema
+ * narrower than its only caller truncates the JSON export without saying so.
+ */
+function runnerExportReport(params: RunnerExportReportParams): RunnerExportReportResult {
+  const { report, format } = params;
+  const folderName = report.folderName ?? "collection";
+  const ts = new Date(report.startedAt).toISOString().replace(/[:.]/g, "-");
+
+  const content = format === "json" ? JSON.stringify(report, null, 2) : renderRunnerHtml(report);
+  const mimeType = format === "json" ? "application/json" : "text/html";
+
+  // `params.workspaceId` (P14 WI 8) is for the blob half only: above `BLOB_INLINE_THRESHOLD_BYTES` a
+  // report stages a blob, and the client reads it scoped to its own workspace. A *large* report is
+  // exactly the case the threshold exists for, so omitting it made the engine's own export unreadable
+  // by the client that requested it — see `blob/publish.ts`.
+  return publishArtifact(content, `${folderName}-report-${ts}.${format}`, mimeType, params.workspaceId);
 }
