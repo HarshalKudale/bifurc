@@ -50,7 +50,7 @@
  * that there is now a non-shell way to call it.
  */
 import type { CommandRegistry } from "./kernel/registry";
-import { registerBlobCommands } from "./blob/commands";
+import { registerBlobCommands } from "./workspace/blob/commands";
 import { registerImportExportCommands } from "./importexport/commands";
 import { registerFileOpsCommands } from "./fileops/commands";
 import { registerCertCommands } from "./certificates/certCommands";

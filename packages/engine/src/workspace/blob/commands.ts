@@ -19,7 +19,7 @@
  * consumers of a staged blob.
  */
 import type { BlobPutParams, BlobReadParams, BlobReleaseParams, BlobStatParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../kernel/registry";
+import type { CommandRegistry } from "../../kernel/registry";
 import { putBlob, readBlob, releaseBlob, statBlob } from "./store";
 
 /**

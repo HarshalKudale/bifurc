@@ -604,7 +604,7 @@ describe("registerAllEngineCommands — the engine-side list covers the shell's"
  */
 async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) => void) | undefined> {
   const paths: Record<string, string> = {
-    Blob: "@bifurc/engine/blob/commands",
+    Blob: "@bifurc/engine/workspace/blob/commands",
     ImportExport: "@bifurc/engine/importexport/commands",
     FileOps: "@bifurc/engine/fileops/commands",
     Cert: "@bifurc/engine/certificates/certCommands",
