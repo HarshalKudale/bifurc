@@ -73,7 +73,7 @@ import type { CommandRegistry } from "../kernel/registry";
 import { blobContentPath, describeBlobError, statBlob } from "../blob/store";
 import { publishArtifact } from "../blob/publish";
 import { caCertPath, caKeyPath } from "../proxy/certManager";
-import { loadConfig } from "../store/config";
+import { loadConfig } from "../workspace/config";
 import { queryLog } from "../store/gitStore";
 import { renderRunnerHtml } from "../runner/reportHtml";
 

@@ -1,5 +1,5 @@
 import { getGit } from "../store/gitStore";
-import { getPendingDeletions, ALL_ENTITY_KINDS } from "../store/workspaceFs";
+import { getPendingDeletions, ALL_ENTITY_KINDS } from "../workspace/workspaceFs";
 
 export type EntitySyncStatus = "clean" | "modified" | "new" | "deleted";
 

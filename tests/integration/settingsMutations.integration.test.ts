@@ -77,8 +77,8 @@ import { startServer, stopServer, isRunning, getPort } from "@bifurc/engine/prox
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
 import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
 import { generateCA } from "@bifurc/engine/proxy/certManager";
-import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
-import { loadConfig } from "@bifurc/engine/store/config";
+import { loadSettings, type AppSettings } from "@bifurc/engine/workspace/appSettings";
+import { loadConfig } from "@bifurc/engine/workspace/config";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { bus } from "@bifurc/engine/kernel/eventBus";
@@ -336,9 +336,9 @@ beforeEach(async () => {
   });
   setDataDirOverride(ws.dataRoot);
 
-  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
-  const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
+  const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
   registerCoreKinds();
   registerClientHandlers();
   registerCrudKinds();
@@ -365,13 +365,13 @@ beforeEach(async () => {
 // 29 failures in this file, all from one throw inside the second test's `beforeEach`.
 beforeAll(async () => {
   const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
-  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  const { registerCoreCommands } = await import("@bifurc/engine/workspace/entities/coreCommands");
   registerCoreCommands(commandRegistry);
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
   // This goes in the `beforeAll` above, **not** next to `registerCrudKinds()` in the `beforeEach` —
   // see the note above for why a registry registration in `beforeEach` kills every test after the
   // first. The channels below are the ones `beforeEach` re-registers harmlessly.
-  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
   registerEntityCrudCommands(commandRegistry);
   // P6 reduction, fifth group: the three `server:*` channels are gone, so `DELETED_SERVER_CHANNELS`
   // invokes the commands directly and this is the only registration they need. Same shape as the
@@ -385,7 +385,7 @@ beforeAll(async () => {
   // `No handler registered for "config:save"`: the message names the *old* surface and points the reader
   // at a file that no longer contains it, which is why the rule is to compare this suite's
   // `register*Commands()` set against `src/ipc/handlers.ts` rather than against its own history.
-  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
+  const { registerConfigCommands } = await import("@bifurc/engine/workspace/entities/configCommands");
   registerConfigCommands(commandRegistry);
 });
 

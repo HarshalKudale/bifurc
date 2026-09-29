@@ -429,7 +429,7 @@ export function writeSampleWorkspace(dataRoot: string, themeId: string | null = 
 
     /**
      * `names.json` holds **`EntityNameEntry` objects, not bare strings** — `{ name, url? , method? ,
-     * urlSuffix? , … }` per id (`packages/engine/src/store/workspace/fsNamesIndex.ts:5`), which is what
+     * urlSuffix? , … }` per id (`packages/engine/src/workspace/fs/fsNamesIndex.ts:5`), which is what
      * `upsertNameEntry()` writes on every real save and import.
      *
      * **All four names indexes below used to write `{ id: "<name>" }` — a string — and that silently

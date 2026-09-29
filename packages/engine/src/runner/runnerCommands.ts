@@ -93,7 +93,7 @@ import type {
     RunnerSaveReportParams,
 } from "@bifurc/protocol";
 import type { CommandRegistry } from "../kernel/registry";
-import { wsDir } from "../store/workspaceFs";
+import { wsDir } from "../workspace/workspaceFs";
 import { renderRunnerHtml } from "./reportHtml";
 
 export function registerRunnerCommands(registry: CommandRegistry): void {

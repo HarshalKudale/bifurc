@@ -2,8 +2,8 @@ import simpleGit, { SimpleGit } from "simple-git";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { AuditAction, AuditEntity, AuditEntry } from "./types";
-import { wsDir as _wsDir, setDataRootOverride } from "./workspaceFs";
+import { AuditAction, AuditEntity, AuditEntry } from "../workspace/types";
+import { wsDir as _wsDir, setDataRootOverride } from "../workspace/workspaceFs";
 
 export type { AuditAction, AuditEntity, AuditEntry };
 

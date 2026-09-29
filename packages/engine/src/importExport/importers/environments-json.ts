@@ -1,7 +1,7 @@
 import {
   loadConfig, saveConfig, generateId, Environment,
-} from "../../store/config";
-import { writeFlatEntity, readAllEntities } from "../../store/workspaceFs";
+} from "../../workspace/config";
+import { writeFlatEntity, readAllEntities } from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 

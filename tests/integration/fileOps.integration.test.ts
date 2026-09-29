@@ -69,9 +69,9 @@ import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
 import { identifyCert } from "@bifurc/engine/proxy/certManager";
 import { blobRoot } from "@bifurc/engine/blob/store";
-import { appDataDir } from "@bifurc/engine/store/appSettings";
-import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
-import { initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
+import { appDataDir } from "@bifurc/engine/workspace/appSettings";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
+import { initWorkspaceDir } from "@bifurc/engine/workspace/workspaceFs";
 import {
     commitMutation,
     initWorkspaceRepo,

@@ -74,8 +74,8 @@ import * as os from "os";
 import * as path from "path";
 import * as net from "net";
 
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import { createWorkspaceHost } from "@bifurc/engine/runtime/host";
 import { createSocketTransport } from "@bifurc/engine/transport/socket";
 import { CommandRegistry, commandRegistry } from "@bifurc/engine/kernel/registry";
@@ -591,10 +591,16 @@ describe("registerAllEngineCommands — the engine-side list covers the shell's"
  * Resolve one `register<Name>Commands` export by the short name the shell's call site uses.
  *
  * The mapping is explicit rather than computed: module paths are the one thing that cannot be derived from
- * the function name (they are `proxy/certCommands`, `store/coreCommands`, `miscCommands`, …), and a computed
- * guess that silently resolved to the wrong module would make the guard above compare against the wrong list.
- * An entry appearing in the shell's source without a row here is a **failure** in the test, not a skip —
- * that is what keeps this table from rotting as the shell adds calls.
+ * the function name (they are `proxy/certCommands`, `workspace/entities/coreCommands`, `miscCommands`, …), and a
+ * computed guess that silently resolved to the wrong module would make the guard above compare against the
+ * wrong list. An entry appearing in the shell's source without a row here is a **failure** in the test, not a
+ * skip — that is what keeps this table from rotting as the shell adds calls.
+ *
+ * ⚠ **This table is invisible to the engine-layout codemod.** The specifiers are plain string *values* passed
+ * to `import()` as a variable, so there is no import specifier for a rewrite to match — and `@vite-ignore`
+ * keeps Vite from resolving them at build time. Every engine-layout phase that moves a module named here
+ * must update this row by hand, or the guard above fails with `Cannot find package '@bifurc/engine/…'`
+ * (which is how phase 3's `store/` → `workspace/` split was caught).
  */
 async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) => void) | undefined> {
   const paths: Record<string, string> = {
@@ -604,18 +610,18 @@ async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) 
     Cert: "@bifurc/engine/proxy/certCommands",
     Server: "@bifurc/engine/proxy/serverCommands",
     Webhook: "@bifurc/engine/proxy/webhookCommands",
-    Config: "@bifurc/engine/store/configCommands",
+    Config: "@bifurc/engine/workspace/entities/configCommands",
     Misc: "@bifurc/engine/miscCommands",
     Runner: "@bifurc/engine/runner/runnerCommands",
-    Audit: "@bifurc/engine/store/auditCommands",
-    Core: "@bifurc/engine/store/coreCommands",
-    Folder: "@bifurc/engine/store/folderCommands",
+    Audit: "@bifurc/engine/workspace/entities/auditCommands",
+    Core: "@bifurc/engine/workspace/entities/coreCommands",
+    Folder: "@bifurc/engine/workspace/entities/folderCommands",
     Graphql: "@bifurc/engine/protocols/graphqlCommands",
     Soap: "@bifurc/engine/protocols/soapCommands",
     Grpc: "@bifurc/engine/protocols/grpcCommands",
     Application: "@bifurc/engine/applications/applicationCommands",
     Sync: "@bifurc/engine/sync/syncCommands",
-    EntityCrud: "@bifurc/engine/store/entityCrudCommands",
+    EntityCrud: "@bifurc/engine/workspace/entities/entityCrudCommands",
   };
   const specifier = paths[shortName];
   if (specifier === undefined) return undefined;

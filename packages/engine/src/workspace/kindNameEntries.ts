@@ -19,7 +19,7 @@
  * functions directly instead of going through `registerAll` — gets `null` and falls back to its own
  * table. See `extractNameEntry()` in `sync/gitOps.ts` for that fallback and its reasoning.
  */
-import type { EntityNameEntry } from "./workspace/fsNamesIndex";
+import type { EntityNameEntry } from "./fs/fsNamesIndex";
 
 type NameEntryResolver = (entity: any) => EntityNameEntry | null;
 

@@ -1,8 +1,8 @@
 import * as net from "net";
 import { EngineError } from "@bifurc/protocol";
 import { isLoopbackHost } from "../utils/net";
-import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../store/config";
-import { readAllEntities } from "../store/workspaceFs";
+import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../workspace/config";
+import { readAllEntities } from "../workspace/workspaceFs";
 import { HOP_BY_HOP } from "./constants";
 import { sendHtml } from "./pages";
 import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";

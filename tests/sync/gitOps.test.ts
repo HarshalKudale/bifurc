@@ -15,7 +15,7 @@ import {
   upsertNameEntry,
   readNamesIndex,
   wsDir,
-} from "@bifurc/engine/store/workspaceFs";
+} from "@bifurc/engine/workspace/workspaceFs";
 
 let tmpDir: string;
 const WS_ID = "ws-gitops-test";
@@ -26,7 +26,7 @@ async function setup() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride(tmpDir);
 
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   fs.writeFileSync(
@@ -40,7 +40,7 @@ async function setup() {
     "utf-8",
   );
 
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
   const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
@@ -51,7 +51,7 @@ async function teardown() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride("");
 
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });

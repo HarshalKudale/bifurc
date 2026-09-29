@@ -1,9 +1,17 @@
 # Engine module layout — a plan
 
-**Status:** in progress on branch `engine_modules`. **Phases 0, 1 and 2 are done and committed**
-(`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · phase 2 — the rebind fan-out).
-**Phase 3 onward is not started.** Every number below is measured from the tree at the time of writing
-(§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29), not estimated.
+**Status:** in progress on branch `engine_modules`. **Phases 0, 1, 2 and 3 are done and committed**
+(`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · `083a026` phase 2 — the rebind
+fan-out · phase 3 — the `workspace/` split).
+**Phase 4 onward is not started.** Every number below is measured from the tree at the time of writing
+(§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2 row 3's
+count re-measured 2026-09-29), not estimated.
+
+> **Phase 3 deviation from §7.2 row 3 — 20 files moved, not 23.** The row's "23" counted the whole of
+> `store/`. Three of those files are *protocol leaf kinds* — `store/kinds/{graphql,grpc,soap}Kinds.ts` —
+> which belong to the **phase 5** verticals (`graphql/`, `grpc/`, `soap/`) and were deliberately left in
+> `store/` so that phase 5 has them to absorb. After phase 3, `store/` holds exactly four files: those
+> three plus `gitStore.ts` (phase 6).
 
 > **Phase 2 deviation from §4.1 — two functions, not one.** §4.1 sketches a single
 > `notifyConfigChanged()`. Measuring the real call sites split the fan-out in two, and both were built:
@@ -431,7 +439,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **0 — freeze** | Commit. Capture the baseline. Emit the old→new path map as `plan/engine-layout-map.json`. **No file moves.** | 0 | The map is reviewable on its own, and it is the input to every later phase. |
 | **1 — kernel + utils** | `commands/registry`→`kernel/`, `eventBus`→`kernel/`, `entityKindMap`→`kernel/kinds`, `logEmitter`→`kernel/telemetry`, `lib/`→`utils/`, `commands/echoWorkspace`→`utils/` | ~8 | Smallest, highest leverage, zero behaviour change. Proves the codemod on a safe subset. |
 | **2 — the rebind fan-out** | **§4.1. No file moves.** Add `runtime/instances.ts` (`notifyConfigChanged` + `rebindRuntimePorts`), repoint 29 call sites across 21 files. | 0 | Removes the most coupling for the least churn, and it is verifiable on its own. |
-| **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 23 | The hub moves first so feature modules have a stable target. |
+| **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 20 | The hub moves first so feature modules have a stable target. **Done — the row's "23" counted all of `store/`; the 3 protocol leaf kinds (`store/kinds/{graphql,grpc,soap}Kinds.ts`) stay for phase 5.** |
 | **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 22 | The largest single directory; `plan/15` already decided the split. |
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. |
 | **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. |

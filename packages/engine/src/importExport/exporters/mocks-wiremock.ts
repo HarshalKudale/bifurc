@@ -1,4 +1,4 @@
-import { loadConfig, MockRule } from "../../store/config";
+import { loadConfig, MockRule } from "../../workspace/config";
 import type { ExportResult } from "../types";
 
 function mockToWireMock(m: MockRule): object {

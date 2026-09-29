@@ -1,7 +1,7 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { ProxyRule, LocalMapping } from "../store/config";
+import { ProxyRule, LocalMapping } from "../workspace/config";
 import { HOP_BY_HOP } from "./constants";
 import { sendHtml } from "./pages";
 import { executeRequestScript, executeResponseScript } from "./scriptExecutor";

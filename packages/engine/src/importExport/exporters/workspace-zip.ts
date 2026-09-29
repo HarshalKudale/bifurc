@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import { ZipArchive } from "archiver";
-import { wsDir } from "../../store/workspaceFs";
+import { wsDir } from "../../workspace/workspaceFs";
 import type { PathExportResult } from "../types";
 
 /**

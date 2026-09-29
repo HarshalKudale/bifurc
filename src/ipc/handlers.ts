@@ -16,8 +16,8 @@ import { registerSoapKinds } from "@bifurc/engine/store/kinds/soapKinds";
 import { registerGraphqlKinds } from "@bifurc/engine/store/kinds/graphqlKinds";
 import { registerGrpcKinds } from "@bifurc/engine/store/kinds/grpcKinds";
 import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
-import { registerCrudKinds } from "@bifurc/engine/store/kinds/crudKinds";
-import { registerCoreKinds } from "@bifurc/engine/store/kinds/coreKinds";
+import { registerCrudKinds } from "@bifurc/engine/workspace/entities/kinds/crudKinds";
+import { registerCoreKinds } from "@bifurc/engine/workspace/entities/kinds/coreKinds";
 
 import { onSyncStatusChange } from "@bifurc/engine/sync/syncManager";
 import { bus, wireLogEventsToBus } from "@bifurc/engine/kernel/eventBus";
@@ -28,18 +28,18 @@ import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
 import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
 import { registerServerCommands } from "@bifurc/engine/proxy/serverCommands";
 import { registerWebhookCommands } from "@bifurc/engine/proxy/webhookCommands";
-import { registerConfigCommands } from "@bifurc/engine/store/configCommands";
+import { registerConfigCommands } from "@bifurc/engine/workspace/entities/configCommands";
 import { registerMiscCommands } from "@bifurc/engine/miscCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
-import { registerAuditCommands } from "@bifurc/engine/store/auditCommands";
-import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
-import { registerFolderCommands } from "@bifurc/engine/store/folderCommands";
+import { registerAuditCommands } from "@bifurc/engine/workspace/entities/auditCommands";
+import { registerCoreCommands } from "@bifurc/engine/workspace/entities/coreCommands";
+import { registerFolderCommands } from "@bifurc/engine/workspace/entities/folderCommands";
 import { registerGraphqlCommands } from "@bifurc/engine/protocols/graphqlCommands";
 import { registerSoapCommands } from "@bifurc/engine/protocols/soapCommands";
 import { registerGrpcCommands } from "@bifurc/engine/protocols/grpcCommands";
 import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
 import { registerSyncCommands } from "@bifurc/engine/sync/syncCommands";
-import { registerEntityCrudCommands } from "@bifurc/engine/store/entityCrudCommands";
+import { registerEntityCrudCommands } from "@bifurc/engine/workspace/entities/entityCrudCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -122,7 +122,7 @@ export function registerIpcHandlers(): void {
   // sends (`packages/gui/src/panels/AuditLogPanel.tsx:61–62`, its date filter). The ratchet filed this as
   // `NARROWED` and called the narrowing "latent, not live" because no renderer code calls `listAudit`
   // by name — that check was a grep for the method name, so the conclusion was backwards. Widened
-  // 2026-09-19; see `packages/engine/src/store/auditCommands.ts`.
+  // 2026-09-19; see `packages/engine/src/workspace/entities/auditCommands.ts`.
   registerAuditCommands(commandRegistry);
   // P6 §5c, first slice: `config.get`, `env.setActive`, `workspace.setActive`, `entity.load` and
   // `entity.setEnabled` were registered at **module scope** in `handlers/coreHandlers.ts` (now

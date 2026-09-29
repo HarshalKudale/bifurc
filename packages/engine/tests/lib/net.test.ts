@@ -1,5 +1,5 @@
 /**
- * `packages/engine/src/lib/net.ts` — the two facts about a hostname **string**.
+ * `packages/engine/src/utils/net.ts` — the two facts about a hostname **string**.
  *
  * ## Why this file exists now, and did not before
  *

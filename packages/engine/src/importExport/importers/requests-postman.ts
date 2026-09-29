@@ -1,9 +1,9 @@
 import {
   loadConfig, saveConfig, generateId, SavedRequest, Folder,
-} from "../../store/config";
+} from "../../workspace/config";
 import {
   writeEntity, upsertNameEntry, readAllEntities,
-} from "../../store/workspaceFs";
+} from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
 import { parsePostmanRequests } from "../formats/postman";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";

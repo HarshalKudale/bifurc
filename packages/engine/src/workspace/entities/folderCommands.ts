@@ -46,16 +46,16 @@ import type {
     FolderMoveParams,
     FolderRenameParams,
 } from "@bifurc/protocol";
-import { loadConfig, saveConfig, generateId, type Folder } from "./config";
+import { loadConfig, saveConfig, generateId, type Folder } from "../config";
 import {
     readIndex,
     writeIndex,
     wsDir,
     sanitizeDirName,
     deleteEntityDir,
-} from "./workspaceFs";
-import { bus } from "../kernel/eventBus";
-import type { CommandRegistry } from "../kernel/registry";
+} from "../workspaceFs";
+import { bus } from "../../kernel/eventBus";
+import type { CommandRegistry } from "../../kernel/registry";
 
 /**
  * The 11 folder kinds, as the shell declared them. `packages/protocol/src/commands/folder.ts`'s

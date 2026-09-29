@@ -27,22 +27,22 @@
  * result it never read. That line is dropped rather than reproduced; every observable behaviour is
  * unchanged. Everything else is a character-for-character move.
  */
-import type { CommandRegistry, CommandContext } from "../kernel/registry";
+import type { CommandRegistry, CommandContext } from "../../kernel/registry";
 import type {
     ConfigSaveParams,
     WorkspaceAddParams,
     WorkspaceDeleteParams,
     WorkspaceRenameParams,
 } from "@bifurc/protocol";
-import { generateId, loadConfig, saveConfig, type AppConfig, type Workspace } from "./config";
-import { initWorkspaceDir } from "./workspaceFs";
-import { initWorkspaceRepo } from "./gitStore";
-import { generateRandomWorkspaceName } from "../utils/randomNames";
-import { gateCreate } from "../subscription/entityCount";
+import { generateId, loadConfig, saveConfig, type AppConfig, type Workspace } from "../config";
+import { initWorkspaceDir } from "../workspaceFs";
+import { initWorkspaceRepo } from "../../store/gitStore";
+import { generateRandomWorkspaceName } from "../../utils/randomNames";
+import { gateCreate } from "../entityCount";
 // `Engine_Module_Plan.md` §4.1 — the fan-out lives in `runtime/instances.ts` now. This command used to
 // import `reloadConfig` from `proxy/server` and the three port re-binders from the listeners themselves;
 // both operations are the *composition*'s business, so they moved to the module that owns the listeners.
-import { notifyConfigChanged, rebindRuntimePorts } from "../runtime/instances";
+import { notifyConfigChanged, rebindRuntimePorts } from "../../runtime/instances";
 
 export function registerConfigCommands(registry: CommandRegistry): void {
     /**

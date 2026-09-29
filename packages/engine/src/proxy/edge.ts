@@ -84,7 +84,7 @@ import * as net from "net";
 import * as http from "http";
 import { EngineError } from "@bifurc/protocol";
 import { isLoopbackHost } from "../utils/net";
-import { AppConfig } from "../store/config";
+import { AppConfig } from "../workspace/config";
 import { HOP_BY_HOP } from "./constants";
 import { sendHtml, buildHomePage, buildNotMappedPage, buildUnservedPage } from "./pages";
 import {
