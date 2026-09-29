@@ -33,8 +33,9 @@
  *    dropped rather than reproduced. Nothing observable moves.
  *  - **`services:discover`, `request:replay`, `server:status`, `proxy:status` and the three
  *    `healthbar:*` were direct calls** to functions the engine already owns — `discoverServices`,
- *    `replayRequest`, `isRunning`/`getPort`/`getServerError`, and `miscCommands.ts`'s workspace file IO.
- *    The commands are registered by `registerServerCommands()` / `registerMiscCommands()`.
+ *    `replayRequest`, `isRunning`/`getPort`/`getServerError`, and `workspace/healthbarCommands.ts`'s
+ *    workspace file IO. The commands are registered by `registerServerCommands()` /
+ *    `registerHealthbarCommands()` (and `request.replay` by `registerRestCommands()`).
  *
  * **The one channel that owned a step the engine did not perform was `entity:load`**, and it is why
  * this group began with a **fix-first** commit rather than a deletion (`174a01d`). Its body applied

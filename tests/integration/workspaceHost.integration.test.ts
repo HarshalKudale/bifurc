@@ -591,7 +591,7 @@ describe("registerAllEngineCommands — the engine-side list covers the shell's"
  * Resolve one `register<Name>Commands` export by the short name the shell's call site uses.
  *
  * The mapping is explicit rather than computed: module paths are the one thing that cannot be derived from
- * the function name (they are `certificates/certCommands`, `workspace/entities/coreCommands`, `miscCommands`, …), and a
+ * the function name (they are `certificates/certCommands`, `workspace/entities/coreCommands`, `rest/commands`, …), and a
  * computed guess that silently resolved to the wrong module would make the guard above compare against the
  * wrong list. An entry appearing in the shell's source without a row here is a **failure** in the test, not a
  * skip — that is what keeps this table from rotting as the shell adds calls.
@@ -605,13 +605,17 @@ describe("registerAllEngineCommands — the engine-side list covers the shell's"
 async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) => void) | undefined> {
   const paths: Record<string, string> = {
     Blob: "@bifurc/engine/blob/commands",
-    ImportExport: "@bifurc/engine/importExport/commands",
-    FileOps: "@bifurc/engine/fileOps/commands",
+    ImportExport: "@bifurc/engine/importexport/commands",
+    FileOps: "@bifurc/engine/fileops/commands",
     Cert: "@bifurc/engine/certificates/certCommands",
     Server: "@bifurc/engine/proxy/serverCommands",
     Webhook: "@bifurc/engine/webhooks/webhookCommands",
     Config: "@bifurc/engine/workspace/entities/configCommands",
-    Misc: "@bifurc/engine/miscCommands",
+    // Engine-layout phase 7 dissolved `miscCommands` (§4.5) into three modules, so the single `Misc`
+    // row became three. The commands are unchanged; only their registering module moved.
+    Rest: "@bifurc/engine/rest/commands",
+    Mock: "@bifurc/engine/mocks/commands",
+    Healthbar: "@bifurc/engine/workspace/healthbarCommands",
     Runner: "@bifurc/engine/runner/runnerCommands",
     Audit: "@bifurc/engine/workspace/entities/auditCommands",
     Core: "@bifurc/engine/workspace/entities/coreCommands",

@@ -193,8 +193,9 @@ export default defineConfig({
         "packages/engine/src/gitops/types.ts",
         // Moved here from `src/ipc/importExport/types.ts` in the layer-5 move. Re-checked, not merely
         // relocated: all ten exports are `type` / `interface` declarations, with no runtime values.
-        // Phase 7 target: `importExport/` → `importexport/` (capitalisation). Still the old path.
-        "packages/engine/src/importExport/types.ts",
+        // Engine phase 7 (`Engine_Module_Plan.md` §7.2): `importExport/` → `importexport/`. Was
+        // `packages/engine/src/importExport/types.ts` until that phase ran.
+        "packages/engine/src/importexport/types.ts",
         // NOT excluded: `packages/engine/src/applications/types.ts`. Despite the name it is not a
         // type-only module — it exports `DEFAULT_DEBUG_PORTS`, `RUN_CONFIG_TYPE_LABELS` and
         // `RUN_CONFIG_TYPE_ICONS` as real runtime values. The old `src/applications/types.ts` entry

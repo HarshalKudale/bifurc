@@ -634,5 +634,10 @@ export function reloadConfig(): void {
 }
 
 // ── Replay a captured request, return {status, headers, body (base64)} ────
+//
+// Re-exported from `utils/replay.ts`, where the implementation moved in engine-layout phase 7: both
+// this module's routing path and the `request.replay` command (`rest/commands.ts`) need it, and §5.1
+// forbids two feature modules importing each other, so the shared behaviour was extracted down.
+// `routingUtils.ts` still imports it from here, unchanged.
 
-export { replayRequest } from "./serverReplay";
+export { replayRequest } from "../utils/replay";

@@ -8,8 +8,8 @@ import {
     getPathExporter,
     getPathImporter,
     registerFormat,
-} from "@bifurc/engine/importExport/registry";
-import type { EntityKind } from "@bifurc/engine/importExport/types";
+} from "@bifurc/engine/importexport/registry";
+import type { EntityKind } from "@bifurc/engine/importexport/types";
 
 /**
  * The registry is the single source of truth for what the Import/Export dialog

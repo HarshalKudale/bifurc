@@ -389,7 +389,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
    * extension.
    *
    * Asked of the engine rather than hard-coded, because the 17 formats and their extensions are
-   * `packages/engine/src/importExport/registry.ts`'s to declare, and a second list here is how the
+   * `packages/engine/src/importexport/registry.ts`'s to declare, and a second list here is how the
    * two would drift. It is the same cheap `export.formats` the modal already reads when it opens.
    * It is read *before* the dialog, which has one visible consequence worth stating plainly: with no
    * engine there is no dialog — correct, because there is nothing to export either way.

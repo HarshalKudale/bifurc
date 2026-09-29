@@ -1,12 +1,34 @@
 # Engine module layout — a plan
 
-**Status:** in progress on branch `engine_modules`. **Phases 0 through 6 are done and committed**
+**Status:** in progress on branch `engine_modules`. **Phases 0 through 7 are done and committed**
 (`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · `083a026` phase 2 — the rebind
 fan-out · `99d1444` phase 3 — the `workspace/` split · `1f748b7` phase 4 — the proxy family · `8bedb72`
-phase 5 — the protocol verticals · phase 6 — `gitops/`).
-**Phase 7 onward is not started.** Every number below is measured from the tree at the time of writing
-(§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2 rows 3
-and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact), not estimated.
+phase 5 — the protocol verticals · `1713dec` phase 6 — `gitops/` · phase 7 — the leftovers).
+**Phase 8 (the ratchet + docs) is not started.** Every number below is measured from the tree at the time of
+writing (§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2
+rows 3 and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact; row 7's "8" re-measured as
+**44 files**), not estimated.
+
+> **Phase 7 dissolved `miscCommands.ts` and normalised the last two directory names — 44 files renamed
+> (42 by the codemod, 2 by hand) and 4 added.** §7.2 row 7's "8" counts *destinations*, not files; this
+> is the third row whose count was an under-count, and the largest miss of the eight. `startup.ts` +
+> `shutdown.ts` → `lifecycle/`; `fileOps/` → `fileops/`; `importExport/` (39 files) → `importexport/`;
+> `miscCommands.ts` → `rest/commands.ts` + `mocks/commands.ts` + `workspace/healthbarCommands.ts`;
+> `proxy/serverReplay.ts` → `utils/replay.ts`. New: `websocket/index.ts` (the §9 reserved placeholder).
+> **Two extractions were forced by the layering rule, not chosen:** §4.5 assigns `healthbar.*` to
+> `workspace/` and `request.replay` to `rest/`, and neither may import the module holding its dependency
+> (`gitops/statusTracker`, `proxy/serverReplay`) — so §5.1's "extract down" remedy produced
+> `workspace/statusCache.ts` and `utils/replay.ts`. The first of those also **repaired a pre-existing
+> violation** (`workspace/entities/entityCrudCommands.ts → gitops/statusTracker`). **⚠ One violation is
+> recorded and deliberately not fixed — see the note on `kernel/eventBus.ts` in §7.2 row 7 and in the
+> map's corrections.**
+
+> **⚠ Windows case-only renames are a silent no-op.** The codemod's `fs.renameSync` reported moving all 40
+> `fileOps/`→`fileops/` and `importExport/`→`importexport/` paths and moved **none** of them: with an
+> identical filename and only a directory component differing in case, source and destination resolve
+> byte-identically on NTFS. The import specifiers *were* rewritten, so the tree briefly said
+> `./importexport/commands` while the directory was `importExport/` — correct on Windows, broken on any
+> case-sensitive filesystem. Recorded in full in `plan/engine-layout-map.json`'s corrections.
 
 > **Phase 6 merged `sync/` (11 files) into `gitops/` together with `store/gitStore.ts` — 12 moves, the
 > heaviest rewrite so far (102 `@bifurc/engine/*` refs + 24 relative imports across 40 files).** After it,
@@ -18,8 +40,8 @@ and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact), not estima
 
 > **Phase 4 deviation from §7.2 row 4 — 14 files moved, not 22.** The row's "22" counted the whole of
 > `proxy/`. Seven of those files are the **forward proxy itself** and stay: `proxyHandler.ts`,
-> `routingUtils.ts`, `server.ts`, `serverCommands.ts`, `serverReplay.ts`, `service-discovery.ts`,
-> `tlsIntercept.ts`. What left is the four named modules (`reverseproxy/` 2, `mocks/` 3, `certificates/` 3,
+> `routingUtils.ts`, `server.ts`, `serverCommands.ts`, `serverReplay.ts` *(that last one left for
+> `utils/replay.ts` in phase 7 — see §4.5)*, `service-discovery.ts`, `tlsIntercept.ts`. What left is the four named modules (`reverseproxy/` 2, `mocks/` 3, `certificates/` 3,
 > `webhooks/` 2 = 10) plus the four shared helpers §3 already routed to `utils/` (`http`, `decompress`,
 > `response`, `server`). `proxy/` is now the **forward half** only — which is exactly the shape `plan/15`
 > work item 3 drew when it split the reverse half onto its own host-level port.
@@ -107,6 +129,10 @@ single largest structural win available, and it is a dependency inversion rather
 `entity.create` is **one** command serving **16 kinds**. Today those kinds are registered from five files in
 `store/kinds/`, while the behaviour behind each kind lives somewhere else entirely:
 
+> **⚠ The table below is a snapshot of the tree *before* phase 1** — every path in it is a pre-migration
+> path, and it is kept as the analysis that motivated §4.4 rather than as a description of the current tree.
+> For where the kinds actually live now, see §3 and the `registerAll.ts` drift guards.
+
 | Kind (protocol name) | Registered today in | Behaviour lives in |
 |---|---|---|
 | `requests` | `crudKinds.ts` | `store/workspaceFs.ts` + `miscCommands.ts` (`request.replay`) + `runner/` |
@@ -168,6 +194,7 @@ packages/engine/src/
 │   ├── net.ts randomNames.ts randomizer.ts        ← lib/
 │   ├── http.ts               ← proxy/constants.ts (HOP_BY_HOP; both proxy halves use it)
 │   ├── decompress.ts response.ts server.ts        ← proxy/decompressUtils|responseUtils|serverUtils
+│   ├── replay.ts             ← proxy/serverReplay.ts  (phase 7 — shared by proxy/ and rest/)
 │   └── echoWorkspace.ts      ← commands/echoWorkspace.ts
 ├── workspace/                THE HUB — persistence. One copy, never per feature.
 │   ├── paths.ts types.ts config.ts appSettings.ts workspaceFs.ts
@@ -176,13 +203,15 @@ packages/engine/src/
 │   │   └── kinds/            ← store/kinds/*Kinds.ts   (generic CRUD machinery only)
 │   └── environments/         the `environments` kind + env.setActive
 ├── reverseproxy/             ← proxy/edge.ts, proxy/pages.ts   (mappings)
-├── proxy/                    ← proxy/{server,proxyHandler,routingUtils,tlsIntercept,serverReplay,
+├── proxy/                    ← proxy/{server,proxyHandler,routingUtils,tlsIntercept,
 │                               service-discovery,serverCommands}.ts   (rules)
 ├── mocks/                    ← proxy/{mockHandler,scriptContext,scriptExecutor}.ts  (mocks)
+│                               + commands.ts (script.execute, from miscCommands — phase 7)
 ├── certificates/             ← proxy/{certManager,certCommands,tlsCert}.ts   (shared: proxy + fileops)
 ├── webhooks/                 ← proxy/{webhookServer,webhookCommands}.ts
-├── websocket/                reserved — the `wsConnections` kind; no behaviour yet
-├── rest/                     the `requests` kind + request.replay  (+ runner/ ? see §9)
+├── websocket/                reserved — the `wsConnections` kind; no behaviour yet (created phase 7)
+├── rest/                     commands.ts — request.replay. The `requests` kind itself registers through
+│                               the shared CRUD table (workspace/entities/kinds/crudKinds.ts), per §4.4
 ├── graphql/                  graphqlCommands.ts + graphqlKinds.ts, merged
 ├── grpc/                     grpcCommands.ts + grpcKinds.ts, merged
 ├── soap/                     soapCommands.ts + soapKinds.ts, merged
@@ -326,16 +355,23 @@ their kinds against the shared vocabulary; they do not own a private list of kin
 
 ### 4.5 `miscCommands.ts` dissolves
 
-Its five commands have obvious homes once the modules exist:
+**Done — engine-layout phase 7.** Its five commands had obvious homes once the modules existed:
 
-| Command | Goes to |
+| Command | Went to |
 |---|---|
-| `request.replay` | `rest/` |
-| `script.execute` | `mocks/` (it calls `scriptExecutor`, which `proxy` already shares) |
-| `healthbar.getServices` / `.saveServices` / `.checkUrl` | `workspace/` (it reads/writes a workspace file) |
+| `request.replay` | `rest/commands.ts` |
+| `script.execute` | `mocks/commands.ts` (it calls `scriptExecutor`, which `proxy` already shares) |
+| `healthbar.getServices` / `.saveServices` / `.checkUrl` | `workspace/healthbarCommands.ts` (it reads/writes a workspace file) |
 
 A 10.6 KB file named "misc" at the root is the clearest symptom the request is describing, and it is the
 cheapest one to remove.
+
+**⚠ Both the `workspace/` and the `rest/` destination needed a dependency moved out from under it**, and that
+is the part this section did not anticipate. `healthbar.saveServices` calls `invalidateCache()` and
+`request.replay` calls `replayRequest()` — but `invalidateCache` lived in `gitops/statusTracker.ts` and
+`replayRequest` in `proxy/serverReplay.ts`, and §5.1/§6 let `workspace/` and `rest/` import **neither**. So
+§5.1's own remedy applied: the shared behaviour came *down* into `workspace/statusCache.ts` and
+`utils/replay.ts`. The first of those also repaired a pre-existing `workspace → gitops` edge. See §7.2 row 7.
 
 ---
 
@@ -394,15 +430,15 @@ assert the **positive** direction:
 | Module | Owns | May import | Public surface |
 |---|---|---|---|
 | `kernel/` | registry contract, event bus, kind name map, telemetry types | *(nothing engine-internal)* | types + `commandRegistry` |
-| `utils/` | net, random, HTTP constants, decompression, echo | `kernel/` | pure functions |
-| `workspace/` | paths, config, app settings, `workspaceFs`, enabled sets, names index, pending deletions, generic CRUD commands, all 16 kind registrations | `kernel/`, `utils/` | `loadConfig`, `writeEntity`, `register*Kinds` |
+| `utils/` | net, random, HTTP constants, decompression, echo, **replay** (`replay.ts`, phase 7 — shared by `proxy/` and `rest/`) | `kernel/` | pure functions |
+| `workspace/` | paths, config, app settings, `workspaceFs`, enabled sets, names index, pending deletions, generic CRUD commands, all 16 kind registrations, the per-workspace status cache (`statusCache.ts`), the `healthbar.*` commands | `kernel/`, `utils/` | `loadConfig`, `writeEntity`, `register*Kinds` |
 | `reverseproxy/` | edge router, home page, mapping dispatch | `kernel/`, `utils/`, `workspace/`, `mocks/` | `createEdgeRouter`, `bindEdgeInstance` |
 | `proxy/` | forward proxy, TLS interception, routing, replay | `kernel/`, `utils/`, `workspace/`, `mocks/`, `certificates/` | `createProxyServer`, `bindProxyInstance` |
 | `mocks/` | mock resolution, script context, script executor | `kernel/`, `utils/`, `workspace/` | `matchMock`, `serveMock`, `executeScript` |
 | `certificates/` | CA generation, identification, leaf certs | `kernel/`, `utils/`, `workspace/` | `certManager`, `registerCertCommands` |
 | `webhooks/` | webhook receiver | `kernel/`, `utils/`, `workspace/` | `createWebhookServer` |
 | `graphql/` `grpc/` `soap/` | commands + kinds for that protocol | `kernel/`, `utils/`, `workspace/` | `register*Commands`, `register*Kinds` |
-| `rest/` | the `requests` kind, replay | `kernel/`, `utils/`, `workspace/` | `registerMiscCommands`-successor |
+| `rest/` | the `requests` **feature** — its behaviour (replay); the kind itself registers through the shared `workspace/entities/kinds/crudKinds.ts` table (§4.4) | `kernel/`, `utils/`, `workspace/` | `registerRestCommands` |
 | `gitops/` | git handle, ops, publish, status, auto-sync, sync commands | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
 | `transport/` | the four transports, auth, event log | `kernel/` | `create*Transport` |
 | `runtime/` | host, CLI, port allocator, **the listener fan-out** (`notifyConfigChanged`, `rebindRuntimePorts`) | everything except `index` | `createWorkspaceHost`, `notifyConfigChanged`, `rebindRuntimePorts` |
@@ -460,7 +496,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 14 | The largest single directory; `plan/15` already decided the split. **Done — the row's "22" counted all of `proxy/`; 7 files are the forward half and stay (`proxyHandler`, `routingUtils`, `server`, `serverCommands`, `serverReplay`, `service-discovery`, `tlsIntercept`). 10 moved to the named modules + 4 shared helpers to `utils/`.** |
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. **Done — 6 paths as planned, the plan's first count that was right.** `store/` drains to `gitStore.ts` alone (phase 6); `protocols/` is now **empty and removed**. |
 | **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. **Done — 12 paths as planned; the second row whose count was right.** `store/` and `sync/` are both now **empty and removed**. |
-| **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. |
+| **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. **Done — but the row's "8" counts *destinations*, not files. Measured: 44 files are renamed (42 codemod + 2 hand) and 4 are added.** `startup`/`shutdown` → `lifecycle/`; `fileOps/` → `fileops/`; `importExport/` (39) → `importexport/`; `miscCommands` → `rest/commands` + `mocks/commands` + `workspace/healthbarCommands`; `proxy/serverReplay` → `utils/replay`. Added: `rest/commands.ts`, `mocks/commands.ts` (the other two thirds of the `miscCommands` split), `websocket/index.ts`, `workspace/statusCache.ts`. **Two files were extracted rather than moved, because §4.5's destinations cannot legally import their dependencies** — `healthbar.*` → `workspace/` needs `invalidateCache` (`gitops/`), and `request.replay` → `rest/` needs `replayRequest` (`proxy/`), so §5.1's "extract down" remedy gave `workspace/statusCache.ts` and `utils/replay.ts`. **⚠ `kernel/eventBus.ts` still imports `getWorkspaceSyncStatus`/`getWorkspaceGitState` from `gitops/`, so §5.1's "kernel imports nothing engine-internal" is currently false** — it needs a design decision (inject the two readers as values, per §4.1's seam, vs. relocate `emitEntityStatus` to a module that may read git), so it is recorded for phase 8 rather than guessed at here. **⚠ Windows case-only renames no-op — see the header note.** |
 | **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. **⚠ Also decides `packages/engine/tests/`'s shape:** phases 1–3 moved sources without moving their test mirrors, so `tests/commands/registry.test.ts` now tests `src/kernel/registry.ts` and `tests/lib/net.test.ts` tests `src/utils/net.ts`. The tests pass (their imports were rewritten), so this is cosmetic — but the §7.1 ratchet covers `src/` only, so nothing else will catch it. Either mirror the test tree or state explicitly that tests do not mirror. |
 
 **Phases 1–2 are the recommendation to start with.** They are ~8 file moves and 0 respectively, they remove
@@ -494,8 +530,9 @@ better than it is today. Phases 4–6 are the ones that carry real churn and can
   the code rather than check `git status`. **If a phase cannot be finished, revert it rather than leave it
   staged.**
 - **⚠ `vitest.config.ts`'s coverage `exclude` list names engine files by path** — the type-only modules.
-  As of phase 6 they are `packages/engine/src/workspace/types.ts` and `packages/engine/src/gitops/types.ts`,
-  with `packages/engine/src/importExport/types.ts` still at its pre-phase-7 path. Moving one **silently
+  **As of phase 7 all three entries name live files** — `packages/engine/src/workspace/types.ts`,
+  `packages/engine/src/gitops/types.ts` and `packages/engine/src/importexport/types.ts`; it is the first time
+  since the list was written that no entry points at a future target. Moving one **silently
   changes the coverage denominator**. Update the list in the same commit as the move. (The codemod cannot:
   these are bare path strings in a config array, not import specifiers.)
 - **`tsup.config.ts`'s `entry: ["src/**/*.ts"]` and `package.json`'s `"./*"` export wildcard need no change**
