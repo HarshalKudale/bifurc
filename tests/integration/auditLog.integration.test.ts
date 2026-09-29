@@ -26,7 +26,7 @@ import {
     getCommitChangedFiles,
     getEntityAtCommit,
     setDataDirOverride,
-} from "@bifurc/engine/gitops/gitStore";
+} from "@bifurc/engine/workspace/gitStore";
 
 let ws: WorkspaceFixture;
 let createCommit: string;

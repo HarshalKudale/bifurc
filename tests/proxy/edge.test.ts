@@ -84,8 +84,8 @@ vi.mock("@bifurc/engine/workspace/config", () => {
   };
 });
 
-vi.mock("@bifurc/engine/utils/server", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@bifurc/engine/utils/server")>();
+vi.mock("@bifurc/engine/workspace/dispatch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@bifurc/engine/workspace/dispatch")>();
   return { ...actual, loadEnabledSets: vi.fn(actual.loadEnabledSets) };
 });
 

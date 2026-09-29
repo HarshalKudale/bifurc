@@ -24,7 +24,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
-import { setDataDirOverride, getGit, initWorkspaceRepo } from "@bifurc/engine/gitops/gitStore";
+import { setDataDirOverride, getGit, initWorkspaceRepo } from "@bifurc/engine/workspace/gitStore";
 import { initWorkspaceDir, wsDir } from "@bifurc/engine/workspace/workspaceFs";
 import { setSettingsPathOverride, loadSettings } from "@bifurc/engine/workspace/appSettings";
 import { getSyncConfig, getRemoteHead } from "@bifurc/engine/gitops/syncManager";

@@ -28,7 +28,7 @@ let tmpDir: string;
 async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-mapping-pub-"));
 
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
@@ -46,12 +46,12 @@ async function setup() {
 
   const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
-  const { initWorkspaceRepo } = await import("@bifurc/engine/gitops/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/workspace/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);

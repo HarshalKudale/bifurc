@@ -4,7 +4,7 @@ import { isLoopbackHost } from "../utils/net";
 import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../workspace/config";
 import { readAllEntities } from "../workspace/workspaceFs";
 import { HOP_BY_HOP } from "../utils/http";
-import { sendHtml } from "../reverseproxy/pages";
+import { sendHtml } from "../utils/sendHtml";
 import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";
 import { loadCA, unloadCA, isCALoaded, clearCertCache } from "../certificates/tlsCert";
 import { interceptTls } from "./tlsIntercept";
@@ -24,7 +24,8 @@ export { RequestLogEntry, logEmitter, emitLogChunk } from "../kernel/telemetry";
 // which of a dozen imports a module actually needs.
 
 
-import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "../utils/server";
+import { mkId } from "../utils/id";
+import { activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "../workspace/dispatch";
 
 /**
  * The proxy server, as an instance (P14 work item 2, step 2).

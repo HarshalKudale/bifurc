@@ -1,8 +1,42 @@
+/**
+ * The **forward half's** upstream request and response handling — passthrough, buffered fetch, and the
+ * header/body plumbing both share.
+ *
+ * ## Why this is in `proxy/` and not in `utils/`
+ *
+ * It lived at `utils/response.ts`. Phase 4 moved it there from `proxy/responseUtils.ts` on the reasoning
+ * that *both proxy halves need it* — and that reasoning was **half wrong**, which is worth recording because
+ * it is how the file ended up in the wrong layer:
+ *
+ *  - **Only `proxy/proxyHandler.ts` imports it.** The edge does not; it calls `proxyToUpstream` /
+ *    `fetchUpstreamResponse` through `proxyHandler`, which is a separate (and real) cross-half edge.
+ *  - It is **not pure**, so `utils/` was never legal for it: `fetchUpstreamResponse()` runs the matched
+ *    rule's `requestScript` / `responseScript` through `mocks/scriptExecutor`, and the error paths write an
+ *    HTML 502 through `sendHtml`. §5.1 defines `utils/` as *pure and stateless, no filesystem, no config
+ *    reads*.
+ *
+ * Back in `proxy/`, every one of its dependencies is legal without an exception: `→ kernel/`, `→ utils/`,
+ * `→ workspace/` (the `ProxyRule` type) and `→ mocks/` are all granted by §6's `proxy/` row.
+ *
+ * Two things left the file on the way:
+ *  - `sendHtml` → **`utils/sendHtml.ts`**, because the edge needs it too and `proxy → reverseproxy` is not
+ *    granted. That extraction is what removes the last three `proxy → reverseproxy` edges.
+ *  - The `ProxyRule` import became `import type` — it is used only as a parameter type, so it was always a
+ *    type-only edge and the ratchet exempts those.
+ *
+ * The `import` statements that sat in the **middle** of the old file (after `handleProxyResponse`, before
+ * `passthroughToUpstream`) are hoisted to the top here. They were always hoisted by the ESM loader; writing
+ * them where they execute is a readability fix, not a behaviour change.
+ */
 import * as http from "http";
+import * as https from "https";
 import * as net from "net";
-import { HOP_BY_HOP } from "./http";
+import { HOP_BY_HOP } from "../utils/http";
 import { emitLogChunk } from "../kernel/telemetry";
-import { decompressBody, stripContentEncoding } from "./decompress";
+import { decompressBody, stripContentEncoding } from "../utils/decompress";
+import { sendHtml } from "../utils/sendHtml";
+import type { ProxyRule } from "../workspace/config";
+import { executeRequestScript, executeResponseScript } from "../mocks/scriptExecutor";
 
 export function buildResponseHeaders(res: http.IncomingMessage) {
   let head = `HTTP/1.1 ${res.statusCode} ${res.statusMessage ?? ""}\r\n`;
@@ -74,11 +108,6 @@ export function handleProxyResponse(
     onDone?.(res.statusCode ?? 0, Date.now() - t0, logHeaders, slice.toString("base64"));
   });
 }
-
-import * as https from "https";
-import { ProxyRule } from "../workspace/config";
-import { sendHtml } from "../reverseproxy/pages";
-import { executeRequestScript, executeResponseScript } from "../mocks/scriptExecutor";
 
 export function passthroughToUpstream(
   socket: net.Socket,
