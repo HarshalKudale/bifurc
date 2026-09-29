@@ -208,6 +208,14 @@ const ADDED = [
   { path: "rest/commands", phase: 7, note: "§4.5 — `request.replay`, from the dissolved `miscCommands`" },
   { path: "mocks/commands", phase: 7, note: "§4.5 — `script.execute`, from the dissolved `miscCommands`" },
   { path: "workspace/healthbarCommands", phase: 7, note: "§4.5 — the three `healthbar.*` commands, from the dissolved `miscCommands`" },
+  // --- added by the post-phase-8 cleanup, which fixed the 22 remaining violations (allowlist → {}) ---
+  { path: "runtime/entityStatus", phase: 8, note: "the second SEAM module — `emitEntityStatus`, out of `kernel/eventBus.ts`, which made §5.1's 'kernel imports nothing engine-internal' true" },
+  { path: "workspace/dispatch", phase: 8, note: "the four config derivations split out of `utils/server.ts` — they read `enabled.json`, so they are persistence" },
+  { path: "utils/id", phase: 8, note: "`mkId`, split out of `utils/server.ts` (pure)" },
+  { path: "utils/sendHtml", phase: 8, note: "the socket writer extracted DOWN out of `reverseproxy/pages.ts` — it is what removed the last three `proxy → reverseproxy` edges" },
+  { path: "proxy/response", phase: 8, note: "`utils/response.ts` returned to `proxy/` — it had exactly ONE importer, and it is not pure" },
+  { path: "workspace/gitStore", phase: 8, note: "`gitops/gitStore.ts` moved — per-workspace handle cache + `workspaceFs` paths; one move fixed six violations and broke a `workspace ↔ gitops` CYCLE" },
+  { path: "workspace/blob/store", phase: 8, note: "`blob/` moved under `workspace/` (a disk-backed store with a TTL sweeper is persistence) — see also publish/sweep/commands" },
 ];
 
 const byFrom = new Map(FILES.map((f) => [f.from, f]));
