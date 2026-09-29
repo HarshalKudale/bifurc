@@ -24,7 +24,11 @@
       "filesMoved": 14,
       "note": "The proxy family split. §7.2 row 4's \"22\" counted all of `proxy/`; 7 files are the forward half and STAY (`proxyHandler`, `routingUtils`, `server`, `serverCommands`, `serverReplay`, `service-discovery`, `tlsIntercept`). Moved: `reverseproxy/` (edge, pages) 2; `mocks/` (mockHandler, scriptContext, scriptExecutor) 3; `certificates/` (certManager, certCommands, tlsCert) 3; `webhooks/` (webhookServer, webhookCommands) 2; to `utils/` (http, decompress, response, server) 4. Hand work the codemod cannot reach: the two `@vite-ignore` table rows in `tests/integration/workspaceHost.integration.test.ts` (`Cert`, `Webhook`) — the runtime-breaking blind spot 6; a `describe` label in `tests/proxy/edge.test.ts`; ~24 prose pointers in engine+shell+tests; `File_Ops_Protocol.md` rows. `vitest.config.ts` needed no change (no proxy entry in the coverage exclude list)."
     },
-    "5": { "status": "not-started" },
+    "5": {
+      "status": "done",
+      "filesMoved": 6,
+      "note": "The protocol verticals. §7.2 row 5's \"6\" is the first planned count that was right. `graphql/`, `grpc/`, `soap/` each gained `kinds.ts` (from `store/kinds/*Kinds.ts`) AND `commands.ts` (from `protocols/*Commands.ts`). After it `store/` holds exactly one file (`gitStore.ts`, phase 6) and `protocols/` is empty and deleted. Hand work the codemod cannot reach: the three `@vite-ignore` table rows in `tests/integration/workspaceHost.integration.test.ts` (`Graphql`, `Soap`, `Grpc`) — blind spot 6, again; three dated \"Step 3e slice 4 moved them into <path>\" records in the new `kinds.ts` files, marked not renamed; and a plain `protocols/grpcCommands.ts` pointer in `grpc/kinds.ts` that the sweep missed because it lacked the `packages/engine/src/` prefix. `vitest.config.ts` needed no change (no protocol entry in the coverage exclude list)."
+    },
     "6": { "status": "not-started" },
     "7": { "status": "not-started" },
     "8": { "status": "not-started" }
