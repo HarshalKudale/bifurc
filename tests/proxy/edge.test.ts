@@ -84,15 +84,15 @@ vi.mock("@bifurc/engine/workspace/config", () => {
   };
 });
 
-vi.mock("@bifurc/engine/proxy/serverUtils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@bifurc/engine/proxy/serverUtils")>();
+vi.mock("@bifurc/engine/utils/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@bifurc/engine/utils/server")>();
   return { ...actual, loadEnabledSets: vi.fn(actual.loadEnabledSets) };
 });
 
 import * as net from "net";
 import * as http from "http";
 import { loadConfig, type AppConfig } from "@bifurc/engine/workspace/config";
-import { createEdgeRouter, DEFAULT_EDGE_BIND_HOST } from "@bifurc/engine/proxy/edge";
+import { createEdgeRouter, DEFAULT_EDGE_BIND_HOST } from "@bifurc/engine/reverseproxy/edge";
 import { logEmitter } from "@bifurc/engine/kernel/telemetry";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ function makeMockServer() {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("@bifurc/engine/proxy/edge", () => {
+describe("@bifurc/engine/reverseproxy/edge", () => {
   /**
    * A deliberately **partial** `AppConfig`, and the cast is how that is said rather than hidden.
    *

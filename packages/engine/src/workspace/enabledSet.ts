@@ -6,7 +6,8 @@
  *
  * It existed **three times** before it existed here:
  * `src/ipc/handlers/utils.ts`, `src/ipc/handlers/entityCrudFactory.ts`, and a private copy in
- * `packages/engine/src/transport/legacyCompanion.ts`. All three were semantically identical — the
+ * `packages/engine/src/transport/legacyCompanion.ts` (a copy; the file itself was deleted when the
+ * companion was retired, 2026-09-23 — see the second copy's note below). All three were semantically identical — the
  * engine's used `??` where the shell's used `if (!set)`, which is the same thing because
  * `readEnabledSet()` returns `Set<string> | null` and an empty `Set` is truthy.
  *

@@ -163,7 +163,7 @@ const VALUE_FLAGS = new Set([
  * All nine went on **2026-09-25** for the same underlying reason: the engine is never deployed remotely,
  * so there is no address to publish and no boundary for a token to guard. The token half is
  * `transport/auth/token.ts`'s deletion; the bind half is the unconditional loopback guard in
- * `transport/ws.ts`, `proxy/server.ts` and `proxy/edge.ts`.
+ * `transport/ws.ts`, `proxy/server.ts` and `reverseproxy/edge.ts`.
  */
 const REMOVED_FLAGS = new Map<string, string>([
   ["--ws-host", "every listener binds loopback, so the bind host is not a choice"],
@@ -292,7 +292,7 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
    *
    * **The *policy* is still not restated here.** A bind policy belongs to the module that binds, and since
    * 2026-09-25 there is no policy to state: loopback is not a default the parser could contradict, it is
-   * the only value the guards accept. See `transport/ws.ts`, `proxy/server.ts` and `proxy/edge.ts`.
+   * the only value the guards accept. See `transport/ws.ts`, `proxy/server.ts` and `reverseproxy/edge.ts`.
    */
   if (rpcSocket !== undefined && wsPort !== undefined) {
     return {

@@ -85,7 +85,7 @@ import * as http from "http";
 import { EngineError } from "@bifurc/protocol";
 import { isLoopbackHost } from "../utils/net";
 import { AppConfig } from "../workspace/config";
-import { HOP_BY_HOP } from "./constants";
+import { HOP_BY_HOP } from "../utils/http";
 import { sendHtml, buildHomePage, buildNotMappedPage, buildUnservedPage } from "./pages";
 import {
   matchMock,
@@ -94,10 +94,10 @@ import {
   mergeMockWithUpstream,
   resolveMockOnlyResponse,
   serveResolvedResponse,
-} from "./mockHandler";
-import { proxyToUpstream, fetchUpstreamResponse } from "./proxyHandler";
+} from "../mocks/mockHandler";
+import { proxyToUpstream, fetchUpstreamResponse } from "../proxy/proxyHandler";
 import { RequestLogEntry, logEmitter, emitLog } from "../kernel/telemetry";
-import { mkId, activeEnv, hostnameOf } from "./serverUtils";
+import { mkId, activeEnv, hostnameOf } from "../utils/server";
 
 export interface EdgeRouterOptions {
   /**
@@ -458,7 +458,7 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
 // ── The module-level binding ──────────────────────────────────────────────────
 //
 // `plan/17` §5 work item 7. The edge is the one runtime-movable port whose listener a command could not
-// reach: `proxy/server.ts` and `proxy/webhookServer.ts` each keep a module-level **facade** over an instance
+// reach: `proxy/server.ts` and `webhooks/webhookServer.ts` each keep a module-level **facade** over an instance
 // someone else owns, which is how `config.save` re-binds those two. The edge had no such handle, so its port
 // could be changed in Settings and nothing happened until the next boot. This is the same mechanism, one port
 // over — and `plan/17` §3 records that reusing the existing binding was the deliberate choice over a new
@@ -469,7 +469,7 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
  *
  * ## Bound-only, and why there is no lazy default here
  *
- * `proxy/server.ts` and `proxy/webhookServer.ts` both fall back to a lazily created default. This one
+ * `proxy/server.ts` and `webhooks/webhookServer.ts` both fall back to a lazily created default. This one
  * deliberately does not: an edge needs a `resolveConfig` callback and there is no honest default for one.
  * A lazily created edge would have to answer
  * **503 for every request** — which is a *worse* outcome than doing nothing, because it replaces a working

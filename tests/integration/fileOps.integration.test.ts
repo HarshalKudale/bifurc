@@ -66,8 +66,8 @@ import {
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
-import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
-import { identifyCert } from "@bifurc/engine/proxy/certManager";
+import { registerCertCommands } from "@bifurc/engine/certificates/certCommands";
+import { identifyCert } from "@bifurc/engine/certificates/certManager";
 import { blobRoot } from "@bifurc/engine/blob/store";
 import { appDataDir } from "@bifurc/engine/workspace/appSettings";
 import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";

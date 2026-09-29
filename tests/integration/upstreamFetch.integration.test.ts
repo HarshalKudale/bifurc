@@ -12,7 +12,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import * as zlib from "zlib";
 import { startUpstream, type UpstreamServer } from "./proxyHarness";
-import { fetchUpstreamResponse } from "@bifurc/engine/proxy/responseUtils";
+import { fetchUpstreamResponse } from "@bifurc/engine/utils/response";
 import type { ProxyRule } from "@bifurc/engine/workspace/config";
 
 let upstream: UpstreamServer | null = null;

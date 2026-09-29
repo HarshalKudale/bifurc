@@ -16,7 +16,7 @@
  * All five were `ipcMain.handle` bodies in `src/ipc/handlers/coreHandlers.ts`, reachable only while
  * the shell and the engine are one process. Every function they call already lives in
  * `packages/engine`: `replayRequest` (`proxy/serverReplay.ts`), `executeIpcScript`
- * (`proxy/scriptExecutor.ts`), `invalidateCache` (`sync/statusTracker.ts`) and `emitEntityStatus`
+ * (`mocks/scriptExecutor.ts`), `invalidateCache` (`sync/statusTracker.ts`) and `emitEntityStatus`
  * (`eventBus.ts`). `scopes.ts` had already assigned all five scopes (`read` / `write` / `execute`)
  * before this module existed — the same independent evidence `serverCommands.ts` found for its six.
  *
@@ -27,7 +27,7 @@
  * engine's **ESM** build output (`tsup` emits `.mjs` alongside `.cjs`), so a verbatim copy would have
  * thrown at call time on the ESM entry point while typechecking and every unit test passed. Both
  * modules are imported statically instead. They are Node builtins with no cycle and no cost, and
- * `serverReplay.ts` and `proxy/webhookServer.ts` already import them the same way.
+ * `serverReplay.ts` and `webhooks/webhookServer.ts` already import them the same way.
  *
  * ## The one gap carried over rather than fixed
  *
@@ -84,7 +84,7 @@ import { wsDir } from "./workspace/workspaceFs";
 import { invalidateCache } from "./sync/statusTracker";
 import { emitEntityStatus } from "./kernel/eventBus";
 import { replayRequest } from "./proxy/serverReplay";
-import { executeIpcScript } from "./proxy/scriptExecutor";
+import { executeIpcScript } from "./mocks/scriptExecutor";
 
 /** The healthbar's own subdirectory inside a workspace, and the file it keeps its services in. */
 const HEALTHBAR_DIR = "healthbar";

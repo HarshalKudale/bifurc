@@ -388,7 +388,7 @@ describe("parseHostArgs — the flags removed on 2026-09-25", () => {
  * it chooses which port one loopback listener uses, which is a question an operator whose machine already has
  * something on 80 still has to answer.
  *
- * What is *not* asserted here is the bind policy itself. That belongs to `proxy/edge.ts`, which owns it, and
+ * What is *not* asserted here is the bind policy itself. That belongs to `reverseproxy/edge.ts`, which owns it, and
  * `tests/proxy/edge.test.ts` is where it is pinned — a copy of the rule here would be a copy that can drift.
  */
 describe("parseHostArgs — --edge-port (plan/15 work item 3)", () => {
