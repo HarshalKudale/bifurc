@@ -444,7 +444,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. |
 | **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. |
 | **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. |
-| **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. |
+| **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. **⚠ Also decides `packages/engine/tests/`'s shape:** phases 1–3 moved sources without moving their test mirrors, so `tests/commands/registry.test.ts` now tests `src/kernel/registry.ts` and `tests/lib/net.test.ts` tests `src/utils/net.ts`. The tests pass (their imports were rewritten), so this is cosmetic — but the §7.1 ratchet covers `src/` only, so nothing else will catch it. Either mirror the test tree or state explicitly that tests do not mirror. |
 
 **Phases 1–2 are the recommendation to start with.** They are ~8 file moves and 0 respectively, they remove
 the largest single class of bad dependency, and if the plan is abandoned after phase 2 the tree is still
