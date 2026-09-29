@@ -55,7 +55,7 @@ import { loadConfig, loadEntity, saveConfig } from "../config";
 import { readEnabledSet } from "../workspaceFs";
 import { syncEnabledSet } from "../enabledSet";
 import { notifyConfigChanged } from "../../runtime/instances";
-import { emitEntityStatus } from "../../kernel/eventBus";
+import { emitEntityStatus } from "../../runtime/entityStatus";
 import {
     mayAffectUnnamedEntities,
     type CommandContext,

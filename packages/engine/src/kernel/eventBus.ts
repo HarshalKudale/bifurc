@@ -11,12 +11,14 @@
  *
  * Once `packages/engine` exists as its own package (the rest of P2's work item 8), this file
  * moves there verbatim — it already has zero Electron coupling.
+ *
+ * **Since engine-layout phase 8 it also has zero *value* imports from the rest of the engine**, which
+ * is §5.1's `kernel/` rule and the property §5.2 calls what makes the layering rule mechanically
+ * checkable. See the note further down about where `emitEntityStatus()` went.
  */
 import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./telemetry";
 import type { WebhookPayload } from "../webhooks/webhookServer";
-import { getWorkspaceSyncStatus } from "../gitops/statusTracker";
-import { getWorkspaceGitState } from "../gitops/gitState";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };
@@ -99,25 +101,13 @@ export class EngineEventBus extends EventEmitter {
 export const bus = new EngineEventBus();
 
 /**
- * Shared replacement for the THREE near-identical local `broadcastEntityStatus()` functions
- * that used to live in `coreHandlers.ts`, `entityCrudFactory.ts`, and `syncHandlers.ts` (plus a
- * fourth, slightly different copy in `companionServer.ts`) — each reaching into the shell's open
- * windows directly. One implementation, emitted on the bus; the shell's `rpcBridge.ts` is now the
- * only place that fans an event out to windows (step 3c deleted the `eventBridge.ts` that used to).
- *
- * Both halves are read in parallel and emitted together. A subscriber that received the file map
- * without the git state would have to fetch it separately, and between the two reads a publish could
- * land — leaving the UI showing a `modified` entity that has nothing left to sync. `getWorkspaceGitState`
- * cannot reject (it resolves `hasRemote: false` instead), so the `Promise.all` below only ever fails
- * on the file map, matching the prior behaviour exactly.
+ * ⚠ `emitEntityStatus()` used to live here and **does not any more** — engine-layout phase 8's
+ * follow-up moved it to `runtime/entityStatus.ts`. It read `getWorkspaceSyncStatus()` and
+ * `getWorkspaceGitState()` from `gitops/`, which made this file import two **values** from a feature
+ * module and so made §5.1's *"`kernel/` imports nothing from the engine"* false. **This file now has
+ * exactly one engine-internal import, and it is a type** (`WebhookPayload`, erased at compile time).
+ * Keep it that way: a value import here is a layering regression, and the ratchet will say so.
  */
-export function emitEntityStatus(wsId: string): void {
-  Promise.all([getWorkspaceSyncStatus(wsId), getWorkspaceGitState(wsId)])
-    .then(([status, git]) => {
-      bus.emitTyped("sync.entityStatus", { wsId, status: JSON.parse(JSON.stringify(status)), git });
-    })
-    .catch(() => { /* best-effort, matches prior behaviour */ });
-}
 
 /**
  * Which buses already have the log wiring, so a second call is a no-op. See `wireLogEventsToBus`.
@@ -142,9 +132,10 @@ const wiredLogBuses = new WeakSet<EngineEventBus>();
  * was read end to end.
  *
  * It belongs in the engine rather than in each shell: P7's web UI, P8's CLI and P9's Docker image all
- * need the same three events, and three copies of this wiring is three places to forget it. It sits
- * next to `emitEntityStatus()` because that is the same shape of fix — one shared implementation
- * replacing several per-shell copies.
+ * need the same three events, and three copies of this wiring is three places to forget it. It is the same
+ * shape of fix `emitEntityStatus()` was — one shared implementation replacing several per-shell copies —
+ * though that function has since moved to `runtime/entityStatus.ts`, so this file is now the bus and only
+ * the bus.
  *
  * ## Idempotent per bus, deliberately
  *
