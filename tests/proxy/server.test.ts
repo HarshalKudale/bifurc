@@ -15,7 +15,7 @@ let _testProxyRules: any[] = [];
 let _testMappings: any[] = [];
 let _testMocks: any[] = [];
 
-vi.mock("@bifurc/engine/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/workspace/workspaceFs", () => ({
   readEnabledSet: vi.fn(() => null),
   bootstrapEnabledSet: vi.fn((_wsId: string, kind: string) => {
     if (kind === "rules") return new Set<string>(_testProxyRules.filter((r) => r.enabled).map((r) => r.id));
@@ -33,7 +33,7 @@ vi.mock("@bifurc/engine/store/workspaceFs", () => ({
 }));
 
 // Mock store/config at top level so it is effective for the imported server module
-vi.mock("@bifurc/engine/store/config", () => {
+vi.mock("@bifurc/engine/workspace/config", () => {
   const loadConfig = vi.fn(() => ({
     port: 8080,
     minimizeToTray: true,
@@ -95,11 +95,11 @@ vi.mock("@bifurc/engine/proxy/serverUtils", async (importOriginal) => {
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { loadConfig, type AppConfig } from "@bifurc/engine/store/config";
+import { loadConfig, type AppConfig } from "@bifurc/engine/workspace/config";
 import { isCALoaded, unloadCA } from "@bifurc/engine/proxy/tlsCert";
 // Imported so the WI 4 cases can override them: which workspace each read asks for is the whole assertion,
 // and it is not observable from the instance's public surface.
-import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
+import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";
 import { loadEnabledSets } from "@bifurc/engine/proxy/serverUtils";
 import {
   createProxyServer,

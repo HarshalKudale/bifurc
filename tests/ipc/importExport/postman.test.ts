@@ -12,7 +12,7 @@ import {
   bodyToText,
   urlRaw,
 } from "@bifurc/engine/importExport/formats/postmanHelpers";
-import type { SavedRequest, MockRule, Folder } from "@bifurc/engine/store/config";
+import type { SavedRequest, MockRule, Folder } from "@bifurc/engine/workspace/config";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

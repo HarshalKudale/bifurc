@@ -1,9 +1,9 @@
 import {
   loadConfig, saveConfig, generateId, ProxyRule,
-} from "../../store/config";
+} from "../../workspace/config";
 import {
   writeFlatEntity, readEnabledSet, writeEnabledSet, bootstrapEnabledSet, readAllEntities,
-} from "../../store/workspaceFs";
+} from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 

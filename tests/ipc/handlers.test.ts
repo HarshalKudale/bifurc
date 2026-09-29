@@ -19,7 +19,7 @@ const { mockLogEmitter, mockIpcMain, registeredHandlers } = vi.hoisted(() => {
   return { mockLogEmitter: logEmitter, mockIpcMain: ipcMain, registeredHandlers: handlers };
 });
 
-vi.mock("@bifurc/engine/subscription/entityCount", () => ({
+vi.mock("@bifurc/engine/workspace/entityCount", () => ({
   gateCreate: vi.fn(() => ({ allowed: true })),
   gateEnable: vi.fn(() => ({ allowed: true })),
 }));
@@ -114,7 +114,7 @@ vi.mock("@bifurc/engine/store/gitStore", () => ({
   AuditAction: {},
 }));
 
-vi.mock("@bifurc/engine/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/workspace/workspaceFs", () => ({
   writeEntity: vi.fn(),
   deleteEntityFile: vi.fn(),
   writeFlatEntity: vi.fn(),
@@ -143,7 +143,7 @@ vi.mock("@bifurc/engine/store/workspaceFs", () => ({
   clearPendingDeletions: vi.fn(),
 }));
 
-vi.mock("@bifurc/engine/store/appSettings", () => ({
+vi.mock("@bifurc/engine/workspace/appSettings", () => ({
   loadSettings: vi.fn(() => ({
     port: 80,
     minimizeToTray: true,
@@ -185,7 +185,7 @@ vi.mock("electron", () => ({
 
 // ── Store mock ────────────────────────────────────────────────────────────────
 
-import type { AppConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, Folder, Environment, Workspace, SavedWsConnection } from "@bifurc/engine/store/config";
+import type { AppConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, Folder, Environment, Workspace, SavedWsConnection } from "@bifurc/engine/workspace/config";
 
 const makeDefaultConfig = (): AppConfig => ({
   port: 80,
@@ -206,7 +206,7 @@ const makeDefaultConfig = (): AppConfig => ({
 
 let currentConfig: AppConfig = makeDefaultConfig();
 
-vi.mock("@bifurc/engine/store/config", () => ({
+vi.mock("@bifurc/engine/workspace/config", () => ({
   loadConfig: vi.fn(() => currentConfig),
   saveConfig: vi.fn((cfg: AppConfig) => { currentConfig = cfg; }),
   generateId: vi.fn(() => `id-${Date.now()}`),
@@ -228,7 +228,7 @@ vi.mock("@bifurc/engine/store/config", () => ({
   // Types only — no runtime value needed for interfaces
 }));
 
-import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/store/config";
+import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/workspace/config";
 import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
 import { startServer, stopServer, isRunning, getPort, getServerError, replayRequest } from "@bifurc/engine/proxy/server";
 // `Engine_Module_Plan.md` §4.1 — the reload fan-out is asserted at the seam now, not at `proxy/server`. The
@@ -511,7 +511,7 @@ describe("src/ipc/handlers.ts", () => {
      * It has now shrunk five times, and the `MOVABLE` half of it is empty. Step 3b-2's slices moved
      * the six proxy/server-lifecycle commands into `packages/engine/src/proxy/serverCommands.ts`
      * (25 → 19); `config.save` + the three `workspace.*` commands into
-     * `packages/engine/src/store/configCommands.ts` (19 → 15); the five `webhook.*` /
+     * `packages/engine/src/workspace/entities/configCommands.ts` (19 → 15); the five `webhook.*` /
      * `webhookServer.*` commands into `packages/engine/src/proxy/webhookCommands.ts` (15 → 10); the
      * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5); and
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
@@ -586,7 +586,7 @@ describe("src/ipc/handlers.ts", () => {
        * **live**, and routing this command as it stood would have broken the audit panel's date
        * filter — invisibly to every test here, because these tests drive the *handler*, not the panel.
        *
-       * The schema was widened on 2026-09-19 and `packages/engine/src/store/auditCommands.ts` now
+       * The schema was widened on 2026-09-19 and `packages/engine/src/workspace/entities/auditCommands.ts` now
        * implements it. The lesson generalises past this command: **"no caller found by grepping the
        * method name" is not evidence that there is no caller.**
        */
@@ -1369,7 +1369,7 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("entity.delete — proxyRules", () => {
     it("deletes the entity file for the given id", async () => {
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
       currentConfig.proxyRules = [
         { id: "r1", name: "a", pattern: ".*a.*", targetMappingId: "m1", enabled: true, workspaceId: "default" },
         { id: "r2", name: "b", pattern: ".*b.*", targetMappingId: "m1", enabled: true, workspaceId: "default" },
@@ -1491,7 +1491,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("writes the updated mock entity to disk", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const mock: MockRule = {
         id: "m1", name: "m", method: "GET", urlPattern: "http://x.com",
         useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "",
@@ -1522,7 +1522,7 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("entity.delete — mocks", () => {
     it("deletes the entity file for the given id", async () => {
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
       currentConfig.mocks = [
         { id: "m1", name: "a", method: "GET", urlPattern: "http://a.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1, workspaceId: "default" },
         { id: "m2", name: "b", method: "POST", urlPattern: "http://b.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 201, responseHeaders: {}, responseBody: "{}", createdAt: 2, workspaceId: "default" },
@@ -1570,7 +1570,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("writes the new request to disk via writeEntity", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await createEntity("requests", baseReq);
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1590,7 +1590,7 @@ describe("src/ipc/handlers.ts", () => {
   describe("entity.update — requests", () => {
     it("writes the updated request to disk via writeEntity", async () => {
       const req: SavedRequest = { id: "r1", name: "old", method: "GET", url: "http://x.com", headers: {}, body: "", createdAt: 1 };
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await updateEntity("requests", { ...req, name: "updated" });
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1609,7 +1609,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.requests = [
         { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
       ];
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
 
       await deleteEntity("requests", "r1");
 
@@ -1966,7 +1966,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("writes the new ws connection to disk via writeEntity", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await createEntity("wsConnections", baseConn);
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1975,7 +1975,7 @@ describe("src/ipc/handlers.ts", () => {
   describe("entity.update — wsConnections", () => {
     it("writes the updated ws connection to disk via writeEntity", async () => {
       const conn: SavedWsConnection = { id: "c1", name: "old", url: "ws://localhost:1", headers: {}, createdAt: 1, workspaceId: "default" };
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await updateEntity("wsConnections", { ...conn, name: "updated" });
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1992,7 +1992,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.wsConnections = [
         { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
       ];
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
       await deleteEntity("wsConnections", "c1");
       expect(deleteEntityFile).toHaveBeenCalledWith("default", "sockets", "c1");
     });
@@ -2421,7 +2421,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("a rule is created with kind \"proxyRules\" and still stores under \"rules\"", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const input: Omit<ProxyRule, "id"> = {
         name: "API rule", pattern: ".*\\.api\\.com.*", targetMappingId: "m1", enabled: true,
       };
@@ -2430,14 +2430,14 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("a websocket connection is created with kind \"wsConnections\" and still stores under \"sockets\"", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const input: Omit<SavedWsConnection, "id"> = { name: "conn", url: "ws://localhost" } as any;
       await createEntity("wsConnections", input);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("sockets");
     });
 
     it("graphql schemas round-trip through entity.create / entity.delete / entity.list", async () => {
-      const { writeEntity, deleteEntityFile, readAllEntities } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity, deleteEntityFile, readAllEntities } = await import("@bifurc/engine/workspace/workspaceFs");
       await createEntity("graphqlSchemas", { name: "s", content: "type Query {}" } as any);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("graphqlSchemas");
 
@@ -2456,7 +2456,7 @@ describe("src/ipc/handlers.ts", () => {
     // like every other kind, with those quirks preserved.
 
     it("an environment is created with kind \"environments\" and stores flat", async () => {
-      const { writeFlatEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeFlatEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const input = { name: "Dev", variables: [] };
       const result = await createEntity("environments", input);
       expect(result.id).toBeTruthy();
@@ -2465,7 +2465,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("a gated create returns { error: \"limit_reached\", ... } and creates nothing", async () => {
-      const { gateCreate } = await import("@bifurc/engine/subscription/entityCount");
+      const { gateCreate } = await import("@bifurc/engine/workspace/entityCount");
       vi.mocked(gateCreate).mockReturnValueOnce({ allowed: false, current: 1, limit: 1 });
 
       currentConfig.environments = [];

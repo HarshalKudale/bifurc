@@ -17,7 +17,7 @@ async function setup() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride(tmpDir);
 
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   // Write minimal settings
@@ -33,7 +33,7 @@ async function setup() {
   );
 
   // Initialize the workspace directory and local git repo
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
   const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
@@ -44,7 +44,7 @@ async function teardown() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride("");
 
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -113,7 +113,7 @@ describe("syncManager", () => {
     expect(cfg?.remote).toBe(nonEmptyRemote);
 
     // workspace.json from the remote should now be present under the adopted dir
-    const { wsDir } = await import("@bifurc/engine/store/workspaceFs");
+    const { wsDir } = await import("@bifurc/engine/workspace/workspaceFs");
     const wsJsonPath = path.join(wsDir(adoptedId), "workspace.json");
     expect(fs.existsSync(wsJsonPath)).toBe(true);
   }, 30_000);
@@ -127,7 +127,7 @@ describe("syncManager", () => {
     expect(result.adoptedId).toBe("other");
 
     // app.json should now use "other" as the workspace id and active id
-    const { loadSettings } = await import("@bifurc/engine/store/appSettings");
+    const { loadSettings } = await import("@bifurc/engine/workspace/appSettings");
     const settings = loadSettings();
     expect(settings.activeWorkspaceId).toBe("other");
     const ws = settings.workspaces.find((w) => w.id === "other");
@@ -141,7 +141,7 @@ describe("syncManager", () => {
     const nonEmptyRemote = await makeNonEmptyRemote();
 
     // Bootstrap enabled.json in each kind dir — this was the bug: these were counted as entity files
-    const { wsDir, writeEnabledSet } = await import("@bifurc/engine/store/workspaceFs");
+    const { wsDir, writeEnabledSet } = await import("@bifurc/engine/workspace/workspaceFs");
     const dir = wsDir(WS_ID);
     for (const kind of ["mappings", "rules", "mocks", "requests", "sockets", "environments"]) {
       fs.mkdirSync(path.join(dir, kind), { recursive: true });
@@ -162,7 +162,7 @@ describe("syncManager", () => {
     const nonEmptyRemote = await makeNonEmptyRemote();
 
     // Add a file to our workspace so it is non-empty
-    const { wsDir } = await import("@bifurc/engine/store/workspaceFs");
+    const { wsDir } = await import("@bifurc/engine/workspace/workspaceFs");
     const dir = wsDir(WS_ID);
     fs.mkdirSync(path.join(dir, "mappings"), { recursive: true });
     fs.writeFileSync(path.join(dir, "mappings", "m1.json"), JSON.stringify({ id: "m1", domain: "test.localhost", target: "127.0.0.1:3000", enabled: true, workspaceId: WS_ID }), "utf-8");

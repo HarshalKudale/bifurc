@@ -35,7 +35,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { wsDir } from "../store/workspaceFs";
+import { wsDir } from "../workspace/workspaceFs";
 
 const INDEX_LOCK = /index\.lock/i;
 const LOCK_PATH = /Unable to create '([^']+)'/i;

@@ -61,13 +61,13 @@ vi.mock("@bifurc/engine/proxy/server", () => ({
 }));
 
 import { createWorkspace, mockFixture, mappingFixture, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { loadConfig } from "@bifurc/engine/store/config";
+import { loadConfig } from "@bifurc/engine/workspace/config";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 import { commandRegistry, type CommandContext, type Scope } from "@bifurc/engine/kernel/registry";
 import { COMPANION_SCOPES, SHELL_SCOPES } from "@bifurc/engine/transport/auth/scopes";
-import { registerCrudKinds } from "@bifurc/engine/store/kinds/crudKinds";
-import { registerCoreCommands } from "@bifurc/engine/store/coreCommands";
-import { registerEntityCrudCommands } from "@bifurc/engine/store/entityCrudCommands";
+import { registerCrudKinds } from "@bifurc/engine/workspace/entities/kinds/crudKinds";
+import { registerCoreCommands } from "@bifurc/engine/workspace/entities/coreCommands";
+import { registerEntityCrudCommands } from "@bifurc/engine/workspace/entities/entityCrudCommands";
 
 /** The conflict signature both sites compare on, for mocks. */
 const SIG = { method: "GET", urlPattern: "/api/conflict", capturedBody: "" };

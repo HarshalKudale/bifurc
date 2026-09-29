@@ -9,7 +9,7 @@
  *
  * `createEngine()` registers **no** commands, and that is a documented, tested invariant (see the
  * `registry` assertion in `tests/integration/engineSmoke.integration.test.ts` and the note in
- * `packages/engine/src/commands/registry.ts`). The consumer registers what it is willing to serve:
+ * `packages/engine/src/kernel/registry.ts`). The consumer registers what it is willing to serve:
  * the Electron shell today, the RPC transport at P4–P6, a CLI or the Docker image later. A module
  * that registered itself on import would break that boundary and make `createEngine()` silently
  * serve a surface nobody asked for.

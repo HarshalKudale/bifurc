@@ -32,8 +32,8 @@
  *     `import { loadConfig } from "@bifurc/engine"` before P6 freezes the real API.
  */
 
-import { setDataRoot, dataDir, isDataRootSet } from "./store/paths";
-import { loadSettings, type AppSettings } from "./store/appSettings";
+import { setDataRoot, dataDir, isDataRootSet } from "./workspace/paths";
+import { loadSettings, type AppSettings } from "./workspace/appSettings";
 import { startServer, isRunning, getPort, getServerError } from "./proxy/server";
 // The **edge router** — `plan/15` §3.3, work item 3. Host-level: one listener for the reverse half
 // (the `*.localhost` mappings and the home page) and, later, the GUI.
@@ -43,7 +43,7 @@ import { startServer, isRunning, getPort, getServerError } from "./proxy/server"
 // when `settings.port` changes.
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./proxy/edge";
 // `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
-import { loadConfig } from "./store/config";
+import { loadConfig } from "./workspace/config";
 import { bus, wireLogEventsToBus } from "./kernel/eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
 import { shutdownEngine } from "./shutdown";
@@ -501,13 +501,13 @@ export {
 // Provisional surface — removed at P6 (see the header)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export * as paths from "./store/paths";
-export * as types from "./store/types";
-export * as appSettings from "./store/appSettings";
-export * as config from "./store/config";
-export * as workspaceFs from "./store/workspaceFs";
+export * as paths from "./workspace/paths";
+export * as types from "./workspace/types";
+export * as appSettings from "./workspace/appSettings";
+export * as config from "./workspace/config";
+export * as workspaceFs from "./workspace/workspaceFs";
 export * as gitStore from "./store/gitStore";
-export * as subscription from "./subscription/entityCount";
+export * as subscription from "./workspace/entityCount";
 export * as randomNames from "./utils/randomNames";
 export * as randomizer from "./utils/randomizer";
 export * as eventBus from "./kernel/eventBus";

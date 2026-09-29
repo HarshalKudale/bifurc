@@ -18,7 +18,7 @@ beforeEach(async () => {
   setDataDirOverride(tmpDir);
 
   // Initialize the workspace directory and git repo
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
   const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
@@ -36,20 +36,20 @@ afterEach(() => {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 async function writeMockFile(id: string, data: object, folderName?: string): Promise<string> {
-  const { writeEntity, entityRelPath } = await import("@bifurc/engine/store/workspaceFs");
+  const { writeEntity, entityRelPath } = await import("@bifurc/engine/workspace/workspaceFs");
   writeEntity(WS_ID, "mocks", id, data, folderName);
   return entityRelPath("mocks", id, folderName);
 }
 
 async function writeMappingFile(id: string, data: object): Promise<string> {
-  const { writeFlatEntity, flatEntityRelPath } = await import("@bifurc/engine/store/workspaceFs");
+  const { writeFlatEntity, flatEntityRelPath } = await import("@bifurc/engine/workspace/workspaceFs");
   writeFlatEntity(WS_ID, "mappings", id, data);
   return flatEntityRelPath("mappings", id);
 }
 
 async function freshCommit(relPath: string, opts: {
-  action: import("@bifurc/engine/store/types").AuditAction;
-  entity: import("@bifurc/engine/store/types").AuditEntity;
+  action: import("@bifurc/engine/workspace/types").AuditAction;
+  entity: import("@bifurc/engine/workspace/types").AuditEntity;
   entityId: string;
   entityName: string;
 }): Promise<string> {
@@ -161,7 +161,7 @@ describe("queryLog()", () => {
     await freshCommit(r2, { action: "create", entity: "mock", entityId: "m2", entityName: "Mock B" });
 
     // Delete m1
-    const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+    const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
     deleteEntityFile(WS_ID, "mocks", "m1");
     await freshCommit(r1, { action: "delete", entity: "mock", entityId: "m1", entityName: "Mock A" });
 
@@ -199,7 +199,7 @@ describe("queryLog()", () => {
     const r2 = await writeMockFile("m1", { id: "m1", name: "A", v: 2 });
     await freshCommit(r2, { action: "update", entity: "mock", entityId: "m1", entityName: "A" });
 
-    const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+    const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
     deleteEntityFile(WS_ID, "mocks", "m1");
     await freshCommit(r1, { action: "delete", entity: "mock", entityId: "m1", entityName: "A" });
 
@@ -354,7 +354,7 @@ describe("getEntityAtCommit()", () => {
     const v1 = { id: "env1", name: "Dev", variables: [] };
     const v2 = { id: "env1", name: "Development", variables: [{ id: "v1", key: "URL", value: "http://localhost" }] };
 
-    const { writeFlatEntity } = await import("@bifurc/engine/store/workspaceFs");
+    const { writeFlatEntity } = await import("@bifurc/engine/workspace/workspaceFs");
     writeFlatEntity(WS_ID, "environments", "env1", v1);
     const r1 = "environments/env1.json";
     await commitMutation({ action: "create", entity: "environment", entityId: "env1", entityName: "Dev", workspaceId: WS_ID, relPath: r1 });

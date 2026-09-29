@@ -114,7 +114,7 @@ import type {
     ServerStatusParams,
     ServerStopParams,
 } from "@bifurc/protocol";
-import { loadConfig } from "../store/config";
+import { loadConfig } from "../workspace/config";
 import { discoverServices } from "./service-discovery";
 import { getPort, getServerError, isRunning, startServer, stopServer } from "./server";
 import { echoWorkspace } from "../utils/echoWorkspace";

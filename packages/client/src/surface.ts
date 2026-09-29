@@ -195,7 +195,7 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   // ── folders ──────────────────────────────────────────────────────────────
   // NOTE: `folder.*` takes a *singular* kind ("mock", "request", "ws", …) — a different
   // vocabulary from `EntityKindValue`'s plurals. That asymmetry is in the frozen protocol,
-  // not introduced here; see `packages/engine/src/commands/entityKindMap.ts`'s sibling.
+  // not introduced here; see `packages/engine/src/kernel/kinds.ts`'s sibling.
   addFolder: t("folder.add"),
   renameFolder: t("folder.rename"),
   moveFolder: t("folder.move"),

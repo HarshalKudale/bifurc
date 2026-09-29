@@ -48,8 +48,8 @@ import * as os from "os";
 import * as path from "path";
 import * as net from "net";
 import * as http from "http";
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import {
   createProxyServer,
   bindProxyInstance,

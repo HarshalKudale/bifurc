@@ -67,8 +67,8 @@
  */
 import {
     readAllEntities, writeEntity, deleteEntityFile,
-} from "../store/workspaceFs";
-import { generateId } from "../store/config";
+} from "../workspace/workspaceFs";
+import { generateId } from "../workspace/config";
 import { processSpawner } from "./processSpawner";
 import { generateResolvedCommand } from "./commandGenerator";
 import { checkPortInUse, killProcessOnPort } from "./portUtils";

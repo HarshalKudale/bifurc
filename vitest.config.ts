@@ -183,10 +183,16 @@ export default defineConfig({
         "src/preload.ts",
         // Type-only modules.
         "**/*.d.ts",
-        "packages/engine/src/store/types.ts",
+        // Engine phase 3 (`Engine_Module_Plan.md` §7.2): `store/` split — persistence into `workspace/`,
+        // commands into `workspace/entities/`. These entries name a *path*, not an import specifier, so the
+        // codemod cannot rewrite them: a stale entry silently stops matching and a type-only module quietly
+        // returns to the coverage report. Update in the same phase as the move, every phase.
+        "packages/engine/src/workspace/types.ts",
+        // Phase 6 target: `sync/` → `gitops/`. Still the old path until that phase runs.
         "packages/engine/src/sync/types.ts",
         // Moved here from `src/ipc/importExport/types.ts` in the layer-5 move. Re-checked, not merely
         // relocated: all ten exports are `type` / `interface` declarations, with no runtime values.
+        // Phase 7 target: `importExport/` → `importexport/` (capitalisation). Still the old path.
         "packages/engine/src/importExport/types.ts",
         // NOT excluded: `packages/engine/src/applications/types.ts`. Despite the name it is not a
         // type-only module — it exports `DEFAULT_DEBUG_PORTS`, `RUN_CONFIG_TYPE_LABELS` and

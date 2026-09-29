@@ -1,5 +1,5 @@
 import { SyncConfig, SyncMeta, SyncState } from "./types";
-import { loadSettings, saveSettings } from "../store/appSettings";
+import { loadSettings, saveSettings } from "../workspace/appSettings";
 
 const _syncStates = new Map<string, SyncState>();
 

@@ -104,22 +104,22 @@
 import type {
   EntityCreateParams, EntityUpdateParams, EntityDeleteParams, EntityListParams,
 } from "@bifurc/protocol";
-import { loadConfig, saveConfig, generateId, AppConfig } from "./config";
+import { loadConfig, saveConfig, generateId, AppConfig } from "../config";
 import {
   writeEntity, deleteEntityFile, writeFlatEntity, deleteFlatEntityFile,
   upsertNameEntry, removeNameEntry,
   addPendingDeletion, findEntityRelPath, flatEntityRelPath,
   readAllEntities,
-} from "./workspaceFs";
-import { syncEnabledSet } from "./enabledSet";
-import { registerKindNameEntry } from "./kindNameEntries";
-import { getGit } from "./gitStore";
-import { notifyConfigChanged } from "../runtime/instances";
-import { invalidateCache } from "../sync/statusTracker";
-import { bus, emitEntityStatus } from "../kernel/eventBus";
-import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../kernel/registry";
-import { toEngineKind } from "../kernel/kinds";
-import { gateCreate } from "../subscription/entityCount";
+} from "../workspaceFs";
+import { syncEnabledSet } from "../enabledSet";
+import { registerKindNameEntry } from "../kindNameEntries";
+import { getGit } from "../../store/gitStore";
+import { notifyConfigChanged } from "../../runtime/instances";
+import { invalidateCache } from "../../sync/statusTracker";
+import { bus, emitEntityStatus } from "../../kernel/eventBus";
+import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../../kernel/registry";
+import { toEngineKind } from "../../kernel/kinds";
+import { gateCreate } from "../entityCount";
 
 /** The shape every CRUD-factory entity satisfies — pulled out so the extracted `*Core`
  * functions below can share it with `registerCrudKind`'s own generic constraint. */

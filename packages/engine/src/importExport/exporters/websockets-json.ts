@@ -1,5 +1,5 @@
-import { loadConfig, SavedWsConnection } from "../../store/config";
-import { readAllEntities } from "../../store/workspaceFs";
+import { loadConfig, SavedWsConnection } from "../../workspace/config";
+import { readAllEntities } from "../../workspace/workspaceFs";
 import type { ExportResult } from "../types";
 
 export async function run(wsId: string): Promise<ExportResult> {

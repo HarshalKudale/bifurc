@@ -3,7 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import { getGit } from "../store/gitStore";
 import { getSyncConfig } from "./syncManager";
-import { wsDir } from "../store/workspaceFs";
+import { wsDir } from "../workspace/workspaceFs";
 import { unquoteGitPath } from "./statusTracker";
 import { withIndexLockRetry } from "./gitLock";
 

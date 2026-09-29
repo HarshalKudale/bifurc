@@ -581,7 +581,8 @@ entire value is a shape guarantee should look like. Re-measure rather than copy.
 Suite size: **101 files / 2,471 tests** (measured 2026-09-18 after 3b-2's second slice, undeselected:
 `2430 passed | 1 failed | 40 skipped`; the failure is the documented `soap.execute` dead-endpoint flake
 below). The last steps were P6's shell seam — 101 / 2,471 after moving `config.save` + the three
-`workspace.*` commands into `packages/engine/src/store/configCommands.ts` and splitting the ratchet by
+`workspace.*` commands into `packages/engine/src/store/configCommands.ts` *(now
+`workspace/entities/configCommands.ts` — engine-layout phase 3, 2026-09-29)* and splitting the ratchet by
 category (+2), 101 / 2,469 after the six proxy/server-lifecycle commands moved into
 `packages/engine/src/proxy/serverCommands.ts` (+2), 101 / 2,467 after the
 registry-coverage ratchet in `tests/ipc/handlers.test.ts` (+3), 101 / 2,464 after step 3a (the push
@@ -903,6 +904,8 @@ method, and because the retired code's 94% is part of the record.
 > `packages/engine/src/transport/legacyCompanion.ts`, and `companion/allowedActions.ts` is
 > `packages/engine/src/transport/legacyCompanionActions.ts`. **`src/companion/` no longer exists.** The
 > numbers are unchanged and still describe these two files — only the paths are historical.
+> **Engine-module-layout phase 3 (2026-09-29)** moves `subscription/entityCount.ts` to
+> `packages/engine/src/workspace/entityCount.ts`.
 >
 > The move deliberately did **not** rewrite the four action bodies, and the reason is recorded in
 > `legacyCompanion.ts`'s header and `plan/05`'s "Item 1": aliasing them onto `config.get` /
@@ -1720,6 +1723,12 @@ nothing about the line you changed".
   `packages/engine/src/sync/types.ts` (layer 2). **Check this every layer** — an exclude entry that
   no longer matches does not error, it just silently starts counting a type-only module as
   uncovered code.
+  **Engine-module-layout phase 3 (2026-09-29) is the first re-check since:** the entry is now
+  `packages/engine/src/workspace/types.ts` (`store/` → `workspace/`); `sync/types.ts` and
+  `importExport/types.ts` stay as written until their own phases (6 and 7). The codemod **cannot**
+  rewrite these — they are bare path strings in a config array, not import specifiers — so each
+  move phase has to update them by hand. `tests/runtime/singleDataRoot.test.ts` carries the same
+  class of hand-maintained path, in a `toEqual` assertion rather than an exclude.
 - **Layer 3 found the mirror-image bug: an exclude that was always wrong.** The list carried
   `src/applications/types.ts` under "Type-only modules", but that file exports three runtime
   constants. The exclusion was made on the strength of the filename and had been hiding live,
@@ -1782,7 +1791,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > `importExportFormats.integration`, `registry.test`, and — added in the eighth pass, once the
 > P3 blob layer existed to test against — `importExportBlob.integration` plus the `blob/**`
 > store, sweep and command suites), `packages/engine/src/applications/**` (87%),
-> `packages/engine/src/subscription/entityCount.ts` (100%), `packages/engine/src/companion/allowedActions.ts` (100%), the
+> `packages/engine/src/workspace/entityCount.ts` (100%), `packages/engine/src/companion/allowedActions.ts` (100%), the
 > Audit Log screen (`auditLog.integration`), **the "hit Send" path**
 > (`protocolExecution.integration` — REST replay, GraphQL execute/introspect, SOAP
 > execute/fetchWsdl, Health Bar polling), **folder management** and **workspace CRUD**
@@ -1803,7 +1812,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > remains is listed here.
 
 ### High — security / correctness
-1. ~~**`packages/engine/src/companion/companionServer.ts` has no authentication.**~~ **RESOLVED
+1. ~~**`packages/engine/src/companion/companionServer.ts` (now `transport/legacyCompanion.ts`) has no authentication.**~~ **RESOLVED
    2026-09-23 by removal.** The finding was real and deliberate to state: the server bound to
    `127.0.0.1`, which was the whole of its access control, and `ALLOWED_ACTIONS` was proven *enforced*
    (a forbidden action was refused and wrote nothing) — but any local process could still open a socket
@@ -2020,9 +2029,9 @@ npm run test:integration
 
 # 3. Confirm the engine really is tested from source, not from a stale build.
 #    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).
-#    Append a marker to packages/engine/src/store/paths.ts, then:
+#    Append a marker to packages/engine/src/workspace/paths.ts, then:
 npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local
-#    → the coverage table must list packages/engine/src/store/paths.ts. If the engine files are
+#    → the coverage table must list packages/engine/src/workspace/paths.ts. If the engine files are
 #      absent or at 0%, the alias in vitest.config.ts has been lost — and a green suite is then
 #      meaningless, because tests are running against dist/ instead of your edits.
 
@@ -2047,9 +2056,11 @@ npx vitest run --project integration tests/integration/gitRemote.integration.tes
 #    g) In packages/engine/src/proxy/server.ts, change the 512 * 1024 capture slice to 256 * 1024, then:
 npx vitest run --project integration tests/integration/capture.integration.test.ts
 #    → "caps an oversized captured response body" fails. Revert.
-#    h) In packages/engine/src/companion/companionServer.ts, drop the `await` on getWorkspaceSyncStatus (or
+#    h) [RETIRED — no longer runnable. The companion server was removed outright (plan/15 §6.4) and
+#       `tests/integration/companionServer.integration.test.ts` with it. Kept as a record of the check.]
+#       In packages/engine/src/companion/companionServer.ts, drop the `await` on getWorkspaceSyncStatus (or
 #       serialize the promise again), then:
-npx vitest run --project integration tests/integration/companionServer.integration.test.ts
+# npx vitest run --project integration tests/integration/companionServer.integration.test.ts
 #    → "tells the renderer to refresh, and reports the new entity as dirty" fails. Revert.
 #    i) In packages/gui/src/lib/createTabReducer.ts, change `if (!options.init)` to `if (options.init)`
 #       so the shared layer always delegates, then:

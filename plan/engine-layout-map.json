@@ -4,7 +4,27 @@
   "source": "packages/engine/src",
   "authority": "Engine_Module_Plan.md §3 (target module map) + §7.2 (phases)",
   "scope": "Code files only (.ts .tsx .mts .mjs .js .cjs). Documentation is phase 8.",
-  "note": "Old→new path map for the engine module reorganisation. `to: null` means the file is SPLIT across modules rather than renamed and needs hand work in its phase. `phase: 0` means the path does not change (already final, or explicitly out of scope).",
+  "note": "Old→new path map for the engine module reorganisation. `to: null` means the file is SPLIT across modules rather than renamed and needs hand work in its phase. `phase: 0` means the path does not change (already final, or explicitly out of scope). **⚠ `from` fields deliberately keep naming the OLD paths** — they are the input to the codemod, not a description of the current tree. Read `phaseStatus` for what has actually landed.",
+  "phaseStatus": {
+    "0": { "status": "done", "commit": "c531c7c" },
+    "1": { "status": "done", "commit": "16161ad", "filesMoved": 8 },
+    "2": {
+      "status": "done",
+      "commit": "083a026",
+      "filesMoved": 0,
+      "note": "§4.1 delivered as TWO functions (`notifyConfigChanged` reload fan-out + `rebindRuntimePorts` port fan-out), not the one §4.1 sketched. 29 call sites across 21 files repointed. See Engine_Module_Plan.md's status note."
+    },
+    "3": {
+      "status": "done",
+      "filesMoved": 20,
+      "note": "The store/ split. §7.2 row 3's \"23\" counted all of store/; the 3 protocol leaf kinds (`store/kinds/{graphql,grpc,soap}Kinds.ts`) are deliberately left for phase 5. After phase 3 `store/` holds exactly 4 files: those 3 plus `gitStore.ts` (phase 6). `store/workspace/*` → `workspace/fs/*` per the ratified deviation above. Hand work the codemod cannot reach: `vitest.config.ts` coverage `exclude`, `tests/runtime/singleDataRoot.test.ts` path assertions, and 4 prose pointers — all updated."
+    },
+    "4": { "status": "not-started" },
+    "5": { "status": "not-started" },
+    "6": { "status": "not-started" },
+    "7": { "status": "not-started" },
+    "8": { "status": "not-started" }
+  },
   "corrections": [
     "§7.1 says \"529 deep-import statements across 104 files\" and \"82 unique paths\". Measured: 532 references across 102 files and 81 unique subpaths (263 static imports).",
     "§7.1 counts only `from` imports. Measured: 193 dynamic `import()`, 33 `vi.mock`/`vi.doMock`, 7 `typeof import()`, 1 `require()`. A `from`-only rewrite misses ~40% of the surface, and the two largest misses fail at RUNTIME, not at compile time.",

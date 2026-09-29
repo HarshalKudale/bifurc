@@ -1,7 +1,7 @@
 /**
  * P2 work item 1 — the EventBus.
  *
- * Copies `proxy/logEmitter.ts`'s pattern (a plain `EventEmitter`, no Electron) rather than
+ * Copies `logEmitter.ts`'s pattern (a plain `EventEmitter`, no Electron) rather than
  * inventing a new one — see `plan/03-phase-2-engine-extraction.md` work item 1. This is the
  * single place every engine module emits domain events; nothing in this file imports
  * `electron`. The Electron shell subscribes to this bus and forwards to `webContents` — as of P6

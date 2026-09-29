@@ -53,9 +53,9 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
-import { loadWorkspaceDispatchSlice } from "@bifurc/engine/store/config";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
+import { loadWorkspaceDispatchSlice } from "@bifurc/engine/workspace/config";
 import { bindProxyInstance, createProxyServer, type ProxyServerInstance } from "@bifurc/engine/proxy/server";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";

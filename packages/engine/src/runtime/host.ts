@@ -64,9 +64,9 @@ import { createWsServer, type WsServer } from "../transport/ws";
 import { commandRegistry, type CommandRegistry } from "../kernel/registry";
 import { registerAllEngineCommands } from "../registerAll";
 import { bus as defaultBus, type EngineEventBus } from "../kernel/eventBus";
-import { loadSettings, appDataDir, type AppSettings } from "../store/appSettings";
+import { loadSettings, appDataDir, type AppSettings } from "../workspace/appSettings";
 import { bootstrapWorkspaces } from "../startup";
-import { setDataRoot, dataDir } from "../store/paths";
+import { setDataRoot, dataDir } from "../workspace/paths";
 import { EventLog } from "../transport/eventLog";
 // `DEFAULT_EDGE_BIND_HOST` is imported rather than defaulted to a literal here: the host needs the same
 // value `createEdgeRouter()` will apply, to report the edge's address, and a second copy of `"127.0.0.1"`
