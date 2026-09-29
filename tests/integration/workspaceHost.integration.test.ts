@@ -620,7 +620,7 @@ async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) 
     Soap: "@bifurc/engine/soap/commands",
     Grpc: "@bifurc/engine/grpc/commands",
     Application: "@bifurc/engine/applications/applicationCommands",
-    Sync: "@bifurc/engine/sync/syncCommands",
+    Sync: "@bifurc/engine/gitops/syncCommands",
     EntityCrud: "@bifurc/engine/workspace/entities/entityCrudCommands",
   };
   const specifier = paths[shortName];

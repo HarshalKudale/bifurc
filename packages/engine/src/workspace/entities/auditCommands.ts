@@ -45,7 +45,7 @@
  */
 import type { AuditListParams } from "@bifurc/protocol";
 import type { CommandRegistry } from "../../kernel/registry";
-import { queryLog, type QueryLogOptions } from "../../store/gitStore";
+import { queryLog, type QueryLogOptions } from "../../gitops/gitStore";
 import { loadConfig } from "../config";
 
 export function registerAuditCommands(registry: CommandRegistry): void {

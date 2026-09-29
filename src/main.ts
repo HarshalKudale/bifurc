@@ -7,7 +7,7 @@ import { loadSettings, saveSettings } from "@bifurc/engine/workspace/appSettings
 import { startServer, bindProxyInstance, createProxyServer } from "@bifurc/engine/proxy/server";
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/reverseproxy/edge";
 import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/webhooks/webhookServer";
-import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
+import { checkGitInstalled } from "@bifurc/engine/gitops/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 import { setDataRoot, dataDir } from "@bifurc/engine/workspace/paths";
 import { preflight, bootstrapWorkspaces } from "@bifurc/engine/startup";

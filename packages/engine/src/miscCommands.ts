@@ -81,7 +81,7 @@ import type {
 } from "@bifurc/protocol";
 import type { CommandRegistry } from "./kernel/registry";
 import { wsDir } from "./workspace/workspaceFs";
-import { invalidateCache } from "./sync/statusTracker";
+import { invalidateCache } from "./gitops/statusTracker";
 import { emitEntityStatus } from "./kernel/eventBus";
 import { replayRequest } from "./proxy/serverReplay";
 import { executeIpcScript } from "./mocks/scriptExecutor";

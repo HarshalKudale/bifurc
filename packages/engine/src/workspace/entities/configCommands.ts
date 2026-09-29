@@ -36,7 +36,7 @@ import type {
 } from "@bifurc/protocol";
 import { generateId, loadConfig, saveConfig, type AppConfig, type Workspace } from "../config";
 import { initWorkspaceDir } from "../workspaceFs";
-import { initWorkspaceRepo } from "../../store/gitStore";
+import { initWorkspaceRepo } from "../../gitops/gitStore";
 import { generateRandomWorkspaceName } from "../../utils/randomNames";
 import { gateCreate } from "../entityCount";
 // `Engine_Module_Plan.md` §4.1 — the fan-out lives in `runtime/instances.ts` now. This command used to

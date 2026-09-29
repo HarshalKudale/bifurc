@@ -48,8 +48,8 @@ import * as http from "http";
 import * as net from "net";
 
 // `startAutoSync` would otherwise leave a real 30 s poller timer running and hold the process open.
-vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/sync/autoSync")>()),
+vi.mock("@bifurc/engine/gitops/autoSync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/gitops/autoSync")>()),
   startAutoSync: vi.fn(),
 }));
 

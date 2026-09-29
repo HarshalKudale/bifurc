@@ -63,7 +63,7 @@ export type EntitySyncStatusValue = "clean" | "modified" | "new" | "deleted";
  * distinguish *committed and pushed* from *committed and not pushed*. Without that distinction a
  * committed-but-unpushed entity reads `clean` and the UI offers it no button at all, so it can only
  * be pushed from the panel-level footer control. Measured locally, never by fetching — see
- * `packages/engine/src/sync/gitState.ts` for why, and for what staleness that accepts.
+ * `packages/engine/src/gitops/gitState.ts` for why, and for what staleness that accepts.
  */
 export interface WorkspaceGitState {
   /** An `origin` remote is configured. `ahead`/`behind` are both `false` when it is not. */

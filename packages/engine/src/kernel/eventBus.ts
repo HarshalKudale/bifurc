@@ -15,8 +15,8 @@
 import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./telemetry";
 import type { WebhookPayload } from "../webhooks/webhookServer";
-import { getWorkspaceSyncStatus } from "../sync/statusTracker";
-import { getWorkspaceGitState } from "../sync/gitState";
+import { getWorkspaceSyncStatus } from "../gitops/statusTracker";
+import { getWorkspaceGitState } from "../gitops/gitState";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };

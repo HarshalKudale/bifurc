@@ -108,7 +108,7 @@ import { getWorkspaceGitState } from "./gitState";
 import { loadConfig } from "../workspace/config";
 import { sanitizeDirName } from "../workspace/workspaceFs";
 import { notifyConfigChanged } from "../runtime/instances";
-import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "../store/gitStore";
+import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "./gitStore";
 import { emitEntityStatus } from "../kernel/eventBus";
 import type { CommandRegistry } from "../kernel/registry";
 

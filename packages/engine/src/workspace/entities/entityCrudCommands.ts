@@ -113,9 +113,9 @@ import {
 } from "../workspaceFs";
 import { syncEnabledSet } from "../enabledSet";
 import { registerKindNameEntry } from "../kindNameEntries";
-import { getGit } from "../../store/gitStore";
+import { getGit } from "../../gitops/gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
-import { invalidateCache } from "../../sync/statusTracker";
+import { invalidateCache } from "../../gitops/statusTracker";
 import { bus, emitEntityStatus } from "../../kernel/eventBus";
 import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../../kernel/registry";
 import { toEngineKind } from "../../kernel/kinds";
@@ -182,7 +182,8 @@ export interface SimpleEntityOpts {
  * `ipcMain.handle` channels. Split deliberately: the container is engine state, and letting the shell mutate
  * it directly is what made this file's dependency direction wrong.
  *
- * **Those five files live in `packages/engine/src/store/kinds/` as of 2026-09-23** (`plan/15` work item 10).
+ * **Those five files live in `packages/engine/src/workspace/entities/kinds/`** (`plan/15` work item 10 placed
+ * them at `packages/engine/src/store/kinds/` on 2026-09-23; engine-layout phase 5 moved them here).
  * They were in the shell, and that is exactly why a headless host registered the four `entity.*` commands
  * and left this container **empty** for every kind — the commands were engine-side, the thing they read was
  * not. `registerAllEngineKinds()` is the fix, and a guard in `tests/integration/workspaceHost.integration.test.ts`
