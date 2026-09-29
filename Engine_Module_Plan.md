@@ -1,12 +1,16 @@
 # Engine module layout — a plan
 
-**Status:** in progress on branch `engine_modules`. **Phases 0, 1, 2, 3, 4 and 5 are done and committed**
+**Status:** in progress on branch `engine_modules`. **Phases 0 through 6 are done and committed**
 (`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · `083a026` phase 2 — the rebind
-fan-out · `99d1444` phase 3 — the `workspace/` split · `1f748b7` phase 4 — the proxy family · phase 5 —
-the protocol verticals).
-**Phase 6 onward is not started.** Every number below is measured from the tree at the time of writing
+fan-out · `99d1444` phase 3 — the `workspace/` split · `1f748b7` phase 4 — the proxy family · `8bedb72`
+phase 5 — the protocol verticals · phase 6 — `gitops/`).
+**Phase 7 onward is not started.** Every number below is measured from the tree at the time of writing
 (§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2 rows 3
-and 4's counts re-measured 2026-09-29; row 5 confirmed exact), not estimated.
+and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact), not estimated.
+
+> **Phase 6 merged `sync/` (11 files) into `gitops/` together with `store/gitStore.ts` — 12 moves, the
+> heaviest rewrite so far (102 `@bifurc/engine/*` refs + 24 relative imports across 40 files).** After it,
+> `store/` and `sync/` are both empty and deleted: the two directories the plan set out to drain are gone.
 
 > **Phase 5 was the first row whose count was right — 6.** `graphql/`, `grpc/`, `soap/` each gained
 > `kinds.ts` (from `store/kinds/*Kinds.ts`) **and** `commands.ts` (from `protocols/*Commands.ts`). After it,
@@ -455,7 +459,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **3 — `workspace/`** | Split `store/`: persistence → `workspace/`, commands → `workspace/entities/`, `gitStore` → `gitops/`, `subscription/` → `workspace/` | 20 | The hub moves first so feature modules have a stable target. **Done — the row's "23" counted all of `store/`; the 3 protocol leaf kinds (`store/kinds/{graphql,grpc,soap}Kinds.ts`) stay for phase 5.** |
 | **4 — proxy family** | `reverseproxy/`, `mocks/`, `certificates/`, `webhooks/` out of `proxy/` | 14 | The largest single directory; `plan/15` already decided the split. **Done — the row's "22" counted all of `proxy/`; 7 files are the forward half and stay (`proxyHandler`, `routingUtils`, `server`, `serverCommands`, `serverReplay`, `service-discovery`, `tlsIntercept`). 10 moved to the named modules + 4 shared helpers to `utils/`.** |
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. **Done — 6 paths as planned, the plan's first count that was right.** `store/` drains to `gitStore.ts` alone (phase 6); `protocols/` is now **empty and removed**. |
-| **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. |
+| **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. **Done — 12 paths as planned; the second row whose count was right.** `store/` and `sync/` are both now **empty and removed**. |
 | **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. |
 | **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. **⚠ Also decides `packages/engine/tests/`'s shape:** phases 1–3 moved sources without moving their test mirrors, so `tests/commands/registry.test.ts` now tests `src/kernel/registry.ts` and `tests/lib/net.test.ts` tests `src/utils/net.ts`. The tests pass (their imports were rewritten), so this is cosmetic — but the §7.1 ratchet covers `src/` only, so nothing else will catch it. Either mirror the test tree or state explicitly that tests do not mirror. |
 
@@ -489,9 +493,11 @@ better than it is today. Phases 4–6 are the ones that carry real churn and can
   `No handler registered`, `Cannot find module` — never as an unfinished edit, and the instinct is to debug
   the code rather than check `git status`. **If a phase cannot be finished, revert it rather than leave it
   staged.**
-- **⚠ `vitest.config.ts`'s coverage `exclude` list names three engine files by path** —
-  `packages/engine/src/store/types.ts`, `sync/types.ts`, `importExport/types.ts`. Moving them **silently
-  changes the coverage denominator**. Update the list in the same commit as the move.
+- **⚠ `vitest.config.ts`'s coverage `exclude` list names engine files by path** — the type-only modules.
+  As of phase 6 they are `packages/engine/src/workspace/types.ts` and `packages/engine/src/gitops/types.ts`,
+  with `packages/engine/src/importExport/types.ts` still at its pre-phase-7 path. Moving one **silently
+  changes the coverage denominator**. Update the list in the same commit as the move. (The codemod cannot:
+  these are bare path strings in a config array, not import specifiers.)
 - **`tsup.config.ts`'s `entry: ["src/**/*.ts"]` and `package.json`'s `"./*"` export wildcard need no change**
   — both are globs. But `bundle: false` means **the `dist/` layout mirrors `src/`**, so the shell's 53
   imports resolve against `dist` and are broken until `build:packages` runs. The `@bifurc/engine/*` alias

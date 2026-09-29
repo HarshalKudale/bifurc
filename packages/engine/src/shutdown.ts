@@ -15,7 +15,7 @@
  * side of the seam.
  */
 import { processSpawner } from "./applications/processSpawner";
-import { stopAllAutoSync } from "./sync/autoSync";
+import { stopAllAutoSync } from "./gitops/autoSync";
 import { stopServer } from "./proxy/server";
 
 /**

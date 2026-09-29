@@ -3,7 +3,7 @@
  *
  * Bifurc's data story is "publish on demand, then sync": a workspace can be wired to a
  * git remote, pushed to, and cloned from on another machine. That entire surface —
- * `packages/engine/src/sync/syncManager.ts`, `packages/engine/src/sync/gitSyncOps.ts` — was previously covered only by
+ * `packages/engine/src/gitops/syncManager.ts`, `packages/engine/src/gitops/gitSyncOps.ts` — was previously covered only by
  * mocked-unit tests, and `gitSyncOps.ts` sat at **19%**. `setRemote()` in particular has
  * three materially different branches (empty→empty push, empty→non-empty clone, and the
  * refusal when both sides have data) and none of them was exercised.
@@ -24,10 +24,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
-import { setDataDirOverride, getGit, initWorkspaceRepo } from "@bifurc/engine/store/gitStore";
+import { setDataDirOverride, getGit, initWorkspaceRepo } from "@bifurc/engine/gitops/gitStore";
 import { initWorkspaceDir, wsDir } from "@bifurc/engine/workspace/workspaceFs";
 import { setSettingsPathOverride, loadSettings } from "@bifurc/engine/workspace/appSettings";
-import { getSyncConfig, getRemoteHead } from "@bifurc/engine/sync/syncManager";
+import { getSyncConfig, getRemoteHead } from "@bifurc/engine/gitops/syncManager";
 
 // ── Electron: capture the real handlers instead of registering them ───────────
 
@@ -207,7 +207,7 @@ beforeAll(async () => {
     // registry directly and there is no longer a channel layer whose absence would surface as
     // `No handler registered` for a *channel* rather than for a command.
     const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
-    const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
+    const { registerSyncCommands } = await import("@bifurc/engine/gitops/syncCommands");
     registerSyncCommands(commandRegistry);
 });
 

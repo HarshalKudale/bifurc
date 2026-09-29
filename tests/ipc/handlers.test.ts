@@ -104,7 +104,7 @@ vi.mock("@bifurc/engine/reverseproxy/edge", async (importOriginal) => ({
   isEdgeRunning: vi.fn(() => true),
 }));
 
-vi.mock("@bifurc/engine/store/gitStore", () => ({
+vi.mock("@bifurc/engine/gitops/gitStore", () => ({
   commitMutation: vi.fn(() => Promise.resolve("abc123")),
   queryLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
   getEntityAtCommit: vi.fn(() => Promise.resolve(null)),
@@ -229,7 +229,7 @@ vi.mock("@bifurc/engine/workspace/config", () => ({
 }));
 
 import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/workspace/config";
-import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
+import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/gitops/gitStore";
 import { startServer, stopServer, isRunning, getPort, getServerError, replayRequest } from "@bifurc/engine/proxy/server";
 // `Engine_Module_Plan.md` §4.1 — the reload fan-out is asserted at the seam now, not at `proxy/server`. The
 // proxy's own `reloadConfig` stays mocked above because `notifyConfigChanged` (real) calls it.

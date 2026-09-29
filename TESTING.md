@@ -854,6 +854,12 @@ against real local servers.
 
 ### 4.5 The git sync / publish path specifically
 
+> **Path note (engine-layout phase 6, 2026-09-29).** This table records a **past measurement**, and every
+> `sync/` row has since moved: `packages/engine/src/sync/*` → `packages/engine/src/gitops/*`, together with
+> `store/gitStore.ts` → `gitops/gitStore.ts` (the phase-6 merge). The numbers are unchanged and still
+> describe these files — only the paths are historical. The `src/ipc/handlers/syncHandlers.ts` row is
+> doubly historical: that shell file was deleted in the P6 reduction (2026-09-21).
+
 Publishing is how a change becomes a shared, auditable fact, and `setRemote()` is the
 gateway to every remote workspace. Both were mocked-unit only; they are now driven against
 a real repository and a real bare remote.
@@ -1734,14 +1740,17 @@ nothing about the line you changed".
   Vitest uses), so without it the 13 moved files would silently vanish from the report.
   `coverage.exclude`'s type-only entries followed the move: `src/store/types.ts` →
   `packages/engine/src/store/types.ts` (layer 1) and `src/sync/types.ts` →
-  `packages/engine/src/sync/types.ts` (layer 2). **Check this every layer** — an exclude entry that
+  `packages/engine/src/sync/types.ts` (layer 2) — *both paths are historical; see the re-checks below,
+  the live entries are `workspace/types.ts` and `gitops/types.ts`.* **Check this every layer** — an exclude entry that
   no longer matches does not error, it just silently starts counting a type-only module as
   uncovered code.
   **Engine-module-layout phase 3 (2026-09-29) is the first re-check since:** the entry is now
   `packages/engine/src/workspace/types.ts` (`store/` → `workspace/`); `sync/types.ts` and
   `importExport/types.ts` stay as written until their own phases (6 and 7). **Phase 4 (same day) added no
   proxy entry** — the split touched no file named in the exclude list, so there was nothing to re-check,
-  which is itself the answer. The codemod **cannot**
+  which is itself the answer. **Phase 5 (same day) likewise added no protocol entry.** **Phase 6 moved the
+  second entry:** `sync/types.ts` → `packages/engine/src/gitops/types.ts` (the `sync/` + `gitStore` merge).
+  `importExport/types.ts` is now the **only** entry still naming a future target (phase 7). The codemod **cannot**
   rewrite these — they are bare path strings in a config array, not import specifiers — so each
   move phase has to update them by hand. `tests/runtime/singleDataRoot.test.ts` carries the same
   class of hand-maintained path, in a `toEqual` assertion rather than an exclude.
@@ -1941,12 +1950,12 @@ is why neither could be found by reading the code, only by asserting on the data
 | Proxy-rule export wrote the **UI stubs** (`targetType`, `targetExternal`, `targetMappingId`, `useRegex` and both scripts blanked), so re-importing silently destroyed every rule | `packages/engine/src/importExport/exporters/{proxyrules-json,workspace-json}.ts` | read `readAllEntities(wsId, "rules")` + re-inject `enabled` from `enabled.json` |
 | Workspace import **never wrote rule files to disk** (relied on `saveConfig()`, which deliberately skips them) → imported workspace proxied nothing | `packages/engine/src/importExport/importers/workspace-json.ts` | explicit `writeEntity(..., "rules", …)` loop + enabled set + `upsertNameEntry` |
 | Disabled mappings/mocks came back **enabled** after import (`if (m.enabled) set.add()` with no `else`; missing flag ⇒ enabled) | `packages/engine/src/importExport/importers/workspace-json.ts` | both-branch enabled sets (`set.add` / `set.delete`) |
-| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/store/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
+| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/gitops/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
 | REST **Send** could fail with a spurious **400 / "socket hang up"** on a later request to the same origin | `packages/engine/src/proxy/serverReplay.ts` `replayRequest` | it sent `connection: close` but did not pin an agent, so Node returned the socket to the global pool whenever the upstream answered `keep-alive` (servers routinely ignore the request's close) and the next request was rejected by the server with `HPE_CLOSED_CONNECTION`. Fixed with `agent: false`. |
 | The exported/saved **HTML run report rendered raw `${…}` placeholders** instead of data — the whole report was inert. The same escaped-interpolation mistake sat in the update-checker's fallback URL | `src/ipc/handlers/runnerHandlers.ts` `generateRunnerHtml`, `src/ipc/handlers/systemHandlers.ts` | un-escaped all 15 interpolations and hardened `esc()` to coerce + escape quotes; fixed the URL template |
-| Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `packages/engine/src/sync/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
-| A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/sync/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/sync/statusTracker.ts` and shared |
-| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/store/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
+| Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `packages/engine/src/gitops/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
+| A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/gitops/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/gitops/statusTracker.ts` and shared |
+| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/gitops/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
 | The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `packages/engine/src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
 | **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `packages/gui/src/lib/createTabReducer.ts`, `packages/gui/src/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
 | **Adding, editing or deleting a mock/mapping/rule/request/websocket/webhook did not take effect on the running proxy until something else reloaded the config.** `entityCrudFactory` called `saveConfig(cfg)` then `reloadConfig()` **before** writing the entity file and **before** `syncEnabledSet()`. `reloadConfig()` snapshots the enabled-sets out of `enabled.json`, so `workspaceCfg()` filtered the new entity straight back out of routing — a mock you just added was not served, and a mock you just **deleted kept being served**, until an unrelated action (a settings save, a workspace switch, an app restart) happened to reload. A test that only inspects the handler's return value cannot see this: the config object is correct, the *running server* is stale | `src/ipc/handlers/entityCrudFactory.ts` (`add`, `update`, `delete`) | move `reloadConfig()` to **after** every on-disk write in all three handlers, so the reload sees both the entity file and the updated enabled-set. Proven by mutation: restoring the old ordering makes "stops serving a mock deleted through mock:delete" fail with `expected { from: 'mock' } to deeply equal { upstream: true, … }` |
@@ -2063,10 +2072,10 @@ npx vitest run --project integration tests/integration/protocolExecution.integra
 #    d) In src/ipc/handlers/runnerHandlers.ts, re-escape one ${…} in generateRunnerHtml, then:
 npx vitest run --project integration tests/integration/runnerStorage.integration.test.ts
 #    → the report-content assertions fail. Revert.
-#    e) In packages/engine/src/sync/publishService.ts, drop the Set() dedupe, then:
+#    e) In packages/engine/src/gitops/publishService.ts, drop the Set() dedupe, then:
 npx vitest run --project integration tests/integration/gitSync.integration.test.ts
 #    → "treats a folder holding exactly one entity as a single-entity commit" fails. Revert.
-#    f) In packages/engine/src/store/gitStore.ts, remove the workspace.json add, then:
+#    f) In packages/engine/src/gitops/gitStore.ts, remove the workspace.json add, then:
 npx vitest run --project integration tests/integration/gitRemote.integration.test.ts
 #    → "clones the remote and adopts its workspace identity" fails. Revert.
 #    g) In packages/engine/src/proxy/server.ts, change the 512 * 1024 capture slice to 256 * 1024, then:

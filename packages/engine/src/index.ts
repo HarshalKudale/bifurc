@@ -506,7 +506,7 @@ export * as types from "./workspace/types";
 export * as appSettings from "./workspace/appSettings";
 export * as config from "./workspace/config";
 export * as workspaceFs from "./workspace/workspaceFs";
-export * as gitStore from "./store/gitStore";
+export * as gitStore from "./gitops/gitStore";
 export * as subscription from "./workspace/entityCount";
 export * as randomNames from "./utils/randomNames";
 export * as randomizer from "./utils/randomizer";
@@ -533,7 +533,7 @@ export { registerAllEngineCommands, registerAllEngineKinds } from "./registerAll
 // `PortRangeExhaustedError`, `AllocatedPorts` and its provenance flags) was deleted along with the model that
 // needed it. One finder remains — `findFreePortFrom`, for the single companion port (Electron's path).
 export * as ports from "./runtime/portAllocator";
-export * as sync from "./sync/syncManager";
+export * as sync from "./gitops/syncManager";
 export * as applications from "./applications/processSpawner";
 export * as commands from "./kernel/registry";
 export * as startup from "./startup";

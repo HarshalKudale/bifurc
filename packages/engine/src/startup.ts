@@ -22,13 +22,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { randomBytes } from "crypto";
 import { createCA } from "mkcert";
-import { checkGitInstalled, initWorkspaceRepo } from "./store/gitStore";
+import { checkGitInstalled, initWorkspaceRepo } from "./gitops/gitStore";
 import { checkPortInUse } from "./applications/portUtils";
 import { saveSettings, type AppSettings } from "./workspace/appSettings";
 import { initWorkspaceDir, wsDir } from "./workspace/workspaceFs";
 import { generateId } from "./workspace/config";
-import { getSyncConfig } from "./sync/syncManager";
-import { setAutoSyncReloadFn, startAutoSync } from "./sync/autoSync";
+import { getSyncConfig } from "./gitops/syncManager";
+import { setAutoSyncReloadFn, startAutoSync } from "./gitops/autoSync";
 import { notifyConfigChanged } from "./runtime/instances";
 
 export type StartupCheckCode =

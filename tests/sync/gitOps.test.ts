@@ -8,7 +8,7 @@ import {
   discardChanges,
   syncChanges,
   getFileHistory,
-} from "@bifurc/engine/sync/gitOps";
+} from "@bifurc/engine/gitops/gitOps";
 import {
   writeEntity,
   readEntity,
@@ -23,7 +23,7 @@ const WS_ID = "ws-gitops-test";
 async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-gitops-test-"));
 
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
   setDataDirOverride(tmpDir);
 
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
@@ -43,12 +43,12 @@ async function setup() {
   const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
-  const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/gitops/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
   setDataDirOverride("");
 
   const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");

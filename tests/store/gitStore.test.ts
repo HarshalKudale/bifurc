@@ -14,21 +14,21 @@ beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-git-test-"));
 
   // Override data root so workspaceFs.wsDir() points at tmpDir
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/gitops/gitStore");
   setDataDirOverride(tmpDir);
 
   // Initialize the workspace directory and git repo
   const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
-  const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/gitops/gitStore");
   await initWorkspaceRepo(WS_ID);
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
   // Clear overrides and git cache
-  import("@bifurc/engine/store/gitStore").then(({ setDataDirOverride }) => {
+  import("@bifurc/engine/gitops/gitStore").then(({ setDataDirOverride }) => {
     setDataDirOverride("");
   });
 });
@@ -53,7 +53,7 @@ async function freshCommit(relPath: string, opts: {
   entityId: string;
   entityName: string;
 }): Promise<string> {
-  const { commitMutation } = await import("@bifurc/engine/store/gitStore");
+  const { commitMutation } = await import("@bifurc/engine/gitops/gitStore");
   return commitMutation({ ...opts, workspaceId: WS_ID, relPath });
 }
 
@@ -61,7 +61,7 @@ async function freshCommit(relPath: string, opts: {
 
 describe("commitMutation()", () => {
   it("creates a git commit with the correct subject format", async () => {
-    const { commitMutation } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation } = await import("@bifurc/engine/gitops/gitStore");
     const relPath = await writeMockFile("mock_abc", { id: "mock_abc", name: "POST /api/users" });
     const hash = await commitMutation({
       action: "create",
@@ -79,7 +79,7 @@ describe("commitMutation()", () => {
   });
 
   it("embeds entity-id, workspace-id, and actor in commit body", async () => {
-    const { commitMutation } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation } = await import("@bifurc/engine/gitops/gitStore");
     const relPath = await writeMappingFile("map_xyz", { id: "map_xyz", domain: "api.localhost" });
     await commitMutation({
       action: "update",
@@ -99,7 +99,7 @@ describe("commitMutation()", () => {
   });
 
   it("uses 'local' as the default actor", async () => {
-    const { commitMutation } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation } = await import("@bifurc/engine/gitops/gitStore");
     const relPath = await writeMappingFile("env_1", { id: "env_1", name: "Production" });
     await commitMutation({
       action: "create",
@@ -116,7 +116,7 @@ describe("commitMutation()", () => {
   });
 
   it("embeds changed-fields in the subject for update commits", async () => {
-    const { commitMutation } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation } = await import("@bifurc/engine/gitops/gitStore");
     const relPath = await writeMockFile("m1", { id: "m1", name: "GET /api" });
     await commitMutation({
       action: "update",
@@ -134,7 +134,7 @@ describe("commitMutation()", () => {
   });
 
   it("skips commit when file content is unchanged (spurious commit prevention)", async () => {
-    const { commitMutation } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation } = await import("@bifurc/engine/gitops/gitStore");
     const data = { id: "m1", name: "GET /api" };
     const relPath = await writeMockFile("m1", data);
     const hash1 = await commitMutation({ action: "create", entity: "mock", entityId: "m1", entityName: "GET /api", workspaceId: WS_ID, relPath });
@@ -152,7 +152,7 @@ describe("commitMutation()", () => {
 
 describe("queryLog()", () => {
   it("returns entries in descending timestamp order", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "Mock A" });
     await freshCommit(r1, { action: "create", entity: "mock", entityId: "m1", entityName: "Mock A" });
@@ -174,7 +174,7 @@ describe("queryLog()", () => {
   });
 
   it("filters by entity type", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "My Mock" });
     await freshCommit(r1, { action: "create", entity: "mock", entityId: "m1", entityName: "My Mock" });
@@ -191,7 +191,7 @@ describe("queryLog()", () => {
   });
 
   it("filters by action", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "A", v: 1 });
     await freshCommit(r1, { action: "create", entity: "mock", entityId: "m1", entityName: "A" });
@@ -209,7 +209,7 @@ describe("queryLog()", () => {
   });
 
   it("filters by entityId", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "Mock 1" });
     await freshCommit(r1, { action: "create", entity: "mock", entityId: "m1", entityName: "Mock 1" });
@@ -226,7 +226,7 @@ describe("queryLog()", () => {
   });
 
   it("filters by search (case-insensitive entity name match)", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "foo endpoint" });
     await freshCommit(r1, { action: "create", entity: "mock", entityId: "m1", entityName: "foo endpoint" });
@@ -243,7 +243,7 @@ describe("queryLog()", () => {
   });
 
   it("paginates with limit and offset", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     for (let i = 0; i < 5; i++) {
       const r = await writeMockFile(`m${i}`, { id: `m${i}`, name: `Mock ${i}`, v: i });
@@ -260,7 +260,7 @@ describe("queryLog()", () => {
   });
 
   it("returns all entries when limit is 0", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     for (let i = 0; i < 5; i++) {
       const r = await writeMappingFile(`r${i}`, { id: `r${i}`, name: `Rule ${i}`, v: i });
@@ -272,7 +272,7 @@ describe("queryLog()", () => {
   });
 
   it("returns empty array when the workspace has no audit commits", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
     const { entries, total } = await queryLog({ workspaceId: WS_ID });
     // init commit doesn't match audit format → 0 entries
     expect(entries).toEqual([]);
@@ -280,14 +280,14 @@ describe("queryLog()", () => {
   });
 
   it("returns empty array for a non-existent workspace", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
     const { entries, total } = await queryLog({ workspaceId: "nonexistent" });
     expect(entries).toEqual([]);
     expect(total).toBe(0);
   });
 
   it("filters by specific filePath", async () => {
-    const { queryLog } = await import("@bifurc/engine/store/gitStore");
+    const { queryLog } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "Mock A", v: 1 });
     await freshCommit(r1, { action: "create", entity: "mock", entityId: "m1", entityName: "Mock A" });
@@ -309,7 +309,7 @@ describe("queryLog()", () => {
 
 describe("getEntityAtCommit()", () => {
   it("returns the entity state as it was at the given commit", async () => {
-    const { commitMutation, getEntityAtCommit } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation, getEntityAtCommit } = await import("@bifurc/engine/gitops/gitStore");
 
     const mockV1 = { id: "m1", name: "Version 1", method: "GET", responseStatus: 200 };
     const mockV2 = { id: "m1", name: "Version 2", method: "POST", responseStatus: 201 };
@@ -326,7 +326,7 @@ describe("getEntityAtCommit()", () => {
   });
 
   it("returns null when the entity does not exist at that commit", async () => {
-    const { commitMutation, getEntityAtCommit } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation, getEntityAtCommit } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "A" });
     const hash = await commitMutation({ action: "create", entity: "mock", entityId: "m1", entityName: "A", workspaceId: WS_ID, relPath: r1 });
@@ -337,19 +337,19 @@ describe("getEntityAtCommit()", () => {
   });
 
   it("returns null for a bad commit reference", async () => {
-    const { getEntityAtCommit } = await import("@bifurc/engine/store/gitStore");
+    const { getEntityAtCommit } = await import("@bifurc/engine/gitops/gitStore");
     const result = await getEntityAtCommit("0000000000000000000000000000000000000000", WS_ID, "mocks/m1.json");
     expect(result).toBeNull();
   });
 
   it("returns null for a non-existent workspace id", async () => {
-    const { getEntityAtCommit } = await import("@bifurc/engine/store/gitStore");
+    const { getEntityAtCommit } = await import("@bifurc/engine/gitops/gitStore");
     const result = await getEntityAtCommit("abc1234", "nonexistent-ws", "mocks/m1.json");
     expect(result).toBeNull();
   });
 
   it("reconstructs before/after for an update by reading parent commit", async () => {
-    const { commitMutation, getEntityAtCommit } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation, getEntityAtCommit } = await import("@bifurc/engine/gitops/gitStore");
 
     const v1 = { id: "env1", name: "Dev", variables: [] };
     const v2 = { id: "env1", name: "Development", variables: [{ id: "v1", key: "URL", value: "http://localhost" }] };
@@ -374,7 +374,7 @@ describe("getEntityAtCommit()", () => {
 
 describe("getCommitChangedFiles()", () => {
   it("returns the relative file paths changed in a commit", async () => {
-    const { commitMutation, getCommitChangedFiles } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation, getCommitChangedFiles } = await import("@bifurc/engine/gitops/gitStore");
 
     const relPath = await writeMockFile("m1", { id: "m1", name: "A" });
     const hash = await commitMutation({ action: "create", entity: "mock", entityId: "m1", entityName: "A", workspaceId: WS_ID, relPath });
@@ -385,7 +385,7 @@ describe("getCommitChangedFiles()", () => {
   });
 
   it("returns empty array for a non-existent commit reference", async () => {
-    const { getCommitChangedFiles } = await import("@bifurc/engine/store/gitStore");
+    const { getCommitChangedFiles } = await import("@bifurc/engine/gitops/gitStore");
 
     const files = await getCommitChangedFiles("0000000000000000000000000000000000000000", WS_ID);
 
@@ -393,7 +393,7 @@ describe("getCommitChangedFiles()", () => {
   });
 
   it("returns empty array for a non-existent workspace", async () => {
-    const { getCommitChangedFiles } = await import("@bifurc/engine/store/gitStore");
+    const { getCommitChangedFiles } = await import("@bifurc/engine/gitops/gitStore");
 
     const files = await getCommitChangedFiles("HEAD", "nonexistent-ws");
 
@@ -401,7 +401,7 @@ describe("getCommitChangedFiles()", () => {
   });
 
   it("lists multiple files when a commit touches more than one file", async () => {
-    const { commitMutation, getCommitChangedFiles } = await import("@bifurc/engine/store/gitStore");
+    const { commitMutation, getCommitChangedFiles } = await import("@bifurc/engine/gitops/gitStore");
 
     const r1 = await writeMockFile("m1", { id: "m1", name: "A" });
     const r2 = await writeMockFile("m2", { id: "m2", name: "B" });
