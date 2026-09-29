@@ -5,8 +5,8 @@ import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
 import { loadConfig } from "@bifurc/engine/workspace/config";
 import { loadSettings, saveSettings } from "@bifurc/engine/workspace/appSettings";
 import { startServer, bindProxyInstance, createProxyServer } from "@bifurc/engine/proxy/server";
-import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
-import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/proxy/webhookServer";
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/reverseproxy/edge";
+import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/webhooks/webhookServer";
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 import { setDataRoot, dataDir } from "@bifurc/engine/workspace/paths";
@@ -378,7 +378,7 @@ if (!gotTheLock) {
      * No `bindHost`: the desktop's edge is loopback, exactly as its proxy has always been. That is no longer
      * a *choice this module is declining* — since 2026-09-25 loopback is the only value the edge's guard
      * accepts, for the shell and for the deployable host alike, and `--edge-bind-host` is a fatal flag. See
-     * `proxy/edge.ts`.
+     * `reverseproxy/edge.ts`.
      */
     edgeRouter = createEdgeRouter({ resolveConfig: () => forwardProxy.dispatchConfig() });
     /**

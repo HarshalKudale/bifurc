@@ -3,7 +3,7 @@
  * trust store.
  *
  * ```
- * ENGINE half (packages/engine/src/proxy/certManager.ts)   CLIENT half (this file)
+ * ENGINE half (packages/engine/src/certificates/certManager.ts)   CLIENT half (this file)
  * ──────────────────────────────────────────────────────   ──────────────────────────────
  * generate the keypair                                     fetch the cert bytes
  * store them in the data dir                               install into the OS trust store

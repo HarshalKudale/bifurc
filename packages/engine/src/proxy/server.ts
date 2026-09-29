@@ -3,10 +3,10 @@ import { EngineError } from "@bifurc/protocol";
 import { isLoopbackHost } from "../utils/net";
 import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../workspace/config";
 import { readAllEntities } from "../workspace/workspaceFs";
-import { HOP_BY_HOP } from "./constants";
-import { sendHtml } from "./pages";
+import { HOP_BY_HOP } from "../utils/http";
+import { sendHtml } from "../reverseproxy/pages";
 import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";
-import { loadCA, unloadCA, isCALoaded, clearCertCache } from "./tlsCert";
+import { loadCA, unloadCA, isCALoaded, clearCertCache } from "../certificates/tlsCert";
 import { interceptTls } from "./tlsIntercept";
 import { handleProxyRouting } from "./routingUtils";
 import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "../kernel/telemetry";
@@ -15,7 +15,7 @@ export { RequestLogEntry, logEmitter, emitLogChunk } from "../kernel/telemetry";
 // `plan/15` work item 3 took this module's **reverse half**, and its imports went with it: the home
 // page and the mapping/mock dispatch — `buildHomePage`, `buildNotMappedPage`, `matchMock`, `serveMock`,
 // `isFullyMocked`, `mergeMockWithUpstream`, `resolveMockOnlyResponse`, `serveResolvedResponse`,
-// `proxyToUpstream`, `fetchUpstreamResponse` — are `proxy/edge.ts`'s now. The forward half never used
+// `proxyToUpstream`, `fetchUpstreamResponse` — are `reverseproxy/edge.ts`'s now. The forward half never used
 // any of them.
 //
 // `http` and `https` were **already** unused here before the split and are gone with the rest. Worth
@@ -24,7 +24,7 @@ export { RequestLogEntry, logEmitter, emitLogChunk } from "../kernel/telemetry";
 // which of a dozen imports a module actually needs.
 
 
-import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./serverUtils";
+import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "../utils/server";
 
 /**
  * The proxy server, as an instance (P14 work item 2, step 2).
@@ -70,7 +70,7 @@ import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./s
  *
  * This module used to serve **two** jobs on one socket: the reverse proxy (a mapped `Host` forwarded to
  * its target) and the forward proxy (a browser configured to use this port). They are now two servers,
- * and only the forward half is here — `proxy/edge.ts` holds the reverse half, on a **host-level** port.
+ * and only the forward half is here — `reverseproxy/edge.ts` holds the reverse half, on a **host-level** port.
  *
  * The reason is §1's second problem: sharing one socket meant a mock could not be applied to
  * forward-proxied traffic without also affecting reverse-proxied traffic, which is exactly what the
@@ -375,7 +375,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
    * ## This is the **forward** half — `plan/15` work item 3
    *
    * The reverse half is no longer here. A request whose `Host` is a mapped domain, and the home page
-   * that listed those mappings, are served by `proxy/edge.ts` on the host-level **edge** port. What
+   * that listed those mappings, are served by `reverseproxy/edge.ts` on the host-level **edge** port. What
    * remains is what a browser sends when it has been *configured to use this port as its proxy*: an
    * absolute-form target for `http://`, and `CONNECT` for the https it wants tunnelled — the latter
    * handled by the connection handler, not here.

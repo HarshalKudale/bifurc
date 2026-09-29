@@ -3,7 +3,8 @@
  *
  * ## It lives in the engine now (2026-09-23, `plan/15` work item 10)
  *
- * Moved from `src/ipc/handlers/coreKinds.ts` to `packages/engine/src/store/kinds/coreKinds.ts`, with its
+ * Moved from `src/ipc/handlers/coreKinds.ts` to `packages/engine/src/~~store/kinds/~~coreKinds.ts` — the `store/` hop
+ * was transitional and is now `workspace/entities/kinds/` (engine-layout phases 3+4, 2026-09-29) — with its
  * four siblings, because the container it populates is read by the engine-side `entity.*` commands and a
  * headless host could not reach a shell file — so `entity.create` for `environments` threw
  * `is not routed through the CommandRegistry yet` on the one host the browser UI talks to. See

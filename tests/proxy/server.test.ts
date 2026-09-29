@@ -87,8 +87,8 @@ vi.mock("@bifurc/engine/workspace/config", () => {
 // which silently changed dispatch for all 74 pre-existing cases in this file (22 failed) — the enabled set
 // decides which mocks and mappings are live. A pass-through spy records the workspace id and then calls the
 // real implementation, so the instrument is inert.
-vi.mock("@bifurc/engine/proxy/serverUtils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@bifurc/engine/proxy/serverUtils")>();
+vi.mock("@bifurc/engine/utils/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@bifurc/engine/utils/server")>();
   return { ...actual, loadEnabledSets: vi.fn(actual.loadEnabledSets) };
 });
 
@@ -96,11 +96,11 @@ import * as net from "net";
 import * as http from "http";
 import * as https from "https";
 import { loadConfig, type AppConfig } from "@bifurc/engine/workspace/config";
-import { isCALoaded, unloadCA } from "@bifurc/engine/proxy/tlsCert";
+import { isCALoaded, unloadCA } from "@bifurc/engine/certificates/tlsCert";
 // Imported so the WI 4 cases can override them: which workspace each read asks for is the whole assertion,
 // and it is not observable from the instance's public surface.
 import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";
-import { loadEnabledSets } from "@bifurc/engine/proxy/serverUtils";
+import { loadEnabledSets } from "@bifurc/engine/utils/server";
 import {
   createProxyServer,
   startServer,

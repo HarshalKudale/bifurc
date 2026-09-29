@@ -72,13 +72,13 @@ import type {
 import type { CommandRegistry } from "../kernel/registry";
 import { blobContentPath, describeBlobError, statBlob } from "../blob/store";
 import { publishArtifact } from "../blob/publish";
-import { caCertPath, caKeyPath } from "../proxy/certManager";
+import { caCertPath, caKeyPath } from "../certificates/certManager";
 import { loadConfig } from "../workspace/config";
 import { queryLog } from "../store/gitStore";
 import { renderRunnerHtml } from "../runner/reportHtml";
 
 /**
- * The CA's location is resolved by `caCertPath()` / `caKeyPath()` in `../proxy/certManager`, which
+ * The CA's location is resolved by `caCertPath()` / `caKeyPath()` in `../certificates/certManager`, which
  * owns the constants and the `appDataDir()`-vs-`dataDir()` decision. This module used to carry its
  * own copy of both; `certCommands.ts` became the second consumer in P3 work item 5, which is the
  * moment two copies became one answer. The note that used to live here — that a mismatch makes the
@@ -161,7 +161,7 @@ function tlsExportCert(): TlsExportCertResult {
  * — and, unlike the four egress commands, that is not an omission awaiting WI 8. It is the correct
  * answer, because **the CA is not a per-workspace entity**:
  *
- * - `caCertPath()` / `caKeyPath()` resolve under `appDataDir()` (`proxy/certManager.ts`), which is
+ * - `caCertPath()` / `caKeyPath()` resolve under `appDataDir()` (`certificates/certManager.ts`), which is
  *   `%LOCALAPPDATA%/Bifurc` on Windows — a directory the workspace data root does not reach, by that
  *   module's own recorded and deliberate decision.
  * - `tls.exportCert` above reads the same two paths for the same reason: there is exactly one CA per

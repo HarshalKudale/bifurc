@@ -3,7 +3,8 @@
  *
  * ## It lives in the engine now (2026-09-23, `plan/15` work item 10)
  *
- * Moved from `src/ipc/handlers/crudKinds.ts` to `packages/engine/src/store/kinds/crudKinds.ts`, with its
+ * Moved from `src/ipc/handlers/crudKinds.ts` to `packages/engine/src/~~store/kinds/~~crudKinds.ts` — the `store/` hop
+ * was transitional and is now `workspace/entities/kinds/` (engine-layout phases 3+4, 2026-09-29) — with its
  * four siblings. **Nothing in it was ever Electron** — two imports, both of engine types — and that is the
  * whole point: this file is the *engine half* of the CRUD factory's inversion, so leaving it in the shell
  * meant a headless host registered the four `entity.*` commands and left this file's container **empty**.

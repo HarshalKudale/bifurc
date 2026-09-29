@@ -50,8 +50,8 @@ import {
   type RunningProxy,
   type WorkspaceFixture,
 } from "./proxyHarness";
-import { generateCA } from "@bifurc/engine/proxy/certManager";
-import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
+import { generateCA } from "@bifurc/engine/certificates/certManager";
+import { isCALoaded } from "@bifurc/engine/certificates/tlsCert";
 import { logEmitter, type RequestLogEntry } from "@bifurc/engine/kernel/telemetry";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

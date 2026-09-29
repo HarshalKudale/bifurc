@@ -14,7 +14,7 @@
  */
 import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./telemetry";
-import type { WebhookPayload } from "../proxy/webhookServer";
+import type { WebhookPayload } from "../webhooks/webhookServer";
 import { getWorkspaceSyncStatus } from "../sync/statusTracker";
 import { getWorkspaceGitState } from "../sync/gitState";
 

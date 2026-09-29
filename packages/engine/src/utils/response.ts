@@ -1,8 +1,8 @@
 import * as http from "http";
 import * as net from "net";
-import { HOP_BY_HOP } from "./constants";
+import { HOP_BY_HOP } from "./http";
 import { emitLogChunk } from "../kernel/telemetry";
-import { decompressBody, stripContentEncoding } from "./decompressUtils";
+import { decompressBody, stripContentEncoding } from "./decompress";
 
 export function buildResponseHeaders(res: http.IncomingMessage) {
   let head = `HTTP/1.1 ${res.statusCode} ${res.statusMessage ?? ""}\r\n`;
@@ -77,8 +77,8 @@ export function handleProxyResponse(
 
 import * as https from "https";
 import { ProxyRule } from "../workspace/config";
-import { sendHtml } from "./pages";
-import { executeRequestScript, executeResponseScript } from "./scriptExecutor";
+import { sendHtml } from "../reverseproxy/pages";
+import { executeRequestScript, executeResponseScript } from "../mocks/scriptExecutor";
 
 export function passthroughToUpstream(
   socket: net.Socket,

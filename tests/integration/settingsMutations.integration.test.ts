@@ -74,9 +74,9 @@ import {
   type WorkspaceFixture,
 } from "./proxyHarness";
 import { startServer, stopServer, isRunning, getPort } from "@bifurc/engine/proxy/server";
-import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
-import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
-import { generateCA } from "@bifurc/engine/proxy/certManager";
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/reverseproxy/edge";
+import { isCALoaded } from "@bifurc/engine/certificates/tlsCert";
+import { generateCA } from "@bifurc/engine/certificates/certManager";
 import { loadSettings, type AppSettings } from "@bifurc/engine/workspace/appSettings";
 import { loadConfig } from "@bifurc/engine/workspace/config";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
@@ -432,7 +432,7 @@ async function bootOnConfiguredPort(): Promise<void> {
   edge = createEdgeRouter({ resolveConfig: () => loadConfig() });
   /**
    * **Bound as well as started — `plan/17` §5 work item 7.** `config.save` re-binds the edge through the
-   * module-level binding, and `restartEdge()` is a **no-op** when nothing is bound: `proxy/edge.ts` has no lazy
+   * module-level binding, and `restartEdge()` is a **no-op** when nothing is bound: `reverseproxy/edge.ts` has no lazy
    * default, unlike the proxy and the webhook. So a suite that created an edge without binding it would leave
    * the entire rebind path unexercised while every case still passed — the "assertion that cannot fail" shape
    * `TRAPS.md` warns about. Mirrors `runtime/host.ts`, which binds its edge the same way.
@@ -460,7 +460,7 @@ async function bootOnConfiguredPort(): Promise<void> {
 /**
  * The one request every routing assertion uses — sent to the **edge**.
  *
- * `app.localhost` is a mapped host, i.e. reverse-half traffic, and the reverse half is `proxy/edge.ts` after
+ * `app.localhost` is a mapped host, i.e. reverse-half traffic, and the reverse half is `reverseproxy/edge.ts` after
  * work item 3. Sending this to the forward proxy is what produced this suite's `400 to be 200` mass: the
  * forward proxy answers every relative request with a deliberate 400 whose body names the edge. Kept as a
  * one-line seam so a case that *means* the forward half reaches for `proxyRequest()` directly through
