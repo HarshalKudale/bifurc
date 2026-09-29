@@ -4,7 +4,7 @@ import {
 import {
   writeFlatEntity, readEnabledSet, writeEnabledSet, bootstrapEnabledSet, readAllEntities,
 } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 function syncEnabled(wsId: string, id: string, enabled: boolean): void {
@@ -63,7 +63,7 @@ export async function run(
     }
 
     saveConfig(cfg);
-    reloadConfig();
+    notifyConfigChanged();
     return { ok: true, imported, skipped };
   } catch (err) {
     return { ok: false, error: String(err) };

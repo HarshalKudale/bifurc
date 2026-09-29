@@ -902,7 +902,8 @@
     {
       "path": "packages/engine/src/runtime/instances.ts",
       "phase": 2,
-      "note": "§4.1 — notifyConfigChanged(), the listener fan-out"
+      "status": "done",
+      "note": "§4.1 — the listener fan-out: notifyConfigChanged() (reload) + rebindRuntimePorts() (port). Two functions, not one; see Engine_Module_Plan.md's status note."
     },
     {
       "path": "packages/engine/src/websocket/index.ts",

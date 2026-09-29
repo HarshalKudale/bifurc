@@ -3,7 +3,7 @@ import {
 } from "../../store/config";
 import type { EnvVariable } from "../../store/types";
 import { writeFlatEntity, readAllEntities } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 interface PostmanEnvValue {
@@ -71,7 +71,7 @@ export async function run(
     }
 
     saveConfig(cfg);
-    reloadConfig();
+    notifyConfigChanged();
     return { ok: true, imported };
   } catch (err) {
     return { ok: false, error: String(err) };

@@ -2,7 +2,7 @@ import {
   loadConfig, saveConfig, generateId, SavedRequest,
 } from "../../store/config";
 import { writeEntity, upsertNameEntry } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 // ── cURL parser (duplicated from packages/gui/src/lib/curlParser.ts for main process use) ──
@@ -151,7 +151,7 @@ export async function run(
       imported++;
     }
 
-    reloadConfig();
+    notifyConfigChanged();
     return { ok: true, imported };
   } catch (err) {
     return { ok: false, error: String(err) };
