@@ -69,10 +69,12 @@ the ratchet. **The plan's move counts were 2 right / 5 wrong** — measure, neve
 
 **⚠ The layering rule is §6's per-module table, NOT §5.1's blanket ban** (they contradict; §6 governs,
 decided 2026-09-29). **`tests/engine/layout.test.ts` enforces it** — 5 assertions, teeth verified by
-mutation. Exemptions: `import type` (erased) and **`runtime/instances` (§4.1's seam — 20 edges)**. **The tree
-had 24 violations when the ratchet landed**; all are in `ALLOWED_VIOLATIONS` with reasons, and a stale entry
-fails the test, so the list can only shrink. **`kernel/eventBus.ts → gitops/` needs a DESIGN DECISION**
-(inject the readers vs. relocate `emitEntityStatus`) — §5.1's "kernel imports nothing" is currently false.
+mutation. Exemptions: `import type` (erased) and **the two SEAM modules** (`runtime/instances` — §4.1's
+listener fan-out, 20 edges; `runtime/entityStatus` — the read-and-emit composition). **The tree had 24
+violations when the ratchet landed; 22 remain allowlisted with reasons** (a stale entry fails the test, so the
+list can only shrink). **✅ The worst is fixed:** `kernel/eventBus.ts` no longer imports `gitops/` — §5.1's
+"kernel imports nothing engine-internal" is now TRUE, because `emitEntityStatus()` moved to
+`runtime/entityStatus.ts` (it could NOT go to `gitops/`: 3 of its 4 callers are `workspace/`-side).
 **§5.2's ESLint half is impossible: this repo has no ESLint.** Tests **do not** mirror `src/`
 (TESTING.md §3.5). **Procedures → skill `bifurc-engine-layout-phase`** (the codemod's six blind spots + the
 Windows case-only-rename trap, the resolve-every-pointer sweep, the per-phase loop).

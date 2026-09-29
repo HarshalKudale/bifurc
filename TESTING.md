@@ -584,7 +584,7 @@ test-directory ratchet would be enforcing a naming convention the project has ju
 The one new suite engine-layout phase 8 added, and the reason it exists is in its own docblock: §5.2 says
 enforcement *"must be added in the same phase as the first move, or the rule decays"*, it was not, and the
 cost is now measured — **24 file-level contract violations** accumulated across phases 1–7 with nothing to
-catch them.
+catch them. **Two of those 24 are already fixed** (see below); the other 22 are allowlisted with a reason each.
 
 Five assertions, each verified fail-able by mutation (planting `blob → gitops` fails with the exact
 `file → file` pair; adding a bogus allowlist entry fails the staleness check):
@@ -596,6 +596,16 @@ Five assertions, each verified fail-able by mutation (planting `blob → gitops`
 | the allowlist has no stale entries | an allowlist that has become a permission slip — it can only shrink |
 | no contract module is orphaned | a module nothing imports (an empty directory that looks wired) |
 | every `register*Commands` owner is reachable from `registerAll.ts` | a command module a headless consumer would answer `UNKNOWN_COMMAND` for |
+
+**The worst finding it surfaced is fixed, and the fix is the model for the rest.** `kernel/eventBus.ts`
+imported `getWorkspaceSyncStatus` and `getWorkspaceGitState` from `gitops/` — two *values* — so §5.1's
+"`kernel/` imports nothing engine-internal" was false. `emitEntityStatus()` moved to
+**`runtime/entityStatus.ts`**, the engine's **second seam module** (the first is `runtime/instances.ts`,
+§4.1). It could not go to `gitops/`: three of its four callers are `workspace/`-side, and §6 lets `workspace/`
+import only `kernel/` and `utils/`, so a sideways move would have turned two `kernel → gitops` edges into
+three `workspace → gitops` ones and changed nothing. **`kernel/eventBus.ts` now has exactly one
+engine-internal import and it is a type.** Its two allowlist entries were deleted in the same commit — which
+is the shrink the staleness assertion exists to force, and the reason that assertion is worth having.
 
 It is **not** an ESLint rule, and §5.2 asks for one. **This repository has no ESLint at all** — no config,
 no dependency, nothing in `node_modules/.bin` — so that half is recorded in the plan rather than taken
