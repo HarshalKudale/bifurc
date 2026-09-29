@@ -65,7 +65,7 @@ import {
   type BlobReleaseResult,
   type BlobStatResult,
 } from "@bifurc/protocol";
-import { dataDir } from "../workspace/paths";
+import { dataDir } from "../paths";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout constants

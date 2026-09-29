@@ -62,6 +62,24 @@ const PHASE = flagValue("--phase") ? Number(flagValue("--phase")) : null;
 // ---------------------------------------------------------------------------
 const F = (from, to, phase, note) => ({ from, to, phase, note });
 
+/**
+ * ⚠ **This table is the phase-0 plan, not a description of the tree.**
+ *
+ * `from` deliberately keeps the ORIGINAL path (it is the codemod's input), and `to` is where the *named
+ * phase* put the file. Both are therefore stale once every phase is applied — and three `to` fields are
+ * stale for a second reason: **the post-phase-8 layout cleanup moved them again**, because phase 4's
+ * placement turned out to be wrong rather than merely preliminary. Their final homes are:
+ *
+ *   - `proxy/responseUtils` → `utils/response` (phase 4) → **`proxy/response`** (one importer, and not pure)
+ *   - `proxy/serverUtils`   → `utils/server`   (phase 4) → **split**: `workspace/dispatch` +
+ *                                                          `utils/id` + `utils/net`
+ *   - `store/gitStore`      → `gitops/gitStore` (phase 6) → **`workspace/gitStore`** (broke a cycle)
+ *   - `blob/*`              (unchanged, phase 0)          → **`workspace/blob/*`** (disk-backed persistence)
+ *
+ * So `--check`'s "TABLE entries with no file on disk" list is expected to be long, and is not a bug.
+ * `plan/engine-layout-map.json`'s `corrections` array carries the same record.
+ */
+
 const FILES = [
   // --- root (6) ------------------------------------------------------------
   F("index", "index", 0),

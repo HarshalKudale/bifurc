@@ -47,7 +47,7 @@ import { loadConfig } from "./workspace/config";
 import { bus, wireLogEventsToBus } from "./kernel/eventBus";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./lifecycle/startup";
 import { shutdownEngine } from "./lifecycle/shutdown";
-import { startBlobSweeper } from "./blob/sweep";
+import { startBlobSweeper } from "./workspace/blob/sweep";
 import { commandRegistry, type CommandRegistry } from "./kernel/registry";
 import { EventLog } from "./transport/eventLog";
 
@@ -538,7 +538,7 @@ export * as applications from "./applications/processSpawner";
 export * as commands from "./kernel/registry";
 export * as startup from "./lifecycle/startup";
 export * as shutdown from "./lifecycle/shutdown";
-export * as blob from "./blob/store";
-export * as blobSweep from "./blob/sweep";
+export * as blob from "./workspace/blob/store";
+export * as blobSweep from "./workspace/blob/sweep";
 export * as importExport from "./importexport/registry";
 export * as importExportCommands from "./importexport/commands";

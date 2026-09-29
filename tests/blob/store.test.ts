@@ -28,8 +28,8 @@ import {
   releaseBlob,
   stagingRoot,
   statBlob,
-} from "@bifurc/engine/blob/store";
-import { sweepBlobs } from "@bifurc/engine/blob/sweep";
+} from "@bifurc/engine/workspace/blob/store";
+import { sweepBlobs } from "@bifurc/engine/workspace/blob/sweep";
 import { dataDir, resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 
 const b64 = (input: string | Buffer): string =>

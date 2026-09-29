@@ -554,16 +554,16 @@ inventory of what has to move.
 | `tests/proxy/edge.test.ts` | `packages/engine/src/reverseproxy/edge.ts` |
 | `tests/proxy/mockHandler.test.ts` | `packages/engine/src/mocks/mockHandler.ts` |
 | `tests/proxy/proxyHandler.test.ts` | `packages/engine/src/proxy/proxyHandler.ts` |
-| `tests/proxy/responseUtils.test.ts` | `packages/engine/src/utils/response.ts` |
+| `tests/proxy/responseUtils.test.ts` | `packages/engine/src/proxy/response.ts` |
 | `tests/proxy/scriptContext.test.ts` | `packages/engine/src/mocks/scriptContext.ts` |
 | `tests/proxy/scriptExecutor.test.ts` | `packages/engine/src/mocks/scriptExecutor.ts` |
 | `tests/proxy/server.test.ts` | `packages/engine/src/proxy/server.ts` |
-| `tests/proxy/serverUtils.test.ts` | `packages/engine/src/utils/server.ts` |
+| `tests/proxy/serverUtils.test.ts` | `packages/engine/src/workspace/dispatch.ts` + `utils/id.ts` + `utils/net.ts` (the file was split) |
 | `tests/proxy/service-discovery.test.ts` | `packages/engine/src/proxy/service-discovery.ts` |
 | `tests/proxy/tlsCert.test.ts` | `packages/engine/src/certificates/tlsCert.ts` |
 | `tests/store/appSettings.test.ts` | `packages/engine/src/workspace/appSettings.ts` |
 | `tests/store/config.test.ts` | `packages/engine/src/workspace/config.ts` |
-| `tests/store/gitStore.test.ts` | `packages/engine/src/gitops/gitStore.ts` |
+| `tests/store/gitStore.test.ts` | `packages/engine/src/workspace/gitStore.ts` |
 | `tests/store/paths.test.ts` | `packages/engine/src/workspace/paths.ts` |
 | `tests/store/workspaceFs.test.ts` | `packages/engine/src/workspace/workspaceFs.ts` |
 | `tests/sync/{autoSync,gitLock,gitOps,gitState,mappingPublish,syncManager}.test.ts` | `packages/engine/src/gitops/*` |
@@ -897,13 +897,20 @@ first six now live under `packages/engine/src/`): `applications` 1.1% → 87.5%,
 
 ## 4.3 The routing path specifically
 
-> **Path note (engine-layout phase 4, 2026-09-29; extended phase 7).** This table records a **past
-> measurement**; the engine-layout reorganisation has since moved six of the eight rows. `proxy/` now holds
-> only the forward half, so `proxy/serverUtils.ts` → `utils/server.ts`, `proxy/mockHandler.ts` →
-> `mocks/mockHandler.ts`, `proxy/tlsCert.ts` → `certificates/tlsCert.ts`, and — as of phase 7 —
-> `proxy/serverReplay.ts` → `utils/replay.ts` (extracted down because both `proxy/` and `rest/` need it),
-> while `proxyHandler.ts`, `routingUtils.ts`, `server.ts` and `tlsIntercept.ts` stay put. The numbers are
-> unchanged and still describe these files — only the paths are historical.
+> **Path note (engine-layout phase 4, 2026-09-29; extended phase 7 and the layout cleanup).** This table
+> records a **past measurement**; the reorganisation has since moved six of the eight rows. `proxy/` now
+> holds only the forward half, so `proxy/mockHandler.ts` → `mocks/mockHandler.ts`, `proxy/tlsCert.ts` →
+> `certificates/tlsCert.ts`, `proxy/serverReplay.ts` → `utils/replay.ts` (extracted down because both
+> `proxy/` and `rest/` need it), while `proxyHandler.ts`, `routingUtils.ts`, `server.ts` and
+> `tlsIntercept.ts` stay put.
+>
+> **`proxy/serverUtils.ts` and `proxy/responseUtils.ts` have moved twice, and the second move is the one
+> worth knowing:** phase 4 sent both to `utils/` on the reasoning that *both proxy halves need them*, and
+> the layout cleanup found that reasoning was half wrong. `responseUtils.ts` had exactly **one** importer
+> (`proxy/proxyHandler.ts`), so it is now **`proxy/response.ts`**; `serverUtils.ts` was not pure (it reads
+> `enabled.json`), so it was **split** — `workspace/dispatch.ts` (the config derivations), `utils/id.ts`
+> (`mkId`) and `utils/net.ts` (`hostnameOf`). The numbers are unchanged and still describe these files —
+> only the paths are historical.
 
 | File | Statements before | Statements after |
 |---|---:|---:|
@@ -941,9 +948,12 @@ against real local servers.
 
 ### 4.5 The git sync / publish path specifically
 
-> **Path note (engine-layout phase 6, 2026-09-29).** This table records a **past measurement**, and every
-> `sync/` row has since moved: `packages/engine/src/sync/*` → `packages/engine/src/gitops/*`, together with
-> `store/gitStore.ts` → `gitops/gitStore.ts` (the phase-6 merge). The numbers are unchanged and still
+> **Path note (engine-layout phase 6, 2026-09-29; extended by the layout cleanup).** This table records a
+> **past measurement**, and every `sync/` row has since moved: `packages/engine/src/sync/*` →
+> `packages/engine/src/gitops/*`, together with `store/gitStore.ts` → `gitops/gitStore.ts` (the phase-6
+> merge) and then → **`workspace/gitStore.ts`** (the cleanup: it resolves paths through `workspaceFs`,
+> holds a *per-workspace* handle cache, and `gitops/` imported `workspace/` in seven files, so
+> `workspace → gitops` was a cycle). The numbers are unchanged and still
 > describe these files — only the paths are historical. The `src/ipc/handlers/syncHandlers.ts` row is
 > doubly historical: that shell file was deleted in the P6 reduction (2026-09-21).
 
@@ -1202,9 +1212,9 @@ A full HTML report is written to `coverage/index.html` by `npm run test:coverage
 
 | File | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
-| `packages/engine/src/blob/commands.ts` | **100%** | **100%** | **100%** | **100%** |
-| `packages/engine/src/blob/store.ts` | **98.3%** | **95.9%** | **100%** | **99.1%** |
-| `packages/engine/src/blob/sweep.ts` | **90.1%** | **91.7%** | **100%** | **92.2%** |
+| `packages/engine/src/workspace/blob/commands.ts` | **100%** | **100%** | **100%** | **100%** |
+| `packages/engine/src/workspace/blob/store.ts` | **98.3%** | **95.9%** | **100%** | **99.1%** |
+| `packages/engine/src/workspace/blob/sweep.ts` | **90.1%** | **91.7%** | **100%** | **92.2%** |
 | `packages/protocol/src/commands/blob.ts` | **100%** | **100%** | **100%** | **100%** |
 
 89 tests in `tests/blob/{store,sweep,commands}.test.ts`. Every one runs against a **real temp data
@@ -1979,7 +1989,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
     `screenshots.spec.ts` (1, zero assertions). Harden them the same way as the ones already
     converted, then delete `screenshots.spec.ts`'s `test()` wrapper or mark it clearly as a
     screenshot generator rather than a test.
-12. **`mkId()` collision risk** — `packages/engine/src/utils/server.ts` appends only 4 base-36 random
+12. **`mkId()` collision risk** — `packages/engine/src/utils/id.ts` appends only 4 base-36 random
     characters (~1.6M space) to a millisecond timestamp, so a burst of ids within one
     millisecond has a small real collision probability. Widen the random suffix.
 13. **E2E binds port 80** — `e2e/fixtures/sampleData.ts` writes `port: 80`, which needs root
@@ -2041,12 +2051,12 @@ is why neither could be found by reading the code, only by asserting on the data
 | Proxy-rule export wrote the **UI stubs** (`targetType`, `targetExternal`, `targetMappingId`, `useRegex` and both scripts blanked), so re-importing silently destroyed every rule | `packages/engine/src/importexport/exporters/{proxyrules-json,workspace-json}.ts` | read `readAllEntities(wsId, "rules")` + re-inject `enabled` from `enabled.json` |
 | Workspace import **never wrote rule files to disk** (relied on `saveConfig()`, which deliberately skips them) → imported workspace proxied nothing | `packages/engine/src/importexport/importers/workspace-json.ts` | explicit `writeEntity(..., "rules", …)` loop + enabled set + `upsertNameEntry` |
 | Disabled mappings/mocks came back **enabled** after import (`if (m.enabled) set.add()` with no `else`; missing flag ⇒ enabled) | `packages/engine/src/importexport/importers/workspace-json.ts` | both-branch enabled sets (`set.add` / `set.delete`) |
-| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/gitops/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
+| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/workspace/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
 | REST **Send** could fail with a spurious **400 / "socket hang up"** on a later request to the same origin | `packages/engine/src/utils/replay.ts` `replayRequest` | it sent `connection: close` but did not pin an agent, so Node returned the socket to the global pool whenever the upstream answered `keep-alive` (servers routinely ignore the request's close) and the next request was rejected by the server with `HPE_CLOSED_CONNECTION`. Fixed with `agent: false`. |
 | The exported/saved **HTML run report rendered raw `${…}` placeholders** instead of data — the whole report was inert. The same escaped-interpolation mistake sat in the update-checker's fallback URL | `src/ipc/handlers/runnerHandlers.ts` `generateRunnerHtml`, `src/ipc/handlers/systemHandlers.ts` | un-escaped all 15 interpolations and hardened `esc()` to coerce + escape quotes; fixed the URL template |
 | Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `packages/engine/src/gitops/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
 | A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/gitops/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/gitops/statusTracker.ts` and shared |
-| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/gitops/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
+| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/workspace/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
 | The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `packages/engine/src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
 | **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `packages/gui/src/lib/createTabReducer.ts`, `packages/gui/src/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
 | **Adding, editing or deleting a mock/mapping/rule/request/websocket/webhook did not take effect on the running proxy until something else reloaded the config.** `entityCrudFactory` called `saveConfig(cfg)` then `reloadConfig()` **before** writing the entity file and **before** `syncEnabledSet()`. `reloadConfig()` snapshots the enabled-sets out of `enabled.json`, so `workspaceCfg()` filtered the new entity straight back out of routing — a mock you just added was not served, and a mock you just **deleted kept being served**, until an unrelated action (a settings save, a workspace switch, an app restart) happened to reload. A test that only inspects the handler's return value cannot see this: the config object is correct, the *running server* is stale | `src/ipc/handlers/entityCrudFactory.ts` (`add`, `update`, `delete`) | move `reloadConfig()` to **after** every on-disk write in all three handlers, so the reload sees both the entity file and the updated enabled-set. Proven by mutation: restoring the old ordering makes "stops serving a mock deleted through mock:delete" fail with `expected { from: 'mock' } to deeply equal { upstream: true, … }` |
@@ -2166,7 +2176,7 @@ npx vitest run --project integration tests/integration/runnerStorage.integration
 #    e) In packages/engine/src/gitops/publishService.ts, drop the Set() dedupe, then:
 npx vitest run --project integration tests/integration/gitSync.integration.test.ts
 #    → "treats a folder holding exactly one entity as a single-entity commit" fails. Revert.
-#    f) In packages/engine/src/gitops/gitStore.ts, remove the workspace.json add, then:
+#    f) In packages/engine/src/workspace/gitStore.ts, remove the workspace.json add, then:
 npx vitest run --project integration tests/integration/gitRemote.integration.test.ts
 #    → "clones the remote and adopts its workspace identity" fails. Revert.
 #    g) In packages/engine/src/proxy/server.ts, change the 512 * 1024 capture slice to 256 * 1024, then:
@@ -2194,7 +2204,7 @@ npx vitest run --project integration tests/integration/settingsMutations.integra
 #      `expected { from: 'mock' } to deeply equal { upstream: true, path: '/api/hello' }`. Revert.
 #    l) In src/ipc/handlers/entityCrudFactory.ts, do the same in the ADD handler, then the same
 #       command fails on "serves a mock added through mock:add immediately". Revert.
-#    m) P3 blob store. In packages/engine/src/blob/store.ts, disable the `bytes.length !== params.size`
+#    m) P3 blob store. In packages/engine/src/workspace/blob/store.ts, disable the `bytes.length !== params.size`
 #       check in putBlob, then:
 npx vitest run tests/blob
 #    → 3 tests fail: "rejects a decoded length that disagrees with the declared size" and
@@ -2203,17 +2213,17 @@ npx vitest run tests/blob
 #      (commands.test.ts). That is the whole point of the check — Node's base64 decoder ignores
 #      characters it does not recognise, so without it a truncated payload stages as a smaller but
 #      valid-looking blob. Revert.
-#    n) In packages/engine/src/blob/store.ts, disable the content-existence check in readMeta, then:
+#    n) In packages/engine/src/workspace/blob/store.ts, disable the content-existence check in readMeta, then:
 npx vitest run tests/blob
 #    → exactly 1 test fails: "treats a blob directory with metadata but no content as not found".
 #      Without the check, statBlob reports a size and a SHA-256 for bytes that are not on disk.
 #      Revert.
-#    o) In packages/engine/src/blob/sweep.ts, change `meta.createdAt + ttlMs <= now` to `< now`, then:
+#    o) In packages/engine/src/workspace/blob/sweep.ts, change `meta.createdAt + ttlMs <= now` to `< now`, then:
 npx vitest run tests/blob
 #    → 4 tests fail, led by "reclaims a blob whose lease has run out, and reports what it freed":
 #      the boundary is inclusive by contract (`createdAt + TTL` is expired, not "expires in 1 ms").
 #      The other three sweep exactly at the boundary. Revert.
-#    p) In packages/engine/src/blob/sweep.ts, disable the `entry.name === BLOB_STAGING_DIR_NAME`
+#    p) In packages/engine/src/workspace/blob/sweep.ts, disable the `entry.name === BLOB_STAGING_DIR_NAME`
 #       branch so `.staging/` falls through to the blob-directory path, then:
 npx vitest run tests/blob
 #    → 2 tests fail: "reclaims an abandoned staged file once it is old" and "does not resurrect a
