@@ -1,5 +1,5 @@
 import * as net from "net";
-import { AppConfig } from "../store/config";
+import { AppConfig } from "../workspace/config";
 
 /**
  * The reason phrase for a status code.

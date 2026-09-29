@@ -1,5 +1,5 @@
-import { loadConfig, SavedRequest, Folder } from "../../store/config";
-import { readAllEntities } from "../../store/workspaceFs";
+import { loadConfig, SavedRequest, Folder } from "../../workspace/config";
+import { readAllEntities } from "../../workspace/workspaceFs";
 import type { ExportResult } from "../types";
 import { exportRequestsToPostman } from "../formats/postman";
 

@@ -1,5 +1,5 @@
-import { AppConfig, Environment, type WorkspaceDispatchSlice } from "../store/config";
-import { readEnabledSet, bootstrapEnabledSet } from "../store/workspaceFs";
+import { AppConfig, Environment, type WorkspaceDispatchSlice } from "../workspace/config";
+import { readEnabledSet, bootstrapEnabledSet } from "../workspace/workspaceFs";
 
 export interface EnabledSets {
   mocks: Set<string>;
@@ -86,7 +86,7 @@ export function activeEnv(cfg: AppConfig): Environment | null {
  */
 export function workspaceCfg(
   cfg: AppConfig,
-  fullRules: import('../store/config').ProxyRule[],
+  fullRules: import('../workspace/config').ProxyRule[],
   enabledSets: EnabledSets,
   slice: WorkspaceDispatchSlice,
 ): AppConfig {

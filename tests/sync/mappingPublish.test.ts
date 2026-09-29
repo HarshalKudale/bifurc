@@ -30,7 +30,7 @@ async function setup() {
 
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride(tmpDir);
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   fs.writeFileSync(
@@ -44,7 +44,7 @@ async function setup() {
     "utf-8",
   );
 
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
   const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
   await initWorkspaceRepo(WS_ID);
@@ -53,7 +53,7 @@ async function setup() {
 async function teardown() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride("");
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* safe-delete shim holds handles */ }
 }
@@ -69,9 +69,9 @@ let ctx: any;
 
 beforeAll(async () => {
   const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
-  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
-  const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
-  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
+  const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
   const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
   const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
@@ -132,7 +132,7 @@ describe("entity.publish — a mapping, through the command the button issues", 
   });
 
   it("publishes an edited mapping as an update, and leaves nothing untracked behind it", async () => {
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("edit.localhost");
     const relPath = `mappings/${created.id}.json`;

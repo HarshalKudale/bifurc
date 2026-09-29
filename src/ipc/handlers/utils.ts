@@ -1,4 +1,4 @@
-import { readEnabledSet, writeEnabledSet, bootstrapEnabledSet } from "@bifurc/engine/store/workspaceFs";
+import { readEnabledSet, writeEnabledSet, bootstrapEnabledSet } from "@bifurc/engine/workspace/workspaceFs";
 import { getGit } from "@bifurc/engine/store/gitStore";
 
 export function syncEnabledSet(wsId: string, kind: string, id: string, enabled: boolean): void {

@@ -14,7 +14,7 @@ import {
     appDataDir,
     WEBHOOK_PORT_BAND_MIN,
     WEBHOOK_PORT_BAND_MAX,
-} from "@bifurc/engine/store/appSettings";
+} from "@bifurc/engine/workspace/appSettings";
 
 describe("appSettings", () => {
     let tmpDir: string;

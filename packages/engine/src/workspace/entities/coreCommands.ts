@@ -51,17 +51,17 @@ import type {
     EntitySetEnabledParams,
     WorkspaceSetActiveParams,
 } from "@bifurc/protocol";
-import { loadConfig, loadEntity, saveConfig } from "./config";
-import { readEnabledSet } from "./workspaceFs";
-import { syncEnabledSet } from "./enabledSet";
-import { notifyConfigChanged } from "../runtime/instances";
-import { emitEntityStatus } from "../kernel/eventBus";
+import { loadConfig, loadEntity, saveConfig } from "../config";
+import { readEnabledSet } from "../workspaceFs";
+import { syncEnabledSet } from "../enabledSet";
+import { notifyConfigChanged } from "../../runtime/instances";
+import { emitEntityStatus } from "../../kernel/eventBus";
 import {
     mayAffectUnnamedEntities,
     type CommandContext,
     type CommandRegistry,
-} from "../kernel/registry";
-import { toEngineKind } from "../kernel/kinds";
+} from "../../kernel/registry";
+import { toEngineKind } from "../../kernel/kinds";
 
 /**
  * The six kinds that carry an enabled/disabled flag, tracked in `enabled.json` rather than on the

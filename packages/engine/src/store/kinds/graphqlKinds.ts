@@ -1,4 +1,4 @@
-import { registerCrudKind, registerSimpleKind } from "../entityCrudCommands";
+import { registerCrudKind, registerSimpleKind } from "../../workspace/entities/entityCrudCommands";
 
 // Moved here from `src/ipc/handlers/graphqlKinds.ts` on 2026-09-23 (`plan/15` work item 10), with its four
 // siblings. The container these registrations populate is what the **engine-side** `entity.*` commands read,

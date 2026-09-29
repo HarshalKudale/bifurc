@@ -49,7 +49,7 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { loadConfig } from "@bifurc/engine/store/config";
+import { loadConfig } from "@bifurc/engine/workspace/config";
 import { writeSampleWorkspace } from "../../e2e/fixtures/sampleData";
 
 describe("the e2e fixture's seeded workspace survives the engine's own read path", () => {

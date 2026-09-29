@@ -10,9 +10,9 @@ import {
   DataRootNotInitialisedError,
   platformDefaultDataDir,
   resolveDataDir,
-} from "@bifurc/engine/store/paths";
+} from "@bifurc/engine/workspace/paths";
 
-describe("store/paths", () => {
+describe("workspace/paths", () => {
   afterEach(() => {
     resetDataRootForTests();
     vi.unstubAllEnvs();

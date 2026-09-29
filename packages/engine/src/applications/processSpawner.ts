@@ -4,7 +4,7 @@
  */
 
 import { ChildProcess, spawn } from "child_process";
-import { readEntity } from "../store/workspaceFs";
+import { readEntity } from "../workspace/workspaceFs";
 import { bus } from "../kernel/eventBus";
 import {
     ApplicationConfig,

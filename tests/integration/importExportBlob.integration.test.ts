@@ -65,9 +65,9 @@ import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
 import { blobRoot, statBlob } from "@bifurc/engine/blob/store";
 import { getAllFormats } from "@bifurc/engine/importExport/registry";
-import { loadConfig } from "@bifurc/engine/store/config";
-import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
-import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 import type { EntityKind } from "@bifurc/engine/importExport/types";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 

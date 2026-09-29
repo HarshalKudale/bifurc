@@ -11,6 +11,11 @@
  * was `true`. `registerAllEngineKinds()` calls it now; the shell still calls it too, for the reasons its own
  * call site records.
  *
+ * ⚠ **The path above is the 2026-09-23 destination, kept as the historical record.** The file is now at
+ * `packages/engine/src/workspace/entities/kinds/crudKinds.ts` (`Engine_Module_Plan.md` phase 3 split
+ * `store/`); `store/kinds/coreKinds.ts` and `crudKinds.ts` moved together, and their three protocol
+ * siblings stay behind until phase 5.
+ *
  * Renamed from `crudHandlers.ts` on 2026-09-21, when the P6 reduction's fourth group deleted the file's
  * last five channels (`webhook:registerActive`, `webhook:unregisterActive`,
  * `webhookServer:start|stop|status`). `plan/07` §5b-septies had recorded a decision to *keep* the
@@ -31,7 +36,7 @@
  * tests. `registerWebhookCommands()` is called from `src/ipc/handlers.ts`.
  */
 import { registerCrudKind } from "../entityCrudCommands";
-import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "../config";
+import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "../../config";
 
 export function registerCrudKinds() {
   // ── Mappings ───────────────────────────────────────────────────────────────

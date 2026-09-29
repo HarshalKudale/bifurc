@@ -80,7 +80,7 @@ import type {
     ScriptExecuteParams,
 } from "@bifurc/protocol";
 import type { CommandRegistry } from "./kernel/registry";
-import { wsDir } from "./store/workspaceFs";
+import { wsDir } from "./workspace/workspaceFs";
 import { invalidateCache } from "./sync/statusTracker";
 import { emitEntityStatus } from "./kernel/eventBus";
 import { replayRequest } from "./proxy/serverReplay";

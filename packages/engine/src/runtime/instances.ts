@@ -33,7 +33,7 @@
 import { isRunning, reloadConfig, startServer } from "../proxy/server";
 import { isEdgeRunning, restartEdge } from "../proxy/edge";
 import { isWebhookServerRunning, startWebhookServer } from "../proxy/webhookServer";
-import type { AppConfig } from "../store/config";
+import type { AppConfig } from "../workspace/config";
 
 /**
  * Re-derive every listener whose rules come from config.

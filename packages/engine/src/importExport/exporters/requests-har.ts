@@ -1,5 +1,5 @@
-import { loadConfig, SavedRequest } from "../../store/config";
-import { readAllEntities } from "../../store/workspaceFs";
+import { loadConfig, SavedRequest } from "../../workspace/config";
+import { readAllEntities } from "../../workspace/workspaceFs";
 import type { ExportResult } from "../types";
 
 function toHarEntry(req: SavedRequest): object {

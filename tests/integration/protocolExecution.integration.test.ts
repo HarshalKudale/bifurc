@@ -315,7 +315,7 @@ beforeAll(async () => {
     res.end('<?xml version="1.0"?><definitions name="TestService"/>');
   });
 
-  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
   const { registerGraphqlKinds } = await import("@bifurc/engine/store/kinds/graphqlKinds");
   const { registerSoapKinds } = await import("@bifurc/engine/store/kinds/soapKinds");
   const { registerGrpcKinds } = await import("@bifurc/engine/store/kinds/grpcKinds");
@@ -324,7 +324,7 @@ beforeAll(async () => {
   // (`plan/07` §5b-septendecies). `registerCoreKinds()` is now the shell's `environments` kind and
   // nothing else; the *commands* still need wiring, which is the line below.
   const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
-  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  const { registerCoreCommands } = await import("@bifurc/engine/workspace/entities/coreCommands");
   // P6 §5c slice 4: the nine protocol-client commands left the three handler files' module scope as
   // well. Every channel in those files *delegates* through `commandRegistry.invoke()`, so without
   // these calls the channels below exist with nothing behind them — a `No handler registered` at
@@ -335,7 +335,7 @@ beforeAll(async () => {
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
   // All three handler groups registered below reach that factory, so without this call their channels
   // exist with nothing behind them.
-  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
   // `request.replay` and the three `healthbar.*` commands are registered by `miscCommands`, and until the
   // reduction's sixth group this suite never had to wire it: `coreHandlers.ts`'s `request:replay` channel
   // *was* the registration, so deleting that channel removed this suite's route to a command it drives
@@ -353,7 +353,7 @@ beforeAll(async () => {
   // `config.save` is the other command this suite drives by the name of a channel that §5c already
   // deleted — `invoke("config:save", …)` resolves through the `handlers.get()` fallback to a plain
   // command, so it needs its registering module wired rather than a table entry.
-  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
+  const { registerConfigCommands } = await import("@bifurc/engine/workspace/entities/configCommands");
 
   registerCoreKinds();
   registerCoreCommands(commandRegistry);

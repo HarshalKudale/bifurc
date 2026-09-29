@@ -1,7 +1,7 @@
 import {
   loadConfig, saveConfig, generateId, SavedRequest,
-} from "../../store/config";
-import { writeEntity, upsertNameEntry } from "../../store/workspaceFs";
+} from "../../workspace/config";
+import { writeEntity, upsertNameEntry } from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 

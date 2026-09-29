@@ -198,7 +198,7 @@ function bytesToBase64(bytes: Uint8Array): string {
  * ```
  *
  * This is the **`window.api`-fidelity half** of a translation that has two halves. The engine owns
- * the other one — `toEngineKind()` in `packages/engine/src/commands/entityKindMap.ts` — and that is
+ * the other one — `toEngineKind()` in `packages/engine/src/kernel/kinds.ts` — and that is
  * the one that has always been on the live path, because the client used to forward the caller's
  * `kind` verbatim and `EntityLoadParams.kind` is the strict `EntityKind` enum. So the wire rejected
  * `"rules"` with a `BAD_REQUEST`, the two panels' `.catch(() => {})` swallowed it, and their entity
