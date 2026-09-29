@@ -14,9 +14,9 @@
  * This module is intentionally Electron-free. Keep it that way: it is on the `packages/engine`
  * side of the seam.
  */
-import { processSpawner } from "./applications/processSpawner";
-import { stopAllAutoSync } from "./gitops/autoSync";
-import { stopServer } from "./proxy/server";
+import { processSpawner } from "../applications/processSpawner";
+import { stopAllAutoSync } from "../gitops/autoSync";
+import { stopServer } from "../proxy/server";
 
 /**
  * The in-flight or completed shutdown. Memoised so the second and later callers await the same

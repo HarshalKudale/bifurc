@@ -23,13 +23,15 @@ import { onSyncStatusChange } from "@bifurc/engine/gitops/syncManager";
 import { bus, wireLogEventsToBus } from "@bifurc/engine/kernel/eventBus";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
-import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
-import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
+import { registerImportExportCommands } from "@bifurc/engine/importexport/commands";
+import { registerFileOpsCommands } from "@bifurc/engine/fileops/commands";
 import { registerCertCommands } from "@bifurc/engine/certificates/certCommands";
 import { registerServerCommands } from "@bifurc/engine/proxy/serverCommands";
 import { registerWebhookCommands } from "@bifurc/engine/webhooks/webhookCommands";
 import { registerConfigCommands } from "@bifurc/engine/workspace/entities/configCommands";
-import { registerMiscCommands } from "@bifurc/engine/miscCommands";
+import { registerRestCommands } from "@bifurc/engine/rest/commands";
+import { registerMockCommands } from "@bifurc/engine/mocks/commands";
+import { registerHealthbarCommands } from "@bifurc/engine/workspace/healthbarCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
 import { registerAuditCommands } from "@bifurc/engine/workspace/entities/auditCommands";
 import { registerCoreCommands } from "@bifurc/engine/workspace/entities/coreCommands";
@@ -110,8 +112,15 @@ export function registerIpcHandlers(): void {
   //
   // **The channels are now deleted** — the reduction's sixth group removed all seventeen of
   // `coreHandlers.ts`'s on 2026-09-21 (`plan/07` §5b-septendecies), and the file became `coreKinds.ts`
-  // with the one kind it registers. This call is the five commands' only registration.
-  registerMiscCommands(commandRegistry);
+  // with the one kind it registers. These three calls are the five commands' only registration.
+  //
+  // **The single `registerMiscCommands()` call became three in engine-layout phase 7**, when
+  // `Engine_Module_Plan.md` §4.5 dissolved `miscCommands.ts` into the feature modules that own each
+  // group: `request.replay` → `rest/`, `script.execute` → `mocks/`, the three `healthbar.*` →
+  // `workspace/`. The split is the point — the five shared nothing but their protocol grouping.
+  registerRestCommands(commandRegistry);
+  registerMockCommands(commandRegistry);
+  registerHealthbarCommands(commandRegistry);
   // P6 finding 5, step 3b-2 (fifth slice): `runner.saveReport`. Its two siblings
   // (`runner.saveConfig` / `runner.loadConfig`) were `BLOCKED` by the frozen protocol at the time and
   // stayed on their legacy channels; step 3d widened `RunnerConfigSchema` and moved them here too.

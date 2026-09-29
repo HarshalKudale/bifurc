@@ -65,10 +65,13 @@ vi.mock("@bifurc/engine/proxy/service-discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 
-// `serverReplay.ts` makes a real outbound HTTP call, so it must be mocked — and it is mocked at *its
-// own* path rather than through `proxy/server`'s re-export, because `miscCommands.ts` imports it
+// `replayRequest` makes a real outbound HTTP call, so it must be mocked — and it is mocked at *its
+// own* path rather than through `proxy/server`'s re-export, because `rest/commands.ts` imports it
 // directly (importing the lighter module beats pulling in the whole proxy server for one function).
-vi.mock("@bifurc/engine/proxy/serverReplay", () => ({
+// Engine-layout phase 7 moved the implementation out of `proxy/serverReplay.ts` into `utils/replay.ts`:
+// both the proxy's routing path and the `request.replay` command need it, and §5.1 forbids two feature
+// modules importing each other, so it was extracted down. The mock path follows the file.
+vi.mock("@bifurc/engine/utils/replay", () => ({
   replayRequest: vi.fn(() => Promise.resolve({ status: 200, headers: {}, body: "" })),
 }));
 
@@ -247,7 +250,7 @@ import {
   getWebhookPort,
   getWebhookServerError,
 } from "@bifurc/engine/webhooks/webhookServer";
-import { replayRequest as replayRequestImpl } from "@bifurc/engine/proxy/serverReplay";
+import { replayRequest as replayRequestImpl } from "@bifurc/engine/utils/replay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
@@ -513,7 +516,9 @@ describe("src/ipc/handlers.ts", () => {
      * (25 → 19); `config.save` + the three `workspace.*` commands into
      * `packages/engine/src/workspace/entities/configCommands.ts` (19 → 15); the five `webhook.*` /
      * `webhookServer.*` commands into `packages/engine/src/webhooks/webhookCommands.ts` (15 → 10); the
-     * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5); and
+     * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5 — that file was itself
+     * dissolved by engine-layout phase 7 on 2026-09-29 into `rest/`, `mocks/` and
+     * `workspace/healthbarCommands.ts`; the count history below is unaffected); and
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
      * the ratchet doing its job rather than a change to the assertion.
      *

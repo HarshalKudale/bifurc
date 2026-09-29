@@ -75,7 +75,7 @@ export interface WebhookPayload {
   body: string;
 }
 
-// -- Import/Export types (mirrored from packages/engine/src/importExport/types.ts) --------
+// -- Import/Export types (mirrored from packages/engine/src/importexport/types.ts) --------
 
 export type ImportExportEntityKind =
   | "workspace" | "requests" | "mocks" | "environments"

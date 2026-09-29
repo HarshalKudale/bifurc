@@ -20,7 +20,7 @@
  * handler*. That works in the shell, which is CJS — but `require` **does not exist in this package's
  * ESM build output**, so a verbatim copy would have compiled, typechecked and passed every unit test,
  * then thrown at *call* time in `dist/*.mjs`. Same defect `healthbar.checkUrl` was fixed for
- * (`miscCommands.ts`); same fix, static builtin imports.
+ * (`workspace/healthbarCommands.ts`); same fix, static builtin imports.
  *
  * ## The two commands fail in two different ways, and both are load-bearing
  *

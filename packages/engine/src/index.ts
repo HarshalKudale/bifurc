@@ -45,8 +45,8 @@ import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./r
 // `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
 import { loadConfig } from "./workspace/config";
 import { bus, wireLogEventsToBus } from "./kernel/eventBus";
-import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
-import { shutdownEngine } from "./shutdown";
+import { preflight, bootstrapWorkspaces, type StartupCheck } from "./lifecycle/startup";
+import { shutdownEngine } from "./lifecycle/shutdown";
 import { startBlobSweeper } from "./blob/sweep";
 import { commandRegistry, type CommandRegistry } from "./kernel/registry";
 import { EventLog } from "./transport/eventLog";
@@ -536,9 +536,9 @@ export * as ports from "./runtime/portAllocator";
 export * as sync from "./gitops/syncManager";
 export * as applications from "./applications/processSpawner";
 export * as commands from "./kernel/registry";
-export * as startup from "./startup";
-export * as shutdown from "./shutdown";
+export * as startup from "./lifecycle/startup";
+export * as shutdown from "./lifecycle/shutdown";
 export * as blob from "./blob/store";
 export * as blobSweep from "./blob/sweep";
-export * as importExport from "./importExport/registry";
-export * as importExportCommands from "./importExport/commands";
+export * as importExport from "./importexport/registry";
+export * as importExportCommands from "./importexport/commands";

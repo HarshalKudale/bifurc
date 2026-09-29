@@ -21,8 +21,8 @@
  * handler*. That works in the shell, which is CJS — but `require` **does not exist in this package's
  * ESM build output**, so a verbatim copy would have compiled, typechecked and passed every unit test,
  * then thrown at *call* time in `dist/*.mjs`. This is the same defect `healthbar.checkUrl` was fixed
- * for (`miscCommands.ts`), and the same fix: import the builtins statically. They are Node builtins
- * with no cycle and no cost, and `proxy/serverReplay.ts` / `webhooks/webhookServer.ts` already do it.
+ * for (`workspace/healthbarCommands.ts`), and the same fix: import the builtins statically. They are
+ * Node builtins with no cycle and no cost, and `utils/replay.ts` / `webhooks/webhookServer.ts` do it.
  *
  * ## The two commands fail in two different ways, and both are load-bearing
  *
