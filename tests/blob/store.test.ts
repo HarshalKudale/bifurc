@@ -30,7 +30,7 @@ import {
   statBlob,
 } from "@bifurc/engine/blob/store";
 import { sweepBlobs } from "@bifurc/engine/blob/sweep";
-import { dataDir, resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
+import { dataDir, resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 
 const b64 = (input: string | Buffer): string =>
   (typeof input === "string" ? Buffer.from(input, "utf-8") : input).toString("base64");

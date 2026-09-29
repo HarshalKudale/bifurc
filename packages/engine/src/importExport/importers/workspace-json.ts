@@ -2,11 +2,11 @@ import {
   loadConfig, saveConfig, generateId,
   LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook,
   Folder, Environment, Workspace,
-} from "../../store/config";
+} from "../../workspace/config";
 import {
   writeEntity, writeFlatEntity, writeEnabledSet, bootstrapEnabledSet, readEnabledSet,
   upsertNameEntry, initWorkspaceDir,
-} from "../../store/workspaceFs";
+} from "../../workspace/workspaceFs";
 import { initWorkspaceRepo } from "../../store/gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";

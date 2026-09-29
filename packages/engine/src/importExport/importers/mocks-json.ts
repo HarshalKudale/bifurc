@@ -1,9 +1,9 @@
 import {
   loadConfig, saveConfig, generateId, MockRule, Folder,
-} from "../../store/config";
+} from "../../workspace/config";
 import {
   writeEntity, upsertNameEntry, readEnabledSet, writeEnabledSet, bootstrapEnabledSet, readAllEntities,
-} from "../../store/workspaceFs";
+} from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 

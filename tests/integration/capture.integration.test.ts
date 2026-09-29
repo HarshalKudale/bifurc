@@ -1,7 +1,7 @@
 /**
  * Happy-path workflow test for **Capture** — the capture half of capture-and-replay.
  *
- * The Capture screen is fed by `logEmitter` (`packages/engine/src/proxy/logEmitter.ts`): the proxy builds a
+ * The Capture screen is fed by `logEmitter` (`packages/engine/src/kernel/telemetry.ts`): the proxy builds a
  * `RequestLogEntry` for every request it serves — method/url/host/status, `via` (how it was
  * fulfilled), the target, the duration, and **base64 request/response bodies so the entry can
  * be replayed or turned into a mock**. Nothing asserted any of that before: the *replay* half
@@ -24,7 +24,7 @@ import { logEmitter } from "@bifurc/engine/kernel/telemetry";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
-import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 import {
     createWorkspace,
     startUpstream,

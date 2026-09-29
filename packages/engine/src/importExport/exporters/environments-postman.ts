@@ -1,4 +1,4 @@
-import { loadConfig, Environment } from "../../store/config";
+import { loadConfig, Environment } from "../../workspace/config";
 import type { ExportResult } from "../types";
 
 function envToPostman(env: Environment): object {

@@ -18,7 +18,7 @@ import {
     readEnabledSet,
     writeEnabledSet,
     bootstrapEnabledSet,
-} from "@bifurc/engine/store/workspaceFs";
+} from "@bifurc/engine/workspace/workspaceFs";
 
 describe("workspaceFs", () => {
     let tmpDir: string;

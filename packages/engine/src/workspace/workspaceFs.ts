@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { dataDir } from "./paths";
-import { getPendingDeletions } from "./workspace/fsPendingDeletions";
+import { getPendingDeletions } from "./fs/fsPendingDeletions";
 
 export interface WorkspaceFile {
   id: string;
@@ -178,11 +178,11 @@ export function deleteEntityFile(wsId: string, kind: string, id: string): void {
   removeExistingEntityFile(wsId, kind, id);
 }
 
-export * from "./workspace/fsPendingDeletions";
+export * from "./fs/fsPendingDeletions";
 
-export * from "./workspace/fsRead";
+export * from "./fs/fsRead";
 
-export * from "./workspace/fsNamesIndex";
+export * from "./fs/fsNamesIndex";
 
 /**
  * Scan entity dir and return stubs: id + folderId from directory structure.
@@ -266,7 +266,7 @@ export function findEntityRelPath(wsId: string, kind: string, id: string): strin
   return null;
 }
 
-export * from "./workspace/fsDirectorySync";
+export * from "./fs/fsDirectorySync";
 
 // ── Flat entity kinds (no subfolder, stored directly in kind/) ────────────────
 
@@ -287,7 +287,7 @@ export function flatEntityRelPath(kind: string, id: string): string {
   return `${kind}/${id}.json`;
 }
 
-export * from "./workspace/fsEnabledSet";
+export * from "./fs/fsEnabledSet";
 
 // ── Find an entity file's absolute path ──────────────────────────────────────
 

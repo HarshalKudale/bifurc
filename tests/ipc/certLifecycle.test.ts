@@ -53,7 +53,7 @@ vi.mock("@/ipc/certTrust", () => ({
     detectFirefox: mocks.detectFirefox,
 }));
 
-vi.mock("@bifurc/engine/store/appSettings", () => ({
+vi.mock("@bifurc/engine/workspace/appSettings", () => ({
     loadSettings: mocks.loadSettings,
     saveSettings: mocks.saveSettings,
 }));

@@ -16,8 +16,8 @@ vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
 import { bootstrapWorkspaces } from "@bifurc/engine/startup";
 import { startAutoSync } from "@bifurc/engine/sync/autoSync";
 import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
-import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
-import type { AppSettings } from "@bifurc/engine/store/appSettings";
+import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
+import type { AppSettings } from "@bifurc/engine/workspace/appSettings";
 
 type WorkspaceMeta = AppSettings["workspaces"][number];
 

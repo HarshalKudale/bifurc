@@ -56,23 +56,23 @@ import { registerFileOpsCommands } from "./fileOps/commands";
 import { registerCertCommands } from "./proxy/certCommands";
 import { registerServerCommands } from "./proxy/serverCommands";
 import { registerWebhookCommands } from "./proxy/webhookCommands";
-import { registerConfigCommands } from "./store/configCommands";
+import { registerConfigCommands } from "./workspace/entities/configCommands";
 import { registerMiscCommands } from "./miscCommands";
 import { registerRunnerCommands } from "./runner/runnerCommands";
-import { registerAuditCommands } from "./store/auditCommands";
-import { registerCoreCommands } from "./store/coreCommands";
-import { registerFolderCommands } from "./store/folderCommands";
+import { registerAuditCommands } from "./workspace/entities/auditCommands";
+import { registerCoreCommands } from "./workspace/entities/coreCommands";
+import { registerFolderCommands } from "./workspace/entities/folderCommands";
 import { registerGraphqlCommands } from "./protocols/graphqlCommands";
 import { registerSoapCommands } from "./protocols/soapCommands";
 import { registerGrpcCommands } from "./protocols/grpcCommands";
 import { registerApplicationCommands } from "./applications/applicationCommands";
 import { registerSyncCommands } from "./sync/syncCommands";
-import { registerEntityCrudCommands } from "./store/entityCrudCommands";
+import { registerEntityCrudCommands } from "./workspace/entities/entityCrudCommands";
 import { registerSoapKinds } from "./store/kinds/soapKinds";
 import { registerGraphqlKinds } from "./store/kinds/graphqlKinds";
 import { registerGrpcKinds } from "./store/kinds/grpcKinds";
-import { registerCrudKinds } from "./store/kinds/crudKinds";
-import { registerCoreKinds } from "./store/kinds/coreKinds";
+import { registerCrudKinds } from "./workspace/entities/kinds/crudKinds";
+import { registerCoreKinds } from "./workspace/entities/kinds/coreKinds";
 
 /**
  * Register every CRUD **kind** the four `entity.*` commands dispatch through.

@@ -14,7 +14,7 @@ import * as path from "path";
 import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { blobRoot, putBlob, statBlob } from "@bifurc/engine/blob/store";
-import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 
 const b64 = (input: string): string => Buffer.from(input, "utf-8").toString("base64");
 

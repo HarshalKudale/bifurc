@@ -1,5 +1,5 @@
-import { loadConfig, SavedWebhook } from "../../store/config";
-import { readAllEntities } from "../../store/workspaceFs";
+import { loadConfig, SavedWebhook } from "../../workspace/config";
+import { readAllEntities } from "../../workspace/workspaceFs";
 import type { ExportResult } from "../types";
 
 export async function run(wsId: string): Promise<ExportResult> {

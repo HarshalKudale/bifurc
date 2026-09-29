@@ -1,4 +1,4 @@
-import { loadConfig } from "../../store/config";
+import { loadConfig } from "../../workspace/config";
 import type { ExportResult } from "../types";
 
 function escapeValue(val: string): string {

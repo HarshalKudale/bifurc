@@ -24,9 +24,9 @@
  *
  *  - **Thirteen were `commandRegistry.invoke()` delegates** — `config:get`, `env:setActive`,
  *    `workspace:setActive`, `entity:load`, `entity:setEnabled`. Every one resolves to a body in
- *    `packages/engine/src/store/coreCommands.ts` that is behaviourally identical.
+ *    `packages/engine/src/workspace/entities/coreCommands.ts` that is behaviourally identical.
  *  - **Four were self-contained and already duplicated** — `config:save`, `workspace:add`,
- *    `workspace:rename`, `workspace:delete` against `packages/engine/src/store/configCommands.ts`.
+ *    `workspace:rename`, `workspace:delete` against `packages/engine/src/workspace/entities/configCommands.ts`.
  *    That file's header records the one difference: `workspace.delete`'s shell body opened with a
  *    `const ws = (cfg.workspaces ?? []).find(...)` whose result it never read, and that dead line is
  *    dropped rather than reproduced. Nothing observable moves.
@@ -46,7 +46,7 @@
  * would have destroyed the only correct implementation of a live behaviour, exactly as group 1 would
  * have for the TLS paths. `entity:setEnabled`'s `invalid_kind` guard travelled with it for the same
  * reason, even though it is unreachable today: `window.ts:41` declares
- * `Promise<{ok: boolean; error?: string}>` and `store/coreCommands.ts:24-28` records the guard as
+ * `Promise<{ok: boolean; error?: string}>` and `workspace/entities/coreCommands.ts:24-28` records the guard as
  * client-facing behaviour. Both now live in `packages/client/src/index.ts`, pinned by two cases in
  * `packages/client/tests/client.test.ts`.
  *
@@ -61,7 +61,7 @@
  * `UNKNOWN_COMMAND` for commands the protocol declares and `@bifurc/client` advertises — and it made
  * the registry-coverage ratchet blind, because in *this* process the shell had registered them.
  *
- * They now live in `packages/engine/src/store/coreCommands.ts` behind `registerCoreCommands()`, called
+ * They now live in `packages/engine/src/workspace/entities/coreCommands.ts` behind `registerCoreCommands()`, called
  * from `src/ipc/handlers.ts` alongside the other `register*Commands` modules. Every body moved
  * verbatim: the adapters here were already thin `commandRegistry.invoke()` delegations, so the wire
  * behaviour is the same code reached through a different door. A suite that registers handler *groups*
@@ -80,7 +80,7 @@
  * with a different blast radius, and it is recorded as a follow-up rather than smuggled in here.
  */
 import { registerCrudKind } from "../entityCrudCommands";
-import { Environment } from "../config";
+import { Environment } from "../../config";
 
 export function registerCoreKinds() {
   // `environments` — the last `EntityKind` still holding out of the CRUD collapse (see the

@@ -1,6 +1,6 @@
 import { getGit, initWorkspaceRepo } from "../store/gitStore";
-import { wsDir } from "../store/workspaceFs";
-import { loadSettings, saveSettings } from "../store/appSettings";
+import { wsDir } from "../workspace/workspaceFs";
+import { loadSettings, saveSettings } from "../workspace/appSettings";
 import { SyncConfig, SyncMeta, SyncState, SyncStatus } from "./types";
 import simpleGit, { SimpleGitProgressEvent } from "simple-git";
 import * as fs from "fs";

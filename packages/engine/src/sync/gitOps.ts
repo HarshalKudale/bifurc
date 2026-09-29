@@ -12,8 +12,8 @@ import {
   ALL_ENTITY_KINDS,
   FLAT_ENTITY_KINDS,
   EntityNameEntry,
-} from "../store/workspaceFs";
-import { getKindNameEntry } from "../store/kindNameEntries";
+} from "../workspace/workspaceFs";
+import { getKindNameEntry } from "../workspace/kindNameEntries";
 import { publishEntities, type PublishResult } from "./publishService";
 import { withIndexLockRetry } from "./gitLock";
 import {

@@ -45,7 +45,7 @@ import type {
     TlsRemoveCertResult,
 } from "@bifurc/protocol";
 import { identifyCert, caCertPath, caKeyPath } from "@bifurc/engine/proxy/certManager";
-import { loadSettings, saveSettings, type TrustedCa } from "@bifurc/engine/store/appSettings";
+import { loadSettings, saveSettings, type TrustedCa } from "@bifurc/engine/workspace/appSettings";
 import { call, writeArtifact } from "@/ipc/fileOpsClient";
 import {
     detectFirefox,

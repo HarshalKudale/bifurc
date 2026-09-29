@@ -1,8 +1,8 @@
 import {
   loadConfig, saveConfig, generateId, Environment,
-} from "../../store/config";
-import type { EnvVariable } from "../../store/types";
-import { writeFlatEntity } from "../../store/workspaceFs";
+} from "../../workspace/config";
+import type { EnvVariable } from "../../workspace/types";
+import { writeFlatEntity } from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 

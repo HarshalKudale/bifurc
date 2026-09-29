@@ -41,7 +41,7 @@ async function setup() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride(tmpDir);
 
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   fs.writeFileSync(
@@ -55,7 +55,7 @@ async function setup() {
     "utf-8",
   );
 
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
   const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
@@ -65,7 +65,7 @@ async function setup() {
 async function teardown() {
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride("");
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
   // Best-effort. On Windows the safe-delete shim holds handles on the temp tree and `rmSync` throws
   // `EBUSY`, which vitest reports as a *test* failure even though the assertions all passed. The
@@ -186,9 +186,9 @@ describe("deleting a flat kind — the deletion must survive until it is publish
    */
   beforeAll(async () => {
     const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
-    const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
-    const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
-    const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+    const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
+    const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
+    const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
     const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
     registerCrudKinds();
@@ -211,8 +211,8 @@ describe("deleting a flat kind — the deletion must survive until it is publish
 
   it("keeps a published mapping visible as a stub, with its deletion pending", async () => {
     const { syncChanges } = await import("@bifurc/engine/sync/gitOps");
-    const { getPendingDeletions } = await import("@bifurc/engine/store/workspaceFs");
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { getPendingDeletions } = await import("@bifurc/engine/workspace/workspaceFs");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("tracked.localhost");
     // Make it tracked — this is what makes the deletion something that has to be *committed*.
@@ -234,8 +234,8 @@ describe("deleting a flat kind — the deletion must survive until it is publish
   });
 
   it("leaves no trace of an untracked mapping's deletion, because there is nothing to commit", async () => {
-    const { getPendingDeletions } = await import("@bifurc/engine/store/workspaceFs");
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { getPendingDeletions } = await import("@bifurc/engine/workspace/workspaceFs");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("untracked.localhost");
 
@@ -250,8 +250,8 @@ describe("deleting a flat kind — the deletion must survive until it is publish
 
   it("drops the stub once the deletion is published", async () => {
     const { syncChanges } = await import("@bifurc/engine/sync/gitOps");
-    const { getPendingDeletions } = await import("@bifurc/engine/store/workspaceFs");
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { getPendingDeletions } = await import("@bifurc/engine/workspace/workspaceFs");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("commitme.localhost");
     await syncChanges(WS_ID, [`mappings/${created.id}.json`]);

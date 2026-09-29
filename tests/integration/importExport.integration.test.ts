@@ -29,8 +29,8 @@ import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 import { getExporter, getImporter } from "@bifurc/engine/importExport/registry";
 import { exportToFile, importFile, preflightFile, sourceFromFile } from "./importExportHarness";
-import { loadConfig } from "@bifurc/engine/store/config";
-import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";
 import type { EntityKind, CollisionStrategy } from "@bifurc/engine/importExport/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

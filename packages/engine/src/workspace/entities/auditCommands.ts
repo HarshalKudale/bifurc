@@ -44,9 +44,9 @@
  * reduction, second group, 2026-09-21 — `plan/07` §5b-terdecies).
  */
 import type { AuditListParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../kernel/registry";
-import { queryLog, type QueryLogOptions } from "./gitStore";
-import { loadConfig } from "./config";
+import type { CommandRegistry } from "../../kernel/registry";
+import { queryLog, type QueryLogOptions } from "../../store/gitStore";
+import { loadConfig } from "../config";
 
 export function registerAuditCommands(registry: CommandRegistry): void {
     registry.register("audit.list", async (params: AuditListParams) => {

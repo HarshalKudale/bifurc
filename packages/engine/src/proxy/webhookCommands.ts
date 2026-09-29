@@ -91,7 +91,7 @@ import type {
     WebhookServerStatusParams,
     WebhookServerStopParams,
 } from "@bifurc/protocol";
-import { loadConfig } from "../store/config";
+import { loadConfig } from "../workspace/config";
 import {
     getWebhookPort,
     getWebhookServerError,

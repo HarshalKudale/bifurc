@@ -3,11 +3,11 @@ import * as path from "path";
 import unzipper from "unzipper";
 import {
   loadConfig, saveConfig, generateId, Workspace,
-} from "../../store/config";
-import { wsDir, initWorkspaceDir } from "../../store/workspaceFs";
+} from "../../workspace/config";
+import { wsDir, initWorkspaceDir } from "../../workspace/workspaceFs";
 import { initWorkspaceRepo } from "../../store/gitStore";
 import { notifyConfigChanged } from "../../runtime/instances";
-import { loadSettings, saveSettings } from "../../store/appSettings";
+import { loadSettings, saveSettings } from "../../workspace/appSettings";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "../types";
 
 /**

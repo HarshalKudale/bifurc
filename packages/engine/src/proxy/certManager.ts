@@ -34,7 +34,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { X509Certificate } from "crypto";
 import { createCA } from "mkcert";
-import { appDataDir } from "../store/appSettings";
+import { appDataDir } from "../workspace/appSettings";
 
 const CA_CERT_FILE = "ca-cert.pem";
 const CA_KEY_FILE = "ca-key.pem";

@@ -26,7 +26,7 @@ beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-lock-guard-"));
   const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
   setDataDirOverride(tmpDir);
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Lock Guard");
   fs.mkdirSync(path.join(tmpDir, WS_ID, ".git"), { recursive: true });
 });

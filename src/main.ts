@@ -2,14 +2,14 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, screen } from "ele
 import * as path from "path";
 import { registerIpcHandlers } from "@/ipc/handlers";
 import { registerClientHandlers } from "@/ipc/handlers/clientHandlers";
-import { loadConfig } from "@bifurc/engine/store/config";
-import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { loadSettings, saveSettings } from "@bifurc/engine/workspace/appSettings";
 import { startServer, bindProxyInstance, createProxyServer } from "@bifurc/engine/proxy/server";
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
 import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/proxy/webhookServer";
 import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
-import { setDataRoot, dataDir } from "@bifurc/engine/store/paths";
+import { setDataRoot, dataDir } from "@bifurc/engine/workspace/paths";
 import { preflight, bootstrapWorkspaces } from "@bifurc/engine/startup";
 import { shutdownEngine } from "@bifurc/engine/shutdown";
 
@@ -102,7 +102,7 @@ export function updateTrayMenu(): void {
       checked: cfg.minimizeToTray,
       click: (item) => {
         const current = loadConfig();
-        const { saveConfig } = require("@bifurc/engine/store/config");
+        const { saveConfig } = require("@bifurc/engine/workspace/config");
         saveConfig({ ...current, minimizeToTray: item.checked });
         updateTrayMenu();
       },

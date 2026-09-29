@@ -31,7 +31,7 @@
  * Both of the blockers the previous version of this comment listed are resolved:
  *
  *  1. `log.entry` / `log.chunk` / `server.error` now reach the engine's bus —
- *     `wireLogEventsToBus()` in `packages/engine/src/eventBus.ts`, called from both `createEngine()`
+ *     `wireLogEventsToBus()` in `packages/engine/src/kernel/eventBus.ts`, called from both `createEngine()`
  *     and `registerIpcHandlers()`. Without it the capture panel, the request-log panel and the
  *     server-error banner would have gone dead *with every unit test green* (see `plan/07` finding 1).
  *  2. The push direction exists: `ipcRenderer.invoke` is request/response and cannot carry events, so

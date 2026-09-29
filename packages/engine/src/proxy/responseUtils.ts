@@ -76,7 +76,7 @@ export function handleProxyResponse(
 }
 
 import * as https from "https";
-import { ProxyRule } from "../store/config";
+import { ProxyRule } from "../workspace/config";
 import { sendHtml } from "./pages";
 import { executeRequestScript, executeResponseScript } from "./scriptExecutor";
 
