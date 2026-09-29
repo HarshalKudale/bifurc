@@ -59,30 +59,37 @@ Electron half open. **P0–P6, P14 done. P7, P9, P16 decommissioned.** `packages
 `renderer/` is its only consumer. **⚠ P18 adds a SECOND authorization axis — per workspace
 (`PermissionContext`), not per session (`transport/auth/scopes.ts`). Do not merge them** (D19–D21).
 
-## Engine module layout — ALL 8 PHASES DONE (branch `engine_modules`)
+## Engine module layout — DONE, and the layering ratchet is CLEAN (branch `engine_modules`)
 
 `Engine_Module_Plan.md` reorganised `packages/engine/src` into feature modules behind a layering rule.
-**Every phase is committed**: `c531c7c` plan/map/codemod · `16161ad` p1 `kernel/`+`utils/` · `083a026` p2
-rebind fan-out · `99d1444` p3 `store/` split · `1f748b7` p4 proxy family (14) · `8bedb72` p5 protocol
-verticals (6) · `1713dec` p6 `gitops/` (12) · `069fe87` p7 leftovers (44 renames + 4 added) · `fbb6fc7` p8
-the ratchet. **The plan's move counts were 2 right / 5 wrong** — measure, never trust the row.
+**Phases 0–8 committed**: `c531c7c` plan/map/codemod · `16161ad` p1 `kernel/`+`utils/` · `083a026` p2 rebind
+fan-out · `99d1444` p3 `store/` split · `1f748b7` p4 proxy family (14) · `8bedb72` p5 protocol verticals (6) ·
+`1713dec` p6 `gitops/` (12) · `069fe87` p7 leftovers (44 renames + 4 added) · `fbb6fc7` p8 the ratchet ·
+`7639458` the `kernel/eventBus` fix · `74bb223` + `206d34f` the layout cleanup. **The plan's move counts
+were 2 right / 5 wrong** — measure, never trust the row.
 
 **⚠ The layering rule is §6's per-module table, NOT §5.1's blanket ban** (they contradict; §6 governs,
 decided 2026-09-29). **`tests/engine/layout.test.ts` enforces it** — 5 assertions, teeth verified by
-mutation. Exemptions: `import type` (erased) and **the two SEAM modules** (`runtime/instances` — §4.1's
-listener fan-out, 20 edges; `runtime/entityStatus` — the read-and-emit composition). **The tree had 24
-violations when the ratchet landed; 22 remain allowlisted with reasons** (a stale entry fails the test, so the
-list can only shrink). **✅ The worst is fixed:** `kernel/eventBus.ts` no longer imports `gitops/` — §5.1's
-"kernel imports nothing engine-internal" is now TRUE, because `emitEntityStatus()` moved to
-`runtime/entityStatus.ts` (it could NOT go to `gitops/`: 3 of its 4 callers are `workspace/`-side).
-**§5.2's ESLint half is impossible: this repo has no ESLint.** Tests **do not** mirror `src/`
-(TESTING.md §3.5). **Procedures → skill `bifurc-engine-layout-phase`** (the codemod's six blind spots + the
-Windows case-only-rename trap, the resolve-every-pointer sweep, the per-phase loop).
+mutation — and **`ALLOWED_VIOLATIONS` is now `{}`**: all 24 violations the ratchet found are FIXED
+(24 → 22 → 0), each deletion forced by the staleness assertion. Exemptions: `import type` (erased) and
+**the two SEAM modules** (`runtime/instances` — §4.1's fan-out, 20 edges; `runtime/entityStatus`).
+
+**The placement rule: "two features share it" is NOT a placement rule — what a module READS is.** Stateless
++ shared → extract **down** into `utils/`. Reads a file/config/sibling → it belongs in the layer it reads
+from, however many callers it has (that is why `blob/` → `workspace/blob/` and `gitops/gitStore.ts` →
+`workspace/gitStore.ts`). **And before choosing a destination, count the CALLERS' modules** — a function's
+own imports do not decide its home. **§5.2's ESLint half is impossible: this repo has no ESLint.** Tests
+**do not** mirror `src/` (TESTING.md §3.5). **Procedures → skill `bifurc-engine-layout-phase`** (the
+codemod's six blind spots + the Windows case-only-rename trap, the resolve-every-pointer sweep, the
+per-phase loop, and the cleanup's two traps).
 
 - **⚠ The map's `from` fields deliberately keep the OLD paths** — they are the codemod's input, not a
-  description of the tree. The map is not "wrong" when it names a moved file, and `--check` drift is expected
-  now that every phase is applied.
+  description of the tree, and three `to` fields were moved *again* by the cleanup. `--check` drift is
+  expected; the codemod's header and the map's `corrections` both say so.
 - **The GUI has its own unrelated `reloadConfig`** (a UI callback in `useCaptureActions.tsx` etc.) — never
   touch it in this migration.
 - **`packages/**/*.test.ts` IS in the `unit` project, and `packages/engine/tsconfig.json` covers
   `packages/engine/tests/`.**
+- **⚠ A test that PINS a split must move with it.** Splitting `fileops/` broke 10 tests in
+  `fileOps.integration.test.ts` because two assertions name *which module registers which command* and the
+  harness had to register the new owner.

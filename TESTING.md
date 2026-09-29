@@ -563,10 +563,11 @@ inventory of what has to move.
 | `tests/proxy/tlsCert.test.ts` | `packages/engine/src/certificates/tlsCert.ts` |
 | `tests/store/appSettings.test.ts` | `packages/engine/src/workspace/appSettings.ts` |
 | `tests/store/config.test.ts` | `packages/engine/src/workspace/config.ts` |
-| `tests/store/gitStore.test.ts` | `packages/engine/src/workspace/gitStore.ts` |
 | `tests/store/paths.test.ts` | `packages/engine/src/workspace/paths.ts` |
 | `tests/store/workspaceFs.test.ts` | `packages/engine/src/workspace/workspaceFs.ts` |
 | `tests/sync/{autoSync,gitLock,gitOps,gitState,mappingPublish,syncManager}.test.ts` | `packages/engine/src/gitops/*` |
+| `tests/blob/{commands,store,sweep}.test.ts` | `packages/engine/src/workspace/blob/*` |
+| `tests/store/gitStore.test.ts` | `packages/engine/src/workspace/gitStore.ts` |
 | `tests/ipc/importExport/{postman,registry}.test.ts` | `packages/engine/src/importexport/*` |
 | `packages/engine/tests/commands/registry.test.ts` | `packages/engine/src/kernel/registry.ts` |
 | `packages/engine/tests/lib/net.test.ts` | `packages/engine/src/utils/net.ts` |
