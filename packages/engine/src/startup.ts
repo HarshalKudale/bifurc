@@ -29,7 +29,7 @@ import { initWorkspaceDir, wsDir } from "./store/workspaceFs";
 import { generateId } from "./store/config";
 import { getSyncConfig } from "./sync/syncManager";
 import { setAutoSyncReloadFn, startAutoSync } from "./sync/autoSync";
-import { reloadConfig } from "./proxy/server";
+import { notifyConfigChanged } from "./runtime/instances";
 
 export type StartupCheckCode =
   | "git-missing"
@@ -209,7 +209,7 @@ function workspaceDirExists(wsId: string): boolean {
 export async function bootstrapWorkspaces(settings: AppSettings): Promise<WorkspaceBootstrapResult> {
   // The engine owns the "refresh live proxy routing after a pull" wiring; the shell never needed
   // to know about it. Doing it here keeps that dependency engine-internal.
-  setAutoSyncReloadFn(reloadConfig);
+  setAutoSyncReloadFn(notifyConfigChanged);
 
   let next = settings;
   const autoSyncStarted: string[] = [];

@@ -4,7 +4,7 @@ import {
 import {
   writeEntity, upsertNameEntry, readAllEntities,
 } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import { parsePostmanRequests } from "../formats/postman";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
@@ -69,7 +69,7 @@ export async function run(
     }
 
     saveConfig(cfg);
-    reloadConfig();
+    notifyConfigChanged();
 
     return { ok: true, imported };
   } catch (err) {

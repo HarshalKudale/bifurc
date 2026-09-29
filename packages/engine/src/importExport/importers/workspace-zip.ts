@@ -6,7 +6,7 @@ import {
 } from "../../store/config";
 import { wsDir, initWorkspaceDir } from "../../store/workspaceFs";
 import { initWorkspaceRepo } from "../../store/gitStore";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import { loadSettings, saveSettings } from "../../store/appSettings";
 import type { PreflightResult, ImportResult, CollisionStrategy } from "../types";
 
@@ -101,7 +101,7 @@ export async function run(
     settings.activeWorkspaceId = newWsId;
     saveSettings(settings);
 
-    reloadConfig();
+    notifyConfigChanged();
 
     return { ok: true, imported: fileCount };
   } catch (err) {
