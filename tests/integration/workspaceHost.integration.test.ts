@@ -443,7 +443,7 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
    * serving nothing and exited 0. The only symptom was `serving 0 workspace(s)`, which reads as an empty
    * data root rather than as "the settings file was read from somewhere else". The cause in that run was
    * exactly that — on Windows `settingsPath()` prefers `%LOCALAPPDATA%` regardless of `setDataRoot()`
-   * (recorded in `proxy/certManager.ts`), so a `--data-dir` run read the user's real settings and the
+   * (recorded in `certificates/certManager.ts`), so a `--data-dir` run read the user's real settings and the
    * requested id was absent from a list nobody could see.
    *
    * **Why the notice names the directory.** That is the whole diagnostic: without it, an operator has no
@@ -591,7 +591,7 @@ describe("registerAllEngineCommands — the engine-side list covers the shell's"
  * Resolve one `register<Name>Commands` export by the short name the shell's call site uses.
  *
  * The mapping is explicit rather than computed: module paths are the one thing that cannot be derived from
- * the function name (they are `proxy/certCommands`, `workspace/entities/coreCommands`, `miscCommands`, …), and a
+ * the function name (they are `certificates/certCommands`, `workspace/entities/coreCommands`, `miscCommands`, …), and a
  * computed guess that silently resolved to the wrong module would make the guard above compare against the
  * wrong list. An entry appearing in the shell's source without a row here is a **failure** in the test, not a
  * skip — that is what keeps this table from rotting as the shell adds calls.
@@ -607,9 +607,9 @@ async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) 
     Blob: "@bifurc/engine/blob/commands",
     ImportExport: "@bifurc/engine/importExport/commands",
     FileOps: "@bifurc/engine/fileOps/commands",
-    Cert: "@bifurc/engine/proxy/certCommands",
+    Cert: "@bifurc/engine/certificates/certCommands",
     Server: "@bifurc/engine/proxy/serverCommands",
-    Webhook: "@bifurc/engine/proxy/webhookCommands",
+    Webhook: "@bifurc/engine/webhooks/webhookCommands",
     Config: "@bifurc/engine/workspace/entities/configCommands",
     Misc: "@bifurc/engine/miscCommands",
     Runner: "@bifurc/engine/runner/runnerCommands",

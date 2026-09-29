@@ -1,5 +1,5 @@
 /**
- * `packages/engine/src/proxy/certManager.ts` — the **engine half** of the certificate lifecycle.
+ * `packages/engine/src/certificates/certManager.ts` — the **engine half** of the certificate lifecycle.
  *
  * ## What changed in P3 work item 5, and why this file looks different
  *
@@ -53,7 +53,7 @@ vi.mock("mkcert", () => ({
     createCA: vi.fn(async () => ({ cert: fixtures.cert, key: fixtures.key })),
 }));
 
-import { generateCA, getCertStatus, identifyCert, removeCA } from "@bifurc/engine/proxy/certManager";
+import { generateCA, getCertStatus, identifyCert, removeCA } from "@bifurc/engine/certificates/certManager";
 
 describe("identifyCert()", () => {
     it("reports the fingerprint a browser would show, for a real certificate", () => {

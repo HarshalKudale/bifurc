@@ -3,7 +3,7 @@ import {
     executeRequestScript,
     executeResponseScript,
     executeIpcScript,
-} from "@bifurc/engine/proxy/scriptExecutor";
+} from "@bifurc/engine/mocks/scriptExecutor";
 
 /**
  * Proxy-rule intercept scripts and request pre/post/test scripts all run inside

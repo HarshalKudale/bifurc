@@ -49,7 +49,7 @@ vi.mock("@bifurc/engine/proxy/server", () => ({
  * calling nothing. So this file mocks the seam's *reload* half and lets the *rebind* half run for real against
  * the listener mocks, which keeps every existing assertion meaningful.
  *
- * `importOriginal` is spread in for the same reason `proxy/edge`'s mock below is: a whole-module replacement
+ * `importOriginal` is spread in for the same reason `reverseproxy/edge`'s mock below is: a whole-module replacement
  * makes `rebindRuntimePorts` `undefined` and turns the call into a `TypeError` inside the command.
  */
 vi.mock("@bifurc/engine/runtime/instances", async (importOriginal) => ({
@@ -76,7 +76,7 @@ vi.mock("@bifurc/engine/proxy/serverReplay", () => ({
 // must not be reached from a unit test — `webhookServer.start` would bind a port. Mocked rather than
 // left real for the same reason `proxy/server` is. `webhookEmitter` is deliberately absent: nothing
 // outside `webhookServer.ts` itself reads it, so omitting it proves no consumer depends on it.
-vi.mock("@bifurc/engine/proxy/webhookServer", () => ({
+vi.mock("@bifurc/engine/webhooks/webhookServer", () => ({
   registerActiveWebhook: vi.fn(),
   unregisterActiveWebhook: vi.fn(),
   startWebhookServer: vi.fn(),
@@ -96,8 +96,8 @@ vi.mock("@bifurc/engine/proxy/webhookServer", () => ({
  * a replacement mock would make `restartEdge` the only defined export and turn any future import from it into
  * a `TypeError` inside an unrelated command. Only the two names under assertion are stubbed.
  */
-vi.mock("@bifurc/engine/proxy/edge", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/proxy/edge")>()),
+vi.mock("@bifurc/engine/reverseproxy/edge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/reverseproxy/edge")>()),
   restartEdge: vi.fn(),
   // `true`, so the **port-change** arm is the one that fires. With `false` the `!isEdgeRunning()` recovery arm
   // would restart on *every* save, and the `config.save` case below would pass for the wrong reason.
@@ -236,7 +236,7 @@ import { startServer, stopServer, isRunning, getPort, getServerError, replayRequ
 import { notifyConfigChanged } from "@bifurc/engine/runtime/instances";
 // `plan/17` §5 work item 7 — `config.save` re-binds the edge, and the edge is the one listener reached through
 // a module-level binding rather than through a facade with a lazy default.
-import { restartEdge } from "@bifurc/engine/proxy/edge";
+import { restartEdge } from "@bifurc/engine/reverseproxy/edge";
 import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
 import {
   registerActiveWebhook,
@@ -246,7 +246,7 @@ import {
   isWebhookServerRunning,
   getWebhookPort,
   getWebhookServerError,
-} from "@bifurc/engine/proxy/webhookServer";
+} from "@bifurc/engine/webhooks/webhookServer";
 import { replayRequest as replayRequestImpl } from "@bifurc/engine/proxy/serverReplay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
@@ -512,7 +512,7 @@ describe("src/ipc/handlers.ts", () => {
      * the six proxy/server-lifecycle commands into `packages/engine/src/proxy/serverCommands.ts`
      * (25 → 19); `config.save` + the three `workspace.*` commands into
      * `packages/engine/src/workspace/entities/configCommands.ts` (19 → 15); the five `webhook.*` /
-     * `webhookServer.*` commands into `packages/engine/src/proxy/webhookCommands.ts` (15 → 10); the
+     * `webhookServer.*` commands into `packages/engine/src/webhooks/webhookCommands.ts` (15 → 10); the
      * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5); and
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
      * the ratchet doing its job rather than a change to the assertion.

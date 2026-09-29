@@ -25,9 +25,9 @@ import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerBlobCommands } from "@bifurc/engine/blob/commands";
 import { registerImportExportCommands } from "@bifurc/engine/importExport/commands";
 import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
-import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
+import { registerCertCommands } from "@bifurc/engine/certificates/certCommands";
 import { registerServerCommands } from "@bifurc/engine/proxy/serverCommands";
-import { registerWebhookCommands } from "@bifurc/engine/proxy/webhookCommands";
+import { registerWebhookCommands } from "@bifurc/engine/webhooks/webhookCommands";
 import { registerConfigCommands } from "@bifurc/engine/workspace/entities/configCommands";
 import { registerMiscCommands } from "@bifurc/engine/miscCommands";
 import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
@@ -91,7 +91,7 @@ export function registerIpcHandlers(): void {
   // three `webhookServer.*` lifecycle commands. Same class of bug as the ten above — served only by
   // `ipcMain.handle` bodies in `crudHandlers.ts`, so `registry.invoke()` answered `UNKNOWN_COMMAND`,
   // and `@bifurc/client` advertised five methods it could not deliver. The listening server, its port
-  // and its error state are all engine state in `proxy/webhookServer.ts`.
+  // and its error state are all engine state in `webhooks/webhookServer.ts`.
   //
   // `webhookServer.start` is the one handler in this batch that is not a literal copy: the shell body
   // ignored its (non-existent) argument, while `WebhookServerStartParams` declares an optional `port`.

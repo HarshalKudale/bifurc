@@ -4,7 +4,7 @@ vi.mock("@bifurc/engine/utils/randomizer", () => ({
     resolveRandomizers: vi.fn((text: string) => text),
 }));
 
-import { resolveVars, matchMock, serveMock, serveStreamingMock, isFullyMocked, mergeMockWithUpstream } from "@bifurc/engine/proxy/mockHandler";
+import { resolveVars, matchMock, serveMock, serveStreamingMock, isFullyMocked, mergeMockWithUpstream } from "@bifurc/engine/mocks/mockHandler";
 
 const createSocket = () => ({ writable: true, write: vi.fn(), end: vi.fn() } as any);
 

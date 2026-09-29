@@ -1,7 +1,7 @@
 import * as http from "http";
 import * as https from "https";
-import { HOP_BY_HOP } from "./constants";
-import { decompressBody, stripContentEncoding } from "./decompressUtils";
+import { HOP_BY_HOP } from "../utils/http";
+import { decompressBody, stripContentEncoding } from "../utils/decompress";
 
 export function replayRequest(
   method: string,

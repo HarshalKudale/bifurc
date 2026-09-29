@@ -19,7 +19,11 @@
       "filesMoved": 20,
       "note": "The store/ split. §7.2 row 3's \"23\" counted all of store/; the 3 protocol leaf kinds (`store/kinds/{graphql,grpc,soap}Kinds.ts`) are deliberately left for phase 5. After phase 3 `store/` holds exactly 4 files: those 3 plus `gitStore.ts` (phase 6). `store/workspace/*` → `workspace/fs/*` per the ratified deviation above. Hand work the codemod cannot reach: `vitest.config.ts` coverage `exclude`, `tests/runtime/singleDataRoot.test.ts` path assertions, and 4 prose pointers — all updated."
     },
-    "4": { "status": "not-started" },
+    "4": {
+      "status": "done",
+      "filesMoved": 14,
+      "note": "The proxy family split. §7.2 row 4's \"22\" counted all of `proxy/`; 7 files are the forward half and STAY (`proxyHandler`, `routingUtils`, `server`, `serverCommands`, `serverReplay`, `service-discovery`, `tlsIntercept`). Moved: `reverseproxy/` (edge, pages) 2; `mocks/` (mockHandler, scriptContext, scriptExecutor) 3; `certificates/` (certManager, certCommands, tlsCert) 3; `webhooks/` (webhookServer, webhookCommands) 2; to `utils/` (http, decompress, response, server) 4. Hand work the codemod cannot reach: the two `@vite-ignore` table rows in `tests/integration/workspaceHost.integration.test.ts` (`Cert`, `Webhook`) — the runtime-breaking blind spot 6; a `describe` label in `tests/proxy/edge.test.ts`; ~24 prose pointers in engine+shell+tests; `File_Ops_Protocol.md` rows. `vitest.config.ts` needed no change (no proxy entry in the coverage exclude list)."
+    },
     "5": { "status": "not-started" },
     "6": { "status": "not-started" },
     "7": { "status": "not-started" },
