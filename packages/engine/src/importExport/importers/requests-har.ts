@@ -2,7 +2,7 @@ import {
   loadConfig, saveConfig, generateId, SavedRequest, Folder,
 } from "../../store/config";
 import { writeEntity, upsertNameEntry } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 interface HarHeader { name: string; value: string }
@@ -79,7 +79,7 @@ export async function run(
     }
 
     saveConfig(cfg);
-    reloadConfig();
+    notifyConfigChanged();
     return { ok: true, imported };
   } catch (err) {
     return { ok: false, error: String(err) };

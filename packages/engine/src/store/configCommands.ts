@@ -39,12 +39,10 @@ import { initWorkspaceDir } from "./workspaceFs";
 import { initWorkspaceRepo } from "./gitStore";
 import { generateRandomWorkspaceName } from "../utils/randomNames";
 import { gateCreate } from "../subscription/entityCount";
-import { isRunning, reloadConfig, startServer } from "../proxy/server";
-// `plan/17` §5 work item 7 — the edge's binding, added so a save can re-bind the one runtime port a command
-// could not previously reach. See `proxy/edge.ts`'s `bindEdgeInstance()` for why this facade is bound-only
-// where the other two have lazy defaults.
-import { isEdgeRunning, restartEdge } from "../proxy/edge";
-import { isWebhookServerRunning, startWebhookServer } from "../proxy/webhookServer";
+// `Engine_Module_Plan.md` §4.1 — the fan-out lives in `runtime/instances.ts` now. This command used to
+// import `reloadConfig` from `proxy/server` and the three port re-binders from the listeners themselves;
+// both operations are the *composition*'s business, so they moved to the module that owns the listeners.
+import { notifyConfigChanged, rebindRuntimePorts } from "../runtime/instances";
 
 export function registerConfigCommands(registry: CommandRegistry): void {
     /**
@@ -58,82 +56,30 @@ export function registerConfigCommands(registry: CommandRegistry): void {
         const incoming = params.config as unknown as AppConfig;
         const prev = loadConfig();
         saveConfig(incoming);
-        reloadConfig();
+        notifyConfigChanged();
         // `ctx.bus`, not the imported singleton: carrying the bus in the context is the whole reason
         // `CommandContext` exists, and it is what lets a test drive this with a fresh bus.
         ctx.bus.emitTyped("settings.changed", {});
-        const tlsChanged = incoming.tlsEnabled !== prev.tlsEnabled
-            || incoming.tlsCaCertPath !== prev.tlsCaCertPath
-            || incoming.tlsCaKeyPath !== prev.tlsCaKeyPath;
 
         /**
          * ## `plan/17` §5 work item 7 — a save re-binds the three runtime ports
          *
          * `plan/17` §1 splits the ports by *whether a change needs a restart*: only the **companion** does, and
-         * manually. The edge, the forward proxy and the webhook **re-bind at runtime** — and until this change
-         * only one of them did, on a port that was no longer its own.
+         * manually. The edge, the forward proxy and the webhook **re-bind at runtime**, and this call is that
+         * rule.
          *
-         * **What this replaced, and why the old rule was right when it was written.** The body used to be a
-         * single `if (!isRunning() || incoming.port !== prev.port || tlsChanged)` that re-bound *the proxy* on
-         * `getPort() || incoming.port`. That was correct after `plan/15` work item 3 and is wrong now: it read
-         * `settings.port` to decide *whether* to act while refusing to use it as *where* to act, because the
-         * port it names had just become the **edge's**. The visible consequence was stated in this comment and
-         * is the thing work item 7 exists to remove: *"changing the port in Settings no longer moves this
-         * listener."* Now it does — it moves the listener that port actually belongs to.
+         * **The branches themselves moved to `runtime/instances.ts`'s `rebindRuntimePorts()`**
+         * (`Engine_Module_Plan.md` §4.1). They were inline here — three parallel `if`s reading five fields off
+         * `incoming`/`prev`, plus a `tlsChanged` predicate — and that put the *port ownership* rule in a
+         * `store/` command. It belongs with the listeners: this command's job is "save the config", and *what
+         * that means for each listener* is a composition concern. Each branch's own rationale (why the edge
+         * may move but only when bound, why the webhook never starts, why TLS needs the proxy restarted rather
+         * than merely reloaded) moved with it, verbatim.
          *
-         * **Three branches, one per port, each with its own rule about whether it may move** (`plan/17` §1).
-         * They are deliberately parallel, and each is a single call because every `start()` in this engine
-         * already does `if (server) stop()` first — so `start(newPort)` **is** the rebind, and an explicit
-         * `stopServer()` before it would be a second way to say the same thing that could drift.
-         *
-         * **A bind failure is not thrown**, here or anywhere: it lands in the listener's `getError()` and is
-         * reported through `status()`. That is the engine's oldest bind contract, and it is what makes the
-         * "revive a listener that is down" arms below safe — a save is the natural moment to retry a port the
-         * user has just been told is occupied.
+         * `prev` is still read here because the diff is what the caller knows; `rebindRuntimePorts` takes
+         * both snapshots rather than re-loading, so there is one definition of "before".
          */
-
-        /**
-         * **The edge** — `settings.port`, the port every `*.localhost` mapping points at.
-         *
-         * This is the reversal of the rule the block above used to state. `plan/17` §1 gives the edge its own
-         * runtime rule (*"bound, not scanned"*), and a user who changes it in Settings means it: a mapping URL
-         * that stops working because the port only takes effect on the next boot is the failure mode this
-         * removes. The `!isEdgeRunning()` arm mirrors the forward proxy's — a save retries an edge that failed
-         * to bind, which is the recovery path for a port that was occupied at boot.
-         */
-        if (!isEdgeRunning() || incoming.port !== prev.port) {
-            restartEdge(incoming.port);
-        }
-
-        /**
-         * **The forward proxy** — `settings.forwardProxyPort`, the port a browser's proxy setting names.
-         *
-         * The port is now read **straight from the setting** rather than from `getPort() ||`. `plan/17` §2
-         * makes D16's remembered resolved port dead: there is no scan, so there is no resolved port that could
-         * differ from the configured one, and `getPort()` here would only re-assert a number the caller already
-         * has. That also removes the old asymmetry where `settings.port` decided *whether* to restart while
-         * `getPort()` decided *where* — the two questions now have one answer each.
-         *
-         * `tlsChanged` is kept and belongs here: `proxy/server.ts`'s `start()` is what loads the CA
-         * (`loadCA`), so a TLS toggle needs the proxy restarted on **its own** port. `reloadConfig()` above
-         * swaps the config but does not touch the CA.
-         */
-        if (!isRunning() || incoming.forwardProxyPort !== prev.forwardProxyPort || tlsChanged) {
-            startServer(incoming.forwardProxyPort);
-        }
-
-        /**
-         * **The webhook receiver** — host-level, and **off by default** (`plan/17` §1).
-         *
-         * So a port change **moves a receiver that is running and never starts one**. Starting it is the
-         * user's action (`webhookServer.start`, from the Webhooks panel), and a settings save that quietly
-         * bound a port nobody asked for would be this command inventing a feature toggle. `isWebhookServerRunning()`
-         * is what makes that distinction; the ordering of the two conditions is irrelevant but reads better with
-         * the cheap check second.
-         */
-        if (incoming.webhookPort !== prev.webhookPort && isWebhookServerRunning()) {
-            startWebhookServer(incoming.webhookPort);
-        }
+        rebindRuntimePorts(incoming, prev);
         return { ok: true };
     });
 
@@ -178,7 +124,10 @@ export function registerConfigCommands(registry: CommandRegistry): void {
             }
         }
         saveConfig(cfg);
-        reloadConfig();
+        // A delete can change which entities are enabled (removing a workspace removes its sets from the
+        // active view), so the proxy has to re-derive. `rebindRuntimePorts` is deliberately **not** called:
+        // the ports of the *host* are not a function of which workspaces exist.
+        notifyConfigChanged();
         return { ok: true };
     });
 }

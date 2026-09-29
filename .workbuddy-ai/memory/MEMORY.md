@@ -59,17 +59,37 @@ Electron half open. **P0–P6, P14 done. P7, P9, P16 decommissioned.** `packages
 ## Active work: engine module layout — branch `engine_modules`
 
 `Engine_Module_Plan.md` (repo root) reorganises `packages/engine/src` (140 files / 23,443 LOC) into feature
-modules behind an enforced layering rule. **Phase 0 + Phase 1 are DONE and committed** (`c531c7c`, `16161ad`):
-`kernel/` + `utils/` extracted. **Phase 2 (the `notifyConfigChanged()` rebind inversion) is scoped but not
-started** — 26 files / 82 call sites, and two tests bind the seam.
+modules behind an enforced layering rule. **Phases 0, 1 and 2 are DONE and committed** (`c531c7c` plan/map/codemod,
+`16161ad` phase 1 — `kernel/` + `utils/`, phase 2 — the rebind fan-out). **Phase 3 (`workspace/` split) is next
+and not started.**
+
+- **Phase 2 delivered `runtime/instances.ts` with TWO functions, not the one §4.1 sketched** (user-ratified):
+  `notifyConfigChanged()` (the **reload** fan-out — proxy facade only; edge/webhook have nothing to reload)
+  **and** `rebindRuntimePorts(incoming, prev)` (the **port** fan-out, moved verbatim out of `config.save`).
+  Only `config.save` rebinds; `restartEdge`/`startWebhookServer` have **zero** other engine callers.
+- **The real Phase 2 surface was 29 call sites / 21 files** — 17 × `importExport/importers/*`,
+  `store/configCommands.ts` ×2, `store/coreCommands.ts` ×3, `store/entityCrudCommands.ts` ×3,
+  `sync/syncCommands.ts` ×4, `startup.ts` ×1 (passed **as a value** to `setAutoSyncReloadFn`, whose seam type is
+  `() => void`). *Not* the plan's 23. **⚠ The GUI has its own unrelated `reloadConfig` (a UI callback in
+  `useCaptureActions.tsx` etc.) — never touch it in this migration.**
+- **⚠ Measuring `reloadConfig` by `grep -c` over-counts ~2× (47 vs 29)** because docblocks name it constantly.
+  Filter comment lines and the definition/interface forms. A blanket rename also rewrites *docblock mentions* —
+  check each: some describe a **historical** name (leave those), some current behaviour (rename those).
+- **Test seam:** `tests/ipc/handlers.test.ts` mocks **only** `notifyConfigChanged` at
+  `@bifurc/engine/runtime/instances` (with `importOriginal` spread) and leaves `rebindRuntimePorts` **real**, so
+  the port assertions still observe real calls against the listener mocks. `facadeBinding.integration.test.ts`
+  keeps importing `reloadConfig` — it tests the proxy's own surface.
 
 - **`scripts/engine-layout-codemod.mjs` is the instrument** — `--check` (report + assert totality),
   `--emit-map`, `--apply --phase N [--write]` (dry by default). Re-running an applied phase must report **0**.
-- **⚠ The rewrite has TWO surfaces.** `@bifurc/engine/*` (532 refs / 102 files / 81 subpaths) **and** the
-  engine's internal *relative* imports — and 226 of the 532 are dynamic `import()` / `vi.mock`, which fail at
-  **RUNTIME**, so a `from`-only find/replace is silently wrong. Do not hand-edit these.
+  **It rewrites `@bifurc/engine/*` specifiers only** — engine-internal *relative* imports (what phase 2 was made
+  of) are hand work.
+- **⚠ The rewrite has TWO surfaces.** `@bifurc/engine/*` (536 refs / 102 files / 83 subpaths at last measure)
+  **and** the engine's internal *relative* imports — and 194 of the 536 are dynamic `import()` / `vi.mock`, which
+  fail at **RUNTIME**, so a `from`-only find/replace is silently wrong. Do not hand-edit these.
 - **⚠ §7.1's counts were wrong** (529/104/82; only `from` counted). `plan/engine-layout-map.json` has the
-  measured numbers and the one deviation (`store/workspace/*` → `workspace/fs/*`, not `workspace/workspace/*`).
+  measured numbers and the one deviation (`store/workspace/*` → `workspace/fs/*`, not `workspace/workspace/*`) —
+  **ratified 2026-09-29, keep it**.
 - §7.3 mechanics: never `git rm`; the **stale-`dist/` trap** (`npm run clean:main` before the app build,
   `node scripts/pkg-check-reachability.mjs` after each phase); `vitest.config.ts`'s coverage `exclude` names
   three engine `types.ts` paths by hand. **`packages/**/*.test.ts` IS in the `unit` project, and

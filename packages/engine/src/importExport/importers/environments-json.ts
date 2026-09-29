@@ -2,7 +2,7 @@ import {
   loadConfig, saveConfig, generateId, Environment,
 } from "../../store/config";
 import { writeFlatEntity, readAllEntities } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 function parse(content: string): Environment[] {
@@ -53,7 +53,7 @@ export async function run(
     }
 
     saveConfig(cfg);
-    reloadConfig();
+    notifyConfigChanged();
     return { ok: true, imported, skipped };
   } catch (err) {
     return { ok: false, error: String(err) };

@@ -536,11 +536,17 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
 // receiver took. Lazy rather than eager so importing this module has no side effect.
 //
 // **Not "removed in WI 7", which is what this header used to say.** WI 7's desktop half landed 2026-09-22
-// and kept the facade *deliberately*: 23 engine modules import `reloadConfig()` from here (17 ×
-// `importExport/importers/*`, plus `startup.ts`, `store/{configCommands,coreCommands,entityCrudCommands}.ts`,
-// `sync/syncCommands.ts`, `transport/legacyCompanion.ts`), and the facade is what lets that keep meaning
-// "the active workspace's server, wherever it lives". What changed is that it can now be **bound** to an
-// instance someone else owns — see `bindProxyInstance()`.
+// and kept the facade *deliberately*, and `Engine_Module_Plan.md` §4.1 later confirmed the reason: the facade
+// is what lets a call mean "the active workspace's server, wherever it lives". What changed is that it can now
+// be **bound** to an instance someone else owns — see `bindProxyInstance()`.
+//
+// **The fan-out no longer lands here.** This header used to enumerate the importers of `reloadConfig()`
+// (17 × `importExport/importers/*`, `startup.ts`, `store/{configCommands,coreCommands,entityCrudCommands}.ts`,
+// `sync/syncCommands.ts`, and a `transport/legacyCompanion.ts` that has since been deleted). Those 29 call
+// sites across 21 files now go through `runtime/instances.ts`'s `notifyConfigChanged()`, and **no module
+// outside `runtime/` imports this function for the fan-out any more** (`Engine_Module_Plan.md` §10 criterion 4).
+// `reloadConfig` remains a legitimate *proxy* API — `tests/integration/facadeBinding.integration.test.ts`
+// exercises it as one, and `runtime/instances.ts` calls it — but it is no longer the engine's config seam.
 
 let defaultInstance: ProxyServerInstance | null = null;
 
@@ -561,9 +567,13 @@ let defaultInstance: ProxyServerInstance | null = null;
  * it. `src/main.ts` binds its one `WorkspaceRuntime`'s proxy here; `createEngine()` and every test bind
  * nothing and get the lazy default, unchanged.
  *
- * **Why this module does not import `runtime/`:** `runtimeRegistry.ts`'s header records that its graph must
- * stay acyclic, and `runtime/workspaceRuntime.ts` imports *this* module as a value. A value import in the
- * other direction would close that loop. A binding is a parameter, not a lookup, so there is no edge at all.
+ * **Why this module does not import `runtime/`:** `runtime/host.ts` imports *this* module as a value (it is
+ * the composition root, and it binds each listener here). A value import in the other direction would close
+ * that loop, so a binding — a parameter — is the only edge this module may have to the runtime layer.
+ *
+ * (This note used to cite `runtimeRegistry.ts` and `runtime/workspaceRuntime.ts`. **Both are deleted** —
+ * `runtime/host.ts` replaced them, as its own header records. The acyclicity requirement is unchanged; only
+ * the files satisfying it moved.)
  */
 let boundInstance: ProxyServerInstance | null = null;
 

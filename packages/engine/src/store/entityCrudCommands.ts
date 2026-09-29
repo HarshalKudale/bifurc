@@ -74,8 +74,8 @@
  *    `mocks` and `rules` set `onAddConflict`, so for every other kind the flag changes nothing.
  *  - **`mayResolveConflicts` is a required parameter, not a default**, so a new caller has to decide
  *    rather than inherit the privileged path. It is `mayAffectUnnamedEntities(ctx)` at the call site.
- *  - **`reloadConfig()` runs LAST in all three writers**, and the reason is different each time.
- *    On create: `reloadConfig()` snapshots the enabled-sets from `enabled.json`, so running it before
+ *  - **`notifyConfigChanged()` runs LAST in all three writers**, and the reason is different each time.
+ *    On create: `notifyConfigChanged()` snapshots the enabled-sets from `enabled.json`, so running it before
  *    `syncEnabledSet()` left the running proxy with a stale set — `workspaceCfg()` then filtered the
  *    brand-new entity out of routing, and it only started working after some unrelated action happened
  *    to reload. On delete: `saveConfig()` does not unlink files for entities removed from the config,
@@ -114,7 +114,7 @@ import {
 import { syncEnabledSet } from "./enabledSet";
 import { registerKindNameEntry } from "./kindNameEntries";
 import { getGit } from "./gitStore";
-import { reloadConfig } from "../proxy/server";
+import { notifyConfigChanged } from "../runtime/instances";
 import { invalidateCache } from "../sync/statusTracker";
 import { bus, emitEntityStatus } from "../kernel/eventBus";
 import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../kernel/registry";
@@ -297,11 +297,11 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
     upsertNameEntry(wsId, opts.kind, newEntity.id, opts.getNameEntry(newEntity));
   }
 
-  // Reload LAST. `reloadConfig()` snapshots the enabled-sets from `enabled.json`, so
+  // Reload LAST. `notifyConfigChanged()` snapshots the enabled-sets from `enabled.json`, so
   // running it before `syncEnabledSet()` left the running proxy with a stale set —
   // `workspaceCfg()` then filtered the brand-new entity out of routing, and it only
   // started working after some unrelated action happened to reload the config.
-  reloadConfig();
+  notifyConfigChanged();
 
   emitEntityStatus(wsId);
 
@@ -343,7 +343,7 @@ async function updateEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
 
   // Reload LAST so the running proxy picks up the edited entity (see the note in
   // `createEntityCore`).
-  reloadConfig();
+  notifyConfigChanged();
 
   emitEntityStatus(wsId);
   return { ok: true };
@@ -421,7 +421,7 @@ async function deleteEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
     // Reload LAST: `saveConfig()` does not unlink files for entities removed from the
     // config, so reloading before the file was deleted (and before the enabled-set was
     // updated) kept the deleted entity live in the proxy's routing tables.
-    reloadConfig();
+    notifyConfigChanged();
 
     invalidateCache(wsId);
     emitEntityStatus(wsId);

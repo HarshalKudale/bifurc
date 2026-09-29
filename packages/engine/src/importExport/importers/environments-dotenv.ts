@@ -3,7 +3,7 @@ import {
 } from "../../store/config";
 import type { EnvVariable } from "../../store/types";
 import { writeFlatEntity } from "../../store/workspaceFs";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 function parseDotenv(text: string): Record<string, string> {
@@ -73,7 +73,7 @@ export async function run(
     cfg.environments = [...cfg.environments, newEnv];
     writeFlatEntity(wsId, "environments", id, newEnv);
     saveConfig(cfg);
-    reloadConfig();
+    notifyConfigChanged();
 
     return { ok: true, imported: 1 };
   } catch (err) {

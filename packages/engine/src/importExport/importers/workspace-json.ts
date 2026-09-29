@@ -8,7 +8,7 @@ import {
   upsertNameEntry, initWorkspaceDir,
 } from "../../store/workspaceFs";
 import { initWorkspaceRepo } from "../../store/gitStore";
-import { reloadConfig } from "../../proxy/server";
+import { notifyConfigChanged } from "../../runtime/instances";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
 
 export function preflight(wsId: string, source: ImportSource): PreflightResult {
@@ -122,7 +122,7 @@ export async function run(
       writeEnabledSet(newWsId, "mappings", set);
     }
 
-    reloadConfig();
+    notifyConfigChanged();
 
     const imported =
       (d.mocks?.length ?? 0) + (d.requests?.length ?? 0) + (d.mappings?.length ?? 0) +

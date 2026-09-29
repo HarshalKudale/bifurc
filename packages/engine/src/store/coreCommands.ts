@@ -54,7 +54,7 @@ import type {
 import { loadConfig, loadEntity, saveConfig } from "./config";
 import { readEnabledSet } from "./workspaceFs";
 import { syncEnabledSet } from "./enabledSet";
-import { reloadConfig } from "../proxy/server";
+import { notifyConfigChanged } from "../runtime/instances";
 import { emitEntityStatus } from "../kernel/eventBus";
 import {
     mayAffectUnnamedEntities,
@@ -80,7 +80,7 @@ export function registerCoreCommands(registry: CommandRegistry): void {
         const ws = (cfg.workspaces ?? []).find((w) => w.id === cfg.activeWorkspaceId);
         if (ws) ws.activeEnvironmentId = id;
         saveConfig(cfg);
-        reloadConfig();
+        notifyConfigChanged();
         return { ok: true };
     });
 
@@ -89,7 +89,8 @@ export function registerCoreCommands(registry: CommandRegistry): void {
      *
      * ## This call was removed in P14 and is restored here, deliberately
      *
-     * P14 WI 4 (2026-09-21) dropped the `reloadConfig()` this command used to make, and the reasoning was
+     * P14 WI 4 (2026-09-21) dropped the `reloadConfig()` this command used to make — the seam is
+     * `notifyConfigChanged()` today — and the reasoning was
      * sound *for that model*: D10–D12 gave each workspace its own runtime and its own port, so the UI pointer
      * and the proxies were independent, and a workspace's rules should keep serving while you edited another
      * one. Re-pointing the single process-wide proxy would have stopped a port from serving what it had been
@@ -110,7 +111,7 @@ export function registerCoreCommands(registry: CommandRegistry): void {
      * The **edge** needs no equivalent: its `resolveConfig` is read per request, so it follows the pointer for
      * free. That asymmetry is `plan/15` §3.1's fresh-versus-cached distinction and is unchanged by `plan/17`.
      *
-     * `env.setActive` below keeps its own `reloadConfig()` for the reason it always had one — an environment
+     * `env.setActive` below keeps its own `notifyConfigChanged()` for the reason it always had one — an environment
      * *is* proxy state (which rules and enabled sets are live). The two commands look symmetric and now
      * genuinely are, which is the distinction between a workspace and an environment surviving the model
      * change rather than being flattened by it.
@@ -123,7 +124,7 @@ export function registerCoreCommands(registry: CommandRegistry): void {
         cfg.activeEnvironmentId = ws.activeEnvironmentId;
         saveConfig(cfg);
         // The swap. See the block above for why this is back after P14 removed it.
-        reloadConfig();
+        notifyConfigChanged();
         return { ok: true, config: loadConfig() };
     });
 
@@ -174,7 +175,7 @@ export function registerCoreCommands(registry: CommandRegistry): void {
         }
 
         syncEnabledSet(workspaceId, kind, id, enabled);
-        reloadConfig();
+        notifyConfigChanged();
         emitEntityStatus(workspaceId);
         return { ok: true };
     });
