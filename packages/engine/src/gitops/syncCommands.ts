@@ -109,7 +109,7 @@ import { loadConfig } from "../workspace/config";
 import { sanitizeDirName } from "../workspace/workspaceFs";
 import { notifyConfigChanged } from "../runtime/instances";
 import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "./gitStore";
-import { emitEntityStatus } from "../kernel/eventBus";
+import { emitEntityStatus } from "../runtime/entityStatus";
 import type { CommandRegistry } from "../kernel/registry";
 
 export function registerSyncCommands(registry: CommandRegistry): void {

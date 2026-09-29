@@ -22,22 +22,29 @@
  *
  * 1. **`import type … from`** is erased at compile time. It creates no runtime edge, so it is not a layer
  *    violation. `kernel/eventBus.ts → webhooks/webhookServer.ts` is the one that relies on this.
- * 2. **`runtime/instances` is the §4.1 seam** and is importable from anywhere. §6's `gitops/` row already
- *    said so; this generalises it. The seam exists precisely so features do *not* have to import each
- *    other to signal "the config changed" — 20 of the engine's edges are this one import.
+ * 2. **The two seam modules are importable from anywhere.** `runtime/instances` is §4.1's listener fan-out
+ *    (20 of the engine's edges are that one import, which is the seam working rather than 20 violations);
+ *    `runtime/entityStatus` is the read-and-emit composition. §6's `gitops/` row already granted the first;
+ *    this generalises the idea and names the set explicitly, so a third seam module is a deliberate act.
  *
  * Root files (`index.ts`, `registerAll.ts`) are exempt: they are the composition root, and §5.1 names
  * `registerAll.ts` as "the single exception that may import every feature module".
  *
  * ## The allowlist is debt, and it can only shrink
  *
- * 24 file-level edges currently break the contract. Each is listed below with its reason, and
+ * 22 file-level edges currently break the contract (it was 24 before `kernel/eventBus.ts` was fixed). Each is listed below with its reason, and
  * `the allowlist has no stale entries` fails if one is fixed without being removed — so the list cannot
- * quietly become a permission slip. **`kernel/eventBus.ts → gitops/` is the one that matters most:** it
- * makes §5.1's "`kernel/` imports nothing engine-internal" false, and §5.2 calls that the property which
- * makes the rule "mechanically checkable rather than aspirational". It needs a design decision (inject the
- * two readers as values, per §4.1's seam, vs. relocate `emitEntityStatus`), not a file move — recorded, not
- * guessed at.
+ * quietly become a permission slip.
+ *
+ * **The worst one is already fixed, and it is worth keeping as the worked example.** When this file first
+ * ran, `kernel/eventBus.ts` imported `getWorkspaceSyncStatus` and `getWorkspaceGitState` from `gitops/` —
+ * two **values** — which made §5.1's "`kernel/` imports nothing engine-internal" false, and §5.2 calls that
+ * property what makes the rule "mechanically checkable rather than aspirational". `emitEntityStatus()` moved
+ * to **`runtime/entityStatus.ts`** (the second seam module), because three of its four callers are
+ * `workspace/`-side and §6 lets `workspace/` import only `kernel/` and `utils/` — so relocating it sideways
+ * would have turned two `kernel → gitops` edges into three `workspace → gitops` ones and changed nothing.
+ * `kernel/eventBus.ts` now has exactly one engine-internal import and it is a type. **Its two allowlist
+ * entries were deleted in the same commit, which is the shrink this test exists to force.**
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -80,7 +87,11 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
 };
 
 /** §4.1's seam — importable from anywhere, because its whole purpose is to avoid a sideways import. */
-const SEAM = "runtime/instances";
+/** The engine's **seam modules** — importable from anywhere, because each exists to avoid a sideways import. */
+const SEAM_MODULES = new Set([
+  "runtime/instances",
+  "runtime/entityStatus",
+]);
 
 /** Modules with no importer *by design*, and why. */
 const ORPHANS_ALLOWED: Record<string, string> = {
@@ -94,14 +105,6 @@ const ORPHANS_ALLOWED: Record<string, string> = {
  * exact import rather than a module pair — a module pair would silently cover the next violation too.
  */
 const ALLOWED_VIOLATIONS: Record<string, string> = {
-  // ── kernel → gitops: the §5.1 claim that is currently false ─────────────────────────────────────
-  "kernel/eventBus.ts -> gitops/statusTracker.ts":
-    "`emitEntityStatus()` reads the per-workspace sync status and the git state, then emits them together " +
-    "so a subscriber cannot see the file map without the position. Needs a design decision (inject the two " +
-    "readers as values, the §4.1 seam pattern, vs. relocate `emitEntityStatus` to a module that may read " +
-    "git) — NOT a file move. Recorded for a follow-up; see the map's corrections.",
-  "kernel/eventBus.ts -> gitops/gitState.ts": "Same function, second reader — see the entry above.",
-
   // ── utils/ is not pure for two files phase 4 moved into it ──────────────────────────────────────
   "utils/response.ts -> workspace/config.ts":
     "`utils/response.ts` came from `proxy/responseUtils.ts` in phase 4, on the reasoning that both proxy " +
@@ -229,7 +232,7 @@ function engineEdges(): Edge[] {
       const target = path.resolve(path.dirname(abs), imp.spec);
       if (!target.startsWith(path.resolve(SRC))) continue;
       const to = path.relative(SRC, target).split(path.sep).join("/") + ".ts";
-      if (to === SEAM + ".ts") continue; // exemption 2
+      if (SEAM_MODULES.has(to.replace(/\.ts$/, ""))) continue; // exemption 2
       edges.push({ from, to, fromMod: moduleOf(from), toMod: moduleOf(to) });
     }
   }

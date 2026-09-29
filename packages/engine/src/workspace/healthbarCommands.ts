@@ -29,7 +29,7 @@
  * All three were `ipcMain.handle` bodies in `src/ipc/handlers/coreHandlers.ts`, reachable only while
  * the shell and the engine are one process. Every function they call already lives in
  * `packages/engine`: `invalidateCache` (`workspace/statusCache.ts`) and `emitEntityStatus`
- * (`kernel/eventBus.ts`). `transport/auth/scopes.ts` had already assigned all three scopes
+ * (`runtime/entityStatus.ts` — it lived in `kernel/eventBus.ts` until engine-layout phase 8's follow-up). `transport/auth/scopes.ts` had already assigned all three scopes
  * (`read` / `write` / `execute`) before the module existed — the same independent evidence
  * `serverCommands.ts` found for its six.
  *
@@ -71,7 +71,7 @@ import type {
 import type { CommandRegistry } from "../kernel/registry";
 import { wsDir } from "./workspaceFs";
 import { invalidateCache } from "./statusCache";
-import { emitEntityStatus } from "../kernel/eventBus";
+import { emitEntityStatus } from "../runtime/entityStatus";
 
 /** The healthbar's own subdirectory inside a workspace, and the file it keeps its services in. */
 const HEALTHBAR_DIR = "healthbar";
