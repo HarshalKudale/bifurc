@@ -12,9 +12,9 @@
 // same reason `registerAll.ts`'s header gives about the eighteen command calls: each one carries a
 // comment naming which P6 reduction made it the only registration, and collapsing them would delete
 // that record. A test keeps the two lists honest — see `workspaceHost.integration.test.ts`'s kinds guard.
-import { registerSoapKinds } from "@bifurc/engine/store/kinds/soapKinds";
-import { registerGraphqlKinds } from "@bifurc/engine/store/kinds/graphqlKinds";
-import { registerGrpcKinds } from "@bifurc/engine/store/kinds/grpcKinds";
+import { registerSoapKinds } from "@bifurc/engine/soap/kinds";
+import { registerGraphqlKinds } from "@bifurc/engine/graphql/kinds";
+import { registerGrpcKinds } from "@bifurc/engine/grpc/kinds";
 import { registerSystemHandlers } from "@/ipc/handlers/systemHandlers";
 import { registerCrudKinds } from "@bifurc/engine/workspace/entities/kinds/crudKinds";
 import { registerCoreKinds } from "@bifurc/engine/workspace/entities/kinds/coreKinds";
@@ -34,9 +34,9 @@ import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
 import { registerAuditCommands } from "@bifurc/engine/workspace/entities/auditCommands";
 import { registerCoreCommands } from "@bifurc/engine/workspace/entities/coreCommands";
 import { registerFolderCommands } from "@bifurc/engine/workspace/entities/folderCommands";
-import { registerGraphqlCommands } from "@bifurc/engine/protocols/graphqlCommands";
-import { registerSoapCommands } from "@bifurc/engine/protocols/soapCommands";
-import { registerGrpcCommands } from "@bifurc/engine/protocols/grpcCommands";
+import { registerGraphqlCommands } from "@bifurc/engine/graphql/commands";
+import { registerSoapCommands } from "@bifurc/engine/soap/commands";
+import { registerGrpcCommands } from "@bifurc/engine/grpc/commands";
 import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
 import { registerSyncCommands } from "@bifurc/engine/sync/syncCommands";
 import { registerEntityCrudCommands } from "@bifurc/engine/workspace/entities/entityCrudCommands";

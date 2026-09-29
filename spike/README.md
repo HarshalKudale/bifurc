@@ -71,7 +71,7 @@ wrong on the first pass, and both were corrected by reading the *assertion*, not
 - **`packages/client/tests/shape.test-d.ts`**'s note that it is *"the productionised form of*
   `spike/protocol/shape.ts`" — a true historical note. The path is now a dead link; the sentence is not
   wrong and rewriting it would erase the fact that the shape had a predecessor worth naming.
-- **The `soap.execute` environment caveat** in `packages/engine/src/protocols/soapCommands.ts`, which
+- **The `soap.execute` environment caveat** in `packages/engine/src/soap/commands.ts`, which
   explains why the two commands fail in two different ways. Its citation of the spike test as "what pins
   this" now points at `protocolExecution.integration.test.ts` — updated, because that one *was* a claim
   about where coverage lives.

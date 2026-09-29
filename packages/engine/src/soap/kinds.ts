@@ -1,4 +1,4 @@
-import { registerCrudKind, registerSimpleKind } from "../../workspace/entities/entityCrudCommands";
+import { registerCrudKind, registerSimpleKind } from "../workspace/entities/entityCrudCommands";
 
 // Moved here from `src/ipc/handlers/soapKinds.ts` on 2026-09-23 (`plan/15` work item 10), with its four
 // siblings. The container these registrations populate is what the **engine-side** `entity.*` commands read,
@@ -26,8 +26,8 @@ interface SavedSoapRequest {
 //
 // `soap.fetchWsdl` / `soap.execute` used to be registered at **module scope** in this file, which is the
 // `plan/07` §5c defect: a containerised engine (P9) answered `UNKNOWN_COMMAND` for both. Step 3e slice 4
-// (2026-09-19) moved them into `packages/engine/src/protocols/soapCommands.ts` behind
-// `registerSoapCommands()`, called from `src/ipc/handlers.ts`.
+// (2026-09-19) moved them into `packages/engine/src/~~protocols/soapCommands.ts~~` behind
+// `registerSoapCommands()` (now `soap/commands.ts` — engine-layout phase 5, 2026-09-29), called from `src/ipc/handlers.ts`.
 //
 // The two `ipcMain.handle` wrappers left behind were then **deleted** (P6 step 3, 2026-09-20). They were
 // `(_e, params) => commandRegistry.invoke("soap.<verb>", params, ctx)` and nothing else, so once the
