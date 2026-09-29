@@ -3,8 +3,10 @@
 **Status:** in progress on branch `engine_modules`. **Phases 0 through 7 are done and committed**
 (`c531c7c` plan/map/codemod · `16161ad` phase 1 — `kernel/` + `utils/` · `083a026` phase 2 — the rebind
 fan-out · `99d1444` phase 3 — the `workspace/` split · `1f748b7` phase 4 — the proxy family · `8bedb72`
-phase 5 — the protocol verticals · `1713dec` phase 6 — `gitops/` · phase 7 — the leftovers).
-**Phase 8 (the ratchet + docs) is not started.** Every number below is measured from the tree at the time of
+phase 5 — the protocol verticals · `1713dec` phase 6 — `gitops/` · phase 7 — the leftovers · phase 8 — the
+ratchet + docs).
+**All eight phases are done.** The one item that could not be delivered as written is §5.2's ESLint rule —
+this repository has no ESLint (see §5.2), and adding one is a toolchain decision, not a file edit. Every number below is measured from the tree at the time of
 writing (§1 from `standalone-engine` on 2026-09-28; §4.1's call-site counts re-measured 2026-09-29; §7.2
 rows 3 and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact; row 7's "8" re-measured as
 **44 files**), not estimated.
@@ -391,6 +393,17 @@ kernel  →  utils  →  workspace  →  { feature modules }  →  transport | r
 - **Feature modules** may import `kernel/`, `utils/`, `workspace/` — and **never each other**. Where two
   features genuinely share behaviour (the mock engine, the certificate manager, the rebind seam), that
   behaviour is extracted *down* into a shared module rather than imported sideways.
+
+**⚠ §5.1 and §6 disagreed, and §6 governs** (settled 2026-09-29, when the ratchet was built). This section's
+blanket "never each other" contradicts §6's table, which grants `proxy/` → `mocks/` + `certificates/` and
+`reverseproxy/` → `mocks/` outright. **§6's per-module table is the rule; this section is the default where
+§6 is silent.** Two further refinements the ratchet applies, both principled:
+
+- **`import type … from` is not a layer violation** — it is erased at compile time and creates no runtime
+  edge. (`kernel/eventBus.ts → webhooks/webhookServer.ts` is the only edge that relies on this.)
+- **`runtime/instances` is importable from anywhere.** It is §4.1's seam, and §6's `gitops/` row already
+  said so; the ratchet generalises it. 20 of the engine's edges are this one import — which is the seam
+  working, not a violation.
 - **`registerAll.ts`** is the single exception: it may import every feature module, because enumerating them
   is its entire job.
 
@@ -399,13 +412,26 @@ kernel  →  utils  →  workspace  →  { feature modules }  →  transport | r
 This repository already enforces design rules with tests rather than documentation (§5c's module-scope
 guard, the workspaceHost drift guards, the client-surface count). The layout should be enforced the same way:
 
-- **`tests/engine/layout.test.ts`** — parse every relative import in `src/`, map each file to its module, and
-  assert the layer order above. Fails with the offending `file → file` pair. This is ~60 lines and it is the
-  difference between a layout and a layout *rule*.
-- **An ESLint `no-restricted-imports` rule** generated from the same module table, so the error appears in
-  the editor rather than only in CI.
+- **`tests/engine/layout.test.ts` — DONE (phase 8, 2026-09-29).** It parses every relative import in `src/`,
+  maps each file to its module, and fails with the offending `file → file` pair. It also asserts that every
+  contract module is a real directory, that none is orphaned, that every `register*Commands` owner is
+  reachable from `registerAll.ts`, and — the half that makes the allowlist safe — that the allowlist has
+  **no stale entries**, so it can only shrink.
+- **An ESLint `no-restricted-imports` rule — CANNOT BE DONE AS WRITTEN. This repository has no ESLint at
+  all**: no config file, no `eslint` dependency, nothing in `node_modules/.bin`. Adding one is a new
+  toolchain decision (dependency + config + a `lint` script), not a phase-8 file edit, so it is recorded
+  here rather than taken unilaterally. The ratchet test above is the enforcement in the meantime — and it is
+  the half §5.2 itself calls *"the difference between a layout and a layout rule"*.
 
 Both must be added **in the same phase as the first move**, or the rule decays.
+
+**It decayed exactly as predicted, and the cost is now measured.** Phases 1–7 landed with no enforcement, so
+the tree accumulated **24 file-level contract violations** before the ratchet existed. All 24 are in the
+ratchet's `ALLOWED_VIOLATIONS` with a reason each. **The one that matters most is
+`kernel/eventBus.ts → gitops/{statusTracker,gitState}.ts`** — it makes §5.1's "`kernel/` imports nothing
+engine-internal" false, and §5.1 calls that the property which makes the rule "mechanically checkable rather
+than aspirational". It needs a **design decision** (inject the two readers as values, per §4.1's seam, vs.
+relocate `emitEntityStatus` to a module that may read git), so it is recorded rather than guessed at.
 
 **The ratchet must assert in both directions, and this repo has already paid for knowing why.** A
 *negative* assertion ("no feature module imports another") only reads what is there. `TRAPS.md`'s
@@ -440,6 +466,13 @@ assert the **positive** direction:
 | `graphql/` `grpc/` `soap/` | commands + kinds for that protocol | `kernel/`, `utils/`, `workspace/` | `register*Commands`, `register*Kinds` |
 | `rest/` | the `requests` **feature** — its behaviour (replay); the kind itself registers through the shared `workspace/entities/kinds/crudKinds.ts` table (§4.4) | `kernel/`, `utils/`, `workspace/` | `registerRestCommands` |
 | `gitops/` | git handle, ops, publish, status, auto-sync, sync commands | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
+| `websocket/` | **nothing yet — reserved (§9)**. The `wsConnections` kind registers through the shared CRUD table; `edge.ts`'s `upgrade` branch is deliberately bodiless | `kernel/`, `utils/`, `workspace/` | *(none — placeholder)* |
+| `fileops/` | file dialogs and IO, `tls.*`, `audit.export`, `runner.exportReport` — a **command aggregator** | `kernel/`, `utils/`, `workspace/` *(reaches five other features today — see the ratchet's allowlist)* | `registerFileOpsCommands` |
+| `importexport/` | the format registry, the importers and exporters | `kernel/`, `utils/`, `workspace/` *(same caveat: it consumes `blob/` and `gitops/`)* | `registerImportExportCommands` |
+| `blob/` | the content-addressed blob store, publish, sweep | `kernel/`, `utils/`, `workspace/` | `registerBlobCommands` |
+| `applications/` | the managed-process spawner | `kernel/`, `utils/`, `workspace/` | `registerApplicationCommands` |
+| `runner/` | collection runs and the HTML report | `kernel/`, `utils/`, `workspace/` | `registerRunnerCommands` |
+| `lifecycle/` | `startup` (preflight, workspace bootstrap) and `shutdown` — it **composes** the engine | everything | `preflight`, `bootstrapWorkspaces`, `shutdownEngine` |
 | `transport/` | the four transports, auth, event log | `kernel/` | `create*Transport` |
 | `runtime/` | host, CLI, port allocator, **the listener fan-out** (`notifyConfigChanged`, `rebindRuntimePorts`) | everything except `index` | `createWorkspaceHost`, `notifyConfigChanged`, `rebindRuntimePorts` |
 
@@ -497,7 +530,7 @@ baseline **by mechanism, not count** (per the project's own rule).
 | **5 — protocol verticals** | `graphql/`, `grpc/`, `soap/` absorb their kinds (§4.4) | 6 | Depends on `workspace/entities/kinds` existing. **Done — 6 paths as planned, the plan's first count that was right.** `store/` drains to `gitStore.ts` alone (phase 6); `protocols/` is now **empty and removed**. |
 | **6 — `gitops/`** | `sync/` + `gitStore` merged | 12 | Depends on phase 3. **Done — 12 paths as planned; the second row whose count was right.** `store/` and `sync/` are both now **empty and removed**. |
 | **7 — leftovers** | `miscCommands` dissolved (§4.5), `lifecycle/`, `rest/`, `websocket/` placeholder, `fileops`/`importexport` normalised | 8 | Small, independent. **Done — but the row's "8" counts *destinations*, not files. Measured: 44 files are renamed (42 codemod + 2 hand) and 4 are added.** `startup`/`shutdown` → `lifecycle/`; `fileOps/` → `fileops/`; `importExport/` (39) → `importexport/`; `miscCommands` → `rest/commands` + `mocks/commands` + `workspace/healthbarCommands`; `proxy/serverReplay` → `utils/replay`. Added: `rest/commands.ts`, `mocks/commands.ts` (the other two thirds of the `miscCommands` split), `websocket/index.ts`, `workspace/statusCache.ts`. **Two files were extracted rather than moved, because §4.5's destinations cannot legally import their dependencies** — `healthbar.*` → `workspace/` needs `invalidateCache` (`gitops/`), and `request.replay` → `rest/` needs `replayRequest` (`proxy/`), so §5.1's "extract down" remedy gave `workspace/statusCache.ts` and `utils/replay.ts`. **⚠ `kernel/eventBus.ts` still imports `getWorkspaceSyncStatus`/`getWorkspaceGitState` from `gitops/`, so §5.1's "kernel imports nothing engine-internal" is currently false** — it needs a design decision (inject the two readers as values, per §4.1's seam, vs. relocate `emitEntityStatus` to a module that may read git), so it is recorded for phase 8 rather than guessed at here. **⚠ Windows case-only renames no-op — see the header note.** |
-| **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. **⚠ Also decides `packages/engine/tests/`'s shape:** phases 1–3 moved sources without moving their test mirrors, so `tests/commands/registry.test.ts` now tests `src/kernel/registry.ts` and `tests/lib/net.test.ts` tests `src/utils/net.ts`. The tests pass (their imports were rewritten), so this is cosmetic — but the §7.1 ratchet covers `src/` only, so nothing else will catch it. Either mirror the test tree or state explicitly that tests do not mirror. |
+| **8 — ratchet + docs** | `tests/engine/layout.test.ts`, the ESLint rule, `plan/`, `TESTING.md`, the `bifurc-*` skills | 0 | Last, so it encodes the finished state. **⚠ Also decides `packages/engine/tests/`'s shape:** phases 1–3 moved sources without moving their test mirrors, so `tests/commands/registry.test.ts` now tests `src/kernel/registry.ts` and `tests/lib/net.test.ts` tests `src/utils/net.ts`. The tests pass (their imports were rewritten), so this is cosmetic — but the §7.1 ratchet covers `src/` only, so nothing else will catch it. Either mirror the test tree or state explicitly that tests do not mirror. **Done — the ratchet landed (`tests/engine/layout.test.ts`, 5 assertions, teeth verified by mutation), the ESLint half could not be built (no ESLint in this repo — see §5.2), and the docs/skills were swept. The test-mirror decision: tests do NOT mirror `src/` — the convention and the full mismatch table are now recorded in `TESTING.md` §3.5. The mismatch is 25 files across four directories (`tests/proxy/` alone spans five modules), and moving them is churn that buys navigation the table already provides.** ⚠ The ratchet found **24 contract violations** the seven move phases had accumulated — all allowlisted with reasons; `kernel/eventBus.ts → gitops/` is the one needing a design decision. |
 
 **Phases 1–2 are the recommendation to start with.** They are ~8 file moves and 0 respectively, they remove
 the largest single class of bad dependency, and if the plan is abandoned after phase 2 the tree is still
