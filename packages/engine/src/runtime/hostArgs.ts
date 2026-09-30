@@ -67,6 +67,8 @@
  */
 
 /** The parsed command line. `dataDir` is the one required field — see `parseHostArgs`. */
+import { platformDefaultDataDir } from "../workspace/paths";
+
 export interface HostArgs {
   /** The data root. Required, and never invented: `store/paths.ts` throws rather than defaulting. */
   dataDir: string;
@@ -86,6 +88,8 @@ export interface HostArgs {
    * write, which is why that coherence check is gone rather than kept.
    */
   wsPort?: number;
+  /** How the RPC endpoint is exposed. Always set by the parser. */
+  transport?: "socket" | "ws" | "stdio";
   /**
    * The port the **edge router** binds — `plan/15` work item 3. Omitted → `app.json`'s `port`
    * (`settings.port`, default 80), which is the port existing `*.localhost` mappings already point at.
@@ -106,7 +110,15 @@ export type HostArgsResult =
   | { kind: "error"; message: string };
 
 /** Printed on `--help`, and on any parse failure so the operator sees what was expected. */
-export const HOST_USAGE = `Usage: node <engine>/dist/runtime/hostCli.js --data-dir <path> [options]
+export const HOST_USAGE = `Usage: bifurc-engine [--data-dir <path>] [--transport socket|ws|stdio] [options]
+
+The Bifurc engine, standalone. One engine serves one data directory; it records where it listens in
+<data-dir>/runtime.json so the desktop app, the CLI and other clients can find it.
+
+  --data-dir <path>       The data root. Defaults to the desktop app's data directory.
+  --transport <kind>      socket (default): a named pipe on Windows, a unix socket elsewhere, at a path
+                          derived from the data dir. ws: WebSocket on loopback. stdio: frames on
+                          stdin/stdout, for a parent process that spawned the engine.
 
 A workspace host: N workspaces behind ONE RPC endpoint, no app-level singleton server.
 
@@ -149,6 +161,7 @@ const VALUE_FLAGS = new Set([
   "--ws-port",
   "--workspace",
   "--edge-port",
+  "--transport",
 ]);
 
 /**
@@ -192,6 +205,7 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
   let rpcSocket: string | undefined;
   let wsPort: number | undefined;
   let edgePort: number | undefined;
+  let transport: HostArgs["transport"];
   const workspaceIds: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -262,6 +276,12 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       case "--workspace":
         workspaceIds.push(value);
         break;
+      case "--transport":
+        if (value !== "socket" && value !== "ws" && value !== "stdio") {
+          return { kind: "error", message: `--transport must be socket, ws or stdio.\n\n${HOST_USAGE}` };
+        }
+        transport = value;
+        break;
       case "--edge-port": {
         // Validated the way `--ws-port` is, and for the same reason: a non-numeric port reaches
         // `listen()` as `NaN` and surfaces as an obscure `ERR_SOCKET_BAD_PORT` from inside the host,
@@ -276,11 +296,17 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
     }
   }
 
-  if (dataDir === undefined || dataDir === "") {
-    return {
-      kind: "error",
-      message: `--data-dir is required (or set BIFURC_DATA_DIR).\n\n${HOST_USAGE}`,
-    };
+  // The desktop app's own data directory, so a sidecar started with no flags serves what the app shows.
+  if (dataDir === undefined || dataDir === "") dataDir = platformDefaultDataDir();
+
+  if (transport === "stdio" && (rpcSocket !== undefined || wsPort !== undefined)) {
+    return { kind: "error", message: `--transport stdio takes no --rpc-socket or --ws-port.\n\n${HOST_USAGE}` };
+  }
+  if (transport === "socket" && wsPort !== undefined) {
+    return { kind: "error", message: `--transport socket cannot be combined with --ws-port.\n\n${HOST_USAGE}` };
+  }
+  if (transport === "ws" && rpcSocket !== undefined) {
+    return { kind: "error", message: `--transport ws cannot be combined with --rpc-socket.\n\n${HOST_USAGE}` };
   }
 
   /**
@@ -307,6 +333,8 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
     kind: "args",
     args: {
       dataDir,
+      // `--ws-port` alone still selects WebSocket, as it always has.
+      transport: transport ?? (wsPort !== undefined ? "ws" : "socket"),
       rpcSocket,
       wsPort,
       // Omitted rather than empty when nothing was passed, so the host's own default applies and

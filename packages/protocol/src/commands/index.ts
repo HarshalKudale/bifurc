@@ -222,6 +222,7 @@ export const COMMANDS = {
   // formatting half; these two are what it used to compute for itself.
   "capture.buildRequest": spec(MiscCmd.CaptureBuildRequestParams, "capture.buildRequest"),
   "capture.buildMock": spec(MiscCmd.CaptureBuildMockParams, "capture.buildMock"),
+  "engine.shutdown": spec(MiscCmd.EngineShutdownParams, "engine.shutdown"),
   "capture.list": spec(MiscCmd.CaptureListParams, "capture.list"),
   "capture.clear": spec(MiscCmd.CaptureClearParams, "capture.clear"),
   "capture.remove": spec(MiscCmd.CaptureRemoveParams, "capture.remove"),

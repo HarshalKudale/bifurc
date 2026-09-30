@@ -70,7 +70,7 @@ ASSIGN = {
         application.delete application.start application.stop application.killPort
         server.start server.stop server.restart
         tls.generate tls.removeCert
-        webhookServer.start webhookServer.stop
+        engine.shutdown
     """,
 }
 
