@@ -28,7 +28,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import * as fs from "fs";
 import * as http from "http";
+import * as path from "path";
 import * as zlib from "zlib";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
@@ -168,6 +170,28 @@ const listEntities = async <T = any>(kind: string): Promise<T[]> => {
   const r: any = await commandRegistry.invoke("entity.list", { kind, workspaceId: TEST_WS }, { bus });
   return r.entities as T[];
 };
+
+/**
+ * Write a saved entity straight to disk, at the workspace root — what the *engine* reads, with no
+ * `entity.create` in between.
+ *
+ * That is deliberate for the `*Saved` block below, and it is a different choice from `createEntity`
+ * above rather than an inconsistency. The subject there is the *command*; the subject here is the
+ * **load-then-dispatch** path, and driving it through `entity.create` would route the fixture through
+ * the very CRUD machinery under test. Writing the file also keeps this block independent of which
+ * kinds the harness happens to have registered: `requests` is a `CrudFactoryOpts` kind, whose
+ * registration (`registerCrudKinds()`) is deliberately **not** part of this suite's `beforeAll`, so
+ * `createEntity("requests", …)` would fail here with `kind "requests" is not routed through the
+ * CommandRegistry yet` — a fact about the harness, not about the command.
+ *
+ * Root-level is enough: `findEntityFile()` checks `<kind>/<id>.json` before it walks sub-folders, so
+ * no `index.json` or `names.json` is needed to be *readable*.
+ */
+function writeSavedEntity(kind: string, entity: Record<string, unknown> & { id: string }): void {
+  const dir = path.join(ws.dataRoot, TEST_WS, kind);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${entity.id}.json`), JSON.stringify(entity, null, 2), "utf-8");
+}
 
 const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
 const unb64 = (s: string) => Buffer.from(s, "base64").toString("utf-8");
@@ -360,6 +384,12 @@ beforeAll(async () => {
   // deleted — `invoke("config:save", …)` resolves through the `handlers.get()` fallback to a plain
   // command, so it needs its registering module wired rather than a table entry.
   const { registerConfigCommands } = await import("@bifurc/engine/workspace/entities/configCommands");
+  // `request.send` — `plan/19` D24's REST pipeline, and the only one of the four `*.send` commands that runs
+  // scripts. `graphql.send`, `soap.send` and `grpc.send` register from `registerGraphqlCommands` /
+  // `registerSoapCommands` / `registerGrpcCommands` below, because each resolves its own fields before
+  // dispatching. This is the line `tests/engine/layout.test.ts`'s "reachable from registerAll.ts" case keeps
+  // in step with `registerAll.ts`.
+  const { registerPipelineCommands } = await import("@bifurc/engine/pipeline/commands");
 
   registerCoreKinds();
   registerCoreCommands(commandRegistry);
@@ -370,6 +400,10 @@ beforeAll(async () => {
   registerSoapCommands(commandRegistry);
   registerGrpcCommands(commandRegistry);
   registerEntityCrudCommands(commandRegistry);
+  // After the commands it dispatches to. Not *required* to be — `invoke()` resolves the handler at invoke
+  // time, not registration time — but it keeps this list readable in the same order as `registerAll.ts`,
+  // which is the list a reader is told to compare against.
+  registerPipelineCommands(commandRegistry);
   registerGraphqlKinds();
   registerSoapKinds();
   registerGrpcKinds();
@@ -847,5 +881,311 @@ describe("protocol entity CRUD", () => {
 
     await deleteEntity("protoFiles", proto.id);
     expect((await listEntities("protoFiles")).map((p: any) => p.id)).not.toContain(proto.id);
+  });
+});
+
+// ── The saved-entity family ───────────────────────────────────────────────────
+
+/**
+ * `request.send` and its three thin siblings — the **headless shape** of the request-executing commands.
+ * The caller names an entity by id, the engine loads it, and the entity is run.
+ *
+ * **`request.send` is no longer a thin counterpart** (2026-09-30, `plan/19` D24/D27): it runs the REST
+ * pipeline, so it resolves the request and executes its scripts on the way through, and it also accepts an
+ * **inline** request so that a draft tab and a CLI use one command. The three siblings still
+ * load-and-dispatch; `packages/protocol/src/commands/saved.ts` owns the asymmetry table and
+ * `plan/protocol-changes.md`'s 2026-09-30 entry owns the wire argument.
+ *
+ * What these cases are for is the **load** half plus the entity→params mapping. The dispatch half is the
+ * blocks above, and asserting it again here would prove nothing new — so each case asserts the request that
+ * reached the *real* server, which is where a mapping mistake actually shows up.
+ *
+ * Every entity is written to disk rather than created through `entity.create`; `writeSavedEntity()`'s
+ * docblock records why that is a deliberate difference from the block above.
+ */
+describe("the saved-entity commands — execute a saved entity by id", () => {
+  it("request.send replays the stored method, url, headers and body", async () => {
+    const id = "req-saved-1";
+    const body = JSON.stringify({ from: "disk" });
+    writeSavedEntity("requests", {
+      id, name: "Saved POST", method: "POST", url: `${rest.origin}/api/saved`,
+      headers: { "content-type": "application/json", "x-saved": "1" }, body,
+    });
+
+    const res = await invokeCommand<any>("request.send", { workspaceId: TEST_WS, id });
+
+    expect(res.status).toBe(200);
+    const seen = rest.requests.at(-1)!;
+    expect(seen.method).toBe("POST");
+    expect(seen.url).toBe("/api/saved");
+    expect(seen.headers["x-saved"]).toBe("1");
+
+    // **The trap this case exists for.** A saved `requests` entity stores `body` as plain TEXT —
+    // `stateToSavePayload` writes `state.reqBody` verbatim, and all five importers do the same — while
+    // `request.replay` takes base64. A counterpart that passed the stored field straight through would
+    // have the upstream receive the base64 *of nothing*, i.e. garbage bytes, and every assertion above
+    // would still pass.
+    expect(seen.body).toBe(body);
+    expect(seen.headers["content-length"]).toBe(String(Buffer.byteLength(body)));
+    // And the response is base64, exactly as the unsaved command returns it.
+    expect(JSON.parse(unb64(res.body)).body).toBe(body);
+  });
+
+  it("encodes the stored body as UTF-8, so a multi-byte body survives the round trip", async () => {
+    const id = "req-saved-utf8";
+    const body = '{"greeting":"✓ Ünïcode — ☕"}';
+    writeSavedEntity("requests", {
+      id, name: "Unicode", method: "POST", url: `${rest.origin}/api/utf8`, headers: {}, body,
+    });
+
+    await invokeCommand("request.send", { workspaceId: TEST_WS, id });
+
+    const seen = rest.requests.at(-1)!;
+    // Guard the premise: unless the fixture is genuinely multi-byte this case passes for a latin-1
+    // encoder too, which is the failure it is here to catch.
+    expect(Buffer.byteLength(body)).toBeGreaterThan(body.length);
+    expect(seen.body).toBe(body);
+    expect(Number(seen.headers["content-length"])).toBe(Buffer.byteLength(body));
+  });
+
+  it("sends no body for a whitespace-only stored body — the editor's blank-means-empty rule", async () => {
+    // `textToB64` returns `""` for a blank string, so the same request sent from the editor carries no
+    // body at all. A counterpart that encoded the stored field literally would send three spaces, which
+    // is a different request to some upstreams and an invisible one to most.
+    const id = "req-saved-blank";
+    const url = `${rest.origin}/api/blank`;
+    writeSavedEntity("requests", {
+      id, name: "Blank", method: "POST", url, headers: {}, body: "   ",
+    });
+
+    await invokeCommand("request.send", { workspaceId: TEST_WS, id });
+    const viaSaved = rest.requests.at(-1)!;
+
+    // Compared against the unsaved path rather than against a literal, because that is the claim: the
+    // two must be the *same* request. (`content-length` is asserted by comparison and not against
+    // `undefined` on purpose — Node adds `content-length: 0` to a bodyless POST, so pinning the header
+    // itself would be asserting Node's framing rather than the counterpart's encoding.)
+    await invoke("request:replay", "POST", url, {}, "");
+    const viaUnsaved = rest.requests.at(-1)!;
+
+    expect(viaSaved.body).toBe("");
+    expect(viaSaved.body).toBe(viaUnsaved.body);
+    expect(viaSaved.headers["content-length"]).toBe(viaUnsaved.headers["content-length"]);
+  });
+
+  it("resolves the stored values against the workspace's environment — the pipeline, not a raw replay", async () => {
+    /**
+     * **The behaviour change this command exists for, and the case this block's predecessor asserted the
+     * opposite of.** Until 2026-09-30 there was a case here pinning *"forwards the stored values literally
+     * — no `{{variable}}` resolution"*, because resolution was the renderer's half and a counterpart that
+     * grew it would have been a different command from the one it delegated to.
+     *
+     * `request.send` **is** that different command, deliberately: it runs `plan/19` D24's pipeline, so
+     * resolution is the engine's and the stored token is *meant* to disappear. This is also §10's
+     * acceptance criterion stated end-to-end — a saved request whose fields contain a token resolves,
+     * with the renderer holding no resolver at all.
+     */
+    writeSavedEntity("environments", {
+      id: "__global__",
+      name: "Global",
+      createdAt: 0,
+      workspaceId: TEST_WS,
+      variables: [{ id: "apiToken", key: "apiToken", value: "resolved-token" }],
+    });
+
+    const id = "req-send-resolved";
+    writeSavedEntity("requests", {
+      id, name: "Resolved", method: "GET", url: `${rest.origin}/api/{{apiToken}}`,
+      headers: { "x-token": "{{apiToken}}" }, body: "",
+    });
+
+    await invokeCommand("request.send", { workspaceId: TEST_WS, id });
+
+    const seen = rest.requests.at(-1)!;
+    expect(seen.url).toBe("/api/resolved-token");
+    expect(seen.headers["x-token"]).toBe("resolved-token");
+  });
+
+  it("produces the same upstream request as request.replay given the same values", async () => {
+    // The property the counterpart is *defined* by — `entity.load` composed with the command — so the
+    // two must agree on what actually leaves the machine.
+    const id = "req-saved-agree";
+    const headers = { "content-type": "application/json" };
+    const body = JSON.stringify({ agree: true });
+    writeSavedEntity("requests", {
+      id, name: "Agree", method: "PUT", url: `${rest.origin}/api/agree`, headers, body,
+    });
+
+    await invokeCommand("request.send", { workspaceId: TEST_WS, id });
+    const viaSaved = rest.requests.at(-1)!;
+
+    await invoke("request:replay", "PUT", `${rest.origin}/api/agree`, headers, b64(body));
+    const viaUnsaved = rest.requests.at(-1)!;
+
+    expect(viaSaved.method).toBe(viaUnsaved.method);
+    expect(viaSaved.url).toBe(viaUnsaved.url);
+    expect(viaSaved.body).toBe(viaUnsaved.body);
+    expect(viaSaved.headers["content-length"]).toBe(viaUnsaved.headers["content-length"]);
+  });
+
+  it("graphql.executeSaved executes the stored endpoint, query, variables and operationName", async () => {
+    const id = "gql-saved-1";
+    const query = "query ($id: ID!) { user(id: $id) { name } }";
+    writeSavedEntity("graphqlRequests", {
+      // Note the stored field is `endpointUrl` and the command's is `url`. That the request reaches the
+      // server at all is the proof the rename happened — there is no other source for the URL.
+      id, name: "Saved GQL", endpointUrl: `${gql.origin}/graphql`, headers: { "x-saved": "gql" },
+      query, variables: '{"id":"42"}', operationName: "GetUser",
+    });
+
+    const res = await invokeCommand<any>("graphql.send", { workspaceId: TEST_WS, id });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-gql"]).toBe("real");
+    const echoed = JSON.parse(res.body).data.echo;
+    expect(echoed.query).toBe(query);
+    // `variables` is stored as a JSON **string** and parsed by the command, so an object arriving here
+    // is proof it travelled as the string rather than being pre-parsed on the way through.
+    expect(echoed.variables).toEqual({ id: "42" });
+    expect(echoed.operationName).toBe("GetUser");
+    expect(gql.requests.at(-1)!.headers["x-saved"]).toBe("gql");
+  });
+
+  it("graphql.send resolves EVERY field — including the query and the operation name", async () => {
+    /**
+     * **The behaviour change, and why this migration is a fix rather than a move.**
+     *
+     * The tab resolved `endpointUrl`, `headers` and `variables` but **not** `query` or `operationName`, while
+     * the Send gate's token scan treated all five as resolvable — so a `{{token}}` in a GraphQL query never
+     * resolved in *either* path (the gate only ever chose between two ways of sending the same unresolved
+     * field). The engine follows the gate, because that is the only form under which `usesVariables` can
+     * leave the gate at all. `plan/protocol-changes.md`'s 2026-09-30 `graphql.send` entry owns the argument.
+     */
+    writeSavedEntity("environments", {
+      id: "__global__",
+      name: "Global",
+      createdAt: 0,
+      workspaceId: TEST_WS,
+      variables: [{ id: "apiToken", key: "apiToken", value: "resolved-token" }],
+    });
+
+    const id = "gql-send-resolved";
+    writeSavedEntity("graphqlRequests", {
+      id, name: "Resolved GQL", endpointUrl: `${gql.origin}/graphql/{{apiToken}}`,
+      headers: { "x-token": "{{apiToken}}" },
+      query: 'query { user(token: "{{apiToken}}") { name } }',
+      variables: '{"token":"{{apiToken}}"}',
+      operationName: "Get{{apiToken}}",
+    });
+
+    await invokeCommand("graphql.send", { workspaceId: TEST_WS, id });
+
+    const seen = gql.requests.at(-1)!;
+    expect(seen.url).toContain("resolved-token");
+    expect(seen.headers["x-token"]).toBe("resolved-token");
+    // The body the *server received* is the payload — `{query, variables, operationName}` — which is more
+    // direct than going through the response's echo, and it is what the upstream actually saw.
+    const sent = JSON.parse(seen.body);
+    // The two the tab never resolved — the whole point of this case.
+    expect(sent.query).toBe('query { user(token: "resolved-token") { name } }');
+    expect(sent.operationName).toBe("Getresolved-token");
+    expect(sent.variables).toEqual({ token: "resolved-token" });
+  });
+
+  it("soap.executeSaved POSTs the stored envelope and SOAPAction", async () => {
+    const id = "soap-saved-1";
+    const envelope = "<soap:Envelope><soap:Body><GetUser><id>7</id></GetUser></soap:Body></soap:Envelope>";
+    writeSavedEntity("soapRequests", {
+      id, name: "Saved SOAP", endpointUrl: `${soap.origin}/ws`, soapAction: "urn:GetUser",
+      headers: {}, body: envelope,
+    });
+
+    const res = await invokeCommand<any>("soap.send", { workspaceId: TEST_WS, id });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-soap"]).toBe("real");
+    const seen = soap.requests.at(-1)!;
+    expect(seen.method).toBe("POST");
+    expect(seen.headers["soapaction"]).toBe("urn:GetUser");
+    expect(seen.body).toBe(envelope);
+  });
+
+  it("soap.send resolves EVERY field — including the SOAPAction", async () => {
+    /**
+     * The same class of fix as `graphql.send`'s, one field wide: the tab resolved `endpointUrl`, `headers`
+     * and `body` but **not `soapAction`**, while the Send gate's token scan treated all four as resolvable —
+     * so a `{{token}}` in a SOAPAction never resolved in *either* path. See
+     * `plan/protocol-changes.md`'s 2026-09-30 `soap.send` entry.
+     */
+    writeSavedEntity("environments", {
+      id: "__global__",
+      name: "Global",
+      createdAt: 0,
+      workspaceId: TEST_WS,
+      variables: [{ id: "apiToken", key: "apiToken", value: "resolved-token" }],
+    });
+
+    const id = "soap-send-resolved";
+    writeSavedEntity("soapRequests", {
+      id, name: "Resolved SOAP", endpointUrl: `${soap.origin}/ws/{{apiToken}}`,
+      soapAction: "urn:{{apiToken}}", headers: { "x-token": "{{apiToken}}" },
+      body: "<ping>{{apiToken}}</ping>",
+    });
+
+    await invokeCommand("soap.send", { workspaceId: TEST_WS, id });
+
+    const seen = soap.requests.at(-1)!;
+    expect(seen.url).toContain("resolved-token");
+    // The one the tab never resolved — the whole point of this case.
+    expect(seen.headers["soapaction"]).toBe("urn:resolved-token");
+    expect(seen.headers["x-token"]).toBe("resolved-token");
+    expect(seen.body).toBe("<ping>resolved-token</ping>");
+  });
+
+  it("grpc.executeSaved delegates to grpc.execute, which is still a stub", async () => {
+    // The result asserted is the *stub's*, and that is the point: the counterpart's job is to load and
+    // dispatch, so it starts working the day the stub is implemented and needs no change then. The load
+    // half is not proven here — a stub ignores every parameter — and the `NOT_FOUND` cases below are
+    // what prove it, because they throw before the stub is reached.
+    const id = "grpc-saved-1";
+    writeSavedEntity("grpcRequests", {
+      id, name: "Saved gRPC", serverAddress: "127.0.0.1:50051", serviceName: "S", methodName: "M",
+      requestBody: "{}", metadata: {}, protoFileId: null, useReflection: false, streamingType: "unary",
+    });
+
+    const res = await invokeCommand<any>("grpc.send", { workspaceId: TEST_WS, id });
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/not yet configured/i);
+  });
+
+  /**
+   * The load half, asserted directly. It matters most for `grpc.executeSaved`, whose target answers the
+   * same thing whatever it is handed — without this block, a counterpart that never read the disk at all
+   * would pass every case above.
+   */
+  it.each([
+    "request.send",
+    "graphql.send",
+    "soap.send",
+    "grpc.send",
+  ])("%s rejects with NOT_FOUND for an id that is not on disk", async (command) => {
+    await expect(
+      invokeCommand(command, { workspaceId: TEST_WS, id: "no-such-entity" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("does not fall back to the active workspace when a different workspace is named", async () => {
+    // The entity exists — in `TEST_WS`, which *is* the active workspace here. A counterpart that
+    // ignored `workspaceId` and loaded from whatever is active would therefore succeed, and the silent
+    // default would be invisible. Naming another workspace is what makes the field load-bearing.
+    const id = "req-saved-other-ws";
+    writeSavedEntity("requests", {
+      id, name: "Here", method: "GET", url: `${rest.origin}/api/here`, headers: {}, body: "",
+    });
+
+    await expect(
+      invokeCommand("request.send", { workspaceId: "ws-does-not-exist", id }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

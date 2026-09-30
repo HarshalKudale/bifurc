@@ -38,11 +38,42 @@
  *
  * `variables` is a JSON **string** in the payload (the request editor holds it as text). A malformed
  * one is swallowed and left `undefined` rather than failing the request — silent, and preserved.
+ *
+ * ## `graphql.send` — the third command, and the first one that resolves (2026-09-30)
+ *
+ * `plan/19` WI 3's second protocol. It replaced `graphql.executeSaved`, whose params were
+ * `{workspaceId, id}`; the new params are a **union** of that form and `{workspaceId, request}`, so a draft
+ * tab and the CLI use one command. `plan/protocol-changes.md`'s 2026-09-30 `graphql.send` entry owns the wire
+ * argument; this docblock owns the behaviour.
+ *
+ * **It resolves every field and runs no scripts**, and both halves are deliberate:
+ *
+ * - *Resolves every field* — `endpointUrl`, `headers`, `query`, `variables` **and** `operationName`, against
+ *   the workspace's merged environment (`workspace/envState.ts`, D23). This is a **fix**, not a
+ *   re-implementation: the tab resolved `endpointUrl`, `headers` and `variables` but **not** `query` or
+ *   `operationName`, while the Send gate's token scan treated all five as resolvable — so a `{{token}}` in a
+ *   query never resolved in *either* path. The gate was written from intent and the tab from practice, and
+ *   the engine follows the gate, which is the only form under which `usesVariables` can leave the gate at
+ *   all (`plan/19` §7).
+ * - *No scripts* — the sandbox's context is a `{method, url, headers, body}` request and a GraphQL request is
+ *   not one, so `graphql.send` has no `scripts` member rather than one nothing could run.
+ *
+ * It lives here rather than in `workspace/entities/savedRequestCommands.ts` because it reads `workspace/` +
+ * `utils/` and dispatches through `kernel/` — this module's §6 row exactly — while the two counterparts that
+ * remain there are pure load-and-dispatch.
  */
 import * as http from "http";
 import * as https from "https";
-import type { GraphqlIntrospectParams, GraphqlExecuteParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../kernel/registry";
+import { EngineError } from "@bifurc/protocol";
+import type {
+    GraphqlIntrospectParams,
+    GraphqlExecuteParams,
+    GraphqlSendParams,
+} from "@bifurc/protocol";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
+import { loadEntity } from "../workspace/config";
+import { loadMergedEnvironment } from "../workspace/envState";
+import { resolveVars, resolveHeaders } from "../utils/resolve";
 
 /**
  * The standard introspection query, verbatim from the shell. It is written out in full rather than
@@ -118,4 +149,66 @@ export function registerGraphqlCommands(registry: CommandRegistry): void {
         });
         return { status, headers: resHeaders, body: resBody, durationMs: Date.now() - start };
     });
+
+    registry.register("graphql.send", async (params: GraphqlSendParams, ctx: CommandContext) => {
+        const stored = "id" in params
+            ? requireStoredGraphqlRequest(params.workspaceId, params.id)
+            : params.request;
+        // One read of the workspace's environment state for the whole send. `plan/19` D23: the engine is the
+        // authority for which environment a request resolves against, and the merge is part of that.
+        const env = loadMergedEnvironment(params.workspaceId);
+        return registry.invoke(
+            "graphql.execute",
+            {
+                // `endpointUrl` → `url` is the only mapping, and it is why this file knows the stored shape
+                // at all. **Every** value is resolved — including `query` and `operationName`, which the tab
+                // never resolved while the Send gate treated them as resolvable (see the header).
+                url: resolveVars(stored.endpointUrl, env),
+                headers: resolveHeaders(stored.headers ?? {}, env),
+                query: resolveVars(stored.query, env),
+                variables: resolveVars(stored.variables, env),
+                operationName: resolveVars(stored.operationName, env),
+            },
+            ctx,
+        );
+    });
+}
+
+/**
+ * The stored entity's fields, as a **projection** — exactly the ones the send reads.
+ *
+ * Declared *after* its only reader, which is legal for a type and keeps this file's shape "the three
+ * commands, then what they read". A field the send does not use is deliberately absent, so it cannot quietly
+ * become required here. The canonical declaration lives beside the `graphqlRequests` kind in
+ * `graphql/kinds.ts` and is not re-exported, because nothing outside those two files had ever needed it.
+ * (This projection lived in `workspace/entities/savedRequestCommands.ts` until 2026-09-30; it moved with the
+ * command, which is its only reader.)
+ */
+interface StoredGraphqlRequest {
+    endpointUrl: string;
+    headers?: Record<string, string>;
+    query: string;
+    variables: string;
+    operationName: string;
+}
+
+/**
+ * Load the entity or fail loudly, rather than answering a failure-shaped value.
+ *
+ * `HttpLikeResult` has **no** `ok` or `error` field, so a `{ok:false}`-shaped result would be a lie about the
+ * declared contract — and the transport hands a handler's value back *uninspected*, so the client would read
+ * `status: undefined` off a successful envelope. So this throws, which the transport preserves as the error
+ * code and which `@bifurc/client`'s retry policy treats as non-retryable — correctly, since the entity is not
+ * going to appear on a second attempt. Same reasoning and same behaviour as the two counterparts still in
+ * `workspace/entities/savedRequestCommands.ts`.
+ */
+function requireStoredGraphqlRequest(workspaceId: string, id: string): StoredGraphqlRequest {
+    const entity = loadEntity<StoredGraphqlRequest>(workspaceId, "graphqlRequests", id);
+    if (!entity) {
+        throw new EngineError(
+            "NOT_FOUND",
+            `No saved graphqlRequests entity "${id}" in workspace "${workspaceId}".`,
+        );
+    }
+    return entity;
 }

@@ -89,6 +89,23 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   importexport: ["kernel", "utils", "workspace"],
   applications: ["kernel", "utils", "workspace"],
   runner: ["kernel", "utils", "workspace"],
+  // `plan/19` D24's request pipeline, and `request.send` — the command that drives it. The row is the
+  // union of what the module reads: the workspace's environment state and entities (`workspace/`), the
+  // resolver (`utils/`), the script sandbox (`mocks/`) and the registry the command dispatches through
+  // (`kernel/`).
+  //
+  // **`kernel/` was added 2026-09-30 with `pipeline/commands.ts`,** and that addition is why the file
+  // exists at all: a command that calls the pipeline is a `workspace/ → pipeline/` edge, and `workspace/`'s
+  // §6 row is exactly `kernel/` + `utils/`. §5.1's remedy is to place a module in the layer it reads from,
+  // so `request.send` moved out of `savedRequestCommands.ts` to the pipeline it drives — the ratchet
+  // forced a *placement*, not just a permission.
+  //
+  // `mocks/` is a **sideways** feature→feature edge and it is granted deliberately, following §6's
+  // existing `proxy/` → `mocks/` and `reverseproxy/` → `mocks/` rows: the sandbox is stateless and shared,
+  // and the §5.1 remedy — extract it *down* into `utils/` — is the cleanup to make if a third consumer
+  // appears. If that happens, `scriptContext.ts` must move with it: `utils/` importing `mocks/` would be
+  // the very violation the extraction exists to avoid.
+  pipeline: ["kernel", "utils", "workspace", "mocks"],
   // `utils/` is granted for `hostnameOf`/`isLoopbackHost`: §6's row for this module predates `plan/15`
   // work item 2, which gave the proxy a second bind guard needing the same answer and extracted
   // `utils/net.ts` so the two could not drift. The row is the thing that was out of date, not the import.
@@ -104,7 +121,15 @@ const SEAM_MODULES = new Set([
   "runtime/entityStatus",
 ]);
 
-/** Modules with no importer *by design*, and why. */
+/**
+ * Modules with no importer *by design*, and why.
+ *
+ * **`pipeline` was here for part of 2026-09-30 and is not any more.** It was added when the pipeline
+ * function landed with no caller, and the entry itself said to delete it when the `*.send` command
+ * arrived — which it did, the same day. It is gone because the assertion below now *forces* that: an
+ * `ORPHANS_ALLOWED` entry outliving its reason is otherwise **inert**, since nothing else reads this map,
+ * so the permission would sit there describing a module that is no longer an orphan.
+ */
 const ORPHANS_ALLOWED: Record<string, string> = {
   websocket:
     "§9 reserved placeholder — no behaviour, so nothing imports it. When the first WebSocket code lands, " +
@@ -225,6 +250,26 @@ describe("engine module layout (§5.1/§5.2)", () => {
     ).toEqual([]);
   });
 
+  it("every real directory is named in the contract", () => {
+    // The **converse** of the assertion above, and it was missing until `plan/19` WI 3 added `pipeline/`.
+    // A new module directory that no row names is invisible to this entire file: `contractViolations()`
+    // returns `false` for an unknown `fromMod`, so none of its imports are ever checked, and the orphan
+    // test only iterates `CONTRACT`'s keys. Adding a directory was therefore the one way to escape the
+    // layering rule silently — which is precisely the decay §5.2 exists to prevent, so the rule needs
+    // teeth in this direction too.
+    const dirs = fs
+      .readdirSync(SRC, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+    const unnamed = dirs.filter((d) => !(d in CONTRACT));
+    expect(
+      unnamed,
+      `${unnamed.length} director(ies) under packages/engine/src are not named in CONTRACT: ` +
+        `${unnamed.join(", ")}. Add a row — an unnamed module's imports are never checked, so the ` +
+        `layering rule silently stops applying to it the moment the directory exists.`,
+    ).toEqual([]);
+  });
+
   it("every relative import obeys the §6 contract, allowlist aside", () => {
     const unexpected = contractViolations()
       .filter((e) => !(key(e) in ALLOWED_VIOLATIONS))
@@ -259,6 +304,23 @@ describe("engine module layout (§5.1/§5.2)", () => {
       orphans,
       `${orphans.length} module(s) are imported by nothing: ${orphans.join(", ")}. §5.2 counts an orphan ` +
         `as a finding — either wire it or record why it is empty.`,
+    ).toEqual([]);
+  });
+
+  it("ORPHANS_ALLOWED has no stale entries — it can only shrink", () => {
+    // The same rule as `ALLOWED_VIOLATIONS`, applied to the file's **other** permission map, and it was
+    // missing until `plan/19` WI 3's `pipeline` entry outlived its reason inside a single day. Nothing
+    // else reads `ORPHANS_ALLOWED`, so an entry for a module that *is* imported is **inert**: it neither
+    // fails nor explains anything, and it silently pre-excuses the next orphan that appears under that
+    // name. That is the same "permission slip" failure the staleness assertion for `ALLOWED_VIOLATIONS`
+    // exists to prevent, one map over.
+    const imported = new Set(EDGES.map((e) => e.toMod));
+    const stale = Object.keys(ORPHANS_ALLOWED).filter((m) => imported.has(m));
+    expect(
+      stale,
+      `${stale.length} ORPHANS_ALLOWED entr(ies) describe module(s) that ARE imported: ` +
+        `${stale.join(", ")}. Delete the entr(ies) — an inert permission is worse than none, because it ` +
+        `silently excuses a future orphan of the same name.`,
     ).toEqual([]);
   });
 
