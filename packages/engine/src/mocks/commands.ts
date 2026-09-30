@@ -1,9 +1,10 @@
 /**
- * The `script.execute` command — run a user-authored script in the sandbox and return its result.
+ * `script.execute` — run a user-authored script in the sandbox — and `capture.buildMock`, which builds a
+ * `mocks` entity body from a captured exchange (`plan/19` WI 5, item 2).
  *
  * ## Where this file came from
  *
- * It is one of the three destinations of `packages/engine/src/miscCommands.ts`, which
+ * `script.execute` is one of the three destinations of `packages/engine/src/miscCommands.ts`, which
  * `Engine_Module_Plan.md` §4.5 dissolved in the engine-layout's phase 7. §4.5's reason for putting it
  * here rather than anywhere else is one line: it calls `executeIpcScript`, which lives in this module's
  * `scriptExecutor.ts`. The command is the sandbox's entry point, so it belongs beside the sandbox.
@@ -25,11 +26,29 @@
  * delegation and stayed that way. Nothing here needed the `require`→static-import fix that
  * `healthbar.checkUrl` needed, because the sandbox's own module access is already handled inside
  * `scriptExecutor.ts`.
+ *
+ * ## Why `capture.buildMock` is here (2026-09-30)
+ *
+ * It builds a **`mocks` entity**, so it belongs to the feature that owns that entity — the same reasoning
+ * that put `request.send` in `pipeline/` and `capture.buildRequest` in `rest/`. The construction itself is
+ * in `utils/captureEntities.ts`, shared with `rest/commands.ts`; this file contributes only the wiring.
  */
-import type { ScriptExecuteParams } from "@bifurc/protocol";
+import type { CaptureBuildMockParams, ScriptExecuteParams } from "@bifurc/protocol";
 import type { CommandRegistry } from "../kernel/registry";
+import type { RequestLogEntry } from "../kernel/telemetry";
 import { executeIpcScript } from "./scriptExecutor";
+import { capturedToMock } from "../utils/captureEntities";
 
 export function registerMockCommands(registry: CommandRegistry): void {
     registry.register("script.execute", (params: ScriptExecuteParams) => executeIpcScript(params));
+
+    /**
+     * `capture.buildMock` — the mock half of capture → entity construction. See the header for why it is
+     * here, and `utils/captureEntities.ts` for the two decisions inside it that are not obvious: the
+     * captured headers are stored **raw** (a mock replays the capture byte-for-byte), and the base64 decode
+     * has an explicit validity check because Node's decoder does not throw where `atob` did.
+     */
+    registry.register("capture.buildMock", (params: CaptureBuildMockParams) => ({
+        mock: capturedToMock(params.entry as unknown as RequestLogEntry),
+    }));
 }

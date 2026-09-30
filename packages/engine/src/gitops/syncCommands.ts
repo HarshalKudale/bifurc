@@ -110,6 +110,7 @@ import { sanitizeDirName } from "../workspace/workspaceFs";
 import { notifyConfigChanged } from "../runtime/instances";
 import { queryLog, getEntityAtCommit, getCommitChangedFiles } from "../workspace/gitStore";
 import { emitEntityStatus } from "../runtime/entityStatus";
+import { loadEntityPathMaps } from "../workspace/entityPaths";
 import type { CommandRegistry } from "../kernel/registry";
 
 export function registerSyncCommands(registry: CommandRegistry): void {
@@ -150,7 +151,17 @@ export function registerSyncCommands(registry: CommandRegistry): void {
             getWorkspaceSyncStatus(workspaceId),
             getWorkspaceGitState(workspaceId),
         ]);
-        return { files, git };
+        /**
+         * `plan/19` WI 5 item 3 — the path maps, so the renderer stops deriving them (`packages/gui/src/
+         * lib/utils.ts`'s three helpers, deleted with this).
+         *
+         * They ride this **read-only result** rather than `config.get`, and that is a safety decision rather
+         * than a convenience: `config.save` hands its payload straight to `saveConfig()`, so a computed field
+         * on an entity would be written to disk and read back stale. `workspace/entityPaths.ts` records that
+         * check, and its two limits — the maps describe the *active* workspace, and they refresh on config
+         * changes rather than on the status event.
+         */
+        return { files, git, paths: loadEntityPathMaps() };
     });
 
     registry.register("git.diff", ({ workspaceId, relPath }: GitDiffParams) => getFileDiff(workspaceId, relPath));

@@ -61,6 +61,58 @@ export interface ReplayResult {
 }
 
 /**
+ * `request.parseCurl`'s result — the request a cURL command describes (`plan/19` WI 5).
+ *
+ * Hand-mirrored from `@bifurc/protocol`'s `RequestParseCurlResult`, like the rest of this file, because
+ * `packages/gui` has **no** dependency on `@bifurc/engine` (nor on `@bifurc/protocol`) by design — see
+ * `RequestSendRequest`'s note.
+ *
+ * Header keys are lower-cased and the map is **unfiltered**: `SKIP_CURL_HEADERS` is the *caller's*
+ * decision, so the REST tab drops hop-by-hop headers itself, from the pinned copy in `@/lib/utils`.
+ */
+export interface ParsedCurlRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/**
+ * `capture.buildRequest`'s payload — a captured entry as a `requests` entity body (`plan/19` WI 5, item 2).
+ *
+ * Hand-mirrored from `@bifurc/engine`'s `CapturedRequest`, like the rest of this file. The **protocol**
+ * declares the result loosely (`Record<string, unknown>`), because it does not model entity bodies at all —
+ * `entity.create`'s `EntityCreateResult.entity` is the same shape. This is where the renderer gets its
+ * typing back, and `BifurcApi` is where the client's cast is aimed.
+ */
+export interface CapturedRequestPayload {
+  /** Always blank — the caller labels it (`"GET http://…"`). */
+  name: string;
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** `capture.buildMock`'s payload — a captured exchange as a `mocks` entity body. */
+export interface CapturedMockPayload {
+  name: string;
+  method: string;
+  urlPattern: string;
+  useRegex: boolean;
+  capturedHeaders: Record<string, string>;
+  capturedBody: string;
+  responseStatus: number;
+  responseStatusMocked: boolean;
+  responseHeaders: Record<string, string>;
+  mockedResponseHeaders: string[];
+  responseBody: string;
+  responseBodyMocked: boolean;
+  responseBodyEncoding?: "utf8" | "base64";
+  responseDelayMocked: boolean;
+}
+
+/**
  * `graphql.send`'s two input forms, and the result it returns — mirrors of `GraphqlSendParams` in
  * `@bifurc/protocol` (`commands/saved.ts`) and `HttpLikeResult` (`commands/graphql.ts`).
  *
@@ -206,6 +258,68 @@ export interface RunnerFinishedEvent {
   workspaceId: string;
   folderId: string;
   report: CollectionRunReport;
+}
+
+/**
+ * The socket registry's shapes — mirrors of `WsStatusResult` / `WsListResult` in
+ * `packages/protocol/src/commands/ws.ts` and of `SocketSnapshot` in
+ * `packages/engine/src/websocket/wsRegistry.ts`.
+ *
+ * **Hand-mirrored, like every other wire shape here**, because `@bifurc/gui` has no `@bifurc/engine`
+ * dependency by design (`plan/19` finding 1). The engine's `SocketSnapshot` is the authority; the protocol's
+ * interface is the wire contract; this is what the renderer compiles against, and the command's return type in
+ * `wsCommands.ts` is what keeps the first two in step.
+ */
+export type WsConnectionState = "connecting" | "connected" | "disconnected" | "error";
+
+/** One frame of the socket's stream, in either direction. `ts` is engine-side epoch ms, `id` engine-minted. */
+export interface WsMessage {
+  id: string;
+  ts: number;
+  direction: "sent" | "received";
+  data: string;
+}
+
+/** `ws.status`'s result. `null` (the method's return) means "never opened", which is not "closed". */
+export interface WsStatusResult {
+  workspaceId: string;
+  socketId: string;
+  /** The url **as connected**, unresolved — shown back to the user verbatim. */
+  url: string;
+  status: WsConnectionState;
+  error: string | null;
+  closeCode?: number;
+  closeReason?: string;
+  openedAt: number | null;
+  /**
+   * The engine's **retained** log, not the whole stream — bounded by `MAX_WS_MESSAGES` (500) per socket.
+   * This is what makes a tab re-opened mid-stream render the backlog instead of only what happens next, and
+   * it is also why `clearMessages` has to be a command rather than local state.
+   */
+  messages: WsMessage[];
+}
+
+/** `ws.list`'s result — the **live** sockets only, plus the registry's own limit. */
+export interface WsListResult {
+  connections: WsStatusResult[];
+  max: number;
+}
+
+/** `event.ws.status`'s payload — mirrors the protocol's schema (`events.ts`). `socketId` is what routes it. */
+export interface WsStatusEvent {
+  workspaceId: string;
+  socketId: string;
+  status: WsConnectionState;
+  error: string | null;
+  code?: number;
+  reason?: string;
+}
+
+/** `event.ws.message`'s payload — one frame, `id`/`ts` included so a re-attaching client can place it. */
+export interface WsMessageEvent {
+  workspaceId: string;
+  socketId: string;
+  message: WsMessage;
 }
 
 /**

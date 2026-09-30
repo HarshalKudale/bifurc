@@ -31,6 +31,26 @@ export function rowsToHeaders(rows: KVRow[]): Record<string, string> {
   return out;
 }
 
+/**
+ * Hop-by-hop and connection headers, dropped when a cURL command or a captured request is turned into
+ * an editable request.
+ *
+ * **A pinned copy of an engine constant, and the pin is what makes it legitimate.** The authority is
+ * `packages/engine/src/utils/curl.ts`; the renderer cannot import it — `@bifurc/gui` has no
+ * `@bifurc/engine` dependency by design (`plan/19` finding 1) — and it needs the list for exactly one
+ * thing the engine cannot do for it: filtering a **stored** mock's `capturedHeaders` when that mock is
+ * loaded into a tab (`restTabHelpers.ts#buildMockReqHeaders`). The cURL-import path does *not* use this
+ * copy; `request.parseCurl` is the engine's, and the tab filters with this list because a parser should
+ * not choose a policy for its caller.
+ *
+ * `tests/gui/curlHeaderSkip.test.ts` asserts this set equals the engine's — the same list-vs-logic split
+ * `plan/19` D28 made for `RANDOMIZER_TOKENS`, and for the same reason: a copy with nothing checking it
+ * is a second implementation nobody notices drifting.
+ */
+export const SKIP_CURL_HEADERS = new Set([
+  "host", "proxy-connection", "connection", "content-length", "transfer-encoding",
+]);
+
 export function b64ToText(b64: string): string {
   if (!b64) return "";
   try {
@@ -111,41 +131,20 @@ export function methodBadgeClass(m: string): string {
   }
 }
 
-// -- Entity file path helpers (mirrors workspaceFs.ts logic, renderer-side) -----
-
-/**
- * The directory-name sanitiser the **storage layer** uses — `strip`, not `replace`.
- *
- * Exported because anything that needs to name a folder's path on disk has to agree with it, and two
- * things now do: `entityRelPath()` (above) and the folder git-status rollup in
- * `components/sidebar/FolderTree.tsx`. The engine's `workspaceFs.sanitizeDirName` is the authority and
- * this is its mirror; the engine's **`folder.publish`** used to carry a *third*, different one
- * (`[<>:"/\\|?*]+` → `"-"`), which is why a folder whose name contains a colon could never be
- * published — the pathspec it built pointed at a directory that does not exist. That is fixed at the
- * source (`sync/syncCommands.ts` now uses the storage sanitiser); do not reintroduce a local variant.
- */
-export function sanitizeDirName(name: string): string {
-  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim() || "unnamed";
-}
-
-type HasFolderId = { id: string; folderId?: string | null };
-type FolderLike = { id: string; name: string };
-
-/** Compute the relative git path for a folder-based entity (mocks, requests, sockets, rules, graphql, soap, grpc, etc.). */
-export function entityRelPath(
-  kind: "mocks" | "requests" | "sockets" | "webhooks" | "rules" | "graphqlRequests" | "soapRequests" | "grpcRequests" | string,
-  entity: HasFolderId,
-  folders: FolderLike[],
-): string {
-  const folder = entity.folderId ? folders.find((f) => f.id === entity.folderId) : null;
-  if (folder) return `${kind}/${sanitizeDirName(folder.name)}/${entity.id}.json`;
-  return `${kind}/${entity.id}.json`;
-}
-
-/** Compute the relative git path for a flat entity (mappings, environments). */
-export function flatEntityRelPath(kind: "mappings" | "environments", id: string): string {
-  return `${kind}/${id}.json`;
-}
+// -- Entity file paths: the ENGINE's now ---------------------------------------
+//
+// `sanitizeDirName`, `entityRelPath` and `flatEntityRelPath` lived here until 2026-09-30. They were a
+// hand-mirror of `packages/engine/src/workspace/workspaceFs.ts` — this file's own docblock said so
+// ("The engine's `workspaceFs.sanitizeDirName` is the authority and this is its mirror") — and they
+// existed because the renderer needed a relPath to key the engine's own status map and to name a file for
+// the git commands.
+//
+// A path is a property of the **storage layout**, so it is engine work by `plan/19` D22's test, and the
+// engine now computes it once: `workspace/entityPaths.ts` builds `entity id → relPath` and
+// `folder id → directory prefix` by walking the kind registry, and they arrive on
+// `EntityStatusPayload.paths`. The renderer reads them through `@/lib/entityPaths` — `useEntityPaths()`
+// inside the tree, or the value `App` passes to `useEntityGitActions` (a hook, so it runs above the
+// provider). See `plan/19` §11 for why that split exists.
 
 const FIELD_LABELS: Record<string, string> = {
   name: "name", domain: "domain", target: "target", enabled: "enabled",

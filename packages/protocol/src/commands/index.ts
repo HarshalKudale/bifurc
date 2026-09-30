@@ -23,6 +23,7 @@ import * as GrpcCmd from "./grpc";
 import * as ApplicationCmd from "./application";
 import * as WebhookCmd from "./webhook";
 import * as RunnerCmd from "./runner";
+import * as WsCmd from "./ws";
 import * as SyncCmd from "./sync";
 import * as AuditCmd from "./audit";
 import * as TlsCmd from "./tls";
@@ -41,6 +42,7 @@ export * from "./grpc";
 export * from "./application";
 export * from "./webhook";
 export * from "./runner";
+export * from "./ws";
 export * from "./sync";
 export * from "./audit";
 export * from "./tls";
@@ -89,6 +91,13 @@ export const COMMANDS = {
   "workspace.delete": spec(ConfigCmd.WorkspaceDeleteParams, "workspace:delete"),
   "workspace.setActive": spec(ConfigCmd.WorkspaceSetActiveParams, "workspace:setActive"),
   "env.setActive": spec(ConfigCmd.EnvSetActiveParams, "env:setActive"),
+  // `plan/19` WI 5, item 4 — the resolution *display* path. The engine resolves; the health bar shows what
+  // a check will probe. See `config.ts` for why a check-only path would leave the card unresolved.
+  "env.resolveText": spec(ConfigCmd.EnvResolveTextParams, "env.resolveText"),
+  // `plan/19` WI 6 — the other half of the same idea, for the one renderer need that is a *list* rather than
+  // a resolved string: the env-var autocomplete hint. It replaced `App.tsx`'s `mergeEnvVars`, which was the
+  // last renderer implementation of a workspace fact the engine already owns.
+  "env.getMerged": spec(ConfigCmd.EnvGetMergedParams, "env.getMerged"),
 
   // server.*, proxy.*, services.*
   "server.status": spec(ServerCmd.ServerStatusParams, "server:status"),
@@ -146,6 +155,23 @@ export const COMMANDS = {
   "runner.cancel": spec(RunnerCmd.RunnerCancelParams, "runner.cancel"),
   "runner.status": spec(RunnerCmd.RunnerStatusParams, "runner.status"),
 
+  // ws.* — the WebSocket connection registry, engine-side (`plan/19` WI 6).
+  //
+  // The module `Protocol_Module_Contract.md` §4 is written for: a socket outlives a single call, so the four
+  // decisions (scope, lifetime D29, concurrency, event completeness) are made in `ws.ts` rather than
+  // discovered. **`ws.status` / `ws.list` are `read` while the other four are not** — see `scopes.ts`, and
+  // `ws.ts` for why `ws.connect` *replaces* rather than refusing.
+  //
+  // These replace a renderer-only implementation, so this is the one namespace in the protocol with **no
+  // legacy channel at all**: `useWebSocket.ts` spoke to the browser's `WebSocket` constructor, not to the
+  // shell, and nothing was ever registered under these names.
+  "ws.connect": spec(WsCmd.WsConnectParams, "ws.connect"),
+  "ws.disconnect": spec(WsCmd.WsDisconnectParams, "ws.disconnect"),
+  "ws.send": spec(WsCmd.WsSendParams, "ws.send"),
+  "ws.status": spec(WsCmd.WsStatusParams, "ws.status"),
+  "ws.list": spec(WsCmd.WsListParams, "ws.list"),
+  "ws.clearMessages": spec(WsCmd.WsClearMessagesParams, "ws.clearMessages"),
+
   // sync.*, git.*, entity.publish/restore
   "sync.setRemote": spec(SyncCmd.SyncSetRemoteParams, "sync:setRemote"),
   "sync.disconnect": spec(SyncCmd.SyncDisconnectParams, "sync:disconnect"),
@@ -192,10 +218,17 @@ export const COMMANDS = {
   // misc
   "script.execute": spec(MiscCmd.ScriptExecuteParams, "script:execute"),
   "request.replay": spec(MiscCmd.RequestReplayParams, "request:replay"),
+  // `plan/19` WI 5 — the cURL parser. A pure function of its input, which is why it is `read`-scoped and
+  // idempotent; it exists so the renderer stops carrying `lib/curlParser.ts` (deleted by that item).
+  "request.parseCurl": spec(MiscCmd.RequestParseCurlParams, "request.parseCurl"),
   "healthbar.getServices": spec(MiscCmd.HealthbarGetServicesParams, "healthbar:getServices"),
   "healthbar.saveServices": spec(MiscCmd.HealthbarSaveServicesParams, "healthbar:saveServices"),
   "healthbar.checkUrl": spec(MiscCmd.HealthbarCheckUrlParams, "healthbar:checkUrl"),
   "capture.shareJson": spec(MiscCmd.CaptureShareJsonParams, "capture:shareJson"),
+  // `plan/19` WI 5, item 2 — capture → entity construction. The renderer's `captureUtils.ts` kept only its
+  // formatting half; these two are what it used to compute for itself.
+  "capture.buildRequest": spec(MiscCmd.CaptureBuildRequestParams, "capture.buildRequest"),
+  "capture.buildMock": spec(MiscCmd.CaptureBuildMockParams, "capture.buildMock"),
 
   // ── the saved-entity counterparts, and `request.send` ─────────────────────────────────────────
   //

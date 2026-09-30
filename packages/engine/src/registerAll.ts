@@ -61,6 +61,7 @@ import { registerRestCommands } from "./rest/commands";
 import { registerMockCommands } from "./mocks/commands";
 import { registerHealthbarCommands } from "./workspace/healthbarCommands";
 import { registerRunnerCommands } from "./runner/runnerCommands";
+import { registerWebsocketCommands } from "./websocket/wsCommands";
 import { registerAuditCommands } from "./workspace/entities/auditCommands";
 import { registerCoreCommands } from "./workspace/entities/coreCommands";
 import { registerFolderCommands } from "./workspace/entities/folderCommands";
@@ -159,6 +160,11 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerApplicationCommands(registry);
   registerSyncCommands(registry);
   registerEntityCrudCommands(registry);
+  // **The socket registry** (`plan/19` WI 6). The `websocket/` directory existed and was reserved before this
+  // line did — `Engine_Module_Plan.md` §9 said not to give it invented content, and it did not need any: the
+  // content was a renderer module's, and this is the move. `ws.*` has **no legacy channel** at all, because
+  // `useWebSocket.ts` spoke to the browser's `WebSocket` constructor rather than to the shell.
+  registerWebsocketCommands(registry);
   // **The saved-entity family, after `plan/19` WI 3 (2026-09-30): four `*.send` commands, four feature
   // modules, and no shared counterpart module.** `request.send` (REST's pipeline) registers from
   // `pipeline/commands.ts`; `graphql.send`, `soap.send` and `grpc.send` register from their own feature

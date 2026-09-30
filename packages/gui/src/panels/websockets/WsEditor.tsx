@@ -15,11 +15,10 @@ import HeaderTable from '@/components/common/HeaderTable';
 import CodeEditor from '@/components/common/CodeEditor';
 import EnvVarHint from '@/components/editor/EnvVarHint';
 import RandomizerHint from '@/components/editor/RandomizerHint';
-import { resolveVars } from '@/lib/resolveVars';
 import { KVRow, mkRowId, headersToRows, rowsToHeaders, tryFormat } from '@/lib/utils';
 import { useDraftPersist, loadDraft, clearDraft, getDraftIds } from '@/hooks/useDraftPersist';
 import { useDebouncedAutosave } from '@/hooks/useDebouncedAutosave';
-import { useWebSocket, MAX_WS_CONNECTIONS, WsMessage } from '@/hooks/useWebSocket';
+import { useWebSocket } from '@/hooks/useWebSocket';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Play, Send, Radio } from '@/lib/icons';
 import { strings } from '@/lib/strings';
@@ -32,6 +31,9 @@ const isDraft = (id: string) => id.startsWith(DRAFT_PREFIX);
 
 interface WsEditorProps {
   tabId: string;
+  /** The workspace the socket belongs to. The engine keys the registry by `{workspaceId, socketId}` for the
+   *  socket's whole life (`plan/19` WI 6), so it cannot be inferred at connect time and then changed. */
+  workspaceId: string;
   initial: Partial<SavedWsConnection> | null;
   isNew: boolean;
   onSave(data: Omit<SavedWsConnection, "id" | "createdAt" | "workspaceId">): Promise<any>;
@@ -50,7 +52,7 @@ export interface WsEditorHandle {
   refresh?(conn: SavedWsConnection): void;
 }
 
-const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ tabId, initial, isNew, onSave, onClose, folders = [], activeEnv = null, onDirtyChange, onSync, onRevert, syncStatus, onHistory }: WsEditorProps, ref) {
+const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ tabId, workspaceId, initial, isNew, onSave, onClose, folders = [], activeEnv = null, onDirtyChange, onSync, onRevert, syncStatus, onHistory }: WsEditorProps, ref) {
   const draft = isDraft(tabId) ? loadDraft<WsDraft>(tabId) : null;
   const src = draft ?? initial;
 
@@ -67,7 +69,7 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
 
   const [activePane, setActivePane] = useState<"outputstream" | "inputstream">("outputstream");
 
-  const { status, error: wsError, messages, connect, disconnect, send, clearMessages, isAtConnectionLimit } = useWebSocket({ tabId, activeEnv });
+  const { status, error: wsError, messages, connect, disconnect, send, clearMessages, isAtConnectionLimit, maxConnections } = useWebSocket({ workspaceId, tabId });
 
   const outgoingMessages = useMemo(() => messages.filter((m) => m.direction === "sent"), [messages]);
   const incomingMessages = useMemo(() => messages.filter((m) => m.direction === "received"), [messages]);
@@ -105,22 +107,22 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
 
   const handleConnect = useCallback(() => {
     setSendErr(null);
-    connect(url.trim(), rowsToHeaders(headers));
+    // Fire-and-forget: the outcome arrives as `event.ws.status`, and a refusal (the connection limit, a
+    // malformed url) is surfaced by the hook's `error`. Nothing here awaits the socket being *open* — that is
+    // D29's shape, and `isConnecting` already renders the wait.
+    void connect(url.trim(), rowsToHeaders(headers));
   }, [url, headers, connect]);
 
   const handleDisconnect = useCallback(() => {
-    disconnect();
+    void disconnect();
   }, [disconnect]);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     if (!outgoingInput.trim()) return;
     setSendErr(null);
-    try {
-      send(outgoingInput);
-      setOutgoingInput("");
-    } catch (e) {
-      setSendErr(e instanceof Error ? e.message : "Send failed");
-    }
+    const res = await send(outgoingInput);
+    if (res.ok) setOutgoingInput("");
+    else setSendErr(res.error ?? "Send failed");
   }, [outgoingInput, send]);
 
   const handleSave = useCallback(async () => {
@@ -213,7 +215,10 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
 
   const headerCount = headers.filter((r) => r.enabled && r.key.trim()).length;
 
-  const resolvedUrl = useMemo(() => resolveVars(url.trim(), activeEnv), [url, activeEnv]);
+  // **`resolvedUrl` used to be computed here and is deliberately gone** (`plan/19` WI 6). It was already dead —
+  // declared and never read — but it was also the renderer's last `resolveVars` call in this file, and with
+  // `lib/resolveVars.ts` deleted there is nothing to compute it with. The engine resolves the url at connect
+  // time; the editor shows the url the user typed, which is the stored value and the one they can edit.
 
   // Status indicator
   const statusDot = (
@@ -267,7 +272,7 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
           <button
             onClick={handleConnect}
             disabled={!url.trim() || (isAtConnectionLimit && !isConnected)}
-            title={isAtConnectionLimit && !isConnected ? strings.sockets.maxConnectionsTitle.replace("{n}", String(MAX_WS_CONNECTIONS)) : strings.sockets.connect}
+            title={isAtConnectionLimit && maxConnections !== null ? strings.sockets.maxConnectionsTitle.replace("{n}", String(maxConnections)) : strings.sockets.connect}
             className="px-4 py-2.5 rounded bg-signal hover:bg-signal/80 disabled:opacity-40 disabled:cursor-not-allowed text-background text-xs font-semibold transition-all cursor-pointer flex-shrink-0"
           >
             <Play size={10} className="inline mr-1" fill="currentColor" /> {strings.sockets.connect}
@@ -282,11 +287,13 @@ const WsEditor = forwardRef<WsEditorHandle, WsEditorProps>(function WsEditor({ t
         )}
       </div>
 
-      {/* Connection limit warning */}
-      {isAtConnectionLimit && isDisconnected && (
+      {/* Connection limit warning. **The count and the limit both come from the engine** (`ws.list`), so a
+          socket left live by a tab that was closed without being closed is visible here rather than
+          mysterious — which is the visible consequence of D29 applied to sockets. */}
+      {isAtConnectionLimit && isDisconnected && maxConnections !== null && (
         <div className="px-4 py-1.5 border-b border-border bg-amber/5 flex-shrink-0">
           <span className="text-[11px] text-amber">
-            {strings.sockets.connectionsActive.replace("{n}", String(MAX_WS_CONNECTIONS))}
+            {strings.sockets.connectionsActive.replace("{n}", String(maxConnections))}
           </span>
         </div>
       )}

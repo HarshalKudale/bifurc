@@ -79,6 +79,10 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "workspace.delete": "write",
   "workspace.setActive": "write",
   "env.setActive": "write",
+  // `plan/19` WI 5, item 4 — the resolution *display* path. `read`: it observes and writes nothing. The
+  // `{{random.*}}` values it mints are not a side effect (nothing is stored), but they are why a caller
+  // must not treat the result as stable — see `config.ts`.
+  "env.resolveText": "read",
   "server.status": "read",
   "server.start": "admin",
   "server.stop": "admin",
@@ -146,10 +150,20 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "blob.release": "write",
   "script.execute": "execute",
   "request.replay": "execute",
+  // `plan/19` WI 5 — the cURL parser. `read` rather than `execute`, and the contrast with the line above is
+  // the point: parsing a string touches nothing outside the process and reaches no upstream, so it is the
+  // "observes; changes nothing" class. A `read`-scoped session may import a cURL command.
+  "request.parseCurl": "read",
   "healthbar.getServices": "read",
   "healthbar.saveServices": "write",
   "healthbar.checkUrl": "read",
   "capture.shareJson": "write",
+  // `plan/19` WI 5, item 2 — capture → entity construction. **`read`, and the contrast with the line above
+  // is the point:** `capture.shareJson` stages a blob, so it writes. These two build a *payload* and touch
+  // nothing — the storing is `entity.create`'s, which is `write`. A `read`-scoped session may prepare an
+  // entity it is not allowed to save, which is the correct amount of authority for a pure function.
+  "capture.buildRequest": "read",
+  "capture.buildMock": "read",
   // The four saved-entity counterparts (`packages/protocol/src/commands/saved.ts`). `execute` for the
   // same reason as the commands they delegate to: each one's effect is an **outbound request the engine
   // does not control**, which is the class this scope exists to single out for rate limiting. Loading
@@ -182,6 +196,27 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "runner.start": "execute",
   "runner.cancel": "execute",
   "runner.status": "read",
+  // The socket registry (`plan/19` WI 6), and the split is `runner.*`'s one namespace over —
+  // `Protocol_Module_Contract.md` §4 requires it to be *chosen* rather than inherited:
+  //
+  //   `ws.connect` / `ws.disconnect` / `ws.send` are `execute`, because each reaches a peer the engine does
+  //   not control — opening a connection, writing a frame to it. `ws.status` / `ws.list` are `read`, which is
+  //   what lets a reconnecting client ask *what happened to my socket* (D29) without also being granted the
+  //   right to open or close one.
+  //
+  //   `ws.clearMessages` is `write`: it mutates engine state (the retained log) and reaches no upstream, so it
+  //   is neither of the two classes above. Note it is deliberately *not* `read` — a `read`-scoped session that
+  //   could erase the log a `status` call reports would make `ws.status` unreliable for everyone else.
+  "ws.connect": "execute",
+  "ws.disconnect": "execute",
+  "ws.send": "execute",
+  "ws.status": "read",
+  "ws.list": "read",
+  "ws.clearMessages": "write",
+  // `plan/19` WI 6 — the read that replaced `App.tsx`'s `mergeEnvVars`. `read`: it merges two entity lists the
+  // caller could have read itself and stores nothing. It is **not** a resolver — `env.resolveText` is — so it
+  // is not `execute`, and the distinction matters because this one returns a list to choose from.
+  "env.getMerged": "read",
 };
 
 /**

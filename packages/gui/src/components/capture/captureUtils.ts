@@ -1,16 +1,21 @@
-import { RequestLogEntry, MockRule, SavedRequest } from "@/types";
+// The capture panel's **presentation** helpers.
+//
+// `plan/19` WI 5, item 2 split this file. The *constructing* half — `reqToHeadersBody` and
+// `buildMockInitial`, which decided which headers to drop, how to decode a body and how a response is
+// stored — moved into the engine (`packages/engine/src/utils/captureEntities.ts`) and is reached through
+// `window.api.captureBuildRequest` / `captureBuildMock`. What is left is what the table and the detail pane
+// actually render: base64/text plumbing, formatting, resource-type derivation and the fulfilled-by labels.
+// Those are presentation, and the boundary ratchet's test — *would this differ if the UI were a terminal?* —
+// answers no for every one of them.
+
+import { RequestLogEntry } from "@/types";
 import { EditorLanguage } from "@/components/common/CodeEditor";
-import { isBinaryContentType, formatBytes } from "@/lib/bodyUtils";
+import { formatBytes } from "@/lib/bodyUtils";
 import { strings } from "@/lib/strings";
 
 export type { EditorLanguage };
 
 export type CaptureType = "xhr" | "doc" | "css" | "js" | "font" | "img" | "media" | "other";
-
-export type RequestPayload = Omit<SavedRequest, "id" | "createdAt" | "workspaceId">;
-
-// Headers stripped when replaying / saving a captured request as an editable request.
-const SKIP_HEADERS = new Set(["host", "proxy-connection", "connection", "content-length", "transfer-encoding"]);
 
 export function b64ToText(b64: string): string {
   if (!b64) return "";
@@ -138,33 +143,7 @@ export function fulfilledColor(via: RequestLogEntry["via"]): string {
   }
 }
 
-/** Build a SavedRequest payload from a captured entry (used by open/save paths). */
-export function reqToHeadersBody(entry: RequestLogEntry): RequestPayload {
-  const headers: Record<string, string> = {};
-  for (const [k, v] of Object.entries(entry.reqHeaders)) {
-    if (!SKIP_HEADERS.has(k.toLowerCase())) headers[k] = v;
-  }
-  return { name: "", method: entry.method, url: entry.url, headers, body: b64ToText(entry.reqBody) };
-}
-
-/** Build a MockRule payload from a captured entry's request/response. */
-export function buildMockInitial(entry: RequestLogEntry): Partial<MockRule> {
-  const resCt = getHeader(entry.resHeaders, "content-type").toLowerCase();
-  const isBinaryRes = isBinaryContentType(resCt);
-  return {
-    name: "",
-    method: entry.method,
-    urlPattern: entry.url,
-    useRegex: false,
-    capturedHeaders: entry.reqHeaders,
-    capturedBody: entry.reqBody,
-    responseStatus: entry.resStatus ?? 200,
-    responseStatusMocked: true,
-    responseHeaders: entry.resHeaders,
-    mockedResponseHeaders: [],
-    responseBody: isBinaryRes ? entry.resBody : (b64ToText(entry.resBody) || "{}"),
-    responseBodyMocked: true,
-    responseBodyEncoding: isBinaryRes ? "base64" : undefined,
-    responseDelayMocked: true,
-  };
-}
+// `reqToHeadersBody` and `buildMockInitial` lived here until 2026-09-30. They are `capturedToRequest` and
+// `capturedToMock` in `packages/engine/src/utils/captureEntities.ts` now, reached through
+// `window.api.captureBuildRequest` / `window.api.captureBuildMock` — see the header for why the split runs
+// where it does.

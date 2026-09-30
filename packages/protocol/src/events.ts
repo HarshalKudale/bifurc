@@ -15,6 +15,7 @@
  */
 import { z } from "zod";
 import { RunReportResultSchema, RunReportSchema } from "./commands/runner";
+import { WsConnectionStateSchema, WsMessageSchema } from "./commands/ws";
 
 
 /** Every event carries a monotonic `seq`. See "Sequence numbers" below for why. */
@@ -170,6 +171,42 @@ export const RunnerFinishedEventSchema = z.object({
 });
 export type RunnerFinishedEvent = z.infer<typeof RunnerFinishedEventSchema>;
 
+/**
+ * `event.ws.status` — a socket changed state (`plan/19` WI 6).
+ *
+ * **The payload carries `socketId`, and that is not decoration.** Every socket in the process emits on one
+ * bus, so a subscriber that did not know which socket an event belonged to could only guess — and the
+ * renderer has one hook instance per tab, all subscribed to the same two events.
+ *
+ * **The full state rides the event rather than a delta**, because a client that attached mid-stream never
+ * saw the connect call: `status`, `error` and the close code are what it needs to render the dot and the
+ * message line, and none of them can be recovered from "the state changed".
+ */
+export const WsStatusEventSchema = z.object({
+  workspaceId: z.string(),
+  socketId: z.string(),
+  status: WsConnectionStateSchema,
+  error: z.string().nullable(),
+  /** Present once the socket has closed. */
+  code: z.number().optional(),
+  reason: z.string().optional(),
+});
+export type WsStatusEvent = z.infer<typeof WsStatusEventSchema>;
+
+/**
+ * `event.ws.message` — one frame, in either direction.
+ *
+ * The whole `WsMessage` is carried, `id` and `ts` included, so a client that re-attaches can place an
+ * arriving frame against the retained log `ws.status` returned instead of appending a duplicate. `direction`
+ * is what separates the two panes the socket editor renders.
+ */
+export const WsMessageEventSchema = z.object({
+  workspaceId: z.string(),
+  socketId: z.string(),
+  message: WsMessageSchema,
+});
+export type WsMessageEvent = z.infer<typeof WsMessageEventSchema>;
+
 export const EVENT_NAMES = [
   "event.sync.status",
   "event.sync.entityStatus",
@@ -182,6 +219,11 @@ export const EVENT_NAMES = [
   "event.settings.changed",
   "event.runner.progress",
   "event.runner.finished",
+  // `plan/19` WI 6 — the socket's two events. The list is total, so adding these is a deliberate protocol
+  // change rather than a side effect of the module landing: a socket whose state the UI cannot watch would be
+  // a connection the engine owns and nobody can render.
+  "event.ws.status",
+  "event.ws.message",
 ] as const;
 export type EventName = (typeof EVENT_NAMES)[number];
 

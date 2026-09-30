@@ -214,6 +214,24 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
 
   // ── environments / workspaces ────────────────────────────────────────────
   setActiveEnvironment: t("env.setActive"),
+  /**
+   * `plan/19` WI 5, item 4 — resolve `{{tokens}}` against the workspace's **merged** environment.
+   *
+   * Filed `transport`: one method, one command, no client half. It exists because WI 3 made the engine the
+   * resolving party, which left the renderer unable to show the value a probe will actually use — the
+   * health bar displays a resolved url. See `packages/protocol/src/commands/config.ts`.
+   */
+  envResolveText: t("env.resolveText", "resolves {{tokens}} for display; the engine owns the merge"),
+  /**
+   * `plan/19` WI 6 — the **merged environment itself**, for the one renderer need that is a *list* rather
+   * than a resolved string: `EnvVarHint`'s autocomplete.
+   *
+   * Filed `transport`: one method, one command, no client half. It replaced `App.tsx`'s `mergeEnvVars`, which
+   * was the last renderer implementation of a workspace fact the engine already owned (D23) — and the merge
+   * is the part that cannot stay: resolving against the *active* environment alone resolves a shadowed key
+   * differently, which is `plan/19` §8 trap 2.
+   */
+  envGetMerged: t("env.getMerged", "the merged environment; the list to choose from, not a resolved value"),
   addWorkspace: t("workspace.add"),
   renameWorkspace: t("workspace.rename"),
   deleteWorkspace: t("workspace.delete"),
@@ -221,6 +239,14 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
 
   // ── server / proxy ───────────────────────────────────────────────────────
   replayRequest: t("request.replay"),
+  /**
+   * `plan/19` WI 5 — the cURL parser.
+   *
+   * Filed as `transport` because it is a 1:1 command mapping: one method, one command, no shim and no
+   * client half. It exists so the renderer stops carrying `packages/gui/src/lib/curlParser.ts` — the
+   * boundary ratchet's `curlParser` construct — while its import field keeps parsing on every keystroke.
+   */
+  requestParseCurl: t("request.parseCurl", "parses a cURL command into the request it describes"),
   /**
    * The four **saved-entity** counterparts, added 2026-09-29. Each takes an entity id where its base
    * takes the whole request, and the engine loads the entity and executes it.
@@ -371,7 +397,34 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   runnerStart: t("runner.start", "starts a run and returns; progress arrives as events"),
   runnerCancel: t("runner.cancel"),
   runnerStatus: t("runner.status", "the run's state, running or finished, or null if never started"),
+
+  // ── websocket (`plan/19` WI 6) ───────────────────────────────────────────
+  //
+  // The one namespace with **no legacy channel**: `useWebSocket.ts` spoke to the browser's `WebSocket`
+  // constructor rather than to the shell, so nothing was ever registered under these names and there is
+  // nothing here that maps onto a pre-existing `window.api` method. Six commands, two events — the four
+  // decisions `Protocol_Module_Contract.md` §4 asks for are made in `packages/protocol/src/commands/ws.ts`.
+  //
+  // `wsConnect` resolves when the socket has been *constructed*, not opened: the transition to `connected`
+  // arrives as `event.ws.status`, and `wsStatus` answers for the state in between. That is D29's shape
+  // (`runnerStart`'s), and for the same reason — a caller that had to await the open would hold the
+  // connection's lifetime, which is exactly what moved to the engine.
+  wsConnect: t("ws.connect", "opens or re-opens a socket; the state arrives as events"),
+  wsDisconnect: t("ws.disconnect", "the ONLY thing that closes a socket — a client disconnect does not"),
+  wsSend: t("ws.send", "resolves the payload engine-side, then writes it"),
+  wsStatus: t("ws.status", "the socket's state, live or finished, or null if never opened"),
+  wsList: t("ws.list", "the live sockets, plus the registry's limit"),
+  wsClearMessages: t("ws.clearMessages", "drops the engine's retained log for one socket"),
   shareCaptureJson: t("capture.shareJson", "returns an artifact; the CLIENT writes the file, not the engine"),
+  /**
+   * `plan/19` WI 5, item 2 — capture → entity construction, the two halves the renderer used to compute.
+   *
+   * Filed `transport`: 1:1 mappings, no shim and no client half. They exist because the renderer cannot
+   * import the engine, so `captureUtils.ts` had to stop holding a second implementation of "which headers
+   * to drop, how to decode a body, how a response is stored".
+   */
+  captureBuildRequest: t("capture.buildRequest", "a captured entry → a `requests` entity body"),
+  captureBuildMock: t("capture.buildMock", "a captured exchange → a `mocks` entity body"),
 
   // ── the 7 subscriptions ──────────────────────────────────────────────────
   onSyncStatus: sub("event.sync.status"),
@@ -402,6 +455,11 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   // client that was disconnected for the run's entire life has to render from.
   onRunnerProgress: sub("event.runner.progress"),
   onRunnerFinished: sub("event.runner.finished"),
+  // The socket's two events (`plan/19` WI 6). **Every payload carries `socketId`**, because one bus serves
+  // every socket in the process and the renderer has one subscriber per open tab — a subscriber that could
+  // not tell which socket an event belonged to could only guess.
+  onWsStatus: sub("event.ws.status"),
+  onWsMessage: sub("event.ws.message"),
 };
 
 /** The keys the client must expose. Derived, so it cannot disagree with `SURFACE`. */

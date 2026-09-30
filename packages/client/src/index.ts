@@ -759,6 +759,34 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
 
     // ── environments / workspaces ───────────────────────────────────────────
     setActiveEnvironment: (id) => call("setActiveEnvironment", { id }) as ReturnType<BifurcApi["setActiveEnvironment"]>,
+    // ── env.resolveText: resolution for display (2026-09-30, plan/19 WI 5 item 4) ───────────────
+    //
+    // `workspaceId` is optional and resolved here when omitted, by the same mechanism as `request.send`:
+    // the protocol requires one because an environment is a per-workspace fact, and a caller that has the
+    // id should pass it rather than pay for a `config.get` round trip.
+    envResolveText: async (text, workspaceId) =>
+      call("envResolveText", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        text,
+      }) as ReturnType<BifurcApi["envResolveText"]>,
+    // ── env.getMerged: the merged environment as data (2026-09-30, plan/19 WI 6) ────────────────
+    //
+    // `workspaceId` is optional and resolved here when omitted, exactly as `envResolveText` does it: the
+    // protocol requires one because an environment is a per-workspace fact, and a caller that has the id
+    // should pass it rather than pay for a `config.get` round trip. The renderer's `App` always has one.
+    envGetMerged: async (workspaceId) =>
+      call("envGetMerged", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+      }) as ReturnType<BifurcApi["envGetMerged"]>,
+    // ── capture.buildRequest / capture.buildMock (2026-09-30, plan/19 WI 5 item 2) ──────────────
+    //
+    // 1:1 mappings. The entry is passed through untouched — the protocol deliberately does not model
+    // `RequestLogEntry` (`misc.ts` says why), and the *results* are typed by `BifurcApi` because
+    // `packages/gui/src/types/ipc.ts` is where entity bodies are hand-mirrored.
+    captureBuildRequest: (entry) =>
+      call("captureBuildRequest", { entry }) as ReturnType<BifurcApi["captureBuildRequest"]>,
+    captureBuildMock: (entry) =>
+      call("captureBuildMock", { entry }) as ReturnType<BifurcApi["captureBuildMock"]>,
     addWorkspace: (name) => call("addWorkspace", { name }) as ReturnType<BifurcApi["addWorkspace"]>,
     renameWorkspace: (id, name) => call("renameWorkspace", { id, name }) as ReturnType<BifurcApi["renameWorkspace"]>,
     deleteWorkspace: (id) => call("deleteWorkspace", { id }) as ReturnType<BifurcApi["deleteWorkspace"]>,
@@ -767,6 +795,13 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     // ── server / proxy ──────────────────────────────────────────────────────
     replayRequest: (method, url, headers, body) =>
       call("replayRequest", { method, url, headers, body }) as ReturnType<BifurcApi["replayRequest"]>,
+    // ── request.parseCurl: the cURL parser (2026-09-30, plan/19 WI 5) ────────
+    //
+    // A 1:1 mapping with no workspace to resolve and no shim: the engine's `utils/curl.ts` parses the
+    // string and returns the request it describes, and the renderer's cURL import field calls this
+    // instead of carrying `lib/curlParser.ts` (deleted by that work item).
+    requestParseCurl: (curl) =>
+      call("requestParseCurl", { curl }) as ReturnType<BifurcApi["requestParseCurl"]>,
     // ── request.send: the REST pipeline (2026-09-30, plan/19 D24/D27) ───────
     //
     // `workspaceId` is optional and resolved here when omitted, for the same reason and by the same
@@ -1014,6 +1049,28 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("runnerCancel", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerCancel"]>,
     runnerStatus: (wsId, folderId) =>
       call("runnerStatus", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerStatus"]>,
+
+    // ── the socket registry (plan/19 WI 6) ──────────────────────────────────
+    //
+    // 1:1 mappings, and the signature carries `wsId` **first and explicitly** rather than resolving the
+    // active workspace the way `envResolveText` does. That is not an inconsistency: a socket is keyed by
+    // `{workspaceId, socketId}` for its whole life, so inferring the workspace at connect time and then
+    // having the user switch would leave a connection addressed by a workspace it is no longer in. The
+    // caller always knows which workspace a tab belongs to; making it say so costs one argument.
+    //
+    // `wsStatus` and `wsList` are `read`-scoped, which is what lets a client that was disconnected ask what
+    // happened to its sockets without also being granted the right to open or close one.
+    wsConnect: (wsId, socketId, url, headers) =>
+      call("wsConnect", headers === undefined ? { workspaceId: wsId, socketId, url } : { workspaceId: wsId, socketId, url, headers }) as ReturnType<BifurcApi["wsConnect"]>,
+    wsDisconnect: (wsId, socketId) =>
+      call("wsDisconnect", { workspaceId: wsId, socketId }) as ReturnType<BifurcApi["wsDisconnect"]>,
+    wsSend: (wsId, socketId, data) =>
+      call("wsSend", { workspaceId: wsId, socketId, data }) as ReturnType<BifurcApi["wsSend"]>,
+    wsStatus: (wsId, socketId) =>
+      call("wsStatus", { workspaceId: wsId, socketId }) as ReturnType<BifurcApi["wsStatus"]>,
+    wsList: (wsId) => call("wsList", { workspaceId: wsId }) as ReturnType<BifurcApi["wsList"]>,
+    wsClearMessages: (wsId, socketId) =>
+      call("wsClearMessages", { workspaceId: wsId, socketId }) as ReturnType<BifurcApi["wsClearMessages"]>,
     shareCaptureJson: async (entries, suggestedName) => {
       const r = await artifactToFile(
         await call("shareCaptureJson", suggestedName === undefined ? { entries } : { entries, suggestedName }),
@@ -1037,6 +1094,10 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     onCompanionRefresh: (cb) => hub.subscribe("event.entity.changed", () => cb()),
     onRunnerProgress: (cb) => plain("event.runner.progress", cb as (p: never) => void),
     onRunnerFinished: (cb) => plain("event.runner.finished", cb as (p: never) => void),
+    // `plan/19` WI 6. Unlike `onCompanionRefresh` these payloads are **not** discarded: the renderer needs
+    // `socketId` to route an event to the right tab, and `event.ws.message` carries the frame itself.
+    onWsStatus: (cb) => plain("event.ws.status", cb as (p: never) => void),
+    onWsMessage: (cb) => plain("event.ws.message", cb as (p: never) => void),
 
     // ── lifecycle (not part of window.api) ──────────────────────────────────
     close: async () => {

@@ -43,6 +43,7 @@ import { registerApplicationCommands } from "@bifurc/engine/applications/applica
 import { registerSyncCommands } from "@bifurc/engine/gitops/syncCommands";
 import { registerEntityCrudCommands } from "@bifurc/engine/workspace/entities/entityCrudCommands";
 import { registerPipelineCommands } from "@bifurc/engine/pipeline/commands";
+import { registerWebsocketCommands } from "@bifurc/engine/websocket/wsCommands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -211,6 +212,12 @@ export function registerIpcHandlers(): void {
   // reason the engine-side list and this one are compared by a test
   // (`tests/integration/workspaceHost.integration.test.ts`) rather than trusted to stay in step.
   registerPipelineCommands(commandRegistry);
+  // **The socket registry** (`plan/19` WI 6). The last feature module to reach the shell, and the only one
+  // whose commands never had a legacy channel: `useWebSocket.ts` spoke to the browser's `WebSocket`
+  // constructor, so there is no channel here to reduce and no §5c finding to record. It is registered by both
+  // consumers for the reason the comment above gives — `tests/ipc/handlers.test.ts` asserts every protocol
+  // command is served by this registry, and `workspaceHost.integration.test.ts` compares the two lists.
+  registerWebsocketCommands(commandRegistry);
   // **0 module-scope registrations remain** — §5c's pass is complete. The 51 commands it turned out to
   // be are now all registered by an explicit `register*Commands()` call from this function.
   // `registerIpcHandlers()` cannot be *deleted*, and as of 2026-09-20 that is a corrected claim rather

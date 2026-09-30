@@ -3,7 +3,8 @@ import { AppConfig, SavedWebhook, WebhookPayload } from "@/types";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useEntityTabs } from "@/hooks/useEntityTabs";
 import { loadDraft, clearDraft } from "@/hooks/useDraftPersist";
-import { entityRelPath, calculateFolderStatus } from "@/lib/utils";
+import { calculateFolderStatus } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { strings } from "@/lib/strings";
 
 const DRAFT_PREFIX = "wh-draft-";
@@ -136,11 +137,14 @@ export function useWebhooksPanelState({
     await reloadWebhooks();
   }, [reloadWebhooks]);
 
+  /** The engine's `webhooks/<id>.json` (`plan/19` WI 5 item 3) — see `useEntityPaths`. */
+  const { relPathOf } = useEntityPaths();
+
   const getEntityFilePath = useCallback((id: string) => {
     if (isDraftId(id)) return "";
     const h = webhooks.find((x) => x.id === id);
-    return h ? entityRelPath("webhooks", h, folders) : "";
-  }, [webhooks, folders]);
+    return h ? relPathOf(h.id) : "";
+  }, [webhooks, relPathOf]);
 
   const tabLabel = (tabId: string) => {
     if (isDraftId(tabId)) {
@@ -159,9 +163,9 @@ export function useWebhooksPanelState({
       folderId: h.folderId ?? null,
       isActive: activeTab === h.id,
       isEnabled: activeTabs.has(h.id),
-      relPath: entityRelPath("webhooks", h, folders),
+      relPath: relPathOf(h.id),
     })),
-    [webhooks, folders, activeTab, activeTabs],
+    [webhooks, relPathOf, activeTab, activeTabs],
   );
 
   const folderStatusMap = useMemo(() => {

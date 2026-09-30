@@ -22,6 +22,7 @@ import "@testing-library/jest-dom";
 import { AppConfig, EntitySyncStatus, LocalMapping, WorkspaceGitState } from "@/types";
 import MappingsPanel from "@/panels/MappingsPanel";
 import { useEntityGitActions } from "@/hooks/useEntityGitActions";
+import { EntityPathsProvider } from "@/lib/entityPaths";
 
 const WS = "ws-1";
 const REL = "mappings/m1.json";
@@ -92,19 +93,27 @@ function Harness() {
     });
   }, []);
 
-  const git = useEntityGitActions({ wsConfig: config, wsId: WS, refreshConfig, refreshEntitySyncStatus, panel: "mappings" });
+  /**
+   * `mappings` is a flat kind, so the engine's answer is always `mappings/<id>.json` (`plan/19` WI 5
+   * item 3). Passed to the hook explicitly because the hook runs above the provider — see
+   * `useEntityGitActions`'s `relPathOf`.
+   */
+  const relPathOf = useCallback((id: string) => `mappings/${id}.json`, []);
+  const git = useEntityGitActions({ wsConfig: config, wsId: WS, refreshConfig, refreshEntitySyncStatus, relPathOf, panel: "mappings" });
 
   return (
-    <MappingsPanel
-      config={config}
-      onConfigChange={vi.fn().mockResolvedValue(undefined)}
-      onRefreshServices={vi.fn()}
-      entitySyncStatus={entitySyncStatus}
-      workspaceGitState={workspaceGitState}
-      onPublish={(id) => git.publish({ type: "entity", kind: "mappings", id })}
-      onRevert={(id) => git.revert({ type: "entity", kind: "mappings", id })}
-      isPublishing={() => false}
-    />
+    <EntityPathsProvider paths={{ entities: Object.fromEntries((config.mappings ?? []).map((m) => [m.id, `mappings/${m.id}.json`])), folders: {} }}>
+      <MappingsPanel
+        config={config}
+        onConfigChange={vi.fn().mockResolvedValue(undefined)}
+        onRefreshServices={vi.fn()}
+        entitySyncStatus={entitySyncStatus}
+        workspaceGitState={workspaceGitState}
+        onPublish={(id) => git.publish({ type: "entity", kind: "mappings", id })}
+        onRevert={(id) => git.revert({ type: "entity", kind: "mappings", id })}
+        isPublishing={() => false}
+      />
+    </EntityPathsProvider>
   );
 }
 

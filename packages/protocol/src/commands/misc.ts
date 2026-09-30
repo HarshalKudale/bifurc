@@ -1,6 +1,11 @@
 /**
  * The remaining ENGINE commands that do not fit a larger domain file:
- * `script.execute`, `request.replay`, `healthbar.*`, `capture.shareJson` (SPLIT — engine half only).
+ * `script.execute`, `request.replay`, `request.parseCurl`, `healthbar.*`, `capture.shareJson`
+ * (SPLIT — engine half only).
+ *
+ * `request.parseCurl` joined on 2026-09-30 (`plan/19` WI 5): the renderer's `lib/curlParser.ts` was
+ * deleted and the parser is now `packages/engine/src/utils/curl.ts`, shared with the cURL importer. It
+ * sits beside `request.replay` because both are the `request.*` commands that are not the pipeline.
  *
  * `app.checkUpdate` was here until 2026-09-20, as the protocol's only other SPLIT, with an empty
  * params schema documented as "the interim engine-half contract". **The split was resolved in favour
@@ -60,6 +65,30 @@ export interface RequestReplayResult {
   durationMs: number;
 }
 
+/**
+ * `request.parseCurl` — parse a cURL command into the request it describes (`plan/19` WI 5).
+ *
+ * The renderer used to own this (`packages/gui/src/lib/curlParser.ts`), and the engine owned a
+ * near-verbatim second copy inside the cURL importer. Both are gone: the parser is
+ * `packages/engine/src/utils/curl.ts`, the importer calls it directly, and this command is the
+ * renderer's way in.
+ *
+ * **Headers come back unfiltered**, and that is deliberate. `SKIP_CURL_HEADERS` is a *caller's*
+ * decision — the tab drops hop-by-hop headers when it imports, the importer drops them at its own
+ * point in the pipeline — so a parser that dropped them would be making a policy choice on the
+ * caller's behalf. The renderer keeps a copy of that list for the one thing it still needs it for
+ * (filtering a stored mock's captured headers); the copy is pinned to the engine's authority by
+ * `tests/gui/curlHeaderSkip.test.ts`, the `plan/19` D28 list-vs-logic split.
+ */
+export const RequestParseCurlParams = z.object({ curl: z.string() }).strict();
+export type RequestParseCurlParams = z.infer<typeof RequestParseCurlParams>;
+export interface RequestParseCurlResult {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
 export const HealthbarGetServicesParams = z.object({ workspaceId: z.string() }).strict();
 export type HealthbarGetServicesParams = z.infer<typeof HealthbarGetServicesParams>;
 export type HealthbarGetServicesResult = Record<string, unknown>[]; // HealthBarService[]
@@ -99,3 +128,59 @@ export const CaptureShareJsonParams = z.object({
 }).merge(WorkspaceScope).strict();
 export type CaptureShareJsonParams = z.infer<typeof CaptureShareJsonParams>;
 export type CaptureShareJsonResult = ArtifactResult;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// capture.buildRequest / capture.buildMock — capture → entity (`plan/19` WI 5, item 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `capture.buildRequest` — turn a captured log entry into a saved-request payload.
+ *
+ * ## Why these two are commands
+ *
+ * The construction decides **which headers to drop**, **how to decode a body** and **how a response is
+ * stored** — engine work by `plan/19` D22's test, and until this item it lived in
+ * `packages/gui/src/components/capture/captureUtils.ts` as `reqToHeadersBody` and `buildMockInitial`. The
+ * renderer cannot import the engine, so the only way to stop it holding a second implementation is to ask
+ * over the wire.
+ *
+ * ## Why two commands rather than one with a discriminator
+ *
+ * The two produce **different shapes** — a `requests` body and a `mocks` body — and the two call sites need
+ * one each: "Save" builds a request, "Open in mocks" builds a mock, and the context menu offers them as
+ * separate actions. One command with a `target` field would return a union whose every reader has to
+ * narrow it, for no caller that wants both.
+ *
+ * ## The `entry` is deliberately loose
+ *
+ * `z.record(z.string(), z.unknown())`, following `capture.shareJson`'s `z.array(z.unknown())`. The protocol
+ * does not model `RequestLogEntry` — it is engine-local and the remote transports project it down before it
+ * goes on the wire (`kernel/telemetry.ts` says so at length) — so a schema here would be a fourth mirror of
+ * a type the wire deliberately does not carry. The *results* are loose for the same reason: the entity
+ * bodies are typed in `@bifurc/engine` and hand-mirrored into `packages/gui/src/types/ipc.ts`, exactly as
+ * `entity.create`'s `EntityCreateResult.entity` is a `Record<string, unknown>`.
+ */
+export const CaptureBuildRequestParams = z.object({
+  entry: z.record(z.string(), z.unknown()),
+}).strict();
+export type CaptureBuildRequestParams = z.infer<typeof CaptureBuildRequestParams>;
+export interface CaptureBuildRequestResult {
+  /** A `requests` entity body, ready for `entity.create`. `name` is blank — the caller labels it. */
+  request: Record<string, unknown>;
+}
+
+/**
+ * `capture.buildMock` — turn a captured exchange into a mock payload.
+ *
+ * **The captured headers are stored raw, hop-by-hop ones included**, which is the one place the two
+ * builders differ: a mock replays the capture byte-for-byte, so a `host` that was actually sent is part of
+ * what was captured. The mock *editor* filters them for display instead.
+ */
+export const CaptureBuildMockParams = z.object({
+  entry: z.record(z.string(), z.unknown()),
+}).strict();
+export type CaptureBuildMockParams = z.infer<typeof CaptureBuildMockParams>;
+export interface CaptureBuildMockResult {
+  /** A `mocks` entity body, ready for `entity.create`. */
+  mock: Record<string, unknown>;
+}
