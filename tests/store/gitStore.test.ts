@@ -422,3 +422,54 @@ describe("getCommitChangedFiles()", () => {
     expect(files.length).toBe(2);
   });
 });
+
+// ── the workspace git handle's environment ────────────────────────────────────
+
+describe("gitProcessEnv()", () => {
+  it("strips the interactive variables and keeps everything else", async () => {
+    const { gitProcessEnv } = await import("@bifurc/engine/workspace/gitStore");
+    const env = gitProcessEnv({
+      EDITOR: "vim", VISUAL: "code", GIT_EDITOR: "true", GIT_SEQUENCE_EDITOR: "vim",
+      PAGER: "less", GIT_PAGER: "less", GIT_EXTERNAL_DIFF: "difft",
+      GIT_SSH_COMMAND: "ssh -i key", PATH: "/usr/bin",
+    });
+    expect(env).toEqual({ GIT_SSH_COMMAND: "ssh -i key", PATH: "/usr/bin", GIT_OPTIONAL_LOCKS: "0" });
+  });
+});
+
+describe("workspace git handle", () => {
+  const INTERACTIVE = { EDITOR: "vim", PAGER: "less", SSH_ASKPASS: "/usr/bin/ksshaskpass", GIT_SSH_COMMAND: "ssh" };
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = Object.fromEntries(Object.keys(INTERACTIVE).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, INTERACTIVE);
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  // simple-git refuses every command when an explicit env carries EDITOR/PAGER/SSH_ASKPASS/…, so a user with
+  // any of them set could not commit. getGit() builds the handle when nothing cached one first.
+  it("commits when the user's environment sets EDITOR, PAGER and SSH variables", async () => {
+    const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
+    setDataDirOverride(tmpDir); // drops the handle initWorkspaceRepo cached, so getGit() builds a fresh one
+    const relPath = await writeMockFile("m_env", { id: "m_env", name: "GET /env" });
+    const hash = await freshCommit(relPath, { action: "create", entity: "mock", entityId: "m_env", entityName: "GET /env" });
+    expect(hash).toBeTruthy();
+  });
+
+  // Startup caches the handle through initWorkspaceRepo(), so that is the handle the running app uses — it
+  // must carry GIT_OPTIONAL_LOCKS, or the index.lock race it prevents comes back.
+  it("gives the handle initWorkspaceRepo() caches the same environment as getGit()", async () => {
+    const { getGit, initWorkspaceRepo } = await import("@bifurc/engine/workspace/gitStore");
+    await initWorkspaceRepo(WS_ID);
+    const env = (getGit(WS_ID) as unknown as { _executor: { env?: Record<string, string> } })._executor.env;
+    expect(env?.GIT_OPTIONAL_LOCKS).toBe("0");
+    expect(env?.EDITOR).toBeUndefined();
+    await expect(getGit(WS_ID).status()).resolves.toBeDefined();
+  });
+});
