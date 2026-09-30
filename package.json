@@ -11,7 +11,7 @@
     "name": "Harshal Kudale"
   },
   "scripts": {
-    "build:packages": "npm run build --workspace @bifurc/protocol && npm run build --workspace @bifurc/engine && npm run build --workspace @bifurc/client && npm run build --workspace @bifurc/web-client",
+    "build:packages": "npm run build --workspace @bifurc/protocol && npm run build --workspace @bifurc/engine && npm run build --workspace @bifurc/client && npm run build --workspace @bifurc/web-client && npm run build --workspace @bifurc/cli",
     "prepare": "npm run build:packages",
     "clean:main": "node scripts/clean-main-dist.mjs",
     "build:main": "npm run clean:main && npm run build:packages && tsc && tsc-alias && npm run build:preload",
@@ -21,7 +21,7 @@
     "build": "npm run build:main && npm run build:renderer",
     "dev": "npm run build && electron .",
     "start": "electron .",
-    "typecheck:packages": "npm run typecheck --workspace @bifurc/protocol && npm run typecheck --workspace @bifurc/engine && npm run typecheck --workspace @bifurc/client && npm run typecheck --workspace @bifurc/web-client",
+    "typecheck:packages": "npm run typecheck --workspace @bifurc/protocol && npm run typecheck --workspace @bifurc/engine && npm run typecheck --workspace @bifurc/client && npm run typecheck --workspace @bifurc/web-client && npm run typecheck --workspace @bifurc/cli",
     "typecheck": "npm run build:packages && npm run typecheck:packages && tsc --noEmit",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",

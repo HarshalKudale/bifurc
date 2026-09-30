@@ -534,6 +534,11 @@ export function registerEntityCrudCommands(registry: CommandRegistry): void {
 
   registry.register("entity.list", ({ workspaceId, kind }: EntityListParams) => {
     const engineKind = toEngineKind(kind);
+    // CRUD kinds (mappings, requests, mocks, …): the full entities of that workspace, active or not — the
+    // per-kind read a client needs instead of pulling the whole config.
+    if (entityCrudRegistry.has(engineKind)) {
+      return { entities: readAllEntities<Record<string, unknown>>(workspaceId, engineKind) };
+    }
     if (!simpleEntityKinds.has(engineKind)) {
       throw new Error(`entity.list: kind "${kind}" is not routed through the CommandRegistry yet`);
     }

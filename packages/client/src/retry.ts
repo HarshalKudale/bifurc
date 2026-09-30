@@ -143,6 +143,7 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "entity.create", // allocates an id; a retry is a second entity
   "folder.add", // allocates an id
   "workspace.add", // allocates an id
+  "engine.shutdown", // a retry after an unknown outcome could stop an engine that has since restarted
   "application.save", // allocates an id
   "application.delete",
   "application.start",

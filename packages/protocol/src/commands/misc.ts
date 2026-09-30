@@ -192,6 +192,14 @@ export interface CaptureBuildMockResult {
  * keeping one: a UI that was closed, or on another screen, still sees what passed. Live exchanges keep arriving
  * as `event.log.entry`, each carrying the `workspaceId` it was captured under.
  */
+/**
+ * `engine.shutdown` — stop a standalone engine gracefully: listeners close, runtime.json is removed, the process
+ * exits. Served only by a standalone engine (`bifurc-engine`); an engine embedded in another process has no
+ * process of its own to stop, so it does not register it.
+ */
+export const EngineShutdownParams = z.object({}).strict();
+export type EngineShutdownParams = z.infer<typeof EngineShutdownParams>;
+
 export const CaptureListParams = z.object({ workspaceId: z.string() }).strict();
 export type CaptureListParams = z.infer<typeof CaptureListParams>;
 export interface CaptureListResult {

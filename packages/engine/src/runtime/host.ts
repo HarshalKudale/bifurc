@@ -52,7 +52,10 @@
  * library that re-pointed `SIGTERM` behind its back would break that caller's shutdown. The handler is a
  * five-line wrapper, so the composition stays testable without a signal ever being raised.
  */
-import { createSocketServer, defaultSocketPath, type SocketServer } from "../transport/socket";
+import { createSocketServer, type SocketServer } from "../transport/socket";
+import { createStdioServer, type StdioServer } from "../transport/stdio";
+import { PROTOCOL_VERSION } from "@bifurc/protocol";
+import { engineSocketPath, findRunningEngine, removeRuntimeInfo, writeRuntimeInfo } from "./discovery";
 // The host's own name: the value an engine that was not told one answers as. Taken from `lib/net` rather than
 // from `../transport/ws` so that "what is this hostname?" does not read as a transport question. Same
 // reasoning `hostArgs.ts` records.
@@ -95,6 +98,9 @@ import { findFreePortFrom, nextFreePortAbove, SCAN_LIMIT } from "./portAllocator
  * value with exactly one legal setting. Their removal is what makes the image's loopback guarantee structural
  * rather than a property of the command line an operator happened to use.
  */
+/** What `engine.shutdown` stops: the host running in this process, if any. */
+let activeShutdown: (() => void) | null = null;
+
 export type HostTransport =
   | {
       kind: "socket";
@@ -105,6 +111,10 @@ export type HostTransport =
       kind: "ws";
       /** Defaults to `0` — an ephemeral port, so two hosts on one machine cannot collide. */
       port?: number;
+    }
+  | {
+      /** RPC over this process's stdin/stdout — for a parent process that spawned the engine as a sidecar. */
+      kind: "stdio";
     };
 
 export interface WorkspaceHostOptions {
@@ -133,6 +143,8 @@ export interface WorkspaceHostOptions {
   registry?: CommandRegistry;
   /** Notified once per workspace whose ports had to be moved off the base. **Not** an error — see below. */
   onNotice?: (message: string, workspaceId?: string) => void;
+  /** Called after `engine.shutdown` has stopped the host. A standalone process exits here. */
+  onShutdownRequested?: () => void;
 }
 
 export interface WorkspaceHostStatus {
@@ -211,7 +223,7 @@ export interface WorkspaceHost {
    */
   readonly forwardProxy: ProxyServerInstance | null;
   /** The one RPC endpoint for this host. `null` before `start()`. */
-  readonly rpc: SocketServer | WsServer | null;
+  readonly rpc: SocketServer | WsServer | StdioServer | null;
   /**
    * The one edge router for this host. `null` before `start()`.
    *
@@ -271,7 +283,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   const domain = DEFAULT_HOST_DOMAIN;
 
   let forwardProxy: ProxyServerInstance | null = null;
-  let rpc: SocketServer | WsServer | null = null;
+  let rpc: SocketServer | WsServer | StdioServer | null = null;
   let edge: EdgeRouterInstance | null = null;
   /** The edge's URL. Set when the edge is created, and read only while it is running. */
   let edgeUrl = "";
@@ -334,6 +346,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      */
     const transport = opts.transport ?? { kind: "socket" };
 
+    // One engine per data directory: a second one would fight the first over the same files and ports.
+    const running = findRunningEngine(opts.dataDir);
+    if (running !== null && running.pid !== process.pid) {
+      throw new Error(
+        `an engine (pid ${running.pid}) is already serving ${opts.dataDir} over ${running.transport} at ` +
+          `${running.address} — connect to it, or stop it first`,
+      );
+    }
+
     // ── 0. register the command surface, before anything can be asked to serve it ─
     /**
      * **The step this file's first integration run proved was missing.**
@@ -349,6 +370,18 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      */
     if (opts.registry === undefined) registerAllEngineCommands(registry);
     unwireEvents = wireEngineEvents(bus);
+    // A standalone engine is the one composition that owns its process, so it is the one that can stop it.
+    activeShutdown = () => {
+      void host.stop().finally(() => opts.onShutdownRequested?.());
+    };
+    if (!registry.isRegistered("engine.shutdown")) {
+      registry.register("engine.shutdown", () => {
+        if (activeShutdown === null) throw new Error("no engine is running in this process");
+        // After the reply is written, so the client hears the acknowledgement before the endpoint closes.
+        setImmediate(activeShutdown);
+        return { ok: true };
+      });
+    }
 
     // ── 1. the data root, first ──────────────────────────────────────────────
     setDataRoot(opts.dataDir);
@@ -656,9 +689,20 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     };
 
     if (transport.kind === "socket") {
-      const path = transport.path ?? defaultSocketPath();
+      const path = transport.path ?? engineSocketPath(opts.dataDir);
       rpc = await createSocketServer({ path, registry, bus, log, auth });
       rpcAddress = path;
+    } else if (transport.kind === "stdio") {
+      rpc = createStdioServer({
+        input: process.stdin,
+        output: process.stdout,
+        registry,
+        bus,
+        engineVersion: auth.engineVersion,
+        // The parent closed our stdin: it is gone, so this sidecar has no one left to serve.
+        onFatal: () => void runtimeStop(),
+      });
+      rpcAddress = "stdio";
     } else {
       /**
        * ## The companion's port is **found**, not bound — `plan/17` §5 work item 4
@@ -715,6 +759,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       rpcAddress = rpc.url;
     }
     notice(`rpc endpoint: ${rpcAddress}`);
+    writeRuntimeInfo({
+      pid: process.pid,
+      transport: transport.kind,
+      address: rpcAddress,
+      dataDir: opts.dataDir,
+      protocolVersion: PROTOCOL_VERSION,
+      engineVersion: auth.engineVersion,
+      startedAt: Date.now(),
+    });
 
     /**
      * **The `engine token: <path>` line was here**, and there is nothing left to report — the token step
@@ -730,7 +783,9 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     return status();
   }
 
-  return {
+  const runtimeStop = (): Promise<void> => host.stop();
+
+  const host: WorkspaceHost = {
     start(): Promise<WorkspaceHostStatus> {
       if (stopped) {
         return Promise.reject(
@@ -744,6 +799,8 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     async stop(): Promise<void> {
       if (stopped) return;
       stopped = true;
+      activeShutdown = null;
+      removeRuntimeInfo(opts.dataDir);
       // The endpoint first: closing it stops new sessions before the servers behind it go away, so a client
       // cannot get a request in against a listener that is mid-teardown.
       if (rpc !== null) {
@@ -809,13 +866,14 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     get forwardProxy(): ProxyServerInstance | null {
       return forwardProxy;
     },
-    get rpc(): SocketServer | WsServer | null {
+    get rpc(): SocketServer | WsServer | StdioServer | null {
       return rpc;
     },
     get edge(): EdgeRouterInstance | null {
       return edge;
     },
   };
+  return host;
 }
 
 /**
@@ -832,7 +890,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
 export async function runWorkspaceHost(
   opts: WorkspaceHostOptions,
 ): Promise<WorkspaceHost> {
-  const host = createWorkspaceHost(opts);
+  const host = createWorkspaceHost({ onShutdownRequested: () => process.exit(0), ...opts });
   let shuttingDown = false;
 
   const shutdown = (signal: NodeJS.Signals): void => {

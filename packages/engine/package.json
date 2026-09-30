@@ -6,6 +6,9 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "bifurc-engine": "./dist/runtime/hostCli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

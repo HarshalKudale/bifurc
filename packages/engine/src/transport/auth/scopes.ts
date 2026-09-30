@@ -160,6 +160,7 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   // entity it is not allowed to save, which is the correct amount of authority for a pure function.
   "capture.buildRequest": "read",
   "capture.buildMock": "read",
+  "engine.shutdown": "admin",
   "capture.list": "read",
   "capture.clear": "write",
   "capture.remove": "write",
