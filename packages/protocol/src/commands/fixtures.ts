@@ -53,6 +53,12 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "workspace.delete": { valid: { id: "w1" }, invalid: {} },
   "workspace.setActive": { valid: { id: "w1" }, invalid: {} },
   "env.setActive": { valid: { id: null }, invalid: {} },
+  // `plan/19` WI 5, item 4. The `invalid` row is a **near-miss** — the right shape under the wrong key —
+  // because `{}` would fail for "missing `workspaceId`" before and after any schema edit.
+  "env.resolveText": { valid: { workspaceId: "ws1", text: "{{host}}/health" }, invalid: { workspaceId: "ws1", value: "{{host}}/health" } },
+  // `plan/19` WI 6. `{}` is the invalid row because `workspaceId` is **required** here — the merge is per
+  // workspace and there is no "active workspace" to fall back to (`WorkspaceScope` is deliberately not used).
+  "env.getMerged": { valid: { workspaceId: "ws1" }, invalid: {} },
 
   // P14 WI 1 (D13): these six carry an optional `workspaceId` so a host can address one of N workspaces
   // behind a single RPC endpoint. The `valid` fixture supplies it, because "omitted" is already covered by
@@ -142,6 +148,19 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "runner.cancel": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
   "runner.status": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
 
+  // `ws.*` (`plan/19` WI 6). The near-misses are chosen per command rather than copied: `ws.connect`'s is a
+  // missing `url` (the pair that identifies the socket is present, so the rejection is the *url's*),
+  // `ws.send`'s is a `data` of the wrong type, and the two read commands' is a missing `socketId`.
+  "ws.connect": {
+    valid: { workspaceId: "ws1", socketId: "tab-1", url: "wss://example.test/socket" },
+    invalid: { workspaceId: "ws1", socketId: "tab-1" },
+  },
+  "ws.disconnect": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
+  "ws.send": { valid: { workspaceId: "ws1", socketId: "tab-1", data: "ping" }, invalid: { workspaceId: "ws1", socketId: "tab-1", data: 1 } },
+  "ws.status": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
+  "ws.list": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "ws.clearMessages": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
+
   "sync.setRemote": { valid: { workspaceId: "ws1", remote: "r", branch: "main" }, invalid: { workspaceId: "ws1", remote: "r" } },
   "sync.disconnect": { valid: { workspaceId: "ws1" }, invalid: {} },
   "sync.push": { valid: { workspaceId: "ws1" }, invalid: {} },
@@ -214,10 +233,19 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
 
   "script.execute": { valid: { script: "1+1", context: "pre", envVars: {} }, invalid: { script: "1+1", context: "bogus", envVars: {} } },
   "request.replay": { valid: { method: "GET", url: "http://x", headers: {}, body: "" }, invalid: { method: "GET", url: "http://x" } },
+  // `plan/19` WI 5. One required field, so the discriminating invalid is a **near-miss**: the right shape
+  // under the wrong key name. `{}` would fail for "missing `curl`" before and after any schema edit, which
+  // is the non-discriminating fixture this table's header warns about.
+  "request.parseCurl": { valid: { curl: "curl http://x" }, invalid: { curlCommand: "curl http://x" } },
   "healthbar.getServices": { valid: { workspaceId: "ws1" }, invalid: {} },
   "healthbar.saveServices": { valid: { workspaceId: "ws1", services: [] }, invalid: { workspaceId: "ws1" } },
   "healthbar.checkUrl": { valid: { url: "http://x" }, invalid: {} },
   "capture.shareJson": { valid: { entries: [], workspaceId: "ws1" }, invalid: {} },
+  // `plan/19` WI 5, item 2. One required field each, so the discriminating `invalid` is a **near-miss**:
+  // the right shape under the wrong key. `{}` would fail for "missing `entry`" before and after any schema
+  // edit, which is the non-discriminating fixture this table's header warns about.
+  "capture.buildRequest": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
+  "capture.buildMock": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
 
   // The saved-entity counterparts (`saved.ts`). All four share one schema, so all four get the same
   // pair — and the `invalid` row is `entity.load`'s: a **near-miss** that drops the required

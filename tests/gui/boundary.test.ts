@@ -42,36 +42,55 @@
  * quietly. Four authorities have landed already (the resolver, the randomizer, the report renderer, the
  * path helpers); two are still `planned:` and are created by WI 3 and WI 5.
  *
- * ## The allowlist is debt, and it can only shrink
+ * ## The allowlist is debt, and it can only shrink — **and it is now empty**
  *
- * **Four entries today, in four files — and the count is a *reading*, not a target.** It started at 9 on
- * 2026-09-29, which was itself a correction of `plan/19` §6: that section predicts `−2 / −1 / −1 / −2` across
- * WI 2–5, summing to 6, because it counts *files deleted* while this file counts *constructs present* —
- * `collectionRunner.ts` carried the pipeline, the run loop and the report-renderer's only caller, and
- * `scriptRunner.ts` / `testRunner.ts` are not in §1's table at all.
+ * **Zero entries. `plan/19` §9's acceptance criterion is met**: *"`tests/gui/boundary.test.ts` passes with an
+ * **empty** allowlist; the renderer contains no resolver, randomizer, pipeline, curl parser or report
+ * renderer."* It opened at 9 on 2026-09-29, which was itself a correction of `plan/19` §6 — that section
+ * predicts `−2 / −1 / −1 / −2` across WI 2–5, summing to 6, because it counts *files deleted* while this file
+ * counts *constructs present*.
  *
- * **The count has moved twice, both times downward, and that is the whole design.** 9 → 8 when
- * `useRestActions.ts` stopped orchestrating (WI 3, REST), then 8 → 4 when WI 4 deleted the run loop and
- * everything that hung off it. **The staleness assertion forced every one of the five retirements** — with the
- * construct gone the entry could not be kept, which is what makes the shrink checkable rather than remembered.
+ * **The count moved five times, always downward, and every retirement was forced rather than chosen:**
  *
- * Each entry names the work item that deletes it, and `the allowlist has no stale entries` fails if one
- * is fixed without being removed — so the list cannot quietly become a permission slip.
+ * | from → to | what |
+ * |---|---|
+ * | 9 → 8 | WI 3 (REST) — `useRestActions.ts#pipeline` stopped orchestrating |
+ * | 8 → 4 | WI 4 — the run loop, the two step wrappers it was the last caller of, and the second HTML renderer |
+ * | 4 → 3 | WI 5 — `lib/curlParser.ts` |
+ * | 3 → 2 | WI 5 item 3 — the `lib/utils.ts` path helpers |
+ * | 2 → 0 | **WI 6 — `lib/resolveVars.ts` and `lib/randomizer.ts`'s generator** |
+ *
+ * **The staleness assertion forced every one of the nine.** With a construct gone from the renderer its entry
+ * could not be kept — which is what makes the shrink checkable rather than remembered, and it is why an entry
+ * whose owner never lands is visible as a *permanent* entry rather than as an unclosed checkbox.
+ *
+ * **⚠ The last two were WI 6's and not WI 3's, and §6's table had them in the wrong row.** The resolver and
+ * the randomizer outlived the four tabs because resolution is not only the tabs' business: `useWebSocket.ts`
+ * resolved a url and its headers, and `HealthBarPanel.tsx` resolved a service url. WI 5's item 4 moved the
+ * second and left the first, and the two entries are keyed on the resolver's **definition** — so they could
+ * only retire when the last *user* stopped, which is WI 6.
+ *
+ * **⚠ `lib/randomizer.ts` survives with its catalogue, and that is not a missed deletion.** The construct is
+ * the *generator* (`generateRandom` / `resolveRandomizers`), both of which are gone; `RANDOMIZER_TOKENS` stays
+ * for `RandomizerHint`'s autocomplete under D28's list-vs-resolver split, pinned by
+ * `tests/gui/randomizerCatalogue.test.ts`. This is the same outcome `lib/runnerReport.ts` had in WI 4 — the
+ * `file#construct` keying doing its job: the file stayed, the construct the ratchet tracked did not.
  *
  * ## What this does not catch, and why it is still worth having
  *
  * Detection is by **name**, so a copy re-implemented under a different name is not caught. That is a
  * real gap, recorded rather than papered over:
  *
- *  - The mistake this guards against is not an adversary — it is a contributor adding a seventh
- *    duplicate because the engine's copy was not where they looked. A name-based scan catches that, at
+ *  - The mistake this guards against is not an adversary — it is a contributor adding a duplicate
+ *    because the engine's copy was not where they looked. A name-based scan catches that, at
  *    the moment the file is written.
  *  - The stronger alternative is a **content fingerprint** per construct (the `{{key}}` substitution
- *    regex, the `env.variables.find` lookup). It cannot be adopted yet: `savedEntitySend.ts` legitimately
- *    contains the token fingerprint until WI 3 shrinks the gate to `!isDraft && !hasLocalChanges`, so a
- *    fingerprint list would open with a false positive that has to be allowlisted itself. Add the
- *    fingerprint in the WI that deletes the last renderer copy of each construct, when it has exactly
- *    one honest home.
+ *    regex, the `env.variables.find` lookup). Its precondition is now met — the renderer holds **zero**
+ *    copies of every construct, so a fingerprint list would open with no false positive to allowlist —
+ *    and it is still deliberately **not added here**: it is a second scan category with its own
+ *    unmeasured false-positive surface (a fingerprint for `resolver` is `/\{\{(\w+)\}\}/`, which the
+ *    editor's own hint components legitimately touch), and the phase's goal is reached without it.
+ *    **Recorded as the next strengthening rather than smuggled in with the retirement that enables it.**
  *  - The structurally complete answer is `Engine_Module_Plan.md` §5.2's ESLint rule, which this repo
  *    cannot have — it has no ESLint.
  */
@@ -103,21 +122,28 @@ const CONSTRUCTS: Record<string, Construct> = {
    * private `resolveVars`; WI 2's engine half moved it **down** into `utils/resolve.ts` so the mocks and
    * the new pipeline share one.
    *
-   * **The global+active merge is not there yet, and that is a refinement of §8 trap 2 rather than an
-   * omission.** The merge decides *which* environment to resolve against, so it moves with the **call**
-   * — WI 3, when the engine becomes the resolving party — not with the function. Landing it beside the
-   * resolver now would add a second merge implementation while `App.tsx:288`'s stayed authoritative,
-   * which is trap 1's duplication introduced rather than removed.
+   * **The global+active merge is in that file too, and it got there the way §8 trap 2 requires — with the
+   * call, not with the function.** The merge decides *which* environment to resolve against, so it landed in
+   * WI 3 when the engine became the resolving party (`envState.ts` reads it); landing it beside the resolver
+   * earlier would have been a *second* merge implementation while `App.tsx`'s stayed authoritative, which is
+   * trap 1's duplication introduced rather than removed.
+   *
+   * **The renderer's last two users were `useWebSocket.ts` and `HealthBarPanel.tsx`, and WI 6 is what retired
+   * the entry.** WI 5 item 4 moved the panel's resolution to `env.resolveText`; WI 6 moved the socket's to the
+   * engine, which also replaced `App.tsx`'s `mergeEnvVars` with `env.getMerged`. Only then could
+   * `lib/resolveVars.ts` be *deleted* — and the entry is keyed on the definition, so it could not have gone a
+   * moment earlier.
    */
   resolver: {
     what: "environment/header resolution",
     detect: /export\s+function\s+(resolveVars|resolveHeaders|mergeEnvVars)\s*\(/,
-    authority: "packages/engine/src/utils/resolve.ts — resolveVars, resolveHeaders",
+    authority: "packages/engine/src/utils/resolve.ts — resolveVars, resolveHeaders, mergeEnvVars",
   },
 
   /**
    * The `{{random.*}}` **generator**. §1 row 2: the two implementations' data pools are identical and
-   * *nothing pins them equal* — they agree by discipline. WI 2 deletes the renderer's generator.
+   * *nothing pins them equal* — they agree by discipline. WI 2 moved the authority into the engine and WI 6
+   * deleted the renderer's generator, which was reachable only through `lib/resolveVars.ts`.
    *
    * **The token catalogue is deliberately NOT part of this construct.** The owner's call, 2026-09-29
    * (`plan/19` §3): the UI may keep a **copy of the list** for autocomplete while the *resolver* stays
@@ -126,6 +152,9 @@ const CONSTRUCTS: Record<string, Construct> = {
    * `tests/gui/randomizerCatalogue.test.ts`, which asserts the UI list equals the engine's **and** that
    * every entry has a matching `case` in the generator. A copy with no pin is the very defect §1 row 2
    * names, so the test is what makes this copy legitimate rather than a fresh instance of the problem.
+   *
+   * **Which is why `lib/randomizer.ts` still exists.** The construct is gone from it; the file is not. That is
+   * the `file#construct` keying working as designed, and the same shape `lib/runnerReport.ts` had in WI 4.
    */
   randomizer: {
     what: "{{random.*}} generator",
@@ -144,27 +173,39 @@ const CONSTRUCTS: Record<string, Construct> = {
   pipeline: {
     what: "pre/post/test script orchestration",
     detect: /(?<!function\s)\b(runPreScript|runPostScript|runTestScript)\s*\(/,
-    authority: "planned: WI 3 — one engine function implementing D24, called by both input forms",
+    authority: "packages/engine/src/pipeline/runPipeline.ts — runRequestPipeline",
   },
 
   /**
    * The renderer's own IPC wrappers for the sandbox steps. Not in §1's table, and they are a construct
-   * anyway: each carries an `envToMap` that duplicates engine knowledge, and each exists only to be
-   * called by `pipeline` above. WI 3 deletes the orchestration, which leaves these unreferenced.
+   * anyway: each carries an `envToMap` that duplicates engine knowledge, and each existed only to be
+   * called by `pipeline` above. WI 3 deleted the orchestration and WI 4 deleted the run loop that was their
+   * last caller, so the wrappers are gone.
    *
-   * **`script.execute` is not this.** It is the engine's sandbox entry point and stays — see §8 trap 7.
+   * **`script.execute` is not this.** It is the engine's sandbox entry point and stays — see §8 trap 7. The
+   * authority below is that sandbox, which is what the wrappers were thin adapters over.
    */
   pipelineStep: {
     what: "renderer-side pre/post/test step wrappers",
     detect: /export\s+async\s+function\s+(runPreScript|runPostScript|runTestScript)\s*\(/,
-    authority: "planned: WI 3 — deleted with the orchestration; the sandbox itself stays engine-side",
+    authority: "packages/engine/src/mocks/scriptExecutor.ts — executeIpcScript",
   },
 
-  /** §1's footnote: a pure parse of a wire format the engine already parses elsewhere. WI 5. */
+  /**
+   * §1's footnote: a pure parse of a wire format the engine already parses elsewhere. WI 5.
+   *
+   * **The construct is the *parser* only — `SKIP_CURL_HEADERS` is deliberately not flagged.** The
+   * header list is *data*, and the renderer needs a copy of it for a read-side job the engine cannot do
+   * for it (filtering a **stored** mock's `capturedHeaders` on load — see `restTabHelpers.ts`). That is
+   * the same **list vs logic** split D28 made for `RANDOMIZER_TOKENS`, and the same consequence
+   * follows: the copy is pinned by a test (`tests/gui/curlHeaderSkip.test.ts`) rather than by this scan.
+   * Flagging the list here would contradict the decision, exactly as flagging the randomizer catalogue
+   * would contradict D28 — so the `detect` pattern matches the parser and nothing else.
+   */
   curlParser: {
     what: "cURL command parsing",
-    detect: /export\s+function\s+parseCurl\s*\(|export\s+const\s+SKIP_CURL_HEADERS\b/,
-    authority: "planned: WI 5 — request.parseCurl",
+    detect: /export\s+function\s+parseCurl\s*\(/,
+    authority: "packages/engine/src/utils/curl.ts — parseCurl",
   },
 
   /** §1 row 5: the engine already renders the report (`runner.exportReport` uses it); this is the copy. */
@@ -184,45 +225,45 @@ const CONSTRUCTS: Record<string, Construct> = {
 };
 
 /**
- * Constructs that break the boundary today. **Keyed by `gui/src`-relative `file#construct`**, so each
- * entry names one exact definition rather than a whole file — a file-level key would silently cover the
+ * Constructs that break the boundary today. **Keyed by `gui/src`-relative `file#construct`**, so each entry
+ * names one exact definition rather than a whole file — a file-level key would silently cover the
  * next violation added to that file, and two of these files legitimately keep other things
  * (`utils.ts` keeps the presentation helpers; `useRestActions.ts` keeps `handleTest`).
  *
- * **Four entries. The goal is `{}`.** The value must name the work item that deletes the entry, which
- * `every allowlist entry names the work item that deletes it` asserts — an entry with no owner is a violation
- * nobody has agreed to fix. It was nine on 2026-09-29 and is four now; **all five retirements are recorded in
- * the map below, with what forced each**, because a shrink nobody can account for is indistinguishable from a
- * construct that was quietly dropped out of the scan.
+ * **`{}` — empty, and that is `plan/19` §9's acceptance criterion rather than a milestone on the way to one.**
+ * The renderer defines no resolver, no randomizer, no pipeline, no curl parser and no report renderer.
+ *
+ * The nine retirements, in the order they happened, each with what forced it — because a shrink nobody can
+ * account for is indistinguishable from a construct that was quietly dropped out of the scan:
+ *
+ * ```
+ *   components/rest/useRestActions.ts#pipeline     WI 3 (REST) — the first entry ever retired
+ *   lib/collectionRunner.ts#pipeline               WI 4 — the run loop, now runner/runCollection.ts
+ *   lib/scriptRunner.ts#pipelineStep               WI 4 — its last caller was that loop
+ *   lib/testRunner.ts#pipelineStep                 WI 4 — likewise
+ *   lib/runnerReport.ts#reportRenderer             WI 4 — the engine's runner/reportHtml.ts is the one
+ *   lib/curlParser.ts#curlParser                   WI 5 — engine/utils/curl.ts, file deleted
+ *   lib/utils.ts#pathHelpers                       WI 5 item 3 — workspace/entityPaths.ts computes them
+ *   lib/resolveVars.ts#resolver                    WI 6 — the last user was useWebSocket.ts; file deleted
+ *   lib/randomizer.ts#randomizer                   WI 6 — reachable only through resolveVars; generator gone
+ * ```
+ *
+ * **The last two are the pair §6's table put in WI 3's row**, and the correction matters: they could not
+ * retire with the tabs, because `useWebSocket.ts` still resolved a url and its headers. See this file's
+ * docblock and `plan/19` §6's WI 3 completion note.
+ *
+ * **⚠ A construct's `detect` may be narrowed, and WI 5 narrowed one.** `curlParser` used to match the header
+ * *list* as well as the parser. It matches the parser only now, because the renderer legitimately keeps a
+ * pinned copy of the list — the D28 list-vs-logic split. Narrowing a pattern is the one edit to this file that
+ * *loosens* the scan, so it must be paired with a pin (`tests/gui/curlHeaderSkip.test.ts` here), or it is
+ * indistinguishable from deleting a construct to silence a violation.
+ *
+ * **`every allowlist entry names the work item that deletes it` now passes vacuously** — there is nothing to
+ * own. It is kept rather than deleted for the reason the whole file is kept: the next entry added to it is
+ * exactly the case it exists for, and a rule that has to be re-added under pressure is a rule that gets
+ * skipped.
  */
-const ALLOWED: Record<string, string> = {
-  // **Still present, and the reason changed on 2026-09-30.** All four protocol tabs stopped resolving in the
-  // renderer, so this entry is no longer "waiting for the last tab" — it is waiting for **WI 6**, because
-  // `useWebSocket.ts` resolves a url and headers and `HealthBarPanel.tsx` resolves a service url. `App.tsx`'s
-  // `mergeEnvVars` also still runs, for the panes' active-env hint. See `plan/19` §6's WI 3 completion note.
-  "lib/resolveVars.ts#resolver":
-    "WI 6 — deleted with the last renderer resolver (`useWebSocket` + `HealthBarPanel`), not with the tabs.",
-  "lib/randomizer.ts#randomizer":
-    "WI 6 — the generator is only reachable through `resolveVars`, so it goes with it; the token catalogue " +
-    "stays as a pinned UI copy (`plan/19` §3, D28).",
-  // **Five entries have left this allowlist on 2026-09-30, in two groups, and neither group was tidying up.**
-  // The staleness assertion forced all five — each construct is gone from the renderer, so an entry that
-  // stayed would have failed it.
-  //
-  //   `components/rest/useRestActions.ts#pipeline`   WI 3's REST slice — the first entry ever retired
-  //   `lib/collectionRunner.ts#pipeline`             WI 4 — the run loop, now `runner/runCollection.ts`
-  //   `lib/scriptRunner.ts#pipelineStep`             WI 4 — its last caller was that loop
-  //   `lib/testRunner.ts#pipelineStep`               WI 4 — likewise
-  //   `lib/runnerReport.ts#reportRenderer`           WI 4 — the engine's `runner/reportHtml.ts` is the one
-  //
-  // The four WI 4 entries went together because they were one feature: the runner's loop was the last caller
-  // of the two step wrappers, and its report was the last reason the renderer had a second HTML renderer at
-  // all. `script.execute` itself stays — trap 7 — and so do the two storage wrappers that shared
-  // `runnerReport.ts` with the renderer.
-  "lib/curlParser.ts#curlParser": "WI 5 — deleted; request.parseCurl.",
-  "lib/utils.ts#pathHelpers":
-    "WI 5 — deleted; the engine already computes these (workspaceFs).",
-};
+const ALLOWED: Record<string, string> = {};
 
 // ── scanning ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -310,8 +351,10 @@ describe("the renderer is a client, not an engine (plan/19 D22)", () => {
 
   it("each landed authority is where the table says it is", () => {
     // The teeth in the other direction: a violation cannot be "fixed" by deleting the engine's copy as
-    // well, which would leave the renderer as the only implementation. `planned:` entries are the three
-    // WIs that have not landed yet and are asserted once their `authority` string stops saying so.
+    // well, which would leave the renderer as the only implementation. **Every entry is now a real authority
+    // — there are no `planned:` rows left** — so this assertion covers all eight constructs, which is the
+    // first time that has been true. It is also what stops the retirement of the last two entries from being
+    // "fixed" by repointing the table at nothing.
     const broken: string[] = [];
     for (const [name, c] of Object.entries(CONSTRUCTS)) {
       if (c.authority.startsWith("planned:")) continue;

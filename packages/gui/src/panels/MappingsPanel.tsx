@@ -3,7 +3,7 @@ import { AppConfig, LocalMapping } from "@/types";
 import Modal from "@/components/common/Modal";
 import PanelHeader from "@/components/layout/PanelHeader";
 import { strings } from "@/lib/strings";
-import { flatEntityRelPath } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { entityGitView, entityGitDotColor, shortCommit } from "@/lib/entityGit";
 import { ArrowLeftRight, History, AlertCircle, CheckCircle2, Plus, Globe, Server, RotateCcw, ArrowUp } from "@/lib/icons";
 import { Button, IconButton, Input, FormField, EmptyState, ModalFooter, StatusDot, Switch } from "@/components/ui";
@@ -146,16 +146,23 @@ export default function MappingsPanel({
    * so without this guard the autosave below would happily `updateMapping()` a file that no longer
    * exists and **resurrect the deletion** the user just made.
    */
+  /**
+   * The engine's `mappings/<id>.json` (`plan/19` WI 5 item 3). `mappings` is a flat kind, so the path has
+   * no folder level — and this used to recompute it here with a hand-mirrored helper that the engine's
+   * `workspaceFs` also had.
+   */
+  const { relPathOf } = useEntityPaths();
+
   const { views, deletedIds } = useMemo(() => {
     const views = new Map<string, ReturnType<typeof entityGitView>>();
     const deletedIds = new Set<string>();
     for (const m of config.mappings) {
-      const v = entityGitView(entitySyncStatus?.[flatEntityRelPath("mappings", m.id)], workspaceGitState);
+      const v = entityGitView(entitySyncStatus?.[relPathOf(m.id)], workspaceGitState);
       views.set(m.id, v);
       if (v.status === "deleted") deletedIds.add(m.id);
     }
     return { views, deletedIds };
-  }, [config.mappings, entitySyncStatus, workspaceGitState]);
+  }, [config.mappings, entitySyncStatus, workspaceGitState, relPathOf]);
 
   useEffect(() => {
     if (prefillTarget) {

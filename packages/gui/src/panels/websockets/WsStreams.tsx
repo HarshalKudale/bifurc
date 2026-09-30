@@ -7,9 +7,8 @@ import RandomizerHint from '@/components/editor/RandomizerHint';
 import { Send, Radio } from '@/lib/icons';
 import { strings } from '@/lib/strings';
 import { KVRow, mkRowId } from '@/lib/utils';
-import { Environment } from '@/types';
+import { Environment, WsMessage } from '@/types';
 import WsMessageRow from './WsMessageRow';
-import { WsMessage } from '@/hooks/useWebSocket';
 
 interface WsStreamsProps {
   reqTab: "headers";

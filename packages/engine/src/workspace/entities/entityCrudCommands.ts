@@ -201,6 +201,23 @@ export function registerSimpleKind(opts: SimpleEntityOpts): void {
   simpleEntityKinds.add(opts.kind);
 }
 
+/**
+ * Walk every registered full-CRUD kind — for a reader that must cover **all** of them.
+ *
+ * Added by `plan/19` WI 5 item 3: `workspace/entityPaths.ts` builds the `entity id → relPath` map the
+ * renderer used to derive for itself, and to do that it has to enumerate the kinds. An **iterator** rather
+ * than the map itself, because the container is module-private on purpose (its own note above says "nothing
+ * outside this file reads it") — a reader can walk it without being able to mutate it.
+ *
+ * It reports `configKey` / `folderConfigKey` / `isFlat`, which is everything a path needs: the map is
+ * `kind + folder name + id`, and all three come from the same registration that the CRUD commands use. That
+ * is the point of reading the registry rather than keeping a second table — a new kind cannot be added
+ * without appearing here.
+ */
+export function forEachCrudKind(fn: (opts: CrudFactoryOpts<any>) => void): void {
+  for (const opts of entityCrudRegistry.values()) fn(opts);
+}
+
 async function isGitTracked(wsId: string, relPath: string): Promise<boolean> {
   try {
     const result = await getGit(wsId).raw(["ls-files", "--error-unmatch", "--", relPath]);

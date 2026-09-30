@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { AppConfig, ServiceInfo, SyncStatus, EntitySyncStatus, WorkspaceGitState } from "@/types";
+import type { EntityPathMaps } from "@/lib/entityPaths";
 
 export const EMPTY_CONFIG: AppConfig = {
   port: 80,
@@ -117,12 +118,23 @@ export function useAppConfigSync() {
     }
   }, []);
 
+  /**
+   * The engine's path maps (`plan/19` WI 5, item 3) — `entity id → relPath` and `folder id → prefix`.
+   *
+   * Declared here rather than beside `entitySyncStatus` because the two arrive in the **same** payload and
+   * are written in the same callback; keeping them together is what makes that visible. `undefined` means
+   * the engine has not answered yet, which `EntityPathsProvider` reads as "unknown" rather than "no paths".
+   */
+  const [entityPaths, setEntityPaths] = useState<EntityPathMaps | undefined>(undefined);
+
   const refreshEntitySyncStatus = useCallback((wsId: string) => {
     window.api.getEntitySyncStatus(wsId).then((payload) => {
       setEntitySyncStatus(payload.files ?? {});
       // A missing `git` is treated as unknown rather than as "no remote": an engine that predates
       // the field must not make every entity look unpushed and grow a Sync button out of nowhere.
       if (payload.git) setWorkspaceGitState(payload.git);
+      // The path maps travel in the same payload and are absent for the same reason (`paths?`).
+      setEntityPaths(payload.paths);
     }).catch(() => { });
   }, []);
 
@@ -234,6 +246,7 @@ export function useAppConfigSync() {
     serverRunning, setServerRunning,
     serverError, setServerError,
     entitySyncStatus, refreshEntitySyncStatus,
+    entityPaths,
     workspaceGitState,
     syncStatus,
     handleConfigChange,

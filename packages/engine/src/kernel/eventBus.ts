@@ -21,7 +21,7 @@ import { logEmitter, type RequestLogEntry } from "./telemetry";
 import type { WebhookPayload } from "../webhooks/webhookServer";
 // `import type`, so the "zero **value** imports from the rest of the engine" property above is untouched —
 // and `@bifurc/protocol` is a separate package rather than an engine-internal module in any case.
-import type { RunnerFinishedEvent, RunnerProgressEvent } from "@bifurc/protocol";
+import type { RunnerFinishedEvent, RunnerProgressEvent, WsMessageEvent, WsStatusEvent } from "@bifurc/protocol";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };
@@ -57,6 +57,18 @@ export interface EngineEvents {
   "runner.progress": RunnerProgressEvent;
   /** The run ended, cancelled or not. The report is the same shape `runner.saveReport` takes. */
   "runner.finished": RunnerFinishedEvent;
+  /**
+   * A socket changed state, or produced a frame — `plan/19` WI 6.
+   *
+   * Typed from the **protocol's** event payloads for the same reason `runner.progress` is: the wire shape and
+   * the bus payload are the same object, and two declarations of one shape is the hazard
+   * `RunnerConfigSchema`'s note records this codebase already paying for once.
+   *
+   * Both carry `socketId`, because every socket in the process shares one bus — a subscriber that could not
+   * tell which socket an event belonged to could only guess, and the renderer has one subscriber per tab.
+   */
+  "ws.status": WsStatusEvent;
+  "ws.message": WsMessageEvent;
 }
 
 /**
@@ -85,6 +97,8 @@ export const ENGINE_EVENT_NAMES: readonly (keyof EngineEvents)[] = [
   "settings.changed",
   "runner.progress",
   "runner.finished",
+  "ws.status",
+  "ws.message",
 ];
 
 /**
