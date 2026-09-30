@@ -1,6 +1,6 @@
 import {
   loadConfig, saveConfig, generateId,
-  LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook,
+  LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection,
   Folder, Environment, Workspace,
 } from "../../workspace/config";
 import {
@@ -21,7 +21,7 @@ export function preflight(wsId: string, source: ImportSource): PreflightResult {
     const itemCount =
       (d.mocks?.length ?? 0) + (d.requests?.length ?? 0) + (d.mappings?.length ?? 0) +
       (d.proxyRules?.length ?? 0) + (d.wsConnections?.length ?? 0) +
-      (d.environments?.length ?? 0) + (d.webhooks?.length ?? 0);
+      (d.environments?.length ?? 0);
     // Workspace import always creates a new workspace — no collisions
     return { ok: true, itemCount, collisionIds: [] };
   } catch (err) {
@@ -64,7 +64,6 @@ export async function run(
     cfg.ruleFolders    = [...cfg.ruleFolders,    ...remap<Folder>(d.ruleFolders ?? [])];
     cfg.requestFolders = [...cfg.requestFolders, ...remap<Folder>(d.requestFolders)];
     cfg.wsFolders      = [...cfg.wsFolders,      ...remap<Folder>(d.wsFolders)];
-    cfg.webhookFolders = [...cfg.webhookFolders, ...remap<Folder>(d.webhookFolders ?? [])];
     cfg.environments   = [...cfg.environments,   ...remap<Environment>(d.environments)];
     cfg.activeWorkspaceId = newWsId;
     cfg.activeEnvironmentId = null;
@@ -77,7 +76,6 @@ export async function run(
 
     const reqFolderMap = new Map(remap<Folder>(d.requestFolders).map((f) => [f.id, f.name]));
     const wsFolderMap  = new Map(remap<Folder>(d.wsFolders).map((f) => [f.id, f.name]));
-    const hookFolderMap = new Map(remap<Folder>(d.webhookFolders ?? []).map((f) => [f.id, f.name]));
     const ruleFolderMap = new Map(remap<Folder>(d.ruleFolders ?? []).map((f) => [f.id, f.name]));
 
     for (const r of remap<SavedRequest>(d.requests ?? [])) {
@@ -87,10 +85,6 @@ export async function run(
     for (const c of remap<SavedWsConnection>(d.wsConnections ?? [])) {
       writeEntity(newWsId, "sockets", c.id, c, c.folderId ? (wsFolderMap.get(c.folderId) ?? null) : null);
       upsertNameEntry(newWsId, "sockets", c.id, { name: c.name, url: c.url });
-    }
-    for (const h of remap<SavedWebhook>(d.webhooks ?? [])) {
-      writeEntity(newWsId, "webhooks", h.id, h, h.folderId ? (hookFolderMap.get(h.folderId) ?? null) : null);
-      upsertNameEntry(newWsId, "webhooks", h.id, { name: h.name, urlSuffix: h.urlSuffix });
     }
     // Proxy rules need an EXPLICIT write: `saveConfig()` deliberately skips rule
     // files (it only ever holds the UI stubs), so without this loop every rule in
@@ -127,7 +121,7 @@ export async function run(
     const imported =
       (d.mocks?.length ?? 0) + (d.requests?.length ?? 0) + (d.mappings?.length ?? 0) +
       (d.proxyRules?.length ?? 0) + (d.wsConnections?.length ?? 0) +
-      (d.environments?.length ?? 0) + (d.webhooks?.length ?? 0);
+      (d.environments?.length ?? 0);
 
     return { ok: true, imported };
   } catch (err) {

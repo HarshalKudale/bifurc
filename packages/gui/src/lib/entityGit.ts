@@ -264,7 +264,6 @@ export const PANEL_ENTITY_KIND: Record<string, PanelEntityKind> = {
     mocks: { kind: "mocks", label: "mock", prefixes: ["mocks/"] },
     "mock-rest": { kind: "mocks", label: "mock", prefixes: ["mocks/"] },
     sockets: { kind: "sockets", label: "socket", prefixes: ["sockets/"] },
-    webhooks: { kind: "webhooks", label: "webhook", prefixes: ["webhooks/"] },
     environments: { kind: "environments", label: "environment", prefixes: ["environments/"] },
     healthbar: { kind: "healthbar", label: "health check", prefixes: ["healthbar/"] },
 };
@@ -290,7 +289,6 @@ export const PLURAL_KIND_BY_TREE_KIND: Record<string, string> = {
     mock: "mocks",
     request: "requests",
     ws: "sockets",
-    webhook: "webhooks",
     rule: "rules",
     graphqlRequest: "graphqlRequests",
     soapRequest: "soapRequests",
@@ -320,7 +318,6 @@ export const FOLDER_KEY_BY_KIND: Record<string, string | null> = {
     mocks: "mockFolders",
     rules: "ruleFolders",
     sockets: "wsFolders",
-    webhooks: "webhookFolders",
     graphqlRequests: "graphqlRequestFolders",
     soapRequests: "soapRequestFolders",
     grpcRequests: "grpcRequestFolders",
@@ -336,7 +333,7 @@ export const FOLDER_KEY_BY_KIND: Record<string, string | null> = {
  * order only affects cost, never the answer, because entity ids are unique.
  */
 export const ALL_ENTITY_KINDS_IN_UI: readonly string[] = [
-    "requests", "mocks", "rules", "sockets", "webhooks",
+    "requests", "mocks", "rules", "sockets",
     "graphqlRequests", "soapRequests", "grpcRequests",
     "mappings", "environments",
 ];

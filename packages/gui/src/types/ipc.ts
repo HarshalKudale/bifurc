@@ -11,7 +11,6 @@ import type {
   SavedProtoFile,
   SavedRequest,
   SavedSoapRequest,
-  SavedWebhook,
   SavedWsConnection,
   SavedWsdl
 } from "./entities";
@@ -375,20 +374,12 @@ export interface LogChunk {
   done: boolean;
 }
 
-export interface WebhookPayload {
-  webhookId: string;
-  urlSuffix: string;
-  ts: number;
-  method: string;
-  headers: Record<string, string>;
-  body: string;
-}
 
 // -- Import/Export types (mirrored from packages/engine/src/importexport/types.ts) --------
 
 export type ImportExportEntityKind =
   | "workspace" | "requests" | "mocks" | "environments"
-  | "mappings" | "proxyRules" | "websockets" | "webhooks";
+  | "mappings" | "proxyRules" | "websockets";
 
 export type CollisionStrategy = "keep" | "override" | "new";
 

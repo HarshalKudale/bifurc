@@ -100,32 +100,6 @@ export const entitiesStrings = {
   
     // Editor sections,
 
-  webhooks: {
-      title: "Webhooks",
-      newWebhook: "New Webhook",
-      webhook: "Webhook",
-      namePlaceholder: "Webhook name (optional)",
-      searchPlaceholder: "Search webhooks…",
-      newTab: "New webhook",
-      drafts: "Drafts",
-      received: "Received",
-      emptyBody: "(empty body)",
-      empty: "(empty)",
-      waitingForPost: "Waiting for POST requests…",
-      activateToReceive: "Activate this webhook to receive payloads.",
-      selectPayload: "Select a payload to view its body",
-      openToReceive: "Open a webhook to start receiving POST requests",
-      // The footer's only write button: a draft webhook has no id yet. Existing ones autosave.
-      createWebhook: "Create Webhook",
-      statusActive: "Active",
-      statusAtLimit: "At limit",
-      statusInactive: "Inactive",
-      maxActive: "Max {n} webhooks active — close another tab to activate this one.",
-      stopServer: "Stop webhook server",
-      startServer: "Start webhook server",
-      serverLabel: "Webhook server",
-      serverStopped: "Webhook server stopped",
-    },
   
     // Health bar panel,
 

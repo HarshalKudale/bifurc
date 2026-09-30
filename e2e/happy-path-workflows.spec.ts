@@ -117,9 +117,6 @@ async function cleanupCreatedEntities(page: Page, names: Record<string, string>)
             await window.api.deleteWsConnection(conn.id);
         }
 
-        for (const hook of (cfg.webhooks ?? []).filter((w) => w.name === created.webhook || w.name === created.webhookUpdated)) {
-            await window.api.deleteWebhook(hook.id);
-        }
 
         for (const req of (cfg.requests ?? []).filter((r) => r.name === created.restRequest || r.name === created.restRequestUpdated)) {
             await window.api.deleteRequest(req.id);
@@ -162,8 +159,6 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
         environmentUpdated: uniqueName("Environment Updated"),
         socket: uniqueName("Socket"),
         socketUpdated: uniqueName("Socket Updated"),
-        webhook: uniqueName("Webhook"),
-        webhookUpdated: uniqueName("Webhook Updated"),
         restRequest: uniqueName("REST Request"),
         restRequestUpdated: uniqueName("REST Request Updated"),
         graphqlRequest: uniqueName("GraphQL Request"),
@@ -298,19 +293,6 @@ test("visits all screens and runs core happy-path CRUD workflows", async ({ page
             await window.api.updateWsConnection({ ...conn, name: updatedName });
         }, { name: created.socket, updatedName: created.socketUpdated });
 
-        // Webhooks CRUD
-        await clickSidebar(page, "Webhooks");
-        await clickNewTab(page, "New webhook", /^New Webhook$/i);
-        await page.getByPlaceholder("Webhook name (optional)").last().fill(created.webhook);
-        await page.getByPlaceholder("your-webhook-path").last().fill(`e2e-${Date.now().toString(36)}`);
-        await clickCreate(page, /Create Webhook/i);
-        await expect(page.locator("body")).toContainText(created.webhook);
-        await page.evaluate(async ({ name, updatedName }) => {
-            const cfg = await window.api.getConfig();
-            const hook = (cfg.webhooks ?? []).find((item) => item.name === name);
-            if (!hook) throw new Error(`Webhook not found: ${name}`);
-            await window.api.updateWebhook({ ...hook, name: updatedName });
-        }, { name: created.webhook, updatedName: created.webhookUpdated });
 
         // Workspace
         await clickTitlebarButton(page, /^Workspace$/i);

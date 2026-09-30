@@ -684,12 +684,12 @@ const ORDERED = [
 ];
 
 describe("format coverage through the blob layer", () => {
-    it("sweeps all 17 registered formats", () => {
+    it("sweeps all 16 registered formats", () => {
         // workspace 2 + requests 5 + mocks 3 + environments 3 + mappings 1 + proxyRules 1 +
         // websockets 1 + webhooks 1. Pinned so a format that silently loses its implementation, or
         // a new one that is never exercised below, is a visible failure rather than a quiet gap.
-        expect(REACHABLE).toHaveLength(17);
-        expect(ORDERED).toHaveLength(17);
+        expect(REACHABLE).toHaveLength(16);
+        expect(ORDERED).toHaveLength(16);
     });
 
     for (const { kind, format } of ORDERED) {
@@ -850,7 +850,7 @@ describe("the protocol schema gates every payload", () => {
     it("serves export.formats as pure data", () => {
         const registry = newRegistry();
         const formats = registry.invoke("export.formats", {}, ctx) as Record<string, { id: string }[]>;
-        expect(Object.keys(formats)).toHaveLength(8);
+        expect(Object.keys(formats)).toHaveLength(7);
         expect(formats.mocks.map((f) => f.id)).toContain("mocks-json");
     });
 });

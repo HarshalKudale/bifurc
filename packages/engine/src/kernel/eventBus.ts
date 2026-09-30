@@ -18,7 +18,6 @@
  */
 import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./telemetry";
-import type { WebhookPayload } from "../webhooks/webhookServer";
 // `import type`, so the "zero **value** imports from the rest of the engine" property above is untouched —
 // and `@bifurc/protocol` is a separate package rather than an engine-internal module in any case.
 import type { RunnerFinishedEvent, RunnerProgressEvent, WsMessageEvent, WsStatusEvent } from "@bifurc/protocol";
@@ -40,7 +39,6 @@ export interface EngineEvents {
   "server.error": string;
   /** Replaces `companion:refresh` — carries what changed instead of "something changed, re-fetch". */
   "entity.changed": { wsId: string; kind: string; id?: string; action: "created" | "updated" | "deleted" };
-  "webhook.payload": WebhookPayload;
   "process.output": { appId: string; stream: "stdout" | "stderr" | "system"; data: string; ts: number };
   "process.statusChange": { appId: string; status: string; [key: string]: unknown };
   /** Was a direct `updateTrayMenu()` call from `coreHandlers.ts` (an engine->shell import cycle).
@@ -91,7 +89,6 @@ export const ENGINE_EVENT_NAMES: readonly (keyof EngineEvents)[] = [
   "log.chunk",
   "server.error",
   "entity.changed",
-  "webhook.payload",
   "process.output",
   "process.statusChange",
   "settings.changed",

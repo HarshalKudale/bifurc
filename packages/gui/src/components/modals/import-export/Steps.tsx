@@ -12,7 +12,6 @@ export const KIND_LABELS: Record<ImportExportEntityKind, string> = {
   mappings: strings.importExport.kindMappings,
   proxyRules: strings.importExport.kindProxyRules,
   websockets: strings.importExport.kindWebsockets,
-  webhooks: strings.importExport.kindWebhooks,
 };
 
 export const KIND_DESC: Record<ImportExportEntityKind, string> = {
@@ -23,12 +22,11 @@ export const KIND_DESC: Record<ImportExportEntityKind, string> = {
   mappings: strings.importExport.descMappings,
   proxyRules: strings.importExport.descProxyRules,
   websockets: strings.importExport.descWebsockets,
-  webhooks: strings.importExport.descWebhooks,
 };
 
 export const ALL_KINDS: ImportExportEntityKind[] = [
   "workspace", "requests", "mocks", "environments",
-  "mappings", "proxyRules", "websockets", "webhooks",
+  "mappings", "proxyRules", "websockets",
 ];
 
 const COLLISION_LABELS: Record<CollisionStrategy, string> = {

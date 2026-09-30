@@ -34,8 +34,7 @@ export type EntityKind =
   | "environments"
   | "mappings"
   | "proxyRules"
-  | "websockets"
-  | "webhooks";
+  | "websockets";
 
 export type CollisionStrategy = "keep" | "override" | "new";
 

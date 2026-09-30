@@ -11,7 +11,6 @@ import {
     ClipboardList,
     Layers,
     Activity,
-    Webhook,
     Network,
     FileCode,
     Braces,
@@ -41,7 +40,6 @@ export type Panel =
     | "audit"
     | "workspace"
     | "healthbar"
-    | "webhooks"
     | "applications";
 
 // -- Panel entry definition --------------------------------------------------
@@ -144,15 +142,6 @@ export const PANEL_REGISTRY: PanelEntry[] = [
         sectionType: "flat",
         enabled: true,
         helpText: strings.sockets.helpText,
-    },
-    {
-        id: "webhooks",
-        label: strings.panels.sectionWebhooks,
-        icon: <Webhook size={20} />,
-        section: strings.panels.sectionRealtime,
-        sectionType: "flat",
-        enabled: true,
-        helpText: strings.panels.webhooksHelp,
     },
 
     // --- Workspace (flat) ---------------------------------------------------------

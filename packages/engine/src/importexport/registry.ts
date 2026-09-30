@@ -162,8 +162,6 @@ import * as proxyJsonImp      from "./importers/proxyrules-json";
 import * as wsJsonExp         from "./exporters/websockets-json";
 import * as wsJsonImp         from "./importers/websockets-json";
 
-import * as hooksJsonExp      from "./exporters/webhooks-json";
-import * as hooksJsonImp      from "./importers/webhooks-json";
 
 // Workspace
 registerFormat("workspace", { definition: { id: "workspace-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: workspaceJsonExp, importer: workspaceJsonImp });
@@ -197,4 +195,3 @@ registerFormat("proxyRules", { definition: { id: "proxyrules-json", label: "Bifu
 registerFormat("websockets", { definition: { id: "websockets-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: wsJsonExp, importer: wsJsonImp });
 
 // Webhooks
-registerFormat("webhooks", { definition: { id: "webhooks-json", label: "Bifurc JSON", extensions: ["json"], supportsExport: true, supportsImport: true }, exporter: hooksJsonExp, importer: hooksJsonImp });
