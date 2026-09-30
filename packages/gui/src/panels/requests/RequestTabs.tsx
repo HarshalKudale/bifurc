@@ -14,7 +14,7 @@ interface Props {
   setActiveTab: (id: string) => void;
   closeTab: (id: string) => void;
   openNewTabInFolder: () => void;
-  reorderTabs: (oldI: number, newI: number) => void;
+  reorderTabs: (fromId: string, toId: string, edge?: "left" | "right") => void;
   closeOtherTabs: (id: string) => void;
   closeAllTabs: () => void;
   handleDuplicateImpl: (id: string) => void;

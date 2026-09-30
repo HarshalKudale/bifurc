@@ -4,7 +4,8 @@ import { clearDraft, getDraftIds, loadDraft } from "@/hooks/useDraftPersist";
 import type { SavedRequest, MockRule } from "@/types";
 
 export interface PersistableTabHandle {
-  refresh?: (entity: unknown) => void;
+  // Method syntax on purpose: each editor's handle takes its own entity type, and methods are bivariant.
+  refresh?(entity: unknown): void;
   save?: () => void;
   /** Optional rename support (used by double-click tab rename). */
   rename?: (name: string) => void;

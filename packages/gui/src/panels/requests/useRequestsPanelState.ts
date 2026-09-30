@@ -34,7 +34,6 @@ export function useRequestsPanelState({
   const multiplex = useMultiplexedEntities({
     mode: "request",
     config,
-    loadedEntities: {}, 
     reload: reloadRequests,
   });
 

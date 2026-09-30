@@ -176,7 +176,7 @@ export default function MocksPanel({
                 tabId={tabId}
                 activeTab={activeTab}
                 isUnsaved={isUnsaved}
-                currentProto={currentProto}
+                currentProto={currentProto ?? null}
                 initialData={initialData}
                 itemMeta={itemMeta}
                 relPath={relPath}
