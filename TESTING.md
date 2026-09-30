@@ -667,26 +667,120 @@ renderer's only caller, and `scriptRunner.ts` / `testRunner.ts` are not in §1's
 that these counts were predictions and wrong more often than right; re-measuring is the point, and the
 number is a reading, not a target.** The measured split is WI 2 → 2, WI 3 → 4, WI 4 → 1, WI 5 → 2.
 
+**The list is now `{}` — empty — and `plan/19` §9's acceptance criterion is met.** Every step is recorded in
+the suite itself: 9 → 8 when WI 3's REST slice stopped `useRestActions.ts` orchestrating; 8 → 4 when WI 4
+deleted the run loop and everything that hung off it; 4 → 3 when WI 5 deleted `lib/curlParser.ts`; 3 → 2 when
+WI 5 item 3 deleted the `lib/utils.ts` path helpers; **2 → 0 in WI 6**, which deleted `lib/resolveVars.ts` and
+the `lib/randomizer.ts` generator. **The staleness assertion forced all nine retirements** — with the construct
+gone the entry could not be kept, which is what makes the shrink checkable rather than remembered.
+
+**⚠ The last two were `plan/19` §6's mis-attribution to WI 3, and the correction is recorded because a reader
+looking for remaining debt would otherwise think they had been forgotten.** The resolver and the randomizer
+outlive the four protocol tabs: `useWebSocket.ts` resolved a url and its headers, and `HealthBarPanel.tsx`
+resolved a service url. WI 5's item 4 moved the second and left the first, and the entries are keyed on the
+resolver's **definition** — so they could only retire when the last *user* stopped, which is WI 6.
+
+**⚠ `lib/randomizer.ts` survives with its catalogue, and that is not a missed deletion.** The construct is the
+*generator*; `RANDOMIZER_TOKENS` stays for `RandomizerHint`'s autocomplete under D28's list-vs-resolver split,
+pinned by `tests/gui/randomizerCatalogue.test.ts`. Same shape as WI 4's `lib/runnerReport.ts`, which kept its
+two storage wrappers — the `file#construct` keying doing its job: the file stayed, the construct the ratchet
+tracked did not.
+
+**⚠ And with no entries left, the authority assertion covers all eight constructs for the first time.** No row
+is `planned:` any more, so `each landed authority is where the table says it is` is now a real check on every
+construct rather than on five of them — which is also what stops the last two retirements from being "fixed" by
+repointing the table at nothing.
+
 **Teeth verified by mutation, three ways:** planting a new `packages/gui/src/lib/*.ts` exporting
 `resolveVars` fails assertion 2 with that exact file; renaming `generateRandom` in the engine's randomizer
 fails assertion 5; renaming the renderer's `generateHtmlReport` so the construct disappears fails the
 staleness assertion with `lib/runnerReport.ts#reportRenderer`.
 
+**⚠ A construct's `detect` pattern may be *narrowed*, and WI 5 narrowed one — the only edit to this suite that
+loosens it.** `curlParser` used to match the header *list* (`SKIP_CURL_HEADERS`) as well as the parser. It
+matches the parser only now, because the renderer legitimately keeps a **pinned copy** of that list for a
+read-side job the engine cannot do for it: filtering a *stored* mock's `capturedHeaders` when that mock is
+loaded into a tab. That is `plan/19` D28's **list vs logic** split applied a second time, and the same
+consequence follows — the copy is permitted only alongside a pin, `tests/gui/curlHeaderSkip.test.ts`, which
+asserts set equality **and** that the list is load-bearing (the engine's `parseCurlCommand` drops exactly
+these headers; the raw `parseCurl` does not). **A narrowing with no pin beside it would be indistinguishable
+from deleting a construct to silence a violation**, which is why the two changes ship in one commit.
+
 **What it does not catch, and the gap is recorded rather than papered over:** detection is by **name**, so
 a copy re-implemented under a different name passes. The stronger form is a per-construct **content
-fingerprint** (the `{{key}}` substitution regex, the `env.variables.find` lookup), and it cannot be adopted
-yet — `savedEntitySend.ts` legitimately contains the token fingerprint until WI 3 shrinks the gate to
-`!isDraft && !hasLocalChanges`, so the fingerprint list would open with a false positive that has to be
-allowlisted itself. Add it in the WI that deletes the last renderer copy of each construct. As with §3.6,
-the structurally complete answer is §5.2's ESLint rule, which this repo cannot have.
+fingerprint** (the `{{key}}` substitution regex, the `env.variables.find` lookup), and **its precondition is
+now met — the renderer holds zero copies of every construct, so a fingerprint list would open with no false
+positive to allowlist — and it is still deliberately not added here.** It is a second scan category with its
+own unmeasured false-positive surface (a fingerprint for `resolver` is `/\{\{(\w+)\}\}/`, which the editor's own
+hint components legitimately touch), and the phase's goal is reached without it. Recorded as the next
+strengthening rather than smuggled in with the retirement that enabled it. As with §3.6, the structurally
+complete answer is §5.2's ESLint rule, which this repo cannot have.
 
-**WI 2's engine half has already moved one authority.** `resolveVars` and `resolveHeaders` now live in
-`packages/engine/src/utils/resolve.ts` — extracted **down** per §5.1 — and `mocks/mockHandler.ts` imports
-them instead of carrying the engine's private copy. The cases that pinned `resolveVars` moved with the
-function, to `tests/proxy/resolve.test.ts`, so `tests/proxy/mockHandler.test.ts` no longer tests a module
-it does not own. `mergeEnvVars` is deliberately **not** in the new module: it moves with the *call*
-(WI 3), because a merge with no engine-side caller would be a second implementation of the thing
-`App.tsx:288` still owns. `plan/19` §11 records the reasoning.
+**The engine's authorities, as of WI 6.** `resolveVars`, `resolveHeaders` **and `mergeEnvVars`** live in
+`packages/engine/src/utils/resolve.ts` — extracted **down** per §5.1 — and `mocks/mockHandler.ts` imports them
+instead of carrying the engine's private copy. The cases that pinned `resolveVars` moved with the function, to
+`tests/proxy/resolve.test.ts`, so `tests/proxy/mockHandler.test.ts` no longer tests a module it does not own.
+**`mergeEnvVars` landed with the *call* rather than with the function**, which is `plan/19` §8 trap 2: the
+merge decides *which* environment we resolve against, so a copy beside the resolver while `App.tsx:288`'s
+stayed authoritative would have been trap 1's duplication introduced rather than removed. It arrived in WI 3
+(`workspace/envState.ts` reads it) and the renderer's copy left in WI 6, when `App.tsx`'s merge was replaced by
+`env.getMerged` — the read that exists because `EnvVarHint` needs the merged *list* for autocomplete, which is
+D28's list-vs-logic split rather than a second resolver. `plan/19` §11 records the reasoning.
+
+### 3.8 The protocol-module ratchet — `tests/gui/protocolModule.test.ts`
+
+The **third** boundary ratchet (after §3.6's engine layering and §3.7's renderer boundary), added by
+`plan/19` WI 7, and the enforcement half of `Protocol_Module_Contract.md`.
+
+**It asks the complementary question to §3.7.** That suite asks *"is engine logic implemented in the
+renderer?"* and answers by **name**, for the constructs `plan/19` §1 enumerated. This one asks ***"does a tab
+speak the wire itself?"*** and answers by **construction site** — `new WebSocket`, `new EventSource`,
+`http.request` / `https.request`, `net.connect` / `createConnection`, `dgram.createSocket`, `new
+XMLHttpRequest`, and a bare `fetch(`. A tab may call `window.api`; it may not open its own connection.
+
+**Five assertions**, the §3.7 set minus the authority check (there is no engine symbol to point at — the
+authority is *absence*) plus a control §3.7 does not need: the tree is real and non-empty; no construction is
+present outside the allowlist; the allowlist has no stale entries; every entry names the work item that
+deletes it; **and every `detect` pattern still matches a real construction, and still refuses a near miss.**
+
+**⚠ It is a separate file rather than a seventh construct in §3.7, and that is a decision.** The two hold
+different categories — engine *logic* vs engine *I/O* — and their entries retire on different schedules: §3.7's
+allowlist empties when the last renderer resolver goes, this one when the last tab stops opening its own
+connection. Merged, one list would have two retirement schedules and the staleness assertion would stop being
+readable, because an entry's owner would no longer be a single work item.
+
+**The allowlist reached `{}` in `plan/19` WI 6, which is the goal it opened with.** It opened at one entry,
+`hooks/useWebSocket.ts#websocket`; that entry retired with the hook's rewrite, because the socket is now the
+engine's (`packages/engine/src/websocket/`) and the tab reaches it through `window.api` like every other
+client. The reserved directory was filled with the content that existed in the wrong process rather than with
+invented content — `Engine_Module_Plan.md` §9's "do not give `websocket/` invented content" was honoured, not
+overridden.
+
+**⚠ Emptying the allowlist removed the vacuity guard the file's own docblock advertised, and the replacement
+had to be designed rather than assumed.** While there was one entry, the staleness assertion did double duty:
+it passed only if the scan found that live violation, so a `detect` pattern that silently matched nothing — the
+failure mode a regex-based ratchet is most prone to — failed the run instead of passing quietly. **With `{}`
+there is no entry whose liveness depends on a hit**, so every assertion above could have gone green while the
+scanner measured nothing. Hence the fifth assertion: each pattern is run against a sample that must match
+**and one that must not**, with the control table checked in both directions against the construct table (so
+adding a construct without a control fails too). The negatives are **near misses** — `WebSocketServer` for
+`WebSocket`, an unqualified `createSocket`, `https.get` for `https.request`, `myFetch` for `fetch` — because a
+control that only tried `"not a socket"` would pass for any regex at all.
+
+**⚠ And a factual error in this suite's docblock, found by the change that emptied it and corrected.**
+It claimed *"a comment mentioning `new WebSocket` in a design note is not a violation"*. The scan reads the file
+as **text**, so a comment that quotes a construction **is** one — and it bit immediately: WI 6's new
+`useWebSocket.ts` docblock described what it used to do by writing the constructor out, and the suite failed on
+its own explanation. The docblock was reworded rather than the scanner loosened, because **a false positive is
+safe and a false negative is not**: a scan that errs toward flagging prose is better than one that strips
+comments and can therefore hide a real construction on the same line as a `//` inside a string literal. The
+`strings.sockets.createSocket` half of the claim *was* accurate — the pattern needs the `dgram.` qualifier —
+which is why the claim read as verified when half of it was not.
+
+**What it does not catch:** a transport reached through an alias, or a socket dependency added to
+`packages/gui/package.json`. The contract's §6 records the dependency assertion as the cheap strengthening to
+add with the first module that needs one. As with §3.6 and §3.7, the structurally complete answer is an ESLint
+rule, which this repo cannot have.
 
 ---
 

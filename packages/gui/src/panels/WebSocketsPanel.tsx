@@ -9,13 +9,12 @@ import BodyEditor from "@/components/common/BodyEditor";
 import CodeEditor from "@/components/common/CodeEditor";
 import EnvVarHint from "@/components/editor/EnvVarHint";
 import RandomizerHint from "@/components/editor/RandomizerHint";
-import { resolveVars } from "@/lib/resolveVars";
 import {
-  KVRow, mkRowId, headersToRows, rowsToHeaders, tryFormat, entityRelPath,
+  KVRow, mkRowId, headersToRows, rowsToHeaders, tryFormat,
 } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useDraftPersist, loadDraft, clearDraft, getDraftIds } from "@/hooks/useDraftPersist";
-import { useWebSocket, MAX_WS_CONNECTIONS, WsMessage } from "@/hooks/useWebSocket";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { Plus, X, Folder, Zap, Play, Send, Radio } from "@/lib/icons";
 import { strings } from "@/lib/strings";
@@ -94,19 +93,38 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
     entities: connections,
   });
 
-  useTabKeyBindings({ activeTab, tabRefs, closeTab, openNewTab });
+  /**
+   * **Closing a socket tab is a user gesture, so it disconnects — and that is not D29 being violated.**
+   *
+   * D29 forbids inferring a close from a client going away: a closed window, a reload, a panel switch must all
+   * leave the engine's socket alone (`plan/19` WI 6). An *unmount* cannot tell those apart from "the user
+   * closed this tab", which is exactly why `useWebSocket` has no disconnect-on-unmount and why the close lives
+   * here instead — on the handler the TabBar, the title bar's ✕ and Ctrl+W all end up calling.
+   *
+   * Without this the socket would be unreachable: the tab is the only place it is rendered, so a socket that
+   * outlived its tab would be a connection counting against the limit with nothing to disconnect it.
+   */
+  const closeSocketTab = useCallback((id: string) => {
+    void window.api.wsDisconnect(config.activeWorkspaceId, id);
+    closeTab(id);
+  }, [config.activeWorkspaceId, closeTab]);
+
+  useTabKeyBindings({ activeTab, tabRefs, closeTab: closeSocketTab, openNewTab });
 
   const reloadConnections = useCallback(async () => {
     const fresh = await window.api.getConfig();
     await onConfigChange(fresh);
   }, [onConfigChange]);
 
+  /** The engine's `sockets/<id>.json` (`plan/19` WI 5 item 3) — see `useEntityPaths`. */
+  const { relPathOf } = useEntityPaths();
+
   const getEntityFilePath = useCallback((tabId: string): string => {
     if (isDraft(tabId)) return "";
     const c = connections.find((x) => x.id === tabId);
     if (!c) return "";
-    return entityRelPath("sockets", c, folders);
-  }, [connections, folders]);
+    return relPathOf(c.id);
+  }, [connections, relPathOf]);
 
   useEffect(() => {
     if (!historyOpen || !activeTab) return;
@@ -214,17 +232,17 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
         tabs={tabItems}
         activeTab={activeTab}
         onTabClick={setActiveTab}
-        onTabClose={closeTab}
+        onTabClose={closeSocketTab}
         onNewTab={openNewTab}
         onReorderTabs={handleReorderTabs}
         newTabTitle={strings.sockets.newTab}
         closeTabTitle={strings.common.close}
         onCloseOthers={useCallback((id: string) => {
-          openTabs.filter((t) => t !== id).forEach(closeTab);
-        }, [openTabs, closeTab])}
+          openTabs.filter((t) => t !== id).forEach(closeSocketTab);
+        }, [openTabs, closeSocketTab])}
         onCloseAll={useCallback(() => {
-          [...openTabs].forEach(closeTab);
-        }, [openTabs, closeTab])}
+          [...openTabs].forEach(closeSocketTab);
+        }, [openTabs, closeSocketTab])}
       />
 
       <div className="flex-1 overflow-hidden relative">
@@ -241,7 +259,7 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
             const isUnsaved = isDraft(tabId);
             const conn = isUnsaved ? null : (loadedEntities[tabId] ?? connections.find((c) => c.id === tabId) ?? null);
             if (!isUnsaved && !conn) return null;
-            const relPath = conn ? entityRelPath("sockets", conn, folders) : "";
+            const relPath = conn ? relPathOf(conn.id) : "";
             const syncStatus = relPath ? entitySyncStatus?.[relPath] : undefined;
             return (
               <div key={tabId} className="absolute inset-0 flex flex-col overflow-hidden" style={{ display: activeTab === tabId ? "flex" : "none" }}>
@@ -249,10 +267,11 @@ export default function WebSocketsPanel({ config, onConfigChange, activeEnv = nu
                   ref={(el) => { tabRefs.current[tabId] = el; }}
                   key={tabId}
                   tabId={tabId}
+                  workspaceId={config.activeWorkspaceId}
                   initial={conn}
                   isNew={isUnsaved}
                   onSave={isUnsaved ? (data) => handleNewSave(tabId, data) : (data) => handleTabSave(tabId, data)}
-                  onClose={() => closeTab(tabId)}
+                  onClose={() => closeSocketTab(tabId)}
                   folders={folders}
                   activeEnv={activeEnv}
                   onDirtyChange={(dirty) => setDirtyTabs((prev) => ({ ...prev, [tabId]: dirty }))}

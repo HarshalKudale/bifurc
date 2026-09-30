@@ -16,7 +16,7 @@ rows 3 and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact; row 
 > is the third row whose count was an under-count, and the largest miss of the eight. `startup.ts` +
 > `shutdown.ts` → `lifecycle/`; `fileOps/` → `fileops/`; `importExport/` (39 files) → `importexport/`;
 > `miscCommands.ts` → `rest/commands.ts` + `mocks/commands.ts` + `workspace/healthbarCommands.ts`;
-> `proxy/serverReplay.ts` → `utils/replay.ts`. New: `websocket/index.ts` (the §9 reserved placeholder).
+> `proxy/serverReplay.ts` → `utils/replay.ts`. New: `websocket/index.ts` (the §9 reserved placeholder — **filled by `plan/19` WI 6 on 2026-09-30**, and it stayed reserved for exactly as long as the rule said it should).
 > **Two extractions were forced by the layering rule, not chosen:** §4.5 assigns `healthbar.*` to
 > `workspace/` and `request.replay` to `rest/`, and neither may import the module holding its dependency
 > (`gitops/statusTracker`, `proxy/serverReplay`) — so §5.1's "extract down" remedy produced
@@ -164,7 +164,7 @@ supported by the measurements. Two adjustments are needed, and both are conseque
 |---|---|
 | `reverseproxy` / `proxy` split | ✅ **Correct and already half-done.** `plan/15` WI 3 physically split the two halves; `edge.ts`'s own header records it. The directories never followed. |
 | `rest`, `graphql`, `grpc`, `soap` | ✅ **Correct — and this is the biggest win.** Each should own its *commands + kinds + behaviour* as one vertical. |
-| `websocket` | ⚠️ **Correct as a placeholder, empty as a module.** `wsConnections` is a registered kind with no behaviour, and `edge.ts`'s `upgrade` branch is reserved and deliberately has no body. Do not invent content for it. |
+| `websocket` | ✅ **Correct, and now real — `plan/19` WI 6 (2026-09-30).** It was a placeholder for a year of phases and the placeholder was right: there was no WebSocket server to extract. What WI 6 moved in is a **client** — `wsRegistry.ts` (the live-socket registry, D29 lifetime, its own concurrency policy) and `wsCommands.ts` — which is content that existed in the *renderer* rather than invented content. **`edge.ts`'s `upgrade` branch is still reserved and still deliberately bodiless**, and the two are different features: an outbound client and an inbound upgrade. |
 | `environments` | ✅ Correct, small. `environments` kind + `env.setActive`. |
 | `gitops` | ✅ Correct. `sync/` (11 files) + `store/gitStore.ts` are one concern split across two directories. |
 | `fileops`, `importexport`, `utils` | ✅ Already exist as `fileOps/`, `importExport/`, `lib/`. Rename/normalise only. |
@@ -215,7 +215,8 @@ packages/engine/src/
 │                               + commands.ts (script.execute, from miscCommands — phase 7)
 ├── certificates/             ← proxy/{certManager,certCommands,tlsCert}.ts   (shared: proxy + fileops)
 ├── webhooks/                 ← proxy/{webhookServer,webhookCommands}.ts
-├── websocket/                reserved — the `wsConnections` kind; no behaviour yet (created phase 7)
+├── websocket/                the live-socket registry — `wsRegistry.ts` + `wsCommands.ts` (`plan/19` WI 6).
+│                             The `wsConnections` *kind* is still data-only and registers through the shared CRUD table.
 ├── rest/                     commands.ts — request.replay. The `requests` kind itself registers through
 │                               the shared CRUD table (workspace/entities/kinds/crudKinds.ts), per §4.4
 ├── graphql/                  graphqlCommands.ts + graphqlKinds.ts, merged
@@ -494,7 +495,7 @@ assert the **positive** direction:
 | `graphql/` `grpc/` `soap/` | commands + kinds for that protocol | `kernel/`, `utils/`, `workspace/` | `register*Commands`, `register*Kinds` |
 | `rest/` | the `requests` **feature** — its behaviour (replay); the kind itself registers through the shared `workspace/entities/kinds/crudKinds.ts` table (§4.4) | `kernel/`, `utils/`, `workspace/` | `registerRestCommands` |
 | `gitops/` | git ops, publish, status, auto-sync, sync commands *(the **handle** is `workspace/gitStore.ts`)* | `kernel/`, `utils/`, `workspace/`, `runtime/instances` | `syncManager`, `registerSyncCommands` |
-| `websocket/` | **nothing yet — reserved (§9)**. The `wsConnections` kind registers through the shared CRUD table; `edge.ts`'s `upgrade` branch is deliberately bodiless | `kernel/`, `utils/`, `workspace/` | *(none — placeholder)* |
+| `websocket/` | **`plan/19` WI 6** — the live-socket registry (`wsRegistry.ts`) and the six `ws.*` commands (`wsCommands.ts`). The `wsConnections` *kind* still registers through the shared CRUD table; `edge.ts`'s `upgrade` branch is still deliberately bodiless | `kernel/`, `utils/`, `workspace/` | `utils/resolve` (resolution, D23), `workspace/envState` (`loadMergedEnvironment`) |
 | `fileops/` | **two egress channels** — `audit.export`, `capture.shareJson`. Was an aggregator holding six; the `tls.*` trio went to `certificates/` and `runner.exportReport` to `runner/` in the layout cleanup | `kernel/`, `utils/`, `workspace/` | `registerFileOpsCommands` |
 | `importexport/` | the format registry, the importers and exporters | `kernel/`, `utils/`, `workspace/` | `registerImportExportCommands` |
 | `applications/` | the managed-process spawner | `kernel/`, `utils/`, `workspace/` | `registerApplicationCommands` |
@@ -630,8 +631,12 @@ better than it is today. Phases 4–6 are the ones that carry real churn and can
   the worst possible outcome of a "cleanup".
 - **Do not move `transport/` or `runtime/` in this pass.** They are already coherent, and `transport/` is
   4,636 lines with its own auth model.
-- **Do not give `websocket/` invented content.** The `upgrade` branch in `edge.ts` is reserved and
-  deliberately has no body — a branch returning "not built yet" is a routing decision nobody made.
+- **Do not give `websocket/` invented content — and `plan/19` WI 6 did not.** The rule was honoured rather
+  than overridden: the module was filled with the content that existed in the wrong process (the renderer's
+  socket client), not with behaviour nobody needed. **The `upgrade` branch in `edge.ts` is still reserved and
+  still deliberately bodiless** — a branch returning "not built yet" is a routing decision nobody made, and
+  an outbound `ws` client is not that decision. The distinction is worth keeping because "the module is no
+  longer empty" is not the same claim as "the reserved branch is now implemented".
 - **Do not expect `rest/` to be a big move.** REST today is one CRUD kind, one `request.replay` command, and
   whatever `runner/` shares. The module is mostly a *home* for future work, and pretending otherwise inflates
   the estimate.

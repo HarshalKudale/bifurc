@@ -53,10 +53,25 @@ export interface WorkspaceGitState {
   behind: boolean;
 }
 
-/** What a status refresh returns: both axes, read at the same instant. */
+/** What a status refresh returns: both axes, read at the same instant, plus the engine's path maps. */
 export interface EntityStatusPayload {
   files: Record<string, EntitySyncStatus>;
   git: WorkspaceGitState;
+  /**
+   * `entity id → relPath` and `folder id → directory prefix`, computed by the engine (`plan/19` WI 5,
+   * item 3). The renderer used to derive these itself from `(kind, entity, folders)` — three helpers in
+   * `lib/utils.ts` that were a hand-mirror of `workspaceFs.ts` — and they are engine work: a path is a
+   * property of the storage *layout*, not of the screen.
+   *
+   * **They ride this read-only result rather than the config**, because `config.save` writes its payload
+   * straight through: a computed field on an entity would be persisted to disk. See
+   * `packages/engine/src/workspace/entityPaths.ts`, which also records the two limits (active-workspace
+   * only, and refreshed on config changes rather than on the status event).
+   *
+   * Optional so a client newer than the engine still typechecks: an engine that predates the field sends
+   * nothing, and `undefined` means "unknown" rather than "no paths".
+   */
+  paths?: { entities: Record<string, string>; folders: Record<string, string> };
 }
 
 export interface SyncState {

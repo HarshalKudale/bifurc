@@ -1,234 +1,257 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import type { WsMessage, WsMessageEvent, WsStatusEvent, WsStatusResult } from "@/types";
 
-// ── useWebSocket module pure-logic tests ──────────────────────────────────────
-//
-// The hook itself requires a DOM + React environment which vitest/node doesn't
-// provide, so we test the exported registry helpers directly. The WebSocket
-// connection behaviour is covered by integration-style tests below using a
-// mock WebSocket class.
+/**
+ * `useWebSocket`'s cases, rewritten for `plan/19` WI 6.
+ *
+ * ## What this file used to be, and why every case in it is gone
+ *
+ * It tested a `MockWebSocket` class and the renderer's registry helpers (`MAX_WS_CONNECTIONS`,
+ * `getActiveConnectionCount`, `canOpenNewConnection`) — because the hook *was* the client: it held the
+ * sockets, constructed them and resolved their payloads. WI 6 moved all of that to
+ * `packages/engine/src/websocket/`, so those cases did not move; they lost their subject. The engine's
+ * registry now has its own suite (`tests/websocket/wsRegistry.test.ts`), and the *transports* are the
+ * ratchets' business (`tests/gui/protocolModule.test.ts` is at `{}` because this file's subject no longer
+ * constructs one).
+ *
+ * ## What is left to test, and it is not nothing
+ *
+ * The hook is a **mirror over `window.api`**, and the two things a mirror can get wrong are the two this
+ * file is about:
+ *
+ * 1. **The hydration race.** `wsStatus` is a round trip and the events are not, so a frame can arrive
+ *    *before* the snapshot it belongs to. The naive order — subscribe, hydrate, then replace state wholesale
+ *    — silently drops it. The engine minting an `id` per message is what makes the merge exact.
+ * 2. **D29 in the UI: no disconnect on unmount.** An unmount cannot tell "the user closed this tab" from "the
+ *    window is going away", so the hook must not infer a close from either. `WebSocketsPanel` issues the
+ *    explicit `wsDisconnect` from the tab-close handler, which *is* a gesture.
+ *
+ * Both are asserted directly rather than through a rendered component, because both are properties of the
+ * hook's contract with the engine.
+ */
 
-// We need to polyfill browser globals before importing the module.
+type StatusListener = (p: WsStatusEvent) => void;
+type MessageListener = (p: WsMessageEvent) => void;
 
-class MockWebSocket {
-  static CONNECTING = 0;
-  static OPEN       = 1;
-  static CLOSING    = 2;
-  static CLOSED     = 3;
-
-  readyState: number = MockWebSocket.CONNECTING;
-  url: string;
-  onopen:    ((e: Event) => void) | null = null;
-  onclose:   ((e: CloseEvent) => void) | null = null;
-  onerror:   ((e: Event) => void) | null = null;
-  onmessage: ((e: MessageEvent) => void) | null = null;
-
-  private _sentMessages: string[] = [];
-
-  constructor(url: string) {
-    this.url = url;
-  }
-
-  send(data: string) {
-    if (this.readyState !== MockWebSocket.OPEN) throw new Error("Not open");
-    this._sentMessages.push(data);
-  }
-
-  close(code?: number, reason?: string) {
-    this.readyState = MockWebSocket.CLOSED;
-    this.onclose?.({ wasClean: true, code: code ?? 1000, reason: reason ?? "" } as CloseEvent);
-  }
-
-  /** Test helper — simulate server accepting the connection. */
-  simulateOpen() {
-    this.readyState = MockWebSocket.OPEN;
-    this.onopen?.(new Event("open"));
-  }
-
-  /** Test helper — simulate server sending a message. */
-  simulateMessage(data: string) {
-    this.onmessage?.(new MessageEvent("message", { data }));
-  }
-
-  /** Test helper — simulate a network error. */
-  simulateError() {
-    this.onerror?.(new Event("error"));
-    this.readyState = MockWebSocket.CLOSED;
-    this.onclose?.({ wasClean: false, code: 1006, reason: "Abnormal closure" } as CloseEvent);
-  }
-
-  get sentMessages(): readonly string[] { return this._sentMessages; }
-}
-
-// Polyfill WebSocket + window.dispatchEvent/addEventListener for the module.
-(globalThis as any).WebSocket    = MockWebSocket;
-(globalThis as any).window       = globalThis;
-(globalThis as any).CustomEvent  = class CustomEvent<T = unknown> extends Event { detail: T; constructor(type: string, init?: CustomEventInit<T>) { super(type); this.detail = init?.detail as T; } };
-
-if (!globalThis.addEventListener) {
-  const _listeners = new Map<string, EventListenerOrEventListenerObject[]>();
-  (globalThis as any).addEventListener = (type: string, cb: EventListenerOrEventListenerObject) => {
-    if (!_listeners.has(type)) _listeners.set(type, []);
-    _listeners.get(type)!.push(cb);
-  };
-  (globalThis as any).removeEventListener = (type: string, cb: EventListenerOrEventListenerObject) => {
-    const arr = _listeners.get(type) ?? [];
-    _listeners.set(type, arr.filter((l) => l !== cb));
-  };
-  (globalThis as any).dispatchEvent = (e: Event) => {
-    const arr = _listeners.get(e.type) ?? [];
-    for (const cb of arr) {
-      if (typeof cb === "function") cb(e);
-      else cb.handleEvent(e);
-    }
-  };
-}
-
-// ── Import after polyfilling globals ────────────────────────────────────────
-
-import {
-  MAX_WS_CONNECTIONS,
-  getActiveConnectionCount,
-  canOpenNewConnection,
-} from "@/hooks/useWebSocket";
-
-// ── Registry helper tests ────────────────────────────────────────────────────
-
-describe("packages/gui/src/lib/useWebSocket.ts — registry helpers", () => {
-  it("MAX_WS_CONNECTIONS is 5", () => {
-    expect(MAX_WS_CONNECTIONS).toBe(5);
-  });
-
-  it("getActiveConnectionCount() returns a number", () => {
-    expect(typeof getActiveConnectionCount()).toBe("number");
-  });
-
-  it("canOpenNewConnection() returns boolean", () => {
-    expect(typeof canOpenNewConnection()).toBe("boolean");
-  });
-
-  it("canOpenNewConnection() returns true when fewer than 5 connections are active", () => {
-    // In a fresh test environment no connections have been registered by hook instances.
-    // The registry may already have entries from prior tests if the module is shared,
-    // so we only assert the relationship rather than an absolute value.
-    const count = getActiveConnectionCount();
-    const can   = canOpenNewConnection();
-    if (count < MAX_WS_CONNECTIONS) {
-      expect(can).toBe(true);
-    } else {
-      expect(can).toBe(false);
-    }
-  });
-});
-
-// ── resolveVars integration (used inside useWebSocket) ───────────────────────
-
-import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
-import type { Environment } from "@/types";
-
-function makeEnv(vars: Record<string, string>): Environment {
+function snapshot(over: Partial<WsStatusResult> = {}): WsStatusResult {
   return {
-    id: "env-ws",
-    name: "WS Test Env",
-    createdAt: 0,
-    variables: Object.entries(vars).map(([key, value]) => ({ id: key, key, value })),
+    workspaceId: "ws-1",
+    socketId: "tab-1",
+    url: "wss://example.test/socket",
+    status: "connected",
+    error: null,
+    openedAt: 1,
+    messages: [],
+    ...over,
   };
 }
 
-describe("WebSocket URL + header variable resolution", () => {
-  it("resolves {{HOST}} token in a ws:// URL", () => {
-    const env = makeEnv({ HOST: "localhost:8080" });
-    expect(resolveVars("ws://{{HOST}}/chat", env)).toBe("ws://localhost:8080/chat");
+const msg = (id: string, data = "hello"): WsMessage => ({ id, ts: 1, direction: "received", data });
+
+/**
+ * A `window.api` stand-in covering the six `ws.*` commands and the two events.
+ *
+ * The listeners are real sets rather than `vi.fn()`s so a case can *emit* — which is the only way to drive
+ * the ordering the hydration case is about. `wsStatus` is left as a controllable promise by default, since
+ * "the response has not arrived yet" is the state under test.
+ */
+function installApi(over: Record<string, unknown> = {}) {
+  const statusListeners = new Set<StatusListener>();
+  const messageListeners = new Set<MessageListener>();
+
+  let resolveStatus: (v: WsStatusResult | null) => void = () => {};
+  const pendingStatus = () =>
+    new Promise<WsStatusResult | null>((resolve) => { resolveStatus = resolve; });
+
+  const api = {
+    wsStatus: vi.fn(() => pendingStatus()),
+    wsList: vi.fn(async () => ({ connections: [], max: 5 })),
+    wsConnect: vi.fn(async () => ({ ok: true })),
+    wsDisconnect: vi.fn(async () => ({ ok: true })),
+    wsSend: vi.fn(async () => ({ ok: true })),
+    wsClearMessages: vi.fn(async () => ({ ok: true })),
+    onWsStatus: vi.fn((cb: StatusListener) => {
+      statusListeners.add(cb);
+      return () => { statusListeners.delete(cb); };
+    }),
+    onWsMessage: vi.fn((cb: MessageListener) => {
+      messageListeners.add(cb);
+      return () => { messageListeners.delete(cb); };
+    }),
+    ...over,
+  };
+
+  (window as unknown as { api: unknown }).api = api;
+
+  return {
+    api,
+    settleStatus: (v: WsStatusResult | null) => { resolveStatus(v); },
+    emitStatus: (p: WsStatusEvent) => { statusListeners.forEach((cb) => cb(p)); },
+    emitMessage: (p: WsMessageEvent) => { messageListeners.forEach((cb) => cb(p)); },
+    statusListenerCount: () => statusListeners.size,
+    messageListenerCount: () => messageListeners.size,
+  };
+}
+
+let harness: ReturnType<typeof installApi>;
+
+beforeEach(() => { harness = installApi(); });
+afterEach(() => { vi.clearAllMocks(); });
+
+const opts = { workspaceId: "ws-1", tabId: "tab-1" };
+
+describe("useWebSocket — the mirror over window.api", () => {
+  it("subscribes to both events and hydrates from wsStatus on mount", async () => {
+    const { result } = renderHook(() => useWebSocket(opts));
+
+    expect(harness.api.wsStatus).toHaveBeenCalledWith("ws-1", "tab-1");
+    expect(harness.statusListenerCount()).toBe(1);
+    expect(harness.messageListenerCount()).toBe(1);
+
+    await act(async () => { harness.settleStatus(snapshot({ messages: [msg("m1")] })); });
+
+    expect(result.current.status).toBe("connected");
+    expect(result.current.messages.map((m) => m.id)).toEqual(["m1"]);
   });
 
-  it("resolves {{TOKEN}} in Authorization header value", () => {
-    const env = makeEnv({ TOKEN: "secret" });
-    const headers = resolveHeaders({ Authorization: "Bearer {{TOKEN}}" }, env);
-    expect(headers["Authorization"]).toBe("Bearer secret");
+  it("⚠ does not drop a message that arrives BEFORE wsStatus answers (the hydration race)", async () => {
+    // The whole reason the hook buffers. Without the buffer the `settleStatus` below would replace state
+    // wholesale and `m-live` would vanish — which is invisible in every test that hydrates first.
+    const { result } = renderHook(() => useWebSocket(opts));
+
+    act(() => { harness.emitMessage({ workspaceId: "ws-1", socketId: "tab-1", message: msg("m-live") }); });
+
+    await act(async () => { harness.settleStatus(snapshot({ messages: [msg("m-retained")] })); });
+
+    expect(result.current.messages.map((m) => m.id)).toEqual(["m-retained", "m-live"]);
   });
 
-  it("leaves unresolved tokens when env is null", () => {
-    expect(resolveVars("ws://{{HOST}}/chat", null)).toBe("ws://{{HOST}}/chat");
+  it("does not double-count a frame that is both retained and live", async () => {
+    // The overlap case, and it is the normal one: a frame that lands in the engine's log *and* on the wire
+    // while the status round trip is in flight. The engine-minted `id` is what makes this exact.
+    const { result } = renderHook(() => useWebSocket(opts));
+
+    act(() => { harness.emitMessage({ workspaceId: "ws-1", socketId: "tab-1", message: msg("m1") }); });
+    await act(async () => { harness.settleStatus(snapshot({ messages: [msg("m1")] })); });
+
+    expect(result.current.messages.map((m) => m.id)).toEqual(["m1"]);
   });
 
-  it("leaves unrecognised tokens unchanged when env is present", () => {
-    const env = makeEnv({ HOST: "localhost" });
-    expect(resolveVars("ws://{{HOST}}/{{UNKNOWN}}", env)).toBe("ws://localhost/{{UNKNOWN}}");
+  it("appends live frames after hydration", async () => {
+    const { result } = renderHook(() => useWebSocket(opts));
+    await act(async () => { harness.settleStatus(snapshot()); });
+
+    act(() => { harness.emitMessage({ workspaceId: "ws-1", socketId: "tab-1", message: msg("m1", "a") }); });
+    act(() => { harness.emitMessage({ workspaceId: "ws-1", socketId: "tab-1", message: msg("m2", "b") }); });
+
+    expect(result.current.messages.map((m) => m.data)).toEqual(["a", "b"]);
   });
 
-  it("resolves token in outgoing message body", () => {
-    const env = makeEnv({ USER: "alice" });
-    const body = JSON.stringify({ user: "{{USER}}" });
-    expect(resolveVars(body, env)).toBe(JSON.stringify({ user: "alice" }));
-  });
-});
+  it("routes events by socketId — another tab's socket does not touch this one", async () => {
+    const { result } = renderHook(() => useWebSocket(opts));
+    await act(async () => { harness.settleStatus(snapshot()); });
 
-// ── MockWebSocket behaviour tests ────────────────────────────────────────────
+    // `await act(async …)` rather than the sync form throughout: a status event also triggers `wsList`, whose
+    // resolution is a second state update — so a sync `act` leaves it to land after the test and React warns.
+    await act(async () => {
+      harness.emitStatus({ workspaceId: "ws-1", socketId: "tab-2", status: "error", error: "not mine" });
+      harness.emitMessage({ workspaceId: "ws-1", socketId: "tab-2", message: msg("other") });
+    });
 
-describe("MockWebSocket (sanity-checks for test infrastructure)", () => {
-  it("starts in CONNECTING state", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    expect(ws.readyState).toBe(MockWebSocket.CONNECTING);
-  });
-
-  it("transitions to OPEN after simulateOpen()", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    ws.simulateOpen();
-    expect(ws.readyState).toBe(MockWebSocket.OPEN);
+    expect(result.current.status).toBe("connected");
+    expect(result.current.error).toBeNull();
+    expect(result.current.messages).toEqual([]);
   });
 
-  it("records sent messages", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    ws.simulateOpen();
-    ws.send("hello");
-    ws.send("world");
-    expect(ws.sentMessages).toEqual(["hello", "world"]);
+  it("⚠ establishes state from a status event when it has no snapshot", async () => {
+    // `Protocol_Module_Contract.md` §4's requirement in its code form. A handler that only *amended* a
+    // snapshot it already had would drop every event for exactly the client the engine-owned lifetime exists
+    // for — the one that attached after the fact. `useCollectionRunner` shipped that bug first.
+    const { result } = renderHook(() => useWebSocket(opts));
+    // `wsStatus` never settles, so there is no snapshot when the event arrives.
+    await act(async () => {
+      harness.emitStatus({ workspaceId: "ws-1", socketId: "tab-1", status: "error", error: "refused", code: 1006 });
+    });
+
+    expect(result.current.status).toBe("error");
+    expect(result.current.error).toBe("refused");
   });
 
-  it("fires onmessage when simulateMessage() is called", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    const received: string[] = [];
-    ws.onmessage = (e) => received.push(e.data);
-    ws.simulateOpen();
-    ws.simulateMessage("ping");
-    expect(received).toEqual(["ping"]);
+  it("⚠ does NOT disconnect on unmount — D29 in the UI", async () => {
+    const { unmount } = renderHook(() => useWebSocket(opts));
+    await act(async () => { harness.settleStatus(snapshot()); });
+
+    unmount();
+
+    // The one assertion this file exists for. An unmount cannot tell a closed tab from a closed window, and
+    // inferring a close from it would make the socket die with the window — the defect WI 6 removes.
+    expect(harness.api.wsDisconnect).not.toHaveBeenCalled();
+    // …and it does tear its subscriptions down, which is the opposite direction and equally required.
+    expect(harness.statusListenerCount()).toBe(0);
+    expect(harness.messageListenerCount()).toBe(0);
   });
 
-  it("fires onclose with wasClean=true when close() is called", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    let closedClean: boolean | undefined;
-    ws.onclose = (e) => { closedClean = e.wasClean; };
-    ws.simulateOpen();
-    ws.close(1000);
-    expect(closedClean).toBe(true);
-    expect(ws.readyState).toBe(MockWebSocket.CLOSED);
+  it("derives the connection limit from wsList, including the engine's own max", async () => {
+    harness = installApi({
+      wsList: vi.fn(async () => ({ connections: [snapshot(), snapshot({ socketId: "tab-2" })], max: 2 })),
+    });
+
+    const { result } = renderHook(() => useWebSocket(opts));
+
+    await waitFor(() => expect(result.current.maxConnections).toBe(2));
+    expect(result.current.isAtConnectionLimit).toBe(true);
   });
 
-  it("fires onerror and onclose with wasClean=false on simulateError()", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    let errorFired = false;
-    let closedClean: boolean | undefined;
-    ws.onerror  = () => { errorFired = true; };
-    ws.onclose  = (e) => { closedClean = e.wasClean; };
-    ws.simulateError();
-    expect(errorFired).toBe(true);
-    expect(closedClean).toBe(false);
+  it("surfaces a refused connect as the hook's error, rather than throwing", async () => {
+    harness = installApi({ wsConnect: vi.fn(async () => ({ ok: false, error: "Max 5 active connections reached." })) });
+
+    const { result } = renderHook(() => useWebSocket(opts));
+
+    await act(async () => { await result.current.connect("wss://example.test", {}); });
+
+    expect(result.current.error).toBe("Max 5 active connections reached.");
   });
 
-  it("throws when send() is called before open", () => {
-    const ws = new MockWebSocket("ws://localhost:1234");
-    expect(() => ws.send("data")).toThrow("Not open");
+  it("sends the payload through the engine and does NOT append it locally", async () => {
+    // The engine wrote the frame, so the engine's `event.ws.message` is what puts it in the log. Appending
+    // here would be a second, competing account of the same log — and it would double up once the event
+    // arrived, since the hook has no way to know the two are the same frame.
+    const { result } = renderHook(() => useWebSocket(opts));
+    await act(async () => { harness.settleStatus(snapshot()); });
+
+    await act(async () => { await result.current.send("ping"); });
+
+    expect(harness.api.wsSend).toHaveBeenCalledWith("ws-1", "tab-1", "ping");
+    expect(result.current.messages).toEqual([]);
+
+    act(() => { harness.emitMessage({ workspaceId: "ws-1", socketId: "tab-1", message: { id: "s1", ts: 2, direction: "sent", data: "ping" } }); });
+    expect(result.current.messages.map((m) => m.direction)).toEqual(["sent"]);
   });
-});
 
-// ── Connection limit logic ───────────────────────────────────────────────────
+  it("mirrors a clear only once the engine confirms it", async () => {
+    const { result } = renderHook(() => useWebSocket(opts));
+    await act(async () => { harness.settleStatus(snapshot({ messages: [msg("m1")] })); });
+    expect(result.current.messages).toHaveLength(1);
 
-describe("Connection limit (MAX_WS_CONNECTIONS = 5)", () => {
-  it("allows up to 5 simultaneous connections conceptually", () => {
-    // This test verifies the constant and the can-open logic without
-    // spinning up real hook instances (which require React/DOM).
-    expect(MAX_WS_CONNECTIONS).toBe(5);
-    // The registry starts empty in a fresh test run; count should be ≤ 5.
-    const count = getActiveConnectionCount();
-    expect(count).toBeLessThanOrEqual(MAX_WS_CONNECTIONS);
+    await act(async () => { await result.current.clearMessages(); });
+
+    expect(harness.api.wsClearMessages).toHaveBeenCalledWith("ws-1", "tab-1");
+    expect(result.current.messages).toEqual([]);
+  });
+
+  it("leaves the log alone when the clear is refused", async () => {
+    // `ws.clearMessages` answers `{ok:false}` for an id the engine has never been asked to open, and a mirror
+    // that cleared anyway would disagree with the engine about what it holds.
+    harness = installApi({ wsClearMessages: vi.fn(async () => ({ ok: false, error: "No socket." })) });
+
+    const { result } = renderHook(() => useWebSocket(opts));
+    await act(async () => { harness.settleStatus(snapshot({ messages: [msg("m1")] })); });
+
+    await act(async () => { await result.current.clearMessages(); });
+
+    expect(result.current.messages.map((m) => m.id)).toEqual(["m1"]);
   });
 });

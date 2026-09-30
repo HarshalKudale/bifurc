@@ -181,7 +181,20 @@ describe("createClient — the surface is byte-identical", () => {
     // are the *same* client object (`src/preload.ts` spreads `createClient`'s result), so this number is a
     // second lock on the total rather than an independent check — the independent one is
     // `surface.test.ts`'s, which diffs against the classification table.
-    expect(mine).toHaveLength(141);
+    //
+    // 141 → 142 on 2026-09-30 with `plan/19` WI 5's `requestParseCurl` — the cURL parser moving out of the
+    // renderer. One method, one command, one count.
+    //
+    // 142 → 143 on the same day, with the same work item's item 4: `env.resolveText`, the display path for
+    // `{{token}}` resolution after the engine became the resolving party. 143 → 145 with item 2's
+    // `captureBuildRequest` / `captureBuildMock` — capture → entity construction, two methods, two counts.
+    //
+    // **145 → 154 with `plan/19` WI 6**, and this is the largest single step the surface has taken: six
+    // `ws.*` methods plus `env.getMerged`, and the socket's two events. It is a *growth* rather than a
+    // rename, which is the honest reading — the renderer's socket was not speaking to the shell at all, so
+    // there was no legacy method to replace. `env.getMerged` is the one that replaces something: `App.tsx`'s
+    // `mergeEnvVars`, the last renderer implementation of a workspace fact the engine owned.
+    expect(mine).toHaveLength(154);
   });
 
   it("keeps close() off the enumerated surface while still being callable", async () => {

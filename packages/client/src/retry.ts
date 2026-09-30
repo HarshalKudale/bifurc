@@ -82,6 +82,20 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "blob.read",
   "healthbar.getServices",
   "healthbar.checkUrl",
+  // `plan/19` WI 5, item 4 — the resolution display path. A read with no stored effect, so a retry cannot
+  // duplicate anything. **⚠ It is not *deterministic* though**: `{{random.*}}` mints a fresh value per
+  // call, so a retry returns a *different* string. That is safe here precisely because the caller uses the
+  // result to *display* a url, not to send one — a caller that sent the resolved value would need the
+  // pipeline's engine-side resolution instead. Recorded because "idempotent" is not the same claim as
+  // "same answer twice".
+  "env.resolveText",
+  // `plan/19` WI 6 — the merged environment. A read of engine state that stores nothing, so a retry cannot
+  // duplicate anything. Unlike `env.resolveText` above it is also **deterministic**: it mints no
+  // `{{random.*}}` value, it returns the same two entity lists merged the same way.
+  "env.getMerged",
+  // `plan/19` WI 5 — the cURL parser. A pure function of its argument: the same string always parses to the
+  // same request, so a retry cannot produce a different outcome.
+  "request.parseCurl",
 
   // ── writes that are a function of their arguments alone ──────────────────
   "entity.update",
@@ -114,6 +128,11 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   // loop checks, so a retry is the same request twice and the second is a no-op on an already-cancelled run.
   "runner.status",
   "runner.cancel",
+  // The socket registry (`plan/19` WI 6). Both are reads of the registry's own state — `status` returns one
+  // snapshot, `list` the live set — so a retry re-asks the same question. `ws.status` in particular is the
+  // command a client calls **on reconnect**, which is the moment a retry is most likely and least dangerous.
+  "ws.status",
+  "ws.list",
 ]);
 
 /**
@@ -154,6 +173,11 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "soap.execute",
   "grpc.execute",
   "capture.shareJson",
+  // `plan/19` WI 5, item 2 — capture → entity construction. Pure functions of the entry they are handed:
+  // the same capture always builds the same payload, so a retry cannot produce a different one. (Unlike
+  // `env.resolveText`, nothing here mints anything — these are genuinely deterministic as well.)
+  "capture.buildRequest",
+  "capture.buildMock",
   "healthbar.saveServices",
   // The saved-entity counterparts of the `*.execute`/`replay` rows above, classified the same way and
   // for the same reason. They *read* an entity first, which is idempotent on its own, but the command's
@@ -170,6 +194,29 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "graphql.send",
   "soap.send",
   "grpc.send",
+  // ── the socket registry (`plan/19` WI 6) ─────────────────────────────────
+  //
+  // All four are non-idempotent, and two of them for the §8-trap-3 reason rather than the obvious one:
+  //
+  //   `ws.connect` — a retry after an unknown outcome is a **second** connect. The registry's policy is that
+  //   a connect on a live key *replaces* rather than refuses (see `wsRegistry.ts`), so a retry is not merely
+  //   wasteful: it tears down a working socket and opens a new one, and the user sees a connection drop for a
+  //   request that had already succeeded.
+  //   `ws.send` — the payload is resolved engine-side and `{{random.*}}` **re-mints per send**, which is the
+  //   correct behaviour for a stream (each frame is its own event, not a retry of an earlier one). That is
+  //   exactly why a transport-level retry is wrong here: it would write a *different* frame than the one the
+  //   caller asked for. Same class as `request.send`, opposite reason — there the re-mint is a hazard, here it
+  //   is the feature, and in both cases the answer is the same.
+  //   `ws.disconnect` — a retry cannot duplicate anything (closing a closed socket is a no-op), but it is
+  //   classified here because its *effect* is not a function of its arguments alone: it depends on what is
+  //   open at call time. Same reasoning as `sync.push`.
+  //   `ws.clearMessages` — drops the retained log, so a retry after an unknown outcome can erase messages the
+  //   caller never saw. `plan/19`'s rule that a retry must not lose data is why this is not idempotent in the
+  //   sense that matters here.
+  "ws.connect",
+  "ws.disconnect",
+  "ws.send",
+  "ws.clearMessages",
 ]);
 
 /** The frozen command list, so the partition can be asserted against it. */
