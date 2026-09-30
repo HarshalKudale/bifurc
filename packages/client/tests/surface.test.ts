@@ -51,7 +51,7 @@ describe("the window.api surface", () => {
     expect([...SURFACE_KEYS].sort()).toEqual([...keys].sort());
   });
 
-  it("exposes 132 keys, which is what the preload actually has", async () => {
+  it("exposes 136 keys, which is what the preload actually has", async () => {
     /**
      * Pinned deliberately. The plan says 136 and `packages/gui/src/types/window.ts` declares 128; both
      * are stale, and a test that merely said "> 100" would let either number drift back in.
@@ -61,10 +61,18 @@ describe("the window.api surface", () => {
      * `grpc*MockServer` transport methods left the surface. The *declared* type lost the same twelve,
      * so the four-key gap this file's header describes is still four — which is what makes this a
      * recorded contract change rather than a number that was edited to match reality.
+     *
+     * **132 → 136 on 2026-09-29**: the four `*Saved` execute methods
+     * (`replayRequestSaved` / `graphqlExecuteSaved` / `soapExecuteSaved` / `grpcExecuteSaved`). This is
+     * the **first time the surface has grown** rather than shrunk, and it is why the plan's stale "136"
+     * in the paragraph above is now the runtime's real number — a coincidence worth not mistaking for
+     * agreement. The *declared* type gained the same four (`128 → 132`), so the gap is still exactly
+     * four, in the same direction: **the runtime is the authority and the type is the secondary check**,
+     * which is the property this file's header exists to state.
      */
     const keys = await realPreloadKeys();
-    expect(keys).toHaveLength(132);
-    expect(SURFACE_KEYS).toHaveLength(132);
+    expect(keys).toHaveLength(136);
+    expect(SURFACE_KEYS).toHaveLength(136);
   });
 
   it("classifies every key it exposes, with no key classified twice", async () => {
@@ -146,7 +154,7 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 62 transport + 39 entity + 7 subscribe + 8 shim + 16 local = 132
+    // 66 transport + 39 entity + 7 subscribe + 8 shim + 16 local = 136
     //
     // The total is asserted because it is what proves nothing was dropped in a move — a key that
     // vanished would keep this test green only if some other count happened to absorb it, which the
@@ -157,6 +165,11 @@ describe("the window.api surface", () => {
     //   `transport` 70 → 67, `shim` 3 → 6       `tlsGenerate` / `tlsImportCert` / `tlsImportKey`
     //   `transport` 67 → 65, `shim` 6 → 8       `loadEntity` + `setEntityEnabled` (2026-09-21)
     //   `transport` 65 → 62, `entity` 48 → 39   mocks became REST-only (`plan/17` WI 8, 2026-09-25)
+    //   `transport` 62 → 66                     the four `*Saved` execute methods (2026-09-29)
+    //
+    // The sixth is the only *addition* in this list, and it moves exactly one count. A change that
+    // raised one count while lowering another would be a reclassification wearing an addition's
+    // clothes — the failure this line is here to catch.
     //
     // The third and fourth are corrections of a *mis*classification rather than new decisions. Those
     // five keys were filed as 1:1 mappings while the shell channels they replaced each performed a step
@@ -173,7 +186,7 @@ describe("the window.api surface", () => {
     // add/update/delete) went with their entity kinds. Two counts moving by the exact size of the
     // deletion is the signal that nothing was reclassified on the way out — a key filed under a
     // different kind would show as one count rising while the other fell by less.
-    expect(byKind("transport")).toBe(62);
+    expect(byKind("transport")).toBe(66);
     expect(byKind("entity")).toBe(39);
     expect(byKind("subscribe")).toBe(7);
     expect(byKind("shim")).toBe(8);

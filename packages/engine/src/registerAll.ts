@@ -70,6 +70,7 @@ import { registerGrpcCommands } from "./grpc/commands";
 import { registerApplicationCommands } from "./applications/applicationCommands";
 import { registerSyncCommands } from "./gitops/syncCommands";
 import { registerEntityCrudCommands } from "./workspace/entities/entityCrudCommands";
+import { registerPipelineCommands } from "./pipeline/commands";
 import { registerSoapKinds } from "./soap/kinds";
 import { registerGraphqlKinds } from "./graphql/kinds";
 import { registerGrpcKinds } from "./grpc/kinds";
@@ -158,4 +159,15 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerApplicationCommands(registry);
   registerSyncCommands(registry);
   registerEntityCrudCommands(registry);
+  // **The saved-entity family, after `plan/19` WI 3 (2026-09-30): four `*.send` commands, four feature
+  // modules, and no shared counterpart module.** `request.send` (REST's pipeline) registers from
+  // `pipeline/commands.ts`; `graphql.send`, `soap.send` and `grpc.send` register from their own feature
+  // modules, each resolving its fields before dispatching to the raw command. The module that used to hold
+  // four load-and-dispatch bodies — `workspace/entities/savedRequestCommands.ts` — is **deleted**, because
+  // "one module, not four" stopped applying the moment the four stopped being identical.
+  //
+  // Placed last for readability only: `CommandRegistry.invoke()` resolves the handler **at invoke time**, so
+  // this line's position relative to the commands it dispatches to is not observable — unlike the
+  // `registerAllEngineKinds()` call above, which genuinely must run first.
+  registerPipelineCommands(registry);
 }

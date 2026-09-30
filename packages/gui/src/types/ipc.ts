@@ -60,6 +60,130 @@ export interface ReplayResult {
   body: string; // base64
 }
 
+/**
+ * `graphql.send`'s two input forms, and the result it returns — mirrors of `GraphqlSendParams` in
+ * `@bifurc/protocol` (`commands/saved.ts`) and `HttpLikeResult` (`commands/graphql.ts`).
+ *
+ * `request` is the **stored entity's shape** — `endpointUrl`, not `url` — because the inline form carries
+ * what the *editor* holds. The rename is the engine's business, and using the command's name here would stop
+ * the id form and the inline form being interchangeable. Hand-mirrored like the rest of this file: see
+ * `RequestSendRequest`'s note for why `packages/gui` declares these rather than importing them.
+ */
+export interface GraphqlSendRequest {
+  endpointUrl: string;
+  headers: Record<string, string>;
+  query: string;
+  variables: string;
+  operationName: string;
+}
+
+export type GraphqlSendParams = { id: string } | { request: GraphqlSendRequest };
+
+/** `graphql.execute`'s result, which `graphql.send` returns unchanged. */
+export interface HttpLikeResult {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  durationMs: number;
+}
+
+/**
+ * `soap.send`'s two input forms — mirrors of `SoapSendParams` in `@bifurc/protocol` (`commands/saved.ts`).
+ *
+ * `request` is the stored entity's shape, which for SOAP is **also** `soap.execute`'s: all four fields are
+ * named identically on both sides, so unlike GraphQL there is no rename for the engine to perform.
+ */
+export interface SoapSendRequest {
+  endpointUrl: string;
+  soapAction: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export type SoapSendParams = { id: string } | { request: SoapSendRequest };
+
+/**
+ * `grpc.send`'s two input forms and its result — mirrors of `GrpcSendParams` in `@bifurc/protocol`
+ * (`commands/saved.ts`) and `GrpcExecuteResult` (`commands/grpc.ts`).
+ *
+ * `protoFileId` and `useReflection` are **required**, matching the protocol: the editor always has both (a
+ * proto file may be `null`, reflection may be off), so making them optional here would let a caller omit a
+ * decision the protocol requires it to make.
+ */
+export interface GrpcSendRequest {
+  serverAddress: string;
+  serviceName: string;
+  methodName: string;
+  requestBody: string;
+  metadata: Record<string, string>;
+  protoFileId: string | null;
+  useReflection: boolean;
+}
+
+export type GrpcSendParams = { id: string } | { request: GrpcSendRequest };
+
+/**
+ * `grpc.execute`'s result, which `grpc.send` returns unchanged.
+ *
+ * It declares `ok`/`error`, unlike its three siblings' results — and that is why `grpc.send` throws
+ * `NOT_FOUND` for a missing entity rather than resolving a failure-shaped value: the stub *also* answers
+ * `{ok:false, error}`, so a missing entity reported the same way would be indistinguishable from it.
+ */
+export interface GrpcExecuteResult {
+  ok: boolean;
+  responses?: string[];
+  metadata?: Record<string, string>;
+  status?: number;
+  statusMessage?: string;
+  durationMs?: number;
+  error?: string;
+}
+
+/**
+ * `request.send`'s two input forms — mirrors of `RequestSendParams` in `@bifurc/protocol`
+ * (`commands/saved.ts`).
+ *
+ * **Hand-mirrored, like the rest of this file, and for the same reason:** `packages/gui` has no
+ * `@bifurc/engine` or `@bifurc/protocol` dependency by design (it is the browser bundle), so the renderer
+ * declares the shapes it consumes. The authority is the protocol package; this is the copy the UI compiles
+ * against, and `tests/gui/boundary.test.ts` is what keeps a *behavioural* copy from appearing beside it.
+ */
+export interface RequestSendRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  /** **Text**, not base64 — resolution and the base64 boundary are the engine's (`plan/19` §5). */
+  body: string;
+}
+
+export interface RequestSendScripts {
+  pre?: string;
+  post?: string;
+  test?: string;
+}
+
+export type RequestSendParams =
+  | { id: string }
+  | { request: RequestSendRequest; scripts: RequestSendScripts };
+
+/**
+ * `request.send`'s result — the response **plus** what the pipeline did on the way through.
+ *
+ * The response fields are `ReplayResult`'s. The rest is here because the pipeline is no longer the
+ * renderer's job: `request` is the request **as actually sent** (resolved, and rewritten by the
+ * pre-script if there was one), which after engine-side resolution the renderer genuinely cannot compute
+ * for itself.
+ */
+export interface RequestSendResult extends ReplayResult {
+  /** The send's own duration. This is also what the test-script sees as `responseTime`. */
+  durationMs: number;
+  request: RequestSendRequest;
+  tests: { name: string; passed: boolean; error?: string; durationMs: number }[];
+  testLogs: string[];
+  preScriptError?: string;
+  postScriptError?: string;
+}
+
 export interface LogChunk {
   logId: string;
   chunk: string;   // base64-encoded chunk data

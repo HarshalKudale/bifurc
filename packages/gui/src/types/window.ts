@@ -26,6 +26,13 @@ import type {
   ServiceInfo,
   RequestLogEntry,
   ReplayResult,
+  RequestSendParams,
+  RequestSendResult,
+  GraphqlSendParams,
+  SoapSendParams,
+  GrpcSendParams,
+  HttpLikeResult,
+  GrpcExecuteResult,
   LogChunk,
   WebhookPayload,
   HealthBarService
@@ -70,6 +77,16 @@ export interface BifurcApi {
   deleteWorkspace(id: string): Promise<{ ok: boolean }>;
   setActiveWorkspace(id: string): Promise<{ ok: boolean; config: AppConfig }>;
   replayRequest(method: string, url: string, headers: Record<string, string>, body: string): Promise<ReplayResult>;
+  /** Run the REST pipeline (`plan/19` D24): resolve, pre-script, send, post-script, test.
+   *
+   * **Two input forms, one command.** `{id}` names a saved `requests` entity and lets the engine read it;
+   * `{request, scripts}` sends what the caller assembled, for a draft tab. The engine decides from the
+   * shape, and the two differ only in where the request comes from — which is why this tab no longer
+   * resolves `{{variables}}` or runs scripts itself.
+   *
+   * `workspaceId` is optional because the renderer has none to send — the client resolves the active one,
+   * as it does for `listGraphQLSchemas`. A caller addressing a specific workspace passes it. */
+  requestSend(params: RequestSendParams, workspaceId?: string): Promise<RequestSendResult>;
   proxyStatus(): Promise<{ running: boolean }>;
   serverStatus(): Promise<{ running: boolean; port: number; error: string | null }>;
   restartServer(): Promise<{ ok: boolean }>;
@@ -151,6 +168,12 @@ export interface BifurcApi {
   listWsdls(): Promise<SavedWsdl[]>;
   soapFetchWsdl(url: string): Promise<{ ok: boolean; content?: string; error?: string }>;
   soapExecute(endpointUrl: string, soapAction: string, headers: Record<string, string>, body: string): Promise<{ status: number; headers: Record<string, string>; body: string; durationMs: number }>;
+  /** Resolve every field against the workspace's environment, then POST the SOAP envelope.
+   *
+   * **Two input forms, one command** — `{id}` for a saved `soapRequests` entity, `{request}` for what the
+   * editor holds. Resolution is the engine's (`plan/19` D23): a `{{token}}` in the endpoint, the SOAPAction, a
+   * header **or** the body now resolves engine-side. See `requestSend` for the optional `workspaceId`. */
+  soapSend(params: SoapSendParams, workspaceId?: string): Promise<HttpLikeResult>;
   // -- GraphQL ------------------------------------------------------------
   addGraphQLRequest(req: Omit<SavedGraphQLRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedGraphQLRequest>;
   updateGraphQLRequest(req: SavedGraphQLRequest): Promise<{ ok: boolean }>;
@@ -160,6 +183,13 @@ export interface BifurcApi {
   listGraphQLSchemas(): Promise<SavedGraphQLSchema[]>;
   graphqlIntrospect(endpointUrl: string, headers: Record<string, string>): Promise<{ ok: boolean; sdl?: string; error?: string }>;
   graphqlExecute(endpointUrl: string, headers: Record<string, string>, query: string, variables: string, operationName: string): Promise<{ status: number; headers: Record<string, string>; body: string; durationMs: number }>;
+  /** Resolve every field against the workspace's environment, then execute the GraphQL request.
+   *
+   * **Two input forms, one command** — `{id}` for a saved `graphqlRequests` entity, `{request}` for what the
+   * editor holds. Resolution is the engine's (`plan/19` D23), which is why this tab no longer calls
+   * `resolveVars`: a `{{token}}` in the endpoint, a header, the query, the variables **or** the operation name
+   * now resolves engine-side. See `requestSend` for the optional `workspaceId`. */
+  graphqlSend(params: GraphqlSendParams, workspaceId?: string): Promise<HttpLikeResult>;
   // -- gRPC --------------------------------------------------------------
   addGrpcRequest(req: Omit<SavedGrpcRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedGrpcRequest>;
   updateGrpcRequest(req: SavedGrpcRequest): Promise<{ ok: boolean }>;
@@ -169,6 +199,16 @@ export interface BifurcApi {
   listProtoFiles(): Promise<SavedProtoFile[]>;
   grpcExecute(serverAddress: string, serviceName: string, methodName: string, requestBody: string, metadata: Record<string, string>, protoFileId: string | null, useReflection: boolean): Promise<{ ok: boolean; responses?: string[]; metadata?: Record<string, string>; status?: number; statusMessage?: string; durationMs?: number; error?: string }>;
   grpcReflect(serverAddress: string): Promise<{ ok: boolean; services?: { name: string; methods: { name: string; inputType: string; outputType: string; clientStreaming: boolean; serverStreaming: boolean }[] }[]; error?: string }>;
+  /** Resolve every field against the workspace's environment, then dispatch the gRPC call.
+   *
+   * **Two input forms, one command** — `{id}` for a saved `grpcRequests` entity, `{request}` for what the
+   * editor holds. Resolution is the engine's (`plan/19` D23): a `{{token}}` in the address, the service name,
+   * the method name, the body or a metadata value now resolves engine-side. `protoFileId` is deliberately
+   * **not** resolved — it names a stored file rather than being template text.
+   *
+   * `grpc.execute` is a `wontfix` stub, so this resolves to `{ok:false, error}` today. See `requestSend` for
+   * the optional `workspaceId`. */
+  grpcSend(params: GrpcSendParams, workspaceId?: string): Promise<GrpcExecuteResult>;
   tlsImportCert(): Promise<{ ok: boolean; path?: string }>;
   tlsImportKey(): Promise<{ ok: boolean; path?: string }>;
   tlsRemoveCert(): Promise<{ ok: boolean }>;

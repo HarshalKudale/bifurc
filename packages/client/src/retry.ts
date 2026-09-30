@@ -150,6 +150,21 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "grpc.execute",
   "capture.shareJson",
   "healthbar.saveServices",
+  // The saved-entity counterparts of the `*.execute`/`replay` rows above, classified the same way and
+  // for the same reason. They *read* an entity first, which is idempotent on its own, but the command's
+  // effect is the outbound request that follows — and a retry after an unknown-outcome failure re-sends
+  // it. Classifying them by their read half would be the "wrongly retryable → duplicated mutation"
+  // direction the header calls the asymmetric one, so the read does not soften the answer.
+  //
+  // `request.send` (2026-09-30, `plan/19` D24/D27) is the same answer for a **stronger** reason, and it
+  // is worth stating because it makes this row load-bearing twice over: it is no longer a mere
+  // load-and-dispatch, it is the pipeline — and `{{random.*}}` is **non-deterministic**, so a retry does
+  // not re-send the same request, it sends a **different** one (`plan/19` §8 trap 3). A future change
+  // that made `request.*` retryable would therefore silently start sending different data.
+  "request.send",
+  "graphql.send",
+  "soap.send",
+  "grpc.send",
 ]);
 
 /** The frozen command list, so the partition can be asserted against it. */

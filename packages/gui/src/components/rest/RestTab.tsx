@@ -12,16 +12,14 @@ import {
   RequestDraft, MockDraft,
 } from "@/components/rest/restTabReducer";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
-import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import { rowsToHeaders, b64ToText, textToB64, tryFormat, METHODS, MOCK_METHODS } from "@/lib/utils";
 import { parseCurl, SKIP_CURL_HEADERS } from "@/lib/curlParser";
 import { contentTypeToMode, isBinaryContentType } from "@/lib/bodyUtils";
 import { strings } from "@/lib/strings";
-import { runPreScript, runPostScript } from "@/lib/scriptRunner";
-import { runTestScript } from "@/lib/testRunner";
 import { ChevronDown, Terminal } from "@/lib/icons";
 
 import { useProtocolEditor } from "@/hooks/useProtocolEditor";
+import { canSendByEntityId } from "@/lib/savedEntitySend";
 import { RestCurlImport } from "./RestCurlImport";
 import { RestEditorPane } from "./RestEditorPane";
 import { useRestActions } from "./useRestActions";
@@ -150,7 +148,35 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
   // -- Send (request mode) ------------------------------------------------
 
-  const { handleSend, handleTest, handleCreateMock } = useRestActions(state, dispatch, activeEnv, tabType, onCreateMock);
+  /**
+   * The saved entity to run **by id**, or `null` to send what the editor holds.
+   *
+   * `tabType === "request"` is part of the condition rather than an afterthought: this component also
+   * renders **mock** tabs, and a mock has no execute command to route to. `canSendByEntityId` carries the
+   * rest — see its header for what each term is protecting against.
+   *
+   * `tabId` is the entity id for a saved tab and a synthetic draft key for an unsaved one; the `isDraft`
+   * term is what keeps the second case out.
+   *
+   * ## The two domain terms are `false` here, and that is the whole of `plan/19` WI 3
+   *
+   * **This is the tab that made the gate two terms.** `hasExecutableScripts` left when REST migrated (it was
+   * `true` only here), and `usesVariables` left with gRPC, the last tab still resolving in the renderer. Both
+   * were facts about **where the work ran**, and §7's predicted end state — `!isDraft && !hasLocalChanges` —
+   * is what is left. See `savedEntitySend.ts` for the term-by-term history.
+   */
+  const savedEntityId =
+    tabType === "request" &&
+    canSendByEntityId({
+      isDraft: !!draftTabId,
+      hasLocalChanges,
+    })
+      ? tabId
+      : null;
+
+  const { handleSend, handleTest, handleCreateMock } = useRestActions(
+    state, dispatch, tabType, onCreateMock, savedEntityId,
+  );
 
   // Expose imperative handle for save + refresh + rename
   useImperativeHandle(ref, () => ({

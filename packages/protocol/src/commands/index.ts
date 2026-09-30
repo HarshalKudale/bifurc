@@ -29,6 +29,7 @@ import * as TlsCmd from "./tls";
 import * as ExportCmd from "./export";
 import * as BlobCmd from "./blob";
 import * as MiscCmd from "./misc";
+import * as SavedCmd from "./saved";
 
 export * from "./entity";
 export * from "./folder";
@@ -46,6 +47,7 @@ export * from "./tls";
 export * from "./export";
 export * from "./blob";
 export * from "./misc";
+export * from "./saved";
 // `COMMAND_FIXTURES` — one valid and one invalid payload per command. Exported from the package
 // rather than left inside `index.test.ts` because the transport conformance suite
 // (`packages/engine/tests/conformance/`) drives its every-command matrix off the same table, and two
@@ -185,6 +187,29 @@ export const COMMANDS = {
   "healthbar.saveServices": spec(MiscCmd.HealthbarSaveServicesParams, "healthbar:saveServices"),
   "healthbar.checkUrl": spec(MiscCmd.HealthbarCheckUrlParams, "healthbar:checkUrl"),
   "capture.shareJson": spec(MiscCmd.CaptureShareJsonParams, "capture:shareJson"),
+
+  // ── the saved-entity counterparts, and `request.send` ─────────────────────────────────────────
+  //
+  // The headless consumer is the whole reason: a CLI has a request *id*, not a request payload, and
+  // re-sending every field from the client would put the stored shape in the client's hands. Three of
+  // the four take `{workspaceId, id}`.
+  //
+  // **`request.send` is no longer one of those.** It is `plan/19` D24/D27's REST pipeline — a union of
+  // `{workspaceId, id}` and `{workspaceId, request, scripts}` — because D24 makes "load the entity" and
+  // "send what the caller assembled" the *same five steps* with two sources of request. It **replaced**
+  // `request.replaySaved`, a name that had never been released; see `plan/protocol-changes.md`'s
+  // 2026-09-30 entry, which is also why this is not a `PROTOCOL_VERSION` bump. The other three are
+  // renamed and widened when their own pipelines land — `plan/19` §8 trap 1, one commit per protocol.
+  //
+  // See `saved.ts` for the group, the naming, and the four near-misses (`graphql.introspect`,
+  // `soap.fetchWsdl`, `grpc.reflect`, `script.execute`) that were deliberately left out.
+  //
+  // `legacyChannel` repeats the wire name, following `blob.*`: these commands never had a legacy
+  // channel, so there is nothing to record there and the field exists only to keep the map uniform.
+  "request.send": spec(SavedCmd.RequestSendParams, "request.send"),
+  "graphql.send": spec(SavedCmd.GraphqlSendParams, "graphql.send"),
+  "soap.send": spec(SavedCmd.SoapSendParams, "soap.send"),
+  "grpc.send": spec(SavedCmd.GrpcSendParams, "grpc.send"),
 } as const;
 
 export type CommandAction = keyof typeof COMMANDS;
