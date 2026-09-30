@@ -54,8 +54,6 @@ export function extractNameEntry(kind: string, entity: any): EntityNameEntry | n
       return { name: entity.name ?? "", method: entity.method ?? "GET", url: entity.url ?? "" };
     case "sockets":
       return { name: entity.name ?? "", url: entity.url ?? "" };
-    case "webhooks":
-      return { name: entity.name ?? "", urlSuffix: entity.urlSuffix ?? "" };
     case "soapRequests":
       return { name: entity.name ?? "", endpointUrl: entity.endpointUrl ?? "", soapAction: entity.soapAction ?? "" };
     case "graphqlRequests":

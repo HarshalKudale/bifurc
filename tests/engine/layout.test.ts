@@ -76,7 +76,6 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   proxy: ["kernel", "utils", "workspace", "mocks", "certificates"],
   mocks: ["kernel", "utils", "workspace"],
   certificates: ["kernel", "utils", "workspace"],
-  webhooks: ["kernel", "utils", "workspace"],
   graphql: ["kernel", "utils", "workspace"],
   grpc: ["kernel", "utils", "workspace"],
   soap: ["kernel", "utils", "workspace"],

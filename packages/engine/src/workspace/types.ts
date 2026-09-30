@@ -102,15 +102,6 @@ export interface SavedWsConnection {
   workspaceId: string;
 }
 
-export interface SavedWebhook {
-  id: string;
-  name: string;
-  /** The user-defined suffix appended after /bifurc/webhooks/ */
-  urlSuffix: string;
-  createdAt: number;
-  folderId?: string | null;
-  workspaceId: string;
-}
 
 export interface WorkspaceSyncConfig {
   remote: string;
@@ -142,7 +133,7 @@ export type AuditEntity =
   | "environment"
   | "request"
   | "wsConnection"
-  | "webhook"
+  | "webhook" // decommissioned; kept so existing audit history still reads
   | "folder"
   | "workspace";
 

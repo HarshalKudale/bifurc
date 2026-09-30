@@ -3,13 +3,12 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-// `settings.update` against a real `app.json` and the real protocol schema. Only the three listeners are
+// `settings.update` against a real `app.json` and the real protocol schema. Only the listeners are
 // stubbed: what is under test is *which* of them a patch moves, not the sockets themselves.
 
 const listeners = vi.hoisted(() => ({
   proxyRunning: true,
   proxyError: null as string | null,
-  webhookRunning: false,
 }));
 
 vi.mock("@bifurc/engine/proxy/server", async (importOriginal) => ({
@@ -24,11 +23,6 @@ vi.mock("@bifurc/engine/reverseproxy/edge", async (importOriginal) => ({
   isEdgeRunning: vi.fn(() => true),
   restartEdge: vi.fn(),
 }));
-vi.mock("@bifurc/engine/webhooks/webhookServer", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/webhooks/webhookServer")>()),
-  isWebhookServerRunning: vi.fn(() => listeners.webhookRunning),
-  startWebhookServer: vi.fn(),
-}));
 
 import { CommandRegistry } from "@bifurc/engine/kernel/registry";
 import { EngineEventBus } from "@bifurc/engine/kernel/eventBus";
@@ -36,7 +30,6 @@ import { registerConfigCommands } from "@bifurc/engine/workspace/entities/config
 import { loadSettings, saveSettings, setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import { startServer } from "@bifurc/engine/proxy/server";
 import { restartEdge } from "@bifurc/engine/reverseproxy/edge";
-import { startWebhookServer } from "@bifurc/engine/webhooks/webhookServer";
 
 describe("settings.update", () => {
   let tmpDir: string;
@@ -52,12 +45,11 @@ describe("settings.update", () => {
       ...loadSettings(),
       port: 80,
       forwardProxyPort: 8080,
-      webhookPort: 9101,
       zoomLevel: 2,
       workspaces: [{ id: "ws1", name: "One", activeEnvironmentId: null }],
       activeWorkspaceId: "ws1",
     });
-    Object.assign(listeners, { proxyRunning: true, proxyError: null, webhookRunning: false });
+    Object.assign(listeners, { proxyRunning: true, proxyError: null });
     vi.clearAllMocks();
     registry = new CommandRegistry();
     bus = new EngineEventBus();
@@ -81,7 +73,6 @@ describe("settings.update", () => {
     update({ minimizeToTray: true });
     expect(restartEdge).not.toHaveBeenCalled();
     expect(startServer).not.toHaveBeenCalled();
-    expect(startWebhookServer).not.toHaveBeenCalled();
   });
 
   it("moves the edge, and only the edge, when its port changes", () => {
@@ -115,13 +106,6 @@ describe("settings.update", () => {
     expect(startServer).toHaveBeenCalledWith(8080);
   });
 
-  it("moves the webhook receiver only when it is running", () => {
-    update({ webhookPort: 9200 });
-    expect(startWebhookServer).not.toHaveBeenCalled();
-    listeners.webhookRunning = true;
-    update({ webhookPort: 9300 });
-    expect(startWebhookServer).toHaveBeenCalledWith(9300);
-  });
 
   it("emits settings.changed", () => {
     const seen = vi.fn();
@@ -133,6 +117,8 @@ describe("settings.update", () => {
   it("rejects an out-of-range port and an unknown field without writing", () => {
     expect(() => update({ port: 70000 })).toThrow(/Invalid payload/);
     expect(() => update({ workspaces: [] })).toThrow(/Invalid payload/);
+    // The webhook receiver is decommissioned; its port is no longer a setting.
+    expect(() => update({ webhookPort: 9200 })).toThrow(/Invalid payload/);
     expect(loadSettings().port).toBe(80);
   });
 });

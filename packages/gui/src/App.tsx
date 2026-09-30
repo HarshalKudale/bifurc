@@ -213,7 +213,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
       case "mocks": case "mock-rest": case "mock-graphql": case "mock-soap": case "mock-grpc": return "mocks";
       case "rules": return "rules";
       case "sockets": return "ws";
-      case "webhooks": return "webhooks";
       default: return null;
     }
   }, []);
@@ -341,7 +340,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     mappings: cnt((wsConfig.mappings ?? []).length),
     rules: cnt((wsConfig.proxyRules ?? []).length),
     requests: cnt(totalRequests), mocks: cnt(totalMocks), "mock-rest": cnt(totalMocks), "req-rest": cnt(totalRequests),
-    sockets: cnt((wsConfig.wsConnections ?? []).length), webhooks: cnt((wsConfig.webhooks ?? []).length),
+    sockets: cnt((wsConfig.wsConnections ?? []).length),
     environments: cnt((wsConfig.environments ?? []).filter((e) => e.id !== "__global__").length),
   };
 
@@ -364,7 +363,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
       case "mocks": case "mock-rest": return <span>{pl(totalMocks, "mock")}</span>;
       case "requests": case "req-rest": return <span>{pl(totalRequests, "request")}</span>;
       case "sockets": return <span>{pl(wsConfig.wsConnections?.length ?? 0, "socket")}</span>;
-      case "webhooks": return <span>{pl(wsConfig.webhooks?.length ?? 0, "webhook")}</span>;
       case "mappings": return <span>{pl(wsConfig.mappings?.length ?? 0, "mapping")}</span>;
       case "rules": return <span>{pl(wsConfig.proxyRules?.length ?? 0, "rule")}</span>;
       case "environments": return <span>{pl(wsConfig.environments?.length ?? 0, "environment")}</span>;

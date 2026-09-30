@@ -79,15 +79,6 @@ vi.mock("@bifurc/engine/utils/replay", () => ({
 // must not be reached from a unit test — `webhookServer.start` would bind a port. Mocked rather than
 // left real for the same reason `proxy/server` is. `webhookEmitter` is deliberately absent: nothing
 // outside `webhookServer.ts` itself reads it, so omitting it proves no consumer depends on it.
-vi.mock("@bifurc/engine/webhooks/webhookServer", () => ({
-  registerActiveWebhook: vi.fn(),
-  unregisterActiveWebhook: vi.fn(),
-  startWebhookServer: vi.fn(),
-  stopWebhookServer: vi.fn(),
-  isWebhookServerRunning: vi.fn(() => false),
-  getWebhookPort: vi.fn(() => 9101),
-  getWebhookServerError: vi.fn(() => null),
-}));
 
 /**
  * `plan/17` §5 work item 7 — `config.save` re-binds the **edge** when `settings.port` changes, and the edge is
@@ -241,15 +232,6 @@ import { notifyConfigChanged } from "@bifurc/engine/runtime/instances";
 // a module-level binding rather than through a facade with a lazy default.
 import { restartEdge } from "@bifurc/engine/reverseproxy/edge";
 import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
-import {
-  registerActiveWebhook,
-  unregisterActiveWebhook,
-  startWebhookServer,
-  stopWebhookServer,
-  isWebhookServerRunning,
-  getWebhookPort,
-  getWebhookServerError,
-} from "@bifurc/engine/webhooks/webhookServer";
 import { replayRequest as replayRequestImpl } from "@bifurc/engine/utils/replay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
@@ -921,11 +903,10 @@ describe("src/ipc/handlers.ts", () => {
          */
         vi.mocked(restartEdge).mockClear();
         vi.mocked(startServer).mockClear();
-        vi.mocked(startWebhookServer).mockClear();
         expect(
           commandRegistry.invoke(
             "config.save",
-            { config: { ...makeDefaultConfig(), port: 9876, forwardProxyPort: 8081, webhookPort: 9123 } },
+            { config: { ...makeDefaultConfig(), port: 9876, forwardProxyPort: 8081 } },
             ctx,
           ),
         ).toEqual({ ok: true });
@@ -937,7 +918,6 @@ describe("src/ipc/handlers.ts", () => {
          * `isWebhookServerRunning` is mocked `false` in this file's `beforeEach`, so `not.toHaveBeenCalled()` is
          * the assertion rather than an omission.
          */
-        expect(startWebhookServer).not.toHaveBeenCalled();
         // The edge's port did not change in this save, so its branch must not fire either.
         expect(restartEdge).not.toHaveBeenCalled();
 
@@ -968,62 +948,6 @@ describe("src/ipc/handlers.ts", () => {
         expect(await commandRegistry.invoke("workspace.delete", { id: added.id }, ctx)).toEqual({ ok: true });
         expect((currentConfig.workspaces ?? []).find((w) => w.id === added.id)).toBeUndefined();
         expect((currentConfig.workspaces ?? []).length).toBe(wsCountBefore);
-
-        // ── slice 3: webhook.* and webhookServer.* ────────────────────────
-
-        // `webhook.registerActive` / `unregisterActive` take the pair the renderer already sends; the
-        // assertion is that both halves reach the engine's active-suffix registry rather than only one.
-        expect(
-          commandRegistry.invoke("webhook.registerActive", { webhookId: "w1", urlSuffix: "/x" }, ctx),
-        ).toEqual({ ok: true });
-        expect(registerActiveWebhook).toHaveBeenCalledWith("w1", "/x");
-
-        expect(commandRegistry.invoke("webhook.unregisterActive", { webhookId: "w1" }, ctx)).toEqual({
-          ok: true,
-        });
-        expect(unregisterActiveWebhook).toHaveBeenCalledWith("w1");
-
-        // `webhookServer.start` — the port resolution is the whole point of this assertion. With no
-        // `port` on the wire it must fall back to the config chain exactly as the shell body did,
-        // because that is what every existing caller sends.
-        currentConfig = { ...makeDefaultConfig(), webhookPort: 9200 };
-        expect(commandRegistry.invoke("webhookServer.start", {}, ctx)).toEqual({ ok: true });
-        expect(startWebhookServer).toHaveBeenCalledWith(9200);
-
-        // …and a declared `port` must win, since `WebhookServerStartParams` advertises one. This is
-        // the one handler in this batch that is not a literal copy of its shell body.
-        expect(commandRegistry.invoke("webhookServer.start", { port: 9300 }, ctx)).toEqual({ ok: true });
-        expect(startWebhookServer).toHaveBeenCalledWith(9300);
-
-        /**
-         * **The `?? 9101` last resort is gone, and the case that asserted it is retired rather than fixed.**
-         *
-         * It read: delete `webhookPort` from the config, then expect `startWebhookServer(9101)` — "a config
-         * written by an older release is exactly how it would be missing". `plan/17` §1 removed the constant,
-         * and the reason the case cannot be restated is the interesting part: the chain is now
-         * `params.port ?? loadConfig().webhookPort`, with **one link and no constant**, and `loadConfig()`
-         * cannot return a missing `webhookPort` — `loadSettings()` merges `makeDefaultSettings()` under
-         * whatever the file holds, so a legacy `app.json` without the key gets `randomWebhookPort()` rather
-         * than `undefined`. The branch is therefore unreachable, and a test for an unreachable branch is a
-         * test that can only ever be satisfied by re-introducing the thing that was deleted.
-         *
-         * The two cases above are what remains, and they cover the whole chain: no `port` on the wire falls
-         * back to the config (9200), and a declared `port` wins (9300).
-         */
-
-        expect(commandRegistry.invoke("webhookServer.stop", {}, ctx)).toEqual({ ok: true });
-        expect(stopWebhookServer).toHaveBeenCalled();
-
-        // `webhookServer.status` — three fields, and `error` is `null` rather than absent because the
-        // renderer's status widget reads it unconditionally.
-        vi.mocked(isWebhookServerRunning).mockReturnValue(true);
-        vi.mocked(getWebhookPort).mockReturnValue(9200);
-        vi.mocked(getWebhookServerError).mockReturnValue(null);
-        expect(commandRegistry.invoke("webhookServer.status", {}, ctx)).toEqual({
-          running: true,
-          port: 9200,
-          error: null,
-        });
 
         // ── slice 4: the five misc.ts commands ─────────────────────────────
 

@@ -95,15 +95,6 @@ export const EntityChangedEventSchema = z.object({
 });
 export type EntityChangedEvent = z.infer<typeof EntityChangedEventSchema>;
 
-export const WebhookPayloadEventSchema = z.object({
-  webhookId: z.string(),
-  method: z.string(),
-  headers: z.record(z.string(), z.string()),
-  body: z.string(),
-  receivedAt: z.number(),
-});
-export type WebhookPayloadEvent = z.infer<typeof WebhookPayloadEventSchema>;
-
 /**
  * A child process writing to its stdout/stderr, or the engine writing a system line about it.
  *
@@ -214,7 +205,6 @@ export const EVENT_NAMES = [
   "event.log.chunk",
   "event.server.error",
   "event.entity.changed",
-  "event.webhook.payload",
   "event.process.output",
   "event.settings.changed",
   "event.runner.progress",

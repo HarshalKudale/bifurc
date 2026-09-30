@@ -378,7 +378,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     mappings: "Mappings",
     proxyRules: "Proxy Rules",
     websockets: "WebSockets",
-    webhooks: "Webhooks",
   };
 
   /** `proxyRules` → `proxy-rules`, the kebab-case the default export file name uses. */
@@ -718,9 +717,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     addWsConnection: async (c) => unwrapCreated(await call("addWsConnection", { kind: "wsConnections", entity: c })) as Awaited<ReturnType<BifurcApi["addWsConnection"]>>,
     updateWsConnection: (c) => call("updateWsConnection", { kind: "wsConnections", entity: c }) as ReturnType<BifurcApi["updateWsConnection"]>,
     deleteWsConnection: (id) => call("deleteWsConnection", { kind: "wsConnections", id }) as ReturnType<BifurcApi["deleteWsConnection"]>,
-    addWebhook: async (h) => unwrapCreated(await call("addWebhook", { kind: "webhooks", entity: h })) as Awaited<ReturnType<BifurcApi["addWebhook"]>>,
-    updateWebhook: (h) => call("updateWebhook", { kind: "webhooks", entity: h }) as ReturnType<BifurcApi["updateWebhook"]>,
-    deleteWebhook: (id) => call("deleteWebhook", { kind: "webhooks", id }) as ReturnType<BifurcApi["deleteWebhook"]>,
     addGraphQLRequest: async (r) => unwrapCreated(await call("addGraphQLRequest", { kind: "graphqlRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addGraphQLRequest"]>>,
     updateGraphQLRequest: (r) => call("updateGraphQLRequest", { kind: "graphqlRequests", entity: r }) as ReturnType<BifurcApi["updateGraphQLRequest"]>,
     deleteGraphQLRequest: (id) => call("deleteGraphQLRequest", { kind: "graphqlRequests", id }) as ReturnType<BifurcApi["deleteGraphQLRequest"]>,
@@ -891,15 +887,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("healthbarSaveServices", { workspaceId: wsId, services }) as ReturnType<BifurcApi["healthbarSaveServices"]>,
     healthbarCheckUrl: (url) => call("healthbarCheckUrl", { url }) as ReturnType<BifurcApi["healthbarCheckUrl"]>,
 
-    // ── webhook server ──────────────────────────────────────────────────────
-    registerActiveWebhook: (webhookId, urlSuffix) =>
-      call("registerActiveWebhook", { webhookId, urlSuffix }) as ReturnType<BifurcApi["registerActiveWebhook"]>,
-    unregisterActiveWebhook: (webhookId) =>
-      call("unregisterActiveWebhook", { webhookId }) as ReturnType<BifurcApi["unregisterActiveWebhook"]>,
-    getWebhookServerStatus: () => call("getWebhookServerStatus", {}) as ReturnType<BifurcApi["getWebhookServerStatus"]>,
-    webhookServerStatus: () => call("webhookServerStatus", {}) as ReturnType<BifurcApi["webhookServerStatus"]>,
-    startWebhookServer: (port) => call("startWebhookServer", port === undefined ? {} : { port }) as ReturnType<BifurcApi["startWebhookServer"]>,
-    stopWebhookServer: () => call("stopWebhookServer", {}) as ReturnType<BifurcApi["stopWebhookServer"]>,
 
     // ── SOAP / GraphQL / gRPC ───────────────────────────────────────────────
     soapFetchWsdl: (url) => call("soapFetchWsdl", { url }) as ReturnType<BifurcApi["soapFetchWsdl"]>,
@@ -1090,7 +1077,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     onLogEntry,
     onLogChunk: (cb) => plain("event.log.chunk", cb as (p: never) => void),
     onServerError: (cb) => plain("event.server.error", cb as (p: never) => void),
-    onWebhookPayload: (cb) => plain("event.webhook.payload", cb as (p: never) => void),
     /**
      * `event.entity.changed` carries what changed; the renderer's `onCompanionRefresh` only wants
      * the signal. Discarding the payload here matches what the legacy `companion:refresh` channel

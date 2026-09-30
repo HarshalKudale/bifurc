@@ -38,7 +38,7 @@
  */
 import { EngineError } from "@bifurc/protocol";
 import { registerCrudKind } from "../entityCrudCommands";
-import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "../../config";
+import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection } from "../../config";
 
 export function registerCrudKinds() {
   // ── Mappings ───────────────────────────────────────────────────────────────
@@ -120,14 +120,6 @@ export function registerCrudKinds() {
     getNameEntry: (conn) => ({ name: conn.name, url: conn.url }),
   });
 
-  // ── Webhooks ───────────────────────────────────────────────────────────────
-
-  registerCrudKind<SavedWebhook>({
-    kind: "webhooks",
-    configKey: "webhooks",
-    folderConfigKey: "webhookFolders",
-    getNameEntry: (hook) => ({ name: hook.name, urlSuffix: hook.urlSuffix }),
-  });
 }
 
 /** A DNS label: letters, digits and inner hyphens. */

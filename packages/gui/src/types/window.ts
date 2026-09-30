@@ -11,7 +11,6 @@ import type {
   SavedProtoFile,
   SavedRequest,
   SavedSoapRequest,
-  SavedWebhook,
   SavedWsConnection,
   SavedWsdl
 } from "./entities";
@@ -45,7 +44,6 @@ import type {
   WsStatusEvent,
   WsMessageEvent,
   LogChunk,
-  WebhookPayload,
   HealthBarService
 } from "./ipc";
 
@@ -75,10 +73,10 @@ export interface BifurcApi {
   addWsConnection(conn: Omit<SavedWsConnection, "id" | "createdAt" | "workspaceId">): Promise<SavedWsConnection>;
   updateWsConnection(conn: SavedWsConnection): Promise<{ ok: boolean }>;
   deleteWsConnection(id: string): Promise<{ ok: boolean }>;
-  addFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", folder: Omit<Folder, "id" | "createdAt" | "workspaceId">): Promise<Folder>;
-  renameFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string, name: string): Promise<{ ok: boolean }>;
-  moveFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string, parentId: string | null): Promise<{ ok: boolean }>;
-  deleteFolder(kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string): Promise<{ ok: boolean }>;
+  addFolder(kind: "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", folder: Omit<Folder, "id" | "createdAt" | "workspaceId">): Promise<Folder>;
+  renameFolder(kind: "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string, name: string): Promise<{ ok: boolean }>;
+  moveFolder(kind: "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string, parentId: string | null): Promise<{ ok: boolean }>;
+  deleteFolder(kind: "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest", id: string): Promise<{ ok: boolean }>;
   addEnvironment(env: Omit<Environment, "id" | "createdAt" | "workspaceId">): Promise<Environment>;
   updateEnvironment(env: Environment): Promise<{ ok: boolean }>;
   deleteEnvironment(id: string): Promise<{ ok: boolean }>;
@@ -200,17 +198,6 @@ export interface BifurcApi {
     durationMs: number;
   }>;
   // Webhooks
-  addWebhook(hook: Omit<SavedWebhook, "id" | "createdAt" | "workspaceId">): Promise<SavedWebhook>;
-  updateWebhook(hook: SavedWebhook): Promise<{ ok: boolean }>;
-  deleteWebhook(id: string): Promise<{ ok: boolean }>;
-  registerActiveWebhook(webhookId: string, urlSuffix: string): Promise<{ ok: boolean }>;
-  unregisterActiveWebhook(webhookId: string): Promise<{ ok: boolean }>;
-  getWebhookServerStatus(): Promise<{ running: boolean; port: number; error: string | null }>;
-  webhookServerStatus(): Promise<{ running: boolean; port: number; error: string | null }>;
-  // `error` is on the wire type, but the engine answers `ok: true` before the bind settles — see webhookCommands.
-  startWebhookServer(port?: number): Promise<{ ok: boolean; error?: string }>;
-  stopWebhookServer(): Promise<{ ok: boolean; error?: string }>;
-  onWebhookPayload(cb: (payload: WebhookPayload) => void): () => void;
   // -- SOAP -------------------------------------------------------------
   addSoapRequest(req: Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedSoapRequest>;
   updateSoapRequest(req: SavedSoapRequest): Promise<{ ok: boolean }>;

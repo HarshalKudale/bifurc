@@ -64,7 +64,7 @@ import type { CommandRegistry } from "../../kernel/registry";
  * (`plan/17` work item 8 removed three of its values — the three mock folder kinds — which changes
  * the enum's size but not that argument.)
  */
-type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
+type FolderKind = "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
 
 /**
  * `kind` → where that kind's folders live. `configKey` is the `AppConfig` array; `entityConfigKey` is
@@ -80,7 +80,6 @@ type FolderKind = "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlReque
 const FOLDER_CONFIG: Record<FolderKind, { configKey: string; entityConfigKey?: string; fsKind: string }> = {
     mock: { configKey: "mockFolders", entityConfigKey: "mocks", fsKind: "mocks" },
     ws: { configKey: "wsFolders", entityConfigKey: "wsConnections", fsKind: "sockets" },
-    webhook: { configKey: "webhookFolders", entityConfigKey: "webhooks", fsKind: "webhooks" },
     rule: { configKey: "ruleFolders", entityConfigKey: "proxyRules", fsKind: "rules" },
     graphqlRequest: { configKey: "graphqlRequestFolders", entityConfigKey: "graphqlRequests", fsKind: "graphqlRequests" },
     grpcRequest: { configKey: "grpcRequestFolders", entityConfigKey: "grpcRequests", fsKind: "grpcRequests" },

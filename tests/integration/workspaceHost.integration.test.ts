@@ -310,10 +310,9 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
       // default, the user starts it, and the user owns the port."* So the receiver exists (the facade is
       // bound to it) but nothing is listening — which is why `status.webhookPort` is `null` while
       // `host.webhook` is not.
-      expect(status.webhookPort).toBeNull();
-      expect(status.webhookError).toBeNull();
-      expect(host.webhook).not.toBeNull();
-      expect(host.webhook!.isRunning()).toBe(false);
+      // The webhook receiver is decommissioned: the host has no such listener and reports no such port.
+      expect("webhookPort" in status).toBe(false);
+      expect("webhook" in host).toBe(false);
 
       // ── THE ACCEPTANCE CRITERION: no companion, and the edge is the host's ────
       // Real bind attempts, in both directions, because a status read cannot express either claim.
@@ -427,7 +426,6 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
       }
       // The webhook was never started, so there is nothing here to release — and that is asserted rather
       // than assumed, because "the teardown released it" and "it was never bound" are different facts.
-      expect(host.status().webhookPort).toBeNull();
       // `stop()` is idempotent, and a stopped host refuses to restart rather than half-working.
       await expect(host.stop()).resolves.toBeUndefined();
       await expect(host.start()).rejects.toThrow(/already been stopped/i);

@@ -10,7 +10,6 @@ import type {
   SavedProtoFile,
   SavedRequest,
   SavedSoapRequest,
-  SavedWebhook,
   SavedWsConnection,
   SavedWsdl
 } from "./entities";
@@ -93,13 +92,12 @@ export interface Workspace {
 
 /** The host settings a client may change, as a patch — the payload of `settings.update`. */
 export type SettingsPatch = Partial<Pick<AppConfig,
-  "port" | "forwardProxyPort" | "webhookPort" | "companionPort" | "minimizeToTray" |
+  "port" | "forwardProxyPort" | "companionPort" | "minimizeToTray" |
   "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath"
 >>;
 
 export interface AppConfig {
   port: number;
-  webhookPort: number;
   /** The forward proxy's port — **engine-level**, one for every workspace (2026-09-25). */
   forwardProxyPort: number;
   /**
@@ -122,8 +120,6 @@ export interface AppConfig {
   requestFolders: Folder[];
   wsConnections: SavedWsConnection[];
   wsFolders: Folder[];
-  webhooks: SavedWebhook[];
-  webhookFolders: Folder[];
   graphqlRequests: SavedGraphQLRequest[];
   graphqlSchemas: SavedGraphQLSchema[];
   graphqlRequestFolders: Folder[];

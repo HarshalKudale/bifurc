@@ -28,7 +28,6 @@ export const EntityKind = z.enum([
   "mocks",
   "requests",
   "wsConnections",
-  "webhooks",
   "graphqlRequests",
   "grpcRequests",
   "soapRequests",
