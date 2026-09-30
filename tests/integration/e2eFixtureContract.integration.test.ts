@@ -50,11 +50,12 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { loadConfig } from "@bifurc/engine/workspace/config";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 import { writeSampleWorkspace } from "../../e2e/fixtures/sampleData";
 
 describe("the e2e fixture's seeded workspace survives the engine's own read path", () => {
   let root: string;
-  let previousLocalAppData: string | undefined;
+
   let cfg: Record<string, any>;
 
   beforeAll(() => {
@@ -63,19 +64,14 @@ describe("the e2e fixture's seeded workspace survives the engine's own read path
     const dataDir = path.join(appDir, "data");
     fs.mkdirSync(dataDir, { recursive: true });
 
-    // Before `loadConfig()`, and before anything resolves a path — see the header.
-    previousLocalAppData = process.env.LOCALAPPDATA;
-    process.env.LOCALAPPDATA = root;
-
-    // The fixture writes `app.json` to the parent of its data argument, which is where `settingsPath()`
-    // looks once `%LOCALAPPDATA%` points here.
+    // The fixture writes `app.json` beside its `data/` dir — i.e. into the data root, set here.
+    setDataRoot(appDir);
     writeSampleWorkspace(dataDir, null);
     cfg = loadConfig() as Record<string, any>;
   });
 
   afterAll(() => {
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-    else process.env.LOCALAPPDATA = previousLocalAppData;
+    resetDataRootForTests();
     fs.rmSync(root, { recursive: true, force: true });
   });
 

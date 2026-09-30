@@ -172,9 +172,6 @@ export function setSettingsPathOverride(p: string | null): void {
 
 function settingsPath(): string {
   if (_settingsPathOverride) return _settingsPathOverride;
-  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    return path.join(process.env.LOCALAPPDATA, "Bifurc", "app.json");
-  }
   // Engine-side, Electron-free path (P2 work item 4): the Electron shell calls `setDataRoot()`
   // with its `userData` path at startup, so this resolves to the exact same directory Electron
   // would have returned — see `store/paths.ts`.
