@@ -421,6 +421,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       id, ts: t0, method, url, host,
       reqHeaders: headers,
       reqBody: reqBodyB64,
+      workspaceId: cfg.activeWorkspaceId,
     };
 
     // ── the forward-proxy path — the only HTTP path this port serves ─────────
@@ -497,6 +498,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       id, ts: t0, method, url, host: hostname,
       reqHeaders: headers,
       reqBody: reqBodyB64,
+      workspaceId: cfg.activeWorkspaceId,
     };
 
     // Proxy routing (mocks, rules)

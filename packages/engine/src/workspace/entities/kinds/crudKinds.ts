@@ -36,6 +36,7 @@
  * `cfg.webhookPort` → `9101` — and the three-field status shape), which is why deleting them cost no
  * tests. `registerWebhookCommands()` is called from `src/ipc/handlers.ts`.
  */
+import { EngineError } from "@bifurc/protocol";
 import { registerCrudKind } from "../entityCrudCommands";
 import { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook } from "../../config";
 
@@ -52,6 +53,7 @@ export function registerCrudKinds() {
     // deleted published mapping simply disappeared from the UI with nothing left to recover or
     // commit (see the delete site in `entityCrudCommands.ts`).
     getNameEntry: (m) => ({ name: m.label || m.domain, url: m.domain }),
+    validate: validateMapping,
   });
 
   // ── Proxy Rules ────────────────────────────────────────────────────────────
@@ -126,4 +128,42 @@ export function registerCrudKinds() {
     folderConfigKey: "webhookFolders",
     getNameEntry: (hook) => ({ name: hook.name, urlSuffix: hook.urlSuffix }),
   });
+}
+
+/** A DNS label: letters, digits and inner hyphens. */
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
+
+function mappingError(field: "domain" | "target", message: string): EngineError {
+  return new EngineError("BAD_REQUEST", message, { field });
+}
+
+/**
+ * The rules a mapping must satisfy, whichever client sends it. The edge routes by `domain` (RFC 6761's
+ * `.localhost`) and dials `target` as `host:port` or an `http(s)://` URL — `proxy/response.ts` accepts both.
+ * Throws `BAD_REQUEST` with `details.field` naming the offending field, so a form can place the message.
+ */
+export function validateMapping(m: LocalMapping, siblings: readonly LocalMapping[]): void {
+  const domain = (m.domain ?? "").trim().toLowerCase();
+  if (domain === "" || domain === ".localhost") throw mappingError("domain", "A domain is required.");
+  if (!domain.endsWith(".localhost")) {
+    throw mappingError("domain", `"${m.domain}" is not a .localhost domain.`);
+  }
+  if (!domain.slice(0, -".localhost".length).split(".").every((l) => DNS_LABEL.test(l))) {
+    throw mappingError("domain", `"${m.domain}" is not a valid domain: use letters, digits and hyphens.`);
+  }
+  if (siblings.some((o) => (o.domain ?? "").trim().toLowerCase() === domain)) {
+    throw mappingError("domain", `${domain} is already mapped.`);
+  }
+  if ((m.target ?? "").trim() === "") throw mappingError("target", "A target is required.");
+  if (!isDialableTarget((m.target ?? "").trim())) {
+    throw mappingError("target", `"${m.target}" is not a target: use host:port or an http(s):// URL.`);
+  }
+}
+
+function isDialableTarget(target: string): boolean {
+  if (/^https?:\/\//i.test(target)) {
+    try { return new URL(target).hostname !== ""; } catch { return false; }
+  }
+  const match = /^([a-z0-9.-]+):(\d{1,5})$/i.exec(target);
+  return match !== null && Number(match[2]) >= 1 && Number(match[2]) <= 65535;
 }

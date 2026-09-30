@@ -9,6 +9,8 @@ import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bi
 import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/webhooks/webhookServer";
 import { checkGitInstalled } from "@bifurc/engine/workspace/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { startBlobSweeper } from "@bifurc/engine/workspace/blob/sweep";
 import { setDataRoot, dataDir } from "@bifurc/engine/workspace/paths";
 import { preflight, bootstrapWorkspaces } from "@bifurc/engine/lifecycle/startup";
 import { shutdownEngine } from "@bifurc/engine/lifecycle/shutdown";
@@ -100,11 +102,9 @@ export function updateTrayMenu(): void {
       label: "Minimize to Tray on Close",
       type: "checkbox",
       checked: cfg.minimizeToTray,
+      // A settings patch through the engine, like any client. The menu rebuilds on `settings.changed`.
       click: (item) => {
-        const current = loadConfig();
-        const { saveConfig } = require("@bifurc/engine/workspace/config");
-        saveConfig({ ...current, minimizeToTray: item.checked });
-        updateTrayMenu();
+        void commandRegistry.invoke("settings.update", { minimizeToTray: item.checked }, { bus });
       },
     },
     { type: "separator" },
@@ -263,6 +263,8 @@ if (!gotTheLock) {
     // Electron-free and resolve their paths via `dataDir()`. This is the one place the shell
     // hands them Electron's own `userData` path, preserving current behaviour exactly.
     setDataRoot(app.getPath("userData"));
+    // Expires unreferenced blobs under the data dir. The timer is unref'd, so it never holds the process open.
+    startBlobSweeper();
 
     const hasGit = await checkGitInstalled();
     if (!hasGit) {

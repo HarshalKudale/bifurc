@@ -71,8 +71,8 @@ describe("the window.api surface", () => {
      * which is the property this file's header exists to state.
      */
     const keys = await realPreloadKeys();
-    expect(keys).toHaveLength(154);
-    expect(SURFACE_KEYS).toHaveLength(154);
+    expect(keys).toHaveLength(157);
+    expect(SURFACE_KEYS).toHaveLength(157);
   });
 
   it("classifies every key it exposes, with no key classified twice", async () => {
@@ -106,6 +106,15 @@ describe("the window.api surface", () => {
       // Every subscription must name a wire event — an empty name would subscribe to nothing.
       expect(entry.event, name).toMatch(/^event\./);
     }
+  });
+
+  // `config.save` rewrites the settings and every entity of the workspace from the caller's copy, so a client
+  // holding a stale copy reverts everyone else's changes. Clients change settings by patch and entities by id.
+  it("offers no route to the whole-config config.save", () => {
+    expect(SURFACE_KEYS).not.toContain("saveConfig");
+    const routed = Object.values(SURFACE).map((e) => ("command" in e ? e.command : undefined));
+    expect(routed).not.toContain("config.save");
+    expect(SURFACE.updateSettings).toMatchObject({ kind: "transport", command: "settings.update" });
   });
 
   it("keeps dialogs, zoom, theme, trust-store and the update check off the transport", () => {
@@ -154,7 +163,7 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 80 transport + 39 entity + 11 subscribe + 8 shim + 16 local = 154
+    // 83 transport + 39 entity + 11 subscribe + 8 shim + 16 local = 157
     //
     // The total is asserted because it is what proves nothing was dropped in a move — a key that
     // vanished would keep this test green only if some other count happened to absorb it, which the
@@ -208,7 +217,10 @@ describe("the window.api surface", () => {
     //
     // Both counts move, and both by exactly the size of the feature. A key filed under a different kind
     // would show as one count rising while another fell, which is the failure this table exists to catch.
-    expect(byKind("transport")).toBe(80);
+    //
+    // 2026-09-30: `saveConfig` → `updateSettings` is a swap (transport stays 80), and the engine's capture
+    // history adds `captureList` / `captureClear` / `captureRemove` (transport 80 → 83).
+    expect(byKind("transport")).toBe(83);
     expect(byKind("entity")).toBe(39);
     expect(byKind("subscribe")).toBe(11);
     expect(byKind("shim")).toBe(8);

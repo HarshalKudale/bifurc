@@ -86,6 +86,7 @@ export const COMMANDS = {
   // config.*, workspace.*, env.*
   "config.get": spec(ConfigCmd.ConfigGetParams, "config:get"),
   "config.save": spec(ConfigCmd.ConfigSaveParams, "config:save"),
+  "settings.update": spec(ConfigCmd.SettingsUpdateParams, "settings.update"),
   "workspace.add": spec(ConfigCmd.WorkspaceAddParams, "workspace:add"),
   "workspace.rename": spec(ConfigCmd.WorkspaceRenameParams, "workspace:rename"),
   "workspace.delete": spec(ConfigCmd.WorkspaceDeleteParams, "workspace:delete"),
@@ -229,6 +230,9 @@ export const COMMANDS = {
   // formatting half; these two are what it used to compute for itself.
   "capture.buildRequest": spec(MiscCmd.CaptureBuildRequestParams, "capture.buildRequest"),
   "capture.buildMock": spec(MiscCmd.CaptureBuildMockParams, "capture.buildMock"),
+  "capture.list": spec(MiscCmd.CaptureListParams, "capture.list"),
+  "capture.clear": spec(MiscCmd.CaptureClearParams, "capture.clear"),
+  "capture.remove": spec(MiscCmd.CaptureRemoveParams, "capture.remove"),
 
   // ── the saved-entity counterparts, and `request.send` ─────────────────────────────────────────
   //

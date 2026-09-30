@@ -106,6 +106,7 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   // appears. If that happens, `scriptContext.ts` must move with it: `utils/` importing `mocks/` would be
   // the very violation the extraction exists to avoid.
   pipeline: ["kernel", "utils", "workspace", "mocks"],
+  capture: ["kernel", "utils", "workspace"],
   // `utils/` is granted for `hostnameOf`/`isLoopbackHost`: §6's row for this module predates `plan/15`
   // work item 2, which gave the proxy a second bind guard needing the same answer and extracted
   // `utils/net.ts` so the two could not drift. The row is the thing that was out of date, not the import.

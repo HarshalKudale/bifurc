@@ -106,7 +106,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     workspaceGitState,
     syncStatus,
     handleConfigChange,
-    handleWsConfigChange: rawHandleWsConfigChange,
+    handleSettingsChange,
     refreshConfig,
     clearWorkspaceContext: baseClearContext,
   } = useAppConfigSync();
@@ -164,8 +164,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
 
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchModalMode, setSearchModalMode] = useState<"current" | "global">("current");
-
-  const handleWsConfigChange = useCallback((next: any) => rawHandleWsConfigChange(next, wsId), [rawHandleWsConfigChange, wsId]);
 
   const clearWorkspaceContext = useCallback((msg?: string) => {
     setPendingOpenRequest(null);
@@ -393,7 +391,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     gitKeyFor: gitActions.keyFor,
     gitLastError: gitActions.lastError,
     gitClearError: gitActions.clearError,
-    handleConfigChange, handleWsConfigChange, setConfig, refreshServices,
+    handleConfigChange, handleSettingsChange, setConfig, refreshServices,
     mappingPrefill, onPrefillConsumed: () => setMappingPrefill(undefined), setPanel, setMappingPrefill,
     pendingOpenRequest, onPendingRequestConsumed: () => setPendingOpenRequest(null),
     pendingMockInitial, onPendingMockConsumed: () => setPendingMockInitial(null),
@@ -404,7 +402,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
       setConfig(await window.api.getConfig());
     },
     onWorkspaceDelete: async (id: string) => {
-      localStorage.removeItem(`capture:entries:${id}`);
       await window.api.deleteWorkspace(id);
       setConfig(await window.api.getConfig());
       setPanel("services");
@@ -419,7 +416,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     wsConfig, config, wsId, services, serverRunning, serverError, colorMode, setColorMode,
     activeEnv, openHistory, handleEntityPathChange, historyOpen, bumpHistoryReload,
     entitySyncStatus, workspaceGitState, refreshEntitySyncStatus, gitActions,
-    handleConfigChange, handleWsConfigChange,
+    handleConfigChange, handleSettingsChange,
     refreshServices, mappingPrefill, pendingOpenRequest, pendingMockInitial, pendingRuleId,
     handleOpenMockEditor, handleOpenInRequests, visibility, setPanelVisible,
   ]);
@@ -484,7 +481,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
         onWorkspaceRename={async (id, name) => { await window.api.renameWorkspace(id, name); setConfig(await window.api.getConfig()); }}
         onWorkspaceDelete={async (id) => {
           clearWorkspaceContext("Switching workspace…");
-          localStorage.removeItem(`capture:entries:${id}`);
           try { await window.api.deleteWorkspace(id); setConfig(await window.api.getConfig()); } finally { setWsLoading(null); }
         }}
         activePanel={panel} onOpenWorkspaceSettings={() => setPanel("workspace")}

@@ -246,6 +246,7 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
     };
 
     const cfg = opts.resolveConfig();
+    if (cfg !== null) baseEntry.workspaceId = cfg.activeWorkspaceId;
 
     // ── 0. this host serves no workspace → say so, and say only that ─────────
     //

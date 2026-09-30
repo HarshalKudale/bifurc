@@ -21,6 +21,7 @@ ASSIGN = {
         application.checkPort
         audit.list audit.diff
         blob.stat blob.read
+        capture.list
         config.get
         entity.load entity.list
         export.formats
@@ -43,7 +44,8 @@ ASSIGN = {
         audit.export
         blob.put blob.release
         capture.shareJson
-        config.save
+        capture.clear capture.remove
+        config.save settings.update
         entity.create entity.update entity.delete entity.setEnabled entity.publish entity.restore
         env.setActive
         export.create

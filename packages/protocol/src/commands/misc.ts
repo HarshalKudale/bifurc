@@ -184,3 +184,29 @@ export interface CaptureBuildMockResult {
   /** A `mocks` entity body, ready for `entity.create`. */
   mock: Record<string, unknown>;
 }
+
+/**
+ * `capture.list` / `capture.clear` / `capture.remove` — the engine's captured-traffic history for a workspace.
+ *
+ * The engine records every exchange itself (newest first, capped), so a client reads the history rather than
+ * keeping one: a UI that was closed, or on another screen, still sees what passed. Live exchanges keep arriving
+ * as `event.log.entry`, each carrying the `workspaceId` it was captured under.
+ */
+export const CaptureListParams = z.object({ workspaceId: z.string() }).strict();
+export type CaptureListParams = z.infer<typeof CaptureListParams>;
+export interface CaptureListResult {
+  entries: Record<string, unknown>[];
+}
+
+export const CaptureClearParams = z.object({ workspaceId: z.string() }).strict();
+export type CaptureClearParams = z.infer<typeof CaptureClearParams>;
+
+export const CaptureRemoveParams = z.object({
+  workspaceId: z.string(),
+  ids: z.array(z.string()).min(1),
+}).strict();
+export type CaptureRemoveParams = z.infer<typeof CaptureRemoveParams>;
+export interface CaptureRemoveResult {
+  ok: boolean;
+  removed: number;
+}

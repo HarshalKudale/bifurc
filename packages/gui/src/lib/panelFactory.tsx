@@ -1,5 +1,5 @@
 import React from "react";
-import { AppConfig, MockRule, SavedRequest, ServiceInfo, SyncStatus, WorkspaceGitState } from "@/types";
+import { AppConfig, SettingsPatch, MockRule, SavedRequest, ServiceInfo, SyncStatus, WorkspaceGitState } from "@/types";
 import { Panel, isPanelEnabled } from "@/lib/panelRegistry";
 import { CaptureStats } from "@/panels/CapturePanel";
 import { ColorMode } from "@/hooks/useTheme";
@@ -65,7 +65,7 @@ export interface PanelRenderContext {
     gitClearError: () => void;
     // Config change handlers
     handleConfigChange: (next: AppConfig) => Promise<void>;
-    handleWsConfigChange: (next: AppConfig) => Promise<void>;
+    handleSettingsChange: (patch: SettingsPatch) => Promise<void>;
     setConfig: (cfg: AppConfig) => void;
     // Services
     refreshServices: () => Promise<void>;
@@ -181,7 +181,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     mappings: (ctx) => (
         <MappingsPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             onRefreshServices={ctx.refreshServices}
             prefillTarget={ctx.mappingPrefill}
             onPrefillConsumed={ctx.onPrefillConsumed}
@@ -197,7 +197,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     rules: (ctx) => (
         <ProxyRulesPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             onHistoryOpen={ctx.openHistory}
             onAfterSave={ctx.bumpHistoryReload}
             entitySyncStatus={ctx.entitySyncStatus}
@@ -213,7 +213,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
         <CapturePanel
             activeWorkspaceId={ctx.wsId}
             wsConfig={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             onOpenInMocks={ctx.handleOpenMockEditor}
             onOpenInRequests={ctx.handleOpenInRequests}
             onStatsChange={ctx.onStatsChange}
@@ -222,7 +222,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     requests: (ctx) => (
         <RequestsPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             pendingOpenRequest={ctx.pendingOpenRequest}
             onPendingConsumed={ctx.onPendingRequestConsumed}
             onOpenMockEditor={ctx.handleOpenMockEditor}
@@ -241,7 +241,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     mocks: (ctx) => (
         <MocksPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             pendingMockInitial={ctx.pendingMockInitial}
             onPendingConsumed={ctx.onPendingMockConsumed}
             activeEnv={ctx.activeEnv}
@@ -267,7 +267,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     sockets: (ctx) => (
         <WebSocketsPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             activeEnv={ctx.activeEnv}
             onHistoryOpen={ctx.openHistory}
             onEntityPathChange={ctx.handleEntityPathChange}
@@ -283,7 +283,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     webhooks: (ctx) => (
         <WebhooksPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             onHistoryOpen={ctx.openHistory}
             onEntityPathChange={ctx.handleEntityPathChange}
             historyOpen={ctx.historyOpen}
@@ -298,7 +298,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
     environments: (ctx) => (
         <EnvironmentsPanel
             config={ctx.wsConfig}
-            onConfigChange={ctx.handleWsConfigChange}
+            onConfigChange={ctx.handleConfigChange}
             onHistoryOpen={ctx.openHistory}
             onAfterSave={ctx.bumpHistoryReload}
             entitySyncStatus={ctx.entitySyncStatus}
@@ -312,7 +312,7 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             config={ctx.config}
             serverRunning={ctx.serverRunning}
             serverError={ctx.serverError}
-            onConfigChange={ctx.handleConfigChange}
+            onSettingsChange={ctx.handleSettingsChange}
             colorMode={ctx.colorMode}
             onColorModeChange={ctx.setColorMode}
             onServerRestart={ctx.onServerRestart}

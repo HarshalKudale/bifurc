@@ -1,14 +1,14 @@
 import React, { useState } from "react";
-import { AppConfig } from "@/types";
+import { AppConfig, SettingsPatch } from "@/types";
 import { strings } from "@/lib/strings";
 import { Button, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
 
 interface TlsSettingsSectionProps {
   config: AppConfig;
-  onConfigChange: (cfg: AppConfig) => Promise<void>;
+  onSettingsChange: (patch: SettingsPatch) => Promise<void>;
 }
 
-export default function TlsSettingsSection({ config, onConfigChange }: TlsSettingsSectionProps) {
+export default function TlsSettingsSection({ config, onSettingsChange }: TlsSettingsSectionProps) {
   const [tlsImporting, setTlsImporting] = useState<"cert" | "key" | null>(null);
   const [tlsGenerating, setTlsGenerating] = useState(false);
   const [tlsInstalling, setTlsInstalling] = useState(false);
@@ -20,9 +20,9 @@ export default function TlsSettingsSection({ config, onConfigChange }: TlsSettin
   } | null>(null);
 
   const handleGlobalChange = (
-    patch: Partial<Pick<AppConfig, "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath">>
+    patch: Pick<SettingsPatch, "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath">
   ) => {
-    onConfigChange({ ...config, ...patch });
+    onSettingsChange(patch);
   };
 
   const hasCert = !!config.tlsCaCertPath;

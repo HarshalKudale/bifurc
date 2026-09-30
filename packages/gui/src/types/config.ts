@@ -91,6 +91,12 @@ export interface Workspace {
   syncMeta?: SyncMeta | null;
 }
 
+/** The host settings a client may change, as a patch — the payload of `settings.update`. */
+export type SettingsPatch = Partial<Pick<AppConfig,
+  "port" | "forwardProxyPort" | "webhookPort" | "companionPort" | "minimizeToTray" |
+  "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath"
+>>;
+
 export interface AppConfig {
   port: number;
   webhookPort: number;
