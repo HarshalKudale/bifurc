@@ -136,6 +136,15 @@ export const COMMANDS = {
   "runner.saveConfig": spec(RunnerCmd.RunnerSaveConfigParams, "runner:saveConfig"),
   "runner.loadConfig": spec(RunnerCmd.RunnerLoadConfigParams, "runner:loadConfig"),
   "runner.listFolderIds": spec(RunnerCmd.RunnerListFolderIdsParams, "runner:listFolderIds"),
+  // ── the run's own commands — `plan/19` WI 4 (D29/D30) ──────────────────────────────────────────
+  //
+  // `runner.start` / `runner.cancel` / `runner.status` drive the run itself; the six above store its report
+  // and its per-folder configuration. The split is deliberate and the storage commands' contract is
+  // **unchanged**, so these three are purely additive — a client that does not call them behaves exactly as
+  // it did before.
+  "runner.start": spec(RunnerCmd.RunnerStartParams, "runner.start"),
+  "runner.cancel": spec(RunnerCmd.RunnerCancelParams, "runner.cancel"),
+  "runner.status": spec(RunnerCmd.RunnerStatusParams, "runner.status"),
 
   // sync.*, git.*, entity.publish/restore
   "sync.setRemote": spec(SyncCmd.SyncSetRemoteParams, "sync:setRemote"),

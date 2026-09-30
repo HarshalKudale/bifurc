@@ -86,6 +86,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import type {
+    RunnerCancelParams,
+    RunnerCancelResult,
     RunnerExportReportParams,
     RunnerExportReportResult,
     RunnerGetHistoryParams,
@@ -93,8 +95,13 @@ import type {
     RunnerLoadConfigParams,
     RunnerSaveConfigParams,
     RunnerSaveReportParams,
+    RunnerStartParams,
+    RunnerStartResult,
+    RunnerStatusParams,
+    RunnerStatusResult,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../kernel/registry";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
+import { cancelRun, getRun, startRun } from "./runRegistry";
 import { wsDir } from "../workspace/workspaceFs";
 import { renderRunnerHtml } from "./reportHtml";
 import { publishArtifact } from "../workspace/blob/publish";
@@ -244,6 +251,71 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
             return [];
         }
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // The run's own commands — plan/19 WI 4 (D29/D30)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * `runner.start` — hand the run to the engine and return.
+     *
+     * ## Where the events come from
+     *
+     * `startRun` takes `onProgress` / `onFinished` rather than reaching for the bus itself, and that is
+     * `runner/`'s §6 row doing its job: the module may import `kernel/` for **types** and nothing else, so the
+     * bus is injected here. **`ctx.bus`, not the module singleton** — a headless host builds its own registry
+     * *and* its own bus, so reaching for the singleton would deliver a run's events to a bus nobody is
+     * listening to, which is the same trap `savedRequestCommands.ts` recorded for the registry before it was
+     * deleted.
+     *
+     * ## `total` on every progress event
+     *
+     * Read back from the snapshot rather than captured, so it is the run's real total. A client that attached
+     * mid-run never saw `runner.start`'s answer, and this is the only other place the number appears.
+     */
+    registry.register("runner.start", (params: RunnerStartParams, ctx: CommandContext): RunnerStartResult =>
+        startRun({
+            registry,
+            ctx,
+            workspaceId: params.workspaceId,
+            folderId: params.folderId,
+            onProgress: (index, result) => {
+                ctx.bus.emitTyped("runner.progress", {
+                    workspaceId: params.workspaceId,
+                    folderId: params.folderId,
+                    index,
+                    total: getRun(params.workspaceId, params.folderId)?.total ?? 0,
+                    result,
+                });
+            },
+            onFinished: (report) => {
+                ctx.bus.emitTyped("runner.finished", {
+                    workspaceId: params.workspaceId,
+                    folderId: params.folderId,
+                    report,
+                });
+            },
+        }),
+    );
+
+    /** `runner.cancel` — the only lever that stops a run, which is D29 stated as code. */
+    registry.register("runner.cancel", (params: RunnerCancelParams): RunnerCancelResult =>
+        cancelRun(params.workspaceId, params.folderId),
+    );
+
+    /**
+     * `runner.status` — the snapshot, or `null`.
+     *
+     * **Returned as-is, and that is the point.** `RunSnapshot` and the protocol's `RunnerStatusResult` are
+     * declared twice on purpose — the wire shape has to be readable by a browser and `runner/` is a Node
+     * module — and this return type is what keeps them in step: a field added to one and not the other is a
+     * compile error here rather than a silently dropped field on the way out. That is the failure mode
+     * `RunnerConfigSchema`'s note records this feature already paying for once, which is why there is no cast
+     * on this line.
+     */
+    registry.register("runner.status", (params: RunnerStatusParams): RunnerStatusResult | null =>
+        getRun(params.workspaceId, params.folderId),
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
