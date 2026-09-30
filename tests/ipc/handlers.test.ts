@@ -613,7 +613,10 @@ describe("src/ipc/handlers.ts", () => {
        */
       const SPLIT: string[] = [];
 
-      const NOT_IN_REGISTRY = [...SPLIT];
+      // Registered only by a standalone engine (`runtime/host.ts`), which owns its process; the desktop embeds
+      // the engine in its own process and must not expose a command that stops it.
+      const HOST_ONLY = ["engine.shutdown"];
+      const NOT_IN_REGISTRY = [...SPLIT, ...HOST_ONLY];
 
       it("implements every protocol command — the pinned list is empty", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
@@ -719,7 +722,7 @@ describe("src/ipc/handlers.ts", () => {
         expect(all.length).toBeGreaterThan(80);
 
         const unreachable = all.filter((command) => {
-          if (commandRegistry.isRegistered(command as never)) return false;
+          if (commandRegistry.isRegistered(command as never) || HOST_ONLY.includes(command)) return false;
           const channel = (COMMANDS as Record<string, { legacyChannel?: string }>)[command]
             ?.legacyChannel;
           return !channel || !registeredHandlers.has(channel);
@@ -731,7 +734,7 @@ describe("src/ipc/handlers.ts", () => {
         // because the *registry* covers everything. If the channels were doing the covering instead,
         // the registry would be short and the filter above would be exercising its fallback.
         const registered = all.filter((c) => commandRegistry.isRegistered(c as never));
-        expect(registered.length).toBe(all.length);
+        expect(registered.length).toBe(all.length - HOST_ONLY.length);
       });
 
       it("every routed surface entry names a command the registry implements", async () => {
