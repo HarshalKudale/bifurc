@@ -175,6 +175,13 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   // `grpc.send` replaced `grpc.executeSaved` (2026-09-30, `plan/19` WI 3's fourth and last protocol). Same
   // `execute` class as the `grpc.execute` it invokes.
   "grpc.send": "execute",
+  // The run's own commands (`plan/19` WI 4). **Two different scopes, and the split is the interesting part:**
+  // starting and cancelling a run both *make something happen*, so they are `execute`; `runner.status` only
+  // reads the engine's own run state, so it is `read` — which is what lets a reconnecting client ask what
+  // happened (D29) without also being granted the right to start or stop anything.
+  "runner.start": "execute",
+  "runner.cancel": "execute",
+  "runner.status": "read",
 };
 
 /**

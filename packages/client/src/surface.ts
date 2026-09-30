@@ -365,6 +365,12 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   saveRunnerConfig: t("runner.saveConfig"),
   loadRunnerConfig: t("runner.loadConfig"),
   listRunnerFolderIds: t("runner.listFolderIds"),
+  // The run's own commands (`plan/19` WI 4, D29/D30). **Additive** — the six above store a run's report and
+  // its per-folder configuration and are unchanged, so a client that never calls these three behaves exactly
+  // as it did before.
+  runnerStart: t("runner.start", "starts a run and returns; progress arrives as events"),
+  runnerCancel: t("runner.cancel"),
+  runnerStatus: t("runner.status", "the run's state, running or finished, or null if never started"),
   shareCaptureJson: t("capture.shareJson", "returns an artifact; the CLIENT writes the file, not the engine"),
 
   // ── the 7 subscriptions ──────────────────────────────────────────────────
@@ -391,6 +397,11 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
    * change to the frozen client surface, which is a separate decision from this one.
    */
   onCompanionRefresh: sub("event.entity.changed", "payload discarded; the renderer only wants the signal"),
+  // The run's own events (`plan/19` WI 4). `progress` carries the result object, so a UI renders results as
+  // they arrive instead of waiting for the run to end; `finished` carries the whole report, which is what a
+  // client that was disconnected for the run's entire life has to render from.
+  onRunnerProgress: sub("event.runner.progress"),
+  onRunnerFinished: sub("event.runner.finished"),
 };
 
 /** The keys the client must expose. Derived, so it cannot disagree with `SURFACE`. */

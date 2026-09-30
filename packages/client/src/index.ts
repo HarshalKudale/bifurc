@@ -1003,6 +1003,17 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("saveRunnerConfig", { workspaceId: wsId, folderId, config }) as ReturnType<BifurcApi["saveRunnerConfig"]>,
     loadRunnerConfig: (wsId, folderId) => call("loadRunnerConfig", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["loadRunnerConfig"]>,
     listRunnerFolderIds: (wsId) => call("listRunnerFolderIds", { workspaceId: wsId }) as ReturnType<BifurcApi["listRunnerFolderIds"]>,
+    // ── the run's own commands (plan/19 WI 4, D29/D30) ──────────────────────
+    //
+    // `runnerStart` resolves as soon as the run is *registered*, not when it finishes — that is D29, and it is
+    // why the progress and completion arrive as events rather than as this call's return value. `runnerStatus`
+    // is what a client that was disconnected asks on reconnect.
+    runnerStart: (wsId, folderId) =>
+      call("runnerStart", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerStart"]>,
+    runnerCancel: (wsId, folderId) =>
+      call("runnerCancel", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerCancel"]>,
+    runnerStatus: (wsId, folderId) =>
+      call("runnerStatus", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerStatus"]>,
     shareCaptureJson: async (entries, suggestedName) => {
       const r = await artifactToFile(
         await call("shareCaptureJson", suggestedName === undefined ? { entries } : { entries, suggestedName }),
@@ -1024,6 +1035,8 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
      * did, so the renderer's behaviour is unchanged — it re-fetches either way.
      */
     onCompanionRefresh: (cb) => hub.subscribe("event.entity.changed", () => cb()),
+    onRunnerProgress: (cb) => plain("event.runner.progress", cb as (p: never) => void),
+    onRunnerFinished: (cb) => plain("event.runner.finished", cb as (p: never) => void),
 
     // ── lifecycle (not part of window.api) ──────────────────────────────────
     close: async () => {

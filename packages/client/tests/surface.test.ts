@@ -71,8 +71,8 @@ describe("the window.api surface", () => {
      * which is the property this file's header exists to state.
      */
     const keys = await realPreloadKeys();
-    expect(keys).toHaveLength(136);
-    expect(SURFACE_KEYS).toHaveLength(136);
+    expect(keys).toHaveLength(141);
+    expect(SURFACE_KEYS).toHaveLength(141);
   });
 
   it("classifies every key it exposes, with no key classified twice", async () => {
@@ -98,9 +98,9 @@ describe("the window.api surface", () => {
     }
   });
 
-  it("routes the seven subscriptions to real wire events", () => {
+  it("routes the nine subscriptions to real wire events", () => {
     const subs = Object.entries(SURFACE).filter(([, e]) => e.kind === "subscribe");
-    expect(subs).toHaveLength(7);
+    expect(subs).toHaveLength(9);
     for (const [name, entry] of subs) {
       if (entry.kind !== "subscribe") throw new Error("unreachable");
       // Every subscription must name a wire event — an empty name would subscribe to nothing.
@@ -154,7 +154,7 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 66 transport + 39 entity + 7 subscribe + 8 shim + 16 local = 136
+    // 69 transport + 39 entity + 9 subscribe + 8 shim + 16 local = 141
     //
     // The total is asserted because it is what proves nothing was dropped in a move — a key that
     // vanished would keep this test green only if some other count happened to absorb it, which the
@@ -166,10 +166,17 @@ describe("the window.api surface", () => {
     //   `transport` 67 → 65, `shim` 6 → 8       `loadEntity` + `setEntityEnabled` (2026-09-21)
     //   `transport` 65 → 62, `entity` 48 → 39   mocks became REST-only (`plan/17` WI 8, 2026-09-25)
     //   `transport` 62 → 66                     the four `*Saved` execute methods (2026-09-29)
+    //   `transport` 66 → 69, `subscribe` 7 → 9  the run's own commands and events (`plan/19` WI 4)
     //
-    // The sixth is the only *addition* in this list, and it moves exactly one count. A change that
+    // The sixth is the first *addition* in this list, and it moves exactly one count. A change that
     // raised one count while lowering another would be a reclassification wearing an addition's
     // clothes — the failure this line is here to catch.
+    //
+    // **The seventh moves two counts, and both are additions of one feature.** `plan/19` WI 4 gives the
+    // collection runner three commands (`runner.start` / `runner.cancel` / `runner.status`) and two events
+    // (`event.runner.progress` / `event.runner.finished`), because a run the *engine* owns has to be
+    // startable, stoppable, askable-about, and watchable. Three transport + two subscribe is the whole of
+    // it — no key changed kind, which is what "both are additions" means here.
     //
     // The third and fourth are corrections of a *mis*classification rather than new decisions. Those
     // five keys were filed as 1:1 mappings while the shell channels they replaced each performed a step
@@ -186,9 +193,9 @@ describe("the window.api surface", () => {
     // add/update/delete) went with their entity kinds. Two counts moving by the exact size of the
     // deletion is the signal that nothing was reclassified on the way out — a key filed under a
     // different kind would show as one count rising while the other fell by less.
-    expect(byKind("transport")).toBe(66);
+    expect(byKind("transport")).toBe(69);
     expect(byKind("entity")).toBe(39);
-    expect(byKind("subscribe")).toBe(7);
+    expect(byKind("subscribe")).toBe(9);
     expect(byKind("shim")).toBe(8);
     expect(byKind("local")).toBe(16);
   });

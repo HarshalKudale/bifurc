@@ -33,6 +33,9 @@ import type {
   GrpcSendParams,
   HttpLikeResult,
   GrpcExecuteResult,
+  RunnerStatusResult,
+  RunnerProgressEvent,
+  RunnerFinishedEvent,
   LogChunk,
   WebhookPayload,
   HealthBarService
@@ -217,6 +220,10 @@ export interface BifurcApi {
   tlsExportCert(): Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>;
   tlsCertStatus(): Promise<{ generated: boolean; certPath: string | null; keyPath: string | null }>;
   onCompanionRefresh(cb: () => void): () => void;
+  /** One request of a run finished. See `runnerStart` for why progress is an event and not a return value. */
+  onRunnerProgress(cb: (payload: RunnerProgressEvent) => void): () => void;
+  /** The run ended, cancelled or not — carries the whole report. */
+  onRunnerFinished(cb: (payload: RunnerFinishedEvent) => void): () => void;
   openFileDialog(): Promise<{ name: string; size: number; base64: string; mimeType: string } | { error: string } | null>;
   pickFilePath(title: string, filters?: { name: string; extensions: string[] }[]): Promise<string | null>;
   pickFolderPath(title: string): Promise<string | null>;
@@ -231,6 +238,14 @@ export interface BifurcApi {
   saveRunnerConfig(wsId: string, folderId: string, config: { requestOrder: string[]; delayMs: number }): Promise<{ ok: boolean }>;
   loadRunnerConfig(wsId: string, folderId: string): Promise<{ requestOrder: string[]; delayMs: number } | null>;
   listRunnerFolderIds(wsId: string): Promise<string[]>;
+  /** The run's own commands (`plan/19` WI 4, D29/D30). **Additive** — the storage methods above are unchanged.
+   *
+   * `runnerStart` resolves when the run is *registered*, not when it finishes (D29): progress arrives as
+   * `event.runner.progress` and the end as `event.runner.finished`. `runnerStatus` is what a client that was
+   * disconnected asks on reconnect, and `null` means the engine has never been asked to run this folder. */
+  runnerStart(wsId: string, folderId: string): Promise<{ ok: boolean; total?: number; error?: string }>;
+  runnerCancel(wsId: string, folderId: string): Promise<{ ok: boolean; error?: string }>;
+  runnerStatus(wsId: string, folderId: string): Promise<RunnerStatusResult | null>;
 }
 
 declare global {

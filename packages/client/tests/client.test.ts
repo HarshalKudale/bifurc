@@ -176,11 +176,12 @@ describe("createClient — the surface is byte-identical", () => {
 
     // Set equality in both directions: a swap (one added, one dropped) must fail.
     expect(mine).toEqual(theirs);
-    // 132 → 136 on 2026-09-29 with the four `*Saved` execute methods. Both sides move together here
-    // because both are the *same* client object (`src/preload.ts` spreads `createClient`'s result), so
-    // this number is a second lock on the total rather than an independent check — the independent one
-    // is `surface.test.ts`'s, which diffs against the classification table.
-    expect(mine).toHaveLength(136);
+    // 132 → 136 on 2026-09-29 with the four `*Saved` execute methods, and 136 → 141 on 2026-09-30 with
+    // `plan/19` WI 4's three run commands and two run events. Both sides move together here because both
+    // are the *same* client object (`src/preload.ts` spreads `createClient`'s result), so this number is a
+    // second lock on the total rather than an independent check — the independent one is
+    // `surface.test.ts`'s, which diffs against the classification table.
+    expect(mine).toHaveLength(141);
   });
 
   it("keeps close() off the enumerated surface while still being callable", async () => {

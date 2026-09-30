@@ -135,6 +135,12 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   },
   "runner.loadConfig": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
   "runner.listFolderIds": { valid: { workspaceId: "ws1" }, invalid: {} },
+  // The run's own commands (`plan/19` WI 4). Each takes the same `{workspaceId, folderId}` pair the storage
+  // commands above take, and the `invalid` fixture is the same near-miss — a missing `folderId` — because the
+  // rejection being exercised is the *pair's*, not a command-specific rule.
+  "runner.start": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
+  "runner.cancel": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
+  "runner.status": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
 
   "sync.setRemote": { valid: { workspaceId: "ws1", remote: "r", branch: "main" }, invalid: { workspaceId: "ws1", remote: "r" } },
   "sync.disconnect": { valid: { workspaceId: "ws1" }, invalid: {} },

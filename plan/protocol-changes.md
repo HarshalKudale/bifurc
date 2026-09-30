@@ -1045,6 +1045,68 @@ load half. `packages/protocol/src/commands/index.test.ts` **249** unchanged; `pr
 replaces an existing name, it is not an `entity.*` kind discriminator, it carries no filesystem path, it is a
 `.strict()`-on-both-members union, and it keeps the `execute` scope of the `grpc.execute` it invokes.
 
+### 2026-09-30 — the run's own commands and events: `runner.start` / `runner.cancel` / `runner.status`
+
+**Phase:** `plan/19` WI 4 (D29 / D30)
+**Type:** **additive** — three new commands and two new events, with no existing name, payload or event changed
+**Change:**
+
+| command | params | result |
+|---|---|---|
+| `runner.start` | `{workspaceId, folderId}` | `{ok, total?, error?}` |
+| `runner.cancel` | `{workspaceId, folderId}` | `{ok, error?}` |
+| `runner.status` | `{workspaceId, folderId}` | the run's state, or `null` |
+
+and two events:
+
+| event | payload | who needs it |
+|---|---|---|
+| `event.runner.progress` | `{workspaceId, folderId, index, total, result}` | a UI rendering results as they arrive |
+| `event.runner.finished` | `{workspaceId, folderId, report}` | a client that was disconnected for the whole run |
+
+Protocol: **93 → 96** commands, **9 → 11** events.
+
+**Why the run needed its own commands rather than extending the six `runner.*` ones above.** Those six store a
+run's *report* and its per-folder *configuration* — file operations with no state — and their contract is
+unchanged. These three drive the run itself, and that state is the engine's (D29), so folding them into
+`runner.saveReport`'s family would have put two different lifetimes behind one namespace.
+
+**Why `runner.start` answers `{ok:false}` rather than throwing for "already running"** (D30): the caller asked
+a question — *may I start this?* — and "no, because X" is an answer. A throw would make it an error envelope,
+which the transport shapes differently and every client would have to unwrap separately.
+
+**Why two events rather than one.** `progress` carries a single result so a UI renders it as it arrives;
+`finished` carries the whole report so a client that saw no progress at all still has everything. Collapsing
+them would make either the incremental case re-send the report or the reconnect case replay N events.
+
+**`total` rides on every progress event**, not only on `runner.start`'s result, because a client that attaches
+mid-run (D29) never saw the start call.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No**, and the near-miss is recorded
+   above: the six storage commands have no run state to drive.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: `entity.*` is CRUD *over* an entity, and a
+   run is not one — it has no id, no folder and no file.
+3. *Does the payload contain a filesystem path?* — No: `{workspaceId, folderId}`.
+4. *Is there a schema, and does the engine validate against it?* — Yes, three `.strict()` objects; the fixtures
+   use the same pair the storage commands do, with the same near-miss.
+5. *Is it in the right scope class?* — **Two classes, deliberately**: `start` and `cancel` are `execute` (they
+   make something happen), `status` is `read` (it reads engine state) — which is what lets a reconnecting
+   client ask what happened without being granted the right to start or stop anything.
+
+**Affected:** clients — `@bifurc/client` gains `runnerStart` / `runnerCancel` / `runnerStatus` and
+`onRunnerProgress` / `onRunnerFinished`. **The surface grows 136 → 141** (transport 66 → 69, subscribe 7 → 9):
+the second growth after 2026-09-29's four `*Saved` methods, and pinned in `surface.test.ts` and
+`client.test.ts`.
+
+**Migration:** none. All five names are new; the six storage commands are untouched.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **249 → 255** (+6 = 3 commands × the 2 generated
+cases each). The conformance suite's every-command and every-event matrices widen **automatically** — both are
+derived from `COMMANDS` / `EVENT_NAMES`, so a new name cannot be left out of them. `plan/19` §11 records the
+totals.
+
 ---
 
 
