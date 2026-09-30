@@ -44,7 +44,8 @@ import { startServer, isRunning, getPort, getServerError } from "./proxy/server"
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./reverseproxy/edge";
 // `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
 import { loadConfig } from "./workspace/config";
-import { bus, wireLogEventsToBus } from "./kernel/eventBus";
+import { bus } from "./kernel/eventBus";
+import { wireEngineEvents } from "./registerAll";
 import { preflight, bootstrapWorkspaces, type StartupCheck } from "./lifecycle/startup";
 import { shutdownEngine } from "./lifecycle/shutdown";
 import { startBlobSweeper } from "./workspace/blob/sweep";
@@ -266,7 +267,7 @@ export function createEngine(opts: EngineOptions): Engine {
     // Wired here and **not only** in the shell's `registerIpcHandlers()` so that P7's web UI, P8's CLI
     // and P9's Docker image inherit it from the lifecycle instead of each re-solving it. That is the
     // whole reason the function lives in the engine rather than in the shell.
-    stopLogWiring = wireLogEventsToBus(bus);
+    stopLogWiring = wireEngineEvents(bus);
 
     /**
      * ## The edge first, then the proxy — `plan/15` §3.3, work item 3

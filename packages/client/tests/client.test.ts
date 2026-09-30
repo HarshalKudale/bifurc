@@ -194,7 +194,7 @@ describe("createClient — the surface is byte-identical", () => {
     // rename, which is the honest reading — the renderer's socket was not speaking to the shell at all, so
     // there was no legacy method to replace. `env.getMerged` is the one that replaces something: `App.tsx`'s
     // `mergeEnvVars`, the last renderer implementation of a workspace fact the engine owned.
-    expect(mine).toHaveLength(154);
+    expect(mine).toHaveLength(157); // +3: capture.list / clear / remove (2026-09-30)
   });
 
   it("keeps close() off the enumerated surface while still being callable", async () => {

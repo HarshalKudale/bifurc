@@ -102,6 +102,8 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "entity.delete",
   "entity.setEnabled",
   "config.save",
+  // A patch of host settings: applying the same patch twice leaves the same settings.
+  "settings.update",
   "folder.rename",
   "folder.move",
   "folder.delete",
@@ -178,6 +180,10 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   // `env.resolveText`, nothing here mints anything — these are genuinely deterministic as well.)
   "capture.buildRequest",
   "capture.buildMock",
+  // The engine's capture history: a read, a clear, and a removal by id — each leaves the same state twice.
+  "capture.list",
+  "capture.clear",
+  "capture.remove",
   "healthbar.saveServices",
   // The saved-entity counterparts of the `*.execute`/`replay` rows above, classified the same way and
   // for the same reason. They *read* an entity first, which is idempotent on its own, but the command's

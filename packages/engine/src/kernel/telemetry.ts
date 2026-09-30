@@ -34,6 +34,8 @@ export interface RequestLogEntry {
     resHeaders: Record<string, string>;
     resBody: string;      // base64, first 512 KB
     resStatus: number | null;
+    /** The workspace whose config served this request — what the capture store files it under. */
+    workspaceId?: string;
 }
 
 export const logEmitter = new EventEmitter();

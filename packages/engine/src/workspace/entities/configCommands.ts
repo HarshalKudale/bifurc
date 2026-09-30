@@ -30,6 +30,7 @@
 import type { CommandRegistry, CommandContext } from "../../kernel/registry";
 import type {
     ConfigSaveParams,
+    SettingsUpdateParams,
     WorkspaceAddParams,
     WorkspaceDeleteParams,
     WorkspaceRenameParams,
@@ -42,7 +43,8 @@ import { gateCreate } from "../entityCount";
 // `Engine_Module_Plan.md` §4.1 — the fan-out lives in `runtime/instances.ts` now. This command used to
 // import `reloadConfig` from `proxy/server` and the three port re-binders from the listeners themselves;
 // both operations are the *composition*'s business, so they moved to the module that owns the listeners.
-import { notifyConfigChanged, rebindRuntimePorts } from "../../runtime/instances";
+import { notifyConfigChanged, rebindChangedListeners, rebindRuntimePorts } from "../../runtime/instances";
+import { loadSettings, saveSettings } from "../appSettings";
 
 export function registerConfigCommands(registry: CommandRegistry): void {
     /**
@@ -80,6 +82,21 @@ export function registerConfigCommands(registry: CommandRegistry): void {
          * both snapshots rather than re-loading, so there is one definition of "before".
          */
         rebindRuntimePorts(incoming, prev);
+        return { ok: true };
+    });
+
+    /**
+     * The settings half of `config.save`, as a patch. It writes `app.json` only — no workspace, no entity —
+     * so a client holding a stale config cannot revert anything by changing a port.
+     */
+    registry.register("settings.update", (params: SettingsUpdateParams, ctx: CommandContext) => {
+        const prev = loadSettings();
+        const patch = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
+        const next = { ...prev, ...patch };
+        saveSettings(next);
+        notifyConfigChanged();
+        ctx.bus.emitTyped("settings.changed", {});
+        rebindChangedListeners(next, prev);
         return { ok: true };
     });
 

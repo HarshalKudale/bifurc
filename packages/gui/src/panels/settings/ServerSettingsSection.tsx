@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AppConfig } from "@/types";
+import { AppConfig, SettingsPatch } from "@/types";
 import { strings } from "@/lib/strings";
 import { ColorMode } from "@/hooks/useTheme";
 import { Button, SectionLabel, SectionCard, SettingsRow, Switch } from "@/components/ui";
@@ -8,7 +8,7 @@ interface ServerSettingsSectionProps {
   config: AppConfig;
   serverRunning: boolean;
   serverError: string | null;
-  onConfigChange: (cfg: AppConfig) => Promise<void>;
+  onSettingsChange: (patch: SettingsPatch) => Promise<void>;
   onServerRestart: () => Promise<void>;
   colorMode: ColorMode;
   onColorModeChange: (m: ColorMode) => void;
@@ -25,15 +25,15 @@ export default function ServerSettingsSection({
   config,
   serverRunning,
   serverError,
-  onConfigChange,
+  onSettingsChange,
   onServerRestart,
   colorMode,
   onColorModeChange,
 }: ServerSettingsSectionProps) {
   const [restarting, setRestarting] = useState(false);
 
-  const handleGlobalChange = (patch: Partial<Pick<AppConfig, "minimizeToTray">>) => {
-    onConfigChange({ ...config, ...patch });
+  const handleGlobalChange = (patch: Pick<SettingsPatch, "minimizeToTray">) => {
+    onSettingsChange(patch);
   };
 
   const handleRestart = async () => {

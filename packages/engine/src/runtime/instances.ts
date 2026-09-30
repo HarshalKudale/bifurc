@@ -30,10 +30,11 @@
  * exactly why `reverseproxy/edge.ts` deliberately has no `reloadConfig()` at all.
  */
 
-import { isRunning, reloadConfig, startServer } from "../proxy/server";
+import { getServerError, isRunning, reloadConfig, startServer } from "../proxy/server";
 import { isEdgeRunning, restartEdge } from "../reverseproxy/edge";
 import { isWebhookServerRunning, startWebhookServer } from "../webhooks/webhookServer";
 import type { AppConfig } from "../workspace/config";
+import type { AppSettings } from "../workspace/appSettings";
 
 /**
  * Re-derive every listener whose rules come from config.
@@ -102,4 +103,30 @@ export function rebindRuntimePorts(incoming: AppConfig, prev: AppConfig): void {
   if (incoming.webhookPort !== prev.webhookPort && isWebhookServerRunning()) {
     startWebhookServer(incoming.webhookPort);
   }
+}
+
+/** The host-local settings that decide where the listeners bind. */
+export type ListenerSettings = Pick<
+  AppSettings,
+  "port" | "forwardProxyPort" | "webhookPort" | "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath"
+>;
+
+/**
+ * `settings.update`'s rebind: move a listener only when **its own** settings changed.
+ *
+ * Unlike {@link rebindRuntimePorts} there is no "revive a listener that is down" arm. That arm is why a
+ * `config.save` of an unrelated change restarted a forward proxy the user had stopped. Here a stopped proxy
+ * stays stopped (its new port is persisted and used by the next start); a proxy that is down because its bind
+ * **failed** is retried, since a new port is exactly how the user fixes that.
+ */
+export function rebindChangedListeners(next: ListenerSettings, prev: ListenerSettings): void {
+  if (next.port !== prev.port) restartEdge(next.port);
+
+  const tlsChanged = next.tlsEnabled !== prev.tlsEnabled
+    || next.tlsCaCertPath !== prev.tlsCaCertPath
+    || next.tlsCaKeyPath !== prev.tlsCaKeyPath;
+  const proxyChanged = next.forwardProxyPort !== prev.forwardProxyPort || tlsChanged;
+  if (proxyChanged && (isRunning() || getServerError() !== null)) startServer(next.forwardProxyPort);
+
+  if (next.webhookPort !== prev.webhookPort && isWebhookServerRunning()) startWebhookServer(next.webhookPort);
 }
