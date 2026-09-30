@@ -5,9 +5,7 @@ import PanelHeader from "@/components/layout/PanelHeader";
 import CaptureTable from "@/components/capture/CaptureTable";
 import CaptureDetail from "@/components/capture/CaptureDetail";
 import CaptureTypeTabs, { TypeFilter } from "@/components/capture/CaptureTypeTabs";
-import {
-  CaptureType, deriveType, fulfilledBy, buildMockInitial, reqToHeadersBody,
-} from "@/components/capture/captureUtils";
+import { CaptureType, deriveType, fulfilledBy } from "@/components/capture/captureUtils";
 import {
   blockKey, blockedKeySet, findBlocksFolder, ensureBlocksFolderId, buildBlockMock,
 } from "@/lib/blocks";

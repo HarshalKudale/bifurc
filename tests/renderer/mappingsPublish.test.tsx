@@ -21,6 +21,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { AppConfig, LocalMapping, WorkspaceGitState } from "@/types";
 import MappingsPanel from "@/panels/MappingsPanel";
+import { EntityPathsProvider } from "@/lib/entityPaths";
 
 const WS = "ws-1";
 
@@ -115,6 +116,16 @@ function renderPanel({
       onRevert={vi.fn().mockResolvedValue({ ok: true })}
       isPublishing={() => false}
     />,
+    // The panel reads the engine's path map through `useEntityPaths()` (`plan/19` WI 5 item 3), so a test
+    // that renders it must provide one. `mappings` is a flat kind, so the engine's answer is
+    // `mappings/<id>.json` — the same string the `entitySyncStatus` prop above is keyed by.
+    {
+      wrapper: ({ children }: { children: React.ReactNode }) => (
+        <EntityPathsProvider paths={{ entities: { [mapping.id]: `mappings/${mapping.id}.json` }, folders: {} }}>
+          {children}
+        </EntityPathsProvider>
+      ),
+    },
   );
   return { ...utils, onPublish, mapping };
 }

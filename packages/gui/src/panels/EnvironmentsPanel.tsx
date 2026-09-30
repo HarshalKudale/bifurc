@@ -9,7 +9,7 @@ import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { EnvVariableTable } from "./EnvVariableTable";
 import { entityGitView, entityGitDotColor } from "@/lib/entityGit";
-import { flatEntityRelPath } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { History, RotateCcw, ArrowUp } from "@/lib/icons";
 
 const GLOBAL_ENV_ID = "__global__";
@@ -70,6 +70,9 @@ function EnvItem({
   onHistoryOpen?: (filePath: string) => void;
   busy?: boolean;
 }) {
+  /** The engine's path for this environment (`plan/19` WI 5 item 3) — see `useEntityPaths`. */
+  const { relPathOf } = useEntityPaths();
+
   return (
     <div className={`flex items-center gap-1 transition-colors group ${isSelected ? "bg-signal/15" : "hover:bg-card/50"}`}>
       <button
@@ -118,7 +121,7 @@ function EnvItem({
         )}
         {view?.canViewHistory && onHistoryOpen && (
           <button
-            onClick={() => onHistoryOpen(flatEntityRelPath("environments", env.id))}
+            onClick={() => onHistoryOpen(relPathOf(env.id))}
             title={strings.entityGit.historyTooltip}
             className="px-1.5 py-0.5 rounded border border-border bg-card hover:bg-surface-2 text-[9px] font-medium text-muted-foreground hover:text-signal cursor-pointer"
           >
@@ -175,14 +178,15 @@ export default function EnvironmentsPanel({ config, onConfigChange, onHistoryOpe
     await reloadConfig();
   }, [reloadConfig]);
 
+  /** The engine's `environments/<id>.json` (`plan/19` WI 5 item 3) — a flat kind, so no folder level. */
+  const { relPathOf } = useEntityPaths();
+
   /**
-   * One environment's git view, from the shared status map.
-   *
-   * Keyed by `flatEntityRelPath`, which is the same string `statusTracker` produces — `environments`
-   * is a flat kind, so the path is always `environments/<id>.json` with no folder level.
+   * One environment's git view, from the shared status map, keyed by the engine's path — the same string
+   * `statusTracker` produces.
    */
   const envView = (id: string) =>
-    entityGitView(entitySyncStatus?.[flatEntityRelPath("environments", id)], workspaceGitState);
+    entityGitView(entitySyncStatus?.[relPathOf(id)], workspaceGitState);
 
   const renderEnvItem = (env: Environment, isGlobal: boolean) => (
     <EnvItem

@@ -1109,6 +1109,302 @@ totals.
 
 ---
 
+## 2026-09-30 — `request.parseCurl` (additive; `plan/19` WI 5)
+
+**What.** One new command: `request.parseCurl { curl }` → `{ method, url, headers, body }`. A pure parse of a
+cURL command, returning the request it describes. Header keys are lower-cased; the map is **unfiltered**.
+
+**Why it is a command rather than an engine-internal helper.** The REST tab parses a pasted cURL on every
+keystroke, and the renderer **cannot import the engine** — `@bifurc/gui` has no `@bifurc/engine` dependency by
+design (`plan/19` finding 1). So either the parser is reachable over the wire, or the capability stays
+duplicated in the renderer. `window.api` is the only door.
+
+**The duplication it removes — and the second copy nobody had counted.** `packages/gui/src/lib/curlParser.ts`
+was the renderer's copy, `plan/19` §1's last table row. The cURL importer
+(`importexport/importers/requests-curl.ts`) held a **third**: its own comment read *"duplicated from
+packages/gui/src/lib/curlParser.ts for main process use"*, so that one file had two near-verbatim copies of
+itself in two packages. Both are gone; the parser is `packages/engine/src/utils/curl.ts`, and the importer
+reaches it through `parseCurlCommand()` (which adds the importer's own *"must start with `curl` and yield a
+url"* contract, rather than re-implementing the parse).
+
+**Why unfiltered, and what that costs.** `SKIP_CURL_HEADERS` (host / proxy-connection / connection /
+content-length / transfer-encoding) is a *caller's* policy: the tab drops them when it imports, the importer
+drops them at its own point in its pipeline. A parser that dropped them would be choosing for both. The
+renderer therefore keeps a copy of the list for one read-side job the engine cannot do for it — filtering a
+**stored** mock's `capturedHeaders` on load — and the copy is **pinned** by
+`tests/gui/curlHeaderSkip.test.ts`, the `plan/19` D28 list-vs-logic split. The boundary ratchet's `curlParser`
+construct was narrowed to the parser accordingly; flagging the list would contradict the pin, exactly as
+flagging `RANDOMIZER_TOKENS` would contradict D28.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** `request.replay` takes a
+   request and sends it; this takes a string and parses it. They share no field and no behaviour.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: it is not CRUD over an entity, and it has
+   no id and no file. It is a pure function.
+3. *Does the payload contain a filesystem path?* — No: `{ curl }`, a string.
+4. *Is there a schema, and does the engine validate against it?* — Yes, one `.strict()` object with one
+   required field. The fixture's `invalid` row is a **near-miss** (the right shape under the wrong key name),
+   because `{}` would fail for "missing `curl`" before and after any schema edit — the non-discriminating
+   fixture that table's header warns about.
+5. *Is it in the right scope class?* — **`read`.** It observes and reaches nothing: no file, no upstream, no
+   side effect. The contrast with `request.replay`'s `execute` two lines above is the point.
+
+**Affected:** clients — `@bifurc/client` gains `requestParseCurl`. **The surface grows 141 → 142**
+(transport 69 → 70): the third growth after 2026-09-29's four `*Saved` methods and the same day's five
+`runner.*` keys, and pinned in `surface.test.ts` and `client.test.ts`.
+
+**Migration:** none. `request.parseCurl` is new; `request.replay` is untouched.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **255 → 257** (+2 = 1 command × the 2 generated
+cases). `packages/client/src/retry.ts` classifies it **idempotent** (a pure function of its argument) and
+`transport/auth/scopes.ts` gives it `read`; both tables are asserted total at import. The parser's 19 cases
+moved from `tests/renderer/curlParser.test.ts` to `tests/engine/curlParser.test.ts` with the implementation.
+
+---
+
+## 2026-09-30 — `env.resolveText` (additive; `plan/19` WI 5, item 4)
+
+**What.** One new command: `env.resolveText { workspaceId, text }` → `{ text }`. Resolves `{{key}}` against the
+workspace's **effective** environment — `__global__` with the active environment merged over it — and mints
+`{{random.*}}` values.
+
+**Why it exists.** `plan/19` WI 3 made the engine the resolving party: a request's fields reach the engine
+verbatim and are resolved there. That removed the renderer's resolver, and with it the renderer's ability to
+**display** a resolved value — which the health bar needs, because it shows the url a check is about to probe.
+
+**The alternative, and why it is worse.** The obvious design is for `healthbar.checkUrl` to return the url it
+resolved. It fails on its own terms: the card shows the resolved url *before* the first check (a service with
+auto-refresh off may never be checked at all), so a check-only path would leave the card showing
+`{{host}}/health` indefinitely. Resolving on demand is the shape that matches what the UI is asking.
+
+**Why "effective" and not "active".** `loadMergedEnvironment()` puts `__global__` under the active environment.
+Resolving against the active environment **alone** resolves a *shadowed* key differently, and every test that
+uses no shadowed key passes either way — `plan/19` §8 trap 2, which is why `mergeEnvVars` travelled with the
+*call* rather than being added beside `resolveVars`. There is deliberately no parameter for the un-merged
+behaviour: that option existed in the renderer, and it is what made the UI the authority for a workspace fact
+the engine already owns.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** `config.get` returns the
+   environments *unresolved*, and nothing else resolves on request.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: it is not CRUD over an entity, it has no id
+   and no file, and it is a pure function of the workspace's settings.
+3. *Does the payload contain a filesystem path?* — No: `{ workspaceId, text }`.
+4. *Is there a schema, and does the engine validate against it?* — Yes, a `.strict()` object. The fixture's
+   `invalid` row is a **near-miss** (the right shape under the wrong key), because `{}` would fail for a missing
+   required field before and after any schema edit.
+5. *Is it in the right scope class?* — **`read`.** Nothing is written and no upstream is reached.
+
+**⚠ The one thing a caller must know: the result is not *stable*.** `{{random.*}}` mints a fresh value per call,
+so the command is **idempotent** (no stored effect, safe to retry) but **not deterministic** (two calls
+disagree). That is safe here precisely because the caller uses the result to *display* a url — a caller that
+sent the resolved value would need the pipeline's engine-side resolution instead, where resolution and the send
+happen once, together. `packages/client/src/retry.ts` records both halves of that distinction.
+
+**Affected:** clients — `@bifurc/client` gains `envResolveText`, with `workspaceId` optional and resolved from
+the active workspace when omitted (the treatment `request.send` gets). **The surface grows 142 → 143**
+(transport 70 → 71), pinned in `surface.test.ts` and `client.test.ts`.
+
+**Migration:** none. `env.resolveText` is new; `env.setActive` is untouched.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **257 → 259** (+2 = 1 command × the 2 generated
+cases), and the conformance matrices widen automatically from `COMMANDS` / `EVENT_NAMES`. `HealthBarPanel` no
+longer imports `@/lib/resolveVars` — **but the boundary ratchet's allowlist is unchanged at three entries**,
+because that entry is keyed on the resolver's *definition*, and `useWebSocket.ts` is still a user of it. WI 6
+is what retires it.
+
+---
+
+## 2026-09-30 — `capture.buildRequest` / `capture.buildMock` (additive; `plan/19` WI 5, item 2)
+
+**What.** Two new commands, both `{ entry }` → one entity body each: `capture.buildRequest` → `{ request }` (a
+`requests` body) and `capture.buildMock` → `{ mock }` (a `mocks` body).
+
+**Why they exist.** They replace `reqToHeadersBody` / `buildMockInitial` in
+`packages/gui/src/components/capture/captureUtils.ts`. Those decided **which headers to drop**, **how to
+decode a body** and **how a response is stored** — engine work by D22's test — and the renderer cannot import
+the engine, so the only way to stop it holding a second implementation is to ask over the wire.
+
+**Why two commands rather than one with a discriminator.** The two produce *different shapes*, and the two call
+sites need one each ("Save" builds a request; "Open in mocks" builds a mock; the context menu offers them as
+separate actions). One command with a `target` field would return a union every reader has to narrow, for no
+caller that wants both.
+
+**Why `entry` is loose — and the results with it.** `z.record(z.string(), z.unknown())`, following
+`capture.shareJson`'s `z.array(z.unknown())`: the protocol deliberately does not model `RequestLogEntry` (it is
+engine-local, and the remote transports project it down before the wire — `kernel/telemetry.ts` says so at
+length), so a schema here would be a fourth mirror of a type the wire does not carry. The results are loose for
+the same reason `entity.create`'s result is: entity bodies are typed in `@bifurc/engine` and hand-mirrored into
+`packages/gui/src/types/ipc.ts`.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** `entity.create` stores an
+   entity the caller has already assembled; nothing turned a capture into one.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: it is not CRUD, and the payload is not an
+   entity yet.
+3. *Does the payload contain a filesystem path?* — No: `{ entry }`.
+4. *Is there a schema, and does the engine validate against it?* — Yes, both `.strict()`. The `invalid` fixture
+   is a **near-miss** (the right shape under the wrong key) rather than `{}`.
+5. *Is it in the right scope class?* — **`read`**, and the contrast with `capture.shareJson`'s `write` is the
+   point: `shareJson` stages a blob, so it writes; these build a payload and touch nothing. The storing is
+   `entity.create`'s, which is `write`. A `read`-scoped session may prepare an entity it may not save.
+
+**Affected:** clients — `@bifurc/client` gains `captureBuildRequest` / `captureBuildMock`. **The surface grows
+143 → 145** (transport 71 → 73), pinned in `surface.test.ts` and `client.test.ts`.
+
+**Migration:** none. Both names are new; `capture.shareJson` is untouched.
+
+**⚠ One behaviour that deliberately did NOT move.** `useCaptureActions.mockEntries` stores only the response
+side plus method/url — it has never persisted `capturedHeaders` / `capturedBody` / the `*Mocked` flags.
+`capture.buildMock` returns the whole body (a mock replays the capture byte-for-byte), so spreading it would
+have silently started persisting the captured request. The caller's field picking is unchanged.
+
+**⚠ And one that had to be *ported* rather than copied.** The renderer decoded base64 with `atob`, which
+**throws**, and its `catch` returned the *raw input* so an odd capture shows as-is. Node's
+`Buffer.from(x, "base64")` never throws — it silently skips offending characters — so the engine's decode
+carries an explicit validity check. Without it the behaviour changes on the way over, and nothing in the old
+suite would have noticed; `tests/engine/captureEntities.test.ts` now pins it, including a whitespace-wrapped
+case, because `atob` tolerates ASCII whitespace and a naive strict check would not.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **259 → 263** (+4 = 2 commands × the 2 generated
+cases). The cases that pinned the two functions moved from `tests/renderer/captureUtils.test.ts` to
+`tests/engine/captureEntities.test.ts`. **The boundary ratchet's allowlist is unchanged** — neither function was
+one of §1's constructs — but the renderer's copy of the binary-content-type predicate is now a **pinned** copy
+(`tests/gui/binaryContentType.test.ts`), the D28 split a third time.
+
+---
+
+
+## 2026-09-30 — `ws.*` (six commands + two events) and `env.getMerged` (additive; `plan/19` WI 6)
+
+**What.** Seven commands and two events.
+
+| name | params → result | scope |
+|---|---|---|
+| `ws.connect` | `{ workspaceId, socketId, url, headers? }` → `{ ok, error? }` | `execute` |
+| `ws.disconnect` | `{ workspaceId, socketId, code?, reason? }` → `{ ok, error? }` | `execute` |
+| `ws.send` | `{ workspaceId, socketId, data }` → `{ ok, error? }` | `execute` |
+| `ws.status` | `{ workspaceId, socketId }` → `WsStatusResult \| null` | `read` |
+| `ws.list` | `{ workspaceId }` → `{ connections, max }` | `read` |
+| `ws.clearMessages` | `{ workspaceId, socketId }` → `{ ok, error? }` | `write` |
+| `env.getMerged` | `{ workspaceId }` → the merged `Environment \| null` | `read` |
+| `event.ws.status` | `{ workspaceId, socketId, status, error, code?, reason? }` | — |
+| `event.ws.message` | `{ workspaceId, socketId, message }` | — |
+
+**Why they exist.** `packages/gui/src/hooks/useWebSocket.ts` was the WebSocket *client*: a module-level
+`Map<string, WebSocket>`, its own constructor call, its own `resolveVars` for the url and the outgoing frame,
+and the message log in React state. Two consequences, and both are `plan/19`'s subject:
+
+1. **The socket died with the window** — the object holding it was a browser object, so a reload, a closed
+   window or a build without the panel dropped every connection. Nothing in that design could have been
+   otherwise.
+2. **A CLI could not open one.** `Protocol_Module_Contract.md` §1: every byte reaching the wire is the
+   engine's.
+
+`env.getMerged` is the smaller half of the same item. `App.tsx` merged `__global__` with the active
+environment on every render (`mergeEnvVars`) and threaded the result down as `activeEnv`, which every
+`EnvVarHint` lists variable names from. The merge is D23's — the engine already owns the `environments` kind,
+the `activeEnvironmentId` pointer and the synthetic `__global__` — so leaving it in the renderer would have
+kept the UI the authority for a workspace fact, and kept `lib/resolveVars.ts` alive with it.
+
+**Why `workspaceId` is required rather than `WorkspaceScope`'s optional.** A socket is keyed by
+`{workspaceId, socketId}` for its whole life, so a workspace inferred at connect time and changed under the
+socket would leave a connection nobody can address. `runner.start` / `runner.cancel` / `runner.status` made
+the same call for the same reason.
+
+**Why `socketId` is the caller's name.** The engine has no idea what a tab is and does not pretend to: the
+caller supplies the name (for the UI, the tab id it already had; for a CLI, whatever it likes) and the engine
+enforces one live socket per key.
+
+**Why a second `ws.connect` on a live key REPLACES rather than being refused — and this is deliberately *not*
+D30.** D30 refused a second run of the same folder, and the difference is the kind of thing each command makes:
+a **run** is a unit of work, so a duplicate is effort nobody asked for twice; a **socket** is a channel, so a
+second connect is a *reconnect* — the renderer did exactly that ("close any existing connection for this
+tab"), and refusing would make a broken socket unrecoverable without a separate disconnect first. The
+replacement is atomic in the sense that matters: the old socket is marked superseded before it is closed, so
+its close event cannot emit a `disconnected` that arrives *after* the new `connecting`.
+
+**Why `ws.list` returns `max`.** The registry is what refuses the sixth connection, so the registry reports
+the number. A pinned `5` in the renderer would be the D28 list-vs-logic split spent on a constant the engine
+can simply answer, and would have been wrong the day the limit became configurable.
+
+**Why `ws.clearMessages` is a command.** The log is engine state — `ws.status` returns it — so a
+renderer-only clear would be undone by the next re-attach. That is the exact class of bug this work item
+removes.
+
+**Why both events carry `socketId`.** One bus serves every socket in the process and the renderer has one
+subscriber per open tab, so an event that did not say which socket it belonged to could only be routed by
+guessing.
+
+**Two behaviour changes that are improvements rather than ports**, both unreachable before because the
+renderer had no way to express them:
+
+- **Headers now reach the wire.** The browser `WebSocket` constructor cannot send headers at all — the
+  renderer's own comment said the resolved headers were "stored, not injected". The engine's `ws` client can,
+  so a `{{TOKEN}}` in an Authorization header went from *resolved and discarded* to *resolved and sent*.
+- **Binary frames are detected properly.** The renderer decided with `typeof ev.data === "string"`, which is a
+  proxy for the frame's opcode rather than a reading of it; the `ws` client hands over `isBinary` directly.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** Nothing opened a socket.
+   `env.getMerged` is the one exception in spirit: it *replaces* `App.tsx`'s `mergeEnvVars`, which was a
+   renderer function rather than a command.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No, and the contrast is worth keeping.** The
+   `wsConnections` entity kind already exists and is untouched: a *saved* connection is workspace data, a
+   *live* one is engine state. Different lifetimes; only the second is these commands' business.
+3. *Does the payload contain a filesystem path?* — No.
+4. *Is there a schema, and does the engine validate against it?* — Yes, all seven `.strict()`. The `invalid`
+   fixtures are near-misses chosen per command (a missing `url` for `ws.connect`, a numeric `data` for
+   `ws.send`, a missing `socketId` for the two reads).
+5. *Is it in the right scope class?* — Chosen per command rather than inherited, which is what
+   `Protocol_Module_Contract.md` §4 requires: `connect`/`disconnect`/`send` reach a peer the engine does not
+   control, so `execute`; `status`/`list` observe, so `read` — **and that split is what lets a reconnecting
+   client ask what happened without being granted the right to open or close anything**; `clearMessages`
+   mutates engine state and reaches no upstream, so `write`. `env.getMerged` is `read`, and deliberately not
+   `execute`: it merges two lists and resolves nothing.
+
+**Affected:** commands **100 → 107**, events **11 → 13**. Clients: `@bifurc/client` gains seven methods and two
+subscriptions — **the surface grows 145 → 154**, its largest single step, and pinned in `surface.test.ts` and
+`client.test.ts`. This is a *growth* rather than a rename, and the honest reading is that there was nothing to
+rename: the renderer's socket never spoke to the shell at all. The conformance matrices widen automatically
+(both are derived from `COMMANDS` / `EVENT_NAMES`), and `assertScopesAreTotal()` / `assertRetryPolicyIsTotal()`
+/ `COMMAND_FIXTURES` equality each throw at import if a row is missing.
+
+**Migration:** none. Every name is new; no existing command, payload or event changed. `ws.*` has **no legacy
+channel** — `useWebSocket.ts` spoke to the browser's `WebSocket` constructor, so no `namespace:verb` channel
+ever existed for the P6 reduction to find.
+
+**⚠ Two `ws.*` commands are classified NON-idempotent for reasons that are not the obvious ones.**
+`ws.connect` because a retry is a second connect, and this registry *replaces* on a live key — so the retry
+tears down a working socket and opens a new one, which the user sees as a dropped connection for a request
+that had already succeeded. `ws.send` because the payload is resolved engine-side and `{{random.*}}` re-mints
+per send: correct for a stream (each frame is its own event, not a retry of an earlier one), and exactly why a
+transport-level retry would write a *different* frame than the caller asked for. `ws.disconnect` and
+`ws.clearMessages` are here for `sync.push`'s reason — their effect is not a function of their arguments
+alone.
+
+**⚠ And one implementation detail that a test caught rather than a review.** A `ws.disconnect` issued while
+the socket is still CONNECTING aborts the handshake, and `ws` reports that as `close(1006)` — abnormal. Read by
+close code alone, a user pressing Disconnect mid-connect would have been shown "Connection closed (code
+1006)". So the registry's `closeRequested` flag, which the `error` handler already consulted, is consulted by
+the `close` handler too: **a close the caller asked for is clean whatever code the client reports**, because
+the code describes how the *handshake* ended and the flag describes who ended it.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` widens by 7 commands × the 2 generated cases.
+`tests/websocket/wsRegistry.test.ts` (32 cases) drives the registry directly, including the three that make
+the §4 decisions checkable rather than asserted — the snapshot outliving the socket, a superseded socket's late
+close not overwriting the new state, and a reconnect not being refused by the limit it is already part of.
+`tests/renderer/websocket.test.ts` (12 cases) covers the hook as a mirror, including the hydration race and
+**that an unmount does not disconnect**. **Both `plan/19` ratchets reached `{}`**: the boundary allowlist lost
+its last two entries (`lib/resolveVars.ts` deleted, `lib/randomizer.ts`'s generator gone) and the protocol-module
+allowlist lost its single entry — see `plan/19` §9.
+
+---
+
 
 ## Guidance
 

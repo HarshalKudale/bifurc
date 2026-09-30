@@ -3,80 +3,11 @@ import {
 } from "../../workspace/config";
 import { writeEntity, upsertNameEntry } from "../../workspace/workspaceFs";
 import { notifyConfigChanged } from "../../runtime/instances";
+// The cURL parser is `utils/curl.ts` — **one implementation**, shared with the `request.parseCurl`
+// command (`plan/19` WI 5). This file used to carry a near-verbatim copy of the renderer's parser,
+// whose own comment said so; both copies are gone and this is the only one left.
+import { parseCurlCommand as parseSingleCurl } from "../../utils/curl";
 import type { PreflightResult, ImportResult, CollisionStrategy, ImportSource } from "../types";
-
-// ── cURL parser (duplicated from packages/gui/src/lib/curlParser.ts for main process use) ──
-
-const SKIP_HEADERS = new Set([
-  "host", "proxy-connection", "connection", "content-length", "transfer-encoding",
-]);
-
-function tokenizeCurl(input: string): string[] {
-  const str = input.replace(/\\\r?\n/g, " ");
-  const tokens: string[] = [];
-  let i = 0;
-  while (i < str.length) {
-    while (i < str.length && /[ \t]/.test(str[i])) i++;
-    if (i >= str.length) break;
-    if (str[i] === "'") {
-      i++;
-      let tok = "";
-      while (i < str.length && str[i] !== "'") tok += str[i++];
-      i++;
-      tokens.push(tok);
-    } else if (str[i] === '"') {
-      i++;
-      let tok = "";
-      while (i < str.length && str[i] !== '"') {
-        if (str[i] === "\\" && i + 1 < str.length) { i++; tok += str[i]; }
-        else tok += str[i];
-        i++;
-      }
-      i++;
-      tokens.push(tok);
-    } else {
-      let tok = "";
-      while (i < str.length && !/[ \t]/.test(str[i])) tok += str[i++];
-      tokens.push(tok);
-    }
-  }
-  return tokens;
-}
-
-function parseSingleCurl(curlStr: string): { method: string; url: string; headers: Record<string, string>; body: string } | null {
-  const tokens = tokenizeCurl(curlStr.trim());
-  if (!tokens.length || tokens[0] !== "curl") return null;
-  let method = "";
-  let url = "";
-  const headers: Record<string, string> = {};
-  let body = "";
-  let i = 0;
-  while (i < tokens.length) {
-    const tok = tokens[i];
-    if (tok === "curl") { i++; continue; }
-    if (tok === "-X" || tok === "--request") {
-      if (++i < tokens.length) method = tokens[i].toUpperCase();
-    } else if (tok === "-H" || tok === "--header") {
-      if (++i < tokens.length) {
-        const ci = tokens[i].indexOf(":");
-        if (ci > 0) {
-          const k = tokens[i].slice(0, ci).trim().toLowerCase();
-          if (!SKIP_HEADERS.has(k)) headers[k] = tokens[i].slice(ci + 1).trim();
-        }
-      }
-    } else if (tok === "-d" || tok === "--data" || tok === "--data-raw" || tok === "--data-binary") {
-      if (++i < tokens.length) body = tokens[i];
-    } else if (tok === "--url") {
-      if (++i < tokens.length) url = tokens[i];
-    } else if (!tok.startsWith("-") && !url && (tok.startsWith("http://") || tok.startsWith("https://"))) {
-      url = tok;
-    }
-    i++;
-  }
-  if (!url) return null;
-  if (!method) method = body ? "POST" : "GET";
-  return { method, url, headers, body };
-}
 
 function splitCurlBlocks(text: string): string[] {
   // Split on blank lines, then group lines that are part of the same curl command

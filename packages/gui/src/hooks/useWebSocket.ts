@@ -1,199 +1,246 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Environment } from "@/types";
-import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
+import type { WsMessage, WsListResult, WsStatusResult, WsStatusEvent, WsMessageEvent } from "@/types";
 
-// -- Connection registry (module-level, shared across all hook instances) -----
-
-/** Max concurrent live WebSocket connections. */
-export const MAX_WS_CONNECTIONS = 5;
-
-/** Map of tabId -> WebSocket for all currently open connections. */
-const activeConnections = new Map<string, WebSocket>();
-
-export function getActiveConnectionCount(): number {
-  return activeConnections.size;
-}
-
-export function canOpenNewConnection(): boolean {
-  return activeConnections.size < MAX_WS_CONNECTIONS;
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  connected:    "var(--c-green)",
-  connecting:   "var(--c-yellow)",
-  disconnected: "var(--c-text-dim)",
-  error:        "var(--c-red)",
-};
-
-function dispatchStatusColor(tabId: string, status: WsStatus): void {
-  window.dispatchEvent(new CustomEvent("ws:statuscolor", {
-    detail: { tabId, color: STATUS_COLORS[status] ?? "var(--c-text-dim)" },
-  }));
-}
-
-// -- Types ---------------------------------------------------------------------
+/**
+ * The socket tab's view of the engine's connection registry — `plan/19` WI 6.
+ *
+ * ## What this file used to be, and why that mattered
+ *
+ * Until 2026-09-30 this hook *was* the WebSocket client. It held a module-level `Map<string, WebSocket>`,
+ * constructed the socket itself — the single transport construction `tests/gui/protocolModule.test.ts`
+ * existed to find, and the reason its allowlist is now empty — resolved the url and the outgoing payload
+ * with `@/lib/resolveVars`, and owned the message log in React state.
+ *
+ * Two consequences followed, and they are the whole reason for the move:
+ *
+ * 1. **The renderer *was* the connection's lifetime.** Closing the window, reloading it, or anything that
+ *    discarded the browser context dropped every socket — because the object holding them was a browser
+ *    object. `plan/19` WI 6's one-liner says it: *"a socket dies with the window and a CLI cannot open one."*
+ * 2. **A CLI could not open one.** `Protocol_Module_Contract.md` §1: every byte reaching the wire is the
+ *    engine's. A socket the engine cannot open is a protocol no second client can speak.
+ *
+ * ## What it is now: a **mirror**, not the authority
+ *
+ * It holds React state, and the distinction that matters is what the state is *used* for. Nothing here
+ * decides anything: whether a socket is open comes from `wsStatus` and `event.ws.status`, the connection
+ * limit comes from `wsList`, and "what is in the log" comes from the engine's retained tail. That is §2's
+ * test applied to this file — *would this line differ if the UI were a terminal?* — and the answer is no:
+ * a terminal would keep exactly the same view.
+ *
+ * This is `useCollectionRunner`'s shape one namespace over, and it is deliberate rather than convergent: the
+ * engine owns the state, the hook subscribes to it and renders it.
+ *
+ * ## ⚠ Two things this hook deliberately does **not** do
+ *
+ * 1. **It does not disconnect on unmount.** That is D29 stated in the UI. A client going away — a closed
+ *    window, a reload, a panel switch — must not cancel engine-owned work, and an unmount effect cannot tell
+ *    those apart from a user closing a tab. So the *only* close is an explicit `disconnect()` call, and
+ *    `WebSocketsPanel` issues it from the tab-close handler, which **is** a user gesture.
+ *
+ *    The visible consequence, recorded rather than hidden: a tab that disappears without being closed leaves
+ *    its socket running, which is now the point — reopening that tab re-attaches and shows the retained
+ *    transcript. The connection-limit banner reports the engine's live count, so those sockets are visible
+ *    rather than mysterious.
+ * 2. **It does not resolve anything.** `{{host}}` in the url, `{{token}}` in a header value and
+ *    `{{random.*}}` in an outgoing frame are all resolved engine-side (D23) — and that is not merely a move:
+ *    the browser `WebSocket` constructor **cannot send headers at all**, so a resolved `Authorization` header
+ *    used to be discarded. Engine-side it reaches the wire.
+ *
+ * ## ⚠ The hydration race, and the buffer that exists for it
+ *
+ * `wsStatus` is a round trip; the events are not. A frame can therefore arrive **before** the status response
+ * that would have given us a snapshot to append it to, and the naive order — subscribe, then hydrate, then
+ * replace state wholesale — silently drops it. So message events are buffered until hydration lands and
+ * merged in by `id` afterwards.
+ *
+ * That is `HealthBarPanel`'s stale-closure lesson in its other form: **the async value and the consumer of it
+ * do not arrive together.** The engine minting an `id` per message is what makes the merge exact rather than
+ * approximate — without it, "the same frame twice" and "two identical frames" are indistinguishable.
+ */
 
 export type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
-export interface WsMessage {
-  id: string;
-  ts: number;
-  direction: "sent" | "received";
-  data: string;
-}
-
-// -- Hook ----------------------------------------------------------------------
-
 interface UseWebSocketOptions {
+  workspaceId: string;
+  /** The caller's name for the socket. For the UI this is the tab id it already had — the engine has no
+   *  notion of a tab and does not pretend to. */
   tabId: string;
-  activeEnv?: Environment | null;
 }
 
 interface UseWebSocketReturn {
   status: WsStatus;
   error: string | null;
   messages: WsMessage[];
-  connect(url: string, headers: Record<string, string>): void;
-  disconnect(): void;
-  send(data: string): void;
-  clearMessages(): void;
+  /** Resolves `{ok:false}` when the registry refuses — the connection limit, or a malformed url. */
+  connect(url: string, headers: Record<string, string>): Promise<{ ok: boolean; error?: string }>;
+  disconnect(): Promise<{ ok: boolean; error?: string }>;
+  /** `{ok:false, error:"Not connected"}` when nothing is open, rather than a throw. */
+  send(data: string): Promise<{ ok: boolean; error?: string }>;
+  clearMessages(): Promise<{ ok: boolean; error?: string }>;
+  /** True when the workspace is at the registry's limit — **and it includes this tab's own socket.** */
   isAtConnectionLimit: boolean;
+  /** The registry's limit, from the engine, or `null` until the first `wsList` answers. */
+  maxConnections: number | null;
 }
 
-let msgIdCounter = 0;
-function nextMsgId() {
-  return `msg-${Date.now()}-${++msgIdCounter}`;
-}
+export function useWebSocket({ workspaceId, tabId }: UseWebSocketOptions): UseWebSocketReturn {
+  const [snapshot, setSnapshot] = useState<WsStatusResult | null>(null);
+  const [list, setList] = useState<WsListResult | null>(null);
+  /** Failures the *commands* reported — a refused connect, a send with nothing open. Distinct from
+   *  `snapshot.error`, which is the socket's own state, and the two are shown in the same line. */
+  const [localError, setLocalError] = useState<string | null>(null);
 
-export function useWebSocket({ tabId, activeEnv = null }: UseWebSocketOptions): UseWebSocketReturn {
-  const [status,   setStatus]   = useState<WsStatus>("disconnected");
-  const [error,    setError]    = useState<string | null>(null);
-  const [messages, setMessages] = useState<WsMessage[]>([]);
-  const [isAtConnectionLimit, setIsAtConnectionLimit] = useState(false);
+  /**
+   * Messages that arrived before `wsStatus` answered. See the header.
+   *
+   * Both are refs rather than state on purpose: they gate a *write*, and a state update here would re-render
+   * for something nothing renders.
+   */
+  const pendingRef = useRef<WsMessage[]>([]);
+  const hydratedRef = useRef(false);
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const refreshList = useCallback(() => {
+    void window.api.wsList(workspaceId).then(setList).catch(() => { /* the count is advisory */ });
+  }, [workspaceId]);
 
-  // Keep limit state in sync whenever the registry changes
-  const refreshLimit = useCallback(() => {
-    setIsAtConnectionLimit(!canOpenNewConnection());
-  }, []);
-
-  // Clean up on unmount (tab close)
   useEffect(() => {
+    let cancelled = false;
+    hydratedRef.current = false;
+    pendingRef.current = [];
+
+    // `wsStatus` on mount, so a tab opened **while a socket is live** attaches to it — D29 visible in the UI,
+    // and the reason the engine's snapshot outlives the socket.
+    void window.api.wsStatus(workspaceId, tabId).then((fresh) => {
+      if (cancelled) return;
+      const pending = pendingRef.current;
+      pendingRef.current = [];
+      hydratedRef.current = true;
+      setSnapshot(fresh === null ? null : {
+        ...fresh,
+        // Anything that arrived during the round trip, minus anything the engine already retained — the two
+        // overlap whenever a frame lands in both the log and a live event.
+        messages: [
+          ...fresh.messages,
+          ...pending.filter((m) => !fresh.messages.some((x) => x.id === m.id)),
+        ],
+      });
+    }).catch(() => { hydratedRef.current = true; });
+
+    refreshList();
+
+    /**
+     * **Both handlers establish state when there is none**, which is the `Protocol_Module_Contract.md` §4
+     * requirement in its code form. A handler that only *amended* a snapshot it already had would silently
+     * drop every event for exactly the client the engine-owned lifetime exists for — the one that attached
+     * after the fact. `useCollectionRunner` shipped that bug first and its tests caught it; this is the same
+     * fix, written deliberately.
+     */
+    const offStatus = window.api.onWsStatus((p: WsStatusEvent) => {
+      if (p.socketId !== tabId) return;
+      setSnapshot((prev) => ({
+        ...(prev ?? blankSnapshot(workspaceId, tabId)),
+        status: p.status,
+        error: p.error,
+        ...(p.code === undefined ? {} : { closeCode: p.code }),
+        ...(p.reason === undefined ? {} : { closeReason: p.reason }),
+      }));
+      // The limit is the engine's answer, so any state change can move it — including another tab's.
+      refreshList();
+    });
+
+    const offMessage = window.api.onWsMessage((p: WsMessageEvent) => {
+      if (p.socketId !== tabId) return;
+      if (!hydratedRef.current) {
+        pendingRef.current.push(p.message);
+        return;
+      }
+      setSnapshot((prev) => {
+        const base = prev ?? blankSnapshot(workspaceId, tabId);
+        if (base.messages.some((m) => m.id === p.message.id)) return base;
+        return { ...base, messages: [...base.messages, p.message] };
+      });
+    });
+
+    /**
+     * Unsubscribe only. **No `wsDisconnect` here** — see the header. An unmount is not a user gesture, and
+     * D29 forbids inferring a close from one.
+     */
     return () => {
-      const ws = activeConnections.get(tabId);
-      if (ws) {
-        ws.close(1000, "Tab closed");
-        activeConnections.delete(tabId);
-      }
-      wsRef.current = null;
-      refreshLimit();
+      cancelled = true;
+      offStatus();
+      offMessage();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId]);
+  }, [workspaceId, tabId, refreshList]);
 
-  const connect = useCallback((rawUrl: string, rawHeaders: Record<string, string>) => {
-    // Close any existing connection for this tab
-    const existing = activeConnections.get(tabId);
-    if (existing) {
-      existing.close(1000, "Reconnecting");
-      activeConnections.delete(tabId);
-      refreshLimit();
+  const connect = useCallback(async (url: string, headers: Record<string, string>) => {
+    setLocalError(null);
+    const res = await window.api.wsConnect(workspaceId, tabId, url.trim(), headers);
+    if (!res.ok) {
+      // The registry's refusal is shown inline rather than thrown, which is why it answers `{ok:false}`.
+      setLocalError(res.error ?? "Connect failed");
+    } else {
+      refreshList();
     }
+    return res;
+  }, [workspaceId, tabId, refreshList]);
 
-    if (!canOpenNewConnection()) {
-      setError(`Max ${MAX_WS_CONNECTIONS} active connections reached. Disconnect another tab first.`);
-      setStatus("error");
-      return;
-    }
+  const disconnect = useCallback(async () => {
+    setLocalError(null);
+    const res = await window.api.wsDisconnect(workspaceId, tabId);
+    if (!res.ok) setLocalError(res.error ?? "Disconnect failed");
+    refreshList();
+    return res;
+  }, [workspaceId, tabId, refreshList]);
 
-    const resolvedUrl = resolveVars(rawUrl.trim(), activeEnv);
-    // Headers can't be passed directly to the WebSocket browser API.
-    // We resolve them for future reference but they are stored, not injected.
-    resolveHeaders(rawHeaders, activeEnv); // side-effect: validation/logging only
+  const send = useCallback(async (data: string) => {
+    setLocalError(null);
+    const res = await window.api.wsSend(workspaceId, tabId, data);
+    if (!res.ok) setLocalError(res.error ?? "Send failed");
+    // The sent frame reaches the log through `event.ws.message`, not from here — the engine wrote it, so the
+    // engine is what says it was written. Appending locally would be a second, competing account of the log.
+    return res;
+  }, [workspaceId, tabId]);
 
-    setStatus("connecting");
-    setError(null);
-    dispatchStatusColor(tabId, "connecting");
+  const clearMessages = useCallback(async () => {
+    const res = await window.api.wsClearMessages(workspaceId, tabId);
+    // Only mirror the clear once the engine has confirmed it. A `ws.message` event landing in between is
+    // appended afterwards by the subscription, which is the correct order.
+    if (res.ok) setSnapshot((prev) => (prev === null ? prev : { ...prev, messages: [] }));
+    return res;
+  }, [workspaceId, tabId]);
 
-    let ws: WebSocket;
-    try {
-      ws = new WebSocket(resolvedUrl);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Invalid WebSocket URL";
-      setError(msg);
-      setStatus("error");
-      return;
-    }
+  const maxConnections = list?.max ?? null;
 
-    wsRef.current = ws;
-    activeConnections.set(tabId, ws);
-    refreshLimit();
+  return {
+    status: snapshot?.status ?? "disconnected",
+    // The socket's own error takes precedence: it is the more specific fact, and the local one is cleared on
+    // the next command either way.
+    error: snapshot?.error ?? localError,
+    messages: snapshot?.messages ?? [],
+    connect,
+    disconnect,
+    send,
+    clearMessages,
+    isAtConnectionLimit: list !== null && list.connections.length >= list.max,
+    maxConnections,
+  };
+}
 
-    ws.onopen = () => {
-      setStatus("connected");
-      setError(null);
-      refreshLimit();
-      dispatchStatusColor(tabId, "connected");
-    };
-
-    ws.onclose = (ev) => {
-      activeConnections.delete(tabId);
-      wsRef.current = null;
-      refreshLimit();
-      if (ev.wasClean) {
-        setStatus("disconnected");
-        dispatchStatusColor(tabId, "disconnected");
-      } else {
-        setError(ev.reason || `Connection closed (code ${ev.code})`);
-        setStatus("error");
-        dispatchStatusColor(tabId, "error");
-      }
-    };
-
-    ws.onerror = () => {
-      // onerror always precedes onclose; set status/error here too for immediate feedback
-      setError("WebSocket error — connection failed or was refused");
-      setStatus("error");
-      dispatchStatusColor(tabId, "error");
-    };
-
-    ws.onmessage = (ev) => {
-      const data = typeof ev.data === "string" ? ev.data : "[binary data]";
-      setMessages((prev) => [...prev, { id: nextMsgId(), ts: Date.now(), direction: "received", data }]);
-    };
-  }, [tabId, activeEnv, refreshLimit]);
-
-  const disconnect = useCallback(() => {
-    const ws = activeConnections.get(tabId);
-    if (ws) {
-      ws.close(1000, "User disconnected");
-      activeConnections.delete(tabId);
-      wsRef.current = null;
-      refreshLimit();
-    }
-    setStatus("disconnected");
-    setError(null);
-    dispatchStatusColor(tabId, "disconnected");
-  }, [tabId, refreshLimit]);
-
-  const send = useCallback((data: string) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setError("Not connected");
-      return;
-    }
-    const resolved = resolveVars(data, activeEnv);
-    ws.send(resolved);
-    setMessages((prev) => [...prev, { id: nextMsgId(), ts: Date.now(), direction: "sent", data: resolved }]);
-  }, [activeEnv]);
-
-  const clearMessages = useCallback(() => setMessages([]), []);
-
-  // Refresh limit state on each render so callers always see the latest value
-  useEffect(() => {
-    setIsAtConnectionLimit(!canOpenNewConnection());
-  });
-
-  return { status, error, messages, connect, disconnect, send, clearMessages, isAtConnectionLimit };
+/**
+ * A snapshot for a socket the engine has told us about but `wsStatus` has not yet answered for.
+ *
+ * `url` is empty rather than guessed: the event carries no url, and the editor renders the url from its own
+ * input state anyway. Filling it in from the caller's input would make the mirror disagree with the engine
+ * about what was connected.
+ */
+function blankSnapshot(workspaceId: string, socketId: string): WsStatusResult {
+  return {
+    workspaceId,
+    socketId,
+    url: "",
+    status: "connecting",
+    error: null,
+    openedAt: null,
+    messages: [],
+  };
 }

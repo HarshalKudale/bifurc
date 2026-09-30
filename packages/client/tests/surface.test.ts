@@ -71,8 +71,8 @@ describe("the window.api surface", () => {
      * which is the property this file's header exists to state.
      */
     const keys = await realPreloadKeys();
-    expect(keys).toHaveLength(141);
-    expect(SURFACE_KEYS).toHaveLength(141);
+    expect(keys).toHaveLength(154);
+    expect(SURFACE_KEYS).toHaveLength(154);
   });
 
   it("classifies every key it exposes, with no key classified twice", async () => {
@@ -98,9 +98,9 @@ describe("the window.api surface", () => {
     }
   });
 
-  it("routes the nine subscriptions to real wire events", () => {
+  it("routes the eleven subscriptions to real wire events", () => {
     const subs = Object.entries(SURFACE).filter(([, e]) => e.kind === "subscribe");
-    expect(subs).toHaveLength(9);
+    expect(subs).toHaveLength(11);
     for (const [name, entry] of subs) {
       if (entry.kind !== "subscribe") throw new Error("unreachable");
       // Every subscription must name a wire event — an empty name would subscribe to nothing.
@@ -154,7 +154,7 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 69 transport + 39 entity + 9 subscribe + 8 shim + 16 local = 141
+    // 80 transport + 39 entity + 11 subscribe + 8 shim + 16 local = 154
     //
     // The total is asserted because it is what proves nothing was dropped in a move — a key that
     // vanished would keep this test green only if some other count happened to absorb it, which the
@@ -193,9 +193,24 @@ describe("the window.api surface", () => {
     // add/update/delete) went with their entity kinds. Two counts moving by the exact size of the
     // deletion is the signal that nothing was reclassified on the way out — a key filed under a
     // different kind would show as one count rising while the other fell by less.
-    expect(byKind("transport")).toBe(69);
+    // The tenth moves two counts, and both are the same feature: `plan/19` WI 5 item 2's
+    // `captureBuildRequest` / `captureBuildMock` — capture → entity construction, the renderer's last
+    // domain logic in the capture panel.
+    //
+    // **The eleventh is `plan/19` WI 6, and it is the largest step this table has taken: +7 transport and
+    // +2 subscribe.** Six `ws.*` commands plus `env.getMerged`, and the socket's two events. It is a
+    // *growth* rather than a reclassification, and the reason is worth stating because every earlier row
+    // here was a rename or a move: `ws.*` has **no legacy channel** to rename. The renderer's socket spoke
+    // to the browser's `WebSocket` constructor rather than to the shell, so there was never a
+    // `window.api` method for these to replace. `env.getMerged` is the one that *does* replace something —
+    // `App.tsx`'s `mergeEnvVars` — but it replaced a renderer function, not a surface key, which is why it
+    // lands as an addition here too.
+    //
+    // Both counts move, and both by exactly the size of the feature. A key filed under a different kind
+    // would show as one count rising while another fell, which is the failure this table exists to catch.
+    expect(byKind("transport")).toBe(80);
     expect(byKind("entity")).toBe(39);
-    expect(byKind("subscribe")).toBe(9);
+    expect(byKind("subscribe")).toBe(11);
     expect(byKind("shim")).toBe(8);
     expect(byKind("local")).toBe(16);
   });

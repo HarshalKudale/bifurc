@@ -12,8 +12,7 @@ import {
   RequestDraft, MockDraft,
 } from "@/components/rest/restTabReducer";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
-import { rowsToHeaders, b64ToText, textToB64, tryFormat, METHODS, MOCK_METHODS } from "@/lib/utils";
-import { parseCurl, SKIP_CURL_HEADERS } from "@/lib/curlParser";
+import { rowsToHeaders, b64ToText, textToB64, tryFormat, METHODS, MOCK_METHODS, SKIP_CURL_HEADERS } from "@/lib/utils";
 import { contentTypeToMode, isBinaryContentType } from "@/lib/bodyUtils";
 import { strings } from "@/lib/strings";
 import { ChevronDown, Terminal } from "@/lib/icons";
@@ -117,10 +116,23 @@ const RestTab = forwardRef<RestTabHandle, RestTabProps>(function RestTab(
 
   // -- cURL parsing ------------------------------------------------------
 
-  const handleCurlChange = useCallback((v: string) => {
+  /**
+   * The cURL import field.
+   *
+   * **The parse is the engine's now** (`request.parseCurl` — `plan/19` WI 5), which is why this is
+   * `async` where it used to call a local function. `RestCurlImport` calls it fire-and-forget on every
+   * keystroke, so nothing about the caller changes: the parse is a loopback round-trip and the last
+   * dispatch still wins.
+   *
+   * **Hop-by-hop headers are dropped *here*, not in the engine.** `request.parseCurl` returns the
+   * command faithfully; which headers to keep is the *import* decision, and the list is the pinned
+   * copy in `@/lib/utils` (pinned by `tests/gui/curlHeaderSkip.test.ts` to the engine's authority).
+   * A parser that filtered would be choosing for its caller — see `utils/curl.ts`.
+   */
+  const handleCurlChange = useCallback(async (v: string) => {
     dispatch({ type: "SET_FIELD", field: "curlInput", value: v });
     if (!v.trim().startsWith("curl")) return;
-    const p = parseCurl(v.trim());
+    const p = await window.api.requestParseCurl(v.trim());
     const filtered: Record<string, string> = {};
     for (const [k, hv] of Object.entries(p.headers)) {
       if (!SKIP_CURL_HEADERS.has(k)) filtered[k] = hv;

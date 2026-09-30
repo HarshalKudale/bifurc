@@ -632,6 +632,11 @@ async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) 
     // captured (`SavedRequest`, from `registerSavedRequestCommands`), and a row whose owner no longer exists
     // fails with "no such export was importable", which is the failure mode this table exists to produce.
     Pipeline: "@bifurc/engine/pipeline/commands",
+    // **Added 2026-09-30** (`plan/19` WI 6): the shell began calling `registerWebsocketCommands()` when the
+    // socket registry moved into `engine/src/websocket/`, and this row was missed with the move. The guard
+    // above failed with exactly the message this table exists to produce — "no such export was importable" —
+    // which is the hand-maintained-table hazard its own docblock warns about, caught rather than skipped.
+    Websocket: "@bifurc/engine/websocket/wsCommands",
   };
   const specifier = paths[shortName];
   if (specifier === undefined) return undefined;

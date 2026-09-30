@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { MockRule, SavedRequest, Folder, SyncStatus } from "@/types";
-import { mergeEnvVars } from "@/lib/resolveVars";
+import { Environment, MockRule, SavedRequest, Folder, SyncStatus } from "@/types";
+import { EntityPathsProvider, entityPathLookup } from "@/lib/entityPaths";
 import { CaptureStats } from "@/panels/CapturePanel";
 import RightSidebar, { type RightSidebarMode } from "@/components/sidebar/RightSidebar";
 import AppSidebar from "@/components/sidebar/AppSidebar";
@@ -102,6 +102,7 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     serverRunning, setServerRunning,
     serverError, setServerError,
     entitySyncStatus, refreshEntitySyncStatus,
+    entityPaths,
     workspaceGitState,
     syncStatus,
     handleConfigChange,
@@ -274,18 +275,66 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
    * History is open, refresh the panel" for **every** panel — including the ones that never passed
    * `onAfterSave` before (mappings, rules, environments, health bar).
    */
+  /**
+   * The engine's path lookup, built here rather than read from the context.
+   *
+   * `useEntityGitActions` is a hook, so it runs in **this** component's body — above any provider this
+   * component renders — and a `useEntityPaths()` inside it would read the *default* context. So the value
+   * is passed in explicitly, while the provider below serves everything under it. Two mechanisms for one
+   * fact, deliberately: the alternative is splitting `App` in two for a single lookup.
+   */
+  const pathLookup = useMemo(() => entityPathLookup(entityPaths), [entityPaths]);
+
   const gitActions = useEntityGitActions({
     wsConfig,
     wsId,
     refreshConfig,
     refreshEntitySyncStatus,
+    relPathOf: pathLookup.relPathOf,
     panel,
     onAfterWrite: bumpHistoryReload,
   });
 
   const globalEnv = (wsConfig.environments ?? []).find((e) => e.id === "__global__") ?? null;
   const selectedActiveEnv = (wsConfig.environments ?? []).find((e) => e.id === wsConfig.activeEnvironmentId) ?? null;
-  const activeEnv = mergeEnvVars(globalEnv, selectedActiveEnv);
+
+  /**
+   * The **merged** environment, for the one thing the renderer legitimately needs it for: `EnvVarHint`'s
+   * autocomplete lists the variable names available at the cursor.
+   *
+   * It used to be computed here — `mergeEnvVars(globalEnv, selectedActiveEnv)` — and that made the UI the
+   * authority for a workspace fact the engine already owns (`plan/19` D23). The merge is part of D23 rather
+   * than a detail: resolving against the *active* environment alone resolves a **shadowed** key differently,
+   * and every test that uses no shadowed key passes either way (§8 trap 2). So it moved with the call, and
+   * `env.getMerged` is the read that replaces it.
+   *
+   * **The list, not a resolved value.** `envResolveText` is the command for "what does this token become";
+   * this one is "which tokens are there". Keeping them apart is the D28 list-vs-logic split, and it is why
+   * `lib/resolveVars.ts` could be deleted outright rather than trimmed.
+   *
+   * Refetched whenever the workspace view changes, which is what a config refresh produces. A stale list is
+   * cosmetic — it offers a name the engine would leave verbatim — so no attempt is made to be cleverer than
+   * the config's own refresh cadence.
+   */
+  const [activeEnv, setActiveEnv] = useState<Environment | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    /**
+     * **Guarded, and it is the only render-time `window.api` call in this component.** Every other call here
+     * happens in an event handler, where the bridge is present by construction; this one runs on mount, which
+     * means a unit render of `App` with a partial `window.api` stub reaches it. `App.test.tsx` does exactly
+     * that, and an unguarded call threw `envGetMerged is not a function` out of a passive effect — taking the
+     * whole tree with it.
+     *
+     * Guarding is honest rather than defensive here: the value is a **hint's** data. Without it `EnvVarHint`
+     * renders nothing, which is the same thing it renders for a workspace with no environment — so a missing
+     * bridge degrades the autocomplete and nothing else.
+     */
+    void Promise.resolve(window.api?.envGetMerged?.(wsId))
+      .then((env) => { if (!cancelled) setActiveEnv(env ?? null); })
+      .catch(() => { /* the hint renders nothing without an environment */ });
+    return () => { cancelled = true; };
+  }, [wsId, wsConfig]);
 
   const cnt = (n: number) => n > 0 ? n : undefined;
   const totalRequests = (wsConfig.requests ?? []).length + (wsConfig.graphqlRequests ?? []).length + (wsConfig.grpcRequests ?? []).length + (wsConfig.soapRequests ?? []).length;
@@ -400,7 +449,13 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
     );
   }
 
-  return (
+  /**
+   * The tree, assigned to a variable so the provider can wrap it without re-indenting it.
+   *
+   * The wrapper is one line of plumbing; inlining `<EntityPathsProvider>` around the tree would mean
+   * re-indenting ~120 lines for it, which is a diff nobody can review.
+   */
+  const tree = (
     <div className={`flex flex-col ${rootHeight} bg-background text-foreground overflow-hidden`}>
       <TitleBar
         config={config} serverRunning={serverRunning} serverError={serverError} helpText={PANEL_HELP[panel]}
@@ -500,4 +555,6 @@ function AppShell({ host = "electron", session }: AppProps = {}) {
       />
     </div>
   );
+
+  return <EntityPathsProvider paths={entityPaths}>{tree}</EntityPathsProvider>;
 }

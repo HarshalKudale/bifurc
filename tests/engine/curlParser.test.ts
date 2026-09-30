@@ -1,7 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { parseCurl, SKIP_CURL_HEADERS } from "@/lib/curlParser";
+import { parseCurl, SKIP_CURL_HEADERS } from "@bifurc/engine/utils/curl";
 
-describe("packages/gui/src/lib/curlParser.ts", () => {
+/**
+ * The cURL parser's cases, moved with it.
+ *
+ * This file was `tests/renderer/curlParser.test.ts` and imported `@/lib/curlParser`. `plan/19` WI 5
+ * deleted that renderer module — the parser is `packages/engine/src/utils/curl.ts` now, shared with the
+ * cURL importer — so the cases moved to the engine's side of the boundary rather than being dropped with
+ * the file. The renderer's *use* of the parser is covered by `tests/gui/boundary.test.ts` (the construct
+ * is gone from `packages/gui/src`) and by `tests/gui/curlHeaderSkip.test.ts` (the pinned header list).
+ *
+ * The two behaviour differences the importer gained when it stopped carrying its own copy — `-b` /
+ * `--cookie` and `--data-ascii` — are asserted below; they used to be renderer-only.
+ */
+describe("packages/engine/src/utils/curl.ts", () => {
   describe("SKIP_CURL_HEADERS", () => {
     it("contains common headers to skip", () => {
       expect(SKIP_CURL_HEADERS.has("host")).toBe(true);

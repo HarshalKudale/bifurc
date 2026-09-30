@@ -122,19 +122,27 @@ const SEAM_MODULES = new Set([
 ]);
 
 /**
- * Modules with no importer *by design*, and why.
+ * Modules with no importer *by design*, and why. **`{}` — empty, and both entries left the way their own
+ * text said they would.**
  *
- * **`pipeline` was here for part of 2026-09-30 and is not any more.** It was added when the pipeline
- * function landed with no caller, and the entry itself said to delete it when the `*.send` command
- * arrived — which it did, the same day. It is gone because the assertion below now *forces* that: an
- * `ORPHANS_ALLOWED` entry outliving its reason is otherwise **inert**, since nothing else reads this map,
- * so the permission would sit there describing a module that is no longer an orphan.
+ * - **`pipeline` was here for part of 2026-09-30.** It was added when the pipeline function landed with no
+ *   caller, and the entry itself said to delete it when the `*.send` command arrived — which it did, the
+ *   same day.
+ * - **`websocket` was here from `Engine_Module_Plan.md` §9's reservation until `plan/19` WI 6.** Its entry
+ *   read *"reserved placeholder — no behaviour, so nothing imports it. When the first WebSocket code lands,
+ *   this entry must be deleted and the module wired"*, and that is exactly what happened: `registerAll.ts`
+ *   now imports `websocket/wsCommands`, so the module is not an orphan and the permission would have been
+ *   inert.
+ *
+ * Both removals were **forced** by the assertion below rather than remembered, which is the point of having
+ * it: an `ORPHANS_ALLOWED` entry outliving its reason is otherwise **inert** — nothing else reads this map,
+ * so the permission would sit there describing a module that is no longer an orphan, and it would
+ * pre-excuse the next orphan that appeared under that name.
+ *
+ * **The map stays empty rather than being deleted**, for the same reason `ALLOWED_VIOLATIONS` below stays:
+ * the two assertions that read it are what stop the next orphan from arriving as an exception.
  */
-const ORPHANS_ALLOWED: Record<string, string> = {
-  websocket:
-    "§9 reserved placeholder — no behaviour, so nothing imports it. When the first WebSocket code lands, " +
-    "this entry must be deleted and the module wired.",
-};
+const ORPHANS_ALLOWED: Record<string, string> = {};
 
 /**
  * Edges that break `CONTRACT` today. **Keyed by `src`-relative `file -> file`**, so each entry names the
