@@ -1,7 +1,7 @@
 import React, {
     forwardRef, useImperativeHandle, useReducer, useCallback, useEffect, useState,
 } from "react";
-import { SavedGraphQLRequest, Folder, Environment } from "@/types";
+import { SavedGraphQLRequest, Folder } from "@/types";
 import { BottomBar, TabStrip, UrlBar, UrlBarVerb } from "@/components/editor/RequestTab";
 import {
     TabPage, TabTitleBar, TabToolbar, TabToolbarRow, SplitPane, useSplitOrientation,
@@ -18,9 +18,9 @@ import CodeEditor from "@/components/common/CodeEditor";
 import HeaderTable from "@/components/common/HeaderTable";
 import { KVRow, mkRowId, headersToRows, rowsToHeaders } from "@/lib/utils";
 import { strings } from "@/lib/strings";
-import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import SchemaExplorer from "@/components/graphql/SchemaExplorer";
 import { useProtocolEditor } from "@/hooks/useProtocolEditor";
+import { canSendByEntityId } from "@/lib/savedEntitySend";
 
 // -- Public handle for imperative refresh -----------------------------------
 
@@ -39,7 +39,6 @@ export interface GraphQLTabProps {
     draftTabId?: string | null;
     initial?: SavedGraphQLRequest | Partial<SavedGraphQLRequest> | null;
     folders?: Folder[];
-    activeEnv?: Environment | null;
     onSave(data: Omit<SavedGraphQLRequest, "id" | "createdAt" | "workspaceId">): Promise<void>;
     onClose(): void;
     onDirtyChange?(dirty: boolean): void;
@@ -56,8 +55,14 @@ export interface GraphQLTabProps {
 
 // -- Component --------------------------------------------------------------
 
+/**
+ * **No `activeEnv` prop as of 2026-09-30, and its absence is this migration's evidence.** Resolution moved
+ * into the engine (`plan/19` D23), so the tab has nothing left to do with a resolved environment: the prop
+ * was threaded from the panel down to `handleSend`, and `handleSend` no longer resolves. It is removed rather
+ * than left unused, deliberately — an unused prop reads as a dependency the component still has.
+ */
 const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQLTab(
-    { tabType, tabId, draftTabId, initial, folders = [], activeEnv = null, onSave, onClose, onDirtyChange, label, onSync, onRevert, syncStatus, onHistory },
+    { tabType, tabId, draftTabId, initial, folders = [], onSave, onClose, onDirtyChange, label, onSync, onRevert, syncStatus, onHistory },
     ref,
 ) {
     const {
@@ -126,25 +131,51 @@ const GraphQLTab = forwardRef<GraphQLTabHandle, GraphQLTabProps>(function GraphQ
 
     // -- Send request -------------------------------------------------------
 
+    /**
+     * The saved entity to run by id, or `null` to send what the editor holds.
+     *
+     * **Two terms now, and this tab's migration removed the first of them.** `usesVariables` was `false` here
+     * from 2026-09-30, because `graphql.send` resolves every field engine-side; it is now gone from
+     * `savedEntitySend.ts` entirely, along with gRPC's migration. See that file for the term-by-term history.
+     *
+     * **⚠ The scan `usesVariables` replaced was broader than what `handleSend` actually resolved**, which is
+     * why that migration is a *fix* rather than a move: it treated `query` and `operationName` as resolvable
+     * while `handleSend` resolved neither, so a `{{token}}` in a GraphQL query never resolved in **either**
+     * path. The engine now resolves all five fields — see `graphql/commands.ts`'s header.
+     */
+    const savedEntityId = canSendByEntityId({
+        isDraft: !!draftTabId,
+        hasLocalChanges,
+    })
+        ? tabId
+        : null;
+
     const handleSend = useCallback(async () => {
         if (!state.endpointUrl.trim()) return;
         dispatch({ type: "SEND_START" });
         try {
-            const url = resolveVars(state.endpointUrl, activeEnv);
-            const hdrs = resolveHeaders(state.headers, activeEnv);
-            const vars = resolveVars(state.variables, activeEnv);
-            const result = await window.api.graphqlExecute(
-                url,
-                hdrs,
-                state.query,
-                vars,
-                state.operationName,
-            );
+            /**
+             * **One call, and the engine does the rest.** No `resolveVars` here any more: `plan/19` D23 makes
+             * the engine the authority for which environment a request resolves against, and D24 makes the id
+             * form and the inline form the *same* send with two sources of request — so this tab assembles the
+             * request **unresolved** and sends it, exactly as the REST tab does.
+             */
+            const result = savedEntityId
+                ? await window.api.graphqlSend({ id: savedEntityId })
+                : await window.api.graphqlSend({
+                    request: {
+                        endpointUrl: state.endpointUrl,
+                        headers: state.headers,
+                        query: state.query,
+                        variables: state.variables,
+                        operationName: state.operationName,
+                    },
+                });
             dispatch({ type: "SEND_SUCCESS", status: result.status, headers: result.headers, body: result.body, durationMs: result.durationMs });
         } catch (err: any) {
             dispatch({ type: "SEND_ERROR", error: err.message ?? String(err) });
         }
-    }, [state.endpointUrl, state.headers, state.query, state.variables, state.operationName, activeEnv]);
+    }, [state.endpointUrl, state.headers, state.query, state.variables, state.operationName, savedEntityId]);
 
     useImperativeHandle(ref, () => ({
         refresh(entity: SavedGraphQLRequest) {

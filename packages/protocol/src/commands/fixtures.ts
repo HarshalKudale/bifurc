@@ -212,4 +212,104 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "healthbar.saveServices": { valid: { workspaceId: "ws1", services: [] }, invalid: { workspaceId: "ws1" } },
   "healthbar.checkUrl": { valid: { url: "http://x" }, invalid: {} },
   "capture.shareJson": { valid: { entries: [], workspaceId: "ws1" }, invalid: {} },
+
+  // The saved-entity counterparts (`saved.ts`). All four share one schema, so all four get the same
+  // pair — and the `invalid` row is `entity.load`'s: a **near-miss** that drops the required
+  // `workspaceId` while keeping `id`, rather than `{}`. `{}` would fail for the same reason before and
+  // after any change to the schema, which is the non-discriminating fixture this table's header warns
+  // about; a missing required field is the shape that actually exercises the rejection path here.
+  // `request.send` is the one command here with a **union** payload, so its two fixtures are chosen for
+  // the union rather than for the id form its three siblings share. `valid` is the **inline** form — the
+  // second member, with the nested `request` / `scripts` shapes, which is the part a schema is most
+  // likely to get wrong; the id form is structurally `SavedEntityRef`, already exercised by three
+  // fixtures and driven end-to-end by `tests/integration/protocolExecution.integration.test.ts`.
+  // `invalid` is a payload that is **partly both** forms — it matches neither member, and `.strict()` on
+  // each member is what turns that into a rejection rather than a half-read. That is the failure mode a
+  // two-member union introduces, so it is the near-miss worth spending the fixture on.
+  "request.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: { method: "GET", url: "http://example.test/", headers: {}, body: "" },
+      scripts: {},
+    },
+    invalid: { workspaceId: "ws1", id: "req-1", scripts: {} },
+  },
+  // `graphql.send` is the second union payload (after `request.send`), and its two fixtures follow the same
+  // rule: `valid` is the **inline** member, because the nested request shape is the part a schema can get
+  // wrong, and `invalid` is a payload that is **partly both** forms — `{workspaceId, id, request}` matches
+  // neither member, which is what `.strict()` on each member turns into a rejection.
+  "graphql.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: {
+        endpointUrl: "http://example.test/graphql",
+        headers: {},
+        query: "query { __typename }",
+        variables: "",
+        operationName: "",
+      },
+    },
+    invalid: {
+      workspaceId: "ws1",
+      id: "gql-1",
+      request: {
+        endpointUrl: "http://example.test/graphql",
+        headers: {},
+        query: "query { __typename }",
+        variables: "",
+        operationName: "",
+      },
+    },
+  },
+  // `soap.send` — the third union payload, and the same fixture rule: `valid` is the **inline** member, and
+  // `invalid` is a payload that is **partly both** forms.
+  "soap.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: {
+        endpointUrl: "http://example.test/ws",
+        soapAction: "urn:Ping",
+        headers: {},
+        body: "<ping/>",
+      },
+    },
+    invalid: {
+      workspaceId: "ws1",
+      id: "soap-1",
+      request: {
+        endpointUrl: "http://example.test/ws",
+        soapAction: "urn:Ping",
+        headers: {},
+        body: "<ping/>",
+      },
+    },
+  },
+  // `grpc.send` — the fourth and last union payload, and the same fixture rule as its three siblings.
+  "grpc.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: {
+        serverAddress: "127.0.0.1:50051",
+        serviceName: "Greeter",
+        methodName: "SayHello",
+        requestBody: "{}",
+        metadata: {},
+        protoFileId: null,
+        useReflection: false,
+      },
+    },
+    invalid: {
+      workspaceId: "ws1",
+      id: "grpc-1",
+      request: {
+        serverAddress: "127.0.0.1:50051",
+        serviceName: "Greeter",
+        methodName: "SayHello",
+        requestBody: "{}",
+        metadata: {},
+        protoFileId: null,
+        useReflection: false,
+      },
+    },
+  },
 };

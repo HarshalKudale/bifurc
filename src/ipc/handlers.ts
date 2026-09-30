@@ -42,6 +42,7 @@ import { registerGrpcCommands } from "@bifurc/engine/grpc/commands";
 import { registerApplicationCommands } from "@bifurc/engine/applications/applicationCommands";
 import { registerSyncCommands } from "@bifurc/engine/gitops/syncCommands";
 import { registerEntityCrudCommands } from "@bifurc/engine/workspace/entities/entityCrudCommands";
+import { registerPipelineCommands } from "@bifurc/engine/pipeline/commands";
 import { registerRpcBridge } from "@/ipc/rpcBridge";
 
 export function registerIpcHandlers(): void {
@@ -199,6 +200,17 @@ export function registerIpcHandlers(): void {
   // now call the engine's `registerCrudKind()` / `registerSimpleKind()` directly — which is what the
   // factory was doing anyway, one wrapper deeper. The 48 generated channels went with it.
   registerEntityCrudCommands(commandRegistry);
+  // **`request.send`** — `plan/19` D24's REST pipeline, and the only one of the four `*.send` commands that
+  // runs scripts. The other three (`graphql.send`, `soap.send`, `grpc.send`) register from their own feature
+  // modules, so there is no shared module left to call here; see `registerAll.ts`, and
+  // `plan/protocol-changes.md`'s 2026-09-30 entries for the wire half.
+  //
+  // Registered by the shell as well as by `registerAllEngineCommands()`, and that is not redundancy for
+  // its own sake — `tests/ipc/handlers.test.ts`'s ratchet asserts *every* protocol command is served by
+  // this registry, so a command registered only engine-side would fail it. That ratchet is also the
+  // reason the engine-side list and this one are compared by a test
+  // (`tests/integration/workspaceHost.integration.test.ts`) rather than trusted to stay in step.
+  registerPipelineCommands(commandRegistry);
   // **0 module-scope registrations remain** — §5c's pass is complete. The 51 commands it turned out to
   // be are now all registered by an explicit `register*Commands()` call from this function.
   // `registerIpcHandlers()` cannot be *deleted*, and as of 2026-09-20 that is a corrected claim rather

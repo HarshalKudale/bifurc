@@ -4,7 +4,7 @@
  * P5 exists to protect exactly one property (plan/README "Non-negotiables" #3):
  * `window.api` stays **byte-identical** through P5–P6. That property is the regression
  * signal for the whole critical path, so the surface is written down here as data rather
- * than left implicit in 132 hand-written methods.
+ * than left implicit in 136 hand-written methods.
  *
  * ## Why this file exists at all
  *
@@ -14,8 +14,19 @@
  *
  * | source | keys |
  * |---|---|
- * | `src/preload.ts` — what `window.api` actually **is** at runtime | **132** |
- * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 128 |
+ * | `src/preload.ts` — what `window.api` actually **is** at runtime | **136** |
+ * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 132 |
+ *
+ * **2026-09-29: both rows +4** — the four `*Saved` execute methods. The gap between the rows is
+ * **still exactly four**, which is the property the table exists to show: a change that moved one row
+ * without the other would be a declared/runtime divergence, and this one moved both.
+ *
+ * **2026-09-30: `replayRequestSaved` → `requestSend`, and the rows do not move.** That is the other
+ * property worth pinning. The REST member of the four was **renamed and widened** into `plan/19` D24's
+ * pipeline (`request.send` — a union of `{id}` and `{request, scripts}`), so a method that used to execute
+ * a saved entity now also resolves the request and runs its scripts. Both rows stay at **136 / 132** — one
+ * key replaced by one key — and the gap stays exactly four, which is what tells a reader this was a
+ * *rename* rather than a drop hiding inside an addition.
  *
  * **`plan/17` work item 8 reduced both by twelve** — 144 → 132 and 140 → 128. Mocks became REST-only,
  * so the nine mock CRUD methods (`graphqlMocks` / `grpcMocks` / `soapMocks` × add/update/delete) and
@@ -210,6 +221,30 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
 
   // ── server / proxy ───────────────────────────────────────────────────────
   replayRequest: t("request.replay"),
+  /**
+   * The four **saved-entity** counterparts, added 2026-09-29. Each takes an entity id where its base
+   * takes the whole request, and the engine loads the entity and executes it.
+   *
+   * ## This is the one place a new key was added to a frozen surface
+   *
+   * The surface was frozen byte-identical through P5–P6, and that freeze had a job: it was the
+   * regression signal for the client extraction, and the pinned counts below are what made any change
+   * to it visible. P6 is complete, so the freeze has done its work — and a capability the renderer is
+   * being asked to *use* cannot be added without a key, because `window.api` is the only door the
+   * renderer has.
+   *
+   * So the freeze is **lifted deliberately rather than eroded**, which is why the four are filed as
+   * `transport` (they are 1:1 command mappings) and why every pinned count below moves by exactly
+   * four: a change that showed up as one count rising while another fell would be a reclassification
+   * hiding inside an addition.
+   *
+   * ## Why the CLI is the reason they exist at all
+   *
+   * A CLI has a request *id*, not a request payload, so the payload-passing commands cannot serve it —
+   * see `plan/protocol-changes.md`. The renderer is the first consumer because it is here; the id
+   * shape is what the CLI will use.
+   */
+  requestSend: t("request.send", "runs the REST pipeline, from a saved `requests` entity or an inline request"),
   proxyStatus: t("proxy.status"),
   serverStatus: t("server.status"),
   restartServer: t("server.restart"),
@@ -284,6 +319,12 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   graphqlExecute: t("graphql.execute"),
   grpcExecute: t("grpc.execute"),
   grpcReflect: t("grpc.reflect"),
+  // The saved-entity counterparts of the three above — see `requestSend`'s note for why the surface
+  // gained keys at all, and `plan/protocol-changes.md` for the protocol half. These three are still thin
+  // counterparts; the REST member stopped being one on 2026-09-30 and is `requestSend` above.
+  soapSend: t("soap.send", "resolves and POSTs a SOAP envelope, from a saved entity or inline"),
+  graphqlSend: t("graphql.send", "resolves and executes a GraphQL request, from a saved entity or inline"),
+  grpcSend: t("grpc.send", "resolves and dispatches a gRPC call, from a saved entity or inline"),
 
   // ── TLS / certificates ───────────────────────────────────────────────────
   //
@@ -346,7 +387,7 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
    * **Do not remove this with the companion server (2026-09-23).** It was checked when the v1 bridge
    * was deleted and it is **live**: `event.entity.changed` is emitted by `entityCrudCommands` and
    * `folderCommands` on the ordinary CRUD path, `useAppConfigSync` re-reads the config on it, and it
-   * is one of the 132 keys `shape.test-d.ts` pins. Only the *name* is historical. A rename would be a
+   * is one of the 136 keys `shape.test-d.ts` pins. Only the *name* is historical. A rename would be a
    * change to the frozen client surface, which is a separate decision from this one.
    */
   onCompanionRefresh: sub("event.entity.changed", "payload discarded; the renderer only wants the signal"),

@@ -1,7 +1,7 @@
 import React, {
     forwardRef, useImperativeHandle, useReducer, useCallback, useEffect, useState,
 } from "react";
-import { SavedSoapRequest, Folder, Environment } from "@/types";
+import { SavedSoapRequest, Folder } from "@/types";
 import { BottomBar, TabStrip, UrlBar, UrlBarVerb } from "@/components/editor/RequestTab";
 import {
     TabPage, TabTitleBar, TabToolbar, TabToolbarRow, SplitPane, useSplitOrientation,
@@ -15,10 +15,10 @@ import {
 } from "@/components/soap/soapTabReducer";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { KVRow, mkRowId, headersToRows, rowsToHeaders } from "@/lib/utils";
-import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import WsdlExplorer from "@/components/soap/WsdlExplorer";
 import { strings } from "@/lib/strings";
 import { useProtocolEditor } from "@/hooks/useProtocolEditor";
+import { canSendByEntityId } from "@/lib/savedEntitySend";
 
 // -- Public handle for imperative refresh -----------------------------------
 
@@ -37,7 +37,6 @@ export interface SoapTabProps {
     draftTabId?: string | null;
     initial?: SavedSoapRequest | Partial<SavedSoapRequest> | null;
     folders?: Folder[];
-    activeEnv?: Environment | null;
     onSave(data: Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId">): Promise<void>;
     onClose(): void;
     label?: string;
@@ -54,8 +53,14 @@ export interface SoapTabProps {
 
 // -- Component --------------------------------------------------------------
 
+/**
+ * **No `activeEnv` prop as of 2026-09-30, and its absence is this migration's evidence.** Resolution moved
+ * into the engine (`plan/19` D23), so the tab has nothing left to do with a resolved environment: the prop was
+ * threaded from the panel down to `handleSend`, and `handleSend` no longer resolves. Removed rather than left
+ * unused, deliberately — an unused prop reads as a dependency the component still has.
+ */
 const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
-    { tabType, tabId, draftTabId, initial, folders = [], activeEnv = null, onSave, onClose, label, onDirtyChange, onSync, onRevert, syncStatus, onHistory },
+    { tabType, tabId, draftTabId, initial, folders = [], onSave, onClose, label, onDirtyChange, onSync, onRevert, syncStatus, onHistory },
     ref,
 ) {
     const {
@@ -118,14 +123,44 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
 
     // -- Send request -----------------------------------------------------
 
+    /**
+     * The saved entity to run by id, or `null` to send what the editor holds.
+     *
+     * **Two terms now.** `usesVariables` was `false` here from 2026-09-30, because `soap.send` resolves every
+     * field engine-side; it is gone from `savedEntitySend.ts` entirely with gRPC's migration. See that file
+     * for the term-by-term history.
+     *
+     * **⚠ The scan `usesVariables` replaced was broader than what `handleSend` resolved**: it treated
+     * `soapAction` as resolvable while `handleSend` never resolved it, so a `{{token}}` in a SOAPAction never
+     * resolved in **either** path. The engine resolves all four fields — see `soap/commands.ts`'s header.
+     */
+    const savedEntityId = canSendByEntityId({
+        isDraft: !!draftTabId,
+        hasLocalChanges,
+    })
+        ? tabId
+        : null;
+
     const handleSend = useCallback(async () => {
         if (!state.endpointUrl.trim()) return;
         dispatch({ type: "SEND_START" });
         try {
-            const url = resolveVars(state.endpointUrl, activeEnv);
-            const hdrs = resolveHeaders(state.headers, activeEnv);
-            const body = resolveVars(state.body, activeEnv);
-            const result = await window.api.soapExecute(url, state.soapAction, hdrs, body);
+            /**
+             * **One call, and the engine does the rest.** No `resolveVars` here any more: `plan/19` D23 makes
+             * the engine the authority for which environment a request resolves against, and D24 makes the id
+             * form and the inline form the *same* send with two sources of request — so this tab assembles the
+             * request **unresolved** and sends it, exactly as the REST and GraphQL tabs do.
+             */
+            const result = savedEntityId
+                ? await window.api.soapSend({ id: savedEntityId })
+                : await window.api.soapSend({
+                    request: {
+                        endpointUrl: state.endpointUrl,
+                        soapAction: state.soapAction,
+                        headers: state.headers,
+                        body: state.body,
+                    },
+                });
             dispatch({
                 type: "SEND_SUCCESS",
                 status: result.status,
@@ -136,7 +171,7 @@ const SoapTab = forwardRef<SoapTabHandle, SoapTabProps>(function SoapTab(
         } catch (err: any) {
             dispatch({ type: "SEND_ERROR", error: err.message ?? String(err) });
         }
-    }, [state.endpointUrl, state.soapAction, state.headers, state.body, activeEnv, dispatch]);
+    }, [state.endpointUrl, state.soapAction, state.headers, state.body, dispatch, savedEntityId]);
 
     // Expose imperative refresh
     useImperativeHandle(ref, () => ({

@@ -587,16 +587,34 @@ enforcement *"must be added in the same phase as the first move, or the rule dec
 cost is now measured — **24 file-level contract violations** accumulated across phases 1–7 with nothing to
 catch them. **Two of those 24 are already fixed** (see below); the other 22 are allowlisted with a reason each.
 
-Five assertions, each verified fail-able by mutation (planting `blob → gitops` fails with the exact
-`file → file` pair; adding a bogus allowlist entry fails the staleness check):
+Seven assertions, each verified fail-able by mutation (planting `blob → gitops` fails with the exact
+`file → file` pair; adding a bogus allowlist entry fails the staleness check; planting a `bogus/`
+directory fails the converse check; and an `ORPHANS_ALLOWED` entry for a module that *is* imported fails
+the second staleness check — both added 2026-09-29/30):
 
 | Assertion | What it catches |
 |---|---|
 | every contract module is a real directory | a module renamed in `src/` but not in the contract — its files would silently fall outside the rule |
+| **every real directory is named in the contract** | a **new** module directory — see below; without this row a new module's imports were never checked at all |
 | every relative import obeys the §6 contract | a new import crossing a layer, reported as `file → file` with both module names |
 | the allowlist has no stale entries | an allowlist that has become a permission slip — it can only shrink |
+| **`ORPHANS_ALLOWED` has no stale entries** | the file's *other* permission map, which nothing else reads: an entry for a module that **is** imported is inert, and it silently pre-excuses the next orphan of that name |
 | no contract module is orphaned | a module nothing imports (an empty directory that looks wired) |
 | every `register*Commands` owner is reachable from `registerAll.ts` | a command module a headless consumer would answer `UNKNOWN_COMMAND` for |
+
+**The two bold rows were both missing for the whole of phases 0–8, and each was a silent exit.**
+
+- **`every real directory`.** `contractViolations()` returns `false` for a module that has no `CONTRACT`
+  row, so none of its imports are ever examined, and the orphan assertion only iterates `CONTRACT`'s keys —
+  so **creating a directory was the one way to escape the layering rule without failing anything**. Found
+  on 2026-09-29 while `plan/19` WI 3 added `packages/engine/src/pipeline/`.
+- **`ORPHANS_ALLOWED` staleness.** That same `pipeline` entry was added with "delete this when the `*.send`
+  command arrives" in its own text, and the command arrived the next day. Nothing would have failed if the
+  entry had stayed: the orphan assertion reads the map as a permission, never as a claim. Closed on
+  2026-09-30, in the change that retired the entry.
+
+Both were closed in the change that would otherwise have slipped past them, which is the §5.2 rule applied
+to this file itself.
 
 **The worst finding it surfaced is fixed, and the fix is the model for the rest.** `kernel/eventBus.ts`
 imported `getWorkspaceSyncStatus` and `getWorkspaceGitState` from `gitops/` — two *values* — so §5.1's
@@ -611,6 +629,64 @@ is the shrink the staleness assertion exists to force, and the reason that asser
 It is **not** an ESLint rule, and §5.2 asks for one. **This repository has no ESLint at all** — no config,
 no dependency, nothing in `node_modules/.bin` — so that half is recorded in the plan rather than taken
 unilaterally; adding a linter is a toolchain decision. The ratchet is the enforcement in the meantime.
+
+### 3.7 The renderer boundary ratchet — `tests/gui/boundary.test.ts`
+
+The one suite **P19 work item 1** adds, and the *second* boundary ratchet in the project — the same idiom
+as §3.6 applied one directory over. `plan/19` §1 found the renderer carrying **five re-implementations of
+engine logic** (two resolvers, two `{{random.*}}` generators whose data pools are identical and pinned
+equal by nothing, the pre/post/test pipeline written twice, a second HTML report renderer, a second cURL
+parser) plus a second set of entity-path helpers. It grew while nobody was looking, which is exactly the
+decay §5.2 describes.
+
+**It lands first, on purpose.** Every later item deletes a copy of something; without this suite, "the
+migration is in progress" and "the migration added a seventh duplicate" look the same from a green test
+run. It is also the reason §6's allowlist counts are checkable rather than remembered.
+
+Five assertions:
+
+| Assertion | What it catches |
+|---|---|
+| the scanner is looking at a real, non-empty renderer tree | a moved `packages/gui/src` — every other assertion would pass by measuring nothing |
+| no engine-owned construct is defined in the renderer | a new resolver / randomizer / pipeline / cURL parser / report renderer / path helper, reported as `file   [defines <construct>]` |
+| the allowlist has no stale entries | an allowlist that has become a permission slip — it can only shrink |
+| every allowlist entry names the work item that deletes it | debt with no owner, i.e. an entry that outlives the phase |
+| each landed authority is where the table says it is | a violation "fixed" by deleting the engine's copy too, leaving the renderer as the only implementation |
+
+**Detection is by *definition*, not by *use*.** `App.tsx` calls `mergeEnvVars` and `RandomizerHint.tsx`
+reads the token catalogue; neither is an implementation and neither is an allowlist entry. Flagging the
+~25 call sites instead would produce an unreadable allowlist and a staleness assertion that fires on
+unrelated edits. The one construct with no named function is the **pipeline**, which is an *orchestration*,
+so it is detected at its call sites — with the step wrappers kept as a separate construct because they are
+deleted by a different work item.
+
+**Nine allowlist entries, in nine files, measured rather than taken from `plan/19` §6.** §6 predicts
+`−2 / −1 / −1 / −2` across WI 2–5, which sums to 6; the census sums to 9. §6 counts *files deleted* and the
+suite counts *constructs present* — `collectionRunner.ts` carries the pipeline, the run loop and the report
+renderer's only caller, and `scriptRunner.ts` / `testRunner.ts` are not in §1's table at all. **§11 warned
+that these counts were predictions and wrong more often than right; re-measuring is the point, and the
+number is a reading, not a target.** The measured split is WI 2 → 2, WI 3 → 4, WI 4 → 1, WI 5 → 2.
+
+**Teeth verified by mutation, three ways:** planting a new `packages/gui/src/lib/*.ts` exporting
+`resolveVars` fails assertion 2 with that exact file; renaming `generateRandom` in the engine's randomizer
+fails assertion 5; renaming the renderer's `generateHtmlReport` so the construct disappears fails the
+staleness assertion with `lib/runnerReport.ts#reportRenderer`.
+
+**What it does not catch, and the gap is recorded rather than papered over:** detection is by **name**, so
+a copy re-implemented under a different name passes. The stronger form is a per-construct **content
+fingerprint** (the `{{key}}` substitution regex, the `env.variables.find` lookup), and it cannot be adopted
+yet — `savedEntitySend.ts` legitimately contains the token fingerprint until WI 3 shrinks the gate to
+`!isDraft && !hasLocalChanges`, so the fingerprint list would open with a false positive that has to be
+allowlisted itself. Add it in the WI that deletes the last renderer copy of each construct. As with §3.6,
+the structurally complete answer is §5.2's ESLint rule, which this repo cannot have.
+
+**WI 2's engine half has already moved one authority.** `resolveVars` and `resolveHeaders` now live in
+`packages/engine/src/utils/resolve.ts` — extracted **down** per §5.1 — and `mocks/mockHandler.ts` imports
+them instead of carrying the engine's private copy. The cases that pinned `resolveVars` moved with the
+function, to `tests/proxy/resolve.test.ts`, so `tests/proxy/mockHandler.test.ts` no longer tests a module
+it does not own. `mergeEnvVars` is deliberately **not** in the new module: it moves with the *call*
+(WI 3), because a merge with no engine-side caller would be a second implementation of the thing
+`App.tsx:288` still owns. `plan/19` §11 records the reasoning.
 
 ---
 
