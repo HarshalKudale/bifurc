@@ -38,9 +38,54 @@ export function getGit(wsId: string): SimpleGit {
      * `GIT_OPTIONAL_LOCKS` does not cover a lock left behind by a **killed** process — see
      * `sync/gitLock.ts`, which retries past one and then removes it.
      */
-    _gitCache.set(wsId, simpleGit(dir).env({ ...process.env, GIT_OPTIONAL_LOCKS: "0" }));
+    _gitCache.set(wsId, createWorkspaceGit(dir));
   }
   return _gitCache.get(wsId)!;
+}
+
+/**
+ * The one constructor for a workspace's cached git handle. `initWorkspaceRepo()` used to cache a plain
+ * `simpleGit(dir)`, and startup runs it for every workspace — so the `GIT_OPTIONAL_LOCKS` env above never
+ * reached the handles the running app actually used. Both paths now build the handle here.
+ */
+function createWorkspaceGit(dir: string): SimpleGit {
+  return simpleGit(dir, { unsafe: GIT_ENV_ALLOWANCES }).env(gitProcessEnv());
+}
+
+/**
+ * Stripped from git's env. The editor/pager variables make git interactive, and the engine is headless;
+ * `GIT_EXTERNAL_DIFF` would replace the diff output the history views parse. `simple-git` refuses to run
+ * **any** command when an explicit `.env()` carries one of these, so a user with `EDITOR` set could not
+ * commit at all.
+ */
+const STRIPPED_GIT_VARS = new Set([
+  "EDITOR", "VISUAL", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "PAGER", "GIT_PAGER", "GIT_EXTERNAL_DIFF",
+]);
+
+/**
+ * `simple-git` also refuses an explicit env carrying SSH, askpass, proxy or config-path variables. This env
+ * is the user's own process environment rather than request input, and those variables are how push/pull
+ * authenticate and reach the remote (`GIT_SSH_COMMAND`, `SSH_ASKPASS`, `GIT_PROXY_COMMAND`) — so they are
+ * allowed rather than stripped.
+ */
+const GIT_ENV_ALLOWANCES = {
+  allowUnsafeSshCommand: true,
+  allowUnsafeAskPass: true,
+  allowUnsafeGitProxy: true,
+  allowUnsafeConfigPaths: true,
+  allowUnsafeConfigEnvCount: true,
+  allowUnsafeTemplateDir: true,
+} as const;
+
+/** The env every workspace git process runs with: the user's, minus {@link STRIPPED_GIT_VARS}, with no optional locks. */
+export function gitProcessEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined || STRIPPED_GIT_VARS.has(key.toUpperCase())) continue;
+    env[key] = value;
+  }
+  env.GIT_OPTIONAL_LOCKS = "0";
+  return env;
 }
 
 // For tests: override the data root so git operates on a temp dir
@@ -59,7 +104,7 @@ export async function initWorkspaceRepo(wsId: string): Promise<void> {
   const dir = resolvedWsDir(wsId);
   const name = deviceName();
   if (!fs.existsSync(path.join(dir, ".git"))) {
-    const g = simpleGit(dir);
+    const g = createWorkspaceGit(dir);
     await g.init();
     await g.addConfig("user.email", `${name}@bifurc`, false, "local");
     await g.addConfig("user.name", name, false, "local");
@@ -76,7 +121,7 @@ export async function initWorkspaceRepo(wsId: string): Promise<void> {
     }
     _gitCache.set(wsId, g);
   } else {
-    const g = simpleGit(dir);
+    const g = createWorkspaceGit(dir);
     // Update user config to current hostname (idempotent)
     try {
       await g.addConfig("user.email", `${name}@bifurc`, false, "local");
