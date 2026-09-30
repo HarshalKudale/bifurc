@@ -57,8 +57,6 @@ export interface AppSettings {
    * existing `*.localhost` mapping already points at. Changeable without a restart.
    */
   port: number;
-  /** The webhook receiver. Host-level since 2026-09-25; changeable without a restart. */
-  webhookPort: number;
   /** The forward proxy. Host-level since 2026-09-25 — the port a browser's proxy setting names. */
   forwardProxyPort: number;
   /**
@@ -109,28 +107,6 @@ export const DEFAULT_FORWARD_PROXY_PORT = 8080;
 export const DEFAULT_COMPANION_PORT = 4747;
 
 /**
- * The band a fresh install's webhook port is drawn from.
- *
- * **Deliberately not a fixed default.** `plan/17` §1: the webhook is a *feature*, off by default, and *"the
- * default is deliberately **random** rather than a fixed number, because a fixed default would collide with
- * whatever else on the machine already wanted it."* A fixed `9101` was the old behaviour, and it is the one
- * shape of default that is guaranteed to be wrong on a machine that already runs one Bifurc.
- *
- * The band is **10000–19999**: above the privileged range, and below the IANA ephemeral range
- * (49152–65535), which the OS hands out to *outbound* connections — binding a listener there invites a
- * collision that looks like a bug in someone else's program. The band is uncommon rather than reserved,
- * which is all a default can be; the port is still checked for real when the user starts the receiver.
- */
-export const WEBHOOK_PORT_BAND_MIN = 10000;
-export const WEBHOOK_PORT_BAND_MAX = 19999;
-
-/** A port from the band above, for a fresh install. See `WEBHOOK_PORT_BAND_MIN`. */
-export function randomWebhookPort(): number {
-  const span = WEBHOOK_PORT_BAND_MAX - WEBHOOK_PORT_BAND_MIN + 1;
-  return WEBHOOK_PORT_BAND_MIN + Math.floor(Math.random() * span);
-}
-
-/**
  * `BIFURC_PROXY_BASE_PORT`, resolved.
  *
  * ## The name is a leftover and the behaviour is new — deliberately
@@ -172,7 +148,6 @@ function makeDefaultSettings(): AppSettings {
   const id = generateId();
   return {
     port: DEFAULT_REVERSE_PROXY_PORT,
-    webhookPort: randomWebhookPort(),
     forwardProxyPort: DEFAULT_FORWARD_PROXY_PORT,
     companionPort: DEFAULT_COMPANION_PORT,
     minimizeToTray: true,

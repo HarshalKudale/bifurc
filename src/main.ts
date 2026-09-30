@@ -6,7 +6,6 @@ import { loadConfig } from "@bifurc/engine/workspace/config";
 import { loadSettings, saveSettings } from "@bifurc/engine/workspace/appSettings";
 import { startServer, bindProxyInstance, createProxyServer } from "@bifurc/engine/proxy/server";
 import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/reverseproxy/edge";
-import { bindWebhookInstance, createWebhookServer } from "@bifurc/engine/webhooks/webhookServer";
 import { checkGitInstalled } from "@bifurc/engine/workspace/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
@@ -290,7 +289,6 @@ if (!gotTheLock) {
         // after this check, from D16's base, and reporting a value that has not been chosen yet would be a
         // preflight result about a different port than the one the proxy will use.
         { name: "edge", port: settings.port },
-        { name: "webhook", port: settings.webhookPort ?? 9101 },
       ],
     }).then((checks) => {
       for (const c of checks) {
@@ -367,7 +365,6 @@ if (!gotTheLock) {
      * binds it). Creating it here is what gives the facade one authority to point at rather than a lazily
      * created default that would become a second one.
      */
-    bindWebhookInstance(createWebhookServer({ workspaceId: null }));
 
     /**
      * The edge, on the port the mappings use.

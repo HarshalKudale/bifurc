@@ -13,8 +13,6 @@ export function useWorkspaceView(config: AppConfig, wsId: string): AppConfig {
     requestFolders: (config.requestFolders ?? []).filter((f) => f.workspaceId === wsId),
     wsConnections: (config.wsConnections ?? []).filter((c) => c.workspaceId === wsId),
     wsFolders: (config.wsFolders ?? []).filter((f) => f.workspaceId === wsId),
-    webhooks: (config.webhooks ?? []).filter((h) => h.workspaceId === wsId),
-    webhookFolders: (config.webhookFolders ?? []).filter((f) => f.workspaceId === wsId),
     graphqlRequests: (config.graphqlRequests ?? []).filter((r) => r.workspaceId === wsId),
     graphqlSchemas: (config.graphqlSchemas ?? []),
     graphqlRequestFolders: (config.graphqlRequestFolders ?? []).filter((f) => f.workspaceId === wsId),

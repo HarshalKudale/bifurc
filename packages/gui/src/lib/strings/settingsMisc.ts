@@ -58,8 +58,6 @@ export const settingsGroupStrings = {
       license: "License",
       licenseName: "Bifurc Community and Commercial License",
       appDesc: "Local development proxy & mock server",
-      webhookServerPort: "Webhook Server Port",
-      webhookServerPortDesc: "Port for the dedicated webhook HTTP server. Off by default — start it from the Webhooks panel, which owns the port.",
       forwardProxyPort: "Forward Proxy Port",
       forwardProxyPortDesc: "The port your browser's HTTP proxy setting points at. Bifurc does not scan for a free one: if it is taken, the forward proxy fails to start and names the port, so you can pick a working one.",
       companionPort: "Companion Port",

@@ -24,7 +24,6 @@ import type { AppConfig } from "@/types";
 const cfg = (over: Partial<AppConfig> = {}): AppConfig =>
   ({
     port: 80,
-    webhookPort: 9101,
     forwardProxyPort: 8080,
     companionPort: 4747,
     ...over,
@@ -39,15 +38,14 @@ describe("PortsSettingsSection", () => {
 
     expect(valueOf(strings.settings.edgePort)).toBe("80");
     expect(valueOf(strings.settings.forwardProxyPort)).toBe("8080");
-    expect(valueOf(strings.settings.webhookServerPort)).toBe("9101");
     expect(valueOf(strings.settings.companionPort)).toBe("4747");
   });
 
-  it("offers exactly four ports — one per host-level port", () => {
+  it("offers exactly three ports — one per host-level port", () => {
     render(<PortsSettingsSection config={cfg()} onSettingsChange={vi.fn()} />);
 
     const inputs = screen.getAllByRole("spinbutton");
-    expect(inputs).toHaveLength(4);
+    expect(inputs).toHaveLength(3);
     // This case also asserted that no input carried a `gui` label, because a *fifth*, derived port — the web
     // GUI's, `companionPort + 1` — was the thing that must never become a setting. The browser host was
     // decommissioned on 2026-09-26 and that port does not exist any more, so the guard lost its subject and
@@ -108,14 +106,6 @@ describe("PortsSettingsSection", () => {
     expect(onSettingsChange).not.toHaveBeenCalled();
   });
 
-  it("shows the configured webhook port rather than a hardcoded default", () => {
-    // Discriminating on purpose: the engine deleted a fixed webhook default in favour of a random one, so a
-    // `?? 9101` reappearing in this row's copy would be a second answer to "which port is the receiver on".
-    render(<PortsSettingsSection config={cfg({ webhookPort: 4321 })} onSettingsChange={vi.fn()} />);
-
-    expect(valueOf(strings.settings.webhookServerPort)).toBe("4321");
-    expect(screen.getByText(/localhost:4321\/bifurc\/webhooks\//)).toBeInTheDocument();
-  });
 
   it("follows a config change from the outside", () => {
     const { rerender } = render(

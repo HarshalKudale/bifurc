@@ -71,8 +71,8 @@ describe("the window.api surface", () => {
      * which is the property this file's header exists to state.
      */
     const keys = await realPreloadKeys();
-    expect(keys).toHaveLength(157);
-    expect(SURFACE_KEYS).toHaveLength(157);
+    expect(keys).toHaveLength(147);
+    expect(SURFACE_KEYS).toHaveLength(147);
   });
 
   it("classifies every key it exposes, with no key classified twice", async () => {
@@ -98,9 +98,9 @@ describe("the window.api surface", () => {
     }
   });
 
-  it("routes the eleven subscriptions to real wire events", () => {
+  it("routes the ten subscriptions to real wire events", () => {
     const subs = Object.entries(SURFACE).filter(([, e]) => e.kind === "subscribe");
-    expect(subs).toHaveLength(11);
+    expect(subs).toHaveLength(10);
     for (const [name, entry] of subs) {
       if (entry.kind !== "subscribe") throw new Error("unreachable");
       // Every subscription must name a wire event — an empty name would subscribe to nothing.
@@ -163,7 +163,7 @@ describe("the window.api surface", () => {
     const keys = await realPreloadKeys();
     const byKind = (kind: string) => keys.filter((k) => SURFACE[k].kind === kind).length;
 
-    // 83 transport + 39 entity + 11 subscribe + 8 shim + 16 local = 157
+    // 77 transport + 36 entity + 10 subscribe + 8 shim + 16 local = 147 (webhooks decommissioned: -6 / -3 / -1)
     //
     // The total is asserted because it is what proves nothing was dropped in a move — a key that
     // vanished would keep this test green only if some other count happened to absorb it, which the
@@ -220,9 +220,9 @@ describe("the window.api surface", () => {
     //
     // 2026-09-30: `saveConfig` → `updateSettings` is a swap (transport stays 80), and the engine's capture
     // history adds `captureList` / `captureClear` / `captureRemove` (transport 80 → 83).
-    expect(byKind("transport")).toBe(83);
-    expect(byKind("entity")).toBe(39);
-    expect(byKind("subscribe")).toBe(11);
+    expect(byKind("transport")).toBe(77);
+    expect(byKind("entity")).toBe(36);
+    expect(byKind("subscribe")).toBe(10);
     expect(byKind("shim")).toBe(8);
     expect(byKind("local")).toBe(16);
   });

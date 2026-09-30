@@ -1,4 +1,4 @@
-import { AppConfig, Folder, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, SavedWebhook, LocalMapping } from "@/types";
+import { AppConfig, Folder, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, LocalMapping } from "@/types";
 import { Panel } from "@/lib/panelRegistry";
 import { readStorage } from "@/lib/storage";
 import { loadDraft } from "@/hooks/useDraftPersist";
@@ -9,7 +9,6 @@ import {
   searchMocks,
   searchRules,
   searchSockets,
-  searchWebhooks,
   searchMappings,
   searchServices,
   searchEnvironments,
@@ -31,8 +30,6 @@ export function getOpenTabs(panel: Panel): string[] {
       return readStorage<string[]>("mocks:openTabs", []);
     case "sockets":
       return readStorage<string[]>("ws:openTabs", []);
-    case "webhooks":
-      return readStorage<string[]>("webhooks:openTabs", []);
     default:
       return [];
   }
@@ -60,7 +57,6 @@ export function searchEntities({
     requests: new Set(getOpenTabs("requests")),
     mocks: new Set(getOpenTabs("mocks")),
     sockets: new Set(getOpenTabs("sockets")),
-    webhooks: new Set(getOpenTabs("webhooks")),
   };
 
   const isEntityOpen = (panel: string, id: string): boolean => openTabIdsByPanel[panel]?.has(id) ?? false;
@@ -85,13 +81,10 @@ export function searchEntities({
   const allSockets: SavedWsConnection[] = config.wsConnections ?? [];
   const socketMap = new Map<string, SavedWsConnection>(allSockets.map((s) => [s.id, s]));
 
-  const whFolders = config.webhookFolders ?? [];
-  const allWebhooks: SavedWebhook[] = config.webhooks ?? [];
-  const whMap = new Map<string, SavedWebhook>(allWebhooks.map((w) => [w.id, w]));
 
   const openTabsList: SearchResultItem[] = [];
 
-  const processOpenTabsFor = (panelKey: "requests" | "mocks" | "sockets" | "webhooks") => {
+  const processOpenTabsFor = (panelKey: "requests" | "mocks" | "sockets") => {
     const tabIds = openTabIdsByPanel[panelKey];
     if (!tabIds) return;
 
@@ -161,24 +154,6 @@ export function searchEntities({
             title = "WebSocket Tab";
           }
         }
-      } else if (panelKey === "webhooks") {
-        if (tabId.startsWith("wh-draft-")) {
-          isDraft = true;
-          const draft = loadDraft<any>(tabId);
-          title = draft?.name || "New Webhook";
-          subtitle = draft?.urlSuffix;
-          method = "HOOK";
-        } else {
-          const wh = whMap.get(tabId);
-          if (wh) {
-            title = wh.name || "Untitled Webhook";
-            subtitle = wh.urlSuffix;
-            method = "HOOK";
-            folderName = getFolderName(wh.folderId, whFolders);
-          } else {
-            title = "Webhook Tab";
-          }
-        }
       }
 
       if (matches(q, title, subtitle, folderName, method)) {
@@ -200,14 +175,13 @@ export function searchEntities({
   };
 
   if (mode === "current") {
-    if (["requests", "mocks", "rules", "sockets", "webhooks"].includes(normalizedActive)) {
+    if (["requests", "mocks", "rules", "sockets"].includes(normalizedActive)) {
       processOpenTabsFor(normalizedActive as any);
     }
   } else {
     processOpenTabsFor("requests");
     processOpenTabsFor("mocks");
     processOpenTabsFor("sockets");
-    processOpenTabsFor("webhooks");
   }
 
   const sections: SearchSection[] = [];
@@ -221,7 +195,6 @@ export function searchEntities({
   if (mode === "global" || normalizedActive === "mocks") addSection("Mocks", searchMocks(q, allMocks, mockFolders, isEntityOpen));
   if (mode === "global" || normalizedActive === "rules") addSection("Proxy Rules", searchRules(q, allRules, ruleFolders, config));
   if (mode === "global" || normalizedActive === "sockets") addSection("WebSockets", searchSockets(q, allSockets, wsFolders, isEntityOpen));
-  if (mode === "global" || normalizedActive === "webhooks") addSection("Webhooks", searchWebhooks(q, allWebhooks, whFolders, isEntityOpen));
   if (mode === "global" || normalizedActive === "mappings") addSection("Domain Mappings", searchMappings(q, config.mappings ?? []));
   if (mode === "global" || normalizedActive === "services") {
     const serviceLimit = normalizedActive === "services" ? 0 : Math.max(maxPerSection, 12);

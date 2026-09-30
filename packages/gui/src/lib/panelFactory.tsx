@@ -13,7 +13,6 @@ import CapturePanel from "@/panels/CapturePanel";
 import MocksPanel from "@/panels/MocksPanel";
 import RequestsPanel from "@/panels/RequestsPanel";
 import WebSocketsPanel from "@/panels/WebSocketsPanel";
-import WebhooksPanel from "@/panels/WebhooksPanel";
 import EnvironmentsPanel from "@/panels/EnvironmentsPanel";
 import AuditLogPanel from "@/panels/AuditLogPanel";
 import WorkspacePanel from "@/panels/WorkspacePanel";
@@ -155,7 +154,6 @@ function folderKeyFor(kind: string): string {
         case "mocks": return "mockFolders";
         case "rules": return "ruleFolders";
         case "sockets": return "wsFolders";
-        case "webhooks": return "webhookFolders";
         case "graphqlRequests": return "graphqlRequestFolders";
         case "soapRequests": return "soapRequestFolders";
         case "grpcRequests": return "grpcRequestFolders";
@@ -278,21 +276,6 @@ const PANEL_RENDERERS: Record<Panel, (ctx: PanelRenderContext) => React.ReactNod
             onPublishItem={pubItem(ctx, "sockets")}
             onPublishFolder={pubFolder(ctx, "sockets")}
             onRestoreItem={revItem(ctx, "sockets")}
-        />
-    ),
-    webhooks: (ctx) => (
-        <WebhooksPanel
-            config={ctx.wsConfig}
-            onConfigChange={ctx.handleConfigChange}
-            onHistoryOpen={ctx.openHistory}
-            onEntityPathChange={ctx.handleEntityPathChange}
-            historyOpen={ctx.historyOpen}
-            onAfterSave={ctx.bumpHistoryReload}
-            entitySyncStatus={ctx.entitySyncStatus}
-            workspaceGitState={ctx.workspaceGitState}
-            onPublishItem={pubItem(ctx, "webhooks")}
-            onPublishFolder={pubFolder(ctx, "webhooks")}
-            onRestoreItem={revItem(ctx, "webhooks")}
         />
     ),
     environments: (ctx) => (

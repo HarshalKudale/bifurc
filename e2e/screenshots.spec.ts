@@ -50,7 +50,6 @@ const PANELS: PanelDef[] = [
     { name: "06-requests", label: "Requests", trigger: "sidebar", openNewTab: true },
     { name: "07-mocks", label: "Mocks", trigger: "sidebar", openNewTab: true },
     { name: "08-websocket", label: "WebSocket", trigger: "sidebar", openNewTab: true },
-    { name: "09-webhooks", label: "Webhooks", trigger: "sidebar", openNewTab: true },
     { name: "10-workspace", label: "Workspace", trigger: "titlebar" },
     { name: "11-environments", label: "Manage Environments", trigger: "environments" },
     { name: "12-settings", label: "Settings", trigger: "bottom" },

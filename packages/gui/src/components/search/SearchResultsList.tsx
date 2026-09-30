@@ -36,7 +36,7 @@ export const SearchResultsList = forwardRef<HTMLDivElement, SearchResultsListPro
               ? mode === "current"
                 ? "Press Tab to switch to Global Search"
                 : "Try searching for another name, method, or URL"
-              : "Search requests, mocks, proxy rules, sockets, webhooks, and services"}
+              : "Search requests, mocks, proxy rules, sockets, and services"}
           </div>
         </div>
       );

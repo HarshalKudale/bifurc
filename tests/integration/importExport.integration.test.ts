@@ -184,13 +184,6 @@ const CASES: Case[] = [
         pick: (e) => pick(e, ["name", "url", "headers"]),
         expected: { name: "RT Socket", url: "ws://api.rt/ws", headers: { "x-a": "1" } },
     },
-    {
-        label: "webhooks (Bifurc JSON)",
-        kind: "webhooks", format: "webhooks-json", dir: "webhooks", id: WEBHOOK.id,
-        seed: (ws) => seedEntities(ws, "webhooks", [WEBHOOK]),
-        pick: (e) => pick(e, ["name", "urlSuffix"]),
-        expected: { name: "RT Hook", urlSuffix: "rt-hook" },
-    },
 ];
 
 describe("import/export round trip", () => {
@@ -428,7 +421,6 @@ describe("preflight", () => {
             ["proxyRules", "proxyrules-json"],
             ["environments", "environments-json"],
             ["websockets", "websockets-json"],
-            ["webhooks", "webhooks-json"],
         ] as Array<[EntityKind, string]>) {
             const pf = preflightFile(getImporter(kind, format)!, TEST_WS, file);
             expect(pf.ok, `${kind}/${format} accepted a foreign schema`).toBe(false);

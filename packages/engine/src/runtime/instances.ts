@@ -32,7 +32,6 @@
 
 import { getServerError, isRunning, reloadConfig, startServer } from "../proxy/server";
 import { isEdgeRunning, restartEdge } from "../reverseproxy/edge";
-import { isWebhookServerRunning, startWebhookServer } from "../webhooks/webhookServer";
 import type { AppConfig } from "../workspace/config";
 import type { AppSettings } from "../workspace/appSettings";
 
@@ -100,15 +99,12 @@ export function rebindRuntimePorts(incoming: AppConfig, prev: AppConfig): void {
     startServer(incoming.forwardProxyPort);
   }
 
-  if (incoming.webhookPort !== prev.webhookPort && isWebhookServerRunning()) {
-    startWebhookServer(incoming.webhookPort);
-  }
 }
 
 /** The host-local settings that decide where the listeners bind. */
 export type ListenerSettings = Pick<
   AppSettings,
-  "port" | "forwardProxyPort" | "webhookPort" | "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath"
+  "port" | "forwardProxyPort" | "tlsEnabled" | "tlsCaCertPath" | "tlsCaKeyPath"
 >;
 
 /**
@@ -128,5 +124,4 @@ export function rebindChangedListeners(next: ListenerSettings, prev: ListenerSet
   const proxyChanged = next.forwardProxyPort !== prev.forwardProxyPort || tlsChanged;
   if (proxyChanged && (isRunning() || getServerError() !== null)) startServer(next.forwardProxyPort);
 
-  if (next.webhookPort !== prev.webhookPort && isWebhookServerRunning()) startWebhookServer(next.webhookPort);
 }

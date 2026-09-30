@@ -95,7 +95,7 @@ export default function FolderTree({
    * Passing `kind` straight through was three type errors and, had they been silenced, three
    * runtime failures on a folder rename from the runner tree.
    */
-  const folderKind = (kind === "runner" ? "request" : kind) as "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
+  const folderKind = (kind === "runner" ? "request" : kind) as "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
 
   const toggleExpand = useCallback((id: string) => setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; }), []);
   const expandAll = useCallback(() => setExpanded(new Set(["__root__", ...folders.map((f) => f.id)])), [folders]);

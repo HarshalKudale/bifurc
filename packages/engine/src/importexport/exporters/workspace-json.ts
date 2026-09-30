@@ -1,4 +1,4 @@
-import { loadConfig, SavedRequest, SavedWsConnection, SavedWebhook, ProxyRule } from "../../workspace/config";
+import { loadConfig, SavedRequest, SavedWsConnection, ProxyRule } from "../../workspace/config";
 import { readAllEntities, readEnabledSet, bootstrapEnabledSet } from "../../workspace/workspaceFs";
 import type { ExportResult } from "../types";
 
@@ -31,8 +31,6 @@ export async function run(wsId: string): Promise<ExportResult> {
         requestFolders: cfg.requestFolders.filter((f) => f.workspaceId === wsId),
         wsConnections:  readAllEntities<SavedWsConnection>(wsId, "sockets").filter((c) => c.workspaceId === wsId),
         wsFolders:      cfg.wsFolders.filter((f) => f.workspaceId === wsId),
-        webhooks:       readAllEntities<SavedWebhook>(wsId, "webhooks").filter((h) => h.workspaceId === wsId),
-        webhookFolders: cfg.webhookFolders.filter((f) => f.workspaceId === wsId),
         environments:   cfg.environments.filter((e) => e.workspaceId === wsId),
       },
     };

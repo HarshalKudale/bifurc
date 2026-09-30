@@ -33,7 +33,6 @@ const port = z.number().int().min(1).max(65535);
 export const SettingsUpdateParams = z.object({
   port: port.optional(),
   forwardProxyPort: port.optional(),
-  webhookPort: port.optional(),
   companionPort: port.optional(),
   minimizeToTray: z.boolean().optional(),
   tlsEnabled: z.boolean().optional(),

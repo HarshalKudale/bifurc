@@ -59,7 +59,6 @@ import { registerImportExportCommands } from "./importexport/commands";
 import { registerFileOpsCommands } from "./fileops/commands";
 import { registerCertCommands } from "./certificates/certCommands";
 import { registerServerCommands } from "./proxy/serverCommands";
-import { registerWebhookCommands } from "./webhooks/webhookCommands";
 import { registerConfigCommands } from "./workspace/entities/configCommands";
 import { registerRestCommands } from "./rest/commands";
 import { registerMockCommands } from "./mocks/commands";
@@ -150,7 +149,6 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerCertCommands(registry);
   registerServerCommands(registry);
   registerConfigCommands(registry);
-  registerWebhookCommands(registry);
   registerRestCommands(registry);
   registerMockCommands(registry);
   registerHealthbarCommands(registry);

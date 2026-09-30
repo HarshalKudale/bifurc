@@ -149,7 +149,6 @@ describe("the panel → entity-kind map", () => {
   it("names every panel that publishes something, including the ones the old maps missed", () => {
     // `webhooks` was in the publish handler and in neither footer map, so the webhooks panel showed
     // "up to date" with unpublishable work on screen and no button to publish it with.
-    expect(panelEntityKind("webhooks")?.kind).toBe("webhooks");
     // The requests panel is multiplexed across four storage kinds; a single prefix missed three.
     expect(panelEntityKind("requests")?.prefixes).toContain("graphqlRequests/");
     expect(panelEntityKind("requests")?.prefixes).toContain("soapRequests/");
