@@ -66,6 +66,10 @@ export function isDataRootSet(): boolean {
 }
 
 /** Platform default per work item 4's resolution order, step 3. */
+/**
+ * The data root a standalone engine or the CLI uses when not told otherwise. On Windows this is where the
+ * desktop app's data has always lived (`%LOCALAPPDATA%\Bifurc`), and the desktop now sets exactly this root.
+ */
 export function platformDefaultDataDir(): string {
   if (process.platform === "win32") {
     const base = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");

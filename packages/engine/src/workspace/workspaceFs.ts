@@ -75,10 +75,6 @@ export function setDataRootOverride(root: string | null): void {
 
 export function dataRoot(): string {
   if (_dataRootOverride) return _dataRootOverride;
-  // Windows: use AppData\Local instead of Roaming
-  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    return path.join(process.env.LOCALAPPDATA, "Bifurc", "data");
-  }
   // Engine-side, Electron-free path (P2 work item 4): the Electron shell calls `setDataRoot()`
   // with its `userData` path at startup, so this resolves to the exact same directory Electron
   // would have returned — see `store/paths.ts`.
