@@ -9,11 +9,39 @@ export const ConfigGetParams = z.object({}).strict();
 export type ConfigGetParams = z.infer<typeof ConfigGetParams>;
 export type ConfigGetResult = Record<string, unknown>; // AppConfig
 
+/**
+ * **Deprecated — no client should send this.** It replaces the host settings *and* rewrites every mock,
+ * mapping and environment of the active workspace from the caller's copy, so a stale copy silently reverts
+ * changes made by anyone else (another client, a git pull, the engine itself). Settings go through
+ * `settings.update`; entities go through `entity.*`. Kept only until its remaining test coverage moves.
+ */
 export const ConfigSaveParams = z.object({
   config: z.record(z.string(), z.unknown()),
 });
 export type ConfigSaveParams = z.infer<typeof ConfigSaveParams>;
 export interface ConfigSaveResult {
+  ok: boolean;
+}
+
+const port = z.number().int().min(1).max(65535);
+
+/**
+ * `settings.update` — change host-local settings by **patch**. Only the fields present are written; nothing
+ * else in the settings or in any workspace is touched. A listener is re-bound only when its own setting
+ * changed, and a forward proxy the user stopped stays stopped.
+ */
+export const SettingsUpdateParams = z.object({
+  port: port.optional(),
+  forwardProxyPort: port.optional(),
+  webhookPort: port.optional(),
+  companionPort: port.optional(),
+  minimizeToTray: z.boolean().optional(),
+  tlsEnabled: z.boolean().optional(),
+  tlsCaCertPath: z.string().nullable().optional(),
+  tlsCaKeyPath: z.string().nullable().optional(),
+}).strict();
+export type SettingsUpdateParams = z.infer<typeof SettingsUpdateParams>;
+export interface SettingsUpdateResult {
   ok: boolean;
 }
 // NOTE (work item 1, SPLIT): the legacy `config:save` also calls `updateTrayMenu()` — a

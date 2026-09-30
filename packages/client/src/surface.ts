@@ -150,7 +150,8 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
     "entity.setEnabled",
     "an out-of-enum kind resolves `{ok:false, error:'invalid_kind'}` rather than throwing",
   ),
-  saveConfig: t("config.save"),
+  // A patch of host settings. The whole-config `config.save` is deliberately not on this surface.
+  updateSettings: t("settings.update"),
 
   // ── import / export (all three are multi-step over the transport) ─────────
   getImportExportFormats: t("export.formats"),
@@ -425,6 +426,9 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
    */
   captureBuildRequest: t("capture.buildRequest", "a captured entry → a `requests` entity body"),
   captureBuildMock: t("capture.buildMock", "a captured exchange → a `mocks` entity body"),
+  captureList: t("capture.list", "the engine's captured-traffic history for a workspace, newest first"),
+  captureClear: t("capture.clear"),
+  captureRemove: t("capture.remove"),
 
   // ── the 7 subscriptions ──────────────────────────────────────────────────
   onSyncStatus: sub("event.sync.status"),

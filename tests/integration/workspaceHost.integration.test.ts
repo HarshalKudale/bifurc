@@ -492,154 +492,25 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
 });
 
 /**
- * The drift guard between the engine's `registerAllEngineCommands()` and the shell's
- * `registerIpcHandlers()`.
+ * The shell and the headless host compose the engine's commands and events through the **same** two calls.
  *
- * ## Why this is needed at all
- *
- * The two lists are deliberately **not** one list (`registerAll.ts`'s header records why: the shell's
- * eighteen calls each carry a comment naming which P6 deletion made it the only registration, and
- * collapsing them would delete that record). Two lists of the same thing drift. This is the check that
- * makes the drift visible.
- *
- * ## What it asserts, and why not equality
- *
- * **A superset, in the direction that can actually bite.** The dangerous failure is a command the shell
- * registers and `registerAllEngineCommands()` does not: the desktop works, the container answers
- * `UNKNOWN_COMMAND`, and nothing in the desktop's own suite can see it — which is precisely how the gap
- * this whole file is about survived until now. So the assertion is *"everything the shell registers, the
- * engine-side list also registers."*
- *
- * The reverse direction is **not** asserted as an error: an engine command the shell chooses not to expose
- * is a legitimate P3 decision ("the consumer declares what it is willing to serve"), not drift. It is
- * reported in the failure message instead, so a reader can judge.
- *
- * It runs on its **own** registry rather than the shared singleton — `register()` throws on a duplicate, so
- * registering into the global one would corrupt every other suite in this worker.
+ * This used to compare two hand-kept lists of `register*Commands()` calls. The copy drifted anyway, one level
+ * over: the event wiring beside the shell's list (`sync.status`, captured traffic) was never in the host.
+ * So the guard is now structural — the shell may not register engine modules itself.
  */
-describe("registerAllEngineCommands — the engine-side list covers the shell's", () => {
-  /** A `CommandRegistry` that records names instead of registering them — see the note above on why. */
-  function recordingRegistry(): { registry: CommandRegistry; names: Set<string> } {
-    const names = new Set<string>();
-    const registry = {
-      register(name: string): void {
-        names.add(name);
-      },
-      invoke(): never {
-        throw new Error("not used");
-      },
-      has: (name: string) => names.has(name),
-      names: () => [...names],
-    } as unknown as CommandRegistry;
-    return { registry, names };
-  }
+describe("the Electron shell composes the engine the way the host does", () => {
+  const handlersSrc = () => fs.readFileSync(path.join(process.cwd(), "src", "ipc", "handlers.ts"), "utf-8");
 
-  it("registers a name set that contains every command the Electron shell serves", async () => {
-    const { registry, names } = recordingRegistry();
-    registerAllEngineCommands(registry);
+  it("delegates to registerAllEngineCommands() and wireEngineEvents()", () => {
+    const src = handlersSrc();
+    expect(src).toMatch(/registerAllEngineCommands\(commandRegistry\);/);
+    expect(src).toMatch(/wireEngineEvents\(\);/);
+  });
 
-    // Guard against a vacuous pass: an empty list is trivially a superset of nothing, and that is exactly
-    // what this function looked like before it existed. The floor is a *sanity* bound, not the real
-    // assertion — the real one is the comparison against the shell's set below. Kept well under the measured
-    // count so it does not become a second, accidental lock on the command total: this file is not the
-    // ratchet, and `packages/protocol/src/commands/index.test.ts` already moves by exactly 2× per command
-    // change. Measured 2026-09-21: **92** names.
-    expect(names.size).toBeGreaterThan(80);
-
-    // The shell's set, read from its source rather than by calling it: `registerIpcHandlers()` also registers
-    // `ipcMain` channels and would need an Electron mock, and what is being compared is the *command* list.
-    const handlersSrc = fs.readFileSync(path.join(process.cwd(), "src", "ipc", "handlers.ts"), "utf-8");
-    const shellCalls = [...handlersSrc.matchAll(/^\s*register([A-Za-z]+)Commands\(commandRegistry\);/gm)].map(
-      (m) => m[1],
-    );
-    // If the regex stops matching, the comparison silently becomes "nothing vs nothing" — the
-    // guard-that-matches-nothing trap. Fail loudly instead.
-    expect(shellCalls.length).toBeGreaterThanOrEqual(15);
-
-    // Each shell call site corresponds to a function imported from the engine; take the names it registers.
-    // The comparison that matters is on the *command names*, so the shell's modules are loaded for real.
-    const shellRegistry = recordingRegistry();
-    for (const fn of shellCalls) {
-      const mod = await loadRegisterFn(fn);
-      expect(mod, `the shell calls register${fn}Commands() but no such export was importable`).toBeTypeOf(
-        "function",
-      );
-      mod(shellRegistry.registry);
-    }
-
-    const missing = [...shellRegistry.names].filter((n) => !names.has(n));
-    const extra = [...names].filter((n) => !shellRegistry.names.has(n));
-
-    expect(
-      missing,
-      `registerAllEngineCommands() is missing ${missing.length} command(s) the shell serves: ` +
-        `${missing.slice(0, 10).join(", ")}${missing.length > 10 ? " …" : ""}. A headless host will answer ` +
-        `UNKNOWN_COMMAND for these.`,
-    ).toEqual([]);
-
-    // Informational, not a failure — see the docblock.
-    if (extra.length > 0) {
-      console.info(
-        `[registerAll] ${extra.length} engine command(s) are not exposed by the shell's registerIpcHandlers(): ` +
-          `${extra.slice(0, 12).join(", ")}${extra.length > 12 ? " …" : ""}`,
-      );
-    }
-  }, 30000);
+  it("registers no engine command module or kind on its own", () => {
+    const own = [...handlersSrc().matchAll(/^\s*(register[A-Za-z]+(?:Commands|Kinds))\(/gm)]
+      .map((m) => m[1])
+      .filter((name) => name !== "registerAllEngineCommands");
+    expect(own).toEqual([]);
+  });
 });
-
-/**
- * Resolve one `register<Name>Commands` export by the short name the shell's call site uses.
- *
- * The mapping is explicit rather than computed: module paths are the one thing that cannot be derived from
- * the function name (they are `certificates/certCommands`, `workspace/entities/coreCommands`, `rest/commands`, …), and a
- * computed guess that silently resolved to the wrong module would make the guard above compare against the
- * wrong list. An entry appearing in the shell's source without a row here is a **failure** in the test, not a
- * skip — that is what keeps this table from rotting as the shell adds calls.
- *
- * ⚠ **This table is invisible to the engine-layout codemod.** The specifiers are plain string *values* passed
- * to `import()` as a variable, so there is no import specifier for a rewrite to match — and `@vite-ignore`
- * keeps Vite from resolving them at build time. Every engine-layout phase that moves a module named here
- * must update this row by hand, or the guard above fails with `Cannot find package '@bifurc/engine/…'`
- * (which is how phase 3's `store/` → `workspace/` split was caught).
- */
-async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) => void) | undefined> {
-  const paths: Record<string, string> = {
-    Blob: "@bifurc/engine/workspace/blob/commands",
-    ImportExport: "@bifurc/engine/importexport/commands",
-    FileOps: "@bifurc/engine/fileops/commands",
-    Cert: "@bifurc/engine/certificates/certCommands",
-    Server: "@bifurc/engine/proxy/serverCommands",
-    Webhook: "@bifurc/engine/webhooks/webhookCommands",
-    Config: "@bifurc/engine/workspace/entities/configCommands",
-    // Engine-layout phase 7 dissolved `miscCommands` (§4.5) into three modules, so the single `Misc`
-    // row became three. The commands are unchanged; only their registering module moved.
-    Rest: "@bifurc/engine/rest/commands",
-    Mock: "@bifurc/engine/mocks/commands",
-    Healthbar: "@bifurc/engine/workspace/healthbarCommands",
-    Runner: "@bifurc/engine/runner/runnerCommands",
-    Audit: "@bifurc/engine/workspace/entities/auditCommands",
-    Core: "@bifurc/engine/workspace/entities/coreCommands",
-    Folder: "@bifurc/engine/workspace/entities/folderCommands",
-    Graphql: "@bifurc/engine/graphql/commands",
-    Soap: "@bifurc/engine/soap/commands",
-    Grpc: "@bifurc/engine/grpc/commands",
-    Application: "@bifurc/engine/applications/applicationCommands",
-    Sync: "@bifurc/engine/gitops/syncCommands",
-    EntityCrud: "@bifurc/engine/workspace/entities/entityCrudCommands",
-    // **The `SavedRequest` row is gone as of 2026-09-30** (`plan/19` WI 3): the module it named,
-    // `workspace/entities/savedRequestCommands.ts`, is deleted — all four protocols now register their own
-    // `*.send` from their own feature module. The key was the short name the shell's call-site regex
-    // captured (`SavedRequest`, from `registerSavedRequestCommands`), and a row whose owner no longer exists
-    // fails with "no such export was importable", which is the failure mode this table exists to produce.
-    Pipeline: "@bifurc/engine/pipeline/commands",
-    // **Added 2026-09-30** (`plan/19` WI 6): the shell began calling `registerWebsocketCommands()` when the
-    // socket registry moved into `engine/src/websocket/`, and this row was missed with the move. The guard
-    // above failed with exactly the message this table exists to produce — "no such export was importable" —
-    // which is the hand-maintained-table hazard its own docblock warns about, caught rather than skipped.
-    Websocket: "@bifurc/engine/websocket/wsCommands",
-  };
-  const specifier = paths[shortName];
-  if (specifier === undefined) return undefined;
-  const mod = (await import(/* @vite-ignore */ specifier)) as Record<string, unknown>;
-  return mod[`register${shortName}Commands`] as ((r: CommandRegistry) => void) | undefined;
-}

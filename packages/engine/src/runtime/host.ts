@@ -62,7 +62,8 @@ import { createSocketServer, defaultSocketPath, type SocketServer } from "../tra
 import { DEFAULT_HOST_DOMAIN } from "../utils/net";
 import { createWsServer, type WsServer } from "../transport/ws";
 import { commandRegistry, type CommandRegistry } from "../kernel/registry";
-import { registerAllEngineCommands } from "../registerAll";
+import { registerAllEngineCommands, wireEngineEvents } from "../registerAll";
+import { startBlobSweeper } from "../workspace/blob/sweep";
 import { bus as defaultBus, type EngineEventBus } from "../kernel/eventBus";
 import { loadSettings, appDataDir, type AppSettings } from "../workspace/appSettings";
 import { bootstrapWorkspaces } from "../lifecycle/startup";
@@ -325,6 +326,8 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   /** The log is per host, not per runtime: `seq` is only meaningful across a reconnect if one authority
    * issues it (`transport/eventLog.ts`), and D13 puts one RPC endpoint in front of all the runtimes. */
   const log = new EventLog({ bus });
+  let unwireEvents: (() => void) | null = null;
+  let stopBlobSweeper: (() => void) | null = null;
 
   async function doStart(): Promise<WorkspaceHostStatus> {
     /**
@@ -365,9 +368,12 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      * already decided what goes in it, and registering into it would double-register and throw.
      */
     if (opts.registry === undefined) registerAllEngineCommands(registry);
+    unwireEvents = wireEngineEvents(bus);
 
     // ── 1. the data root, first ──────────────────────────────────────────────
     setDataRoot(opts.dataDir);
+    // Housekeeping for `workspace/blob/`; `createEngine()` has always run it, and the host never did.
+    stopBlobSweeper = startBlobSweeper();
 
     // ── 2. settings, then the engine's own bootstrap ─────────────────────────
     // `bootstrapWorkspaces()` is reused rather than reimplemented: it creates each workspace's dirs and repo,
@@ -823,6 +829,10 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
        *
        * `null` restores the lazy default, which is the state a process that never ran a host is in.
        */
+      unwireEvents?.();
+      unwireEvents = null;
+      stopBlobSweeper?.();
+      stopBlobSweeper = null;
       bindProxyInstance(null);
       bindWebhookInstance(null);
       // The edge's binding is released with the other two, and for the same reason — see the block above. It

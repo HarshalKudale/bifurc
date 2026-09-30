@@ -1,4 +1,4 @@
-import type { AppConfig, SyncState, SyncStatus, Workspace, EntitySyncStatus, EntityStatusPayload, WorkspaceGitState } from "./config";
+import type { AppConfig, SettingsPatch, SyncState, SyncStatus, Workspace, EntitySyncStatus, EntityStatusPayload, WorkspaceGitState } from "./config";
 import type {
   Environment,
   Folder,
@@ -54,7 +54,7 @@ export interface BifurcApi {
   getConfig(): Promise<AppConfig>;
   loadEntity(wsId: string, kind: string, id: string): Promise<{ ok: boolean; entity?: unknown }>;
   setEntityEnabled(wsId: string, kind: string, id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }>;
-  saveConfig(config: AppConfig): Promise<{ ok: boolean }>;
+  updateSettings(patch: SettingsPatch): Promise<{ ok: boolean }>;
   getImportExportFormats(): Promise<ImportExportFormatsMap>;
   exportData(req: ExportRequest): Promise<{ ok: boolean; filePath?: string; error?: string; canceled?: boolean }>;
   preflightImport(req: PreflightRequest): Promise<{ ok: boolean; filePath?: string; itemCount?: number; collisionIds?: string[]; error?: string; canceled?: boolean }>;
@@ -112,6 +112,10 @@ export interface BifurcApi {
    * replays the capture byte-for-byte — which is the one respect in which this differs from
    * `captureBuildRequest`, whose headers are stripped. */
   captureBuildMock(entry: RequestLogEntry): Promise<{ mock: CapturedMockPayload }>;
+  /** The engine's captured-traffic history for a workspace, newest first. */
+  captureList(wsId: string): Promise<RequestLogEntry[]>;
+  captureClear(wsId: string): Promise<{ ok: boolean }>;
+  captureRemove(wsId: string, ids: string[]): Promise<{ ok: boolean; removed: number }>;
   addWorkspace(name: string): Promise<Workspace>;
   renameWorkspace(id: string, name: string): Promise<{ ok: boolean }>;
   deleteWorkspace(id: string): Promise<{ ok: boolean }>;
@@ -203,8 +207,9 @@ export interface BifurcApi {
   unregisterActiveWebhook(webhookId: string): Promise<{ ok: boolean }>;
   getWebhookServerStatus(): Promise<{ running: boolean; port: number; error: string | null }>;
   webhookServerStatus(): Promise<{ running: boolean; port: number; error: string | null }>;
-  startWebhookServer(port?: number): Promise<{ ok: boolean }>;
-  stopWebhookServer(): Promise<{ ok: boolean }>;
+  // `error` is on the wire type, but the engine answers `ok: true` before the bind settles — see webhookCommands.
+  startWebhookServer(port?: number): Promise<{ ok: boolean; error?: string }>;
+  stopWebhookServer(): Promise<{ ok: boolean; error?: string }>;
   onWebhookPayload(cb: (payload: WebhookPayload) => void): () => void;
   // -- SOAP -------------------------------------------------------------
   addSoapRequest(req: Omit<SavedSoapRequest, "id" | "createdAt" | "workspaceId">): Promise<SavedSoapRequest>;

@@ -52,6 +52,8 @@ export interface RequestLogEntry {
   resHeaders: Record<string, string>;
   resBody: string;      // base64
   resStatus: number | null;
+  /** The workspace the engine captured this exchange under. */
+  workspaceId?: string;
 }
 
 export interface ReplayResult {

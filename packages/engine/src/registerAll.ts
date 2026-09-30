@@ -50,6 +50,10 @@
  * that there is now a non-shell way to call it.
  */
 import type { CommandRegistry } from "./kernel/registry";
+import { bus as defaultBus, wireLogEventsToBus, type EngineEventBus } from "./kernel/eventBus";
+import { onSyncStatusChange } from "./gitops/syncManager";
+import { registerCaptureCommands } from "./capture/commands";
+import { startCaptureRecording } from "./capture/store";
 import { registerBlobCommands } from "./workspace/blob/commands";
 import { registerImportExportCommands } from "./importexport/commands";
 import { registerFileOpsCommands } from "./fileops/commands";
@@ -176,4 +180,25 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   // this line's position relative to the commands it dispatches to is not observable — unlike the
   // `registerAllEngineKinds()` call above, which genuinely must run first.
   registerPipelineCommands(registry);
+  registerCaptureCommands(registry);
+}
+
+/**
+ * Put the engine's own notifications on the bus, where every transport reads them: captured traffic
+ * (`log.entry` / `log.chunk` / `server.error`) and git sync state (`sync.status`).
+ *
+ * Every composition calls this — the desktop shell, `createEngine()` and the headless host. It used to be
+ * wired only by the shell, so a client of the headless host (the CLI's path to a sidecar) never saw captured
+ * traffic or sync status. It also starts the engine's capture history (`capture/store.ts`), which records
+ * every exchange whether or not a client is listening. Returns the undo.
+ */
+export function wireEngineEvents(target: EngineEventBus = defaultBus): () => void {
+  onSyncStatusChange((wsId, state) => target.emitTyped("sync.status", { wsId, ...state }));
+  const unwireLogs = wireLogEventsToBus(target);
+  const stopRecording = startCaptureRecording();
+  return () => {
+    stopRecording();
+    unwireLogs();
+    onSyncStatusChange(() => {});
+  };
 }
