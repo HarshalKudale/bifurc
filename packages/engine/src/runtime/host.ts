@@ -78,11 +78,6 @@ import { EventLog } from "../transport/eventLog";
 // can re-bind it when `settings.port` changes.
 import { bindEdgeInstance, createEdgeRouter, DEFAULT_EDGE_BIND_HOST, type EdgeRouterInstance } from "../reverseproxy/edge";
 import { createProxyServer, bindProxyInstance, type ProxyServerInstance } from "../proxy/server";
-import {
-  createWebhookServer,
-  bindWebhookInstance,
-  type WebhookServerInstance,
-} from "../webhooks/webhookServer";
 // The **single**-port finder and the bound on its scan. The companion is the one listener whose port is
 // *found* rather than bound (`plan/17` §1): the host scans upward from `settings.companionPort`, skipping the
 // ports it has already bound, so the port a client is told to connect to is one that is really free.
@@ -185,15 +180,6 @@ export interface WorkspaceHostStatus {
   /** Whatever the forward proxy reported on a failed bind, if anything. */
   forwardProxyError: string | null;
   /**
-   * The **webhook receiver** — host-level, and **off by default** (`plan/17` §1).
-   *
-   * `null` is therefore the ordinary value: the receiver is a *feature*, not infrastructure, and it is the
-   * user who starts it. A non-null port means it is listening.
-   */
-  webhookPort: number | null;
-  /** Whatever the webhook receiver reported on a failed bind, if anything. */
-  webhookError: string | null;
-  /**
    * The **companion** — the RPC endpoint over WebSocket that the browser extension connects to.
    *
    * `null` when this host runs no companion, which is the default: a `--ws-port` host has one, and a
@@ -224,8 +210,6 @@ export interface WorkspaceHost {
    * the host's summary of them — the same reason `rpc` and `edge` are.
    */
   readonly forwardProxy: ProxyServerInstance | null;
-  /** The one webhook receiver for this host, or `null` before `start()`. */
-  readonly webhook: WebhookServerInstance | null;
   /** The one RPC endpoint for this host. `null` before `start()`. */
   readonly rpc: SocketServer | WsServer | null;
   /**
@@ -287,7 +271,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   const domain = DEFAULT_HOST_DOMAIN;
 
   let forwardProxy: ProxyServerInstance | null = null;
-  let webhook: WebhookServerInstance | null = null;
   let rpc: SocketServer | WsServer | null = null;
   let edge: EdgeRouterInstance | null = null;
   /** The edge's URL. Set when the edge is created, and read only while it is running. */
@@ -315,9 +298,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       edgeError: edge?.getError() ?? null,
       forwardProxyPort: forwardProxy !== null && forwardProxy.isRunning() ? forwardProxy.getPort() : null,
       forwardProxyError: forwardProxy?.getError() ?? null,
-      // `null` is the ordinary value here: the webhook is off by default (`plan/17` §1).
-      webhookPort: webhook !== null && webhook.isRunning() ? webhook.getPort() : null,
-      webhookError: webhook?.getError() ?? null,
       companionPort,
       workspaces: served,
     };
@@ -492,25 +472,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      */
     await waitUntilReady(() => proxyListener.isRunning(), () => proxyListener.getError());
 
-    // ── 3c. the webhook receiver — host-level, and OFF by default ────────────
-    /**
-     * `plan/17` §1: *"the webhook does NOT scan either. It is a **feature, not infrastructure**: it is **off
-     * by default**, the user starts it, and the user owns the port."* So this is **created and not started**
-     * — the `webhookServer.start` command is what binds it, exactly as the desktop has always done
-     * (`WebhooksPanel` → `window.api.startWebhookServer()`).
-     *
-     * Creating it here rather than leaving it lazy is what makes `webhookServer.status` answerable before any
-     * tab has opened, and it is what the binding below needs: the facade must point at *this* instance, not
-     * at a lazily-created default that would become a second, competing authority.
-     *
-     * **Known gap, stated rather than implied.** The receiver's *active* set — the suffixes it will accept a
-     * POST for — is registered by the UI when a webhook tab opens, and it is not keyed by workspace. So
-     * switching workspace does not by itself retire the previous workspace's active webhooks. `plan/17` §1
-     * lists *"which webhook endpoints are in force"* among the things a switch changes; this host makes the
-     * **port** host-level but not yet the **active set**, because `createWebhookServer()`'s active maps are
-     * not workspace-keyed. Recorded here so it is a known limit rather than a surprise.
-     */
-    webhook = createWebhookServer({ workspaceId: null });
 
     /**
      * ## Binding the facade is what makes a command reach these two
@@ -528,7 +489,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      * `plan/17` §3: the routing *collapses*.
      */
     bindProxyInstance(forwardProxy);
-    bindWebhookInstance(webhook);
 
     // ── 3d. the edge router — one listener for the whole host (`plan/15` §3.3) ─
     /**
@@ -805,7 +765,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       // Then the two listeners. Both are null-guarded internally, so a host that never reached them tears
       // down cleanly.
       forwardProxy?.stop();
-      webhook?.stop();
       /**
        * **The facade binding is undone here, because `start()` made it.**
        *
@@ -834,7 +793,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       stopBlobSweeper?.();
       stopBlobSweeper = null;
       bindProxyInstance(null);
-      bindWebhookInstance(null);
       // The edge's binding is released with the other two, and for the same reason — see the block above. It
       // was added by `plan/17` §5 work item 7, and the obligation came with the mechanism rather than later.
       bindEdgeInstance(null);
@@ -850,9 +808,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     status,
     get forwardProxy(): ProxyServerInstance | null {
       return forwardProxy;
-    },
-    get webhook(): WebhookServerInstance | null {
-      return webhook;
     },
     get rpc(): SocketServer | WsServer | null {
       return rpc;

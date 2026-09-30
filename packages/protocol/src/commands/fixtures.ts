@@ -102,19 +102,6 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "application.checkPort": { valid: { port: 3000 }, invalid: { port: "3000" } },
   "application.killPort": { valid: { port: 3000 }, invalid: { port: "3000" } },
 
-  // P14 WI 1 (D13): same `workspaceId` treatment as `server.*` above — supplied in `valid` (the new
-  // capability is what needs covering, not the status quo), and the near-miss on the new field replaces the
-  // generic extra-key case. `webhookServer.start` keeps its `port: "abc"` rejection, which is a better
-  // near-miss than `workspaceId` here since `port` is the field that command is actually about.
-  "webhook.registerActive": {
-    valid: { webhookId: "w1", urlSuffix: "/x", workspaceId: "ws1" },
-    invalid: { webhookId: "w1", workspaceId: "ws1" },
-  },
-  "webhook.unregisterActive": { valid: { webhookId: "w1", workspaceId: "ws1" }, invalid: {} },
-  "webhookServer.start": { valid: { workspaceId: "ws1" }, invalid: { port: "abc" } },
-  "webhookServer.stop": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
-  "webhookServer.status": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
-
   "runner.saveReport": {
     valid: { workspaceId: "ws1", report: { folderId: "f1", startedAt: 1 } },
     invalid: { workspaceId: "ws1", report: {} },

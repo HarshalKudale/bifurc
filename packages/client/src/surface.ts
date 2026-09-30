@@ -179,9 +179,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   addWsConnection: e("wsConnections", "create"),
   updateWsConnection: e("wsConnections", "update"),
   deleteWsConnection: e("wsConnections", "delete"),
-  addWebhook: e("webhooks", "create"),
-  updateWebhook: e("webhooks", "update"),
-  deleteWebhook: e("webhooks", "delete"),
   addGraphQLRequest: e("graphqlRequests", "create"),
   updateGraphQLRequest: e("graphqlRequests", "update"),
   deleteGraphQLRequest: e("graphqlRequests", "delete"),
@@ -329,15 +326,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   healthbarSaveServices: t("healthbar.saveServices"),
   healthbarCheckUrl: t("healthbar.checkUrl"),
 
-  // ── webhook server ───────────────────────────────────────────────────────
-  registerActiveWebhook: t("webhook.registerActive"),
-  unregisterActiveWebhook: t("webhook.unregisterActive"),
-  // Two names, one channel. Kept as two entries because the renderer may call either, and
-  // "byte-identical" means both must exist.
-  getWebhookServerStatus: t("webhookServer.status"),
-  webhookServerStatus: t("webhookServer.status"),
-  startWebhookServer: t("webhookServer.start"),
-  stopWebhookServer: t("webhookServer.stop"),
 
   // ── SOAP / GraphQL / gRPC ────────────────────────────────────────────────
   soapFetchWsdl: t("soap.fetchWsdl"),
@@ -436,7 +424,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   onLogEntry: sub("event.log.entry"),
   onLogChunk: sub("event.log.chunk"),
   onServerError: sub("event.server.error"),
-  onWebhookPayload: sub("event.webhook.payload"),
   /**
    * A shim in disguise, and **the name is a fossil — it does not mean the companion**.
    *

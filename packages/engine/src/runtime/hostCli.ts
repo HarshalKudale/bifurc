@@ -148,9 +148,6 @@ async function main(argv: readonly string[]): Promise<void> {
       `[host] forward proxy ${status.forwardProxyPort} — point the browser's proxy setting here`,
     );
   }
-  if (status.webhookPort !== null) {
-    console.log(`[host] webhook receiver ${status.webhookPort}`);
-  }
   if (status.companionPort !== null) {
     console.log(`[host] companion ${status.companionPort}`);
   }

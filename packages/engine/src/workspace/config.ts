@@ -17,14 +17,13 @@ import {
 } from "./workspaceFs";
 import type {
   MockRule, LocalMapping, ProxyRule, SavedRequest,
-  SavedWsConnection, SavedWebhook, Environment, Folder, Workspace,
+  SavedWsConnection, Environment, Folder, Workspace,
 } from "./types";
 
-export type { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, SavedWebhook, Folder, Environment, Workspace };
+export type { LocalMapping, ProxyRule, MockRule, SavedRequest, SavedWsConnection, Folder, Environment, Workspace };
 
 export interface AppConfig {
   port: number;
-  webhookPort: number;
   /** The forward proxy's port — **engine-level**, one for every workspace (2026-09-25). */
   forwardProxyPort: number;
   /**
@@ -47,8 +46,6 @@ export interface AppConfig {
   requestFolders: Folder[];
   wsConnections: SavedWsConnection[];
   wsFolders: Folder[];
-  webhooks: SavedWebhook[];
-  webhookFolders: Folder[];
   graphqlRequests: any[];
   graphqlSchemas: any[];
   graphqlRequestFolders: Folder[];
@@ -155,33 +152,21 @@ export function loadConfig(): AppConfig {
   // Full entity data is loaded on-demand when a tab is opened via entity:load IPC.
   const requestStubs = readEntityStubs(wsId, "requests");
   const wsConnectionStubs = readEntityStubs(wsId, "sockets");
-  const webhookStubs = readEntityStubs(wsId, "webhooks");
   const ruleStubs = readEntityStubs(wsId, "rules");
   // Bootstrap names.json if it doesn't exist yet (first-time migration)
   const requestNames = (() => { const n = readNamesIndex(wsId, "requests"); return Object.keys(n).length || requestStubs.length === 0 ? n : bootstrapNamesIndex<SavedRequest>(wsId, "requests"); })();
   const wsNames = (() => { const n = readNamesIndex(wsId, "sockets"); return Object.keys(n).length || wsConnectionStubs.length === 0 ? n : bootstrapNamesIndex<SavedWsConnection>(wsId, "sockets"); })();
-  const webhookNames = (() => { const n = readNamesIndex(wsId, "webhooks"); return Object.keys(n).length || webhookStubs.length === 0 ? n : bootstrapNamesIndex<SavedWebhook>(wsId, "webhooks"); })();
   const ruleNames = (() => { const n = readNamesIndex(wsId, "rules"); return Object.keys(n).length || ruleStubs.length === 0 ? n : bootstrapNamesIndex<ProxyRule>(wsId, "rules"); })();
 
   const mockIdx = autoSyncFsDirectories(wsId, "mocks", generateId);
   const reqIdx = autoSyncFsDirectories(wsId, "requests", generateId);
   const wsIdx = autoSyncFsDirectories(wsId, "sockets", generateId);
-  const webhookIdx = autoSyncFsDirectories(wsId, "webhooks", generateId);
   const ruleIdx = autoSyncFsDirectories(wsId, "rules", generateId);
 
   const activeEnv = settings.workspaces.find((w) => w.id === wsId)?.activeEnvironmentId ?? null;
 
   return {
     port: settings.port,
-    /**
-     * No `??` fallback, and its removal is deliberate (`plan/17` §1). `webhookPort` used to fall back to a
-     * fixed `DEFAULT_WEBHOOK_PORT` for an `app.json` written before the field existed — but the field has
-     * existed since long before this, `AppSettings.webhookPort` is **required**, and `loadSettings()` merges
-     * the defaults under whatever it reads. So the fallback was unreachable, and worse, it was a *second*
-     * answer to "which port is the receiver on" — the one thing a fixed default and a random default
-     * (`appSettings.ts#randomWebhookPort`) would have disagreed about the moment the latter landed.
-     */
-    webhookPort: settings.webhookPort,
     // Both of these are new fields, so an `app.json` written before 2026-09-25 carries neither — the `??` is
     // the migration. It is why they are defaulted here rather than trusted from disk.
     forwardProxyPort: settings.forwardProxyPort ?? DEFAULT_FORWARD_PROXY_PORT,
@@ -269,13 +254,6 @@ export function loadConfig(): AppConfig {
     mockFolders: mockIdx.folders as Folder[],
     requestFolders: reqIdx.folders as Folder[],
     wsFolders: wsIdx.folders as Folder[],
-    webhooks: webhookStubs.map((s) => ({
-      id: s.id, folderId: s.folderId, workspaceId: wsId,
-      name: webhookNames[s.id]?.name ?? "",
-      urlSuffix: (webhookNames[s.id] as any)?.urlSuffix ?? "",
-      createdAt: 0,
-    } as SavedWebhook)),
-    webhookFolders: webhookIdx.folders as Folder[],
     environments: [
       ...environments.map((e) => ({ ...e, workspaceId: e.workspaceId ?? wsId })),
       // Pending-deletion environments: stubs with no variables, so nothing can resolve against a
@@ -349,17 +327,6 @@ export function saveConfig(cfg: AppConfig): void {
   // Update global settings
   const settings = loadSettings();
   settings.port = cfg.port;
-  /**
-   * `?? settings.webhookPort` — **keep what is on disk**, not a constant (`plan/17` §1).
-   *
-   * This read `?? DEFAULT_WEBHOOK_PORT`, a fixed `9101`. That fallback is gone with the constant, and
-   * substituting the *current* value is the honest replacement rather than a new magic number: the case it
-   * covers is a client that predates the field, and for such a client the correct port is the one the
-   * receiver is already configured on — inventing `9101` would silently move it, which is the exact failure
-   * `plan/17` §1 forbids for a port the user owns. The default for a *fresh* install is drawn in
-   * `appSettings.ts#randomWebhookPort()` and arrives here already resolved.
-   */
-  settings.webhookPort = cfg.webhookPort ?? settings.webhookPort;
   // Written through even when unchanged, so a save from a client that predates these fields fills them in
   // rather than leaving `undefined` on disk for the next load to default.
   settings.forwardProxyPort = cfg.forwardProxyPort ?? DEFAULT_FORWARD_PROXY_PORT;

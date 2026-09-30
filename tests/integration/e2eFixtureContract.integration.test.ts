@@ -109,13 +109,6 @@ describe("the e2e fixture's seeded workspace survives the engine's own read path
     expect(cfg.wsConnections).toHaveLength(2);
   });
 
-  it("reads every seeded webhook's name and urlSuffix — webhooks key on `urlSuffix`, not `url`", () => {
-    const hook = byId(cfg.webhooks, "wh-001");
-    expect(hook?.name).toBe("Order Created");
-    expect(hook?.urlSuffix).toBe("orders/created");
-    expect(cfg.webhooks).toHaveLength(2);
-  });
-
   it("has no empty name anywhere a names index backs the kind", () => {
     /**
      * The generalisation of the bug, stated as a property rather than as four spot checks: **an empty name
@@ -144,7 +137,6 @@ describe("the e2e fixture's seeded workspace survives the engine's own read path
       ["proxyRules", cfg.proxyRules],
       ["requests", cfg.requests],
       ["wsConnections", cfg.wsConnections],
-      ["webhooks", cfg.webhooks],
       ["mocks", cfg.mocks],
     ];
     const blank: string[] = [];

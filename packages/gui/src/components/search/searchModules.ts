@@ -1,4 +1,4 @@
-import { AppConfig, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, SavedWebhook, LocalMapping } from "@/types";
+import { AppConfig, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, LocalMapping } from "@/types";
 import { SearchResultItem } from "./searchTypes";
 import { getFolderName, matches } from "./searchHelpers";
 
@@ -102,29 +102,6 @@ export function searchSockets(q: string, allSockets: SavedWsConnection[], wsFold
   return items;
 }
 
-export function searchWebhooks(q: string, allWebhooks: SavedWebhook[], whFolders: any[], isEntityOpen: (p: string, id: string) => boolean): SearchResultItem[] {
-  const items: SearchResultItem[] = [];
-  allWebhooks.forEach((w) => {
-    if (isEntityOpen("webhooks", w.id)) return;
-    const folderName = getFolderName(w.folderId, whFolders);
-    if (matches(q, w.name, w.urlSuffix, folderName)) {
-      items.push({
-        id: w.id,
-        tabId: w.id,
-        title: w.name || "Untitled Webhook",
-        subtitle: `/bifurc/webhooks/${w.urlSuffix}`,
-        method: "HOOK",
-        folderName,
-        panel: "webhooks",
-        isOpenTab: false,
-        section: "Webhooks",
-        entityType: "webhook",
-        original: w,
-      });
-    }
-  });
-  return items;
-}
 
 export function searchMappings(q: string, mappings: LocalMapping[]): SearchResultItem[] {
   const items: SearchResultItem[] = [];

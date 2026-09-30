@@ -60,7 +60,6 @@ export default function PortsSettingsSection({ config, onSettingsChange }: Ports
   const forward = usePortDraft(config.forwardProxyPort, (port) =>
     onSettingsChange({ forwardProxyPort: port })
   );
-  const webhook = usePortDraft(config.webhookPort, (port) => onSettingsChange({ webhookPort: port }));
   const companion = usePortDraft(config.companionPort, (port) =>
     onSettingsChange({ companionPort: port })
   );
@@ -110,13 +109,6 @@ export default function PortsSettingsSection({ config, onSettingsChange }: Ports
           desc={strings.settings.forwardProxyPortDesc}
         >
           {renderPortInput(forward.draft, forward.setDraft, forward.onCommit, strings.settings.forwardProxyPort)}
-        </SettingsRow>
-
-        <SettingsRow
-          title={strings.settings.webhookServerPort}
-          desc={`${strings.settings.webhookServerPortDesc} ${strings.settings.currentlyLabel} localhost:${config.webhookPort}/bifurc/webhooks/`}
-        >
-          {renderPortInput(webhook.draft, webhook.setDraft, webhook.onCommit, strings.settings.webhookServerPort)}
         </SettingsRow>
 
         <SettingsRow

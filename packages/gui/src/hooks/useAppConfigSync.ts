@@ -23,8 +23,6 @@ export const EMPTY_CONFIG: AppConfig = {
   requestFolders: [],
   wsConnections: [],
   wsFolders: [],
-  webhooks: [],
-  webhookFolders: [],
   graphqlRequests: [],
   graphqlSchemas: [],
   graphqlRequestFolders: [],
@@ -34,7 +32,6 @@ export const EMPTY_CONFIG: AppConfig = {
   soapRequests: [],
   savedWsdls: [],
   soapRequestFolders: [],
-  webhookPort: 9101,
   environments: [],
   activeEnvironmentId: null,
 };

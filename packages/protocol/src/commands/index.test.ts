@@ -57,11 +57,6 @@ describe("@bifurc/protocol command schemas", () => {
       "server.stop",
       "server.restart",
       "proxy.status",
-      "webhook.registerActive",
-      "webhook.unregisterActive",
-      "webhookServer.start",
-      "webhookServer.stop",
-      "webhookServer.status",
       // D17 — the blob layer, so a blobId is namespaced to the workspace that staged it.
       "blob.put",
       "blob.stat",

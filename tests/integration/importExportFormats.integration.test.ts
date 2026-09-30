@@ -393,7 +393,8 @@ describe("workspace snapshot round trip", () => {
         expect(snapshot.data.mappings).toHaveLength(1);
         expect(snapshot.data.requests).toHaveLength(1);
         expect(snapshot.data.wsConnections).toHaveLength(1);
-        expect(snapshot.data.webhooks).toHaveLength(1);
+        // Webhooks are decommissioned: files left in a workspace are not exported.
+        expect(snapshot.data.webhooks).toBeUndefined();
         // The snapshot must carry the FULL rule, not the UI stub.
         expect(snapshot.data.proxyRules).toHaveLength(1);
         expect(snapshot.data.proxyRules[0].targetExternal).toBe("127.0.0.1:7002");
@@ -402,14 +403,14 @@ describe("workspace snapshot round trip", () => {
         const importer = getImporter("workspace", "workspace-json")!;
         const pf = preflightFile(importer, TEST_WS, file);
         expect(pf.ok, pf.error).toBe(true);
-        // 1 mock + 1 mapping + 1 rule + 1 request + 1 socket + 1 webhook + 2 envs
+        // 1 mock + 1 mapping + 1 rule + 1 request + 1 socket + 2 envs
         // (the implicit `__global__` env is included in the snapshot).
-        expect(pf.itemCount).toBe(8);
+        expect(pf.itemCount).toBe(7);
 
         newWorkspace();
         const res = await importFile(importer, TEST_WS, file, "override");
         expect(res.ok, res.error).toBe(true);
-        expect(res.imported).toBe(8);
+        expect(res.imported).toBe(7);
 
         // The import switches the active workspace to the newly created one.
         const newWsId = loadConfig().activeWorkspaceId;
@@ -450,9 +451,6 @@ describe("workspace snapshot round trip", () => {
         expect(sockets).toHaveLength(1);
         expect(sockets[0].url).toBe("ws://api.fmt/ws");
 
-        const webhooks = readAllEntities<any>(newWsId, "webhooks");
-        expect(webhooks).toHaveLength(1);
-        expect(webhooks[0].urlSuffix).toBe("fmt-hook");
 
         const envs = readAllEntities<any>(newWsId, "environments").filter((e) => e.id !== "__global__");
         expect(envs).toHaveLength(1);

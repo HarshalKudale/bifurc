@@ -21,7 +21,6 @@ import * as GraphqlCmd from "./graphql";
 import * as SoapCmd from "./soap";
 import * as GrpcCmd from "./grpc";
 import * as ApplicationCmd from "./application";
-import * as WebhookCmd from "./webhook";
 import * as RunnerCmd from "./runner";
 import * as WsCmd from "./ws";
 import * as SyncCmd from "./sync";
@@ -40,7 +39,6 @@ export * from "./graphql";
 export * from "./soap";
 export * from "./grpc";
 export * from "./application";
-export * from "./webhook";
 export * from "./runner";
 export * from "./ws";
 export * from "./sync";
@@ -132,12 +130,6 @@ export const COMMANDS = {
   "application.checkPort": spec(ApplicationCmd.ApplicationCheckPortParams, "applications:checkPort"),
   "application.killPort": spec(ApplicationCmd.ApplicationKillPortParams, "applications:killPort"),
 
-  // webhook.*, webhookServer.*
-  "webhook.registerActive": spec(WebhookCmd.WebhookRegisterActiveParams, "webhook:registerActive"),
-  "webhook.unregisterActive": spec(WebhookCmd.WebhookUnregisterActiveParams, "webhook:unregisterActive"),
-  "webhookServer.start": spec(WebhookCmd.WebhookServerStartParams, "webhookServer:start"),
-  "webhookServer.stop": spec(WebhookCmd.WebhookServerStopParams, "webhookServer:stop"),
-  "webhookServer.status": spec(WebhookCmd.WebhookServerStatusParams, "webhookServer:status"),
 
   // runner.*
   "runner.saveReport": spec(RunnerCmd.RunnerSaveReportParams, "runner:saveReport"),

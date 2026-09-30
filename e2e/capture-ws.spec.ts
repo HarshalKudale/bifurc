@@ -53,38 +53,3 @@ test.describe("WebSocket Panel", () => {
         }
     });
 });
-
-test.describe("Webhooks Panel", () => {
-    test.beforeEach(async ({ page }) => {
-        const nav = page.locator("text=Webhooks, [data-testid='nav-webhooks']").first();
-        if (await nav.isVisible()) {
-            await nav.click();
-            await page.waitForTimeout(500);
-        }
-    });
-
-    test("displays webhooks panel", async ({ page }) => {
-        const body = await page.textContent("body");
-        expect(body).toBeTruthy();
-    });
-
-    test("can create a new webhook listener", async ({ page }) => {
-        const addBtn = page.locator("[data-testid='add-button'], button:has-text('Add'), button:has-text('+')").first();
-        if (await addBtn.isVisible()) {
-            await addBtn.click();
-            await page.waitForTimeout(300);
-
-            const suffixInput = page.locator("input[name='urlSuffix'], input[placeholder*='suffix'], input[placeholder*='path'], [data-testid='webhook-suffix-input']").first();
-            if (await suffixInput.isVisible()) {
-                await suffixInput.fill("order-events");
-                const saveBtn = page.locator("button:has-text('Save'), button:has-text('Create'), button[type='submit']").first();
-                if (await saveBtn.isVisible()) {
-                    await saveBtn.click();
-                    await page.waitForTimeout(500);
-                    const body = await page.textContent("body");
-                    expect(body).toContain("order-events");
-                }
-            }
-        }
-    });
-});

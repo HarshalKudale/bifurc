@@ -251,7 +251,6 @@ export function createEngine(opts: EngineOptions): Engine {
         // of work item 3. The forward proxy's port is resolved after this, from D16's base, so there
         // is nothing to check here for it.
         { name: "edge", port: settings.port },
-        { name: "webhook", port: settings.webhookPort ?? 9101 },
       ],
     });
     for (const check of checks) if (!check.ok) warn(check);
@@ -513,7 +512,6 @@ export * as randomNames from "./utils/randomNames";
 export * as randomizer from "./utils/randomizer";
 export * as eventBus from "./kernel/eventBus";
 export * as proxy from "./proxy/server";
-export * as webhookServer from "./webhooks/webhookServer";
 // P14 WI 3 — the workspace **host**: the composition a deployable unit runs. It owns one listener per port
 // for the whole host — the edge, the forward proxy, the webhook receiver and the RPC endpoint — plus the
 // signal handling.
