@@ -123,6 +123,20 @@ modules), and **`savedEntitySend.ts` is now `!isDraft && !hasLocalChanges`** —
 + `HealthBarPanel` still resolve), and the four `pipeline`/`pipelineStep` entries to **WI 4**. §6's "the last
 tab" was wrong.
 
+**WI 4's engine half LANDED (2026-09-30): `runner/runCollection.ts` + `runner/runRegistry.ts`.** Two policies
+were **decided by the owner** (§8 traps 5/6 ask for exactly that): **D29 — a run's lifetime is the ENGINE's**
+(a disconnect and a workspace switch do not cancel it; a host restart loses it, because resuming would have to
+decide whether to re-send what it already sent) and **D30 — one run per `{workspaceId, folderId}`** (same
+folder refused, different folders concurrent, a *finished* run does not block a new one). The loop is **thin
+because WI 3 exists**: one `registry.invoke("request.send", {workspaceId, id})` per request. `runRegistry.ts`'s
+map is module-level **by design** and nothing in it can observe a disconnect. **⚠ `stopOnFailure` and
+`iterations` in `runner.json` stay UN-honoured** — the renderer read neither, and implementing them would be a
+behaviour change smuggled in under a move. **⚠ The engine half is safe before the renderer's, unlike WI 3's** —
+two run loops do not double-apply anything the way two resolvers do.
+**Next for WI 4:** the wire (`runner.start`/`cancel`/`status` + progress events — `EVENT_NAMES`,
+`EngineEvents`, `assertBridgeIsTotal` ×4 transports, the conformance matrix, client subscriptions + pinned
+counts) and the renderer half, which owes four allowlist deletions.
+
 **D28 LANDED** — the engine's
 `utils/randomizer.ts` owns `RANDOMIZER_TOKENS`; the UI keeps a **copy** pinned by
 `tests/gui/randomizerCatalogue.test.ts`, and **the pin is what makes the copy legitimate** (without it the
