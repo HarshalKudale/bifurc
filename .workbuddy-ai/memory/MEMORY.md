@@ -141,8 +141,20 @@ event** (a mid-run attacher never saw the start call). **⚠ The conformance mat
 they are derived from `COMMANDS`/`EVENT_NAMES`, so the wire cost three list entries, not three hand-kept tables.
 **⚠ `retry.ts`'s partition needed all three**: `status`/`cancel` idempotent, **`start` non-idempotent** (a retry
 is a run the caller did not ask for).
-**Next: the renderer half**, which owes four allowlist deletions (`collectionRunner.ts#pipeline`,
-`scriptRunner.ts#pipelineStep`, `testRunner.ts#pipelineStep`, `runnerReport.ts#reportRenderer`).
+**WI 4 COMPLETE (2026-09-30): the renderer half landed too.** `useCollectionRunner` is a **subscription**
+(`runnerStatus` on mount so a tab opened mid-run attaches; `runnerStart`/`cancel`; the two events), and it is
+a **mirror, not the authority** — nothing in it decides anything. **⚠ A flaw the tests caught:** the first
+version only *updated* a snapshot it had, so a `runner.finished` arriving with **no** snapshot was **dropped** —
+the exact disconnected-client case D29 exists for. Both handlers now **establish** state, and that is what
+`total` on every progress event was for. **⚠ A progress event carries no start time**, so that branch's
+`startedAt` is a guess (recorded in the hook).
+**Four deletions landed: `lib/collectionRunner.ts`, `lib/scriptRunner.ts`, `lib/testRunner.ts`, and
+`runnerReport.ts`'s HTML renderer — allowlist 8 → 4.** `runnerReport.ts` survives with its two *storage*
+wrappers, which is the `file#construct` keying working as designed. `requestsRunnerTab.test.tsx` was
+**rewritten** to assert the new contract, and that rewrite is what caught the flaw.
+**Remaining: WI 5** (cURL parsing, capture→entity construction, path helpers, `HealthBarPanel`'s resolution)
+and **WI 6** (WebSocket — carries the resolver/randomizer allowlist entries and is the item that finally
+empties it), then **WI 7** (the extensibility contract).
 
 **D28 LANDED** — the engine's
 `utils/randomizer.ts` owns `RANDOMIZER_TOKENS`; the UI keeps a **copy** pinned by

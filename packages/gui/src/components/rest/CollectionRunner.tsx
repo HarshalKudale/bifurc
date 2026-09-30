@@ -1,7 +1,6 @@
 import React from "react";
 import { Play, ChevronDown, ChevronUp, GripVertical, Loader2 } from "lucide-react";
-import { SavedRequest, Environment } from "@/types";
-import { CollectionRunReport } from "@/lib/collectionRunner";
+import { SavedRequest, CollectionRunReport } from "@/types";
 import { strings } from "@/lib/strings";
 import {
   TabPage, TabTitleBar, TabToolbar, TabToolbarRow, SplitPane, useSplitOrientation, PROTOCOL_TONE,
@@ -15,7 +14,6 @@ export interface CollectionRunnerProps {
   folderId: string;
   folderName: string;
   requests: SavedRequest[];
-  activeEnv: Environment | null;
   wsId: string;
   onClose(): void;
   onSaveReport?(report: CollectionRunReport): Promise<void>;
@@ -48,7 +46,6 @@ export default function CollectionRunner({
   folderId,
   folderName,
   requests,
-  activeEnv,
   wsId,
   onSaveReport,
 }: CollectionRunnerProps) {
@@ -59,6 +56,7 @@ export default function CollectionRunner({
     progress,
     results,
     report,
+    startError,
     handleDelayChange,
     moveUp,
     moveDown,
@@ -73,7 +71,6 @@ export default function CollectionRunner({
     folderId,
     folderName,
     requests,
-    activeEnv,
     onSaveReport,
   });
 
@@ -105,6 +102,7 @@ export default function CollectionRunner({
             delayMs={delayMs}
             running={running}
             report={report}
+            startError={startError}
             onDelayChange={handleDelayChange}
             onExport={handleExport}
             onRun={handleRun}
