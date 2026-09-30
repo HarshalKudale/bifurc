@@ -410,7 +410,11 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
       // and with one host-level listener per port there is nothing per workspace to remember. The surviving
       // half of the rule is the half that mattered — **no port is in the git-tracked `workspace.json`**,
       // which syncs between machines and must not carry one machine's port allocation.
-      expect(fs.existsSync(path.join(dataRoot, "runtime.json"))).toBe(false);
+      // `runtime.json` is now the engine's discovery record (runtime/discovery.ts): where it listens, not ports.
+      const runtime = JSON.parse(fs.readFileSync(path.join(dataRoot, "runtime.json"), "utf-8"));
+      expect(Object.keys(runtime).sort()).toEqual(
+        ["address", "dataDir", "engineVersion", "pid", "protocolVersion", "startedAt", "transport"],
+      );
       const wsJson = fs.readFileSync(path.join(dataRoot, WS_A, "workspace.json"), "utf-8");
       expect(wsJson).not.toMatch(/Port/i);
     } finally {

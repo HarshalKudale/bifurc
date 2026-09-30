@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * P14 work item 6 — the **deployable host artifact**: the executable a container runs.
  *
@@ -46,8 +47,19 @@
  * `hostArgs.ts`'s `REMOVED_FLAGS` names all of them to an operator who still passes one, so the failure is a
  * diagnosis rather than an `unrecognised flag`.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { runWorkspaceHost, type WorkspaceHostOptions, type HostTransport } from "./host";
 import { HOST_USAGE, parseHostArgs } from "./hostArgs";
+
+/** The engine package's version, reported to clients in the `hello` response and in runtime.json. */
+function packageVersion(): string {
+  try {
+    return (JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as { version: string }).version;
+  } catch {
+    return "0.0.0";
+  }
+}
 
 async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseHostArgs(argv);
@@ -74,10 +86,26 @@ async function main(argv: readonly string[]): Promise<void> {
    * caller could use to widen the bind, and `transport/ws.ts` no longer has them.
    */
   const transport: HostTransport =
-    args.wsPort !== undefined ? { kind: "ws", port: args.wsPort } : { kind: "socket", path: args.rpcSocket };
+    args.transport === "stdio"
+      ? { kind: "stdio" }
+      : args.transport === "ws"
+        ? { kind: "ws", port: args.wsPort }
+        : { kind: "socket", path: args.rpcSocket };
+
+  // Over stdio, stdout *is* the RPC channel: one stray log line would corrupt the framing. Every log in the
+  // process goes to stderr instead.
+  if (transport.kind === "stdio") {
+    const toStderr = (...parts: unknown[]): void => {
+      process.stderr.write(`${parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}\n`);
+    };
+    console.log = toStderr;
+    console.info = toStderr;
+    console.debug = toStderr;
+  }
 
   const opts: WorkspaceHostOptions = {
     dataDir: args.dataDir,
+    engineVersion: packageVersion(),
     // **No `domain`.** The host answers as `localhost`, which it composes itself, and the parser no longer has
     // a flag for it — removed 2026-09-24 because the engine is no longer deployed in the cloud
     // (`hostArgs.ts`'s header records the reasoning). There is nothing here to pass through.
