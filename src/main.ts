@@ -10,7 +10,7 @@ import { checkGitInstalled } from "@bifurc/engine/workspace/gitStore";
 import { bus } from "@bifurc/engine/kernel/eventBus";
 import { commandRegistry } from "@bifurc/engine/kernel/registry";
 import { startBlobSweeper } from "@bifurc/engine/workspace/blob/sweep";
-import { setDataRoot, dataDir } from "@bifurc/engine/workspace/paths";
+import { setDataRoot, dataDir, platformDefaultDataDir } from "@bifurc/engine/workspace/paths";
 import { preflight, bootstrapWorkspaces } from "@bifurc/engine/lifecycle/startup";
 import { shutdownEngine } from "@bifurc/engine/lifecycle/shutdown";
 
@@ -261,7 +261,10 @@ if (!gotTheLock) {
     // P2 work item 4: the engine-side store modules (appSettings.ts, workspaceFs.ts) are now
     // Electron-free and resolve their paths via `dataDir()`. This is the one place the shell
     // hands them Electron's own `userData` path, preserving current behaviour exactly.
-    setDataRoot(app.getPath("userData"));
+    // On Windows the app's data has always been in %LOCALAPPDATA%\Bifurc (the engine used to hardcode it,
+    // ignoring the root it was given). The root is now that directory itself, which is also the default a
+    // standalone engine and the CLI use, so all three agree. Elsewhere `userData` was already the root.
+    setDataRoot(process.platform === "win32" ? platformDefaultDataDir() : app.getPath("userData"));
     // Expires unreferenced blobs under the data dir. The timer is unref'd, so it never holds the process open.
     startBlobSweeper();
 
