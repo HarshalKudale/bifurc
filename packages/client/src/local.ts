@@ -3,7 +3,7 @@
  *
  * ## Why this is an injected interface rather than an implementation
  *
- * Fourteen of the 132 keys are not RPC at all. They act on **the machine the client is running on**:
+ * Sixteen of the 136 keys are not RPC at all. They act on **the machine the client is running on**:
  * native file pickers, the OS trust store, Electron's `BrowserWindow`/`nativeTheme`, shell launch
  * state. On a remote engine they are meaningless at best and a hole at worst — `tlsInstallCA` mutates
  * the *client's* OS trust store, and routing it would let a server install a root certificate on a

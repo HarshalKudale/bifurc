@@ -1,7 +1,7 @@
 import * as net from "net";
 import { MockRule, Environment } from "../workspace/config";
 import { HOP_BY_HOP } from "../utils/http";
-import { resolveRandomizers } from "../utils/randomizer";
+import { resolveVars } from "../utils/resolve";
 
 export interface ResolvedMockResponse {
   status: number;
@@ -10,18 +10,14 @@ export interface ResolvedMockResponse {
   delayMs: number;
 }
 
-export function resolveVars(text: string, env: Environment | null): string {
-  if (!text) return text;
-  let result = text;
-  if (env) {
-    result = result.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
-      if (key.startsWith("random.")) return _match;
-      const v = env.variables.find((v) => v.key === key);
-      return v !== undefined ? v.value : _match;
-    });
-  }
-  return resolveRandomizers(result);
-}
+/**
+ * `resolveVars` was defined here, privately, as the engine's only copy (`plan/19` §1 row 1). WI 2's
+ * engine half moved it **down** to `utils/resolve.ts` so `mocks/` and the request pipeline can share one
+ * implementation instead of a third being written beside it.
+ *
+ * It is **imported, not re-exported**, and the distinction is deliberate: a re-export would keep the
+ * name on this module's surface, and the next reader looking for the authority would find it here.
+ */
 
 export function matchMock(mocks: MockRule[], method: string, url: string, env: Environment | null): MockRule | null {
   for (const m of mocks) {

@@ -626,6 +626,12 @@ async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) 
     Application: "@bifurc/engine/applications/applicationCommands",
     Sync: "@bifurc/engine/gitops/syncCommands",
     EntityCrud: "@bifurc/engine/workspace/entities/entityCrudCommands",
+    // **The `SavedRequest` row is gone as of 2026-09-30** (`plan/19` WI 3): the module it named,
+    // `workspace/entities/savedRequestCommands.ts`, is deleted — all four protocols now register their own
+    // `*.send` from their own feature module. The key was the short name the shell's call-site regex
+    // captured (`SavedRequest`, from `registerSavedRequestCommands`), and a row whose owner no longer exists
+    // fails with "no such export was importable", which is the failure mode this table exists to produce.
+    Pipeline: "@bifurc/engine/pipeline/commands",
   };
   const specifier = paths[shortName];
   if (specifier === undefined) return undefined;

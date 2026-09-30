@@ -150,6 +150,31 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "healthbar.saveServices": "write",
   "healthbar.checkUrl": "read",
   "capture.shareJson": "write",
+  // The four saved-entity counterparts (`packages/protocol/src/commands/saved.ts`). `execute` for the
+  // same reason as the commands they delegate to: each one's effect is an **outbound request the engine
+  // does not control**, which is the class this scope exists to single out for rate limiting. Loading
+  // the entity is a read, but the command as a whole is not, and a scope is per command.
+  //
+  // The `execute` choice is also what keeps the pair consistent rather than privileged: a counterpart
+  // delegates through `registry.invoke()`, which does **not** re-check scopes (the check lives in the
+  // transport decorator), so a counterpart carrying a *weaker* scope than its target would be a
+  // widening — a `read`-scoped session could reach `graphql.execute` by the saved-entity door. Same
+  // scope, no widening.
+  // `request.send` replaced `request.replaySaved` (2026-09-30, `plan/19` D24/D27). Same `execute` class
+  // as the `request.replay` it invokes — the pipeline resolves and runs scripts, and a `read` scope for
+  // that would be a widening, not a reclassification.
+  "request.send": "execute",
+  // `graphql.send` replaced `graphql.executeSaved` (2026-09-30, `plan/19` WI 3's second protocol). Same
+  // `execute` class as the `graphql.execute` it invokes — it resolves the request now, and a `read` scope
+  // for that would be a widening rather than a reclassification.
+  "graphql.send": "execute",
+  // `soap.send` replaced `soap.executeSaved` (2026-09-30, `plan/19` WI 3's third protocol). Same `execute`
+  // class as the `soap.execute` it invokes — it resolves the request now, and a `read` scope would be a
+  // widening rather than a reclassification.
+  "soap.send": "execute",
+  // `grpc.send` replaced `grpc.executeSaved` (2026-09-30, `plan/19` WI 3's fourth and last protocol). Same
+  // `execute` class as the `grpc.execute` it invokes.
+  "grpc.send": "execute",
 };
 
 /**

@@ -1,10 +1,9 @@
 import React, { forwardRef, useImperativeHandle, useReducer, useCallback, useEffect, useState } from "react";
-import { SavedGrpcRequest, Folder, Environment } from "@/types";
+import { SavedGrpcRequest, Folder } from "@/types";
 import { BottomBar, TabStrip, UrlBar, UrlBarVerb } from "@/components/editor/RequestTab";
 import { TabPage, TabTitleBar, TabToolbar, TabToolbarRow, SplitPane, useSplitOrientation, PROTOCOL_TONE } from "@/components/editor/TabPage";
 import { useDraftPersist, loadDraft } from "@/hooks/useDraftPersist";
 import { KVRow, mkRowId } from "@/lib/utils";
-import { resolveVars } from "@/lib/resolveVars";
 import { cn } from "@/components/ui/cn";
 import { strings } from "@/lib/strings";
 import {
@@ -14,6 +13,7 @@ import {
     GrpcRequestDraft,
 } from "@/components/grpc/grpcTabReducer";
 import { useProtocolEditor } from "@/hooks/useProtocolEditor";
+import { canSendByEntityId } from "@/lib/savedEntitySend";
 import { GrpcLeftPane, ReqSubTab } from "./GrpcLeftPane";
 import { GrpcResponsePane, ResSubTab } from "./GrpcResponsePane";
 
@@ -32,7 +32,6 @@ interface Props {
     draftTabId: string | null;
     initial: SavedGrpcRequest | null;
     folders: Folder[];
-    activeEnv?: Environment | null;
     onSave: (data: Omit<SavedGrpcRequest, "id" | "createdAt" | "workspaceId">) => Promise<any>;
     onClose: () => void;
     onSync?: (savedId?: string) => Promise<void>;
@@ -59,8 +58,15 @@ function rowsToMetadata(rows: KVRow[]): Record<string, string> {
 
 // -- Component --------------------------------------------------------------
 
+/**
+ * **No `activeEnv` prop as of 2026-09-30, and its absence is this migration's evidence.** Resolution moved
+ * into the engine (`plan/19` D23), so the tab has nothing left to do with a resolved environment: the prop was
+ * threaded from the panel down to `handleSend`, and `handleSend` no longer resolves. Removed rather than left
+ * unused, deliberately — an unused prop reads as a dependency the component still has. **It was the last of the
+ * four tabs to give it up**, which is why `RequestTabContent` no longer passes it to any of them.
+ */
 const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
-    { tabType, tabId, draftTabId, initial, folders, activeEnv = null, onSave, onClose, onSync, onRevert, syncStatus, onHistory }: Props,
+    { tabType, tabId, draftTabId, initial, folders, onSave, onClose, onSync, onRevert, syncStatus, onHistory }: Props,
     ref,
 ) {
     const isNew = !!draftTabId;
@@ -116,23 +122,48 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
     /** Field setter. Declared before the imperative handle, which reaches for `set("name")`. */
     const set = (field: keyof GrpcTabState) => (value: unknown) => dispatch({ type: "SET_FIELD", field, value });
 
+    /**
+     * The saved entity to run by id, or `null` to send what the editor holds.
+     *
+     * **This tab's migration is what took the gate's last domain term away.** `usesVariables` is gone from
+     * `savedEntitySend.ts` entirely as of 2026-09-30, because gRPC was the last tab still resolving in the
+     * renderer — so the gate is now `!isDraft && !hasLocalChanges`, `plan/19` §7's predicted end state. See
+     * that file for the term-by-term history.
+     *
+     * **⚠ The scan `usesVariables` replaced was broader than what `handleSend` resolved**: it treated
+     * `serviceName` and `methodName` as resolvable while `handleSend` resolved neither, so a `{{token}}` in
+     * either never resolved in **either** path. The engine resolves all five fields — see `grpc/commands.ts`.
+     */
+    const savedEntityId = canSendByEntityId({
+        isDraft: !!draftTabId,
+        hasLocalChanges,
+    })
+        ? tabId
+        : null;
+
     // Send gRPC request
     const handleSend = useCallback(async () => {
         dispatch({ type: "SEND_START" });
         try {
-            const addr = resolveVars(state.serverAddress, activeEnv);
-            const body = resolveVars(state.requestBody, activeEnv);
-            const meta: Record<string, string> = {};
-            for (const [k, v] of Object.entries(state.metadata)) { meta[k] = resolveVars(v, activeEnv); }
-            const result = await window.api.grpcExecute(
-                addr,
-                state.serviceName,
-                state.methodName,
-                body,
-                meta,
-                state.protoFileId,
-                state.useReflection,
-            );
+            /**
+             * **One call, and the engine does the rest.** No `resolveVars` here any more: `plan/19` D23 makes
+             * the engine the authority for which environment a request resolves against, and D24 makes the id
+             * form and the inline form the *same* send with two sources of request — so this tab assembles the
+             * call **unresolved** and sends it, exactly as the other three do.
+             */
+            const result = savedEntityId
+                ? await window.api.grpcSend({ id: savedEntityId })
+                : await window.api.grpcSend({
+                    request: {
+                        serverAddress: state.serverAddress,
+                        serviceName: state.serviceName,
+                        methodName: state.methodName,
+                        requestBody: state.requestBody,
+                        metadata: state.metadata,
+                        protoFileId: state.protoFileId,
+                        useReflection: state.useReflection,
+                    },
+                });
             if (result.ok) {
                 dispatch({
                     type: "SEND_SUCCESS",
@@ -148,7 +179,7 @@ const GrpcTab = forwardRef<GrpcTabHandle, Props>(function GrpcTab(
         } catch (err: any) {
             dispatch({ type: "SEND_ERROR", error: err?.message ?? strings.grpc.sendFailed });
         }
-    }, [state.serverAddress, state.serviceName, state.methodName, state.requestBody, state.metadata, state.protoFileId, state.useReflection, activeEnv]);
+    }, [state.serverAddress, state.serviceName, state.methodName, state.requestBody, state.metadata, state.protoFileId, state.useReflection, savedEntityId]);
 
     useImperativeHandle(ref, () => ({
         save() {

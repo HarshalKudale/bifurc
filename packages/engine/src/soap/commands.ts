@@ -49,11 +49,35 @@
  * check changes which requests get TLS. `rejectUnauthorized: false` is also deliberate and kept —
  * these are the user's own endpoints, and a self-signed certificate is the norm for a development
  * SOAP server.
+ *
+ * ## `soap.send` — the third command, and the second that resolves (2026-09-30)
+ *
+ * `plan/19` WI 3's third protocol. It replaced `soap.executeSaved`, whose params were `{workspaceId, id}`;
+ * the new params are a **union** of that form and `{workspaceId, request}`, so a draft tab and the CLI use one
+ * command. `plan/protocol-changes.md`'s 2026-09-30 `soap.send` entry owns the wire argument.
+ *
+ * **It resolves every field and runs no scripts**, the same shape as `graphql.send` and for the same reasons:
+ *
+ * - *Every field* — `endpointUrl`, `soapAction`, `headers` **and** `body`, against the workspace's merged
+ *   environment (`workspace/envState.ts`, D23). The tab resolved all of these **except `soapAction`**, while
+ *   the Send gate's token scan treated all four as resolvable — so a `{{token}}` in a SOAPAction never
+ *   resolved in *either* path. The gate was written from intent and the tab from practice, and the engine
+ *   follows the gate.
+ * - *No scripts* — the sandbox's context is a `{method, url, headers, body}` request and a SOAP request is not
+ *   one, so `soap.send` has no `scripts` member rather than one nothing could run.
+ *
+ * It lives here rather than in `workspace/entities/savedRequestCommands.ts` because it reads `workspace/` +
+ * `utils/` and dispatches through `kernel/` — this module's §6 row exactly — while the one counterpart that
+ * remains there is pure load-and-dispatch.
  */
 import * as http from "http";
 import * as https from "https";
-import type { SoapFetchWsdlParams, SoapExecuteParams } from "@bifurc/protocol";
-import type { CommandRegistry } from "../kernel/registry";
+import { EngineError } from "@bifurc/protocol";
+import type { SoapFetchWsdlParams, SoapExecuteParams, SoapSendParams } from "@bifurc/protocol";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
+import { loadEntity } from "../workspace/config";
+import { loadMergedEnvironment } from "../workspace/envState";
+import { resolveVars, resolveHeaders } from "../utils/resolve";
 
 export function registerSoapCommands(registry: CommandRegistry): void {
     registry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {
@@ -108,4 +132,63 @@ export function registerSoapCommands(registry: CommandRegistry): void {
         });
         return { status, headers: resHeaders, body: resBody, durationMs: Date.now() - start };
     });
+
+    registry.register("soap.send", async (params: SoapSendParams, ctx: CommandContext) => {
+        const stored = "id" in params
+            ? requireStoredSoapRequest(params.workspaceId, params.id)
+            : params.request;
+        // One read of the workspace's environment state for the whole send. `plan/19` D23: the engine is the
+        // authority for which environment a request resolves against, and the merge is part of that.
+        const env = loadMergedEnvironment(params.workspaceId);
+        return registry.invoke(
+            "soap.execute",
+            {
+                // Field-for-field identical to the stored shape, so there is no rename here — but **every**
+                // field is resolved, including `soapAction`, which the tab never resolved while the Send gate
+                // treated it as resolvable (see the header).
+                endpointUrl: resolveVars(stored.endpointUrl, env),
+                soapAction: resolveVars(stored.soapAction, env),
+                headers: resolveHeaders(stored.headers ?? {}, env),
+                body: resolveVars(stored.body, env),
+            },
+            ctx,
+        );
+    });
+}
+
+/**
+ * The stored entity's fields, as a **projection** — exactly the ones the send reads.
+ *
+ * Declared *after* its only reader, which is legal for a type and keeps this file's shape "the three
+ * commands, then what they read". The canonical declaration lives beside the `soapRequests` kind in
+ * `soap/kinds.ts` and is not re-exported, because nothing outside those two files had ever needed it. (This
+ * projection lived in `workspace/entities/savedRequestCommands.ts` until 2026-09-30; it moved with the
+ * command, which is its only reader.)
+ */
+interface StoredSoapRequest {
+    endpointUrl: string;
+    soapAction: string;
+    headers?: Record<string, string>;
+    body: string;
+}
+
+/**
+ * Load the entity or fail loudly, rather than answering a failure-shaped value.
+ *
+ * `SoapExecuteResult` is `HttpLikeResult`, which has **no** `ok` or `error` field — so a `{ok:false}`-shaped
+ * result would be a lie about the declared contract, and the transport hands a handler's value back
+ * *uninspected*, leaving the client to read `status: undefined` off a successful envelope. So this throws,
+ * which the transport preserves as the error code and which `@bifurc/client`'s retry policy treats as
+ * non-retryable — correctly, since the entity is not going to appear on a second attempt. Same reasoning and
+ * same behaviour as the counterpart still in `workspace/entities/savedRequestCommands.ts`.
+ */
+function requireStoredSoapRequest(workspaceId: string, id: string): StoredSoapRequest {
+    const entity = loadEntity<StoredSoapRequest>(workspaceId, "soapRequests", id);
+    if (!entity) {
+        throw new EngineError(
+            "NOT_FOUND",
+            `No saved soapRequests entity "${id}" in workspace "${workspaceId}".`,
+        );
+    }
+    return entity;
 }

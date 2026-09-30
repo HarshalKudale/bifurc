@@ -767,6 +767,25 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     // ── server / proxy ──────────────────────────────────────────────────────
     replayRequest: (method, url, headers, body) =>
       call("replayRequest", { method, url, headers, body }) as ReturnType<BifurcApi["replayRequest"]>,
+    // ── request.send: the REST pipeline (2026-09-30, plan/19 D24/D27) ───────
+    //
+    // `workspaceId` is optional and resolved here when omitted, for the same reason and by the same
+    // mechanism as `listGraphQLSchemas` below: the renderer's tab knows an entity **id** and has no
+    // workspace id to send, while `request.send` requires one (an entity id is only unique within a
+    // workspace — `packages/protocol/src/commands/saved.ts`). Resolving it here keeps the protocol
+    // honest *and* keeps the renderer free of a prop it would otherwise have to thread through panels.
+    //
+    // A CLI targeting a specific workspace passes it explicitly, which is why the parameter exists
+    // rather than being resolved unconditionally.
+    //
+    // `params` is `request.send`'s union — `{id}` or `{request, scripts}` — spread onto the resolved
+    // workspace id, so both input forms travel as one call and the client does not offer two methods for
+    // what the protocol treats as one command.
+    requestSend: async (params, workspaceId) =>
+      call("requestSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["requestSend"]>,
     proxyStatus: () => call("proxyStatus", {}) as ReturnType<BifurcApi["proxyStatus"]>,
     serverStatus: () => call("serverStatus", {}) as ReturnType<BifurcApi["serverStatus"]>,
     restartServer: () => call("restartServer", {}) as ReturnType<BifurcApi["restartServer"]>,
@@ -853,6 +872,23 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     grpcExecute: (serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection) =>
       call("grpcExecute", { serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection }) as ReturnType<BifurcApi["grpcExecute"]>,
     grpcReflect: (serverAddress) => call("grpcReflect", { serverAddress }) as ReturnType<BifurcApi["grpcReflect"]>,
+    // The three saved-entity counterparts. Same optional-`workspaceId` treatment as
+    // `replayRequestSaved` above, and the same reason — see that note rather than a second copy of it.
+    soapSend: async (params, workspaceId) =>
+      call("soapSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["soapSend"]>,
+    graphqlSend: async (params, workspaceId) =>
+      call("graphqlSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["graphqlSend"]>,
+    grpcSend: async (params, workspaceId) =>
+      call("grpcSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["grpcSend"]>,
 
     // ── TLS ─────────────────────────────────────────────────────────────────
     //
