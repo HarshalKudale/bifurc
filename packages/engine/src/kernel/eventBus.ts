@@ -19,6 +19,9 @@
 import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./telemetry";
 import type { WebhookPayload } from "../webhooks/webhookServer";
+// `import type`, so the "zero **value** imports from the rest of the engine" property above is untouched —
+// and `@bifurc/protocol` is a separate package rather than an engine-internal module in any case.
+import type { RunnerFinishedEvent, RunnerProgressEvent } from "@bifurc/protocol";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };
@@ -43,6 +46,17 @@ export interface EngineEvents {
   /** Was a direct `updateTrayMenu()` call from `coreHandlers.ts` (an engine->shell import cycle).
    * The shell subscribes and updates its own tray; the engine no longer imports `@/main`. */
   "settings.changed": Record<string, never>;
+  /**
+   * One request of a collection run has finished — `plan/19` WI 4. Carries the same result object the report
+   * does, so a UI renders results as they arrive rather than waiting for the run to end.
+   *
+   * Typed from the **protocol's** event payload rather than re-declared: the wire shape and the bus payload
+   * are the same object, and two declarations would be the "a shape that exists in two places" hazard
+   * `RunnerConfigSchema`'s note records this feature already paying for once.
+   */
+  "runner.progress": RunnerProgressEvent;
+  /** The run ended, cancelled or not. The report is the same shape `runner.saveReport` takes. */
+  "runner.finished": RunnerFinishedEvent;
 }
 
 /**
@@ -69,6 +83,8 @@ export const ENGINE_EVENT_NAMES: readonly (keyof EngineEvents)[] = [
   "process.output",
   "process.statusChange",
   "settings.changed",
+  "runner.progress",
+  "runner.finished",
 ];
 
 /**

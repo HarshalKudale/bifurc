@@ -567,8 +567,20 @@ with the runner owning only ordering, the delay, cancellation and the report.
 `tests/runner/runRegistry.test.ts` (12 cases) drives both directly, including the three that make the decisions
 checkable rather than asserted — `startRun` returns before the loop finishes, `cancelRun` is the **only** lever
 that stops a run, and D30 holds in both directions (same folder refused, different folders concurrent, a
-finished run not blocking a new one). **The wire (`runner.start` / `runner.cancel` / `runner.status` plus the
-progress events) and the renderer half are next.** The engine half is safe to have landed first, unlike WI 3's,
+finished run not blocking a new one).
+
+**The wire followed the same day** (`plan/protocol-changes.md`'s 2026-09-30 entry): `runner.start` /
+`runner.cancel` / `runner.status`, and `event.runner.progress` / `event.runner.finished`. Protocol **93 → 96**
+commands and **9 → 11** events; the client surface **136 → 141**. Two details are worth keeping: **`status` is
+scoped `read` while `start` and `cancel` are `execute`**, which is what lets a reconnecting client ask what
+happened without being granted the right to start or stop anything; and **`total` rides on every progress
+event**, because a client attaching mid-run never saw the start call. The conformance suite's every-command and
+every-event matrices widened **automatically** — both are derived from `COMMANDS` / `EVENT_NAMES`, so a new
+name cannot be left out of them, which is the property that makes this wire cheap.
+
+**The renderer half is next, and it is the half that owes the deletions:** `collectionRunner.ts`'s loop,
+`useCollectionRunner`'s `running` / `progress` / `results` / `report` state, `runnerReport.ts`'s HTML renderer,
+and the two step wrappers — four allowlist entries. **The engine half was safe to land first, unlike WI 3's**,
 because two run loops do not interfere the way two resolvers do — nothing routes to the renderer's loop but the
 UI's own button, so there is no window in which a request is processed twice.
 

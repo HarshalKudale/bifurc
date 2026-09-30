@@ -110,6 +110,10 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "tls.importCert",
   "tls.importKey",
   "blob.release",
+  // The run's own commands (`plan/19` WI 4). `status` is a read of engine state; `cancel` sets a flag the
+  // loop checks, so a retry is the same request twice and the second is a no-op on an already-cancelled run.
+  "runner.status",
+  "runner.cancel",
 ]);
 
 /**
@@ -131,6 +135,7 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "runner.saveReport",
   "runner.exportReport",
   "runner.saveConfig",
+  "runner.start", // starts a run; a retry after an unknown outcome is a run the caller did not ask for
   "sync.setRemote",
   "sync.push", // sends whatever is dirty at call time
   "sync.pull",
