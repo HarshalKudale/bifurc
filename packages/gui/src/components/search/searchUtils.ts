@@ -1,4 +1,4 @@
-import { AppConfig, Folder, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, SavedWebhook, Mapping } from "@/types";
+import { AppConfig, Folder, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, SavedWebhook, LocalMapping } from "@/types";
 import { Panel } from "@/lib/panelRegistry";
 import { readStorage } from "@/lib/storage";
 import { loadDraft } from "@/hooks/useDraftPersist";
@@ -130,13 +130,13 @@ export function searchEntities({
           isDraft = true;
           const draft = loadDraft<any>(tabId);
           title = draft?.name || "New Mock";
-          subtitle = draft?.path || draft?.urlPattern;
+          subtitle = draft?.urlPattern;
           method = draft?.method || "*";
         } else {
           const mock = mockMap.get(tabId);
           if (mock) {
             title = mock.name || "Untitled Mock";
-            subtitle = mock.path || (mock as any).urlPattern;
+            subtitle = mock.urlPattern;
             method = mock.method || "*";
             folderName = getFolderName(mock.folderId, mockFolders);
           } else {

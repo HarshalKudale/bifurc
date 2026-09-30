@@ -59,7 +59,7 @@ export default function WsStreams({
               <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border/40 bg-background/10 flex-shrink-0 justify-end">
                 <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mr-1">Insert</span>
                 <EnvVarHint
-                  env={activeEnv}
+                  env={activeEnv ?? null}
                   onInsert={(token) => {
                     setHeaders((prev) => {
                       if (prev.length === 0) return [{ id: mkRowId(), enabled: true, key: "", value: token }];
@@ -104,7 +104,7 @@ export default function WsStreams({
               <div className="flex items-center gap-1.5 px-3 py-1 border-t border-border/40 bg-background/10 justify-end">
                 <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mr-1">Insert</span>
                 <EnvVarHint
-                  env={activeEnv}
+                  env={activeEnv ?? null}
                   onInsert={(token) => setOutgoingInput((v) => v + token)}
                 />
                 <RandomizerHint
