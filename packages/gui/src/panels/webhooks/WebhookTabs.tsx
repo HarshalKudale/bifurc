@@ -13,7 +13,7 @@ interface Props {
   openTab: (id: string) => void;
   closeTab: (id: string) => void;
   openNewTab: () => void;
-  handleReorderTabs: (oldI: number, newI: number) => void;
+  handleReorderTabs: (fromId: string, toId: string, edge?: "left" | "right") => void;
   handleDuplicate: (id: string) => void;
 }
 
@@ -39,7 +39,7 @@ export default function WebhookTabs({
         label: tabLabel(id),
         isDraft,
         isModified: dirtyTabs[id],
-        renderTab: ({ isActive }: { isActive?: boolean }) => (
+        renderTab: (isActive: boolean) => (
           <div className="flex items-center gap-1.5 min-w-0" title={tabLabel(id)}>
             {!isDraft && isActivated && (
               <span className="w-2 h-2 rounded-full bg-green-500/80 animate-pulse flex-shrink-0" />

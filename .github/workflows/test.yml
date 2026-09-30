@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, main, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [master, main, develop]
 
 jobs:
   # ── Static checks ───────────────────────────────────────────────────────────
@@ -42,12 +42,10 @@ jobs:
       # removed the only CI gate over `packages/gui` — the gap would have looked like a deletion rather than a
       # regression.
       #
-      # **`continue-on-error`, because this check cannot pass yet, and a red gate is worse than a visible
-      # report.** The shared UI carries **34 pre-existing type errors** that have never been gated anywhere.
-      # Fixing them is its own work item; until then this step is a *report*.
+      # A hard gate since 2026-09-30, when the last pre-existing errors were fixed. Two of them were live bugs
+      # (global search read a `subdomain` field mappings do not have; webhook tabs never showed as active).
       - name: Typecheck the renderer and the shared UI
         run: npm run typecheck:renderer
-        continue-on-error: true
 
   # ── Unit + integration ──────────────────────────────────────────────────────
   # `test:ci` runs every Vitest project (unit and integration) with coverage and
