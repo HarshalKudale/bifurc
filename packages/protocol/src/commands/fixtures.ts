@@ -48,6 +48,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
 
   "config.get": { valid: {}, invalid: { extra: true } },
   "config.save": { valid: { config: { port: 80 } }, invalid: {} },
+  "settings.update": { valid: { forwardProxyPort: 8081, minimizeToTray: true }, invalid: { port: 70000 } },
   "workspace.add": { valid: { name: "WS" }, invalid: {} },
   "workspace.rename": { valid: { id: "w1", name: "New" }, invalid: { id: "w1" } },
   "workspace.delete": { valid: { id: "w1" }, invalid: {} },
@@ -246,6 +247,9 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   // edit, which is the non-discriminating fixture this table's header warns about.
   "capture.buildRequest": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
   "capture.buildMock": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
+  "capture.list": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "capture.clear": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "capture.remove": { valid: { workspaceId: "ws1", ids: ["log-1"] }, invalid: { workspaceId: "ws1", ids: [] } },
 
   // The saved-entity counterparts (`saved.ts`). All four share one schema, so all four get the same
   // pair — and the `invalid` row is `entity.load`'s: a **near-miss** that drops the required

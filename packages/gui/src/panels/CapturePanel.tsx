@@ -24,24 +24,8 @@ export interface CaptureStats {
   paused: boolean;
 }
 
+/** Live entries are prepended between reads; the view keeps the engine's own cap (`capture/store.ts`). */
 const MAX_ENTRIES = 200;
-const storageKey = (wsId: string) => `capture:entries:${wsId}`;
-
-function loadPersistedEntries(wsId: string): RequestLogEntry[] {
-  try {
-    const raw = localStorage.getItem(storageKey(wsId));
-    if (!raw) return [];
-    return JSON.parse(raw) as RequestLogEntry[];
-  } catch {
-    return [];
-  }
-}
-
-function persistEntries(wsId: string, entries: RequestLogEntry[]) {
-  try {
-    localStorage.setItem(storageKey(wsId), JSON.stringify(entries));
-  } catch { /* quota */ }
-}
 
 interface Props {
   activeWorkspaceId: string;
@@ -60,33 +44,42 @@ interface CtxMenuState {
 }
 
 export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChange, onOpenInMocks, onOpenInRequests, onStatsChange }: Props) {
-  const [entries, setEntries] = useState<RequestLogEntry[]>(() => loadPersistedEntries(activeWorkspaceId));
+  const [entries, setEntries] = useState<RequestLogEntry[]>([]);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  /**
+   * Pause freezes **this view**. The engine keeps recording regardless, so resuming re-reads its history and
+   * shows what arrived meanwhile — nothing is lost, which a pause that dropped events could not promise.
+   */
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
+  const wsRef = useRef(activeWorkspaceId);
+  wsRef.current = activeWorkspaceId;
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
 
+  // The history is the engine's: read it on mount, on a workspace switch, and on resume.
   useEffect(() => {
-    setEntries(loadPersistedEntries(activeWorkspaceId));
     setSelectedIds(new Set());
     setAnchorId(null);
     setActiveId(null);
-  }, [activeWorkspaceId]);
-
-  useEffect(() => {
-    persistEntries(activeWorkspaceId, entries);
-  }, [activeWorkspaceId, entries]);
+    if (paused) return;
+    let current = true;
+    window.api.captureList(activeWorkspaceId)
+      .then((list) => { if (current) setEntries(list); })
+      .catch(() => { if (current) setEntries([]); });
+    return () => { current = false; };
+  }, [activeWorkspaceId, paused]);
 
   useEffect(() => {
     const unsub = window.api.onLogEntry((entry) => {
       if (pausedRef.current) return;
+      if (entry.workspaceId && entry.workspaceId !== wsRef.current) return;
       setEntries((prev) => {
-        const next = [entry, ...prev];
+        const next = [entry, ...prev.filter((e) => e.id !== entry.id)];
         return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
       });
     });
@@ -121,12 +114,13 @@ export default function CapturePanel({ activeWorkspaceId, wsConfig, onConfigChan
     setSelectedIds(new Set());
     setAnchorId(null);
     setActiveId(null);
-    localStorage.removeItem(storageKey(activeWorkspaceId));
+    void window.api.captureClear(activeWorkspaceId).catch(() => { });
   }, [activeWorkspaceId]);
 
   const removeEntries = useCallback((ids: Set<string>) => {
     setEntries((prev) => prev.filter((e) => !ids.has(e.id)));
-  }, []);
+    if (ids.size > 0) void window.api.captureRemove(activeWorkspaceId, [...ids]).catch(() => { });
+  }, [activeWorkspaceId]);
 
   const visible = useMemo(
     () => entries.filter((e) => {

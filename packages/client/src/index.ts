@@ -591,7 +591,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       }
       return call("setEntityEnabled", { workspaceId: wsId, kind, id, enabled }) as ReturnType<BifurcApi["setEntityEnabled"]>;
     },
-    saveConfig: (config) => call("saveConfig", { config }) as ReturnType<BifurcApi["saveConfig"]>,
+    updateSettings: (patch) => call("updateSettings", patch) as ReturnType<BifurcApi["updateSettings"]>,
 
     // ── import / export ─────────────────────────────────────────────────────
     getImportExportFormats: () => call("getImportExportFormats", {}) as ReturnType<BifurcApi["getImportExportFormats"]>,
@@ -787,6 +787,11 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("captureBuildRequest", { entry }) as ReturnType<BifurcApi["captureBuildRequest"]>,
     captureBuildMock: (entry) =>
       call("captureBuildMock", { entry }) as ReturnType<BifurcApi["captureBuildMock"]>,
+    captureList: async (wsId) =>
+      ((await call("captureList", { workspaceId: wsId })) as { entries: unknown[] }).entries as Awaited<ReturnType<BifurcApi["captureList"]>>,
+    captureClear: (wsId) => call("captureClear", { workspaceId: wsId }) as ReturnType<BifurcApi["captureClear"]>,
+    captureRemove: (wsId, ids) =>
+      call("captureRemove", { workspaceId: wsId, ids }) as ReturnType<BifurcApi["captureRemove"]>,
     addWorkspace: (name) => call("addWorkspace", { name }) as ReturnType<BifurcApi["addWorkspace"]>,
     renameWorkspace: (id, name) => call("renameWorkspace", { id, name }) as ReturnType<BifurcApi["renameWorkspace"]>,
     deleteWorkspace: (id) => call("deleteWorkspace", { id }) as ReturnType<BifurcApi["deleteWorkspace"]>,

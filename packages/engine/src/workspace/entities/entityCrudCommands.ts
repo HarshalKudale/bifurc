@@ -160,7 +160,12 @@ export interface CrudFactoryOpts<T> {
   // in the suite was pinning two of them (`TRAPS.md`).
   isFlat?: boolean; // If true, uses writeFlatEntity/deleteFlatEntityFile instead of writeEntity/deleteEntityFile
   hasEnabledState?: boolean;
-  validate?: (entity: Partial<T>) => void;
+  /**
+   * Throws when `entity` may not be stored. Runs on create **and** update, after the id is assigned, with the
+   * kind's other entities in the same workspace — so a rule like "no two mappings share a domain" holds for
+   * every client, not only the one that happens to check.
+   */
+  validate?: (entity: T, siblings: readonly T[]) => void;
   onAddConflict?: (cfg: AppConfig, newEntity: T) => void;
   getNameEntry?: (entity: T) => any; // Return object for upsertNameEntry/addPendingDeletion
   /** The friendly kind name `gateCreate()` (`../subscription/entityCount`) expects — e.g.
@@ -240,12 +245,11 @@ async function isGitTracked(wsId: string, relPath: string): Promise<boolean> {
  * see that predicate for why conflict resolution is not a plain `write`.
  */
 async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, entity: Omit<T, "id" | "createdAt">, mayResolveConflicts: boolean): Promise<T> {
-  if (opts.validate) opts.validate(entity as Partial<T>);
-
   const cfg = loadConfig() as any;
   const wsId = (entity as any).workspaceId ?? cfg.activeWorkspaceId;
 
   const newEntity = { ...entity, id: generateId(), createdAt: Date.now(), workspaceId: wsId } as unknown as T;
+  opts.validate?.(newEntity, siblingsOf(cfg, opts, wsId, newEntity.id));
 
   if (opts.hasEnabledState && newEntity.enabled === undefined) {
     newEntity.enabled = true;
@@ -334,9 +338,15 @@ async function createEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, 
   return newEntity;
 }
 
+/** The kind's entities in `wsId`, other than `id` — what `validate` checks a new or changed entity against. */
+function siblingsOf<T extends EntityBase>(cfg: any, opts: CrudFactoryOpts<T>, wsId: string, id: string): T[] {
+  return ((cfg[opts.configKey] ?? []) as T[]).filter((e) => e.id !== id && (e.workspaceId ?? wsId) === wsId);
+}
+
 async function updateEntityCore<T extends EntityBase>(opts: CrudFactoryOpts<T>, entity: T): Promise<{ ok: boolean }> {
   const cfg = loadConfig() as any;
   const wsId = entity.workspaceId ?? cfg.activeWorkspaceId;
+  opts.validate?.(entity, siblingsOf(cfg, opts, wsId, entity.id));
 
   cfg[opts.configKey] = cfg[opts.configKey] ?? [];
   const idx = cfg[opts.configKey].findIndex((e: any) => e.id === entity.id);

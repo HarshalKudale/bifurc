@@ -74,6 +74,7 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "folder.publish": "write",
   "config.get": "read",
   "config.save": "write",
+  "settings.update": "write",
   "workspace.add": "write",
   "workspace.rename": "write",
   "workspace.delete": "write",
@@ -164,6 +165,9 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   // entity it is not allowed to save, which is the correct amount of authority for a pure function.
   "capture.buildRequest": "read",
   "capture.buildMock": "read",
+  "capture.list": "read",
+  "capture.clear": "write",
+  "capture.remove": "write",
   // The four saved-entity counterparts (`packages/protocol/src/commands/saved.ts`). `execute` for the
   // same reason as the commands they delegate to: each one's effect is an **outbound request the engine
   // does not control**, which is the class this scope exists to single out for rate limiting. Loading

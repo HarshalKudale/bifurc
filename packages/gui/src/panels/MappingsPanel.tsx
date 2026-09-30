@@ -54,28 +54,15 @@ const fullDomain = (sub: string) =>
   sub.trim() ? `${sub.trim().toLowerCase()}.localhost` : "";
 
 /**
- * Both validators are pure and return a message rather than throwing, so the create modal and the
- * inline row editor can share them — the modal paints its result, the autosave path only asks
- * whether it is `null`.
+ * Place an engine refusal on the form field it names. The **engine** owns a mapping's rules
+ * (`validateMapping`), so every client is held to the same ones; this only maps its `details.field` onto
+ * this form's field names. An error that names no field is shown on the target, beside the save.
  */
-const subdomainError = (sub: string, mappings: LocalMapping[], ignoreId: string | null): string | null => {
-  const s = sub.trim().toLowerCase();
-  if (!s) return strings.mappings.subdomainRequired;
-  const labels = s.split(".");
-  const invalid = labels.some(
-    (l) => !l || !/^[a-zA-Z0-9-]+$/.test(l) || l.startsWith("-") || l.endsWith("-")
-  );
-  if (invalid) return strings.mappings.subdomainInvalid;
-  const domain = `${s}.localhost`;
-  const duplicate = mappings.find((m) => m.domain.toLowerCase() === domain && m.id !== ignoreId);
-  if (duplicate) return strings.mappings.subdomainDuplicate.replace("{domain}", domain);
-  return null;
-};
-
-const targetError = (target: string): string | null =>
-  !/^[a-zA-Z0-9.\-]+:\d{1,5}$/.test(target) || parseInt(target.split(":").pop()!, 10) > 65535
-    ? strings.mappings.targetInvalid
-    : null;
+function fieldErrorsOf(err: unknown): Partial<FormState> {
+  const message = err instanceof Error ? err.message : String(err);
+  const field = (err as { details?: { field?: unknown } } | null)?.details?.field;
+  return field === "domain" ? { subdomain: message } : { target: message };
+}
 
 export default function MappingsPanel({
   config,
@@ -93,6 +80,9 @@ export default function MappingsPanel({
 }: Props) {
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
 
+  /** Every change is an engine command; afterwards the panel adopts the engine's config rather than editing its own. */
+  const reloadConfig = async () => onConfigChange(await window.api.getConfig());
+
   // The modal is create-only; existing mappings are edited on their cards.
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -101,8 +91,8 @@ export default function MappingsPanel({
   /**
    * In-progress inline edits, keyed by mapping id.
    *
-   * A keystroke must **not** reach `config` — that path persists the workspace to disk — so edits
-   * accumulate here and the debounce below applies them in one pass.
+   * Edits accumulate here and the debounce below sends them to the engine in one pass, rather than one
+   * `mapping.update` per keystroke.
    */
   const [edits, setEdits] = useState<Record<string, MappingEdit>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, Partial<FormState>>>({});
@@ -182,21 +172,19 @@ export default function MappingsPanel({
   // -- Create ---------------------------------------------------------------
 
   const createMapping = async () => {
-    const errs: Partial<FormState> = {};
-    const subErr = subdomainError(form.subdomain, config.mappings, null);
-    const tgtErr = targetError(form.target);
-    if (subErr) errs.subdomain = subErr;
-    if (tgtErr) errs.target = tgtErr;
-    setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
-
-    const newM = await window.api.addMapping({
-      domain: fullDomain(form.subdomain),
-      target: form.target,
-      label: form.label,
-      enabled: true,
-    });
-    await onConfigChange({ ...config, mappings: [...config.mappings, newM] });
+    setErrors({});
+    try {
+      await window.api.addMapping({
+        domain: fullDomain(form.subdomain),
+        target: form.target.trim(),
+        label: form.label,
+        enabled: true,
+      });
+    } catch (err) {
+      setErrors(fieldErrorsOf(err));
+      return;
+    }
+    await reloadConfig();
     setModalOpen(false);
     onRefreshServices();
     onAfterSave?.();
@@ -230,38 +218,42 @@ export default function MappingsPanel({
    * a half-typed target must not reach the config — and it keeps its error until the user fixes it.
    * Only the rows actually written are dropped, so a rejected row survives the save.
    */
-  const applyEdits = async () => {
+  /**
+   * Send every pending row to the engine, which decides whether it is valid. A refused row keeps its edit and
+   * shows the engine's message; only rows the engine stored leave `edits`. Returns the ids it refused.
+   */
+  const applyEdits = async (): Promise<Set<string>> => {
+    const refused = new Set<string>();
     const ids = Object.keys(edits).filter((id) => !deletedIds.has(id));
-    if (ids.length === 0) return;
+    if (ids.length === 0) return refused;
 
     const nextErrors: Record<string, Partial<FormState>> = {};
-    const updates: LocalMapping[] = [];
+    const written: string[] = [];
     for (const id of ids) {
       const m = config.mappings.find((x) => x.id === id);
       if (!m) continue;
       const e = edits[id];
-      const subErr = subdomainError(e.subdomain, config.mappings, id);
-      const tgtErr = targetError(e.target);
-      if (subErr || tgtErr) {
-        nextErrors[id] = { ...(subErr ? { subdomain: subErr } : {}), ...(tgtErr ? { target: tgtErr } : {}) };
-        continue;
+      try {
+        await window.api.updateMapping({ ...m, domain: fullDomain(e.subdomain), target: e.target.trim(), label: e.label });
+        written.push(id);
+      } catch (err) {
+        nextErrors[id] = fieldErrorsOf(err);
+        refused.add(id);
       }
-      updates.push({ ...m, domain: fullDomain(e.subdomain), target: e.target.trim(), label: e.label });
     }
 
     setRowErrors(nextErrors);
-    if (updates.length === 0) return;
+    if (written.length === 0) return refused;
 
-    for (const u of updates) await window.api.updateMapping(u);
-    const written = new Map(updates.map((u) => [u.id, u]));
-    await onConfigChange({ ...config, mappings: config.mappings.map((m) => written.get(m.id) ?? m) });
+    await reloadConfig();
     setEdits((prev) => {
       const next = { ...prev };
-      for (const u of updates) delete next[u.id];
+      for (const id of written) delete next[id];
       return next;
     });
     onRefreshServices();
     onAfterSave?.();
+    return refused;
   };
 
   const { savedAt: autoSavedAt, error: autoSaveError } = useDebouncedAutosave({
@@ -283,9 +275,8 @@ export default function MappingsPanel({
       : strings.entityGit.deleteConfirmPermanent.replace("{what}", what);
     if (!await confirm(message)) return;
     await window.api.deleteMapping(id);
-    const mappings = config.mappings.filter((m) => m.id !== id);
-    const proxyRules = config.proxyRules.filter((r) => r.targetMappingId !== id);
-    await onConfigChange({ ...config, mappings, proxyRules });
+    // The engine deletes the mapping and the rules that targeted it; the UI only re-reads.
+    await reloadConfig();
     setEdits((prev) => {
       if (!(id in prev)) return prev;
       const next = { ...prev };
@@ -298,26 +289,16 @@ export default function MappingsPanel({
 
   const toggleEnabled = async (m: LocalMapping, enabled: boolean) => {
     await window.api.setEntityEnabled(config.activeWorkspaceId, "mappings", m.id, enabled);
-    await onConfigChange({ ...config, mappings: config.mappings.map((x) => (x.id === m.id ? { ...x, enabled } : x)) });
+    await reloadConfig();
   };
 
   const publish = async (m: LocalMapping) => {
     if (!onPublish || isPublishing?.(m.id)) return;
-    const pending = edits[m.id];
-    if (pending) {
-      const errors = {
-        ...(subdomainError(pending.subdomain, config.mappings, m.id) ? { subdomain: subdomainError(pending.subdomain, config.mappings, m.id)! } : {}),
-        ...(targetError(pending.target) ? { target: targetError(pending.target)! } : {}),
-      };
-      if (Object.keys(errors).length) {
-        setRowErrors((prev) => ({ ...prev, [m.id]: errors }));
-        return;
-      }
-    }
     setPublishErrors((prev) => { const next = { ...prev }; delete next[m.id]; return next; });
     try {
-      // Persist in-progress card edits before committing the entity file.
-      await applyEdits();
+      // Persist in-progress card edits before committing the entity file; a row the engine refused is not
+      // published, and already shows why.
+      if ((await applyEdits()).has(m.id)) return;
       const result = await onPublish(m.id);
       if (!result.ok) {
         setPublishErrors((prev) => ({ ...prev, [m.id]: result.error ?? "Publish failed" }));

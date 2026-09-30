@@ -41,7 +41,7 @@ vi.mock("@/hooks/useAppConfigSync", () => ({
     refreshEntitySyncStatus: vi.fn(),
     syncStatus: "idle",
     handleConfigChange: vi.fn(),
-    handleWsConfigChange: vi.fn(),
+    handleSettingsChange: vi.fn(),
     refreshConfig: vi.fn(),
     clearWorkspaceContext: vi.fn(),
   }),
