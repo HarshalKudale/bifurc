@@ -44,17 +44,16 @@
  *
  * ## The allowlist is debt, and it can only shrink
  *
- * **Eight entries today, in eight files — measured, not taken from `plan/19` §6.** That document's own §11
- * warns that its counts are predictions and that "this programme's own history is that its move counts were
- * wrong more often than right"; here they were: §6 predicts `−2 / −1 / −1 / −2` across WI 2–5, which sums to
- * 6, while the census started at 9. The reason is that §6 counts *files deleted* and this file counts
- * *constructs present* — `collectionRunner.ts` carries the pipeline, the run loop and the report-renderer's
- * only caller, and `scriptRunner.ts` / `testRunner.ts` are not in §1's table at all. Re-measuring is the
- * point; the number is a reading, not a target.
+ * **Four entries today, in four files — and the count is a *reading*, not a target.** It started at 9 on
+ * 2026-09-29, which was itself a correction of `plan/19` §6: that section predicts `−2 / −1 / −1 / −2` across
+ * WI 2–5, summing to 6, because it counts *files deleted* while this file counts *constructs present* —
+ * `collectionRunner.ts` carried the pipeline, the run loop and the report-renderer's only caller, and
+ * `scriptRunner.ts` / `testRunner.ts` are not in §1's table at all.
  *
- * **The count has moved once, downward, and that is the whole design.** 9 → 8 on 2026-09-30, when
- * `useRestActions.ts` stopped orchestrating (`plan/19` WI 3, REST). The staleness assertion is what forced
- * it: with the orchestration gone the construct is no longer present, so the entry could not be kept.
+ * **The count has moved twice, both times downward, and that is the whole design.** 9 → 8 when
+ * `useRestActions.ts` stopped orchestrating (WI 3, REST), then 8 → 4 when WI 4 deleted the run loop and
+ * everything that hung off it. **The staleness assertion forced every one of the five retirements** — with the
+ * construct gone the entry could not be kept, which is what makes the shrink checkable rather than remembered.
  *
  * Each entry names the work item that deletes it, and `the allowlist has no stale entries` fails if one
  * is fixed without being removed — so the list cannot quietly become a permission slip.
@@ -190,37 +189,36 @@ const CONSTRUCTS: Record<string, Construct> = {
  * next violation added to that file, and two of these files legitimately keep other things
  * (`utils.ts` keeps the presentation helpers; `useRestActions.ts` keeps `handleTest`).
  *
- * **Eight entries. The goal is `{}`.** The value must name the work item that deletes the entry, which
- * `every allowlist entry names the work item that deletes it` asserts — an entry with no owner is a
- * violation nobody has agreed to fix. It was nine until 2026-09-30; the first entry this ratchet has ever
- * retired is recorded in the map below, with what forced it.
+ * **Four entries. The goal is `{}`.** The value must name the work item that deletes the entry, which
+ * `every allowlist entry names the work item that deletes it` asserts — an entry with no owner is a violation
+ * nobody has agreed to fix. It was nine on 2026-09-29 and is four now; **all five retirements are recorded in
+ * the map below, with what forced each**, because a shrink nobody can account for is indistinguishable from a
+ * construct that was quietly dropped out of the scan.
  */
 const ALLOWED: Record<string, string> = {
+  // **Still present, and the reason changed on 2026-09-30.** All four protocol tabs stopped resolving in the
+  // renderer, so this entry is no longer "waiting for the last tab" — it is waiting for **WI 6**, because
+  // `useWebSocket.ts` resolves a url and headers and `HealthBarPanel.tsx` resolves a service url. `App.tsx`'s
+  // `mergeEnvVars` also still runs, for the panes' active-env hint. See `plan/19` §6's WI 3 completion note.
   "lib/resolveVars.ts#resolver":
-    "WI 2 — deleted when the LAST tab stops resolving. REST stopped on 2026-09-30; graphql/soap/grpc " +
-    "still resolve in the renderer, so the construct is still present (plan/19 §8 trap 1).",
+    "WI 6 — deleted with the last renderer resolver (`useWebSocket` + `HealthBarPanel`), not with the tabs.",
   "lib/randomizer.ts#randomizer":
-    "WI 2 — the generator goes with the last resolving tab; the token catalogue stays as a pinned UI " +
-    "copy (plan/19 §3, owner's call).",
-  // `components/rest/useRestActions.ts#pipeline` was here, and it is **deleted 2026-09-30** — the first
-  // entry this ratchet has retired. What forced it is the staleness assertion rather than tidiness: the
-  // orchestration is gone, so the construct is no longer present and the entry would now fail.
+    "WI 6 — the generator is only reachable through `resolveVars`, so it goes with it; the token catalogue " +
+    "stays as a pinned UI copy (`plan/19` §3, D28).",
+  // **Five entries have left this allowlist on 2026-09-30, in two groups, and neither group was tidying up.**
+  // The staleness assertion forced all five — each construct is gone from the renderer, so an entry that
+  // stayed would have failed it.
   //
-  // `useRestActions` assembles the request and calls `window.api.requestSend`; the five steps
-  // (`resolve → pre-script → send → post-script → test`) run in
-  // `packages/engine/src/pipeline/runPipeline.ts`. That is `plan/19` §8 trap 1's "the engine starts and
-  // the renderer stops" done for one protocol, and the entry's disappearance is the evidence.
-  "lib/collectionRunner.ts#pipeline":
-    "WI 4 — deleted with the run loop that wraps it; until then the runner still orchestrates its own " +
-    "copy (plan/19 §6 WI 3's deletion table).",
-  "lib/scriptRunner.ts#pipelineStep":
-    "WI 4 — its last caller is `collectionRunner`, so it goes with the loop; `script.execute` itself " +
-    "stays (trap 7).",
-  "lib/testRunner.ts#pipelineStep":
-    "WI 4 — its last caller is `collectionRunner`, so it goes with the loop; `script.execute` itself " +
-    "stays (trap 7).",
-  "lib/runnerReport.ts#reportRenderer":
-    "WI 4 — deleted; runner.saveReport already renders through the engine's renderRunnerHtml.",
+  //   `components/rest/useRestActions.ts#pipeline`   WI 3's REST slice — the first entry ever retired
+  //   `lib/collectionRunner.ts#pipeline`             WI 4 — the run loop, now `runner/runCollection.ts`
+  //   `lib/scriptRunner.ts#pipelineStep`             WI 4 — its last caller was that loop
+  //   `lib/testRunner.ts#pipelineStep`               WI 4 — likewise
+  //   `lib/runnerReport.ts#reportRenderer`           WI 4 — the engine's `runner/reportHtml.ts` is the one
+  //
+  // The four WI 4 entries went together because they were one feature: the runner's loop was the last caller
+  // of the two step wrappers, and its report was the last reason the renderer had a second HTML renderer at
+  // all. `script.execute` itself stays — trap 7 — and so do the two storage wrappers that shared
+  // `runnerReport.ts` with the renderer.
   "lib/curlParser.ts#curlParser": "WI 5 — deleted; request.parseCurl.",
   "lib/utils.ts#pathHelpers":
     "WI 5 — deleted; the engine already computes these (workspaceFs).",
