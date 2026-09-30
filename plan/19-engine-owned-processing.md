@@ -380,10 +380,24 @@ worth stating: trap 1 exists because two resolvers *double-apply* a value, where
 interfere — the renderer's is only reachable from the UI, and nothing routes to it but the UI's own button.
 There is no window in which a request is processed twice.
 
-**The deletions this item owes, once the renderer half lands:** `lib/collectionRunner.ts#pipeline`,
-`lib/scriptRunner.ts#pipelineStep`, `lib/testRunner.ts#pipelineStep` (their last caller is that loop),
-`lib/runnerReport.ts#reportRenderer`, and `useCollectionRunner`'s `running` / `progress` / `results` / `report`
-state — which becomes a subscription.
+**Renderer half — LANDED 2026-09-30.** `useCollectionRunner` is a **subscription**: `runnerStatus` on mount
+(so a tab opened mid-run attaches — D29 visible in the UI), `runnerStart` / `runnerCancel` for the two
+buttons, and the two events for everything else. **⚠ The hook still holds React state, and the distinction
+that matters is what it is *used* for**: nothing in it decides anything — the cancel is a request to the
+engine, and whether a run is going comes from the engine's answer. It is a mirror, not the authority, and that
+is the §2 test applied to it (*would this differ if the UI were a terminal?* — the state would not).
+
+**⚠ A flaw the tests caught, and it was in the hook rather than in the test.** The first version only
+*updated* a snapshot it already had (`prev ? … : prev`), so a `runner.finished` event arriving with no snapshot
+was dropped — which is exactly the disconnected-client case D29 exists for. Both handlers now **establish**
+state when there is none, and that is what `total` riding on every progress event was for. (A progress event
+carries no start time, so that branch's `startedAt` is a guess; recorded in the hook rather than papered over.)
+
+**The four deletions this item owed, all landed:** `lib/collectionRunner.ts`, `lib/scriptRunner.ts`,
+`lib/testRunner.ts`, and `runnerReport.ts`'s HTML renderer — **the allowlist went 8 → 4**.
+`runnerReport.ts` itself survives with the two *storage* wrappers, which is the `file#construct` keying doing
+its job: the file stayed, the construct the ratchet tracked did not. `script.execute` stays — trap 7 — and the
+renderer's two deleted test files' subjects are `tests/runner/runRegistry.test.ts`'s now.
 
 **The wire and the renderer half — the original spec, unchanged:**
 `runner.start { workspaceId, folderId }` → engine loads the folder's ordered requests, runs the WI 3 pipeline
@@ -578,11 +592,20 @@ event**, because a client attaching mid-run never saw the start call. The confor
 every-event matrices widened **automatically** — both are derived from `COMMANDS` / `EVENT_NAMES`, so a new
 name cannot be left out of them, which is the property that makes this wire cheap.
 
-**The renderer half is next, and it is the half that owes the deletions:** `collectionRunner.ts`'s loop,
-`useCollectionRunner`'s `running` / `progress` / `results` / `report` state, `runnerReport.ts`'s HTML renderer,
-and the two step wrappers — four allowlist entries. **The engine half was safe to land first, unlike WI 3's**,
-because two run loops do not interfere the way two resolvers do — nothing routes to the renderer's loop but the
-UI's own button, so there is no window in which a request is processed twice.
+**The renderer half landed too, and WI 4 is complete.** `useCollectionRunner` is a subscription —
+`runnerStatus` on mount so a tab opened mid-run attaches (D29 in the UI), `runnerStart` / `runnerCancel` for
+the two buttons, and the two events for everything else — and the four deletions it owed are gone:
+`collectionRunner.ts`'s loop, `scriptRunner.ts`, `testRunner.ts`, and `runnerReport.ts`'s HTML renderer. **The
+allowlist went 8 → 4.** `runnerReport.ts` survives with its two *storage* wrappers, which is the
+`file#construct` keying working as designed.
+
+**⚠ A flaw the tests caught, and it was in the hook rather than in the test:** the first version only
+*updated* a snapshot it already had, so a `runner.finished` event arriving with none was dropped — exactly the
+disconnected-client case D29 exists for. Both handlers now establish state when there is none.
+
+**The engine half was safe to land first, unlike WI 3's**, because two run loops do not interfere the way two
+resolvers do — nothing routes to the renderer's loop but the UI's own button, so there was no window in which a
+request is processed twice.
 
 **`hasExecutableScripts` left the Send gate, and that is §7's accounting coming true early.** It was `true`
 for the REST tab alone and `false` for the other three, so it was never a per-request question; REST's

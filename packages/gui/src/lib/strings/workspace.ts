@@ -139,6 +139,8 @@ export const workspaceStrings = {
       run: "Run",
       runAgain: "Run Again",
       running: "Running...",
+      /** The engine refused a start (D30: the folder already has a run in flight) and said why. */
+      startFailed: "Could not start the run.",
       allPassed: "All passed",
       someFailed: "Some failed",
       exportTitle: "Export report as HTML or JSON",
