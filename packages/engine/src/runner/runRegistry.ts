@@ -89,9 +89,12 @@ export interface StartRunOptions {
   workspaceId: string;
   folderId: string;
   /**
-   * Called once the run has finished, with the report. **The wire's seam**: `runner.start`'s slice will emit
-   * the progress and finished events from here rather than this module reaching for the bus.
+   * Called after each request completes, with its 0-based index. **The wire's seam** — `runner.start` emits
+   * `event.runner.progress` from here, so this module never reaches for the bus (and `runner/`'s §6 row keeps
+   * `kernel/` imports to types).
    */
+  onProgress?: (index: number, result: RunnerRequestResult) => void;
+  /** Called once the run has finished, with the report. The other half of the same seam. */
   onFinished?: (report: CollectionRunReport) => void;
 }
 
@@ -139,9 +142,10 @@ export function startRun(opts: StartRunOptions): StartRunResult {
     // The whole of D29: the flag this reads is set by `cancelRun` and by nothing else.
     isCancelled: () => snapshot.cancelled,
     callbacks: {
-      onRequestDone: (_index, result) => {
+      onRequestDone: (index, result) => {
         snapshot.results.push(result);
         snapshot.completed = snapshot.results.length;
+        opts.onProgress?.(index, result);
       },
     },
   })

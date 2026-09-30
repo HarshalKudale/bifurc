@@ -133,9 +133,16 @@ map is module-level **by design** and nothing in it can observe a disconnect. **
 `iterations` in `runner.json` stay UN-honoured** — the renderer read neither, and implementing them would be a
 behaviour change smuggled in under a move. **⚠ The engine half is safe before the renderer's, unlike WI 3's** —
 two run loops do not double-apply anything the way two resolvers do.
-**Next for WI 4:** the wire (`runner.start`/`cancel`/`status` + progress events — `EVENT_NAMES`,
-`EngineEvents`, `assertBridgeIsTotal` ×4 transports, the conformance matrix, client subscriptions + pinned
-counts) and the renderer half, which owes four allowlist deletions.
+**WI 4's WIRE LANDED (2026-09-30): `runner.start`/`cancel`/`status` + `event.runner.progress`/`finished`.**
+Protocol **93 → 96** commands, **9 → 11** events; client surface **136 → 141** (transport 66 → 69, subscribe
+7 → 9). **⚠ Two scopes deliberately: `start`/`cancel` = `execute`, `status` = `read`** — that is what lets a
+reconnecting client ask what happened without the right to start or stop. **⚠ `total` rides on every progress
+event** (a mid-run attacher never saw the start call). **⚠ The conformance matrices widened AUTOMATICALLY** —
+they are derived from `COMMANDS`/`EVENT_NAMES`, so the wire cost three list entries, not three hand-kept tables.
+**⚠ `retry.ts`'s partition needed all three**: `status`/`cancel` idempotent, **`start` non-idempotent** (a retry
+is a run the caller did not ask for).
+**Next: the renderer half**, which owes four allowlist deletions (`collectionRunner.ts#pipeline`,
+`scriptRunner.ts#pipelineStep`, `testRunner.ts#pipelineStep`, `runnerReport.ts#reportRenderer`).
 
 **D28 LANDED** — the engine's
 `utils/randomizer.ts` owns `RANDOMIZER_TOKENS`; the UI keeps a **copy** pinned by

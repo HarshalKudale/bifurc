@@ -140,6 +140,75 @@ export interface GrpcExecuteResult {
 }
 
 /**
+ * The collection runner's result shapes — mirrors of `RunnerRequestResult` / `CollectionRunReport` in
+ * `packages/engine/src/runner/runCollection.ts` and `RunnerStatusResult` in `@bifurc/protocol`.
+ *
+ * **They move here rather than living beside the runner's UI**, which is where they were until 2026-09-30
+ * (`packages/gui/src/lib/collectionRunner.ts`). `plan/19` WI 4 moves the run itself into the engine, so the
+ * renderer keeps only the *types* — and they belong with the other wire mirrors, not with a module that no
+ * longer implements anything.
+ */
+export interface RunnerRequestResult {
+  requestId: string;
+  requestName: string;
+  /** The method and url **as actually sent** — resolved, and rewritten by the pre-script if there was one. */
+  method: string;
+  url: string;
+  status: number | null;
+  responseTime: number;
+  error?: string;
+  tests: { name: string; passed: boolean; error?: string; durationMs: number }[];
+  testLogs: string[];
+  preScriptError?: string;
+  postScriptError?: string;
+}
+
+export interface CollectionRunReport {
+  folderId: string;
+  folderName?: string;
+  startedAt: number;
+  completedAt: number;
+  totalRequests: number;
+  totalTests: number;
+  passedTests: number;
+  failedTests: number;
+  results: RunnerRequestResult[];
+}
+
+/** `runner.status`'s result. `null` (the method's return) means "never started", which is not "ran and produced nothing". */
+export interface RunnerStatusResult {
+  workspaceId: string;
+  folderId: string;
+  startedAt: number;
+  total: number;
+  completed: number;
+  running: boolean;
+  cancelled: boolean;
+  completedAt?: number;
+  error?: string;
+  results: RunnerRequestResult[];
+  report?: CollectionRunReport;
+}
+
+/** `event.runner.progress`'s payload — mirrors the protocol's schema (`events.ts`). */
+export interface RunnerProgressEvent {
+  workspaceId: string;
+  folderId: string;
+  /** 0-based, matching the position in the finished report's `results`. */
+  index: number;
+  /** On every event rather than only on the start call, because a client can attach mid-run (D29). */
+  total: number;
+  result: RunnerRequestResult;
+}
+
+/** `event.runner.finished`'s payload — carries the whole report, which is what a disconnected client renders from. */
+export interface RunnerFinishedEvent {
+  workspaceId: string;
+  folderId: string;
+  report: CollectionRunReport;
+}
+
+/**
  * `request.send`'s two input forms — mirrors of `RequestSendParams` in `@bifurc/protocol`
  * (`commands/saved.ts`).
  *

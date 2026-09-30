@@ -14,6 +14,7 @@
  * visible rather than silent, and it is now down to `process.statusChange` alone.
  */
 import { z } from "zod";
+import { RunReportResultSchema, RunReportSchema } from "./commands/runner";
 
 
 /** Every event carries a monotonic `seq`. See "Sequence numbers" below for why. */
@@ -135,6 +136,40 @@ export type ProcessOutputEvent = z.infer<typeof ProcessOutputEventSchema>;
 export const SettingsChangedEventSchema = z.object({});
 export type SettingsChangedEvent = z.infer<typeof SettingsChangedEventSchema>;
 
+/**
+ * `event.runner.progress` — one request of a collection run has finished (`plan/19` WI 4).
+ *
+ * `index` is 0-based and matches the position in the finished report's `results`, so a client can place an
+ * arriving result without counting. **`total` rides on every event rather than being remembered from the start
+ * call**, because a client that attaches mid-run (`runner.status`, D29) never saw one.
+ *
+ * The bus name is `runner.progress` — the bridge derives it from `EVENT_NAMES` by stripping `event.`, so
+ * there is no second table to keep in step (`wire/types.ts`).
+ */
+export const RunnerProgressEventSchema = z.object({
+  workspaceId: z.string(),
+  folderId: z.string(),
+  index: z.number(),
+  total: z.number(),
+  result: RunReportResultSchema,
+});
+export type RunnerProgressEvent = z.infer<typeof RunnerProgressEventSchema>;
+
+/**
+ * `event.runner.finished` — a collection run ended, cancelled or not.
+ *
+ * **The whole report is carried**, and it is the same shape `runner.saveReport` takes. A client that was
+ * disconnected for the run's entire life still gets its results from this one event, and a client that watched
+ * the whole thing gets the object it would otherwise have assembled itself — which is what makes the event the
+ * *only* thing a runner UI needs to render from.
+ */
+export const RunnerFinishedEventSchema = z.object({
+  workspaceId: z.string(),
+  folderId: z.string(),
+  report: RunReportSchema,
+});
+export type RunnerFinishedEvent = z.infer<typeof RunnerFinishedEventSchema>;
+
 export const EVENT_NAMES = [
   "event.sync.status",
   "event.sync.entityStatus",
@@ -145,6 +180,8 @@ export const EVENT_NAMES = [
   "event.webhook.payload",
   "event.process.output",
   "event.settings.changed",
+  "event.runner.progress",
+  "event.runner.finished",
 ] as const;
 export type EventName = (typeof EVENT_NAMES)[number];
 
