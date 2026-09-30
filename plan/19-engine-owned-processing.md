@@ -146,6 +146,24 @@ matching `case` in the generator. **The pin is not optional:** a copy with nothi
 than a new instance of the defect this phase opens with. The boundary ratchet's `randomizer` construct was
 narrowed to the **generator** accordingly — flagging `RANDOMIZER_TOKENS` there would contradict D28.
 
+**D29 — a run's lifetime is the ENGINE's, not the client's (DECIDED 2026-09-30 by the owner).** A client
+disconnect and a workspace switch **do not** cancel a run; `runner.status` lets a reconnecting client attach to
+one already in flight. A **host restart loses it** — there is no durable run record, and the `.runs/` files stay
+what they have always been: a *report* of a finished run, written by `runner.saveReport`, not live state. This
+is §8 trap 5's requirement — *"a disconnected client must not cancel the run … and 'cancel on disconnect' is the
+default most implementations reach for"*. Persisting the run so a restart could resume it was considered and
+**rejected**: resuming would have to decide whether to re-send the requests the run had already sent, and that
+is a question with no safe default.
+
+**D30 — one run per `{workspaceId, folderId}`; a second is REJECTED, and two different folders may run at once
+(DECIDED 2026-09-30 by the owner).** A run executes one folder's ordered requests, so the folder *is* the run's
+identity and that is the lock's granularity: `runner.start` for a folder already running fails with an error
+naming it. §8 trap 6 is why this is a decision rather than a discovery — *"concurrency is undefined today
+because the renderer made it impossible … prevented by there being one browser tab."* The per-folder policy is a
+**superset** of that behaviour (which allowed zero concurrent runs), so nothing regresses. A workspace-wide lock
+was rejected because it forbids two independent collections for a reason the UI never had; a queue was rejected
+because it needs ordering semantics and a way to report "queued" that this document has no use for yet.
+
 ---
 
 ## 4. The target architecture
@@ -334,6 +352,40 @@ of the layering rule. The converse assertion now exists (six assertions, was fiv
 `bogus/` directory.
 
 ### WI 4 — the collection runner moves to the engine
+
+**Engine half — LANDED 2026-09-30.** `packages/engine/src/runner/runCollection.ts` is the loop, and it is thin
+because WI 3 exists: the whole per-request body is **one `registry.invoke("request.send", {workspaceId, id})`**.
+The renderer's version could not be that thin — it had to do the five steps itself, which is why §1 counted it
+as a second copy of the pipeline rather than as a runner.
+
+`packages/engine/src/runner/runRegistry.ts` is the **run state**, and it is where **D29** and **D30** live:
+module-level by design (D29 — no persistence, no teardown hook, and *nothing in the file can observe a
+disconnect*), keyed by `{workspaceId, folderId}` (D30 — a second run of the same folder is refused while one is
+in flight, two different folders run side by side, and a *finished* run does not block a new one because the
+snapshot has to outlive the run for `runner.status`).
+
+`tests/runner/runRegistry.test.ts` (12 cases) drives both directly, including the three that make the decisions
+checkable rather than asserted: `startRun` returns **before** the loop finishes, `cancelRun` is the **only**
+lever that stops a run, and the two halves of D30 in both directions.
+
+**⚠ Two config fields stay un-honoured, and that is deliberate.** `runner.json` carries `stopOnFailure` and
+`iterations`, and the renderer's `runCollection` read **neither** — a folder configured to stop on failure ran
+to the end anyway. Implementing them here would be a behaviour change smuggled in under a move, and each is a
+real decision (does a failed *test* count as a failure, or only a failed *send*?) that this item is not the
+place to make. Recorded in `runCollection.ts` so the omission reads as one.
+
+**Still to come for this item:** the wire — `runner.start` / `runner.cancel` / `runner.status` plus the progress
+events — and the renderer half. **⚠ The engine half is safe to land first, unlike WI 3's**, and the reason is
+worth stating: trap 1 exists because two resolvers *double-apply* a value, whereas two run loops do not
+interfere — the renderer's is only reachable from the UI, and nothing routes to it but the UI's own button.
+There is no window in which a request is processed twice.
+
+**The deletions this item owes, once the renderer half lands:** `lib/collectionRunner.ts#pipeline`,
+`lib/scriptRunner.ts#pipelineStep`, `lib/testRunner.ts#pipelineStep` (their last caller is that loop),
+`lib/runnerReport.ts#reportRenderer`, and `useCollectionRunner`'s `running` / `progress` / `results` / `report`
+state — which becomes a subscription.
+
+**The wire and the renderer half — the original spec, unchanged:**
 `runner.start { workspaceId, folderId }` → engine loads the folder's ordered requests, runs the WI 3 pipeline
 per request with the configured delay, and emits progress; `runner.cancel`, `runner.status`. New event names
 in `packages/protocol/src/events.ts` (the list is total, so this is a deliberate protocol addition) plus the
@@ -507,6 +559,18 @@ header and in the `grpc.send` entry.
 **⚠ The allowlist did not reach `{}`, and the two entries left are not WI 3's** — see §6's completion note:
 `resolveVars` and the randomizer outlive the four tabs, because `useWebSocket.ts` (WI 6) and
 `HealthBarPanel.tsx` still resolve. They belong to WI 6.
+
+**WI 4's engine half is landed** — `packages/engine/src/runner/runCollection.ts` and `runRegistry.ts`, with
+**D29** and **D30** decided by the owner rather than discovered, which is exactly what §8 traps 5 and 6 ask for.
+The loop is thin *because* WI 3 exists: one `registry.invoke("request.send", {workspaceId, id})` per request,
+with the runner owning only ordering, the delay, cancellation and the report.
+`tests/runner/runRegistry.test.ts` (12 cases) drives both directly, including the three that make the decisions
+checkable rather than asserted — `startRun` returns before the loop finishes, `cancelRun` is the **only** lever
+that stops a run, and D30 holds in both directions (same folder refused, different folders concurrent, a
+finished run not blocking a new one). **The wire (`runner.start` / `runner.cancel` / `runner.status` plus the
+progress events) and the renderer half are next.** The engine half is safe to have landed first, unlike WI 3's,
+because two run loops do not interfere the way two resolvers do — nothing routes to the renderer's loop but the
+UI's own button, so there is no window in which a request is processed twice.
 
 **`hasExecutableScripts` left the Send gate, and that is §7's accounting coming true early.** It was `true`
 for the REST tab alone and `false` for the other three, so it was never a per-request question; REST's
