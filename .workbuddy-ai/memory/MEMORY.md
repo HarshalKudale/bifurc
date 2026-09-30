@@ -29,12 +29,13 @@ anything)** · procedures → the `bifurc-*` skills · per-day → `memory/YYYY-
   full run** — unit + integration = the total. `getFreePort()` is a **reservation, not a guarantee** (TRAPS 112).
 - **⚠ Standing ENVIRONMENT failures — deterministic, NOT to be fixed.** `gitRemote.integration.test.ts` fails
   every case (10; sandbox `git push` reports success **without writing the remote's refs**). The safe-delete shim
-  (`EBUSY … rmdir` on `%TEMP%`) times out `gitStore.test.ts`'s `beforeEach` (**24/24 alone**) and leaves four
-  teardown-only suite `FAIL`s (`fileOps`, `importExport`, `importExportBlob`, `importExportFormats` —
-  `Hook timed out in 20000ms` in `afterAll`; all their tests pass). **⚠ Never blame a change for a count in the
-  git/temp family — check alone first.**
-- **Last full measurement 2026-09-29: 2,742 tests / 128 files** (unit 98 / 2,281 incl. 40 skipped; integration
-  30 / 461). 11 failures, **all environment**. **e2e: 11 specs rewritten 2026-09-28 — the old 46/46 figure is
+  (`EBUSY … rmdir` on `%TEMP%`) times out any hook that tears down a temp dir: `gitStore.test.ts`'s
+  `beforeEach` (**24/24 alone**), `tests/proxy/serverUtils.test.ts`'s `afterEach` (**passes 1/1 alone**), and it
+  leaves four teardown-only suite `FAIL`s (`fileOps`, `importExport`, `importExportBlob`, `importExportFormats`
+  — `Hook timed out in 20000ms` in `afterAll`; all their tests pass). **⚠ Never blame a change for a count in
+  the git/temp family — check alone first.**
+- **Last full measurement 2026-09-30: 2,824 tests / 137 files** (unit 107 / 2,348 incl. 40 skipped; integration
+  30 / 476). 12 failures, **all environment**. **e2e: 11 specs rewritten 2026-09-28 — the old 46/46 figure is
   stale and wants an owner run.**
 
 ## Protocol commands & the client surface
