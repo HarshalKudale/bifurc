@@ -34,7 +34,7 @@
  * in the same change that makes the engine resolve.
  */
 import type { Environment } from "../workspace/config";
-import { resolveRandomizers } from "./randomizer";
+import { resolveRandomizers } from "../utils/randomizer";
 
 /** Replace `{{KEY}}` with env vars, then `{{random.*}}`. Unknown keys are left verbatim. */
 export function resolveVars(text: string, env: Environment | null): string {

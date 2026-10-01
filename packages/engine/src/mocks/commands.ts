@@ -37,7 +37,7 @@ import type { CaptureBuildMockParams, ScriptExecuteParams } from "@bifurc/protoc
 import type { CommandRegistry } from "../kernel/registry";
 import type { RequestLogEntry } from "../kernel/telemetry";
 import { executeIpcScript } from "./scriptExecutor";
-import { capturedToMock } from "../utils/captureEntities";
+import { capturedToMock } from "../capture/captureEntities";
 
 export function registerMockCommands(registry: CommandRegistry): void {
     registry.register("script.execute", (params: ScriptExecuteParams) => executeIpcScript(params));

@@ -63,6 +63,13 @@ rows 3 and 4's counts re-measured 2026-09-29; rows 5 and 6 confirmed exact; row 
 > when it notes *"the edge: nothing to reload — a port is owned by its workspace."* Both live in
 > `packages/engine/src/runtime/instances.ts`.
 
+> **Layout follow-up (2026-10-01).** `env/` now owns environment state, selection, the `{{var}}` resolver and the
+> `env.*` commands (out of `workspace/` and `utils/`); `services/` owns `services.discover` and `healthbar.*`;
+> `pipeline/` is merged into `rest/` (`runPipeline.ts`, `sendCommands.ts`); `captureEntities` moved to `capture/`,
+> `echoWorkspace` to `proxy/`. `utils/replay.ts` stays: proxy routing and `request.replay` both use it. The Electron
+> shell no longer builds the proxy/edge itself — `src/main.ts` starts `createWorkspaceHost()`, the same composition as
+> the standalone engine (`runtime/attachSocket.ts` is gone).
+
 **Scope:** `packages/engine/src` — 140 files, 23,443 lines. Nothing outside the engine package is
 restructured, except the import statements that point into it.
 

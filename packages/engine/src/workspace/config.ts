@@ -15,7 +15,7 @@ import {
   wsDir, dataRoot, autoSyncFsDirectories, readEnabledSet, bootstrapEnabledSet,
   getPendingDeletions,
 } from "./workspaceFs";
-import { effectiveEnvironmentId } from "./envSelection";
+import { effectiveEnvironmentId } from "../env/envSelection";
 import type {
   MockRule, LocalMapping, ProxyRule, SavedRequest,
   SavedWsConnection, Environment, Folder, Workspace,

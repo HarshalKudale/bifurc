@@ -37,8 +37,8 @@
  * `tests/engine/captureEntities.test.ts` keeps the case that pins it.
  */
 import type { RequestLogEntry } from "../kernel/telemetry";
-import { SKIP_CURL_HEADERS } from "./curl";
-import { isBinaryContentType } from "./contentType";
+import { SKIP_CURL_HEADERS } from "../utils/curl";
+import { isBinaryContentType } from "../utils/contentType";
 
 /** A captured request as the **editor** wants it: hop-by-hop headers gone, body decoded to text. */
 export interface CapturedRequest {

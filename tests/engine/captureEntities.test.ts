@@ -16,7 +16,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { RequestLogEntry } from "@bifurc/engine/kernel/telemetry";
-import { capturedToRequest, capturedToMock } from "@bifurc/engine/utils/captureEntities";
+import { capturedToRequest, capturedToMock } from "@bifurc/engine/capture/captureEntities";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

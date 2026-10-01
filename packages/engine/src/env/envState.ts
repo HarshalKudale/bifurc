@@ -33,10 +33,10 @@
  * the desktop, where `loadConfig()` has usually created it already — but it changes nothing, which is
  * exactly why the shortcut is safe.
  */
-import type { Environment } from "./config";
-import { readAllEntities } from "./fs/fsRead";
-import { loadSettings } from "./appSettings";
-import { mergeEnvVars } from "../utils/resolve";
+import type { Environment } from "../workspace/config";
+import { readAllEntities } from "../workspace/fs/fsRead";
+import { loadSettings } from "../workspace/appSettings";
+import { mergeEnvVars } from "./resolve";
 import { effectiveEnvironmentId } from "./envSelection";
 
 /**
