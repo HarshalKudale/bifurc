@@ -14,6 +14,7 @@ use gpui_kit::component::{
     ActiveTheme as _, WindowExt as _,
     command::CommandState,
     h_flex,
+    input::InputState,
     notification::Notification,
     resizable::{h_resizable, resizable_panel},
     v_flex,
@@ -28,7 +29,10 @@ use self::right_sidebar::RightSidebar;
 use crate::{
     app_model::{AppModel, ModelEvent},
     commands::ShellHandle,
-    components::dialogs::{PromptField, confirm_danger, prompt},
+    components::{
+        EntityAction,
+        dialogs::{PromptField, confirm_danger, prompt},
+    },
     model::{RequestKind, snippet::RequestParts},
     preferences::Preferences,
     screens::{
@@ -46,6 +50,18 @@ pub struct ActiveTarget {
     pub entity_id: Option<String>,
     /// The request as an HTTP call, when it can be written as a snippet.
     pub request: Option<RequestParts>,
+    /// The field the entity's name is typed in. The breadcrumb shows it in place of the title, so the name
+    /// is edited where it is read.
+    pub name: Option<Entity<InputState>>,
+    /// The request's type, on the screen whose entities have one.
+    pub kind: Option<RequestKind>,
+}
+
+impl ActiveTarget {
+    /// The target for an entity that is not a request: its title, its saved id and its name field.
+    pub fn named(title: SharedString, entity_id: Option<String>, name: Entity<InputState>) -> Self {
+        Self { title, entity_id, request: None, name: Some(name), kind: None }
+    }
 }
 
 pub struct Shell {
@@ -87,6 +103,8 @@ impl Shell {
             // The breadcrumb and the right sidebar follow what is open on the screen in front.
             cx.observe_in(&requests, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             cx.observe_in(&mocks, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
+            cx.observe_in(&proxy_rules, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
+            cx.observe_in(&environments, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             // These screens give the footer a line that changes as they work.
             cx.observe(&services, |_, _, cx| cx.notify()),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
@@ -129,7 +147,10 @@ impl Shell {
                 cx.notify();
             }
             ModelEvent::Notice(text) => window.push_notification(Notification::warning(text.clone()), cx),
-            ModelEvent::SocketStatus(_) | ModelEvent::SocketMessage(_) | ModelEvent::Traffic(_) => {}
+            ModelEvent::SocketStatus(_)
+            | ModelEvent::SocketMessage(_)
+            | ModelEvent::Traffic(_)
+            | ModelEvent::EntityReverted(_) => {}
         }
     }
 
@@ -140,14 +161,31 @@ impl Shell {
                 title: session.title(cx),
                 entity_id: session.saved_id(cx),
                 request: session.request_parts(cx),
+                name: Some(session.name_input(cx)),
+                kind: Some(session.kind(cx)),
             }),
-            Screen::Mocks => self.mocks.read(cx).active_target(cx).map(|(title, entity_id)| ActiveTarget {
-                title,
-                entity_id,
-                request: None,
-            }),
+            Screen::Mocks => self.mocks.read(cx).active_target(cx),
+            Screen::ProxyRules => self.proxy_rules.read(cx).active_target(cx),
+            Screen::Environments => self.environments.read(cx).active_target(cx),
             _ => None,
         }
+    }
+
+    /// Asks the screen in front to do `action` to the entity it has open. Screens with nothing of the kind
+    /// ignore it.
+    fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            Screen::Environments => self.environments.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            _ => {}
+        }
+    }
+
+    /// Makes the open draft request one of another type.
+    pub(super) fn change_request_kind(&mut self, kind: RequestKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.requests.update(cx, |requests, cx| requests.change_active_kind(kind, window, cx));
     }
 
     fn sync_right_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -212,23 +250,11 @@ impl Shell {
     }
 
     pub fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.screen {
-            Screen::Requests => self.requests.update(cx, |screen, cx| screen.save_active(window, cx)),
-            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.save_active(window, cx)),
-            Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.save(window, cx)),
-            Screen::Environments => self.environments.update(cx, |screen, cx| screen.save(window, cx)),
-            _ => {}
-        }
+        self.entity_action(EntityAction::Save, window, cx);
     }
 
     pub fn revert_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.screen {
-            Screen::Requests => self.requests.update(cx, |screen, cx| screen.revert_active(window, cx)),
-            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.revert_active(window, cx)),
-            Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.revert(window, cx)),
-            Screen::Environments => self.environments.update(cx, |screen, cx| screen.revert(window, cx)),
-            _ => {}
-        }
+        self.entity_action(EntityAction::Revert, window, cx);
     }
 
     /// Send, or connect: the active request's main verb.
@@ -239,11 +265,7 @@ impl Shell {
     }
 
     pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.screen {
-            Screen::Requests => self.requests.update(cx, |screen, cx| screen.close_active(window, cx)),
-            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.close_active(window, cx)),
-            _ => {}
-        }
+        self.entity_action(EntityAction::Close, window, cx);
     }
 
     pub(super) fn prompt_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {

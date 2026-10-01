@@ -7,21 +7,27 @@
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Side, Sizable as _, StyledExt as _, TitleBar,
-    breadcrumb::{Breadcrumb, BreadcrumbItem},
     button::{Button, ButtonVariants as _},
     h_flex,
+    input::Input,
     kbd::Kbd,
     menu::{DropdownMenu as _, PopupMenuItem},
     sidebar::SidebarToggleButton,
     status_bar::StatusBar,
+    tag::Tag,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
+    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString, Styled as _, Window,
+    div,
 };
 
 use super::{Screen, Shell};
-use crate::{commands::OpenCommandPalette, model::git::PublishAction, preferences::Preferences};
+use crate::{
+    commands::OpenCommandPalette,
+    model::{RequestKind, git::PublishAction},
+    preferences::Preferences,
+};
 
 fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
@@ -102,14 +108,36 @@ impl Shell {
         )
     }
 
-    /// What the breadcrumb ends in: the thing open on the current screen, if the screen has one.
-    fn active_item_title(&self, cx: &Context<Self>) -> Option<SharedString> {
-        self.active_target(cx).map(|target| target.title)
+    /// The request's type, in the breadcrumb. A draft's type can still be chosen; a saved request's is fixed,
+    /// because its type is which kind of entity it was stored as.
+    fn render_request_kind(&self, kind: RequestKind, is_draft: bool, cx: &mut Context<Self>) -> AnyElement {
+        if !is_draft {
+            return Tag::secondary().small().child(kind.label()).into_any_element();
+        }
+        let shell = cx.weak_entity();
+        Button::new("request-kind")
+            .outline()
+            .xsmall()
+            .label(kind.label())
+            .icon(IconName::ChevronDown)
+            .tooltip("The type can be changed until the request is saved")
+            .dropdown_menu(move |menu, _, _| {
+                RequestKind::ALL.iter().fold(menu, |menu, option| {
+                    let (shell, option) = (shell.clone(), *option);
+                    menu.item(PopupMenuItem::new(option.label()).checked(option == kind).on_click(
+                        move |_, window, cx| {
+                            shell.update(cx, |shell, cx| shell.change_request_kind(option, window, cx)).ok();
+                        },
+                    ))
+                })
+            })
+            .into_any_element()
     }
 
-    pub(super) fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Where the user is: the workspace, the screen, and what is open on it. The last part is the open
+    /// entity's own name field, so the name is changed where it is read.
+    fn render_breadcrumb(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
-        let collapsed = Preferences::global(cx).sidebar_collapsed;
         let workspace = self
             .model
             .read(cx)
@@ -117,10 +145,42 @@ impl Shell {
             .active_workspace()
             .map(|w| w.name.clone())
             .unwrap_or_else(|| "Workspace".to_owned());
-        let breadcrumb = Breadcrumb::new()
-            .child(BreadcrumbItem::new(workspace))
-            .child(BreadcrumbItem::new(self.screen.label()))
-            .when_some(self.active_item_title(cx), |this, title| this.child(BreadcrumbItem::new(title)));
+        let target = self.active_target(cx);
+        let separator = || Icon::new(IconName::ChevronRight).text_color(theme.muted_foreground).size_3p5();
+        let screen = div()
+            .flex_none()
+            .when(target.is_none(), |this| this.text_color(theme.foreground))
+            .child(self.screen.label());
+
+        let trail = h_flex()
+            .w_full()
+            .gap_1p5()
+            .text_sm()
+            .text_color(theme.muted_foreground)
+            .child(div().flex_none().child(workspace))
+            .child(separator())
+            .child(screen);
+        let Some(target) = target else { return trail.into_any_element() };
+        let kind = target.kind.map(|kind| self.render_request_kind(kind, target.entity_id.is_none(), cx));
+        trail
+            .child(separator())
+            .children(kind)
+            .child(match target.name {
+                Some(name) => div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(theme.foreground)
+                    .child(Input::new(&name).small().appearance(false))
+                    .into_any_element(),
+                None => div().text_color(theme.foreground).child(target.title).into_any_element(),
+            })
+            .into_any_element()
+    }
+
+    pub(super) fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let collapsed = Preferences::global(cx).sidebar_collapsed;
+        let breadcrumb = self.render_breadcrumb(cx);
 
         h_flex()
             .flex_none()
@@ -224,14 +284,14 @@ impl Shell {
         let status = self.screen_status(cx);
 
         let proxy_label = match (&proxy.error, proxy.running) {
-            (Some(_), _) => format!("Proxy :{} unavailable", proxy.port),
-            (None, true) => format!("Proxy :{} running", proxy.port),
-            (None, false) => format!("Proxy :{} stopped", proxy.port),
+            (Some(_), _) => format!("Forward proxy :{} unavailable", proxy.port),
+            (None, true) => format!("Forward proxy :{} running", proxy.port),
+            (None, false) => format!("Forward proxy :{} stopped", proxy.port),
         };
         let proxy_tooltip: SharedString = match (&proxy.error, proxy.running) {
             (Some(error), _) => format!("{error}. Select to try starting it again.").into(),
-            (None, true) => "Stop the proxy".into(),
-            (None, false) => "Start the proxy".into(),
+            (None, true) => "Stop the forward proxy".into(),
+            (None, false) => "Start the forward proxy".into(),
         };
         let app_model = self.model.clone();
 

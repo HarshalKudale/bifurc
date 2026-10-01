@@ -3,10 +3,14 @@
 //! A rule matches a URL pattern and sends the request to one of the workspace's mappings or to another
 //! server, optionally running a script on the request and on the response. The list is read from the engine
 //! (`entity.list`); the detail pane holds an *edit* of the selected rule, saved over the engine's copy by id.
+//!
+//! A new rule is a draft until Save creates it. A saved rule has no Save step: an edit is written a moment
+//! after it is made, or at once when another rule is selected. The rule's name is edited in the window's
+//! breadcrumb, which shows this screen's name field.
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    button::Button,
     checkbox::Checkbox,
     h_flex,
     input::{Editor, Input, InputEvent, InputState},
@@ -18,15 +22,17 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Syntax, VarEditor, dialogs::confirm_danger, page},
+    components::{Autosave, EntityAction, EntityBar, Syntax, VarEditor, dialogs::confirm_danger, entity_bar, page},
     engine::{call, call_in, describe, failure},
+    session::SaveMode,
+    shell::ActiveTarget,
 };
 
 const DEFAULT_NAME: &str = "New rule";
@@ -87,6 +93,9 @@ pub struct ProxyRulesScreen {
     script_ix: usize,
     baseline: Fields,
     saving: bool,
+    autosave: Autosave,
+    /// The selected rule was reverted on disk: the next list is shown whatever the controls hold.
+    reload_due: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -96,6 +105,34 @@ fn text(rule: &Map<String, Value>, key: &str) -> String {
 
 fn flag(rule: &Map<String, Value>, key: &str) -> bool {
     rule.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// What the controls hold once `rule` is shown in them, to compare with the baseline without showing it.
+fn engine_fields(rule: &Map<String, Value>) -> Fields {
+    Fields {
+        name: text(rule, "name").trim().to_owned(),
+        pattern: text(rule, "pattern").trim().to_owned(),
+        use_regex: flag(rule, "useRegex"),
+        enabled: rule.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        target: if text(rule, "targetType") == "mapping" { Target::Mapping } else { Target::External },
+        mapping_id: text(rule, "targetMappingId"),
+        external: text(rule, "targetExternal").trim().to_owned(),
+        request_script: text(rule, "requestScript"),
+        response_script: text(rule, "responseScript"),
+    }
+}
+
+/// Why a rule cannot be written as it stands, if it cannot.
+fn problem_of(fields: &Fields) -> Option<&'static str> {
+    if fields.pattern.is_empty() {
+        Some("Enter the URL pattern this rule matches.")
+    } else if fields.target == Target::Mapping && fields.mapping_id.is_empty() {
+        Some("Choose the mapping to send matching requests to.")
+    } else if fields.target == Target::External && fields.external.is_empty() {
+        Some("Enter the server to send matching requests to.")
+    } else {
+        None
+    }
 }
 
 impl ProxyRulesScreen {
@@ -109,21 +146,33 @@ impl ProxyRulesScreen {
             VarEditor::code(Syntax::JavaScript, "// Runs on the response before it is returned", window, cx);
 
         let mut subscriptions = vec![cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
-            if matches!(event, ModelEvent::ConfigChanged | ModelEvent::WorkspaceSwitched) {
-                this.reload(window, cx);
+            match event {
+                ModelEvent::ConfigChanged | ModelEvent::WorkspaceSwitched => this.reload(window, cx),
+                ModelEvent::EntityReverted(id) if this.selection == Selection::Saved(id.clone()) => {
+                    // An edit waiting to be written belongs to the version that was just replaced.
+                    this.autosave.cancel();
+                    this.reload_due = true;
+                    this.reload(window, cx);
+                }
+                _ => {}
             }
         })];
-        for input in [&name, &pattern, &external] {
-            subscriptions.push(cx.subscribe(input, |_, _, event: &InputEvent, cx| {
+        subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
+            InputEvent::Change => this.changed(cx),
+            InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
+            InputEvent::Focus => {}
+        }));
+        for input in [&pattern, &external] {
+            subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
-                    cx.notify();
+                    this.changed(cx);
                 }
             }));
         }
         for editor in [&request_script, &response_script] {
-            subscriptions.push(cx.subscribe(editor.state(), |_, _, event: &InputEvent, cx| {
+            subscriptions.push(cx.subscribe(editor.state(), |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
-                    cx.notify();
+                    this.changed(cx);
                 }
             }));
         }
@@ -155,6 +204,8 @@ impl ProxyRulesScreen {
                 response_script: String::new(),
             },
             saving: false,
+            autosave: Autosave::new(window),
+            reload_due: false,
             _subscriptions: subscriptions,
         };
         this.reload(window, cx);
@@ -191,13 +242,20 @@ impl ProxyRulesScreen {
         self.rules.iter().find(|rule| rule.get("id").and_then(Value::as_str) == Some(id))
     }
 
-    /// Keeps the detail pane on a rule that exists, refreshing it when there is no edit here to lose.
+    /// Keeps the detail pane on a rule that exists. The controls are only written when the engine's copy
+    /// differs from what they were last shown or saved as, and there is no edit here to lose: every
+    /// autosave makes the engine's list change, and writing the controls would move the cursor under the user.
     fn follow_rules(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let forced = std::mem::take(&mut self.reload_due);
         match self.selection.clone() {
             Selection::Draft => {}
             Selection::Saved(id) => match self.rule(&id).cloned() {
-                Some(rule) if !self.is_dirty(cx) => self.show(&rule, window, cx),
-                Some(_) => {}
+                Some(rule) => {
+                    let differs = engine_fields(&rule) != self.baseline;
+                    if forced || (differs && !self.saving && !self.is_dirty(cx)) {
+                        self.show(&rule, window, cx);
+                    }
+                }
                 None => self.select_first(window, cx),
             },
             Selection::None => self.select_first(window, cx),
@@ -233,6 +291,48 @@ impl ProxyRulesScreen {
         self.selection != Selection::None && self.fields(cx) != self.baseline
     }
 
+    /// The id of the selected rule, once it is saved.
+    fn saved_id(&self) -> Option<&str> {
+        match &self.selection {
+            Selection::Saved(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// The selected rule, for the window's breadcrumb. The shell shows this screen's name field there.
+    pub fn active_target(&self, cx: &gpui_kit::App) -> Option<ActiveTarget> {
+        if self.selection == Selection::None {
+            return None;
+        }
+        let name = self.name.read(cx).value();
+        let title = if name.is_empty() { DEFAULT_NAME.into() } else { name };
+        Some(ActiveTarget::named(title, self.saved_id().map(str::to_owned), self.name.clone()))
+    }
+
+    /// A saved rule is written a moment after each change; a draft waits for Save.
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+        if self.saved_id().is_some() {
+            self.autosave.schedule(cx, |this, window, cx| this.save(SaveMode::Auto, window, cx));
+        }
+    }
+
+    /// The name was confirmed, by Enter or by leaving the field. Naming a draft is what creates it, when it
+    /// has what it needs to be created.
+    fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selection == Selection::Draft && self.fields(cx).name != self.baseline.name {
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Writes an edit that is still waiting, now: another rule is about to be shown.
+    fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id().is_some() {
+            self.autosave.cancel();
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
     /// Fills the detail pane from a rule.
     fn show(&mut self, rule: &Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
         self.name.update(cx, |s, cx| s.set_value(text(rule, "name"), window, cx));
@@ -248,12 +348,17 @@ impl ProxyRulesScreen {
         cx.notify();
     }
 
-    /// Moves the detail pane to another rule, asking first if that would lose an edit.
+    /// Moves the detail pane to another rule. An edit of a saved rule is written on the way out; a draft, or
+    /// an edit that cannot be written, is asked about first.
     fn go_to(&mut self, selection: Selection, window: &mut Window, cx: &mut Context<Self>) {
         if selection == self.selection {
             return;
         }
-        if self.is_dirty(cx) {
+        let writable = self.saved_id().is_some() && !self.saving && problem_of(&self.fields(cx)).is_none();
+        if self.is_dirty(cx) && writable {
+            self.flush(window, cx);
+            self.open(selection, window, cx);
+        } else if self.is_dirty(cx) {
             let name = self.baseline.name.clone();
             confirm_danger(
                 cx.weak_entity(),
@@ -293,28 +398,51 @@ impl ProxyRulesScreen {
         self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
     }
 
-    pub fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selection = self.selection.clone();
-        self.open(selection, window, cx);
+    /// What the footer of the detail pane asks for.
+    pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            EntityAction::Save => self.save(SaveMode::Explicit, window, cx),
+            EntityAction::Sync => {
+                if let Some(id) = self.saved_id().map(str::to_owned) {
+                    self.model.update(cx, |model, cx| model.sync_entity(&id, cx));
+                }
+            }
+            EntityAction::Revert => {
+                if let Some(id) = self.saved_id().map(str::to_owned) {
+                    let name = self.baseline.name.clone();
+                    confirm_danger(
+                        cx.weak_entity(),
+                        window,
+                        cx,
+                        format!("Revert “{name}” to the last synced version?"),
+                        "The changes saved since then are discarded.",
+                        "Revert",
+                        move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
+                    );
+                }
+            }
+            EntityAction::Delete => self.confirm_delete(window, cx),
+            EntityAction::Close => {}
+        }
     }
 
-    pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Creates the rule if it is a draft, or writes the edit over the saved one. A write that is asked for
+    /// while another is in flight is not lost: the one in flight looks for a newer edit when it lands.
+    fn save(&mut self, mode: SaveMode, window: &mut Window, cx: &mut Context<Self>) {
         use gpui_kit::component::{WindowExt as _, notification::Notification};
         if self.saving || self.selection == Selection::None {
             return;
         }
         let fields = self.fields(cx);
-        let problem = if fields.pattern.is_empty() {
-            Some("Enter the URL pattern this rule matches.")
-        } else if fields.target == Target::Mapping && fields.mapping_id.is_empty() {
-            Some("Choose the mapping to send matching requests to.")
-        } else if fields.target == Target::External && fields.external.is_empty() {
-            Some("Enter the server to send matching requests to.")
-        } else {
-            None
-        };
-        if let Some(problem) = problem {
-            window.push_notification(Notification::warning(problem).title("Can't save yet"), cx);
+        let creating = self.selection == Selection::Draft;
+        if !creating && fields == self.baseline {
+            return;
+        }
+        if let Some(problem) = problem_of(&fields) {
+            if mode == SaveMode::Explicit {
+                window.push_notification(Notification::warning(problem).title("Can't save yet"), cx);
+            }
+            cx.notify();
             return;
         }
 
@@ -334,7 +462,6 @@ impl ProxyRulesScreen {
 
         let model = self.model.read(cx);
         let client = model.client().clone();
-        let creating = self.selection == Selection::Draft;
         let (action, payload) = if creating {
             entity.insert("workspaceId".into(), json!(model.workspace_id()));
             ("entity.create", json!({ "kind": "proxyRules", "workspaceId": model.workspace_id(), "entity": entity }))
@@ -343,23 +470,33 @@ impl ProxyRulesScreen {
         };
         self.saving = true;
         cx.notify();
+        let started_on = self.selection.clone();
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.saving = false;
             match failure(&outcome) {
-                Some(message) => this.report("Couldn't save the rule.", message, cx),
+                Some(message) => {
+                    this.report("Couldn't save the rule.", message, cx);
+                    cx.notify();
+                    return;
+                }
                 None => {
-                    // What was saved is the new baseline; the list that follows will agree with it.
-                    this.baseline = fields;
-                    if creating
-                        && let Some(id) =
-                            outcome.ok().and_then(|r| r.get("id").and_then(Value::as_str).map(str::to_owned))
-                    {
-                        this.selection = Selection::Saved(id);
+                    // The controls are left alone: they may hold what was typed while this was in flight. What
+                    // was sent is the new baseline, so that newer text still reads as an edit. If another rule
+                    // was selected meanwhile, the controls and baseline are its, and are not touched.
+                    if this.selection == started_on {
+                        this.baseline = fields;
+                        if creating
+                            && let Some(id) =
+                                outcome.ok().and_then(|r| r.get("id").and_then(Value::as_str).map(str::to_owned))
+                        {
+                            this.selection = Selection::Saved(id);
+                        }
                     }
                     this.reload(window, cx);
                 }
             }
-            cx.notify();
+            // An edit made since this write was sent is the next write. (`changed` schedules it.)
+            this.changed(cx);
         });
     }
 
@@ -381,6 +518,7 @@ impl ProxyRulesScreen {
             "Delete",
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
+                this.autosave.cancel();
                 this.selection = Selection::None;
                 call(&client, cx, "entity.delete", json!({ "kind": "proxyRules", "id": id }), |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
@@ -481,7 +619,7 @@ impl ProxyRulesScreen {
                     .selected_index(if self.target == Target::Mapping { 0 } else { 1 })
                     .on_click(cx.listener(|this, ix: &usize, _, cx| {
                         this.target = if *ix == 0 { Target::Mapping } else { Target::External };
-                        cx.notify();
+                        this.changed(cx);
                     }))
                     .child(Tab::new().label("A mapping"))
                     .child(Tab::new().label("Another server")),
@@ -502,7 +640,7 @@ impl ProxyRulesScreen {
                                     move |_, _, cx| {
                                         this.update(cx, |this, cx| {
                                             this.mapping_id = id.clone();
-                                            cx.notify();
+                                            this.changed(cx);
                                         })
                                         .ok();
                                     },
@@ -531,7 +669,20 @@ impl ProxyRulesScreen {
         }
         let theme = cx.theme().clone();
         let dirty = self.is_dirty(cx);
-        let is_draft = self.selection == Selection::Draft;
+        let saved_id = self.saved_id().map(str::to_owned);
+        let saved = saved_id.is_some();
+        let problem = (saved && dirty)
+            .then(|| problem_of(&self.fields(cx)))
+            .flatten()
+            .map(|problem| SharedString::from(format!("Not saved. {problem}")));
+        let bar = EntityBar {
+            saving: self.saving,
+            unsaved: saved && dirty,
+            problem,
+            closable: false,
+            deletable: true,
+            ..EntityBar::of(self.model.read(cx), saved_id.as_deref())
+        };
         let editor = if self.script_ix == 0 { &self.request_script } else { &self.response_script };
         let label =
             |text: &'static str| div().w_24().flex_none().text_sm().text_color(theme.muted_foreground).child(text);
@@ -539,88 +690,62 @@ impl ProxyRulesScreen {
         v_flex()
             .size_full()
             .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.name).small().appearance(false)))
-                    .child(Switch::new("rule-enabled").checked(self.enabled).small().label("Enabled").on_change(
-                        cx.listener(|this, checked: &bool, _, cx| {
-                            this.enabled = *checked;
-                            cx.notify();
-                        }),
-                    ))
-                    .child(
-                        Button::new("delete-rule")
-                            .ghost()
-                            .small()
-                            .icon(IconName::Delete)
-                            .tooltip(if is_draft { "Discard this new rule" } else { "Delete this rule…" })
-                            .on_click(cx.listener(|this, _, window, cx| this.confirm_delete(window, cx))),
-                    )
-                    .child(
-                        Button::new("revert-rule")
-                            .ghost()
-                            .small()
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.revert(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-rule")
-                            .small()
-                            .label("Save")
-                            .loading(self.saving)
-                            .disabled(!dirty && !is_draft)
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
-            )
-            .child(
                 v_flex()
-                    .flex_none()
-                    .gap_3()
-                    .p_3()
+                    .flex_1()
+                    .min_h_0()
                     .child(
-                        h_flex()
+                        v_flex()
+                            .flex_none()
                             .gap_3()
-                            .child(label("Matches"))
-                            .child(div().flex_1().min_w_0().child(Input::new(&self.pattern).small()))
+                            .p_3()
+                            .child(h_flex().gap_3().child(
+                                Switch::new("rule-enabled").checked(self.enabled).small().label("Enabled").on_change(
+                                    cx.listener(|this, checked: &bool, _, cx| {
+                                        this.enabled = *checked;
+                                        this.changed(cx);
+                                    }),
+                                ),
+                            ))
                             .child(
-                                Checkbox::new("rule-regex")
-                                    .checked(self.use_regex)
-                                    .small()
-                                    .label("Regular expression")
-                                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                                        this.use_regex = *checked;
-                                        cx.notify();
-                                    })),
+                                h_flex()
+                                    .gap_3()
+                                    .child(label("Matches"))
+                                    .child(div().flex_1().min_w_0().child(Input::new(&self.pattern).small()))
+                                    .child(
+                                        Checkbox::new("rule-regex")
+                                            .checked(self.use_regex)
+                                            .small()
+                                            .label("Regular expression")
+                                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                                this.use_regex = *checked;
+                                                this.changed(cx);
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_3()
+                                    .child(label("Send to"))
+                                    .child(div().flex_1().min_w_0().child(self.render_target(cx))),
                             ),
                     )
                     .child(
-                        h_flex()
-                            .gap_3()
-                            .child(label("Send to"))
-                            .child(div().flex_1().min_w_0().child(self.render_target(cx))),
-                    ),
+                        div().flex_none().px_3().child(
+                            TabBar::new("rule-scripts")
+                                .underline()
+                                .small()
+                                .selected_index(self.script_ix)
+                                .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                                    this.script_ix = *ix;
+                                    cx.notify();
+                                }))
+                                .child(Tab::new().label("Request script"))
+                                .child(Tab::new().label("Response script")),
+                        ),
+                    )
+                    .child(div().flex_1().min_h_0().child(Editor::new(editor.state()).bordered(false).h_full())),
             )
-            .child(
-                div().flex_none().px_3().child(
-                    TabBar::new("rule-scripts")
-                        .underline()
-                        .small()
-                        .selected_index(self.script_ix)
-                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.script_ix = *ix;
-                            cx.notify();
-                        }))
-                        .child(Tab::new().label("Request script"))
-                        .child(Tab::new().label("Response script")),
-                ),
-            )
-            .child(div().flex_1().min_h_0().child(Editor::new(editor.state()).bordered(false).h_full()))
+            .child(entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)))
             .into_any_element()
     }
 }

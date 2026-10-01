@@ -11,9 +11,14 @@ pub mod protocol;
 pub mod rest;
 pub mod websocket;
 
+use gpui_kit::component::input::InputState;
 use gpui_kit::{AnyView, App, Context, Entity, SharedString, Window};
 
-use crate::model::{RequestKind, snippet::RequestParts};
+use crate::{
+    app_model::AppModel,
+    components::EntityBar,
+    model::{RequestKind, snippet::RequestParts},
+};
 
 use self::{protocol::ProtocolSession, rest::RestSession, websocket::WsSession};
 
@@ -22,6 +27,25 @@ pub enum LoadState {
     Loading,
     Ready,
     Failed(String),
+}
+
+/// Who asked for a save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveMode {
+    /// The user did, with the Save button or its key: what stops the save is said aloud.
+    Explicit,
+    /// The editor did, after a change: an edit that cannot be written yet is left for the next change.
+    Auto,
+}
+
+/// What a draft keeps when its request type is changed: the fields every type has some form of.
+#[derive(Debug, Clone, Default)]
+pub struct Carry {
+    /// `None` when the name was still the type's default one.
+    pub name: Option<String>,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
 }
 
 /// What a session tells the shell, which owns the tabs.
@@ -109,19 +133,74 @@ impl Session {
         }
     }
 
-    pub fn save(&self, window: &mut Window, cx: &mut App) {
+    /// The field the request's name is typed in. The shell shows it in the breadcrumb.
+    pub fn name_input(&self, cx: &App) -> Entity<InputState> {
         match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.save(window, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.save(window, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.save(window, cx)),
+            Session::Rest(s) => s.read(cx).name_input().clone(),
+            Session::WebSocket(s) => s.read(cx).name_input().clone(),
+            Session::Protocol(s) => s.read(cx).name_input().clone(),
         }
     }
 
-    pub fn revert(&self, window: &mut Window, cx: &mut App) {
+    /// The folder the request is in, or will be created in.
+    pub fn folder_id(&self, cx: &App) -> Option<String> {
         match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.revert(window, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.revert(window, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.revert(window, cx)),
+            Session::Rest(s) => s.read(cx).folder_id().map(str::to_owned),
+            Session::WebSocket(s) => s.read(cx).folder_id().map(str::to_owned),
+            Session::Protocol(s) => s.read(cx).folder_id().map(str::to_owned),
+        }
+    }
+
+    /// What the tab's footer says about the request and offers to do with it.
+    pub fn bar(&self, model: &AppModel, cx: &App) -> EntityBar {
+        let (saving, problem) = match self {
+            Session::Rest(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+            Session::WebSocket(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+            Session::Protocol(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+        };
+        let saved_id = self.saved_id(cx);
+        EntityBar {
+            saving,
+            unsaved: saved_id.is_some() && self.is_dirty(cx),
+            problem,
+            closable: true,
+            ..EntityBar::of(model, saved_id.as_deref())
+        }
+    }
+
+    /// Creates a draft, or writes a saved request's edit now instead of a moment from now.
+    pub fn save(&self, mode: SaveMode, window: &mut Window, cx: &mut App) {
+        match self {
+            Session::Rest(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+            Session::WebSocket(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+            Session::Protocol(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+        }
+    }
+
+    /// Writes a saved request's waiting edit now: its tab is about to close.
+    pub fn flush(&self, window: &mut Window, cx: &mut App) {
+        match self {
+            Session::Rest(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+            Session::WebSocket(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+            Session::Protocol(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+        }
+    }
+
+    /// What this draft keeps if it becomes a request of another type.
+    pub fn carry(&self, cx: &App) -> Carry {
+        match self {
+            Session::Rest(s) => s.read(cx).carry(cx),
+            Session::WebSocket(s) => s.read(cx).carry(cx),
+            Session::Protocol(s) => s.read(cx).carry(cx),
+        }
+    }
+
+    /// Fills this draft with what was typed into a draft of another type.
+    pub fn apply_carry(&self, carry: &Carry, window: &mut Window, cx: &mut App) {
+        match self {
+            Session::Rest(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
+            Session::WebSocket(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
+            Session::Protocol(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
         }
     }
 
