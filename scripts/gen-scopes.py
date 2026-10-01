@@ -21,7 +21,7 @@ ASSIGN = {
         application.checkPort
         audit.list audit.diff
         blob.stat blob.read
-        capture.list
+        capture.list capture.get
         config.get
         entity.load entity.list
         export.formats

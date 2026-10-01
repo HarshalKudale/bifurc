@@ -43,10 +43,10 @@
  */
 import type { CaptureBuildRequestParams, RequestParseCurlParams, RequestReplayParams } from "@bifurc/protocol";
 import type { CommandRegistry } from "../kernel/registry";
-import type { RequestLogEntry } from "../kernel/telemetry";
 import { replayRequest } from "../utils/replay";
 import { parseCurl } from "../utils/curl";
 import { capturedToRequest } from "../capture/captureEntities";
+import { resolveCaptureEntry } from "../capture/store";
 
 export function registerRestCommands(registry: CommandRegistry): void {
     registry.register("request.replay", (params: RequestReplayParams) =>
@@ -78,6 +78,6 @@ export function registerRestCommands(registry: CommandRegistry): void {
      * shortcut — `@bifurc/protocol` deliberately does not model `RequestLogEntry` (`misc.ts` says why).
      */
     registry.register("capture.buildRequest", (params: CaptureBuildRequestParams) => ({
-        request: capturedToRequest(params.entry as unknown as RequestLogEntry),
+        request: capturedToRequest(resolveCaptureEntry(params)),
     }));
 }

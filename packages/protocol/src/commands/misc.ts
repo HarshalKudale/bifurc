@@ -160,9 +160,10 @@ export type CaptureShareJsonResult = ArtifactResult;
  * bodies are typed in `@bifurc/engine` and hand-mirrored into `packages/gui/src/types/ipc.ts`, exactly as
  * `entity.create`'s `EntityCreateResult.entity` is a `Record<string, unknown>`.
  */
-export const CaptureBuildRequestParams = z.object({
-  entry: z.record(z.string(), z.unknown()),
-}).strict();
+export const CaptureBuildRequestParams = z.union([
+  z.object({ entry: z.record(z.string(), z.unknown()) }).strict(),
+  z.object({ workspaceId: z.string(), id: z.string() }).strict(),
+]);
 export type CaptureBuildRequestParams = z.infer<typeof CaptureBuildRequestParams>;
 export interface CaptureBuildRequestResult {
   /** A `requests` entity body, ready for `entity.create`. `name` is blank — the caller labels it. */
@@ -176,9 +177,10 @@ export interface CaptureBuildRequestResult {
  * builders differ: a mock replays the capture byte-for-byte, so a `host` that was actually sent is part of
  * what was captured. The mock *editor* filters them for display instead.
  */
-export const CaptureBuildMockParams = z.object({
-  entry: z.record(z.string(), z.unknown()),
-}).strict();
+export const CaptureBuildMockParams = z.union([
+  z.object({ entry: z.record(z.string(), z.unknown()) }).strict(),
+  z.object({ workspaceId: z.string(), id: z.string() }).strict(),
+]);
 export type CaptureBuildMockParams = z.infer<typeof CaptureBuildMockParams>;
 export interface CaptureBuildMockResult {
   /** A `mocks` entity body, ready for `entity.create`. */
@@ -200,10 +202,17 @@ export interface CaptureBuildMockResult {
 export const EngineShutdownParams = z.object({}).strict();
 export type EngineShutdownParams = z.infer<typeof EngineShutdownParams>;
 
-export const CaptureListParams = z.object({ workspaceId: z.string() }).strict();
+export const CaptureListParams = z.object({ workspaceId: z.string(), summary: z.boolean().optional() }).strict();
 export type CaptureListParams = z.infer<typeof CaptureListParams>;
 export interface CaptureListResult {
   entries: Record<string, unknown>[];
+}
+
+/** `capture.get` — one full captured entry by id, or `null`. */
+export const CaptureGetParams = z.object({ workspaceId: z.string(), id: z.string() }).strict();
+export type CaptureGetParams = z.infer<typeof CaptureGetParams>;
+export interface CaptureGetResult {
+  entry: Record<string, unknown> | null;
 }
 
 export const CaptureClearParams = z.object({ workspaceId: z.string() }).strict();

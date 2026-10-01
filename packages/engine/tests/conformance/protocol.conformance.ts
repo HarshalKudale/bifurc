@@ -171,6 +171,9 @@ function wireLogEntry(n: number): Record<string, unknown> {
     url: `https://example.test/${n}`,
     status: 200,
     durationMs: 3,
+    via: "proxy",
+    target: null,
+    size: 33,
   };
 }
 

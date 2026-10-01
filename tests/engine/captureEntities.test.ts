@@ -73,6 +73,36 @@ describe("capturedToRequest — turning a capture into a saved request", () => {
   it("leaves the name blank so the caller can label it", () => {
     expect(capturedToRequest(entry()).name).toBe("");
   });
+
+  it("never throws on a partial entry", () => {
+    const partial = { id: "x", method: "GET", url: "http://x" } as unknown as RequestLogEntry;
+    expect(capturedToRequest(partial)).toMatchObject({ headers: {}, body: "" });
+    expect(capturedToMock(partial)).toMatchObject({ capturedHeaders: {}, capturedBody: "", responseHeaders: {} });
+  });
+
+  it("keeps a binary content-type body as base64", () => {
+    const body = Buffer.from([0, 1, 2, 3]).toString("base64");
+    const req = capturedToRequest(entry({ reqHeaders: { "Content-Type": "application/octet-stream" }, reqBody: body }));
+    expect(req).toMatchObject({ body, bodyEncoding: "base64" });
+  });
+
+  it("keeps a multipart body as base64 even when it is valid text", () => {
+    const body = b64("--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--b--\r\n");
+    const req = capturedToRequest(entry({ reqHeaders: { "content-type": "multipart/form-data; boundary=b" }, reqBody: body }));
+    expect(req).toMatchObject({ body, bodyEncoding: "base64" });
+  });
+
+  it("keeps non-UTF-8 bytes as base64 whatever the content-type", () => {
+    const body = Buffer.from([0xff, 0xfe, 0x41]).toString("base64");
+    const req = capturedToRequest(entry({ reqHeaders: { "content-type": "application/x-weird" }, reqBody: body }));
+    expect(req).toMatchObject({ body, bodyEncoding: "base64" });
+  });
+
+  it("leaves a text body as text with no bodyEncoding", () => {
+    const req = capturedToRequest(entry({ reqHeaders: { "content-type": "application/json" }, reqBody: b64('{"a":"é"}') }));
+    expect(req.body).toBe('{"a":"é"}');
+    expect("bodyEncoding" in req).toBe(false);
+  });
 });
 
 // ── capture → mock ───────────────────────────────────────────────────────────
