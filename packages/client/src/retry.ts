@@ -141,6 +141,7 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
  */
 export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "entity.create", // allocates an id; a retry is a second entity
+  "entity.duplicate", // creates through entity.create; a retry is a second copy
   "folder.add", // allocates an id
   "workspace.add", // allocates an id
   "engine.shutdown", // a retry after an unknown outcome could stop an engine that has since restarted
@@ -179,6 +180,7 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   // The engine's capture history: a read, a clear, and a removal by id — each leaves the same state twice.
   "capture.list",
   "capture.get",
+  "capture.setPaused",
   "capture.clear",
   "capture.remove",
   "healthbar.saveServices",

@@ -71,6 +71,7 @@ export const COMMANDS = {
   "entity.update": spec(EntityCmd.EntityUpdateParams, "<kind>:update"),
   "entity.delete": spec(EntityCmd.EntityDeleteParams, "<kind>:delete"),
   "entity.load": spec(EntityCmd.EntityLoadParams, "entity:load"),
+  "entity.duplicate": spec(EntityCmd.EntityDuplicateParams, "entity:duplicate"),
   "entity.list": spec(EntityCmd.EntityListParams, "entity:list"), // new — no direct legacy channel, was implicit in config:get
   "entity.setEnabled": spec(EntityCmd.EntitySetEnabledParams, "entity:setEnabled"),
 
@@ -225,6 +226,7 @@ export const COMMANDS = {
   "engine.shutdown": spec(MiscCmd.EngineShutdownParams, "engine.shutdown"),
   "capture.list": spec(MiscCmd.CaptureListParams, "capture.list"),
   "capture.get": spec(MiscCmd.CaptureGetParams, "capture.get"),
+  "capture.setPaused": spec(MiscCmd.CaptureSetPausedParams, "capture.setPaused"),
   "capture.clear": spec(MiscCmd.CaptureClearParams, "capture.clear"),
   "capture.remove": spec(MiscCmd.CaptureRemoveParams, "capture.remove"),
 

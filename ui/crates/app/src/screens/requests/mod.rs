@@ -3,42 +3,46 @@
 //!
 //! The screen owns which requests are open and which is in front. It holds one dock area, not one per tab:
 //! its "Request" and "Response" panels stay where the user put them and follow the active tab. An open
-//! request is a [`Session`]; the workspace comes from [`AppModel`]; everything that changes a saved request
-//! is an engine command.
+//! request is a [`Session`]; a folder opened to be run is a [`FolderRunner`], which fills the tab instead of
+//! the docks. The workspace comes from [`AppModel`]; everything that changes a saved request is an engine
+//! command.
 
+mod runner;
 mod tree;
 
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Selectable as _, Sizable as _,
+    ActiveTheme as _, IconName, Selectable as _, Sizable as _, StyledExt as _, VirtualListScrollHandle,
     button::{Button, ButtonVariants as _},
     dock::{DockArea, DockLayout, DockSkin, panel_handle},
     h_flex,
     menu::DropdownMenu as _,
     resizable::{h_resizable, resizable_panel},
-    tab::{Tab, TabBar},
+    tag::Tag,
     v_flex,
 };
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription,
-    Window, div, px,
+    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
+    Subscription, Window, div, px, rems,
 };
 use serde_json::{Value, json};
 
+use self::runner::{FolderRunner, RunnerEvent};
 use self::tree::{RequestTree, RequestTreeEvent, new_menu};
 use crate::{
     app_model::{AppModel, Load, ModelEvent},
     components::{
-        EntityAction,
+        EntityAction, StripTab, TabAction, TabStrip,
         dialogs::{PromptField, confirm_danger, prompt},
-        entity_bar, page,
+        entity_bar, tab_strip,
     },
-    engine::{call, describe},
-    model::{NodeRef, RequestKind},
+    engine::{call, call_in, describe},
+    model::{NodeRef, RequestKind, tree::folder_path},
     panels::host::HostPanel,
     preferences::Preferences,
     session::{SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, websocket::WsSession},
+    shell::ActiveTarget,
 };
 
 /// How a tab is identified before and after it has an id from the engine.
@@ -46,12 +50,44 @@ use crate::{
 enum TabKey {
     Saved { kind: RequestKind, id: String },
     Draft(u64),
+    /// The runner of the REST folder with this id.
+    Runner(String),
+}
+
+enum TabContent {
+    Request(Session),
+    Runner(Entity<FolderRunner>),
 }
 
 struct OpenTab {
     key: TabKey,
-    session: Session,
+    content: TabContent,
     _subscription: Subscription,
+}
+
+impl OpenTab {
+    fn session(&self) -> Option<&Session> {
+        match &self.content {
+            TabContent::Request(session) => Some(session),
+            TabContent::Runner(_) => None,
+        }
+    }
+
+    /// A draft that was typed into: closing its tab loses what was typed.
+    fn is_unsaved_draft(&self, cx: &App) -> bool {
+        matches!(self.key, TabKey::Draft(_)) && self.session().is_some_and(|session| session.is_dirty(cx))
+    }
+}
+
+/// One line about a request type, for the list a screen with nothing open offers.
+fn kind_summary(kind: RequestKind) -> &'static str {
+    match kind {
+        RequestKind::Rest => "An HTTP call with a method, headers and a body",
+        RequestKind::GraphQl => "A query or mutation, with its variables",
+        RequestKind::Grpc => "A call to a method of a gRPC service",
+        RequestKind::Soap => "An XML envelope sent to a SOAP action",
+        RequestKind::WebSocket => "A connection that sends and receives messages",
+    }
 }
 
 pub struct RequestsScreen {
@@ -59,6 +95,7 @@ pub struct RequestsScreen {
     tree: Entity<RequestTree>,
     tabs: Vec<OpenTab>,
     active: Option<usize>,
+    tab_scroll: VirtualListScrollHandle,
     dock: Entity<DockArea>,
     /// Kept so the dock's appearance can be changed later; the area holds the same skin.
     _skin: Rc<DockSkin>,
@@ -101,6 +138,7 @@ impl RequestsScreen {
             tree,
             tabs: Vec::new(),
             active: None,
+            tab_scroll: VirtualListScrollHandle::new(),
             dock,
             _skin: skin,
             request_panel,
@@ -135,11 +173,43 @@ impl RequestsScreen {
             RequestTreeEvent::NewFolder { kind, parent } => self.prompt_new_folder(*kind, parent.clone(), window, cx),
             RequestTreeEvent::Rename(node) => self.prompt_rename(node.clone(), window, cx),
             RequestTreeEvent::Delete(node) => self.confirm_delete(node.clone(), window, cx),
+            RequestTreeEvent::Duplicate(node) => self.duplicate(node.clone(), window, cx),
+            RequestTreeEvent::RunFolder(folder) => self.open_runner(folder, window, cx),
         }
     }
 
+    fn active_tab(&self) -> Option<&OpenTab> {
+        self.active.and_then(|ix| self.tabs.get(ix))
+    }
+
     pub fn active_session(&self) -> Option<&Session> {
-        self.active.and_then(|ix| self.tabs.get(ix)).map(|tab| &tab.session)
+        self.active_tab().and_then(OpenTab::session)
+    }
+
+    /// What is open in the tab in front, for the breadcrumb and the right sidebar.
+    pub fn active_tab_target(&self, cx: &App) -> Option<ActiveTarget> {
+        let model = self.model.read(cx);
+        match &self.active_tab()?.content {
+            TabContent::Request(session) => Some(ActiveTarget {
+                title: session.title(cx),
+                entity_id: session.saved_id(cx),
+                request: session.request_parts(cx),
+                name: Some(session.name_input(cx)),
+                kind: Some(session.kind(cx)),
+                folders: session.folder_trail(model, cx),
+            }),
+            TabContent::Runner(runner) => Some(ActiveTarget {
+                title: "Runner".into(),
+                entity_id: None,
+                request: None,
+                name: None,
+                kind: None,
+                folders: folder_path(
+                    &model.config().request_folder_rows(RequestKind::Rest),
+                    runner.read(cx).folder_id(),
+                ),
+            }),
+        }
     }
 
     /// Selects a request in the tree, opening the folders above it.
@@ -150,6 +220,9 @@ impl RequestsScreen {
     /// Brings a tab to the front and points the dock panels at it.
     fn set_active(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.active = ix.filter(|ix| *ix < self.tabs.len());
+        if let Some(ix) = self.active {
+            self.tab_scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        }
         let session = self.active_session().cloned();
         let editor = session.as_ref().map(Session::editor_view);
         let response = session.as_ref().map(|s| s.response_view(cx));
@@ -175,6 +248,26 @@ impl RequestsScreen {
             }
         };
         self.add_tab(key, session, window, cx);
+    }
+
+    /// Opens the REST folder with this id as a tab that runs its requests in order.
+    pub fn open_runner(&mut self, folder_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let key = TabKey::Runner(folder_id.to_owned());
+        if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
+            self.set_active(Some(ix), cx);
+            return;
+        }
+        let (model, folder_id) = (self.model.clone(), folder_id.to_owned());
+        let runner = cx.new(|cx| FolderRunner::new(model, folder_id, cx));
+        let subscription = cx.subscribe_in(&runner, window, |this, _, event: &RunnerEvent, window, cx| match event {
+            RunnerEvent::Open(node) => {
+                this.open_node(node, window, cx);
+                this.reveal(node, cx);
+            }
+            RunnerEvent::Changed => cx.notify(),
+        });
+        self.tabs.push(OpenTab { key, content: TabContent::Runner(runner), _subscription: subscription });
+        self.set_active(Some(self.tabs.len() - 1), cx);
     }
 
     fn draft(&self, kind: RequestKind, folder: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Session {
@@ -208,24 +301,29 @@ impl RequestsScreen {
     pub fn change_active_kind(&mut self, kind: RequestKind, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.active else { return };
         let Some(tab) = self.tabs.get(ix) else { return };
-        if !matches!(tab.key, TabKey::Draft(_)) || tab.session.kind(cx) == kind {
+        let Some(current) = tab.session() else { return };
+        if !matches!(tab.key, TabKey::Draft(_)) || current.kind(cx) == kind {
             return;
         }
-        let carry = tab.session.carry(cx);
-        let folder = tab.session.folder_id(cx);
+        let carry = current.carry(cx);
+        let folder = current.folder_id(cx);
         let session = self.draft(kind, folder, window, cx);
         session.apply_carry(&carry, window, cx);
         let subscription = session.subscribe_in(window, cx, Self::on_session_event);
         let tab = &mut self.tabs[ix];
-        tab.session = session;
+        tab.content = TabContent::Request(session);
         tab._subscription = subscription;
         self.set_active(Some(ix), cx);
     }
 
     fn add_tab(&mut self, key: TabKey, session: Session, window: &mut Window, cx: &mut Context<Self>) {
         let subscription = session.subscribe_in(window, cx, Self::on_session_event);
-        self.tabs.push(OpenTab { key, session, _subscription: subscription });
+        self.tabs.push(OpenTab { key, content: TabContent::Request(session), _subscription: subscription });
         self.set_active(Some(self.tabs.len() - 1), cx);
+    }
+
+    fn position_of(&self, session: &Session) -> Option<usize> {
+        self.tabs.iter().position(|tab| tab.session().is_some_and(|open| open.same_as(session)))
     }
 
     fn on_session_event(
@@ -240,9 +338,9 @@ impl RequestsScreen {
             // The tab strip shows the title and the unsaved mark, which live in the session.
             SessionEvent::Changed => cx.notify(),
             SessionEvent::Saved { id } => {
-                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.session.same_as(session)) {
+                if let Some(ix) = self.position_of(session) {
                     let kind = session.kind(cx);
-                    tab.key = TabKey::Saved { kind, id: id.clone() };
+                    self.tabs[ix].key = TabKey::Saved { kind, id: id.clone() };
                     let node = NodeRef::Request { kind, id: id.clone() };
                     self.tree.update(cx, |tree, cx| tree.reveal(&node, cx));
                 }
@@ -271,17 +369,12 @@ impl RequestsScreen {
     /// that was typed into is asked about first, because closing it discards it.
     fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(ix) else { return };
-        if matches!(tab.key, TabKey::Saved { .. }) {
-            tab.session.clone().flush(window, cx);
-            self.remove_tab(ix, cx);
+        if !tab.is_unsaved_draft(cx) {
+            self.close_keys(vec![tab.key.clone()], window, cx);
             return;
         }
-        if !tab.session.is_dirty(cx) {
-            self.remove_tab(ix, cx);
-            return;
-        }
-        let session = tab.session.clone();
-        let title = session.title(cx);
+        let key = tab.key.clone();
+        let title = tab.session().map(|session| session.title(cx)).unwrap_or_default();
         confirm_danger(
             cx.weak_entity(),
             window,
@@ -289,18 +382,129 @@ impl RequestsScreen {
             format!("Discard “{title}”?"),
             "This request has not been saved. Closing its tab discards it.",
             "Discard",
-            move |this, _, cx| {
-                if let Some(ix) = this.tabs.iter().position(|tab| tab.session.same_as(&session)) {
-                    this.remove_tab(ix, cx);
-                }
-            },
+            move |this, window, cx| this.close_keys(vec![key.clone()], window, cx),
         );
+    }
+
+    /// Closes every tab `closes` picks. Drafts that were typed into are asked about once, together.
+    fn close_where(&mut self, closes: impl Fn(usize) -> bool, window: &mut Window, cx: &mut Context<Self>) {
+        let picked = || self.tabs.iter().enumerate().filter(|(ix, _)| closes(*ix)).map(|(_, tab)| tab);
+        let keys: Vec<TabKey> = picked().map(|tab| tab.key.clone()).collect();
+        let unsaved = picked().filter(|tab| tab.is_unsaved_draft(cx)).count();
+        if unsaved == 0 {
+            self.close_keys(keys, window, cx);
+            return;
+        }
+        let what = if unsaved == 1 { "1 unsaved request".to_owned() } else { format!("{unsaved} unsaved requests") };
+        confirm_danger(
+            cx.weak_entity(),
+            window,
+            cx,
+            format!("Discard {what}?"),
+            "Requests that have not been saved are discarded when their tabs close.",
+            "Discard",
+            move |this, window, cx| this.close_keys(keys.clone(), window, cx),
+        );
+    }
+
+    /// Closes the tabs with these keys, writing a saved request's waiting edit on the way out. The tab in
+    /// front stays in front when it is not one of them.
+    fn close_keys(&mut self, keys: Vec<TabKey>, window: &mut Window, cx: &mut Context<Self>) {
+        let front = self.active_tab().map(|tab| tab.key.clone());
+        let position = self.active.unwrap_or(0);
+        for tab in self.tabs.iter().filter(|tab| keys.contains(&tab.key)) {
+            if let (TabKey::Saved { .. }, Some(session)) = (&tab.key, tab.session()) {
+                session.clone().flush(window, cx);
+            }
+        }
+        self.tabs.retain(|tab| !keys.contains(&tab.key));
+        let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
+            Some(ix) => Some(ix),
+            None if self.tabs.is_empty() => None,
+            // The tab that takes the closed one's place comes to the front, or the last one.
+            None => Some(position.min(self.tabs.len() - 1)),
+        };
+        self.set_active(next, cx);
+    }
+
+    /// What a tab asks for, by its close button or its menu.
+    fn tab_action(&mut self, action: TabAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            TabAction::Select(ix) => self.set_active(Some(ix), cx),
+            TabAction::Close(ix) => self.close_tab(ix, window, cx),
+            TabAction::CloseOthers(keep) => self.close_where(|ix| ix != keep, window, cx),
+            TabAction::CloseToRight(of) => self.close_where(|ix| ix > of, window, cx),
+            TabAction::CloseAll => self.close_where(|_| true, window, cx),
+            TabAction::Duplicate(ix) => {
+                if let Some(TabKey::Saved { kind, id }) = self.tabs.get(ix).map(|tab| tab.key.clone()) {
+                    self.duplicate(NodeRef::Request { kind, id }, window, cx);
+                }
+            }
+        }
+    }
+
+    fn describe_tab(&self, ix: usize, cx: &App) -> Option<StripTab> {
+        let tab = self.tabs.get(ix)?;
+        let id = match &tab.key {
+            TabKey::Saved { kind, id } => format!("{}-{id}", kind.entity_kind()),
+            TabKey::Draft(number) => format!("draft-{number}"),
+            TabKey::Runner(folder) => format!("runner-{folder}"),
+        };
+        Some(match &tab.content {
+            TabContent::Request(session) => StripTab {
+                id: id.into(),
+                badge: session.badge(cx).into(),
+                title: session.title(cx),
+                dirty: session.is_dirty(cx),
+                can_duplicate: matches!(tab.key, TabKey::Saved { .. }),
+            },
+            TabContent::Runner(runner) => StripTab {
+                id: id.into(),
+                badge: "RUN".into(),
+                title: runner.read(cx).title(cx),
+                dirty: false,
+                can_duplicate: false,
+            },
+        })
+    }
+
+    /// Copies a saved request. The engine makes the copy, next to the original; it is then opened.
+    fn duplicate(&mut self, node: NodeRef, window: &mut Window, cx: &mut Context<Self>) {
+        let NodeRef::Request { kind, id } = node else { return };
+        // An edit still waiting to be written belongs in the copy too.
+        let open = self.tabs.iter().find(|tab| tab.key == TabKey::Saved { kind, id: id.clone() });
+        if let Some(session) = open.and_then(OpenTab::session).cloned() {
+            session.flush(window, cx);
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "kind": kind.entity_kind(), "id": id });
+        call_in(&client, window, cx, "entity.duplicate", payload, move |this, outcome, window, cx| {
+            let copy = match &outcome {
+                Ok(result) => result.get("entity").and_then(|entity| entity.get("id")).and_then(Value::as_str),
+                Err(error) => {
+                    return this.notify_failure(format!("Couldn't duplicate the request. {}", describe(error)), cx);
+                }
+            };
+            let Some(copy) = copy else { return };
+            let node = NodeRef::Request { kind, id: copy.to_owned() };
+            // The copy is in the engine but not yet in this window's snapshot, which the tree is built from.
+            this.model.update(cx, |model, cx| model.refresh(cx));
+            this.open_node(&node, window, cx);
+            this.reveal(&node, cx);
+        });
     }
 
     /// What the active tab's footer asks for, and the keys that ask for the same things.
     pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.active else { return };
-        let Some(session) = self.active_session().cloned() else { return };
+        let Some(session) = self.active_session().cloned() else {
+            // A runner is not an entity: the only thing to do with its tab is close it.
+            if action == EntityAction::Close {
+                self.close_tab(ix, window, cx);
+            }
+            return;
+        };
         let saved = session.saved_id(cx);
         match (action, saved) {
             (EntityAction::Save, _) => session.save(SaveMode::Explicit, window, cx),
@@ -329,32 +533,37 @@ impl RequestsScreen {
     }
 
     /// A saved request that is gone from the workspace (deleted here, elsewhere, or with its folder) has
-    /// nothing left to show, and nothing an edit could be written to.
+    /// nothing left to show, and nothing an edit could be written to. The same goes for the runner of a
+    /// folder that is gone.
     fn close_vanished_tabs(&mut self, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         if !matches!(model.load(), Load::Ready) {
             return;
         }
-        let gone: Vec<Session> = self
+        let config = model.config();
+        let gone: Vec<TabKey> = self
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                TabKey::Saved { kind, id } => model.config().request(*kind, id).is_none(),
+                TabKey::Saved { kind, id } => config.request(*kind, id).is_none(),
+                TabKey::Runner(folder) => config.folder(RequestKind::Rest, folder).is_none(),
                 TabKey::Draft(_) => false,
             })
-            .map(|tab| tab.session.clone())
+            .map(|tab| tab.key.clone())
             .collect();
-        for session in gone {
-            if let Some(ix) = self.tabs.iter().position(|tab| tab.session.same_as(&session)) {
+        for key in gone {
+            if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
                 self.remove_tab(ix, cx);
             }
         }
     }
 
-    /// Send, or connect: the active request's main verb.
+    /// Send, connect, or run: the active tab's main verb.
     pub fn run_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(session) = self.active_session().cloned() {
-            session.run(window, cx);
+        match self.active_tab().map(|tab| &tab.content) {
+            Some(TabContent::Request(session)) => session.clone().run(window, cx),
+            Some(TabContent::Runner(runner)) => runner.clone().update(cx, |runner, cx| runner.run(cx)),
+            None => {}
         }
     }
 
@@ -498,79 +707,105 @@ impl RequestsScreen {
         );
     }
 
-    fn render_tab_strip(&self, tree_open: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
+    fn render_tab_strip(&self, tree_open: bool, window: &Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let tree = self.tree.downgrade();
-        let tabs = self.tabs.iter().enumerate().map(|(ix, tab)| {
-            let title = tab.session.title(cx);
-            let label: SharedString = if tab.session.is_dirty(cx) { format!("{title} ●").into() } else { title };
-            Tab::new()
-                .label(label)
-                .prefix(div().pl_2().text_xs().text_color(theme.muted_foreground).child(tab.session.badge(cx)))
-                .suffix(div().pr_1().child(
-                    Button::new(("close-tab", ix)).icon(IconName::Close).ghost().xsmall().on_click(cx.listener(
-                        move |this, _, window, cx| {
-                            // The tab under the button would otherwise take the click as a selection.
-                            cx.stop_propagation();
-                            this.close_tab(ix, window, cx);
-                        },
-                    )),
-                ))
-        });
-        TabBar::new("request-tabs")
-            .small()
-            .menu(true)
-            .selected_index(self.active.unwrap_or(0))
-            .on_click(cx.listener(|this, ix: &usize, _, cx| this.set_active(Some(*ix), cx)))
-            .prefix(
-                h_flex().px_1().child(
-                    Button::new("toggle-folder-tree")
-                        .icon(if tree_open { IconName::FolderOpen } else { IconName::Folder })
-                        .ghost()
-                        .small()
-                        .selected(tree_open)
-                        .tooltip(if tree_open { "Hide the folder tree" } else { "Show the folder tree" })
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
-                            cx.notify();
-                        })),
-                ),
-            )
-            .children(tabs)
-            .suffix(
-                h_flex().px_1().child(
-                    Button::new("new-tab")
-                        .icon(IconName::Plus)
-                        .ghost()
-                        .small()
-                        .tooltip("New request")
-                        .dropdown_menu(move |menu, window, cx| new_menu(menu, &tree, None, window, cx)),
-                ),
-            )
+        let strip = TabStrip {
+            id: "request-tabs",
+            count: self.tabs.len(),
+            active: self.active,
+            scroll: self.tab_scroll.clone(),
+            describe: Self::describe_tab,
+            on_action: Self::tab_action,
+        };
+        let prefix = h_flex().flex_none().px_1().child(
+            Button::new("toggle-folder-tree")
+                .icon(if tree_open { IconName::FolderOpen } else { IconName::Folder })
+                .ghost()
+                .small()
+                .selected(tree_open)
+                .tooltip(if tree_open { "Hide the folder tree" } else { "Show the folder tree" })
+                .on_click(cx.listener(|_, _, _, cx| {
+                    Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
+                    cx.notify();
+                })),
+        );
+        let suffix = h_flex().flex_none().px_1().child(
+            Button::new("new-tab")
+                .icon(IconName::Plus)
+                .ghost()
+                .small()
+                .tooltip("New request")
+                .dropdown_menu(move |menu, window, cx| new_menu(menu, &tree, None, window, cx)),
+        );
+        tab_strip(self, strip, prefix, suffix, window, cx)
     }
 
+    /// With nothing open: everything that can be started here, one row per request type.
     fn render_welcome(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        page::empty_with_action(
-            "No request open",
-            "Open one from the folder tree, or start a new one.",
-            h_flex()
-                .gap_2()
+        let theme = cx.theme().clone();
+        let rows = RequestKind::ALL.into_iter().enumerate().map(|(ix, kind)| {
+            Button::new(("welcome-new", ix))
+                .ghost()
+                .w_full()
                 .child(
-                    Button::new("welcome-new-rest").label("New REST request").on_click(
-                        cx.listener(|this, _, window, cx| this.new_request(RequestKind::Rest, None, window, cx)),
-                    ),
+                    h_flex()
+                        .w_full()
+                        .gap_3()
+                        .child(div().w_12().flex_none().child(Tag::secondary().small().child(kind.badge())))
+                        .child(div().flex_none().child(format!("New {} request", kind.label())))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_left()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(kind_summary(kind)),
+                        ),
                 )
-                .child(Button::new("welcome-new-ws").label("New WebSocket").on_click(
-                    cx.listener(|this, _, window, cx| this.new_request(RequestKind::WebSocket, None, window, cx)),
-                )),
-        )
+                .on_click(cx.listener(move |this, _, window, cx| this.new_request(kind, None, window, cx)))
+        });
+        // Wider than the kit's empty state, which is sized for a sentence and one button.
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                v_flex()
+                    .w(rems(40.))
+                    .max_w_full()
+                    .px_4()
+                    .gap_4()
+                    .child(
+                        v_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(div().font_semibold().child("No request open"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.muted_foreground)
+                                    .child("Open one from the folder tree, or start a new one."),
+                            ),
+                    )
+                    .child(v_flex().gap_1().children(rows)),
+            )
+            .into_any_element()
     }
 }
 
 impl Render for RequestsScreen {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
-        let body = if self.tabs.is_empty() { self.render_welcome(cx) } else { self.dock.clone().into_any_element() };
+        let body = match self.active_tab().map(|tab| &tab.content) {
+            None => self.render_welcome(cx),
+            Some(TabContent::Request(_)) => self.dock.clone().into_any_element(),
+            Some(TabContent::Runner(runner)) => runner.clone().into_any_element(),
+        };
         // The footer belongs to the tab, not to a dock panel: it stays put however the panels are arranged.
         let footer = self.active_session().map(|session| session.bar(self.model.read(cx), cx)).map(|bar| {
             entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)).into_any_element()
@@ -578,7 +813,7 @@ impl Render for RequestsScreen {
         let main = v_flex()
             .size_full()
             .bg(cx.theme().background)
-            .child(self.render_tab_strip(tree_open, cx))
+            .child(self.render_tab_strip(tree_open, window, cx))
             .child(div().flex_1().min_h_0().child(body))
             .children(footer);
         // The split's sizes are physical starting points the user resizes, not part of the rem scale.

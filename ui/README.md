@@ -69,13 +69,23 @@ main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree
   Switch with the sidebar or `Ctrl+1` to `Ctrl+8` (Services, Health bar, Mappings, Proxy rules, Capture,
   Requests, Mocks, Environments); `Ctrl+,` opens Settings.
   - **Requests** and **Mocks** have a folder tree (`Ctrl+Shift+E` shows or hides it), the open items as tabs, and
-    the active item's editor and response as docks you can drag to split or move.
+    the active item's editor and response as docks you can drag to split or move. A tab's right-click menu
+    closes it, the others, the ones to its right or all of them, and duplicates what it shows; the mouse wheel
+    scrolls the strip, and the arrow at its end lists every open tab.
+  - **Duplicate** (a request's or a mock's right-click menu in the tree, or its tab's) asks the engine for a
+    copy named "… copy" in the same folder and opens it. A mock's copy starts switched off, so the original
+    keeps answering.
+  - **Runner**: a folder of REST requests opens as a tab from its right-click menu (**Open as runner**). The tab
+    lists the folder's requests in run order, which the arrows change; **Run folder** has the engine send them
+    one after another and shows each one's status, time and test results as they arrive. The run belongs to
+    the engine, so it goes on if the tab is closed and is picked up again when the tab is reopened.
   - **Mappings**, **Services** and **Health bar** are lists. **Proxy rules** and **Environments** are a list with
     a detail pane.
   - **Capture** works like a browser's network tab. The list shows each exchange's name, method, status, type,
     how the proxy handled it, size and time. Selecting one fetches it from the engine and shows its headers,
     its payload (query parameters and request body) and its response; an image is shown as an image, and other
     data can be saved to a file. **Save as request** and **Save as mock** create the entity and open it.
+    **Pause** stops the engine recording for this workspace until **Resume**: what passes meanwhile is not kept.
   - **Settings**: Appearance (theme, text size; kept by this client only), Proxy, HTTPS (interception and the
     root certificate: generate, remove) and About (versions, and a link to the releases page).
 - **Requests** are one tree. REST, GraphQL, gRPC, SOAP and **WebSocket** requests live in their own folders,
@@ -112,7 +122,7 @@ main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree
 | Key                | Command                                   |
 | ------------------ | ----------------------------------------- |
 | `Ctrl+K`, `Ctrl+Shift+P` | Command palette                     |
-| `Ctrl+N`           | New REST request                          |
+| `Ctrl+N`, `Ctrl+T` | New REST request                          |
 | `Ctrl+Shift+N`     | New WebSocket request                     |
 | `Ctrl+Shift+M`     | New mock                                  |
 | `Ctrl+S`           | Save (creates a draft; writes now if saved) |
@@ -133,7 +143,7 @@ Everything else the palette lists has a command but no key.
 - Import and export.
 - Setting up a git remote (the UI only uses one that exists), and certificate export or import (Settings can
   generate and remove the root certificate).
-- The collection runner and the audit log.
+- The audit log. The runner has no history of past runs, no report export, and runs REST folders only.
 - Schema explorers for GraphQL, gRPC and SOAP.
 - An updater: Settings only links to the releases page.
 - Saving the dock layout between runs (the sidebar state and the theme are kept).

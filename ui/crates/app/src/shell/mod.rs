@@ -159,6 +159,8 @@ impl Shell {
             ModelEvent::SocketStatus(_)
             | ModelEvent::SocketMessage(_)
             | ModelEvent::Traffic(_)
+            | ModelEvent::RunnerProgress(_)
+            | ModelEvent::RunnerFinished(_)
             | ModelEvent::EntityReverted(_) => {}
         }
     }
@@ -166,14 +168,7 @@ impl Shell {
     /// What is open on the current screen, if the screen has such a thing.
     pub(super) fn active_target(&self, cx: &gpui_kit::App) -> Option<ActiveTarget> {
         match self.screen {
-            Screen::Requests => self.requests.read(cx).active_session().map(|session| ActiveTarget {
-                title: session.title(cx),
-                entity_id: session.saved_id(cx),
-                request: session.request_parts(cx),
-                name: Some(session.name_input(cx)),
-                kind: Some(session.kind(cx)),
-                folders: session.folder_trail(self.model.read(cx), cx),
-            }),
+            Screen::Requests => self.requests.read(cx).active_tab_target(cx),
             Screen::Mocks => self.mocks.read(cx).active_target(cx),
             Screen::ProxyRules => self.proxy_rules.read(cx).active_target(cx),
             Screen::Environments => self.environments.read(cx).active_target(cx),

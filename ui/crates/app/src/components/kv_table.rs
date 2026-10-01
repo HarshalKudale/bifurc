@@ -8,7 +8,7 @@ use gpui_kit::component::{
     ActiveTheme as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     v_flex,
 };
 use gpui_kit::{
@@ -147,7 +147,6 @@ impl Render for KeyValueTable {
         let theme = cx.theme().clone();
         let last = self.rows.len().saturating_sub(1);
         let readonly = self.readonly;
-        let row_height = VarEditor::row_height(cx);
         v_flex()
             .id("key-value-table")
             .size_full()
@@ -171,7 +170,7 @@ impl Render for KeyValueTable {
                 h_flex()
                     .id(("pair", id))
                     .gap_2()
-                    .child(div().w_1_3().min_w_0().child(Input::new(&row.key).h(row_height)))
+                    .child(div().w_1_3().min_w_0().child(VarEditor::row_input(&row.key, cx)))
                     .child(div().flex_1().min_w_0().child(row.value.line_field(cx)))
                     .child(div().w_6().flex_none().children(removable.then(|| {
                         Button::new(("remove-pair", id))

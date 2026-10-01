@@ -206,6 +206,15 @@ export const CaptureListParams = z.object({ workspaceId: z.string(), summary: z.
 export type CaptureListParams = z.infer<typeof CaptureListParams>;
 export interface CaptureListResult {
   entries: Record<string, unknown>[];
+  /** Whether the workspace's capture is paused — the engine is not recording. */
+  paused: boolean;
+}
+
+/** `capture.setPaused` — stop or resume the engine recording a workspace's traffic. Held in memory only. */
+export const CaptureSetPausedParams = z.object({ workspaceId: z.string(), paused: z.boolean() }).strict();
+export type CaptureSetPausedParams = z.infer<typeof CaptureSetPausedParams>;
+export interface CaptureSetPausedResult {
+  paused: boolean;
 }
 
 /** `capture.get` — one full captured entry by id, or `null`. */
