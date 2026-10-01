@@ -3,8 +3,8 @@
 //!
 //! The history is the engine's (a window opened later still sees what passed) and is extended live by
 //! `event.log.entry`. Both carry only a light summary of each exchange; the headers and bodies of one are
-//! fetched by id (`capture.get`) when it is selected. Pausing only stops this view from following; the engine
-//! keeps capturing. An exchange can be turned into a saved request or a mock: the engine builds the entity
+//! fetched by id (`capture.get`) when it is selected. Pausing stops the engine recording
+//! (`capture.setPaused`); nothing passes into the history until it is resumed. An exchange can be turned into a saved request or a mock: the engine builds the entity
 //! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
 use gpui_kit::component::{
@@ -138,7 +138,7 @@ pub struct CaptureScreen {
     entries: Vec<TrafficEntry>,
     /// The engine's history has been read at least once.
     loaded: bool,
-    /// While paused the list stops following live traffic; the engine keeps capturing.
+    /// Mirrors the engine: while capture is paused the engine records nothing, and the list stops following.
     paused: bool,
     filter: Entity<InputState>,
     selected: Option<String>,
@@ -247,6 +247,7 @@ impl CaptureScreen {
             match outcome {
                 Ok(result) => {
                     this.entries = traffic::parse_list(&result);
+                    this.paused = result.get("paused").and_then(Value::as_bool).unwrap_or(false);
                     this.loaded = true;
                 }
                 Err(error) => this.report("Couldn't read captured traffic.", describe(&error), cx),
@@ -259,13 +260,25 @@ impl CaptureScreen {
         self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
     }
 
-    pub fn toggle_paused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.paused = !self.paused;
-        if !self.paused {
-            // Catch up on what passed while the list was not following.
-            self.reload(window, cx);
-        }
-        cx.notify();
+    pub fn toggle_paused(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let resume = self.paused;
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "paused": !resume });
+        call(&client, cx, "capture.setPaused", payload, move |this, outcome, cx| {
+            match failure(&outcome) {
+                Some(message) => {
+                    let what = if resume { "Couldn't resume capture." } else { "Couldn't pause capture." };
+                    this.report(what, message, cx);
+                }
+                None => {
+                    if let Ok(result) = &outcome {
+                        this.paused = result.get("paused").and_then(Value::as_bool).unwrap_or(!resume);
+                    }
+                }
+            }
+            cx.notify();
+        });
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -472,7 +485,7 @@ impl CaptureScreen {
             return page::empty(
                 "No traffic captured",
                 if self.paused {
-                    "The list is paused. Resume to follow traffic through the proxy."
+                    "Capture is paused. Nothing is being recorded until you resume."
                 } else {
                     "Requests that pass through the proxy are listed here as they happen."
                 },

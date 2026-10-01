@@ -8,12 +8,12 @@
 use gpui_kit::component::{
     ActiveTheme as _, Theme,
     input::{
-        Editor, EditorState, InputEvent, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
+        Editor, EditorState, Input, InputEvent, InputState, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
         TextDecoration, TextDecorationCollection,
     },
 };
 use gpui_kit::{
-    App, AppContext as _, Entity, FontWeight, HighlightStyle, Pixels, SharedString, Subscription, Window, px,
+    App, AppContext as _, Entity, FontWeight, HighlightStyle, Pixels, SharedString, Styled, Subscription, Window, px,
 };
 
 use crate::model::variables::variable_ranges;
@@ -86,6 +86,9 @@ impl VarEditor {
                 .line_number(false)
                 .folding(false)
                 .soft_wrap(false)
+                // An editor keeps empty rows below its last line to scroll into; a one-row field has none,
+                // so the wheel over it cannot move its text out of view.
+                .scroll_beyond_last_line(Some(0))
                 .submit_on_enter(true)
                 .placeholder(placeholder)
         })
@@ -96,6 +99,12 @@ impl VarEditor {
     /// this height so the row has one top and one bottom edge.
     pub fn row_height(cx: &App) -> Pixels {
         cx.theme().mono_font_size * 1.5 + px(18.)
+    }
+
+    /// A plain text input as tall as a one-row field, for the inputs that share a row with one. The kit's
+    /// own height setter only applies to its multi-line inputs, so the height goes in as a style.
+    pub fn row_input(state: &Entity<InputState>, cx: &App) -> Input {
+        Styled::h(Input::new(state), Self::row_height(cx))
     }
 
     /// This editor as a one-row field.

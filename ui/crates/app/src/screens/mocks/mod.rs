@@ -9,7 +9,7 @@ mod editor;
 use std::{collections::HashSet, rc::Rc};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, VirtualListScrollHandle,
     button::{Button, ButtonVariants as _},
     dock::{DockArea, DockLayout, DockSkin, panel_handle},
     h_flex,
@@ -18,13 +18,12 @@ use gpui_kit::component::{
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     switch::Switch,
-    tab::{Tab, TabBar},
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
 use gpui_kit::{
-    AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, WeakEntity, Window, div, px, rems,
+    AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy,
+    SharedString, Styled as _, Subscription, WeakEntity, Window, div, px, rems,
 };
 use serde_json::{Map, json};
 
@@ -32,11 +31,11 @@ use self::editor::{MockEditor, MockEvent};
 use crate::{
     app_model::{AppModel, Load, ModelEvent},
     components::{
-        EntityAction, EntityBar, FolderPicker,
+        EntityAction, EntityBar, FolderPicker, StripTab, TabAction, TabStrip,
         dialogs::{PromptField, confirm_danger, prompt},
-        entity_bar, page,
+        entity_bar, page, tab_strip,
     },
-    engine::{call, failure, patch_entity},
+    engine::{call, call_in, failure, patch_entity},
     model::{
         git::FileState,
         tree::{ItemRow, TreeKey, TreeNode, build_tree, folder_path},
@@ -62,6 +61,14 @@ struct OpenTab {
     _subscription: Subscription,
 }
 
+impl OpenTab {
+    /// A draft that was typed into: closing its tab loses what was typed.
+    fn is_unsaved_draft(&self, cx: &App) -> bool {
+        let editor = self.editor.read(cx);
+        editor.saved_id().is_none() && editor.is_dirty(cx)
+    }
+}
+
 pub struct MocksScreen {
     model: Entity<AppModel>,
     filter: Entity<InputState>,
@@ -71,6 +78,7 @@ pub struct MocksScreen {
     selected: Option<String>,
     tabs: Vec<OpenTab>,
     active: Option<usize>,
+    tab_scroll: VirtualListScrollHandle,
     dock: Entity<DockArea>,
     _skin: Rc<DockSkin>,
     rule_panel: Entity<HostPanel>,
@@ -135,6 +143,7 @@ impl MocksScreen {
             selected: None,
             tabs: Vec::new(),
             active: None,
+            tab_scroll: VirtualListScrollHandle::new(),
             dock,
             _skin: skin,
             rule_panel,
@@ -195,6 +204,9 @@ impl MocksScreen {
 
     fn set_active(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.active = ix.filter(|ix| *ix < self.tabs.len());
+        if let Some(ix) = self.active {
+            self.tab_scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        }
         let (rule, response) = match self.active.and_then(|ix| self.tabs.get(ix)) {
             Some(tab) => (Some(tab.rule.clone()), Some(tab.response.clone())),
             None => (None, None),
@@ -257,17 +269,12 @@ impl MocksScreen {
     /// edits asks first, since closing it discards them.
     fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(ix) else { return };
-        let editor = tab.editor.clone();
-        if editor.read(cx).saved_id().is_some() {
-            editor.update(cx, |editor, cx| editor.flush(window, cx));
-            self.remove_tab(ix, cx);
+        if !tab.is_unsaved_draft(cx) {
+            self.close_keys(vec![tab.key.clone()], window, cx);
             return;
         }
-        if !editor.read(cx).is_dirty(cx) {
-            self.remove_tab(ix, cx);
-            return;
-        }
-        let title = editor.read(cx).title(cx);
+        let key = tab.key.clone();
+        let title = tab.editor.read(cx).title(cx);
         confirm_danger(
             cx.weak_entity(),
             window,
@@ -275,12 +282,108 @@ impl MocksScreen {
             format!("Discard changes to “{title}”?"),
             "The edits in this tab have not been saved.",
             "Discard changes",
-            move |this, _, cx| {
-                if let Some(ix) = this.tabs.iter().position(|tab| tab.editor == editor) {
-                    this.remove_tab(ix, cx);
-                }
-            },
+            move |this, window, cx| this.close_keys(vec![key.clone()], window, cx),
         );
+    }
+
+    /// Closes every tab `closes` picks. Drafts that were typed into are asked about once, together.
+    fn close_where(&mut self, closes: impl Fn(usize) -> bool, window: &mut Window, cx: &mut Context<Self>) {
+        let picked = || self.tabs.iter().enumerate().filter(|(ix, _)| closes(*ix)).map(|(_, tab)| tab);
+        let keys: Vec<TabKey> = picked().map(|tab| tab.key.clone()).collect();
+        let unsaved = picked().filter(|tab| tab.is_unsaved_draft(cx)).count();
+        if unsaved == 0 {
+            self.close_keys(keys, window, cx);
+            return;
+        }
+        let what = if unsaved == 1 { "1 unsaved mock".to_owned() } else { format!("{unsaved} unsaved mocks") };
+        confirm_danger(
+            cx.weak_entity(),
+            window,
+            cx,
+            format!("Discard {what}?"),
+            "Mocks that have not been saved are discarded when their tabs close.",
+            "Discard",
+            move |this, window, cx| this.close_keys(keys.clone(), window, cx),
+        );
+    }
+
+    /// Closes the tabs with these keys, writing a saved mock's waiting edit on the way out. The tab in
+    /// front stays in front when it is not one of them.
+    fn close_keys(&mut self, keys: Vec<TabKey>, window: &mut Window, cx: &mut Context<Self>) {
+        let front = self.active.and_then(|ix| self.tabs.get(ix)).map(|tab| tab.key.clone());
+        let position = self.active.unwrap_or(0);
+        for tab in self.tabs.iter().filter(|tab| keys.contains(&tab.key)) {
+            if matches!(tab.key, TabKey::Saved(_)) {
+                tab.editor.update(cx, |editor, cx| editor.flush(window, cx));
+            }
+        }
+        self.tabs.retain(|tab| !keys.contains(&tab.key));
+        let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
+            Some(ix) => Some(ix),
+            None if self.tabs.is_empty() => None,
+            // The tab that takes the closed one's place comes to the front, or the last one.
+            None => Some(position.min(self.tabs.len() - 1)),
+        };
+        self.set_active(next, cx);
+    }
+
+    /// What a tab asks for, by its close button or its menu.
+    fn tab_action(&mut self, action: TabAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            TabAction::Select(ix) => self.set_active(Some(ix), cx),
+            TabAction::Close(ix) => self.close_tab(ix, window, cx),
+            TabAction::CloseOthers(keep) => self.close_where(|ix| ix != keep, window, cx),
+            TabAction::CloseToRight(of) => self.close_where(|ix| ix > of, window, cx),
+            TabAction::CloseAll => self.close_where(|_| true, window, cx),
+            TabAction::Duplicate(ix) => {
+                if let Some(TabKey::Saved(id)) = self.tabs.get(ix).map(|tab| tab.key.clone()) {
+                    self.duplicate(id, window, cx);
+                }
+            }
+        }
+    }
+
+    fn describe_tab(&self, ix: usize, cx: &App) -> Option<StripTab> {
+        let tab = self.tabs.get(ix)?;
+        let id = match &tab.key {
+            TabKey::Saved(id) => format!("mock-{id}"),
+            TabKey::Draft(number) => format!("draft-{number}"),
+        };
+        let editor = tab.editor.read(cx);
+        Some(StripTab {
+            id: id.into(),
+            badge: editor.badge(cx).into(),
+            title: editor.title(cx),
+            dirty: editor.is_dirty(cx),
+            can_duplicate: matches!(tab.key, TabKey::Saved(_)),
+        })
+    }
+
+    /// Copies a saved mock. The engine makes the copy, named "<name> copy", in the same folder and switched
+    /// off, so the original keeps answering; it is then opened.
+    fn duplicate(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        // An edit still waiting to be written belongs in the copy too.
+        let open = self.tabs.iter().find(|tab| tab.key == TabKey::Saved(id.clone())).map(|tab| tab.editor.clone());
+        if let Some(editor) = open {
+            editor.update(cx, |editor, cx| editor.flush(window, cx));
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "kind": "mocks", "id": id });
+        call_in(&client, window, cx, "entity.duplicate", payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                this.report("Couldn't duplicate the mock.", message, cx);
+                return;
+            }
+            let copy = outcome
+                .ok()
+                .and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned));
+            let Some(copy) = copy else { return };
+            // The copy is in the engine but not yet in this window's snapshot, which the tree is built from.
+            this.model.update(cx, |model, cx| model.refresh(cx));
+            this.selected = Some(TreeKey::Item(copy.clone()).encode());
+            this.open_mock(&copy, window, cx);
+        });
     }
 
     /// Does what the footer asked for to the mock in the active tab.
@@ -491,53 +594,36 @@ impl MocksScreen {
             .child(div().flex_1().min_h_0().child(body))
     }
 
-    fn render_tab_strip(&self, tree_open: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
+    fn render_tab_strip(&self, tree_open: bool, window: &Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let this = cx.weak_entity();
-        let tabs = self.tabs.iter().enumerate().map(|(ix, tab)| {
-            let editor = tab.editor.read(cx);
-            let title = editor.title(cx);
-            let label: SharedString = if editor.is_dirty(cx) { format!("{title} ●").into() } else { title };
-            Tab::new()
-                .label(label)
-                .prefix(div().pl_2().text_xs().text_color(theme.muted_foreground).child(editor.badge(cx)))
-                .suffix(div().pr_1().child(
-                    Button::new(("close-mock-tab", ix)).icon(IconName::Close).ghost().xsmall().on_click(cx.listener(
-                        move |this, _, window, cx| {
-                            // The tab under the button would otherwise take the click as a selection.
-                            cx.stop_propagation();
-                            this.close_tab(ix, window, cx);
-                        },
-                    )),
-                ))
-        });
-        TabBar::new("mock-tabs")
-            .small()
-            .menu(true)
-            .selected_index(self.active.unwrap_or(0))
-            .on_click(cx.listener(|this, ix: &usize, _, cx| this.set_active(Some(*ix), cx)))
-            .prefix(
-                h_flex().px_1().child(
-                    Button::new("toggle-mock-tree")
-                        .icon(if tree_open { IconName::FolderOpen } else { IconName::Folder })
-                        .ghost()
-                        .small()
-                        .selected(tree_open)
-                        .tooltip(if tree_open { "Hide the folder tree" } else { "Show the folder tree" })
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
-                            cx.notify();
-                        })),
-                ),
-            )
-            .children(tabs)
-            .suffix(h_flex().px_1().child(
-                Button::new("new-mock-tab").icon(IconName::Plus).ghost().small().tooltip("New mock").on_click(
-                    move |_, window, cx| {
-                        this.update(cx, |this, cx| this.new_mock(None, window, cx)).ok();
-                    },
-                ),
-            ))
+        let strip = TabStrip {
+            id: "mock-tabs",
+            count: self.tabs.len(),
+            active: self.active,
+            scroll: self.tab_scroll.clone(),
+            describe: Self::describe_tab,
+            on_action: Self::tab_action,
+        };
+        let prefix = h_flex().flex_none().px_1().child(
+            Button::new("toggle-mock-tree")
+                .icon(if tree_open { IconName::FolderOpen } else { IconName::Folder })
+                .ghost()
+                .small()
+                .selected(tree_open)
+                .tooltip(if tree_open { "Hide the folder tree" } else { "Show the folder tree" })
+                .on_click(cx.listener(|_, _, _, cx| {
+                    Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
+                    cx.notify();
+                })),
+        );
+        let suffix = h_flex().flex_none().px_1().child(
+            Button::new("new-mock-tab").icon(IconName::Plus).ghost().small().tooltip("New mock").on_click(
+                move |_, window, cx| {
+                    this.update(cx, |this, cx| this.new_mock(None, window, cx)).ok();
+                },
+            ),
+        );
+        tab_strip(self, strip, prefix, suffix, window, cx)
     }
 }
 
@@ -568,9 +654,14 @@ fn context_menu(entry: &TreeEntry, menu: PopupMenu, view: &WeakEntity<MocksScree
     let (rename, delete) = (key.clone(), key.clone());
     let menu = match &key {
         TreeKey::Item(id) => {
-            let id = id.clone();
+            let (open, copy) = (id.clone(), id.clone());
             menu.item(
-                PopupMenuItem::new("Open").on_click(act(view, move |this, window, cx| this.open_mock(&id, window, cx))),
+                PopupMenuItem::new("Open")
+                    .on_click(act(view, move |this, window, cx| this.open_mock(&open, window, cx))),
+            )
+            .item(
+                PopupMenuItem::new("Duplicate")
+                    .on_click(act(view, move |this, window, cx| this.duplicate(copy.clone(), window, cx))),
             )
         }
         TreeKey::Folder(id) => {
@@ -672,7 +763,7 @@ fn render_row(
 }
 
 impl Render for MocksScreen {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
         let body = if self.tabs.is_empty() {
             page::empty_with_action(
@@ -706,7 +797,7 @@ impl Render for MocksScreen {
         let main = v_flex()
             .size_full()
             .bg(cx.theme().background)
-            .child(self.render_tab_strip(tree_open, cx))
+            .child(self.render_tab_strip(tree_open, window, cx))
             .child(div().flex_1().min_h_0().child(body))
             .children(footer);
         // The split's sizes are physical starting points the user resizes, not part of the rem scale.

@@ -20,7 +20,7 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 8] = [
+const EVENTS: [&str; 10] = [
     "event.entity.changed",
     "event.sync.entityStatus",
     "event.sync.status",
@@ -29,6 +29,8 @@ const EVENTS: [&str; 8] = [
     "event.ws.status",
     "event.ws.message",
     "event.log.entry",
+    "event.runner.progress",
+    "event.runner.finished",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +63,10 @@ pub enum ModelEvent {
     SocketMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
+    /// `event.runner.progress`: one request of a folder run has finished.
+    RunnerProgress(Value),
+    /// `event.runner.finished`: a folder run ended, with its report.
+    RunnerFinished(Value),
     /// The entity with this id was put back to its last synced version; an editor showing it must re-read it.
     EntityReverted(String),
     /// A short message for the user: a failed command, a lost connection.
@@ -173,6 +179,8 @@ impl AppModel {
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
+                "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
+                "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
                 _ => {}
             },
         }

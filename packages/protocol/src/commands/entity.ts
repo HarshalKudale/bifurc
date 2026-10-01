@@ -87,6 +87,17 @@ export interface EntityLoadResult {
   entity?: Record<string, unknown>;
 }
 
+/** `entity.duplicate` — a copy of a saved entity, created through `entity.create`; named "<name> copy". */
+export const EntityDuplicateParams = z.object({
+  workspaceId: z.string(),
+  kind: EntityKind,
+  id: z.string(),
+}).strict();
+export type EntityDuplicateParams = z.infer<typeof EntityDuplicateParams>;
+export interface EntityDuplicateResult {
+  entity: Record<string, unknown>;
+}
+
 export const EntityListParams = z.object({
   workspaceId: z.string(),
   kind: EntityKind,

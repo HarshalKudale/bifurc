@@ -62,6 +62,7 @@ export const SCOPES = ["read", "write", "execute", "admin"] as const satisfies r
  */
 export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "entity.create": "write",
+  "entity.duplicate": "write",
   "entity.update": "write",
   "entity.delete": "write",
   "entity.load": "read",
@@ -163,6 +164,7 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "engine.shutdown": "admin",
   "capture.list": "read",
   "capture.get": "read",
+  "capture.setPaused": "write",
   "capture.clear": "write",
   "capture.remove": "write",
   // The four saved-entity counterparts (`packages/protocol/src/commands/saved.ts`). `execute` for the
