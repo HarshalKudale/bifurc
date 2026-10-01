@@ -13,7 +13,7 @@ pub mod websocket;
 
 use gpui_kit::{AnyView, App, Context, Entity, SharedString, Window};
 
-use crate::model::RequestKind;
+use crate::model::{RequestKind, snippet::RequestParts};
 
 use self::{protocol::ProtocolSession, rest::RestSession, websocket::WsSession};
 
@@ -31,8 +31,6 @@ pub enum SessionEvent {
     Changed,
     /// A draft was saved and now has this id.
     Saved { id: String },
-    /// One line for the activity log.
-    Activity(String),
     /// Something the user should be told about.
     Notice(String),
 }
@@ -57,7 +55,7 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).saved_id().map(str::to_owned),
             Session::WebSocket(s) => s.read(cx).saved_id().map(str::to_owned),
-            Session::Protocol(s) => Some(s.read(cx).saved_id().to_owned()),
+            Session::Protocol(s) => s.read(cx).saved_id().map(str::to_owned),
         }
     }
 
@@ -65,7 +63,24 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).title(cx),
             Session::WebSocket(s) => s.read(cx).title(cx),
-            Session::Protocol(s) => s.read(cx).title(),
+            Session::Protocol(s) => s.read(cx).title(cx),
+        }
+    }
+
+    /// What a tab leads with: the method for REST, the type's short badge for everything else.
+    pub fn badge(&self, cx: &App) -> &'static str {
+        match self {
+            Session::Rest(s) => s.read(cx).method(cx),
+            _ => self.kind(cx).badge(),
+        }
+    }
+
+    /// The request as an HTTP call, for a code snippet. `None` for a type a snippet cannot express.
+    pub fn request_parts(&self, cx: &App) -> Option<RequestParts> {
+        match self {
+            Session::Rest(s) => Some(s.read(cx).request_parts(cx)),
+            Session::Protocol(s) => s.read(cx).request_parts(cx),
+            Session::WebSocket(_) => None,
         }
     }
 
@@ -73,7 +88,7 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).is_dirty(cx),
             Session::WebSocket(s) => s.read(cx).is_dirty(cx),
-            Session::Protocol(_) => false,
+            Session::Protocol(s) => s.read(cx).is_dirty(cx),
         }
     }
 
@@ -98,7 +113,7 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.save(window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.save(window, cx)),
-            Session::Protocol(_) => {}
+            Session::Protocol(s) => s.update(cx, |s, cx| s.save(window, cx)),
         }
     }
 
@@ -106,7 +121,7 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.revert(window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.revert(window, cx)),
-            Session::Protocol(_) => {}
+            Session::Protocol(s) => s.update(cx, |s, cx| s.revert(window, cx)),
         }
     }
 

@@ -1,7 +1,8 @@
 //! The command palette: every command, every saved request and every environment, one search.
 //!
-//! Commands are actions, so the palette shows the key each is bound to and dispatches the same action the
-//! key does. Requests and environments are not commands; confirming one runs the shell method directly.
+//! It is what the title bar's search opens. Commands are actions, so the palette shows the key each is bound
+//! to and dispatches the same action the key does. Requests and environments are not commands; confirming
+//! one runs the shell method directly.
 
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::{
@@ -10,11 +11,13 @@ use gpui_kit::component::{
 };
 use gpui_kit::{Action, Context, ParentElement as _, Styled as _, Window};
 
-use super::{Module, Shell};
+use super::{Screen, Shell};
 use crate::{
     commands::{
-        NewFolder, NewRestRequest, NewWebSocketRequest, ReloadWorkspace, RevertRequest, RunRequest, SaveRequest,
-        ShowEnvironments, ShowMappings, ShowRequests, ToggleActivity, ToggleDetails, ToggleExplorer,
+        NewFolder, NewGraphQlRequest, NewGrpcRequest, NewRestRequest, NewSoapRequest, NewWebSocketRequest,
+        ReloadWorkspace, RevertRequest, RunRequest, SaveRequest, ShowCapture, ShowEnvironments, ShowHealthBar,
+        ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ToggleFolderTree,
+        ToggleInspector, ToggleSidebar,
     },
     model::NodeRef,
 };
@@ -31,21 +34,30 @@ struct Entry {
     keywords: Vec<String>,
 }
 
-fn commands() -> Vec<(&'static str, Option<IconName>, Box<dyn Action>)> {
+fn commands() -> Vec<(&'static str, IconName, Box<dyn Action>)> {
     vec![
-        ("New request", Some(IconName::Plus), Box::new(NewRestRequest)),
-        ("New WebSocket", Some(IconName::Plus), Box::new(NewWebSocketRequest)),
-        ("New folder…", Some(IconName::Folder), Box::new(NewFolder)),
-        ("Save request", Some(IconName::File), Box::new(SaveRequest)),
-        ("Revert request", Some(IconName::Undo), Box::new(RevertRequest)),
-        ("Send request or connect", Some(IconName::Play), Box::new(RunRequest)),
-        ("Show requests", Some(IconName::Inbox), Box::new(ShowRequests)),
-        ("Show environments", Some(IconName::Globe), Box::new(ShowEnvironments)),
-        ("Show mappings", Some(IconName::Replace), Box::new(ShowMappings)),
-        ("Toggle explorer", Some(IconName::PanelLeft), Box::new(ToggleExplorer)),
-        ("Toggle details", Some(IconName::PanelRight), Box::new(ToggleDetails)),
-        ("Toggle activity", Some(IconName::PanelBottom), Box::new(ToggleActivity)),
-        ("Reload workspace", Some(IconName::RefreshCw), Box::new(ReloadWorkspace)),
+        ("New REST request", IconName::Plus, Box::new(NewRestRequest)),
+        ("New GraphQL request", IconName::Plus, Box::new(NewGraphQlRequest)),
+        ("New gRPC request", IconName::Plus, Box::new(NewGrpcRequest)),
+        ("New SOAP request", IconName::Plus, Box::new(NewSoapRequest)),
+        ("New WebSocket", IconName::Plus, Box::new(NewWebSocketRequest)),
+        ("New folder…", IconName::Folder, Box::new(NewFolder)),
+        ("Save", IconName::File, Box::new(SaveRequest)),
+        ("Revert changes", IconName::Undo, Box::new(RevertRequest)),
+        ("Send request or connect", IconName::Play, Box::new(RunRequest)),
+        ("Go to Services", Screen::Services.icon(), Box::new(ShowServices)),
+        ("Go to Health bar", Screen::HealthBar.icon(), Box::new(ShowHealthBar)),
+        ("Go to Mappings", Screen::Mappings.icon(), Box::new(ShowMappings)),
+        ("Go to Proxy rules", Screen::ProxyRules.icon(), Box::new(ShowProxyRules)),
+        ("Go to Capture", Screen::Capture.icon(), Box::new(ShowCapture)),
+        ("Go to Requests", Screen::Requests.icon(), Box::new(ShowRequests)),
+        ("Go to Mocks", Screen::Mocks.icon(), Box::new(ShowMocks)),
+        ("Go to Environments", Screen::Environments.icon(), Box::new(ShowEnvironments)),
+        ("Go to Settings", Screen::Settings.icon(), Box::new(ShowSettings)),
+        ("Toggle sidebar", IconName::PanelLeft, Box::new(ToggleSidebar)),
+        ("Toggle inspector", IconName::PanelRight, Box::new(ToggleInspector)),
+        ("Toggle folder tree", IconName::FolderOpen, Box::new(ToggleFolderTree)),
+        ("Reload workspace", IconName::RefreshCw, Box::new(ReloadWorkspace)),
     ]
 }
 
@@ -73,7 +85,7 @@ impl Shell {
             })
             .collect();
         let environments: Vec<(Entry, Choice)> = std::iter::once((
-            Entry { label: "No environment".to_owned(), keywords: vec!["environment".to_owned()] },
+            Entry { label: "Use no environment".to_owned(), keywords: vec!["environment".to_owned()] },
             Choice::Environment(None),
         ))
         .chain(config.selectable_environments().map(|e| {
@@ -93,11 +105,7 @@ impl Shell {
 
             let command_group =
                 commands().into_iter().fold(CommandGroup::new().label("Commands"), |group, (label, icon, action)| {
-                    let item = CommandItem::new().label(label).action(action);
-                    group.item(match icon {
-                        Some(icon) => item.icon(icon),
-                        None => item,
-                    })
+                    group.item(CommandItem::new().label(label).icon(icon).action(action))
                 });
             let request_group = requests.iter().fold(CommandGroup::new().label("Requests"), |group, (entry, _)| {
                 group.item(CommandItem::new().label(entry.label.clone()).keywords(entry.keywords.clone()))
@@ -114,14 +122,14 @@ impl Shell {
                 content.child(
                     Command::new(&state)
                         .bordered(false)
-                        .placeholder("Type a command, or search requests…")
-                        .group(command_group.clone())
+                        .placeholder("Search requests and commands…")
                         .group(request_group.clone())
+                        .group(command_group.clone())
                         .group(environment_group.clone())
                         .on_confirm(move |ix: IndexPath, window, cx| {
-                            // Section 0 is the commands, whose actions have already been dispatched.
+                            // Section 1 is the commands, whose actions have already been dispatched.
                             let choice = match ix.section {
-                                1 => request_choices.get(ix.row).cloned(),
+                                0 => request_choices.get(ix.row).cloned(),
                                 2 => environment_choices.get(ix.row).cloned(),
                                 _ => None,
                             };
@@ -141,9 +149,11 @@ impl Shell {
     fn apply_choice(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {
         match choice {
             Choice::Open(node) => {
-                self.show_module(Module::Requests, window, cx);
-                self.open_node(&node, window, cx);
-                self.explorer.update(cx, |explorer, cx| explorer.reveal(&node, cx));
+                self.show_screen(Screen::Requests, window, cx);
+                self.requests.update(cx, |requests, cx| {
+                    requests.open_node(&node, window, cx);
+                    requests.reveal(&node, cx);
+                });
             }
             Choice::Environment(id) => {
                 self.model.update(cx, |model, cx| model.set_active_environment(id.as_deref(), cx))
