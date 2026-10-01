@@ -9,11 +9,38 @@ use gpui_kit::component::{
     dock::{BasePanel, Panel, PanelEvent},
 };
 use gpui_kit::{
-    AnyView, App, Context, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Window, div,
+    AnyElement, AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div,
 };
 
 use crate::components::page;
+
+/// One part of an entity's view, as a view of its own.
+///
+/// An editor that is one entity but fills two dock panels (a mock's rule and its response) gives each panel
+/// a `PartView`: it renders by asking the owner for that part, and redraws whenever the owner does.
+pub struct PartView<T: 'static> {
+    owner: Entity<T>,
+    render: fn(&mut T, &mut Window, &mut Context<T>) -> AnyElement,
+    _subscription: Subscription,
+}
+
+impl<T: 'static> PartView<T> {
+    pub fn new(
+        owner: &Entity<T>,
+        render: fn(&mut T, &mut Window, &mut Context<T>) -> AnyElement,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| Self { owner: owner.clone(), render, _subscription: cx.observe(owner, |_, _, cx| cx.notify()) })
+    }
+}
+
+impl<T: 'static> Render for PartView<T> {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let render = self.render;
+        self.owner.update(cx, |owner, cx| render(owner, window, cx))
+    }
+}
 
 pub struct HostPanel {
     focus_handle: FocusHandle,

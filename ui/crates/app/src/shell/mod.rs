@@ -32,7 +32,8 @@ use crate::{
     model::{RequestKind, snippet::RequestParts},
     preferences::Preferences,
     screens::{
-        environments::EnvironmentsScreen, mappings::MappingsScreen, requests::RequestsScreen, settings::SettingsScreen,
+        environments::EnvironmentsScreen, mappings::MappingsScreen, mocks::MocksScreen, requests::RequestsScreen,
+        settings::SettingsScreen,
     },
 };
 
@@ -50,6 +51,7 @@ pub struct Shell {
     pub(crate) model: Entity<AppModel>,
     screen: Screen,
     requests: Entity<RequestsScreen>,
+    mocks: Entity<MocksScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
     settings: Entity<SettingsScreen>,
@@ -65,6 +67,7 @@ pub struct Shell {
 impl Shell {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let requests = cx.new(|cx| RequestsScreen::new(model.clone(), window, cx));
+        let mocks = cx.new(|cx| MocksScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
@@ -76,6 +79,7 @@ impl Shell {
             cx.observe(&model, |_, _, cx| cx.notify()),
             // The breadcrumb and the right sidebar follow what is open on the screen in front.
             cx.observe_in(&requests, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
+            cx.observe_in(&mocks, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
         ];
 
         let handle = ShellHandle(cx.weak_entity());
@@ -85,6 +89,7 @@ impl Shell {
             model,
             screen: Screen::Requests,
             requests,
+            mocks,
             mappings,
             environments,
             settings,
@@ -122,6 +127,11 @@ impl Shell {
                 entity_id: session.saved_id(cx),
                 request: session.request_parts(cx),
             }),
+            Screen::Mocks => self.mocks.read(cx).active_target(cx).map(|(title, entity_id)| ActiveTarget {
+                title,
+                entity_id,
+                request: None,
+            }),
             _ => None,
         }
     }
@@ -136,10 +146,11 @@ impl Shell {
     fn screen_view(&self) -> Option<AnyView> {
         match self.screen {
             Screen::Requests => Some(self.requests.clone().into()),
+            Screen::Mocks => Some(self.mocks.clone().into()),
             Screen::Mappings => Some(self.mappings.clone().into()),
             Screen::Environments => Some(self.environments.clone().into()),
             Screen::Settings => Some(self.settings.clone().into()),
-            Screen::Services | Screen::HealthBar | Screen::ProxyRules | Screen::Capture | Screen::Mocks => None,
+            Screen::Services | Screen::HealthBar | Screen::ProxyRules | Screen::Capture => None,
         }
     }
 
@@ -166,6 +177,7 @@ impl Shell {
     pub fn toggle_folder_tree(&mut self, cx: &mut Context<Self>) {
         Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
         self.requests.update(cx, |_, cx| cx.notify());
+        self.mocks.update(cx, |_, cx| cx.notify());
         cx.notify();
     }
 
@@ -186,6 +198,7 @@ impl Shell {
     pub fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.screen {
             Screen::Requests => self.requests.update(cx, |screen, cx| screen.save_active(window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.save_active(window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.save(window, cx)),
             _ => {}
         }
@@ -194,6 +207,7 @@ impl Shell {
     pub fn revert_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.screen {
             Screen::Requests => self.requests.update(cx, |screen, cx| screen.revert_active(window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.revert_active(window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.revert(window, cx)),
             _ => {}
         }
@@ -207,8 +221,10 @@ impl Shell {
     }
 
     pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.screen == Screen::Requests {
-            self.requests.update(cx, |screen, cx| screen.close_active(window, cx));
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.close_active(window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.close_active(window, cx)),
+            _ => {}
         }
     }
 
