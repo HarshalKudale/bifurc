@@ -15,6 +15,7 @@ import {
   wsDir, dataRoot, autoSyncFsDirectories, readEnabledSet, bootstrapEnabledSet,
   getPendingDeletions,
 } from "./workspaceFs";
+import { effectiveEnvironmentId } from "./envSelection";
 import type {
   MockRule, LocalMapping, ProxyRule, SavedRequest,
   SavedWsConnection, Environment, Folder, Workspace,
@@ -107,6 +108,7 @@ export interface WorkspaceDispatchSlice {
 export function loadWorkspaceDispatchSlice(wsId: string): WorkspaceDispatchSlice {
   const mockEnabledSet = readEnabledSet(wsId, "mocks") ?? bootstrapEnabledSet(wsId, "mocks");
   const mappingEnabledSet = readEnabledSet(wsId, "mappings") ?? bootstrapEnabledSet(wsId, "mappings");
+  const environments = readAllEntities<Environment>(wsId, "environments");
 
   return {
     workspaceId: wsId,
@@ -117,10 +119,13 @@ export function loadWorkspaceDispatchSlice(wsId: string): WorkspaceDispatchSlice
       workspaceId: m.workspaceId ?? wsId,
       enabled: mappingEnabledSet.has(m.id),
     })),
-    environments: readAllEntities<Environment>(wsId, "environments"),
+    environments,
     // Read from settings rather than from the slice's own entities: the pointer is a *settings* field, and
     // for the active workspace this is exactly what `loadConfig()` resolves at line 108.
-    activeEnvironmentId: loadSettings().workspaces.find((w) => w.id === wsId)?.activeEnvironmentId ?? null,
+    activeEnvironmentId: effectiveEnvironmentId(
+      environments,
+      loadSettings().workspaces.find((w) => w.id === wsId)?.activeEnvironmentId,
+    ),
   };
 }
 
@@ -163,7 +168,10 @@ export function loadConfig(): AppConfig {
   const wsIdx = autoSyncFsDirectories(wsId, "sockets", generateId);
   const ruleIdx = autoSyncFsDirectories(wsId, "rules", generateId);
 
-  const activeEnv = settings.workspaces.find((w) => w.id === wsId)?.activeEnvironmentId ?? null;
+  const activeEnv = effectiveEnvironmentId(
+    environments,
+    settings.workspaces.find((w) => w.id === wsId)?.activeEnvironmentId,
+  );
 
   return {
     port: settings.port,

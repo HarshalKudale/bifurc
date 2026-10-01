@@ -37,6 +37,7 @@ import type { Environment } from "./config";
 import { readAllEntities } from "./fs/fsRead";
 import { loadSettings } from "./appSettings";
 import { mergeEnvVars } from "../utils/resolve";
+import { effectiveEnvironmentId } from "./envSelection";
 
 /**
  * The synthetic global environment's id.
@@ -55,7 +56,10 @@ export function loadMergedEnvironment(wsId: string): Environment | null {
   // Read from settings rather than from the entity list: the pointer is a *settings* field, which is
   // what `loadConfig()` resolves for the active workspace and what `loadWorkspaceDispatchSlice()` reads
   // for any workspace. An `environments` entity is not "active" by virtue of anything on itself.
-  const activeId = loadSettings().workspaces.find((w) => w.id === wsId)?.activeEnvironmentId ?? null;
+  const activeId = effectiveEnvironmentId(
+    environments,
+    loadSettings().workspaces.find((w) => w.id === wsId)?.activeEnvironmentId,
+  );
   const activeEnv = environments.find((e) => e.id === activeId) ?? null;
   return mergeEnvVars(globalEnv, activeEnv);
 }

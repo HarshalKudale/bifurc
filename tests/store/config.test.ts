@@ -133,8 +133,23 @@ describe("@bifurc/engine/workspace/config", () => {
         ...makeDefaultSettings(),
         workspaces: [{ id: "default", name: "W1", activeEnvironmentId: "env-99" }],
       });
+      vi.mocked(readAllEntities).mockImplementation((_ws, kind) =>
+        kind === "environments" ? ([{ id: "env-99" }, { id: "env-2" }] as any) : []);
       const cfg = loadConfig();
       expect(cfg.activeEnvironmentId).toBe("env-99");
+    });
+
+    it("selects the only non-global environment when none is chosen, and nothing when there are several", () => {
+      vi.mocked(loadSettings).mockReturnValue({
+        ...makeDefaultSettings(),
+        workspaces: [{ id: "default", name: "W1", activeEnvironmentId: null }],
+      });
+      vi.mocked(readAllEntities).mockImplementation((_ws, kind) =>
+        kind === "environments" ? ([{ id: "__global__" }, { id: "only" }] as any) : []);
+      expect(loadConfig().activeEnvironmentId).toBe("only");
+      vi.mocked(readAllEntities).mockImplementation((_ws, kind) =>
+        kind === "environments" ? ([{ id: "a" }, { id: "b" }] as any) : []);
+      expect(loadConfig().activeEnvironmentId).toBeNull();
     });
   });
 
