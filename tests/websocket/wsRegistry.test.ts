@@ -85,7 +85,7 @@ vi.mock("ws", () => ({ WebSocket: fake.FakeSocket }));
 
 /** The environment the registry resolves against. Controlled per case. */
 const env = vi.hoisted(() => ({ current: null as { variables: { key: string; value: string }[] } | null }));
-vi.mock("@bifurc/engine/workspace/envState", () => ({
+vi.mock("@bifurc/engine/env/envState", () => ({
   loadMergedEnvironment: () => env.current,
 }));
 

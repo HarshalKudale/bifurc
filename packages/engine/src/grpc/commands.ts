@@ -78,8 +78,8 @@ import { EngineError } from "@bifurc/protocol";
 import type { GrpcExecuteParams, GrpcReflectParams, GrpcSendParams } from "@bifurc/protocol";
 import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { loadEntity } from "../workspace/config";
-import { loadMergedEnvironment } from "../workspace/envState";
-import { resolveVars } from "../utils/resolve";
+import { loadMergedEnvironment } from "../env/envState";
+import { resolveVars } from "../env/resolve";
 
 export function registerGrpcCommands(registry: CommandRegistry): void {
     registry.register("grpc.execute", async (_params: GrpcExecuteParams) => {

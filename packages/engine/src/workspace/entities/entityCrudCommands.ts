@@ -121,7 +121,7 @@ import { emitEntityStatus } from "../../runtime/entityStatus";
 import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../../kernel/registry";
 import { toEngineKind } from "../../kernel/kinds";
 import { gateCreate } from "../entityCount";
-import { effectiveEnvironmentId } from "../envSelection";
+import { effectiveEnvironmentId } from "../../env/envSelection";
 import { loadSettings, saveSettings } from "../appSettings";
 
 /** The shape every CRUD-factory entity satisfies — pulled out so the extracted `*Core`

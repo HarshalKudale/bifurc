@@ -46,7 +46,7 @@ import type { CommandRegistry } from "../kernel/registry";
 import type { RequestLogEntry } from "../kernel/telemetry";
 import { replayRequest } from "../utils/replay";
 import { parseCurl } from "../utils/curl";
-import { capturedToRequest } from "../utils/captureEntities";
+import { capturedToRequest } from "../capture/captureEntities";
 
 export function registerRestCommands(registry: CommandRegistry): void {
     registry.register("request.replay", (params: RequestReplayParams) =>

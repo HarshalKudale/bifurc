@@ -115,9 +115,8 @@ import type {
     ServerStopParams,
 } from "@bifurc/protocol";
 import { loadConfig } from "../workspace/config";
-import { discoverServices } from "./service-discovery";
 import { getPort, getServerError, isRunning, startServer, stopServer } from "./server";
-import { echoWorkspace } from "../utils/echoWorkspace";
+import { echoWorkspace } from "./echoWorkspace";
 
 /**
  * The port a command re-binds when the proxy is not running.
@@ -177,5 +176,4 @@ export function registerServerCommands(registry: CommandRegistry): void {
 
     registry.register("proxy.status", (_params: ProxyStatusParams) => ({ running: isRunning() }));
 
-    registry.register("services.discover", () => discoverServices());
 }

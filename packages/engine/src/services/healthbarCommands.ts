@@ -69,8 +69,8 @@ import type {
     HealthbarSaveServicesParams,
 } from "@bifurc/protocol";
 import type { CommandRegistry } from "../kernel/registry";
-import { wsDir } from "./workspaceFs";
-import { invalidateCache } from "./statusCache";
+import { wsDir } from "../workspace/workspaceFs";
+import { invalidateCache } from "../workspace/statusCache";
 import { emitEntityStatus } from "../runtime/entityStatus";
 
 /** The healthbar's own subdirectory inside a workspace, and the file it keeps its services in. */

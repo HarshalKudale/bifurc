@@ -76,8 +76,8 @@ import { EngineError } from "@bifurc/protocol";
 import type { SoapFetchWsdlParams, SoapExecuteParams, SoapSendParams } from "@bifurc/protocol";
 import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { loadEntity } from "../workspace/config";
-import { loadMergedEnvironment } from "../workspace/envState";
-import { resolveVars, resolveHeaders } from "../utils/resolve";
+import { loadMergedEnvironment } from "../env/envState";
+import { resolveVars, resolveHeaders } from "../env/resolve";
 
 export function registerSoapCommands(registry: CommandRegistry): void {
     registry.register("soap.fetchWsdl", async ({ url }: SoapFetchWsdlParams) => {

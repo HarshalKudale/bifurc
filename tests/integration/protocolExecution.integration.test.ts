@@ -379,7 +379,7 @@ beforeAll(async () => {
   // `request.replay` half is `rest/`; the three `healthbar.*` are `workspace/`; `script.execute` is
   // `mocks/` (not driven by this suite).
   const { registerRestCommands } = await import("@bifurc/engine/rest/commands");
-  const { registerHealthbarCommands } = await import("@bifurc/engine/workspace/healthbarCommands");
+  const { registerHealthbarCommands } = await import("@bifurc/engine/services/healthbarCommands");
   // `config.save` is the other command this suite drives by the name of a channel that §5c already
   // deleted — `invoke("config:save", …)` resolves through the `handlers.get()` fallback to a plain
   // command, so it needs its registering module wired rather than a table entry.
@@ -389,7 +389,7 @@ beforeAll(async () => {
   // `registerSoapCommands` / `registerGrpcCommands` below, because each resolves its own fields before
   // dispatching. This is the line `tests/engine/layout.test.ts`'s "reachable from registerAll.ts" case keeps
   // in step with `registerAll.ts`.
-  const { registerPipelineCommands } = await import("@bifurc/engine/pipeline/commands");
+  const { registerPipelineCommands } = await import("@bifurc/engine/rest/sendCommands");
 
   registerCoreKinds();
   registerCoreCommands(commandRegistry);

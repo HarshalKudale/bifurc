@@ -61,7 +61,7 @@ vi.mock("@bifurc/engine/kernel/telemetry", () => ({
   logEmitter: mockLogEmitter,
 }));
 
-vi.mock("@bifurc/engine/proxy/service-discovery", () => ({
+vi.mock("@bifurc/engine/services/discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 
@@ -231,7 +231,7 @@ import { notifyConfigChanged } from "@bifurc/engine/runtime/instances";
 // `plan/17` §5 work item 7 — `config.save` re-binds the edge, and the edge is the one listener reached through
 // a module-level binding rather than through a facade with a lazy default.
 import { restartEdge } from "@bifurc/engine/reverseproxy/edge";
-import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
+import { discoverServices } from "@bifurc/engine/services/discovery";
 import { replayRequest as replayRequestImpl } from "@bifurc/engine/utils/replay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
@@ -360,6 +360,10 @@ const entityLoad = (wsId: string, kind: string, id: string): any =>
 describe("src/ipc/handlers.ts", () => {
   // Register handlers once before all tests.
   beforeAll(async () => {
+    // The engine half is the host's job in the app (`main.ts`); this suite stands in for it.
+    const { registerAllEngineCommands, wireEngineEvents } = await import("@bifurc/engine/registerAll");
+    registerAllEngineCommands(commandRegistry);
+    wireEngineEvents();
     const { registerIpcHandlers } = await import("../../src/ipc/handlers");
     registerIpcHandlers();
   });

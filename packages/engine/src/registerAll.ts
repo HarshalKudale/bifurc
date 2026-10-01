@@ -62,7 +62,9 @@ import { registerServerCommands } from "./proxy/serverCommands";
 import { registerConfigCommands } from "./workspace/entities/configCommands";
 import { registerRestCommands } from "./rest/commands";
 import { registerMockCommands } from "./mocks/commands";
-import { registerHealthbarCommands } from "./workspace/healthbarCommands";
+import { registerHealthbarCommands } from "./services/healthbarCommands";
+import { registerServicesCommands } from "./services/commands";
+import { registerEnvCommands } from "./env/commands";
 import { registerRunnerCommands } from "./runner/runnerCommands";
 import { registerWebsocketCommands } from "./websocket/wsCommands";
 import { registerAuditCommands } from "./workspace/entities/auditCommands";
@@ -74,7 +76,7 @@ import { registerGrpcCommands } from "./grpc/commands";
 import { registerApplicationCommands } from "./applications/applicationCommands";
 import { registerSyncCommands } from "./gitops/syncCommands";
 import { registerEntityCrudCommands } from "./workspace/entities/entityCrudCommands";
-import { registerPipelineCommands } from "./pipeline/commands";
+import { registerPipelineCommands } from "./rest/sendCommands";
 import { registerSoapKinds } from "./soap/kinds";
 import { registerGraphqlKinds } from "./graphql/kinds";
 import { registerGrpcKinds } from "./grpc/kinds";
@@ -152,6 +154,8 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerRestCommands(registry);
   registerMockCommands(registry);
   registerHealthbarCommands(registry);
+  registerServicesCommands(registry);
+  registerEnvCommands(registry);
   registerRunnerCommands(registry);
   registerAuditCommands(registry);
   registerCoreCommands(registry);
@@ -169,7 +173,7 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerWebsocketCommands(registry);
   // **The saved-entity family, after `plan/19` WI 3 (2026-09-30): four `*.send` commands, four feature
   // modules, and no shared counterpart module.** `request.send` (REST's pipeline) registers from
-  // `pipeline/commands.ts`; `graphql.send`, `soap.send` and `grpc.send` register from their own feature
+  // `rest/sendCommands.ts`; `graphql.send`, `soap.send` and `grpc.send` register from their own feature
   // modules, each resolving its fields before dispatching to the raw command. The module that used to hold
   // four load-and-dispatch bodies — `workspace/entities/savedRequestCommands.ts` — is **deleted**, because
   // "one module, not four" stopped applying the moment the four stopped being identical.

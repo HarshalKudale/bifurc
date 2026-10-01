@@ -17,7 +17,7 @@ vi.mock("@bifurc/engine/utils/randomizer", () => ({
     resolveRandomizers: vi.fn((text: string) => text),
 }));
 
-import { resolveVars, resolveHeaders, mergeEnvVars } from "@bifurc/engine/utils/resolve";
+import { resolveVars, resolveHeaders, mergeEnvVars } from "@bifurc/engine/env/resolve";
 
 describe("resolveVars()", () => {
     it("returns text as-is when env is null", () => {
