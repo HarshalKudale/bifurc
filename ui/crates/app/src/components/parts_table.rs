@@ -12,7 +12,7 @@ use gpui_kit::component::{
     ActiveTheme as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     v_flex,
 };
 use gpui_kit::{
@@ -288,7 +288,6 @@ impl Render for PartsTable {
         }
         let theme = cx.theme().clone();
         let last = self.rows.len().saturating_sub(1);
-        let row_height = VarEditor::row_height(cx);
         v_flex()
             .id("parts-table")
             .size_full()
@@ -313,7 +312,7 @@ impl Render for PartsTable {
                 h_flex()
                     .id(("part", id))
                     .gap_2()
-                    .child(div().w_1_4().min_w_0().child(Input::new(&row.name).h(row_height)))
+                    .child(div().w_1_4().min_w_0().child(VarEditor::row_input(&row.name, cx)))
                     .child(div().flex_1().min_w_0().child(self.render_value(row, cx)))
                     .child(
                         div().w_32().flex_none().child(

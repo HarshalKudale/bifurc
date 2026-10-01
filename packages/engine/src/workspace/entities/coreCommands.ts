@@ -44,8 +44,10 @@
  * renderer caller can reach it today. **Both were carried over anyway — the rule is that a channel's
  * owned step moves to the twin, not that it moves only when it is currently reachable.**
  */
+import { EngineError } from "@bifurc/protocol";
 import type {
     ConfigGetParams,
+    EntityDuplicateParams,
     EntityLoadParams,
     EntitySetEnabledParams,
     WorkspaceSetActiveParams,
@@ -125,6 +127,29 @@ export function registerCoreCommands(registry: CommandRegistry): void {
             return { ok: true, entity: { ...entity as object, enabled: set ? set.has(id) : false } };
         }
         return { ok: true, entity };
+    });
+
+    registry.register("entity.duplicate", async (params: EntityDuplicateParams, ctx: CommandContext) => {
+        const { workspaceId, kind, id } = params;
+        const loaded = registry.invoke("entity.load", { workspaceId, kind, id }, ctx) as { ok: boolean; entity?: Record<string, unknown> };
+        if (!loaded.ok || !loaded.entity) {
+            throw new EngineError("NOT_FOUND", `No ${kind} entity "${id}" in workspace "${workspaceId}".`);
+        }
+        const copy = JSON.parse(JSON.stringify(loaded.entity)) as Record<string, unknown>;
+        delete copy.id;
+        delete copy.createdAt;
+        delete copy.updatedAt;
+        // A copy of something that can be switched on starts switched off. It matches exactly what its
+        // original matches, and creating it enabled would switch the original off (`onAddConflict`).
+        // By kind rather than by the loaded entity's own `enabled`: that state lives in `enabled.json`,
+        // so a loaded entity does not always carry it, and `entity.create` reads its absence as "on".
+        if (kind === "mocks" || kind === "proxyRules" || kind === "mappings") copy.enabled = false;
+        else delete copy.enabled;
+        if (typeof copy.name === "string" && copy.name !== "") copy.name = `${copy.name} copy`;
+        const created = await registry.invoke("entity.create", { kind, entity: copy, workspaceId }, ctx) as
+            { entity?: Record<string, unknown>; error?: string };
+        if (!created.entity) throw new EngineError("CONFLICT", `Could not duplicate ${kind} entity "${id}": ${created.error ?? "create failed"}.`);
+        return { entity: created.entity };
     });
 
     registry.register("entity.setEnabled", async ({ workspaceId, kind, id, enabled }: EntitySetEnabledParams, ctx: CommandContext) => {

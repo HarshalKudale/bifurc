@@ -17,6 +17,7 @@ use gpui_kit::component::{
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Subscription, WeakEntity, Window, div, rems,
@@ -36,6 +37,10 @@ pub enum RequestTreeEvent {
     NewFolder { kind: RequestKind, parent: Option<String> },
     Rename(NodeRef),
     Delete(NodeRef),
+    /// Copy the request, next to the original.
+    Duplicate(NodeRef),
+    /// Open the REST folder with this id as a runner tab.
+    RunFolder(String),
 }
 
 pub struct RequestTree {
@@ -212,10 +217,19 @@ fn context_menu(entry: &TreeEntry, menu: PopupMenu, tree: &WeakEntity<RequestTre
     match node {
         NodeRef::Request { .. } => menu
             .item(PopupMenuItem::new("Open").on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))))
+            .item(PopupMenuItem::new("Duplicate").on_click(emitter(tree, RequestTreeEvent::Duplicate(node.clone()))))
             .separator()
             .item(PopupMenuItem::new("Rename…").on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
             .item(PopupMenuItem::new("Delete…").on_click(emitter(tree, RequestTreeEvent::Delete(node.clone())))),
         NodeRef::Folder { kind, ref id } => menu
+            // The engine runs folders of REST requests; the other types have no runner.
+            .when(kind == RequestKind::Rest, |menu| {
+                menu.item(
+                    PopupMenuItem::new("Open as runner")
+                        .on_click(emitter(tree, RequestTreeEvent::RunFolder(id.clone()))),
+                )
+                .separator()
+            })
             .item(
                 PopupMenuItem::new(format!("New {} request here", kind.label()))
                     .on_click(emitter(tree, RequestTreeEvent::NewRequest { kind, folder: Some(id.clone()) })),

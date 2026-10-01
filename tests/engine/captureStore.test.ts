@@ -5,8 +5,8 @@ import * as path from "path";
 import { setDataRoot, resetDataRootForTests } from "@bifurc/engine/workspace/paths";
 import { emitLog, type RequestLogEntry } from "@bifurc/engine/kernel/telemetry";
 import {
-  MAX_CAPTURE_ENTRIES, clearCapture, flushCapture, listCapture, removeCapture, resetCaptureForTests,
-  startCaptureRecording,
+  MAX_CAPTURE_ENTRIES, clearCapture, flushCapture, isCapturePaused, listCapture, removeCapture, resetCaptureForTests,
+  setCapturePaused, startCaptureRecording,
 } from "@bifurc/engine/capture/store";
 import { CommandRegistry } from "@bifurc/engine/kernel/registry";
 import { bus } from "@bifurc/engine/kernel/eventBus";
@@ -79,6 +79,21 @@ describe("capture store", () => {
     expect(listCapture("ws1")).toEqual([]);
   });
 
+  it("drops entries for a paused workspace only, and records again once resumed", () => {
+    emitLog(entry("before", "ws1"));
+    setCapturePaused("ws1", true);
+    expect(isCapturePaused("ws1")).toBe(true);
+    expect(isCapturePaused("ws2")).toBe(false);
+    emitLog(entry("while-paused", "ws1"));
+    emitLog(entry("other", "ws2"));
+    expect(listCapture("ws1").map((e) => e.id)).toEqual(["before"]);
+    expect(listCapture("ws2").map((e) => e.id)).toEqual(["other"]);
+
+    setCapturePaused("ws1", false);
+    emitLog(entry("after", "ws1"));
+    expect(listCapture("ws1").map((e) => e.id)).toEqual(["after", "before"]);
+  });
+
   it("stops recording once undone", () => {
     stop();
     emitLog(entry("late", "ws1"));
@@ -100,6 +115,23 @@ describe("capture.* commands", () => {
     expect(registry.invoke("capture.remove", { workspaceId: "ws1", ids: ["a"] }, ctx)).toEqual({ ok: true, removed: 1 });
     expect(registry.invoke("capture.clear", { workspaceId: "ws1" }, ctx)).toEqual({ ok: true });
     expect(() => registry.invoke("capture.remove", { workspaceId: "ws1", ids: [] }, ctx)).toThrow(/Invalid payload/);
+  });
+
+  it("setPaused stops recording, list reports it, and get/remove/clear keep working", () => {
+    const registry = new CommandRegistry();
+    registerCaptureCommands(registry);
+    const ctx = { bus };
+    emitLog(entry("a", "ws1"));
+    expect(registry.invoke("capture.setPaused", { workspaceId: "ws1", paused: true }, ctx)).toEqual({ paused: true });
+    emitLog(entry("b", "ws1"));
+    const listed = registry.invoke("capture.list", { workspaceId: "ws1" }, ctx) as { entries: RequestLogEntry[]; paused: boolean };
+    expect(listed.paused).toBe(true);
+    expect(listed.entries.map((e) => e.id)).toEqual(["a"]);
+    expect((registry.invoke("capture.get", { workspaceId: "ws1", id: "a" }, ctx) as { entry: RequestLogEntry }).entry.id).toBe("a");
+    expect(registry.invoke("capture.clear", { workspaceId: "ws1" }, ctx)).toEqual({ ok: true });
+    expect(registry.invoke("capture.setPaused", { workspaceId: "ws1", paused: false }, ctx)).toEqual({ paused: false });
+    expect((registry.invoke("capture.list", { workspaceId: "ws1" }, ctx) as { paused: boolean }).paused).toBe(false);
+    expect(() => registry.invoke("capture.setPaused", { workspaceId: "ws1" }, ctx)).toThrow(/Invalid payload/);
   });
 
   it("list summary returns the wire shape; get returns the full entry or null; build* accept a reference", async () => {

@@ -33,6 +33,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "entity.create": { valid: { kind: "mocks", entity: { name: "x" } }, invalid: { kind: "not-a-kind", entity: {} } },
   "entity.update": { valid: { kind: "mocks", entity: { id: "m1" } }, invalid: { kind: "mocks" } },
   "entity.delete": { valid: { kind: "mocks", id: "m1" }, invalid: { kind: "mocks" } },
+  "entity.duplicate": { valid: { workspaceId: "ws1", kind: "mocks", id: "m1" }, invalid: { kind: "mocks", id: "m1" } },
   "entity.load": { valid: { workspaceId: "ws1", kind: "mocks", id: "m1" }, invalid: { kind: "mocks", id: "m1" } },
   "entity.list": { valid: { workspaceId: "ws1", kind: "mocks" }, invalid: { kind: "mocks" } },
   "entity.setEnabled": {
@@ -237,6 +238,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "engine.shutdown": { valid: {}, invalid: { now: true } },
   "capture.list": { valid: { workspaceId: "ws1" }, invalid: {} },
   "capture.get": { valid: { workspaceId: "ws1", id: "log-1" }, invalid: { workspaceId: "ws1" } },
+  "capture.setPaused": { valid: { workspaceId: "ws1", paused: true }, invalid: { workspaceId: "ws1" } },
   "capture.clear": { valid: { workspaceId: "ws1" }, invalid: {} },
   "capture.remove": { valid: { workspaceId: "ws1", ids: ["log-1"] }, invalid: { workspaceId: "ws1", ids: [] } },
 
