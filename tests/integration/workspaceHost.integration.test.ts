@@ -494,25 +494,23 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
 });
 
 /**
- * The shell and the headless host compose the engine's commands and events through the **same** two calls.
- *
- * This used to compare two hand-kept lists of `register*Commands()` calls. The copy drifted anyway, one level
- * over: the event wiring beside the shell's list (`sync.status`, captured traffic) was never in the host.
- * So the guard is now structural — the shell may not register engine modules itself.
+ * The shell and the headless host are **one** composition: `main.ts` starts `createWorkspaceHost()`, which makes
+ * the two registration calls, builds the proxy and the edge, and opens the socket. The shell may not repeat any
+ * of that — it was hand-built there once, and the copy drifted.
  */
 describe("the Electron shell composes the engine the way the host does", () => {
-  const handlersSrc = () => fs.readFileSync(path.join(process.cwd(), "src", "ipc", "handlers.ts"), "utf-8");
+  const read = (...p: string[]) => fs.readFileSync(path.join(process.cwd(), ...p), "utf-8");
+  const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-  it("delegates to registerAllEngineCommands() and wireEngineEvents()", () => {
-    const src = handlersSrc();
-    expect(src).toMatch(/registerAllEngineCommands\(commandRegistry\);/);
-    expect(src).toMatch(/wireEngineEvents\(\);/);
+  it("main.ts starts the engine through createWorkspaceHost()", () => {
+    expect(read("src", "main.ts")).toMatch(/createWorkspaceHost\(/);
   });
 
-  it("registers no engine command module or kind on its own", () => {
-    const own = [...handlersSrc().matchAll(/^\s*(register[A-Za-z]+(?:Commands|Kinds))\(/gm)]
-      .map((m) => m[1])
-      .filter((name) => name !== "registerAllEngineCommands");
+  it("main.ts and handlers.ts build no listener and register no engine module on their own", () => {
+    const src = stripComments(read("src", "main.ts")) + stripComments(read("src", "ipc", "handlers.ts"));
+    expect(src).not.toMatch(/createProxyServer|createEdgeRouter|bindProxyInstance|bindEdgeInstance|startBlobSweeper|bootstrapWorkspaces/);
+    expect(src).not.toMatch(/registerAllEngineCommands|wireEngineEvents/);
+    const own = [...src.matchAll(/^\s*(register[A-Za-z]+(?:Commands|Kinds))\(/gm)].map((m) => m[1]);
     expect(own).toEqual([]);
   });
 });

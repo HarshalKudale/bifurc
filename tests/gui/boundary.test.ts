@@ -137,7 +137,7 @@ const CONSTRUCTS: Record<string, Construct> = {
   resolver: {
     what: "environment/header resolution",
     detect: /export\s+function\s+(resolveVars|resolveHeaders|mergeEnvVars)\s*\(/,
-    authority: "packages/engine/src/utils/resolve.ts — resolveVars, resolveHeaders, mergeEnvVars",
+    authority: "packages/engine/src/env/resolve.ts — resolveVars, resolveHeaders, mergeEnvVars",
   },
 
   /**
@@ -173,7 +173,7 @@ const CONSTRUCTS: Record<string, Construct> = {
   pipeline: {
     what: "pre/post/test script orchestration",
     detect: /(?<!function\s)\b(runPreScript|runPostScript|runTestScript)\s*\(/,
-    authority: "packages/engine/src/pipeline/runPipeline.ts — runRequestPipeline",
+    authority: "packages/engine/src/rest/runPipeline.ts — runRequestPipeline",
   },
 
   /**

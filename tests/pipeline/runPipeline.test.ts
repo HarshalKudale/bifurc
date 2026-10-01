@@ -20,7 +20,7 @@ import {
     runRequestPipeline,
     type PipelineRequest,
     type PipelineRawResponse,
-} from "@bifurc/engine/pipeline/runPipeline";
+} from "@bifurc/engine/rest/runPipeline";
 
 const WS = "ws-1";
 
