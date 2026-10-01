@@ -22,6 +22,11 @@ Workspaces
   workspaces list
   workspaces use <id>
 
+Environments (Global is always applied; the selected one overrides it; one extra env is auto-selected)
+  env list
+  env use <id|name>
+  env show                               The merged variables a request resolves against
+
 Mappings (<sub>.localhost → target)
   mappings list
   mappings add <sub|domain> <target> [--label <text>]
@@ -110,6 +115,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       case "engine": await engineCommand(args, out, dataDir); break;
       case "status": await cmd.status(ctx); break;
       case "workspaces": case "workspace": await cmd.workspaces(ctx, sub); break;
+      case "env": case "environments": case "environment": await cmd.env(ctx, sub); break;
       case "mappings": case "mapping": await cmd.mappings(ctx, sub); break;
       case "services": await cmd.services(ctx, sub); break;
       case "requests": case "request": await cmd.requests(ctx, sub); break;
