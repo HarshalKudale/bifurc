@@ -58,26 +58,36 @@ main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree
   - The left sidebar has the workspace switcher at the top (switch, create, rename, delete), the screens in
     groups, and Settings at the foot. Applications: Services, Health bar. Routing: Mappings, Proxy rules,
     Capture. API: Requests, Mocks. Workspace: Environments. It collapses to icons (`Ctrl+B`).
-  - The top bar has the two sidebar triggers and the breadcrumb: workspace, screen, and what is open on it.
+  - The top bar has the two sidebar triggers and the breadcrumb: workspace, screen, the folders the open
+    request or mock is filed under, and what is open.
   - The right sidebar (`Ctrl+Shift+B`) is reference only: **History** (the commits that touched the open
     entity's file), **Snippet** (the open request as cURL, `fetch`, axios or Python) and **Variables** (what
     `{{name}}` resolves against).
   - The footer shows the workspace's git state with a Publish/Sync button for the current screen's changes, the
     current screen's status, the forward proxy (select it to start or stop it) and the engine connection.
 - **Screens** are kept alive while another one is in front, so coming back to Requests finds its tabs as they were.
-  Switch with the sidebar or `Ctrl+1` to `Ctrl+7` (Services, Health bar, Mappings, Proxy rules, Capture,
-  Requests, Mocks); `Ctrl+,` opens Settings.
+  Switch with the sidebar or `Ctrl+1` to `Ctrl+8` (Services, Health bar, Mappings, Proxy rules, Capture,
+  Requests, Mocks, Environments); `Ctrl+,` opens Settings.
   - **Requests** and **Mocks** have a folder tree (`Ctrl+Shift+E` shows or hides it), the open items as tabs, and
     the active item's editor and response as docks you can drag to split or move.
   - **Mappings**, **Services** and **Health bar** are lists. **Proxy rules** and **Environments** are a list with
-    a detail pane. **Capture** lists the traffic the proxy has seen and shows one exchange in detail; an exchange
-    can be turned into a saved request or a mock.
+    a detail pane.
+  - **Capture** works like a browser's network tab. The list shows each exchange's name, method, status, type,
+    how the proxy handled it, size and time. Selecting one fetches it from the engine and shows its headers,
+    its payload (query parameters and request body) and its response; an image is shown as an image, and other
+    data can be saved to a file. **Save as request** and **Save as mock** create the entity and open it.
   - **Settings**: Appearance (theme, text size; kept by this client only), Proxy, HTTPS (interception and the
     root certificate: generate, remove) and About (versions, and a link to the releases page).
 - **Requests** are one tree. REST, GraphQL, gRPC, SOAP and **WebSocket** requests live in their own folders,
   are created from the command palette or the keys below, and are edited the same way as REST ones. A WebSocket
   is just another request type: its stream shows in the Response panel, and the connection belongs to the
   engine, so it survives closing the tab.
+- **Bodies**: a REST request's body is none, JSON, text, XML, HTML, form fields, **multipart** (fields and
+  files) or one **file** sent as it is. A response that is an image is previewed, and any response that is not
+  text can be saved to a file.
+- **A mock's body follows its response type.** The type is the mock's `Content-Type` header, which a mock made
+  from captured traffic takes from the real server. A text type is edited as text; an image or other data type
+  is answered with a file, and a file of another type is refused.
 - **Save model**: a new request, mock, rule or environment is a **draft**, and Save creates it. A saved one has
   no Save step: its edits are written a moment after they are made, or at once when you leave it. Closing a
   draft you typed into asks first; a saved item is simply closed.
@@ -90,8 +100,12 @@ main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree
   - **Sync** commits the entity's file, and pushes it if the workspace has a remote.
   - **Revert** puts the entity's file back to the last synced version.
   - **Delete** removes the entity.
-- **Command palette**: `Ctrl+K` / `Ctrl+Shift+P`. Commands show the keys they are bound to; requests and
-  environments are searchable.
+  - For a request or a mock the bar also shows its **folder**. Choosing another one moves it: a saved item
+    with its next write, a draft when it is created.
+- **Command palette**: `Ctrl+K` / `Ctrl+Shift+P`. It opens any saved request or mock in a tab, switches the
+  environment, and lists every screen's actions: new request of each type, new folder, new mock, new mapping,
+  new proxy rule, new health check, new environment, pause or clear capture, start or stop the forward proxy,
+  and Save, Sync, Revert, Delete and Close for the open item. Commands show the keys they are bound to.
 
 `Ctrl` is `Cmd` on macOS.
 
@@ -100,22 +114,22 @@ main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree
 | `Ctrl+K`, `Ctrl+Shift+P` | Command palette                     |
 | `Ctrl+N`           | New REST request                          |
 | `Ctrl+Shift+N`     | New WebSocket request                     |
+| `Ctrl+Shift+M`     | New mock                                  |
 | `Ctrl+S`           | Save (creates a draft; writes now if saved) |
 | `Ctrl+Enter`       | Send, or connect                          |
 | `Ctrl+W`           | Close the open tab                        |
 | `Ctrl+B`           | Show or hide the left sidebar             |
 | `Ctrl+Shift+B`     | Show or hide the right sidebar            |
 | `Ctrl+Shift+E`     | Show or hide the folder tree              |
-| `Ctrl+1` to `7`    | Go to a screen (see above)                |
+| `Ctrl+1` to `8`    | Go to a screen (see above)                |
 | `Ctrl+,`           | Settings                                  |
 | `F5`               | Reload the workspace                      |
 | `Ctrl+Q`           | Quit                                      |
 
-GraphQL, gRPC and SOAP requests, new folders and Revert have commands in the palette but no key.
+Everything else the palette lists has a command but no key.
 
 ## What is not here yet
 
-- Multipart and binary request bodies (a request body is none, JSON, text, XML, HTML or form fields).
 - Import and export.
 - Setting up a git remote (the UI only uses one that exists), and certificate export or import (Settings can
   generate and remove the root certificate).

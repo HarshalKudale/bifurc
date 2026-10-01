@@ -304,6 +304,7 @@ impl RequestsScreen {
         let saved = session.saved_id(cx);
         match (action, saved) {
             (EntityAction::Save, _) => session.save(SaveMode::Explicit, window, cx),
+            (EntityAction::Move(folder), _) => session.set_folder(folder, cx),
             (EntityAction::Close, _) => self.close_tab(ix, window, cx),
             (EntityAction::Sync, Some(id)) => self.model.update(cx, |model, cx| model.sync_entity(&id, cx)),
             (EntityAction::Revert, Some(id)) => {

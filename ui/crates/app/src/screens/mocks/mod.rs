@@ -32,14 +32,14 @@ use self::editor::{MockEditor, MockEvent};
 use crate::{
     app_model::{AppModel, Load, ModelEvent},
     components::{
-        EntityAction, EntityBar,
+        EntityAction, EntityBar, FolderPicker,
         dialogs::{PromptField, confirm_danger, prompt},
         entity_bar, page,
     },
     engine::{call, failure, patch_entity},
     model::{
         git::FileState,
-        tree::{FolderRow, ItemRow, TreeKey, TreeNode, build_tree},
+        tree::{ItemRow, TreeKey, TreeNode, build_tree, folder_path},
     },
     panels::host::{HostPanel, PartView},
     preferences::Preferences,
@@ -156,11 +156,7 @@ impl MocksScreen {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter.read(cx).value().to_string();
         let config = self.model.read(cx).config();
-        let folders: Vec<FolderRow> = config
-            .mock_folders
-            .iter()
-            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
-            .collect();
+        let folders = config.mock_folder_rows();
         let items: Vec<ItemRow> = config
             .mocks
             .iter()
@@ -190,7 +186,11 @@ impl MocksScreen {
     /// The open mock, for the breadcrumb and the right sidebar.
     pub fn active_target(&self, cx: &App) -> Option<ActiveTarget> {
         let editor = self.active_editor()?.read(cx);
-        Some(ActiveTarget::named(editor.title(cx), editor.saved_id().map(str::to_owned), editor.name_input().clone()))
+        let folders = self.model.read(cx).config().mock_folder_rows();
+        Some(ActiveTarget {
+            folders: editor.folder_id().map(|id| folder_path(&folders, id)).unwrap_or_default(),
+            ..ActiveTarget::named(editor.title(cx), editor.saved_id().map(str::to_owned), editor.name_input().clone())
+        })
     }
 
     fn set_active(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
@@ -204,7 +204,7 @@ impl MocksScreen {
         cx.notify();
     }
 
-    fn open_mock(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_mock(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let key = TabKey::Saved(id.to_owned());
         if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
             self.set_active(Some(ix), cx);
@@ -290,6 +290,7 @@ impl MocksScreen {
         let saved_id = editor.read(cx).saved_id().map(str::to_owned);
         match action {
             EntityAction::Save => editor.update(cx, |editor, cx| editor.save(SaveMode::Explicit, window, cx)),
+            EntityAction::Move(folder) => editor.update(cx, |editor, cx| editor.set_folder(folder, cx)),
             EntityAction::Close => self.close_tab(ix, window, cx),
             EntityAction::Sync => {
                 if let Some(id) = saved_id {
@@ -343,7 +344,7 @@ impl MocksScreen {
         self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
     }
 
-    fn prompt_new_folder(&mut self, parent: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn prompt_new_folder(&mut self, parent: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         prompt(
             cx.weak_entity(),
             window,
@@ -692,6 +693,10 @@ impl Render for MocksScreen {
                 unsaved: saved_id.is_some() && editor.is_dirty(cx),
                 problem: editor.problem(cx),
                 closable: true,
+                folder: Some(FolderPicker::new(
+                    editor.folder_id().map(str::to_owned),
+                    &self.model.read(cx).config().mock_folder_rows(),
+                )),
                 ..EntityBar::of(self.model.read(cx), saved_id.as_deref())
             }
         });
