@@ -160,7 +160,9 @@ impl Shell {
             Screen::Mappings => plural(config.mappings.len(), "mapping"),
             Screen::ProxyRules => plural(config.proxy_rule_count, "rule"),
             Screen::Environments => plural(config.selectable_environments().count(), "environment"),
-            Screen::Services | Screen::HealthBar | Screen::Capture => self.screen_note.clone().unwrap_or_default(),
+            Screen::Services => self.services.read(cx).status_line(),
+            Screen::HealthBar => self.healthbar.read(cx).status_line(),
+            Screen::Capture => self.capture.read(cx).status_line(cx),
             Screen::Settings => String::new(),
         }
     }

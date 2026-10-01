@@ -32,7 +32,8 @@ use crate::{
     model::{RequestKind, snippet::RequestParts},
     preferences::Preferences,
     screens::{
-        environments::EnvironmentsScreen, mappings::MappingsScreen, mocks::MocksScreen, requests::RequestsScreen,
+        capture::CaptureScreen, environments::EnvironmentsScreen, healthbar::HealthBarScreen, mappings::MappingsScreen,
+        mocks::MocksScreen, proxy_rules::ProxyRulesScreen, requests::RequestsScreen, services::ServicesScreen,
         settings::SettingsScreen,
     },
 };
@@ -52,13 +53,15 @@ pub struct Shell {
     screen: Screen,
     requests: Entity<RequestsScreen>,
     mocks: Entity<MocksScreen>,
+    services: Entity<ServicesScreen>,
+    healthbar: Entity<HealthBarScreen>,
+    proxy_rules: Entity<ProxyRulesScreen>,
+    capture: Entity<CaptureScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
     settings: Entity<SettingsScreen>,
     right: Entity<RightSidebar>,
     right_open: bool,
-    /// A line a screen without countable entities gives the footer.
-    screen_note: Option<String>,
     palette: Entity<CommandState>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -68,6 +71,10 @@ impl Shell {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let requests = cx.new(|cx| RequestsScreen::new(model.clone(), window, cx));
         let mocks = cx.new(|cx| MocksScreen::new(model.clone(), window, cx));
+        let services = cx.new(|cx| ServicesScreen::new(model.clone(), window, cx));
+        let healthbar = cx.new(|cx| HealthBarScreen::new(model.clone(), window, cx));
+        let proxy_rules = cx.new(|cx| ProxyRulesScreen::new(model.clone(), window, cx));
+        let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
@@ -80,6 +87,10 @@ impl Shell {
             // The breadcrumb and the right sidebar follow what is open on the screen in front.
             cx.observe_in(&requests, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             cx.observe_in(&mocks, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
+            // These screens give the footer a line that changes as they work.
+            cx.observe(&services, |_, _, cx| cx.notify()),
+            cx.observe(&healthbar, |_, _, cx| cx.notify()),
+            cx.observe(&capture, |_, _, cx| cx.notify()),
         ];
 
         let handle = ShellHandle(cx.weak_entity());
@@ -90,12 +101,15 @@ impl Shell {
             screen: Screen::Requests,
             requests,
             mocks,
+            services,
+            healthbar,
+            proxy_rules,
+            capture,
             mappings,
             environments,
             settings,
             right,
             right_open: false,
-            screen_note: None,
             palette,
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -150,14 +164,16 @@ impl Shell {
             Screen::Mappings => Some(self.mappings.clone().into()),
             Screen::Environments => Some(self.environments.clone().into()),
             Screen::Settings => Some(self.settings.clone().into()),
-            Screen::Services | Screen::HealthBar | Screen::ProxyRules | Screen::Capture => None,
+            Screen::Services => Some(self.services.clone().into()),
+            Screen::HealthBar => Some(self.healthbar.clone().into()),
+            Screen::ProxyRules => Some(self.proxy_rules.clone().into()),
+            Screen::Capture => Some(self.capture.clone().into()),
         }
     }
 
     pub fn show_screen(&mut self, screen: Screen, window: &mut Window, cx: &mut Context<Self>) {
         if self.screen != screen {
             self.screen = screen;
-            self.screen_note = None;
             self.sync_right_sidebar(window, cx);
         }
         cx.notify();
@@ -199,6 +215,7 @@ impl Shell {
         match self.screen {
             Screen::Requests => self.requests.update(cx, |screen, cx| screen.save_active(window, cx)),
             Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.save_active(window, cx)),
+            Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.save(window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.save(window, cx)),
             _ => {}
         }
@@ -208,6 +225,7 @@ impl Shell {
         match self.screen {
             Screen::Requests => self.requests.update(cx, |screen, cx| screen.revert_active(window, cx)),
             Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.revert_active(window, cx)),
+            Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.revert(window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.revert(window, cx)),
             _ => {}
         }
