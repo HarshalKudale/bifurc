@@ -12,7 +12,7 @@
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    button::Button,
     group_box::GroupBoxVariant,
     h_flex,
     link::Link,
