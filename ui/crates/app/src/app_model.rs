@@ -1,8 +1,9 @@
 //! The workspace as the engine reports it, and the one place the engine's events are received.
 //!
-//! `AppModel` holds no domain state of its own. It keeps the latest [`ConfigSnapshot`], replaces it when the
-//! engine says something changed, and re-broadcasts the engine's socket events to whichever sessions care.
-//! Everything that changes the workspace is an engine command; this model then re-reads.
+//! `AppModel` holds no domain state of its own. It keeps the latest [`ConfigSnapshot`], the workspace's git
+//! status and the proxy's status, replaces them when the engine says something changed, and re-broadcasts
+//! the engine's socket events to whichever views care. Everything that changes the workspace is an engine
+//! command; this model then re-reads.
 
 use bifurc_engine_client::{ClientError, EngineClient, Incoming};
 use futures::StreamExt as _;
@@ -11,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{EngineSession, call, describe},
-    model::ConfigSnapshot,
+    model::{ConfigSnapshot, git::GitStatus},
 };
 
 /// Wire names of the engine events the UI listens to.
@@ -19,10 +20,12 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 6] = [
+const EVENTS: [&str; 8] = [
     "event.entity.changed",
     "event.sync.entityStatus",
+    "event.sync.status",
     "event.settings.changed",
+    "event.server.error",
     "event.ws.status",
     "event.ws.message",
     "event.log.entry",
@@ -33,6 +36,16 @@ pub enum Load {
     Loading,
     Ready,
     Failed(String),
+}
+
+/// The reverse proxy on the edge port, as `server.status` reports it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProxyStatus {
+    pub running: bool,
+    pub port: u16,
+    pub error: Option<String>,
+    /// A start or stop is in flight.
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -54,10 +67,14 @@ pub enum ModelEvent {
 pub struct AppModel {
     engine: EngineSession,
     config: ConfigSnapshot,
+    git: GitStatus,
+    proxy: ProxyStatus,
     load: Load,
     refreshing: bool,
     refresh_again: bool,
     connection_lost: bool,
+    /// A publish or sync is in flight.
+    publishing: bool,
 }
 
 impl EventEmitter<ModelEvent> for AppModel {}
@@ -67,10 +84,13 @@ impl AppModel {
         let mut model = Self {
             engine,
             config: ConfigSnapshot::default(),
+            git: GitStatus::default(),
+            proxy: ProxyStatus::default(),
             load: Load::Loading,
             refreshing: false,
             refresh_again: false,
             connection_lost: false,
+            publishing: false,
         };
         model.listen(cx);
         model.refresh(cx);
@@ -89,6 +109,14 @@ impl AppModel {
         &self.config
     }
 
+    pub fn git(&self) -> &GitStatus {
+        &self.git
+    }
+
+    pub fn proxy(&self) -> &ProxyStatus {
+        &self.proxy
+    }
+
     pub fn load(&self) -> &Load {
         &self.load
     }
@@ -99,6 +127,10 @@ impl AppModel {
 
     pub fn is_connection_lost(&self) -> bool {
         self.connection_lost
+    }
+
+    pub fn is_publishing(&self) -> bool {
+        self.publishing
     }
 
     fn listen(&mut self, cx: &mut Context<Self>) {
@@ -133,6 +165,8 @@ impl AppModel {
             }
             Incoming::Event(event) => match event.event.as_str() {
                 "event.entity.changed" | "event.sync.entityStatus" | "event.settings.changed" => self.refresh(cx),
+                "event.sync.status" => self.refresh_git(cx),
+                "event.server.error" => self.refresh_proxy(cx),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
@@ -164,6 +198,8 @@ impl AppModel {
                 if !previous_workspace.is_empty() && previous_workspace != self.config.active_workspace_id {
                     cx.emit(ModelEvent::WorkspaceSwitched);
                 }
+                self.refresh_git(cx);
+                self.refresh_proxy(cx);
             }
             Err(message) => {
                 // Keep showing the last good snapshot; only a first load has nothing to fall back on.
@@ -179,11 +215,135 @@ impl AppModel {
         }
     }
 
+    /// Re-reads which files differ from the last commit. A failure keeps the previous status: the footer
+    /// would rather be a moment stale than empty.
+    pub fn refresh_git(&mut self, cx: &mut Context<Self>) {
+        if self.workspace_id().is_empty() {
+            return;
+        }
+        let client = self.engine.client.clone();
+        let workspace_id = self.workspace_id().to_owned();
+        let payload = json!({ "workspaceId": workspace_id });
+        call(&client, cx, "sync.getEntityStatus", payload, move |this, outcome, cx| {
+            // An answer for a workspace that is no longer the active one describes the wrong repository.
+            if let Ok(value) = outcome
+                && this.workspace_id() == workspace_id
+            {
+                this.git = GitStatus::from_value(&value);
+                cx.notify();
+            }
+        });
+    }
+
+    pub fn refresh_proxy(&mut self, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "server.status", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.proxy = ProxyStatus {
+                    running: value.get("running").and_then(Value::as_bool).unwrap_or(false),
+                    port: value.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0),
+                    error: value.get("error").and_then(Value::as_str).map(str::to_owned),
+                    busy: false,
+                };
+                cx.notify();
+            }
+        });
+    }
+
+    /// Starts the proxy if it is stopped, stops it if it is running.
+    pub fn toggle_proxy(&mut self, cx: &mut Context<Self>) {
+        if self.proxy.busy {
+            return;
+        }
+        let action = if self.proxy.running { "server.stop" } else { "server.start" };
+        self.run_proxy_command(action, cx);
+    }
+
+    pub fn restart_proxy(&mut self, cx: &mut Context<Self>) {
+        if !self.proxy.busy {
+            self.run_proxy_command("server.restart", cx);
+        }
+    }
+
+    fn run_proxy_command(&mut self, action: &'static str, cx: &mut Context<Self>) {
+        self.proxy.busy = true;
+        cx.notify();
+        let client = self.engine.client.clone();
+        call(&client, cx, action, json!({}), |this, outcome, cx| {
+            if let Err(error) = outcome {
+                cx.emit(ModelEvent::Notice(format!("Couldn't change the proxy. {}", describe(&error))));
+            }
+            // Whatever the command said, the status is the authority on what is running now.
+            this.proxy.busy = false;
+            this.refresh_proxy(cx);
+        });
+    }
+
+    /// Commits `paths` (and pushes, when the workspace has a remote).
+    pub fn publish(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        if self.publishing {
+            return;
+        }
+        self.publishing = true;
+        cx.notify();
+        let client = self.engine.client.clone();
+        // With changed files, publish them (the engine commits, and pushes when there is a remote). With none,
+        // what is left to do is push the commits the remote has not seen.
+        let (action, payload) = if paths.is_empty() {
+            ("sync.push", json!({ "workspaceId": self.workspace_id() }))
+        } else {
+            ("entity.publish", json!({ "workspaceId": self.workspace_id(), "paths": paths }))
+        };
+        call(&client, cx, action, payload, |this, outcome, cx| {
+            this.publishing = false;
+            let failure = match outcome {
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
+                    Some(result.get("error").and_then(Value::as_str).unwrap_or("The engine refused.").to_owned())
+                }
+                Ok(_) => None,
+                Err(error) => Some(describe(&error)),
+            };
+            if let Some(message) = failure {
+                cx.emit(ModelEvent::Notice(format!("Couldn't publish. {message}")));
+            }
+            this.refresh_git(cx);
+            cx.notify();
+        });
+    }
+
     pub fn set_active_workspace(&mut self, id: &str, cx: &mut Context<Self>) {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
             Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't switch workspace. {}", describe(&error)))),
+        });
+    }
+
+    /// Creates a workspace and switches to it.
+    pub fn add_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "workspace.add", json!({ "name": name }), |this, outcome, cx| match outcome {
+            Ok(created) => match created.get("id").and_then(Value::as_str) {
+                Some(id) => this.set_active_workspace(&id.to_owned(), cx),
+                None => this.refresh(cx),
+            },
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't create the workspace. {}", describe(&error)))),
+        });
+    }
+
+    pub fn rename_workspace(&mut self, id: &str, name: &str, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "workspace.rename", json!({ "id": id, "name": name }), |this, outcome, cx| match outcome {
+            Ok(_) => this.refresh(cx),
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't rename the workspace. {}", describe(&error)))),
+        });
+    }
+
+    pub fn delete_workspace(&mut self, id: &str, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "workspace.delete", json!({ "id": id }), |this, outcome, cx| match outcome {
+            Ok(_) => this.refresh(cx),
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't delete the workspace. {}", describe(&error)))),
         });
     }
 
@@ -196,12 +356,28 @@ impl AppModel {
         });
     }
 
-    pub fn set_mapping_enabled(&mut self, id: &str, enabled: bool, cx: &mut Context<Self>) {
+    /// Turns a mapping, mock or proxy rule on or off. `kind` is the command's own name for it: `mappings`,
+    /// `mocks` or `rules`.
+    pub fn set_enabled(&mut self, kind: &'static str, id: &str, enabled: bool, cx: &mut Context<Self>) {
         let client = self.engine.client.clone();
-        let payload = json!({ "workspaceId": self.workspace_id(), "kind": "mappings", "id": id, "enabled": enabled });
+        let payload = json!({ "workspaceId": self.workspace_id(), "kind": kind, "id": id, "enabled": enabled });
         call(&client, cx, "entity.setEnabled", payload, |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't change the mapping. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't change it. {}", describe(&error)))),
         });
+    }
+
+    /// Changes engine-wide settings: ports, TLS, tray behavior. `patch` holds only what changes.
+    pub fn update_settings(&mut self, patch: Value, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "settings.update", patch, |this, outcome, cx| match outcome {
+            Ok(_) => this.refresh(cx),
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't change the setting. {}", describe(&error)))),
+        });
+    }
+
+    /// A message for the user from a view that has no window in hand.
+    pub fn notice(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+        cx.emit(ModelEvent::Notice(text.into()));
     }
 }

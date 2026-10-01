@@ -7,13 +7,12 @@
 //! an edited request sends the target it holds. The engine resolves environment variables either way.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState},
     notification::Notification,
-    spinner::Spinner,
     v_flex,
 };
 use gpui_kit::{
@@ -28,10 +27,11 @@ use super::{
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
+    components::{KeyValueEvent, KeyValueTable, VarEditor, page},
     engine::{call, call_in, describe},
     model::{
         RequestKind,
-        http::{format_headers, parse_headers},
+        http::{header_map, header_pairs},
         socket::SocketView,
     },
 };
@@ -42,7 +42,7 @@ const DEFAULT_NAME: &str = "New WebSocket";
 struct Fields {
     name: String,
     url: String,
-    headers: String,
+    headers: Vec<(String, String)>,
 }
 
 pub struct WsSession {
@@ -55,8 +55,8 @@ pub struct WsSession {
     entity: Map<String, Value>,
     load: LoadState,
     name: Entity<InputState>,
-    url: Entity<InputState>,
-    headers: Entity<TextareaState>,
+    url: VarEditor,
+    headers: Entity<KeyValueTable>,
     baseline: Fields,
     connection: Entity<SocketConnection>,
     saving: bool,
@@ -76,23 +76,26 @@ impl WsSession {
         let workspace_id = model.read(cx).workspace_id().to_owned();
         let socket_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Connection name"));
-        let url = cx.new(|cx| InputState::new(window, cx).placeholder("wss://example.test/socket"));
-        let headers = cx.new(|cx| TextareaState::new(window, cx).placeholder("Header-Name: value"));
+        let url = VarEditor::line("wss://example.test/socket", window, cx);
+        let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
         let connection = cx.new(|cx| SocketConnection::new(window, cx));
 
         let mut subscriptions = Vec::new();
-        for input in [&name, &url] {
-            subscriptions.push(cx.subscribe_in(input, window, |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::Change => cx.emit(SessionEvent::Changed),
+        subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
+            InputEvent::Change => this.changed(cx),
+            InputEvent::PressEnter { .. } => this.connect(window, cx),
+            _ => {}
+        }));
+        subscriptions.push(cx.subscribe_in(
+            url.state(),
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => this.changed(cx),
                 InputEvent::PressEnter { .. } => this.connect(window, cx),
                 _ => {}
-            }));
-        }
-        subscriptions.push(cx.subscribe_in(&headers, window, |_, _, event: &InputEvent, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.emit(SessionEvent::Changed);
-            }
-        }));
+            },
+        ));
+        subscriptions.push(cx.subscribe(&headers, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
         subscriptions.push(cx.subscribe_in(&connection, window, |this, _, event: &ConnectionEvent, window, cx| {
             match event {
                 ConnectionEvent::Send(text) => this.send_message(text.clone(), window, cx),
@@ -110,7 +113,7 @@ impl WsSession {
             _ => {}
         }));
 
-        let baseline = Fields { name: DEFAULT_NAME.to_owned(), url: String::new(), headers: String::new() };
+        let baseline = Fields { name: DEFAULT_NAME.to_owned(), url: String::new(), headers: Vec::new() };
         let mut this = Self {
             model,
             workspace_id,
@@ -202,11 +205,16 @@ impl WsSession {
         self.load == LoadState::Ready && self.fields(cx) != self.baseline
     }
 
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        cx.emit(SessionEvent::Changed);
+        cx.notify();
+    }
+
     fn fields(&self, cx: &gpui_kit::App) -> Fields {
         Fields {
             name: self.name.read(cx).value().to_string(),
-            url: self.url.read(cx).value().trim().to_owned(),
-            headers: format_headers(&Value::Object(parse_headers(&self.headers.read(cx).value()))),
+            url: self.url.line_value(cx),
+            headers: self.headers.read(cx).pairs(cx),
         }
     }
 
@@ -214,14 +222,14 @@ impl WsSession {
         Fields {
             name: entity.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
             url: entity.get("url").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
-            headers: format_headers(entity.get("headers").unwrap_or(&Value::Null)),
+            headers: header_pairs(entity.get("headers").unwrap_or(&Value::Null)),
         }
     }
 
     fn apply_fields(&mut self, fields: &Fields, window: &mut Window, cx: &mut Context<Self>) {
         self.name.update(cx, |s, cx| s.set_value(fields.name.clone(), window, cx));
-        self.url.update(cx, |s, cx| s.set_value(fields.url.clone(), window, cx));
-        self.headers.update(cx, |s, cx| s.set_value(fields.headers.clone(), window, cx));
+        self.url.set_value(fields.url.clone(), window, cx);
+        self.headers.update(cx, |table, cx| table.set_pairs(&fields.headers, window, cx));
     }
 
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
@@ -252,7 +260,7 @@ impl WsSession {
         let mut entity = self.entity.clone();
         entity.insert("name".into(), json!(name));
         entity.insert("url".into(), json!(fields.url));
-        entity.insert("headers".into(), Value::Object(parse_headers(&fields.headers)));
+        entity.insert("headers".into(), Value::Object(header_map(&fields.headers)));
         entity.insert("workspaceId".into(), json!(self.workspace_id));
         if let Some(folder) = &self.folder_id {
             entity.insert("folderId".into(), json!(folder));
@@ -298,7 +306,7 @@ impl WsSession {
                         let mut saved = this.entity.clone();
                         saved.insert("name".into(), json!(name));
                         saved.insert("url".into(), json!(fields.url));
-                        saved.insert("headers".into(), Value::Object(parse_headers(&fields.headers)));
+                        saved.insert("headers".into(), Value::Object(header_map(&fields.headers)));
                         this.adopt_entity(saved, window, cx);
                     }
                     cx.emit(SessionEvent::Changed);
@@ -327,11 +335,10 @@ impl WsSession {
                 "workspaceId": self.workspace_id,
                 "socketId": self.socket_id,
                 "url": fields.url,
-                "headers": parse_headers(&fields.headers),
+                "headers": header_map(&fields.headers),
             }),
         };
         let client = self.model.read(cx).client().clone();
-        let url = fields.url.clone();
         call_in(&client, window, cx, "ws.connect", payload, move |_this, outcome, window, cx| {
             let failure = match outcome {
                 Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => Some(
@@ -344,9 +351,8 @@ impl WsSession {
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
-            match failure {
-                Some(message) => window.push_notification(Notification::error(message).title("Couldn't connect"), cx),
-                None => cx.emit(SessionEvent::Activity(format!("Connecting to {url}"))),
+            if let Some(message) = failure {
+                window.push_notification(Notification::error(message).title("Couldn't connect"), cx);
             }
         });
     }
@@ -393,17 +399,7 @@ impl Render for WsSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => {
-                return v_flex()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .bg(theme.background)
-                    .child(Spinner::new())
-                    .child("Loading request…")
-                    .into_any_element();
-            }
+            LoadState::Loading => return page::loading("Loading request…"),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
@@ -428,7 +424,7 @@ impl Render for WsSession {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().child(Input::new(&self.name).appearance(false)))
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.name).small().appearance(false)))
                     .child(
                         Button::new("revert-socket")
                             .ghost()
@@ -444,20 +440,23 @@ impl Render for WsSession {
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),
             )
-            .child(h_flex().gap_2().child(div().flex_1().child(Input::new(&self.url).disabled(state.is_live()))).child(
-                if state.is_live() {
-                    Button::new("disconnect-socket")
-                        .label("Disconnect")
-                        .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
-                } else {
-                    Button::new("connect-socket")
-                        .primary()
-                        .label("Connect")
-                        .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
-                },
-            ))
-            .child(div().text_sm().text_color(theme.muted_foreground).child("Headers"))
-            .child(div().flex_1().min_h_0().child(Textarea::new(&self.headers).h_full().disabled(state.is_live())))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(self.url.line_field(cx).disabled(state.is_live())))
+                    .child(if state.is_live() {
+                        Button::new("disconnect-socket")
+                            .label("Disconnect")
+                            .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
+                    } else {
+                        Button::new("connect-socket")
+                            .primary()
+                            .label("Connect")
+                            .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
+                    }),
+            )
+            .child(page::section_label("Headers", cx))
+            .child(div().flex_1().min_h_0().child(self.headers.clone()))
             .into_any_element()
     }
 }

@@ -1,0 +1,179 @@
+//! A folder tree over one kind of saved entity: folders first, then items, each sorted by name.
+//!
+//! The requests explorer has its own builder because it merges five request types; this is the same shape
+//! for a screen with a single type, such as mocks.
+
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FolderRow<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub parent_id: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemRow<'a> {
+    pub id: &'a str,
+    pub label: String,
+    pub folder_id: Option<&'a str>,
+    /// Extra text a filter may match besides the label.
+    pub detail: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TreeNode {
+    /// `folder:<id>` or `item:<id>`; stable across refreshes.
+    pub key: String,
+    pub label: String,
+    pub children: Vec<TreeNode>,
+}
+
+impl TreeNode {
+    pub fn is_folder(&self) -> bool {
+        self.key.starts_with("folder:")
+    }
+}
+
+/// What a tree key refers to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeKey {
+    Folder(String),
+    Item(String),
+}
+
+impl TreeKey {
+    pub fn parse(key: &str) -> Option<Self> {
+        if let Some(id) = key.strip_prefix("folder:") {
+            Some(Self::Folder(id.to_owned()))
+        } else {
+            key.strip_prefix("item:").map(|id| Self::Item(id.to_owned()))
+        }
+    }
+
+    pub fn encode(&self) -> String {
+        match self {
+            Self::Folder(id) => format!("folder:{id}"),
+            Self::Item(id) => format!("item:{id}"),
+        }
+    }
+}
+
+/// Builds the tree. A non-empty `filter` keeps items whose label or detail contains it (case-insensitive)
+/// and the folders above them; a folder whose own name matches is kept with everything inside it. Items and
+/// folders whose parent no longer exists surface at the top rather than being lost.
+pub fn build_tree(folders: &[FolderRow], items: &[ItemRow], filter: &str) -> Vec<TreeNode> {
+    let needle = filter.trim().to_lowercase();
+    let known: HashSet<&str> = folders.iter().map(|f| f.id).collect();
+    let mut seen = HashSet::new();
+    level(folders, items, &known, None, &needle, false, &mut seen)
+}
+
+fn level<'a>(
+    folders: &[FolderRow<'a>],
+    items: &[ItemRow<'a>],
+    known: &HashSet<&str>,
+    parent: Option<&str>,
+    needle: &str,
+    keep_all: bool,
+    seen: &mut HashSet<&'a str>,
+) -> Vec<TreeNode> {
+    let filtering = !needle.is_empty();
+    let is_here = |candidate: Option<&str>| match (candidate, parent) {
+        (None, None) => true,
+        (Some(c), Some(p)) => c == p,
+        (Some(c), None) => !known.contains(c),
+        (None, Some(_)) => false,
+    };
+
+    let mut nodes: Vec<TreeNode> = Vec::new();
+    for folder in folders.iter().filter(|f| is_here(f.parent_id)) {
+        if !seen.insert(folder.id) {
+            continue; // a cycle in the stored parents; the first visit wins
+        }
+        let own_match = filtering && folder.name.to_lowercase().contains(needle);
+        let children = level(folders, items, known, Some(folder.id), needle, keep_all || own_match, seen);
+        if !filtering || keep_all || own_match || !children.is_empty() {
+            nodes.push(TreeNode { key: format!("folder:{}", folder.id), label: folder.name.to_owned(), children });
+        }
+    }
+    nodes.sort_by_key(|n| n.label.to_lowercase());
+
+    let mut leaves: Vec<TreeNode> = items
+        .iter()
+        .filter(|item| is_here(item.folder_id))
+        .filter(|item| {
+            !filtering
+                || keep_all
+                || item.label.to_lowercase().contains(needle)
+                || item.detail.to_lowercase().contains(needle)
+        })
+        .map(|item| TreeNode { key: format!("item:{}", item.id), label: item.label.clone(), children: Vec::new() })
+        .collect();
+    leaves.sort_by_key(|n| n.label.to_lowercase());
+    nodes.extend(leaves);
+    nodes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folders() -> Vec<FolderRow<'static>> {
+        vec![
+            FolderRow { id: "f1", name: "Users", parent_id: None },
+            FolderRow { id: "f2", name: "admin", parent_id: Some("f1") },
+        ]
+    }
+
+    fn items() -> Vec<ItemRow<'static>> {
+        vec![
+            ItemRow { id: "a", label: "list".into(), folder_id: Some("f1"), detail: "/users" },
+            ItemRow { id: "b", label: "Create".into(), folder_id: Some("f2"), detail: "/users" },
+            ItemRow { id: "c", label: "Ping".into(), folder_id: None, detail: "/ping" },
+            ItemRow { id: "d", label: "Stranded".into(), folder_id: Some("gone"), detail: "" },
+        ]
+    }
+
+    fn labels(nodes: &[TreeNode]) -> Vec<&str> {
+        nodes.iter().map(|n| n.label.as_str()).collect()
+    }
+
+    #[test]
+    fn folders_come_first_and_orphans_surface_at_the_top() {
+        let tree = build_tree(&folders(), &items(), "");
+        assert_eq!(labels(&tree), ["Users", "Ping", "Stranded"]);
+        assert_eq!(labels(&tree[0].children), ["admin", "list"]);
+        assert!(tree[0].is_folder() && !tree[1].is_folder());
+    }
+
+    #[test]
+    fn a_filter_keeps_matches_and_the_way_to_them() {
+        let tree = build_tree(&folders(), &items(), "create");
+        assert_eq!(labels(&tree), ["Users"]);
+        assert_eq!(labels(&tree[0].children[0].children), ["Create"]);
+        assert_eq!(labels(&build_tree(&folders(), &items(), "/ping")), ["Ping"]);
+    }
+
+    #[test]
+    fn a_matching_folder_keeps_its_contents() {
+        let tree = build_tree(&folders(), &items(), "users");
+        assert_eq!(labels(&tree[0].children), ["admin", "list"]);
+    }
+
+    #[test]
+    fn keys_round_trip() {
+        assert_eq!(TreeKey::parse("item:a:b"), Some(TreeKey::Item("a:b".into())));
+        assert_eq!(TreeKey::parse(&TreeKey::Folder("x".into()).encode()), Some(TreeKey::Folder("x".into())));
+        assert_eq!(TreeKey::parse("nope"), None);
+    }
+
+    #[test]
+    fn a_parent_cycle_cannot_hang_the_tree() {
+        let cyclic = vec![
+            FolderRow { id: "a", name: "A", parent_id: Some("b") },
+            FolderRow { id: "b", name: "B", parent_id: Some("a") },
+        ];
+        let _ = build_tree(&cyclic, &[], "");
+    }
+}
