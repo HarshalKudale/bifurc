@@ -33,11 +33,17 @@ use crate::{
         EntityAction,
         dialogs::{PromptField, confirm_danger, prompt},
     },
-    model::{RequestKind, snippet::RequestParts},
+    model::{NodeRef, RequestKind, snippet::RequestParts},
     preferences::Preferences,
     screens::{
-        capture::CaptureScreen, environments::EnvironmentsScreen, healthbar::HealthBarScreen, mappings::MappingsScreen,
-        mocks::MocksScreen, proxy_rules::ProxyRulesScreen, requests::RequestsScreen, services::ServicesScreen,
+        capture::{CaptureEvent, CaptureScreen},
+        environments::EnvironmentsScreen,
+        healthbar::HealthBarScreen,
+        mappings::MappingsScreen,
+        mocks::MocksScreen,
+        proxy_rules::ProxyRulesScreen,
+        requests::RequestsScreen,
+        services::ServicesScreen,
         settings::SettingsScreen,
     },
 };
@@ -55,12 +61,14 @@ pub struct ActiveTarget {
     pub name: Option<Entity<InputState>>,
     /// The request's type, on the screen whose entities have one.
     pub kind: Option<RequestKind>,
+    /// The folders it is in, outermost first; empty at the top level and for entities not kept in folders.
+    pub folders: Vec<String>,
 }
 
 impl ActiveTarget {
     /// The target for an entity that is not a request: its title, its saved id and its name field.
     pub fn named(title: SharedString, entity_id: Option<String>, name: Entity<InputState>) -> Self {
-        Self { title, entity_id, request: None, name: Some(name), kind: None }
+        Self { title, entity_id, request: None, name: Some(name), kind: None, folders: Vec::new() }
     }
 }
 
@@ -109,6 +117,7 @@ impl Shell {
             cx.observe(&services, |_, _, cx| cx.notify()),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
             cx.observe(&capture, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&capture, window, Self::on_capture_event),
         ];
 
         let handle = ShellHandle(cx.weak_entity());
@@ -163,6 +172,7 @@ impl Shell {
                 request: session.request_parts(cx),
                 name: Some(session.name_input(cx)),
                 kind: Some(session.kind(cx)),
+                folders: session.folder_trail(self.model.read(cx), cx),
             }),
             Screen::Mocks => self.mocks.read(cx).active_target(cx),
             Screen::ProxyRules => self.proxy_rules.read(cx).active_target(cx),
@@ -244,17 +254,93 @@ impl Shell {
         self.requests.update(cx, |requests, cx| requests.new_request(kind, None, window, cx));
     }
 
-    pub fn prompt_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks for the name of a new top-level folder for requests of `kind`. Each request type has its own
+    /// folders.
+    pub fn prompt_new_folder(&mut self, kind: RequestKind, window: &mut Window, cx: &mut Context<Self>) {
         self.show_screen(Screen::Requests, window, cx);
-        self.requests.update(cx, |requests, cx| requests.prompt_new_folder(RequestKind::Rest, None, window, cx));
+        self.requests.update(cx, |requests, cx| requests.prompt_new_folder(kind, None, window, cx));
     }
 
-    pub fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.entity_action(EntityAction::Save, window, cx);
+    /// Opens a saved request in a tab and selects it in the tree.
+    pub fn open_request(&mut self, node: &NodeRef, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Requests, window, cx);
+        self.requests.update(cx, |requests, cx| {
+            requests.open_node(node, window, cx);
+            requests.reveal(node, cx);
+        });
     }
 
-    pub fn revert_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.entity_action(EntityAction::Revert, window, cx);
+    /// Opens a saved mock in a tab.
+    pub fn open_mock(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Mocks, window, cx);
+        self.mocks.update(cx, |mocks, cx| mocks.open_mock(id, window, cx));
+    }
+
+    pub fn new_mock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Mocks, window, cx);
+        self.mocks.update(cx, |mocks, cx| mocks.new_mock(None, window, cx));
+    }
+
+    pub fn prompt_new_mock_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Mocks, window, cx);
+        self.mocks.update(cx, |mocks, cx| mocks.prompt_new_folder(None, window, cx));
+    }
+
+    pub fn prompt_new_mapping(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Mappings, window, cx);
+        self.mappings.update(cx, |mappings, cx| mappings.prompt_new(window, cx));
+    }
+
+    pub fn new_proxy_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::ProxyRules, window, cx);
+        self.proxy_rules.update(cx, |rules, cx| rules.new_rule(window, cx));
+    }
+
+    pub fn prompt_new_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Environments, window, cx);
+        self.environments.update(cx, |environments, cx| environments.prompt_new(window, cx));
+    }
+
+    pub fn prompt_new_health_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::HealthBar, window, cx);
+        self.healthbar.update(cx, |healthbar, cx| healthbar.prompt_new(window, cx));
+    }
+
+    pub fn check_all_health(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::HealthBar, window, cx);
+        self.healthbar.update(cx, |healthbar, cx| healthbar.check_all(window, cx));
+    }
+
+    pub fn refresh_services(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Services, window, cx);
+        self.services.update(cx, |services, cx| services.refresh(cx));
+    }
+
+    pub fn toggle_capture_paused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Capture, window, cx);
+        self.capture.update(cx, |capture, cx| capture.toggle_paused(window, cx));
+    }
+
+    pub fn clear_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Capture, window, cx);
+        self.capture.update(cx, |capture, cx| capture.clear(cx));
+    }
+
+    /// Commits what changed on the current screen (and pushes, when the workspace has a remote).
+    pub fn publish_changes(&mut self, cx: &mut Context<Self>) {
+        let rollup = self.model.read(cx).git().rollup(self.screen.git_prefixes());
+        if rollup.action.is_none() {
+            self.model.update(cx, |model, cx| model.notice("There is nothing to publish.", cx));
+            return;
+        }
+        let paths = rollup.changed.clone();
+        self.model.update(cx, |model, cx| model.publish(paths, cx));
+    }
+
+    /// Does `action` to what is open on the screen in front: the keys and the palette ask for the same
+    /// things the tab's footer does.
+    pub fn act_on_active(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
+        self.entity_action(action, window, cx);
     }
 
     /// Send, or connect: the active request's main verb.
@@ -264,8 +350,22 @@ impl Shell {
         }
     }
 
-    pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.entity_action(EntityAction::Close, window, cx);
+    /// An exchange saved from Capture is opened where it now lives.
+    fn on_capture_event(
+        &mut self,
+        _: &Entity<CaptureScreen>,
+        event: &CaptureEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The new entity is in the engine but not yet in this window's snapshot, which the tree is built from.
+        self.model.update(cx, |model, cx| model.refresh(cx));
+        match event {
+            CaptureEvent::SavedRequest { id } => {
+                self.open_request(&NodeRef::Request { kind: RequestKind::Rest, id: id.clone() }, window, cx)
+            }
+            CaptureEvent::SavedMock { id } => self.open_mock(id, window, cx),
+        }
     }
 
     pub(super) fn prompt_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -16,8 +16,8 @@ use gpui_kit::{AnyView, App, Context, Entity, SharedString, Window};
 
 use crate::{
     app_model::AppModel,
-    components::EntityBar,
-    model::{RequestKind, snippet::RequestParts},
+    components::{EntityBar, FolderPicker},
+    model::{RequestKind, snippet::RequestParts, tree::folder_path},
 };
 
 use self::{protocol::ProtocolSession, rest::RestSession, websocket::WsSession};
@@ -151,6 +151,21 @@ impl Session {
         }
     }
 
+    /// Puts the request in another folder of its type, or at the top level.
+    pub fn set_folder(&self, folder: Option<String>, cx: &mut App) {
+        match self {
+            Session::Rest(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+            Session::WebSocket(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+            Session::Protocol(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+        }
+    }
+
+    /// The names of the folders the request is in, outermost first.
+    pub fn folder_trail(&self, model: &AppModel, cx: &App) -> Vec<String> {
+        let folders = model.config().request_folder_rows(self.kind(cx));
+        self.folder_id(cx).map(|id| folder_path(&folders, &id)).unwrap_or_default()
+    }
+
     /// What the tab's footer says about the request and offers to do with it.
     pub fn bar(&self, model: &AppModel, cx: &App) -> EntityBar {
         let (saving, problem) = match self {
@@ -164,6 +179,7 @@ impl Session {
             unsaved: saved_id.is_some() && self.is_dirty(cx),
             problem,
             closable: true,
+            folder: Some(FolderPicker::new(self.folder_id(cx), &model.config().request_folder_rows(self.kind(cx)))),
             ..EntityBar::of(model, saved_id.as_deref())
         }
     }

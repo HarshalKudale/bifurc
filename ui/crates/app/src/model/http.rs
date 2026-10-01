@@ -155,11 +155,21 @@ pub enum BodyMode {
     Xml,
     Html,
     Form,
+    Multipart,
+    File,
 }
 
 impl BodyMode {
-    pub const ALL: [BodyMode; 6] =
-        [BodyMode::None, BodyMode::Json, BodyMode::Text, BodyMode::Xml, BodyMode::Html, BodyMode::Form];
+    pub const ALL: [BodyMode; 8] = [
+        BodyMode::None,
+        BodyMode::Json,
+        BodyMode::Text,
+        BodyMode::Xml,
+        BodyMode::Html,
+        BodyMode::Form,
+        BodyMode::Multipart,
+        BodyMode::File,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -169,6 +179,8 @@ impl BodyMode {
             BodyMode::Xml => "XML",
             BodyMode::Html => "HTML",
             BodyMode::Form => "Form",
+            BodyMode::Multipart => "Multipart",
+            BodyMode::File => "File",
         }
     }
 
@@ -181,6 +193,9 @@ impl BodyMode {
             BodyMode::Xml => Some("application/xml"),
             BodyMode::Html => Some("text/html"),
             BodyMode::Form => Some("application/x-www-form-urlencoded"),
+            BodyMode::Multipart => Some("multipart/form-data"),
+            // Set from the chosen file, by the session.
+            BodyMode::File => None,
         }
     }
 
@@ -425,6 +440,17 @@ mod tests {
         assert_eq!(BodyMode::detect(None, ""), BodyMode::None);
         assert_eq!(BodyMode::detect(None, " [1]"), BodyMode::Json);
         assert_eq!(BodyMode::detect(None, "hello"), BodyMode::Text);
+    }
+
+    #[test]
+    fn every_mode_has_a_label_and_the_file_modes_come_last() {
+        assert_eq!(BodyMode::ALL.len(), 8);
+        assert_eq!(BodyMode::ALL[6], BodyMode::Multipart);
+        assert_eq!(BodyMode::ALL[7], BodyMode::File);
+        assert_eq!(BodyMode::Multipart.label(), "Multipart");
+        assert_eq!(BodyMode::File.label(), "File");
+        assert_eq!(BodyMode::Multipart.content_type(), Some("multipart/form-data"));
+        assert_eq!(BodyMode::File.content_type(), None);
     }
 
     #[test]

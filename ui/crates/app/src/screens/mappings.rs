@@ -64,7 +64,7 @@ impl MappingsScreen {
         self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
     }
 
-    fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         prompt(
             cx.weak_entity(),
             window,

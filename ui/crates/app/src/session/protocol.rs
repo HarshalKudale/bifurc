@@ -140,6 +140,8 @@ pub struct ProtocolSession {
     workspace_id: String,
     saved_id: Option<String>,
     folder_id: Option<String>,
+    /// The folder the engine has it in. It differs from `folder_id` while a move is waiting to be written.
+    saved_folder: Option<String>,
     entity: Map<String, Value>,
     load: LoadState,
     name: Entity<InputState>,
@@ -224,6 +226,7 @@ impl ProtocolSession {
             kind,
             workspace_id,
             saved_id,
+            saved_folder: folder_id.clone(),
             folder_id,
             entity: defaults_of(kind),
             load: LoadState::Ready,
@@ -325,7 +328,7 @@ impl ProtocolSession {
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
-        self.load == LoadState::Ready && self.values(cx) != self.baseline
+        self.load == LoadState::Ready && (self.values(cx) != self.baseline || self.folder_id != self.saved_folder)
     }
 
     /// The request as an HTTP call, for a snippet. gRPC is not HTTP in a way a snippet could show.
@@ -414,6 +417,15 @@ impl ProtocolSession {
         }
     }
 
+    /// Puts it in another folder, or at the top level with `None`. A saved one is moved by its next write;
+    /// a draft is created there.
+    pub fn set_folder(&mut self, folder: Option<String>, cx: &mut Context<Self>) {
+        if self.folder_id != folder {
+            self.folder_id = folder;
+            self.changed(cx);
+        }
+    }
+
     /// Writes an edit that is still waiting, now: the tab is about to close.
     pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saved_id.is_some() {
@@ -497,6 +509,7 @@ impl ProtocolSession {
 
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
         self.folder_id = entity.get("folderId").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+        self.saved_folder = self.folder_id.clone();
         if let Some(name) = entity.get("name").and_then(Value::as_str) {
             self.name.update(cx, |state, cx| state.set_value(name.to_owned(), window, cx));
         }
@@ -529,7 +542,7 @@ impl ProtocolSession {
         }
         let values = self.values(cx);
         let creating = self.saved_id.is_none();
-        if !creating && values == self.baseline {
+        if !creating && values == self.baseline && self.folder_id == self.saved_folder {
             return;
         }
         if Self::target_is_empty(&values) {
@@ -544,9 +557,8 @@ impl ProtocolSession {
         }
         let mut entity = self.edited_entity(&values);
         entity.insert("workspaceId".into(), json!(self.workspace_id));
-        if let Some(folder) = &self.folder_id {
-            entity.insert("folderId".into(), json!(folder));
-        }
+        entity.insert("folderId".into(), json!(self.folder_id));
+        let folder = self.folder_id.clone();
 
         self.saving = true;
         cx.notify();
@@ -573,6 +585,7 @@ impl ProtocolSession {
                             this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
                             this.entity = saved.clone();
                             this.baseline = values;
+                            this.saved_folder = folder.clone();
                             if let Some(id) = this.saved_id.clone() {
                                 cx.emit(SessionEvent::Saved { id });
                             }
@@ -585,6 +598,7 @@ impl ProtocolSession {
                 Ok(_) => {
                     this.entity = edited;
                     this.baseline = values;
+                    this.saved_folder = folder.clone();
                     true
                 }
                 Err(error) => {

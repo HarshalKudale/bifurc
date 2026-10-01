@@ -9,6 +9,7 @@
 //! A draft is created by Save. Once it exists there is no Save step: an edit is written a moment after it
 //! is made. The request's name is edited in the window's breadcrumb, which shows this session's name field.
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
     ActiveTheme as _, IndexPath, Sizable as _, WindowExt as _,
     alert::Alert,
@@ -30,7 +31,12 @@ use serde_json::{Map, Value, json};
 use super::{Carry, LoadState, SaveMode, SessionEvent, exchange::Exchange};
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    components::{
+        Autosave, FileData, KeyValueEvent, KeyValueTable, Part, PartValue, PartsEvent, PartsTable, Syntax, VarEditor,
+        binary::{BinaryBody, pick_file},
+        page,
+        parts_table::{parts_from_json, parts_to_json},
+    },
     engine::{call_in, describe},
     model::{
         RequestKind,
@@ -38,6 +44,7 @@ use crate::{
             BodyEncoding, BodyMode, HTTP_METHODS, decode_form, encode_form, header_map, header_pairs, join_query,
             pretty_json, split_query,
         },
+        media::{BodyClass, classify, size_label},
         snippet::RequestParts,
     },
 };
@@ -52,9 +59,22 @@ struct Fields {
     url: String,
     headers: Vec<(String, String)>,
     body: String,
+    /// The fields of a multipart body; empty in every other mode.
+    parts: Vec<Part>,
+    /// The file that is the body; `None` in every other mode.
+    file: Option<FileData>,
     pre_script: String,
     post_script: String,
     test_script: String,
+}
+
+/// The file as it can be previewed: an image is decoded once, when the file arrives.
+fn preview_of(file: &FileData) -> Option<BinaryBody> {
+    if classify(&file.content_type) != BodyClass::Image {
+        return None;
+    }
+    let bytes = STANDARD.decode(&*file.data).ok()?;
+    Some(BinaryBody::new(bytes, file.content_type.clone())).filter(BinaryBody::is_image)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +101,8 @@ pub struct RestSession {
     workspace_id: String,
     saved_id: Option<String>,
     folder_id: Option<String>,
+    /// The folder the engine has it in. It differs from `folder_id` while a move is waiting to be written.
+    saved_folder: Option<String>,
     /// The entity as the engine last returned it; the base that edited fields are written over.
     entity: Map<String, Value>,
     load: LoadState,
@@ -92,6 +114,14 @@ pub struct RestSession {
     body_mode: BodyMode,
     body: VarEditor,
     form: Entity<KeyValueTable>,
+    parts: Entity<PartsTable>,
+    /// The file that is the body in File mode. Kept when the mode changes, so switching back finds it.
+    file: Option<FileData>,
+    /// The file shown as an image, built when `file` is set.
+    file_preview: Option<BinaryBody>,
+    /// A file just chosen, applied by the next render: it needs a window to update the header table.
+    pending_file: Option<FileData>,
+    file_error: Option<SharedString>,
     pre_script: VarEditor,
     post_script: VarEditor,
     test_script: VarEditor,
@@ -122,6 +152,7 @@ impl RestSession {
         let params = cx.new(|cx| KeyValueTable::new("Parameter", "Value", window, cx));
         let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
         let form = cx.new(|cx| KeyValueTable::new("Field", "Value", window, cx));
+        let parts = cx.new(|cx| PartsTable::new(window, cx));
         let body = VarEditor::code(Syntax::Json, "Request body", window, cx);
         let pre_script = VarEditor::code(Syntax::JavaScript, "// Runs before the request is sent", window, cx);
         let post_script = VarEditor::code(Syntax::JavaScript, "// Runs after the response arrives", window, cx);
@@ -160,6 +191,7 @@ impl RestSession {
         for table in [&headers, &form] {
             subscriptions.push(cx.subscribe(table, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
         }
+        subscriptions.push(cx.subscribe(&parts, |this, _, _: &PartsEvent, cx| this.changed(cx)));
         for editor in [&body, &pre_script, &post_script, &test_script] {
             subscriptions.push(cx.subscribe(editor.state(), |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -173,6 +205,7 @@ impl RestSession {
             model,
             workspace_id,
             saved_id,
+            saved_folder: folder_id.clone(),
             folder_id,
             entity: Map::new(),
             load: LoadState::Ready,
@@ -184,6 +217,11 @@ impl RestSession {
             body_mode: BodyMode::None,
             body,
             form,
+            parts,
+            file: None,
+            file_preview: None,
+            pending_file: None,
+            file_error: None,
             pre_script,
             post_script,
             test_script,
@@ -195,6 +233,8 @@ impl RestSession {
                 url: String::new(),
                 headers: Vec::new(),
                 body: String::new(),
+                parts: Vec::new(),
+                file: None,
                 pre_script: String::new(),
                 post_script: String::new(),
                 test_script: String::new(),
@@ -278,7 +318,7 @@ impl RestSession {
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
-        self.load == LoadState::Ready && self.fields(cx) != self.baseline
+        self.load == LoadState::Ready && (self.fields(cx) != self.baseline || self.folder_id != self.saved_folder)
     }
 
     /// The request as the editor holds it, for writing out as a code snippet.
@@ -310,6 +350,15 @@ impl RestSession {
     fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saved_id.is_none() && self.fields(cx).name != self.baseline.name {
             self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Puts it in another folder, or at the top level with `None`. A saved one is moved by its next write;
+    /// a draft is created there.
+    pub fn set_folder(&mut self, folder: Option<String>, cx: &mut Context<Self>) {
+        if self.folder_id != folder {
+            self.folder_id = folder;
+            self.changed(cx);
         }
     }
 
@@ -347,11 +396,15 @@ impl RestSession {
 
     fn fields(&self, cx: &gpui_kit::App) -> Fields {
         let body = match self.body_mode {
-            BodyMode::None => String::new(),
+            BodyMode::None | BodyMode::Multipart | BodyMode::File => String::new(),
             BodyMode::Form => encode_form(&self.form.read(cx).pairs(cx)),
             _ => self.body.value(cx),
         };
+        let parts = if self.body_mode == BodyMode::Multipart { self.parts.read(cx).parts(cx) } else { Vec::new() };
+        let file = if self.body_mode == BodyMode::File { self.file.clone() } else { None };
         Fields {
+            parts,
+            file,
             name: self.name.read(cx).value().trim().to_owned(),
             method: self.method(cx).to_owned(),
             url: self.url.line_value(cx),
@@ -394,7 +447,7 @@ impl RestSession {
         match mode {
             BodyMode::Json => Syntax::Json,
             BodyMode::Xml | BodyMode::Html => Syntax::Markup,
-            BodyMode::None | BodyMode::Text | BodyMode::Form => Syntax::Plain,
+            BodyMode::None | BodyMode::Text | BodyMode::Form | BodyMode::Multipart | BodyMode::File => Syntax::Plain,
         }
     }
 
@@ -406,6 +459,29 @@ impl RestSession {
             return;
         }
         match (self.body_mode, mode) {
+            (BodyMode::Form, BodyMode::Multipart) => {
+                let parts: Vec<Part> = self
+                    .form
+                    .read(cx)
+                    .pairs(cx)
+                    .into_iter()
+                    .map(|(name, value)| Part { name, value: PartValue::Text(value) })
+                    .collect();
+                self.parts.update(cx, |table, cx| table.set_parts(&parts, window, cx));
+            }
+            (BodyMode::Multipart, BodyMode::Form) => {
+                let pairs: Vec<(String, String)> = self
+                    .parts
+                    .read(cx)
+                    .parts(cx)
+                    .into_iter()
+                    .filter_map(|part| match part.value {
+                        PartValue::Text(value) => Some((part.name, value)),
+                        PartValue::File(_) => None,
+                    })
+                    .collect();
+                self.form.update(cx, |table, cx| table.set_pairs(&pairs, window, cx));
+            }
             (BodyMode::Form, _) => {
                 let text = encode_form(&self.form.read(cx).pairs(cx));
                 self.body.set_value(text, window, cx);
@@ -419,12 +495,46 @@ impl RestSession {
         self.body_mode = mode;
         self.body.set_syntax(Self::body_syntax(mode), cx);
 
+        self.sync_content_type(window, cx);
+        self.changed(cx);
+    }
+
+    /// Sets the `Content-Type` header the current mode calls for. In File mode that is the chosen file's
+    /// type, and no header while there is no file.
+    fn sync_content_type(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let content_type = match self.body_mode {
+            BodyMode::File => self.file.as_ref().map(|file| file.content_type.clone()),
+            mode => mode.content_type().map(str::to_owned),
+        };
         let mut headers = self.headers.read(cx).pairs(cx);
         headers.retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
-        if let Some(content_type) = mode.content_type() {
-            headers.push(("Content-Type".to_owned(), content_type.to_owned()));
+        if let Some(content_type) = content_type {
+            headers.push(("Content-Type".to_owned(), content_type));
         }
         self.headers.update(cx, |table, cx| table.set_pairs(&headers, window, cx));
+    }
+
+    fn set_file(&mut self, file: Option<FileData>) {
+        self.file_preview = file.as_ref().and_then(preview_of);
+        self.file = file;
+        self.file_error = None;
+    }
+
+    /// Asks for the file that is the body. It is applied by the next render, which has the window the
+    /// header table needs.
+    fn choose_file(&mut self, cx: &mut Context<Self>) {
+        pick_file("Choose a file to send", cx, |this, outcome, cx| {
+            match outcome {
+                Ok(file) => this.pending_file = Some(FileData::from_picked(file)),
+                Err(message) => this.file_error = Some(format!("Couldn't read the file: {message}").into()),
+            }
+            cx.notify();
+        });
+    }
+
+    fn remove_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_file(None);
+        self.sync_content_type(window, cx);
         self.changed(cx);
     }
 
@@ -441,6 +551,7 @@ impl RestSession {
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
         let text = |key: &str| entity.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
         self.folder_id = entity.get("folderId").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+        self.saved_folder = self.folder_id.clone();
 
         let headers = header_pairs(entity.get("headers").unwrap_or(&Value::Null));
         let body = text("body");
@@ -455,7 +566,7 @@ impl RestSession {
         self.params.update(cx, |table, cx| table.set_pairs(&query, window, cx));
         self.headers.update(cx, |table, cx| table.set_pairs(&headers, window, cx));
 
-        self.show_body(body, window, cx);
+        self.show_entity_body(&entity, body, window, cx);
         self.pre_script.set_value(text("preScript"), window, cx);
         self.post_script.set_value(text("postScript"), window, cx);
         self.test_script.set_value(text("testScript"), window, cx);
@@ -466,9 +577,42 @@ impl RestSession {
         self.baseline = self.fields(cx);
     }
 
+    /// Shows the body of a loaded request. Multipart parts and a base64 file decide the mode first; a
+    /// request without either has a text body.
+    fn show_entity_body(
+        &mut self,
+        entity: &Map<String, Value>,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parts = entity.get("bodyParts").map(parts_from_json).unwrap_or_default();
+        let is_file = entity.get("bodyEncoding").and_then(Value::as_str) == Some("base64");
+        if !parts.is_empty() {
+            self.body_mode = BodyMode::Multipart;
+            self.set_file(None);
+            self.parts.update(cx, |table, cx| table.set_parts(&parts, window, cx));
+            self.body.set_value("", window, cx);
+        } else if is_file {
+            self.body_mode = BodyMode::File;
+            let name = entity.get("bodyFileName").and_then(Value::as_str).unwrap_or("file").to_owned();
+            let content_type = self.content_type(cx).unwrap_or_else(|| "application/octet-stream".to_owned());
+            self.set_file(Some(FileData::from_base64(name, content_type, text.trim().to_owned())));
+            self.parts.update(cx, |table, cx| table.set_parts(&[], window, cx));
+            self.body.set_value("", window, cx);
+        } else {
+            self.set_file(None);
+            self.parts.update(cx, |table, cx| table.set_parts(&[], window, cx));
+            self.show_body(text, window, cx);
+        }
+    }
+
     /// Shows `body` in the mode its content and the `Content-Type` header (already in the table) call for.
     fn show_body(&mut self, body: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.body_mode = BodyMode::detect(self.content_type(cx).as_deref(), &body);
+        let multipart = body.is_empty()
+            && self.content_type(cx).is_some_and(|ct| ct.to_ascii_lowercase().contains("multipart/form-data"));
+        self.body_mode =
+            if multipart { BodyMode::Multipart } else { BodyMode::detect(self.content_type(cx).as_deref(), &body) };
         self.body.set_syntax(Self::body_syntax(self.body_mode), cx);
         if self.body_mode == BodyMode::Form {
             let pairs = decode_form(&body);
@@ -484,7 +628,22 @@ impl RestSession {
         entity.insert("method".into(), json!(fields.method));
         entity.insert("url".into(), json!(fields.url));
         entity.insert("headers".into(), Value::Object(header_map(&fields.headers)));
-        entity.insert("body".into(), json!(fields.body));
+        if !fields.parts.is_empty() {
+            entity.insert("body".into(), json!(""));
+            entity.insert("bodyParts".into(), parts_to_json(&fields.parts));
+            entity.remove("bodyEncoding");
+            entity.remove("bodyFileName");
+        } else if let Some(file) = &fields.file {
+            entity.insert("body".into(), json!(&*file.data));
+            entity.insert("bodyEncoding".into(), json!("base64"));
+            entity.insert("bodyFileName".into(), json!(file.name));
+            entity.remove("bodyParts");
+        } else {
+            entity.insert("body".into(), json!(fields.body));
+            entity.remove("bodyEncoding");
+            entity.remove("bodyParts");
+            entity.remove("bodyFileName");
+        }
         entity.insert("preScript".into(), json!(fields.pre_script));
         entity.insert("postScript".into(), json!(fields.post_script));
         entity.insert("testScript".into(), json!(fields.test_script));
@@ -499,7 +658,7 @@ impl RestSession {
         }
         let fields = self.fields(cx);
         let creating = self.saved_id.is_none();
-        if !creating && fields == self.baseline {
+        if !creating && fields == self.baseline && self.folder_id == self.saved_folder {
             return;
         }
         if fields.url.is_empty() {
@@ -512,9 +671,8 @@ impl RestSession {
         let mut entity = self.edited_entity(&fields);
         entity.insert("protocol".into(), json!("rest"));
         entity.insert("workspaceId".into(), json!(self.workspace_id));
-        if let Some(folder) = &self.folder_id {
-            entity.insert("folderId".into(), json!(folder));
-        }
+        entity.insert("folderId".into(), json!(self.folder_id));
+        let folder = self.folder_id.clone();
 
         self.saving = true;
         cx.notify();
@@ -537,6 +695,7 @@ impl RestSession {
                         this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
                         this.entity = saved;
                         this.baseline = fields;
+                        this.saved_folder = folder.clone();
                         if let Some(id) = this.saved_id.clone() {
                             cx.emit(SessionEvent::Saved { id });
                         }
@@ -547,6 +706,7 @@ impl RestSession {
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
                     this.baseline = fields;
+                    this.saved_folder = folder.clone();
                 }
                 Err(error) => {
                     window.push_notification(
@@ -585,16 +745,20 @@ impl RestSession {
                         scripts.insert(field.into(), json!(text));
                     }
                 }
-                json!({
-                    "workspaceId": self.workspace_id,
-                    "request": {
-                        "method": fields.method,
-                        "url": fields.url,
-                        "headers": header_map(&fields.headers),
-                        "body": fields.body,
-                    },
-                    "scripts": scripts,
-                })
+                let mut request = Map::new();
+                request.insert("method".into(), json!(fields.method));
+                request.insert("url".into(), json!(fields.url));
+                request.insert("headers".into(), Value::Object(header_map(&fields.headers)));
+                if !fields.parts.is_empty() {
+                    request.insert("body".into(), json!(""));
+                    request.insert("bodyParts".into(), parts_to_json(&fields.parts));
+                } else if let Some(file) = &fields.file {
+                    request.insert("body".into(), json!(&*file.data));
+                    request.insert("bodyEncoding".into(), json!("base64"));
+                } else {
+                    request.insert("body".into(), json!(fields.body));
+                }
+                json!({ "workspaceId": self.workspace_id, "request": request, "scripts": scripts })
             }
         };
 
@@ -653,6 +817,8 @@ impl RestSession {
         let content = match self.body_mode {
             BodyMode::None => page::empty("No body", "This request is sent without a body."),
             BodyMode::Form => self.form.clone().into_any_element(),
+            BodyMode::Multipart => self.parts.clone().into_any_element(),
+            BodyMode::File => self.render_file(cx),
             _ => Editor::new(self.body.state()).bordered(false).h_full().into_any_element(),
         };
         v_flex()
@@ -670,6 +836,66 @@ impl RestSession {
                 },
             ))
             .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+
+    /// The file that is the body: what it is and how to change it, and the image itself when it is one.
+    fn render_file(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let choose = |label: &'static str| {
+            Button::new("choose-body-file")
+                .small()
+                .label(label)
+                .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx)))
+        };
+        let Some(file) = &self.file else {
+            return v_flex()
+                .size_full()
+                .child(div().flex_1().min_h_0().child(page::empty_with_action(
+                    "No file chosen",
+                    "The file's bytes are sent as the request body.",
+                    choose("Choose file…"),
+                )))
+                .children(
+                    self.file_error.clone().map(|message| {
+                        div().flex_none().px_3().pb_2().text_xs().text_color(theme.warning).child(message)
+                    }),
+                )
+                .into_any_element();
+        };
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_3()
+                    .py_2()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        v_flex().flex_1().min_w_0().child(div().truncate().text_sm().child(file.name.clone())).child(
+                            div().text_xs().text_color(theme.muted_foreground).child(format!(
+                                "{} · {}",
+                                size_label(file.size),
+                                file.content_type
+                            )),
+                        ),
+                    )
+                    .child(choose("Choose another file…").ghost())
+                    .child(
+                        Button::new("remove-body-file")
+                            .ghost()
+                            .small()
+                            .label("Remove file")
+                            .on_click(cx.listener(|this, _, window, cx| this.remove_file(window, cx))),
+                    ),
+            )
+            .children(
+                self.file_error
+                    .clone()
+                    .map(|message| div().flex_none().px_3().pb_2().text_xs().text_color(theme.warning).child(message)),
+            )
+            .child(div().flex_1().min_h_0().children(self.file_preview.as_ref().map(|preview| preview.render(cx))))
             .into_any_element()
     }
 
@@ -706,7 +932,15 @@ fn entity_of(result: &Value) -> Result<Map<String, Value>, String> {
 }
 
 impl Render for RestSession {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A file chosen in the dialog is applied here, where a window is at hand.
+        if let Some(file) = self.pending_file.take()
+            && self.load == LoadState::Ready
+        {
+            self.set_file(Some(file));
+            self.sync_content_type(window, cx);
+            self.changed(cx);
+        }
         let theme = cx.theme().clone();
         match &self.load {
             LoadState::Loading => return page::loading("Loading request…"),

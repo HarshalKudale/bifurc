@@ -10,9 +10,13 @@
 //! The editor is one entity shown in two dock panels: [`MockEditor::render_rule`] and
 //! [`MockEditor::render_response`].
 
+use std::sync::Arc;
+
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
-    ActiveTheme as _, IndexPath, Sizable as _, WindowExt as _,
+    ActiveTheme as _, IconName, IndexPath, Sizable as _, WindowExt as _,
     alert::Alert,
+    button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     h_flex,
     input::{Editor, Input, InputEvent, InputState},
@@ -20,6 +24,7 @@ use gpui_kit::component::{
     select::{Select, SelectEvent, SelectState},
     switch::Switch,
     tab::{Tab, TabBar},
+    tag::Tag,
     v_flex,
 };
 use gpui_kit::{
@@ -30,9 +35,16 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    components::{
+        Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor,
+        binary::{BinaryBody, PickedFile, pick_file, save_to_file, suggested_file_name},
+        page,
+    },
     engine::{call_in, describe},
-    model::http::{HTTP_METHODS, header_map, header_pairs},
+    model::{
+        http::{HTTP_METHODS, header_map, header_pairs},
+        media::{self, BodyClass},
+    },
     session::{LoadState, SaveMode},
 };
 
@@ -60,12 +72,29 @@ struct Fields {
     status: String,
     mock_status: bool,
     headers: Vec<(String, String)>,
+    /// The body as text. Empty when the body is data.
     body: String,
+    /// The body is data, not text: the mock answers with an image or another binary type.
+    is_data: bool,
+    /// The data, in base64. `None` when the body is text, or no file has been chosen yet.
+    data: Option<Arc<str>>,
     mock_body: bool,
     delay: String,
     mock_delay: bool,
     streaming: String,
     chunk_delay: String,
+}
+
+/// Why a file cannot be the body of a mock that answers with `expected`, if it cannot. The response type is
+/// the real server's; the mocked body has to be of that type for the caller to read it.
+fn file_mismatch(expected: &str, file_type: &str) -> Option<String> {
+    let (expected, file_type) = (media::essence(expected), media::essence(file_type));
+    // A type that says nothing about the bytes, on either side, accepts anything.
+    let unknown = |kind: &str| kind.is_empty() || kind == "application/octet-stream";
+    if unknown(&expected) || unknown(&file_type) || expected == file_type {
+        return None;
+    }
+    Some(format!("This mock answers with {expected}, as the real server does. Choose a file of that type."))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,6 +111,8 @@ pub struct MockEditor {
     workspace_id: String,
     saved_id: Option<String>,
     folder_id: Option<String>,
+    /// The folder the engine has it in. It differs from `folder_id` while a move is waiting to be written.
+    saved_folder: Option<String>,
     /// The entity as the engine last returned it; the base that edited fields are written over.
     entity: Map<String, Value>,
     load: LoadState,
@@ -95,8 +126,13 @@ pub struct MockEditor {
     headers: Entity<KeyValueTable>,
     body: VarEditor,
     mock_body: bool,
-    /// A body stored as base64 is binary; it is kept as it is rather than edited as text.
-    binary_body: bool,
+    /// The body when it is an image or other data: its bytes in base64, as the engine stores them. Which of
+    /// this and the text editor is the body follows the `Content-Type` the mock answers with.
+    data: Option<Arc<str>>,
+    /// `data`, decoded once for showing.
+    data_view: Option<BinaryBody>,
+    /// What choosing or saving a file came to, when there is something to say.
+    data_note: Option<SharedString>,
     delay: Entity<InputState>,
     mock_delay: bool,
     streaming: Entity<SelectState<Vec<&'static str>>>,
@@ -173,6 +209,7 @@ impl MockEditor {
             model,
             workspace_id,
             saved_id,
+            saved_folder: folder_id.clone(),
             folder_id,
             entity: Map::new(),
             load: LoadState::Ready,
@@ -186,7 +223,9 @@ impl MockEditor {
             headers,
             body,
             mock_body: true,
-            binary_body: false,
+            data: None,
+            data_view: None,
+            data_note: None,
             delay,
             mock_delay: true,
             streaming,
@@ -202,6 +241,8 @@ impl MockEditor {
                 mock_status: true,
                 headers: Vec::new(),
                 body: String::new(),
+                is_data: false,
+                data: None,
                 mock_body: true,
                 delay: String::new(),
                 mock_delay: true,
@@ -262,6 +303,10 @@ impl MockEditor {
         self.saved_id.as_deref()
     }
 
+    pub fn folder_id(&self) -> Option<&str> {
+        self.folder_id.as_deref()
+    }
+
     /// The field the mock's name is typed in. The shell shows it in the breadcrumb.
     pub fn name_input(&self) -> &Entity<InputState> {
         &self.name
@@ -282,7 +327,7 @@ impl MockEditor {
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
-        self.load == LoadState::Ready && self.fields(cx) != self.baseline
+        self.load == LoadState::Ready && (self.fields(cx) != self.baseline || self.folder_id != self.saved_folder)
     }
 
     /// Why the edit cannot be written as it stands, for a saved mock that has one.
@@ -314,6 +359,15 @@ impl MockEditor {
         }
     }
 
+    /// Puts it in another folder, or at the top level with `None`. A saved one is moved by its next write;
+    /// a draft is created there.
+    pub fn set_folder(&mut self, folder: Option<String>, cx: &mut Context<Self>) {
+        if self.folder_id != folder {
+            self.folder_id = folder;
+            self.changed(cx);
+        }
+    }
+
     /// Writes an edit that is still waiting, now: the tab is about to close.
     pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saved_id.is_some() {
@@ -338,7 +392,9 @@ impl MockEditor {
             status: text(&self.status),
             mock_status: self.mock_status,
             headers: self.headers.read(cx).pairs(cx),
-            body: self.body.value(cx),
+            body: if self.is_data(cx) { String::new() } else { self.body.value(cx) },
+            is_data: self.is_data(cx),
+            data: self.data.clone().filter(|_| self.is_data(cx)),
             mock_body: self.mock_body,
             delay: text(&self.delay),
             mock_delay: self.mock_delay,
@@ -347,17 +403,75 @@ impl MockEditor {
         }
     }
 
-    /// The body is highlighted for the `Content-Type` the mock answers with.
-    fn follow_content_type(&mut self, cx: &mut Context<Self>) {
-        let content_type = self
-            .headers
+    /// The `Content-Type` the mock answers with. It is the real server's when the mock was made from
+    /// captured traffic, and it decides what the body can be.
+    fn content_type(&self, cx: &gpui_kit::App) -> String {
+        self.headers
             .read(cx)
             .pairs(cx)
             .into_iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
             .map(|(_, value)| value)
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+
+    /// The body is an image or other data rather than text: the response type says so, or the stored body
+    /// is bytes and nothing says what they are.
+    fn is_data(&self, cx: &gpui_kit::App) -> bool {
+        let content_type = self.content_type(cx);
+        media::classify(&content_type) != BodyClass::Text || (content_type.is_empty() && self.data.is_some())
+    }
+
+    /// The body is highlighted for the `Content-Type` the mock answers with.
+    fn follow_content_type(&mut self, cx: &mut Context<Self>) {
+        let content_type = self.content_type(cx);
         self.body.set_syntax(Syntax::for_content_type(&content_type), cx);
+        // The preview is drawn for the type the bytes are said to be.
+        if self.data_view.as_ref().is_some_and(|view| view.content_type() != content_type) {
+            self.show_data(cx);
+        }
+    }
+
+    /// Decodes `data` for showing. Done when the data or its type changes, not while drawing.
+    fn show_data(&mut self, cx: &gpui_kit::App) {
+        let content_type = self.content_type(cx);
+        self.data_view = self
+            .data
+            .as_deref()
+            .and_then(|data| STANDARD.decode(data.trim()).ok())
+            .map(|bytes| BinaryBody::new(bytes, content_type));
+    }
+
+    /// Asks for the file the mock answers with. A file of another type than the response's is refused:
+    /// the caller would be told one type and handed another.
+    fn choose_file(&mut self, cx: &mut Context<Self>) {
+        pick_file("Choose the file this mock answers with", cx, |this, outcome, cx| {
+            let expected = this.content_type(cx);
+            match outcome {
+                Ok(PickedFile { bytes, content_type, .. }) => match file_mismatch(&expected, content_type) {
+                    Some(problem) => this.data_note = Some(problem.into()),
+                    None => {
+                        this.data = Some(STANDARD.encode(&bytes).into());
+                        this.data_view = Some(BinaryBody::new(bytes, expected));
+                        this.data_note = None;
+                    }
+                },
+                Err(error) => this.data_note = Some(format!("Couldn't read the file. {error}").into()),
+            }
+            this.changed(cx);
+        });
+    }
+
+    fn save_data(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = &self.data_view else { return };
+        let name = suggested_file_name(&self.pattern.read(cx).value(), "mock-body", view.content_type());
+        save_to_file(view.bytes().to_vec(), name, cx, |this, outcome, cx| {
+            this.data_note = Some(match outcome {
+                Ok(path) => format!("Saved to {}", path.display()).into(),
+                Err(error) => format!("Couldn't save the file. {error}").into(),
+            });
+            cx.notify();
+        });
     }
 
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
@@ -365,6 +479,7 @@ impl MockEditor {
         let flag = |key: &str, default: bool| entity.get(key).and_then(Value::as_bool).unwrap_or(default);
         let number = |key: &str, default: u64| entity.get(key).and_then(Value::as_u64).unwrap_or(default).to_string();
         self.folder_id = entity.get("folderId").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+        self.saved_folder = self.folder_id.clone();
 
         let method = text("method").to_uppercase();
         let method = method_options().into_iter().find(|m| *m == method).unwrap_or(ANY_METHOD_LABEL);
@@ -380,8 +495,24 @@ impl MockEditor {
         self.mock_status = flag("responseStatusMocked", true);
         let headers = header_pairs(entity.get("responseHeaders").unwrap_or(&Value::Null));
         self.headers.update(cx, |table, cx| table.set_pairs(&headers, window, cx));
-        self.binary_body = entity.get("responseBodyEncoding").and_then(Value::as_str) == Some("base64");
-        self.body.set_value(text("responseBody"), window, cx);
+        let stored_as_bytes = entity.get("responseBodyEncoding").and_then(Value::as_str) == Some("base64");
+        let class = media::classify(&self.content_type(cx));
+        let body = text("responseBody");
+        self.data_note = None;
+        if stored_as_bytes && class == BodyClass::Text && !self.content_type(cx).is_empty() {
+            // Bytes under a text type are text: they are shown, and saved again, as text.
+            let decoded = STANDARD.decode(body.trim()).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+            self.data = None;
+            self.body.set_value(decoded.unwrap_or(body), window, cx);
+        } else if stored_as_bytes {
+            self.data = Some(body.into());
+            self.body.set_value(String::new(), window, cx);
+        } else {
+            self.data = None;
+            // A text body under a data type cannot be what the mock answers with; it is not carried over.
+            self.body.set_value(if class == BodyClass::Text { body } else { String::new() }, window, cx);
+        }
+        self.show_data(cx);
         self.follow_content_type(cx);
         self.mock_body = flag("responseBodyMocked", true);
         self.delay.update(cx, |s, cx| s.set_value(number("responseDelay", 0), window, cx));
@@ -425,8 +556,19 @@ impl MockEditor {
             "mockedResponseHeaders".into(),
             Value::Array(fields.headers.iter().map(|(name, _)| json!(name)).collect()),
         );
-        if !self.binary_body {
+        if fields.is_data {
+            // Bytes are stored as they are. A mock that replaces the body needs some to replace it with.
+            match &fields.data {
+                Some(data) => entity.insert("responseBody".into(), json!(data.as_ref())),
+                None if fields.mock_body => {
+                    return Err("Choose a file for the body: this mock answers with data, not text.");
+                }
+                None => entity.insert("responseBody".into(), json!("")),
+            };
+            entity.insert("responseBodyEncoding".into(), json!("base64"));
+        } else {
             entity.insert("responseBody".into(), json!(fields.body));
+            entity.remove("responseBodyEncoding");
         }
         entity.insert("responseBodyMocked".into(), json!(fields.mock_body));
         entity.insert("responseDelay".into(), json!(delay));
@@ -444,7 +586,7 @@ impl MockEditor {
         }
         let fields = self.fields(cx);
         let creating = self.saved_id.is_none();
-        if !creating && fields == self.baseline {
+        if !creating && fields == self.baseline && self.folder_id == self.saved_folder {
             return;
         }
         let mut entity = match self.edited_entity(&fields) {
@@ -460,9 +602,8 @@ impl MockEditor {
         entity.entry("protocol").or_insert(json!("rest"));
         entity.entry("capturedHeaders").or_insert(json!({}));
         entity.entry("capturedBody").or_insert(json!(""));
-        if let Some(folder) = &self.folder_id {
-            entity.insert("folderId".into(), json!(folder));
-        }
+        entity.insert("folderId".into(), json!(self.folder_id));
+        let folder = self.folder_id.clone();
 
         self.saving = true;
         cx.notify();
@@ -485,6 +626,7 @@ impl MockEditor {
                         this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
                         this.entity = saved;
                         this.baseline = fields;
+                        this.saved_folder = folder.clone();
                         if let Some(id) = this.saved_id.clone() {
                             cx.emit(MockEvent::Saved { id });
                         }
@@ -496,6 +638,7 @@ impl MockEditor {
                 Ok(_) => {
                     this.entity = sent;
                     this.baseline = fields;
+                    this.saved_folder = folder.clone();
                 }
                 Err(error) => {
                     window.push_notification(Notification::error(describe(&error)).title("Couldn't save the mock"), cx);
@@ -592,6 +735,61 @@ impl MockEditor {
             }))
     }
 
+    /// The body, as the response type allows it to be: text in an editor, or a file for an image or other
+    /// data. The type itself is the `Content-Type` header, which a mock made from captured traffic takes
+    /// from the real server.
+    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let is_data = self.is_data(cx);
+        let content_type = media::essence(&self.content_type(cx));
+        let kind = Tag::secondary().small().child(if content_type.is_empty() {
+            "No Content-Type header".to_owned()
+        } else {
+            content_type
+        });
+        let toolbar = h_flex()
+            .flex_none()
+            .px_3()
+            .py_2()
+            .gap_3()
+            .child(Self::pass_through("mock-body", self.mock_body, "body", cx, |this, on| this.mock_body = on))
+            .child(kind)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_sm()
+                    .text_color(theme.warning)
+                    .children(self.data_note.clone().filter(|_| is_data)),
+            )
+            .children(is_data.then(|| {
+                Button::new("mock-body-choose")
+                    .outline()
+                    .small()
+                    .icon(IconName::File)
+                    .label(if self.data.is_some() { "Choose another file…" } else { "Choose file…" })
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx)))
+            }))
+            .children((is_data && self.data_view.is_some()).then(|| {
+                Button::new("mock-body-save")
+                    .ghost()
+                    .small()
+                    .label("Save to file…")
+                    .on_click(cx.listener(|this, _, _, cx| this.save_data(cx)))
+            }));
+        let content = match (&self.data_view, is_data) {
+            (_, false) => Editor::new(self.body.state()).bordered(false).h_full().into_any_element(),
+            (Some(view), true) => view.render(cx),
+            (None, true) => page::empty(
+                "No file chosen",
+                "This mock answers with an image or other data. Choose the file to answer with.",
+            ),
+        };
+        v_flex().size_full().child(toolbar).child(div().flex_1().min_h_0().child(content)).into_any_element()
+    }
+
     /// What the mock answers with: status, body, headers and timing.
     pub fn render_response(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if let Some(placeholder) = self.placeholder() {
@@ -600,21 +798,7 @@ impl MockEditor {
         let theme = cx.theme().clone();
         let headers = self.headers.read(cx).pairs(cx).len();
         let content = match self.section {
-            Section::Body => v_flex()
-                .size_full()
-                .child(h_flex().flex_none().px_3().py_2().child(Self::pass_through(
-                    "mock-body",
-                    self.mock_body,
-                    "body",
-                    cx,
-                    |this, on| this.mock_body = on,
-                )))
-                .child(div().flex_1().min_h_0().child(if self.binary_body {
-                    page::empty("Binary body", "This mock answers with data that isn't text. It is kept as it is.")
-                } else {
-                    Editor::new(self.body.state()).bordered(false).h_full().into_any_element()
-                }))
-                .into_any_element(),
+            Section::Body => self.render_body(cx),
             Section::Headers => self.headers.clone().into_any_element(),
             Section::Timing => v_flex()
                 .size_full()

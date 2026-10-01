@@ -17,20 +17,52 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{App, ClickEvent, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div};
 
-use crate::{app_model::AppModel, model::git::FileState};
+use crate::{
+    app_model::AppModel,
+    model::{
+        git::FileState,
+        tree::{FolderRow, folder_choices},
+    },
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntityAction {
     Save,
     Close,
     Sync,
     Revert,
     Delete,
+    /// Put it in the folder with this id, or at the top level.
+    Move(Option<String>),
 }
+
+/// The folder an entity is in and the ones it could be in, for the entities that live in folders.
+#[derive(Debug, Clone, Default)]
+pub struct FolderPicker {
+    pub current: Option<String>,
+    /// Every folder: its id and its full path, in the order they are offered.
+    pub choices: Vec<(String, String)>,
+}
+
+impl FolderPicker {
+    pub fn new(current: Option<String>, folders: &[FolderRow]) -> Self {
+        Self { current, choices: folder_choices(folders) }
+    }
+
+    fn label(&self) -> SharedString {
+        self.current
+            .as_deref()
+            .and_then(|id| self.choices.iter().find(|(choice, _)| choice == id))
+            .map_or(NO_FOLDER.into(), |(_, path)| path.clone().into())
+    }
+}
+
+const NO_FOLDER: &str = "No folder";
 
 /// What the footer needs to know about the open entity.
 #[derive(Debug, Clone, Default)]
@@ -51,6 +83,8 @@ pub struct EntityBar {
     /// The entity is in a tab that can be closed.
     pub closable: bool,
     pub deletable: bool,
+    /// Where it is filed, for an entity kept in folders.
+    pub folder: Option<FolderPicker>,
 }
 
 impl EntityBar {
@@ -100,7 +134,33 @@ fn listener<V: 'static>(
     cx: &mut Context<V>,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     let on = on.clone();
-    cx.listener(move |this, _: &ClickEvent, window, cx| on(this, action, window, cx))
+    cx.listener(move |this, _: &ClickEvent, window, cx| on(this, action.clone(), window, cx))
+}
+
+/// The folder the entity is in, as a button that offers the others. Choosing one moves the entity: a saved
+/// one with its next write, a draft when it is created.
+fn folder_button<V: 'static>(picker: FolderPicker, on: &OnAction<V>, cx: &mut Context<V>) -> impl IntoElement {
+    let view = cx.weak_entity();
+    let on = on.clone();
+    let label = picker.label();
+    Button::new("entity-folder")
+        .ghost()
+        .small()
+        .icon(IconName::Folder)
+        .label(label)
+        .tooltip("The folder this is kept in. Choose another to move it.")
+        .dropdown_menu(move |menu, _, _| {
+            let item = |label: SharedString, target: Option<String>| {
+                let (view, on) = (view.clone(), on.clone());
+                PopupMenuItem::new(label).checked(picker.current == target).on_click(move |_, window, cx| {
+                    let action = EntityAction::Move(target.clone());
+                    view.update(cx, |this, cx| on(this, action, window, cx)).ok();
+                })
+            };
+            let menu = menu.item(item(NO_FOLDER.into(), None));
+            let menu = if picker.choices.is_empty() { menu } else { menu.separator() };
+            picker.choices.iter().fold(menu, |menu, (id, path)| menu.item(item(path.clone().into(), Some(id.clone()))))
+        })
 }
 
 /// Renders the footer for `bar`. `on` runs on the view with the action the user asked for.
@@ -134,6 +194,7 @@ pub fn entity_bar<V: 'static>(
                 .text_color(if is_problem { theme.warning } else { theme.muted_foreground })
                 .child(status),
         )
+        .children(bar.folder.clone().map(|picker| folder_button(picker, &on, cx)))
         .child(
             Button::new("entity-delete")
                 .ghost()

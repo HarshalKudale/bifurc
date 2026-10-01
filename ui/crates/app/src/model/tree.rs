@@ -115,9 +115,59 @@ fn level<'a>(
     nodes
 }
 
+/// The names of the folders above an entity, outermost first, ending in the folder with `id`. A folder that
+/// no longer exists gives an empty path, which is where the tree shows its contents too: at the top.
+pub fn folder_path(folders: &[FolderRow], id: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    let mut next = Some(id);
+    while let Some(current) = next {
+        // A cycle in the stored parents ends the walk rather than looping.
+        if !seen.insert(current) {
+            break;
+        }
+        let Some(folder) = folders.iter().find(|f| f.id == current) else { break };
+        names.push(folder.name.to_owned());
+        next = folder.parent_id;
+    }
+    names.reverse();
+    names
+}
+
+/// Every folder as a place something can be moved to: its id and its full path (`Users / Admin`), in the
+/// order of the paths.
+pub fn folder_choices(folders: &[FolderRow]) -> Vec<(String, String)> {
+    let mut choices: Vec<(String, String)> =
+        folders.iter().map(|f| (f.id.to_owned(), folder_path(folders, f.id).join(" / "))).collect();
+    choices.sort_by_key(|(_, path)| path.to_lowercase());
+    choices
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_path_runs_from_the_top_down_to_the_folder() {
+        assert_eq!(folder_path(&folders(), "f2"), ["Users", "admin"]);
+        assert_eq!(folder_path(&folders(), "f1"), ["Users"]);
+        assert!(folder_path(&folders(), "gone").is_empty());
+    }
+
+    #[test]
+    fn folder_choices_are_full_paths_in_order() {
+        let choices = folder_choices(&folders());
+        assert_eq!(choices, [("f1".to_owned(), "Users".to_owned()), ("f2".to_owned(), "Users / admin".to_owned())]);
+    }
+
+    #[test]
+    fn a_parent_cycle_cannot_hang_a_folder_path() {
+        let cyclic = vec![
+            FolderRow { id: "a", name: "A", parent_id: Some("b") },
+            FolderRow { id: "b", name: "B", parent_id: Some("a") },
+        ];
+        assert_eq!(folder_path(&cyclic, "a"), ["B", "A"]);
+    }
 
     fn folders() -> Vec<FolderRow<'static>> {
         vec![

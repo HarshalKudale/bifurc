@@ -1,12 +1,15 @@
-//! The Capture screen: the traffic the proxy has seen, newest first, and one exchange in detail.
+//! The Capture screen: the traffic the proxy has seen, newest first, and one exchange in detail, much like
+//! a browser's Network tab.
 //!
 //! The history is the engine's (a window opened later still sees what passed) and is extended live by
-//! `event.log.entry`. Pausing only stops this view from following; the engine keeps capturing. An exchange
-//! can be turned into a saved request or a mock: the engine builds the entity from the entry
-//! (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
+//! `event.log.entry`. Both carry only a light summary of each exchange; the headers and bodies of one are
+//! fetched by id (`capture.get`) when it is selected. Pausing only stops this view from following; the engine
+//! keeps capturing. An exchange can be turned into a saved request or a mock: the engine builds the entity
+//! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
+    alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
@@ -18,21 +21,38 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window, div, px, uniform_list,
+    AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use serde_json::{Value, json};
 use std::ops::Range;
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Syntax, page},
+    components::{
+        Syntax,
+        binary::{BinaryBody, save_to_file, suggested_file_name},
+        page,
+    },
     engine::{call, call_in, describe, failure},
     model::{
-        http::pretty_json,
-        traffic::{self, CapturedBody, TrafficEntry, clock_utc},
+        http::{pretty_json, status_text},
+        media::{self, BodyClass},
+        traffic::{self, Exchange, RESPONSE_BODY_LIMIT, TrafficEntry, body_class, clock_utc},
     },
 };
+
+/// What happened on this screen that the window should act on.
+#[derive(Debug, Clone)]
+pub enum CaptureEvent {
+    /// An exchange was saved as a REST request with this id.
+    SavedRequest { id: String },
+    /// An exchange was saved as a mock with this id.
+    SavedMock { id: String },
+}
+
+impl EventEmitter<CaptureEvent> for CaptureScreen {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
@@ -40,20 +60,77 @@ enum Side {
     Response,
 }
 
-impl Side {
-    fn headers_key(self) -> &'static str {
-        match self {
-            Side::Request => "reqHeaders",
-            Side::Response => "resHeaders",
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Headers,
+    Payload,
+    Response,
+}
+
+const SECTIONS: [Section; 3] = [Section::Headers, Section::Payload, Section::Response];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyView {
+    Pretty,
+    Raw,
+}
+
+/// One body of an exchange, prepared for showing.
+enum Body {
+    Empty,
+    /// Text for the read-only editor: as received, and re-indented when that is possible.
+    Text {
+        raw: String,
+        pretty: Option<String>,
+    },
+    /// An image or other data, decoded once here rather than per frame.
+    Data(BinaryBody),
+}
+
+impl Body {
+    /// The body, and how to highlight it when it is text.
+    fn new(bytes: &[u8], content_type: &str) -> (Self, Syntax) {
+        match body_class(content_type, bytes) {
+            None => (Body::Empty, Syntax::Plain),
+            Some(BodyClass::Text) => {
+                let raw = String::from_utf8_lossy(bytes).into_owned();
+                let mut syntax = Syntax::for_content_type(content_type);
+                // A JSON body is recognised by its content too: servers often mislabel it.
+                if syntax == Syntax::Plain && pretty_json(&raw).is_some() {
+                    syntax = Syntax::Json;
+                }
+                let pretty = if syntax == Syntax::Json { pretty_json(&raw) } else { None };
+                (Body::Text { raw, pretty }, syntax)
+            }
+            Some(_) => (Body::Data(BinaryBody::new(bytes.to_vec(), content_type)), Syntax::Plain),
         }
     }
 
-    fn body_key(self) -> &'static str {
+    fn text(&self, view: BodyView) -> Option<String> {
         match self {
-            Side::Request => "reqBody",
-            Side::Response => "resBody",
+            Body::Text { pretty: Some(pretty), .. } if view == BodyView::Pretty => Some(pretty.clone()),
+            Body::Text { raw, .. } => Some(raw.clone()),
+            _ => None,
         }
     }
+
+    fn can_pretty(&self) -> bool {
+        matches!(self, Body::Text { pretty: Some(_), .. })
+    }
+}
+
+/// A fetched exchange with its two bodies prepared.
+struct Shown {
+    exchange: Exchange,
+    request: Body,
+    response: Body,
+}
+
+enum Detail {
+    Idle,
+    Loading,
+    Failed(String),
+    Ready(Box<Shown>),
 }
 
 pub struct CaptureScreen {
@@ -65,30 +142,49 @@ pub struct CaptureScreen {
     paused: bool,
     filter: Entity<InputState>,
     selected: Option<String>,
-    side: Side,
-    body: Entity<EditorState>,
+    detail: Detail,
+    section: Section,
+    response_view: BodyView,
+    request_body: Entity<EditorState>,
+    response_body: Entity<EditorState>,
+    /// A save as request or mock is in flight.
+    saving: bool,
     scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
+fn read_only_editor(window: &mut Window, cx: &mut Context<CaptureScreen>) -> Entity<EditorState> {
+    cx.new(|cx| {
+        let mut state =
+            EditorState::new(window, cx).language(Syntax::Plain.language()).line_number(true).soft_wrap(true);
+        state.set_readonly(true, cx);
+        state
+    })
+}
+
 impl CaptureScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by URL, method, status"));
-        let body = cx.new(|cx| {
-            let mut state =
-                EditorState::new(window, cx).language(Syntax::Plain.language()).line_number(true).soft_wrap(true);
-            state.set_readonly(true, cx);
-            state
-        });
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by URL, method, status, type"));
+        let request_body = read_only_editor(window, cx);
+        let response_body = read_only_editor(window, cx);
         let subscriptions = vec![
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::Traffic(payload) if !this.paused => {
+                    let active = this.model.read(cx).workspace_id().to_owned();
+                    let incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
+                    // The selected exchange changed (its status landed, say): its detail is out of date.
+                    let refresh =
+                        this.selected.as_ref().filter(|id| incoming.iter().any(|entry| &entry.id == *id)).cloned();
                     // A batch is oldest first; the list is newest first.
-                    traffic::merge_live(&mut this.entries, traffic::parse_event(payload));
+                    traffic::merge_live(&mut this.entries, incoming);
+                    if let Some(id) = refresh {
+                        this.fetch(id, window, cx);
+                    }
                     cx.notify();
                 }
                 ModelEvent::WorkspaceSwitched => {
                     this.selected = None;
+                    this.detail = Detail::Idle;
                     this.reload(window, cx);
                 }
                 // The screen is built before the workspace is known; the first snapshot is when it can load.
@@ -108,8 +204,12 @@ impl CaptureScreen {
             paused: false,
             filter,
             selected: None,
-            side: Side::Response,
-            body,
+            detail: Detail::Idle,
+            section: Section::Headers,
+            response_view: BodyView::Pretty,
+            request_body,
+            response_body,
+            saving: false,
             scroll: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
         };
@@ -142,7 +242,7 @@ impl CaptureScreen {
             return;
         }
         let client = model.client().clone();
-        let payload = json!({ "workspaceId": model.workspace_id() });
+        let payload = json!({ "workspaceId": model.workspace_id(), "summary": true });
         call(&client, cx, "capture.list", payload, |this, outcome, cx| {
             match outcome {
                 Ok(result) => {
@@ -159,7 +259,7 @@ impl CaptureScreen {
         self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
     }
 
-    fn toggle_paused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_paused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.paused = !self.paused;
         if !self.paused {
             // Catch up on what passed while the list was not following.
@@ -168,7 +268,7 @@ impl CaptureScreen {
         cx.notify();
     }
 
-    fn clear(&mut self, cx: &mut Context<Self>) {
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         let client = model.client().clone();
         let payload = json!({ "workspaceId": model.workspace_id() });
@@ -177,6 +277,7 @@ impl CaptureScreen {
             None => {
                 this.entries.clear();
                 this.selected = None;
+                this.detail = Detail::Idle;
                 cx.notify();
             }
         });
@@ -188,35 +289,77 @@ impl CaptureScreen {
     }
 
     fn select(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        self.selected = id;
-        self.show_body(window, cx);
+        self.selected = id.clone();
+        self.response_view = BodyView::Pretty;
+        match id {
+            Some(id) => {
+                self.detail = Detail::Loading;
+                self.fetch(id, window, cx);
+            }
+            None => self.detail = Detail::Idle,
+        }
         cx.notify();
     }
 
-    /// Puts the selected exchange's body, for the side in view, into the read-only editor.
-    fn show_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.selected_entry() else { return };
-        let content_type = entry
-            .headers(self.side.headers_key())
-            .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-            .map(|(_, value)| value)
-            .unwrap_or_default();
-        let (text, syntax) = match entry.body(self.side.body_key()) {
-            CapturedBody::Text(text) => match pretty_json(&text) {
-                Some(pretty) => (pretty, Syntax::Json),
-                None => (text, Syntax::for_content_type(&content_type)),
-            },
-            CapturedBody::Empty | CapturedBody::Binary { .. } => (String::new(), Syntax::Plain),
-        };
-        self.body.update(cx, |state, cx| {
-            state.set_highlighter(syntax.language(), cx);
-            state.set_value(text, window, cx);
+    /// Asks the engine for the whole exchange. An answer for an exchange that is no longer selected is dropped.
+    fn fetch(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "id": id });
+        call_in(&client, window, cx, "capture.get", payload, move |this, outcome, window, cx| {
+            if this.selected.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            if let Some(message) = failure(&outcome) {
+                this.detail = Detail::Failed(message);
+                return cx.notify();
+            }
+            let exchange = outcome.ok().and_then(|result| Exchange::from_value(result.get("entry")?));
+            match exchange {
+                Some(exchange) => this.show(exchange, window, cx),
+                None => {
+                    this.detail = Detail::Failed("This exchange is no longer in the engine's history.".to_owned());
+                }
+            }
+            cx.notify();
         });
+    }
+
+    /// Takes a fetched exchange and puts its bodies into the editors.
+    fn show(&mut self, exchange: Exchange, window: &mut Window, cx: &mut Context<Self>) {
+        let (request, request_syntax) = Body::new(&exchange.request_body, exchange.request_content_type());
+        let (response, response_syntax) = Body::new(&exchange.response_body, exchange.response_content_type());
+        if let Some(text) = request.text(BodyView::Pretty) {
+            self.request_body.update(cx, |state, cx| {
+                state.set_highlighter(request_syntax.language(), cx);
+                state.set_value(text, window, cx);
+            });
+        }
+        if let Some(text) = response.text(self.response_view) {
+            self.response_body.update(cx, |state, cx| {
+                state.set_highlighter(response_syntax.language(), cx);
+                state.set_value(text, window, cx);
+            });
+        }
+        self.detail = Detail::Ready(Box::new(Shown { exchange, request, response }));
+    }
+
+    fn set_response_view(&mut self, view: BodyView, window: &mut Window, cx: &mut Context<Self>) {
+        if self.response_view == view {
+            return;
+        }
+        self.response_view = view;
+        if let Detail::Ready(shown) = &self.detail
+            && let Some(text) = shown.response.text(view)
+        {
+            self.response_body.update(cx, |state, cx| state.set_value(text, window, cx));
+        }
+        cx.notify();
     }
 
     fn remove_selected(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected.take() else { return };
+        self.detail = Detail::Idle;
         self.entries.retain(|entry| entry.id != id);
         let model = self.model.read(cx);
         let client = model.client().clone();
@@ -229,39 +372,85 @@ impl CaptureScreen {
         cx.notify();
     }
 
-    /// Saves the selected exchange as a request or as a mock. The engine builds the entity from the entry;
-    /// what it built is created as it is.
+    fn save_failed(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
+        self.saving = false;
+        self.report(what, message, cx);
+        cx.notify();
+    }
+
+    /// Saves the selected exchange as a request or as a mock. The engine builds the entity from the entry it
+    /// holds; what it built is created as it is, named after the exchange when it has no name (the method is shown beside the name already).
     fn save_as(&mut self, mock: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.selected_entry().map(|entry| entry.raw.clone()) else { return };
+        if self.saving {
+            return;
+        }
+        let Some(entry) = self.selected_entry() else { return };
+        let id = entry.id.clone();
+        let name = entry.name();
         let (build, field, kind, done) = if mock {
-            ("capture.buildMock", "mock", "mocks", "Saved as a mock. Find it on the Mocks screen.")
+            ("capture.buildMock", "mock", "mocks", "Saved as a mock.")
         } else {
-            ("capture.buildRequest", "request", "requests", "Saved as a request. Find it on the Requests screen.")
+            ("capture.buildRequest", "request", "requests", "Saved as a request.")
         };
         let model = self.model.read(cx);
         let client = model.client().clone();
         let workspace_id = model.workspace_id().to_owned();
         let create_client = client.clone();
-        call_in(&client, window, cx, build, json!({ "entry": entry }), move |this, outcome, window, cx| {
-            let entity = match outcome {
-                Ok(result) => result.get(field).cloned().filter(Value::is_object),
-                Err(error) => return this.report("Couldn't build it from this exchange.", describe(&error), cx),
+        self.saving = true;
+        cx.notify();
+        let payload = json!({ "workspaceId": workspace_id, "id": id });
+        call_in(&client, window, cx, build, payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                return this.save_failed("Couldn't build it from this exchange.", message, cx);
+            }
+            let entity = outcome.ok().and_then(|result| result.get(field).cloned()).filter(Value::is_object);
+            let Some(mut entity) = entity else {
+                return this.save_failed(
+                    "Couldn't build it from this exchange.",
+                    "The engine returned nothing.".into(),
+                    cx,
+                );
             };
-            let Some(entity) = entity else {
-                return this.report("Couldn't build it from this exchange.", "The engine returned nothing.".into(), cx);
-            };
+            if let Some(object) = entity.as_object_mut() {
+                let unnamed = object.get("name").and_then(Value::as_str).is_none_or(str::is_empty);
+                if unnamed {
+                    object.insert("name".to_owned(), Value::String(name));
+                }
+            }
             let payload = json!({ "kind": kind, "workspaceId": workspace_id, "entity": entity });
-            call_in(
-                &create_client,
-                window,
-                cx,
-                "entity.create",
-                payload,
-                move |this, outcome, window, cx| match failure(&outcome) {
-                    Some(message) => this.report("Couldn't save it.", message, cx),
-                    None => window.push_notification(Notification::success(done), cx),
-                },
-            );
+            call_in(&create_client, window, cx, "entity.create", payload, move |this, outcome, window, cx| {
+                if let Some(message) = failure(&outcome) {
+                    return this.save_failed("Couldn't save it.", message, cx);
+                }
+                let created =
+                    outcome.ok().and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned));
+                let Some(created) = created else {
+                    return this.save_failed("Couldn't save it.", "The engine returned nothing.".into(), cx);
+                };
+                this.saving = false;
+                window.push_notification(Notification::success(done), cx);
+                cx.emit(if mock {
+                    CaptureEvent::SavedMock { id: created }
+                } else {
+                    CaptureEvent::SavedRequest { id: created }
+                });
+                cx.notify();
+            });
+        });
+    }
+
+    /// Asks where to save the body of one side and writes it there.
+    fn save_body(&mut self, side: Side, cx: &mut Context<Self>) {
+        let Detail::Ready(shown) = &self.detail else { return };
+        let (body, name, content_type) = match side {
+            Side::Request => (&shown.request, "request", shown.exchange.request_content_type()),
+            Side::Response => (&shown.response, "response", shown.exchange.response_content_type()),
+        };
+        let Body::Data(binary) = body else { return };
+        let file_name = suggested_file_name(&shown.exchange.url, name, content_type);
+        save_to_file(binary.bytes().to_vec(), file_name, cx, |this, outcome, cx| match outcome {
+            Ok(path) => this.report("Saved to", format!("{}.", path.display()), cx),
+            Err(message) => this.report("Couldn't save the file.", message, cx),
         });
     }
 
@@ -312,30 +501,47 @@ impl CaptureScreen {
                             .text_sm()
                             .child(
                                 h_flex()
+                                    .w_full()
                                     .gap_3()
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap_2()
+                                            .overflow_hidden()
+                                            .child(
+                                                div().min_w_0().overflow_hidden().text_ellipsis().child(entry.name()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .text_ellipsis()
+                                                    .text_xs()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(entry.host()),
+                                            ),
+                                    )
+                                    .child(div().w_16().flex_none().child(entry.method.clone()))
+                                    .child(h_flex().w_20().flex_none().child(Self::status_tag(entry.status)))
                                     .child(
                                         div()
                                             .w_16()
                                             .flex_none()
                                             .text_color(theme.muted_foreground)
-                                            .child(clock_utc(entry.ts)),
+                                            .child(entry.type_label()),
                                     )
-                                    .child(div().w_16().flex_none().child(entry.method.clone()))
-                                    .child(h_flex().w_16().flex_none().child(Self::status_tag(entry.status)))
                                     .child(
                                         div()
-                                            .w_20()
+                                            .w_24()
                                             .flex_none()
                                             .text_color(theme.muted_foreground)
                                             .child(entry.via_label()),
                                     )
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .child(entry.url.clone()),
+                                        div().w_20().flex_none().text_right().text_color(theme.muted_foreground).child(
+                                            entry.size.map(|size| media::size_label(size as usize)).unwrap_or_default(),
+                                        ),
                                     )
                                     .child(
                                         div()
@@ -344,6 +550,14 @@ impl CaptureScreen {
                                             .text_right()
                                             .text_color(theme.muted_foreground)
                                             .child(entry.duration_ms.map(|ms| format!("{ms} ms")).unwrap_or_default()),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .flex_none()
+                                            .text_right()
+                                            .text_color(theme.muted_foreground)
+                                            .child(clock_utc(entry.ts)),
                                     ),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| this.select(Some(id.clone()), window, cx)))
@@ -367,26 +581,226 @@ impl CaptureScreen {
                     .text_color(theme.muted_foreground)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().w_16().flex_none().child("Time (UTC)"))
+                    .child(div().flex_1().child("Name"))
                     .child(div().w_16().flex_none().child("Method"))
-                    .child(div().w_16().flex_none().child("Status"))
-                    .child(div().w_20().flex_none().child("Handled by"))
-                    .child(div().flex_1().child("URL"))
-                    .child(div().w_20().flex_none().text_right().child("Time taken")),
+                    .child(div().w_20().flex_none().child("Status"))
+                    .child(div().w_16().flex_none().child("Type"))
+                    .child(div().w_24().flex_none().child("Handled by"))
+                    .child(div().w_20().flex_none().text_right().child("Size"))
+                    .child(div().w_20().flex_none().text_right().child("Time taken"))
+                    .child(div().w_20().flex_none().text_right().child("Time (UTC)")),
             )
             .child(rows)
             .into_any_element()
     }
 
+    /// A name and its value, name muted.
+    fn pair(
+        name: impl Into<SharedString>,
+        value: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        h_flex()
+            .gap_3()
+            .items_start()
+            .text_sm()
+            .child(div().w_48().flex_none().text_color(cx.theme().muted_foreground).child(name.into()))
+            .child(div().flex_1().min_w_0().child(value.into()))
+            .into_any_element()
+    }
+
+    fn pairs(
+        label: &'static str,
+        rows: &[(String, String)],
+        empty: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let muted = cx.theme().muted_foreground;
+        v_flex()
+            .gap_1()
+            .child(page::section_label(label, cx))
+            .children((rows.is_empty()).then(|| div().text_sm().text_color(muted).child(empty)))
+            .children(rows.iter().map(|(name, value)| Self::pair(name.clone(), value.clone(), cx)))
+            .into_any_element()
+    }
+
+    fn render_headers(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let exchange = &shown.exchange;
+        let status = match exchange.status {
+            Some(code) if status_text(code).is_empty() => code.to_string(),
+            Some(code) => format!("{code} {}", status_text(code)),
+            None => "Pending".to_owned(),
+        };
+        let via = self.selected_entry().map_or("", TrafficEntry::via_label);
+        let handled_by = match (via.is_empty(), &exchange.target) {
+            (false, Some(target)) => format!("{via} · {target}"),
+            (false, None) => via.to_owned(),
+            (true, Some(target)) => target.clone(),
+            (true, None) => String::new(),
+        };
+        let mut general = vec![
+            Self::pair("URL", exchange.url.clone(), cx),
+            Self::pair("Method", exchange.method.clone(), cx),
+            Self::pair("Status", status, cx),
+        ];
+        if !handled_by.is_empty() {
+            general.push(Self::pair("Handled by", handled_by, cx));
+        }
+        if let Some(ms) = exchange.duration_ms {
+            general.push(Self::pair("Time taken", format!("{ms} ms"), cx));
+        }
+        v_flex()
+            .id("capture-headers")
+            .size_full()
+            .overflow_y_scroll()
+            .p_4()
+            .gap_4()
+            .child(v_flex().gap_1().child(page::section_label("General", cx)).children(general))
+            .child(Self::pairs("Response headers", &exchange.response_headers, "No headers were captured.", cx))
+            .child(Self::pairs("Request headers", &exchange.request_headers, "No headers were captured.", cx))
+            .into_any_element()
+    }
+
+    fn render_payload(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let query = shown.exchange.query();
+        let query_block = (!query.is_empty()).then(|| {
+            div().id("capture-query").flex_none().max_h(px(160.)).overflow_y_scroll().child(Self::pairs(
+                "Query parameters",
+                &query,
+                "",
+                cx,
+            ))
+        });
+        v_flex()
+            .size_full()
+            .p_4()
+            .gap_3()
+            .children(query_block)
+            .child(page::section_label("Request body", cx))
+            .child(div().flex_1().min_h_0().child(self.render_body(Side::Request, shown, cx)))
+            .into_any_element()
+    }
+
+    fn render_response(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let truncated = shown.exchange.response_body.len() == RESPONSE_BODY_LIMIT;
+        v_flex()
+            .size_full()
+            .child(div().flex_1().min_h_0().child(self.render_body(Side::Response, shown, cx)))
+            .children(truncated.then(|| {
+                div()
+                    .flex_none()
+                    .px_4()
+                    .py_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Only the first 512 KB of the response is kept.")
+            }))
+            .into_any_element()
+    }
+
+    /// One body: text in the read-only editor, an image or other data by itself, or a note that there is none.
+    fn render_body(&self, side: Side, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let (body, editor, key) = match side {
+            Side::Request => (&shown.request, &self.request_body, "request"),
+            Side::Response => (&shown.response, &self.response_body, "response"),
+        };
+        match body {
+            Body::Empty => page::empty(
+                "No body",
+                match side {
+                    Side::Request => "The request carried no body.",
+                    Side::Response => "The response carried no body.",
+                },
+            ),
+            Body::Text { .. } => {
+                let copy_from = editor.clone();
+                let toggle = (side == Side::Response && body.can_pretty()).then(|| {
+                    TabBar::new("capture-body-view")
+                        .segmented()
+                        .small()
+                        .selected_index(if self.response_view == BodyView::Pretty { 0 } else { 1 })
+                        .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                            this.set_response_view(if *ix == 0 { BodyView::Pretty } else { BodyView::Raw }, window, cx)
+                        }))
+                        .child(Tab::new().label("Pretty"))
+                        .child(Tab::new().label("Raw"))
+                });
+                v_flex()
+                    .size_full()
+                    .child(
+                        h_flex().flex_none().py_2().gap_2().children(toggle).child(div().flex_1()).child(
+                            Button::new(SharedString::from(format!("capture-copy-{key}")))
+                                .ghost()
+                                .small()
+                                .icon(IconName::Copy)
+                                .label("Copy")
+                                .on_click(move |_, _, cx| {
+                                    let text = copy_from.read(cx).value().to_string();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                }),
+                        ),
+                    )
+                    .child(div().flex_1().min_h_0().child(Editor::new(editor).bordered(false).h_full()))
+                    .into_any_element()
+            }
+            Body::Data(binary) => v_flex()
+                .size_full()
+                .child(
+                    h_flex().flex_none().py_2().gap_2().child(div().flex_1()).child(
+                        Button::new(SharedString::from(format!("capture-save-{key}-body")))
+                            .ghost()
+                            .small()
+                            .label("Save to file…")
+                            .on_click(cx.listener(move |this, _, _, cx| this.save_body(side, cx))),
+                    ),
+                )
+                .child(div().flex_1().min_h_0().child(binary.render(cx)))
+                .into_any_element(),
+        }
+    }
+
+    fn render_sections(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let selected = SECTIONS.iter().position(|s| *s == self.section).unwrap_or(0);
+        let content = match self.section {
+            Section::Headers => self.render_headers(shown, cx),
+            Section::Payload => self.render_payload(shown, cx),
+            Section::Response => self.render_response(shown, cx),
+        };
+        v_flex()
+            .size_full()
+            .child(
+                div().flex_none().px_4().child(
+                    TabBar::new("capture-sections")
+                        .underline()
+                        .small()
+                        .selected_index(selected)
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                            this.section = SECTIONS[*ix];
+                            cx.notify();
+                        }))
+                        .child(Tab::new().label("Headers"))
+                        .child(Tab::new().label("Payload"))
+                        .child(Tab::new().label("Response")),
+                ),
+            )
+            .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+
     fn render_detail(&self, entry: &TrafficEntry, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
-        let headers = entry.headers(self.side.headers_key());
-        let body = match entry.body(self.side.body_key()) {
-            CapturedBody::Text(_) => Editor::new(&self.body).bordered(false).h_full().into_any_element(),
-            CapturedBody::Empty => page::empty("No body", "This side of the exchange carried no body."),
-            CapturedBody::Binary { bytes } => {
-                page::empty("Binary body", format!("{bytes} bytes of data that can't be shown as text."))
-            }
+        let content = match &self.detail {
+            Detail::Idle => div().into_any_element(),
+            Detail::Loading => page::loading("Loading the exchange…"),
+            Detail::Failed(message) => div()
+                .p_4()
+                .child(
+                    Alert::error("capture-load-failed", SharedString::from(message.clone()))
+                        .title("Couldn't load the exchange"),
+                )
+                .into_any_element(),
+            Detail::Ready(shown) => self.render_sections(shown, cx),
         };
         v_flex()
             .size_full()
@@ -415,12 +829,14 @@ impl CaptureScreen {
                         Button::new("capture-save-request")
                             .small()
                             .label("Save as request")
+                            .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_as(false, window, cx))),
                     )
                     .child(
                         Button::new("capture-save-mock")
                             .small()
                             .label("Save as mock")
+                            .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_as(true, window, cx))),
                     )
                     .child(
@@ -440,49 +856,7 @@ impl CaptureScreen {
                             .on_click(cx.listener(|this, _, window, cx| this.select(None, window, cx))),
                     ),
             )
-            .child(
-                div().flex_none().px_4().child(
-                    TabBar::new("capture-sides")
-                        .underline()
-                        .small()
-                        .selected_index(if self.side == Side::Request { 0 } else { 1 })
-                        .on_click(cx.listener(|this, ix: &usize, window, cx| {
-                            this.side = if *ix == 0 { Side::Request } else { Side::Response };
-                            this.show_body(window, cx);
-                            cx.notify();
-                        }))
-                        .child(Tab::new().label("Request"))
-                        .child(Tab::new().label("Response")),
-                ),
-            )
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .items_stretch()
-                    .child(
-                        v_flex()
-                            .id("capture-headers")
-                            .w_2_5()
-                            .flex_none()
-                            .overflow_y_scroll()
-                            .p_4()
-                            .gap_2()
-                            .border_r_1()
-                            .border_color(theme.border)
-                            .child(page::section_label("Headers", cx))
-                            .children(headers.is_empty().then(|| {
-                                div().text_sm().text_color(theme.muted_foreground).child("No headers were captured.")
-                            }))
-                            .children(headers.into_iter().map(|(name, value)| {
-                                v_flex()
-                                    .text_sm()
-                                    .child(div().text_color(theme.muted_foreground).child(name))
-                                    .child(div().child(value))
-                            })),
-                    )
-                    .child(div().flex_1().min_w_0().child(body)),
-            )
+            .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }
 }
