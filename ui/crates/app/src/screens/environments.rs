@@ -221,7 +221,7 @@ impl EnvironmentsScreen {
     /// What the footer of the detail pane asks for. There is no draft here, so Save has nothing to do.
     pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
-            EntityAction::Save | EntityAction::Close => {}
+            EntityAction::Save | EntityAction::Close | EntityAction::Move(_) => {}
             EntityAction::Sync => {
                 if let Some(id) = self.selected.clone() {
                     self.model.update(cx, |model, cx| model.sync_entity(&id, cx));
@@ -303,7 +303,7 @@ impl EnvironmentsScreen {
         });
     }
 
-    fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         prompt(
             cx.weak_entity(),
             window,

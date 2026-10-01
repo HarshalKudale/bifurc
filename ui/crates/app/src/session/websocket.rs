@@ -52,6 +52,8 @@ pub struct WsSession {
     workspace_id: String,
     saved_id: Option<String>,
     folder_id: Option<String>,
+    /// The folder the engine has it in. It differs from `folder_id` while a move is waiting to be written.
+    saved_folder: Option<String>,
     /// The key the engine knows this connection by: the saved id, or a name made up for a draft.
     socket_id: String,
     entity: Map<String, Value>,
@@ -124,6 +126,7 @@ impl WsSession {
             model,
             workspace_id,
             saved_id,
+            saved_folder: folder_id.clone(),
             folder_id,
             socket_id,
             entity: Map::new(),
@@ -234,7 +237,7 @@ impl WsSession {
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
-        self.load == LoadState::Ready && self.fields(cx) != self.baseline
+        self.load == LoadState::Ready && (self.fields(cx) != self.baseline || self.folder_id != self.saved_folder)
     }
 
     /// Why the edit cannot be written as it stands, for a saved request that has one.
@@ -260,6 +263,15 @@ impl WsSession {
     fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saved_id.is_none() && self.fields(cx).name != self.baseline.name {
             self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Puts it in another folder, or at the top level with `None`. A saved one is moved by its next write;
+    /// a draft is created there.
+    pub fn set_folder(&mut self, folder: Option<String>, cx: &mut Context<Self>) {
+        if self.folder_id != folder {
+            self.folder_id = folder;
+            self.changed(cx);
         }
     }
 
@@ -318,6 +330,7 @@ impl WsSession {
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
         let fields = Self::fields_of(&entity);
         self.folder_id = entity.get("folderId").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+        self.saved_folder = self.folder_id.clone();
         self.apply_fields(&fields, window, cx);
         self.baseline = fields;
         self.entity = entity;
@@ -340,7 +353,7 @@ impl WsSession {
         }
         let fields = self.fields(cx);
         let creating = self.saved_id.is_none();
-        if !creating && fields == self.baseline {
+        if !creating && fields == self.baseline && self.folder_id == self.saved_folder {
             return;
         }
         if fields.url.is_empty() {
@@ -352,9 +365,8 @@ impl WsSession {
         }
         let mut entity = self.edited_entity(&fields);
         entity.insert("workspaceId".into(), json!(self.workspace_id));
-        if let Some(folder) = &self.folder_id {
-            entity.insert("folderId".into(), json!(folder));
-        }
+        entity.insert("folderId".into(), json!(self.folder_id));
+        let folder = self.folder_id.clone();
 
         self.saving = true;
         cx.notify();
@@ -377,6 +389,7 @@ impl WsSession {
                         this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
                         this.entity = saved;
                         this.baseline = fields;
+                        this.saved_folder = folder.clone();
                         // A draft that is already connected stays under the name it connected with.
                         if !this.connection.read(cx).state().is_live()
                             && let Some(id) = &this.saved_id
@@ -393,6 +406,7 @@ impl WsSession {
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
                     this.baseline = fields;
+                    this.saved_folder = folder.clone();
                 }
                 Err(error) => {
                     window.push_notification(

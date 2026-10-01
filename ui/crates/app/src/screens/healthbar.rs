@@ -167,6 +167,11 @@ impl HealthBarScreen {
         cx.notify();
     }
 
+    /// Checks every URL now.
+    pub fn check_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.check_matching(|_| true, window, cx);
+    }
+
     fn check_matching(
         &mut self,
         include: fn(&Map<String, Value>) -> bool,
@@ -229,7 +234,7 @@ impl HealthBarScreen {
         });
     }
 
-    fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         prompt(
             cx.weak_entity(),
             window,

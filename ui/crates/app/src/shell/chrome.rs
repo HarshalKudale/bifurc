@@ -67,7 +67,7 @@ impl Shell {
                                     .gap_2()
                                     .text_color(theme.muted_foreground)
                                     .child(Icon::new(IconName::Search).small())
-                                    .child(div().flex_1().text_left().child("Search requests and commands…"))
+                                    .child(div().flex_1().text_left().child("Search requests, mocks and commands…"))
                                     .children(shortcut),
                             )
                             .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenCommandPalette), cx)),
@@ -162,7 +162,12 @@ impl Shell {
             .child(screen);
         let Some(target) = target else { return trail.into_any_element() };
         let kind = target.kind.map(|kind| self.render_request_kind(kind, target.entity_id.is_none(), cx));
+        // The folders the entity is filed under, so where it lives is read here and not only in the tree.
+        let folders = target.folders.iter().flat_map(|name| {
+            [separator().into_any_element(), div().flex_none().child(name.clone()).into_any_element()]
+        });
         trail
+            .children(folders)
             .child(separator())
             .children(kind)
             .child(match target.name {
