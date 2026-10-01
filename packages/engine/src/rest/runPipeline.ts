@@ -58,8 +58,8 @@
  * request and a response, and the renderer has always displayed them beside a successful send.
  */
 import type { Environment } from "../workspace/types";
-import { resolveVars, resolveHeaders } from "../utils/resolve";
-import { loadMergedEnvironment } from "../workspace/envState";
+import { resolveVars, resolveHeaders } from "../env/resolve";
+import { loadMergedEnvironment } from "../env/envState";
 import { executeIpcScript, type TestResultEntry } from "../mocks/scriptExecutor";
 
 /** The protocol-independent view of a request. `body` is **text** — see the header's encoding table. */

@@ -72,8 +72,8 @@ import type {
 } from "@bifurc/protocol";
 import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { loadEntity } from "../workspace/config";
-import { loadMergedEnvironment } from "../workspace/envState";
-import { resolveVars, resolveHeaders } from "../utils/resolve";
+import { loadMergedEnvironment } from "../env/envState";
+import { resolveVars, resolveHeaders } from "../env/resolve";
 
 /**
  * The standard introspection query, verbatim from the shell. It is written out in full rather than

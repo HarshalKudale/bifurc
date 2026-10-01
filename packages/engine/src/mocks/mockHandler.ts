@@ -1,7 +1,7 @@
 import * as net from "net";
 import { MockRule, Environment } from "../workspace/config";
 import { HOP_BY_HOP } from "../utils/http";
-import { resolveVars } from "../utils/resolve";
+import { resolveVars } from "../env/resolve";
 
 export interface ResolvedMockResponse {
   status: number;

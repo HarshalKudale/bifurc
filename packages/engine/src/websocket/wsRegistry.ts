@@ -73,8 +73,8 @@
  */
 import { WebSocket, type RawData } from "ws";
 import type { WsConnectionState, WsMessage } from "@bifurc/protocol";
-import { loadMergedEnvironment } from "../workspace/envState";
-import { resolveHeaders, resolveVars } from "../utils/resolve";
+import { loadMergedEnvironment } from "../env/envState";
+import { resolveHeaders, resolveVars } from "../env/resolve";
 
 /**
  * Max concurrent **live** sockets per workspace. Carried over from the renderer's `MAX_WS_CONNECTIONS`, which

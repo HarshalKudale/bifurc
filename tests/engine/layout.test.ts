@@ -74,37 +74,28 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
   // down to `utils/`), so this is a dependency, not a cycle.
   reverseproxy: ["kernel", "utils", "workspace", "mocks", "proxy"],
   proxy: ["kernel", "utils", "workspace", "mocks", "certificates"],
-  mocks: ["kernel", "utils", "workspace"],
+  mocks: ["kernel", "utils", "workspace", "capture"],
   certificates: ["kernel", "utils", "workspace"],
-  graphql: ["kernel", "utils", "workspace"],
-  grpc: ["kernel", "utils", "workspace"],
-  soap: ["kernel", "utils", "workspace"],
-  rest: ["kernel", "utils", "workspace"],
+  graphql: ["kernel", "utils", "workspace", "env"],
+  grpc: ["kernel", "utils", "workspace", "env"],
+  soap: ["kernel", "utils", "workspace", "env"],
+  // `rest/` owns the whole REST send path: `request.send` (`sendCommands.ts`) and the pipeline it drives
+  // (`runPipeline.ts`, formerly the separate `pipeline/` module). `mocks/` is the script sandbox, `capture/`
+  // the captured-entry -> saved-request conversion, `env/` the merged environment the pipeline resolves with.
+  rest: ["kernel", "utils", "workspace", "env", "mocks", "capture"],
+  // Environment state, selection, the `{{var}}` resolver and the `env.*` commands. `workspace/` reaches
+  // `env/envSelection` and feature modules reach `env/resolve` through SEAM_MODULES: both are pure leaves.
+  env: ["kernel", "utils", "workspace"],
+  // `services.discover` and the `healthbar.*` service-health commands.
+  services: ["kernel", "utils", "workspace"],
   // Reserved (§9): the directory exists, the behaviour does not. The contract is the default so that the
   // first real code here starts under the rule rather than outside it.
-  websocket: ["kernel", "utils", "workspace"],
+  websocket: ["kernel", "utils", "workspace", "env"],
   gitops: ["kernel", "utils", "workspace"],
   fileops: ["kernel", "utils", "workspace"],
   importexport: ["kernel", "utils", "workspace"],
   applications: ["kernel", "utils", "workspace"],
   runner: ["kernel", "utils", "workspace"],
-  // `plan/19` D24's request pipeline, and `request.send` — the command that drives it. The row is the
-  // union of what the module reads: the workspace's environment state and entities (`workspace/`), the
-  // resolver (`utils/`), the script sandbox (`mocks/`) and the registry the command dispatches through
-  // (`kernel/`).
-  //
-  // **`kernel/` was added 2026-09-30 with `pipeline/commands.ts`,** and that addition is why the file
-  // exists at all: a command that calls the pipeline is a `workspace/ → pipeline/` edge, and `workspace/`'s
-  // §6 row is exactly `kernel/` + `utils/`. §5.1's remedy is to place a module in the layer it reads from,
-  // so `request.send` moved out of `savedRequestCommands.ts` to the pipeline it drives — the ratchet
-  // forced a *placement*, not just a permission.
-  //
-  // `mocks/` is a **sideways** feature→feature edge and it is granted deliberately, following §6's
-  // existing `proxy/` → `mocks/` and `reverseproxy/` → `mocks/` rows: the sandbox is stateless and shared,
-  // and the §5.1 remedy — extract it *down* into `utils/` — is the cleanup to make if a third consumer
-  // appears. If that happens, `scriptContext.ts` must move with it: `utils/` importing `mocks/` would be
-  // the very violation the extraction exists to avoid.
-  pipeline: ["kernel", "utils", "workspace", "mocks"],
   capture: ["kernel", "utils", "workspace"],
   // `utils/` is granted for `hostnameOf`/`isLoopbackHost`: §6's row for this module predates `plan/15`
   // work item 2, which gave the proxy a second bind guard needing the same answer and extracted
@@ -119,6 +110,8 @@ const CONTRACT: Record<string, readonly string[] | "any"> = {
 const SEAM_MODULES = new Set([
   "runtime/instances",
   "runtime/entityStatus",
+  "env/envSelection",
+  "env/resolve",
 ]);
 
 /**
