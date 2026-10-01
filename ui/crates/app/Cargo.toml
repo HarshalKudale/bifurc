@@ -1,0 +1,19 @@
+[package]
+name = "bifurc-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Bifurc desktop UI: a GPUI app that runs the Bifurc engine as a sidecar."
+
+[[bin]]
+name = "bifurc-ui"
+path = "src/main.rs"
+
+[dependencies]
+bifurc-engine-client = { path = "../engine-client" }
+base64 = "0.22"
+futures = "0.3"
+gpui-kit = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
