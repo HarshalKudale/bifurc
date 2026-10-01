@@ -37,6 +37,187 @@ pub fn format_headers(headers: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// The engine's header map as ordered pairs, for a name/value table.
+pub fn header_pairs(headers: &Value) -> Vec<(String, String)> {
+    headers
+        .as_object()
+        .map(|map| {
+            map.iter().map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_owned())).collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Pairs back to the engine's header map. A later pair with the same name replaces the earlier one, as a
+/// map requires.
+pub fn header_map(pairs: &[(String, String)]) -> Map<String, Value> {
+    pairs.iter().map(|(name, value)| (name.clone(), Value::String(value.clone()))).collect()
+}
+
+/// Splits a URL into everything but its query, and the query's pairs. The text is not decoded: what the
+/// user typed (including `{{variables}}`) is what the table shows.
+pub fn split_query(url: &str) -> (String, Vec<(String, String)>) {
+    let (before_fragment, fragment) = match url.find('#') {
+        Some(ix) => (&url[..ix], &url[ix..]),
+        None => (url, ""),
+    };
+    let Some(ix) = before_fragment.find('?') else { return (url.to_owned(), Vec::new()) };
+    let pairs = before_fragment[ix + 1..]
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| match part.split_once('=') {
+            Some((name, value)) => (name.to_owned(), value.to_owned()),
+            None => (part.to_owned(), String::new()),
+        })
+        .collect();
+    (format!("{}{fragment}", &before_fragment[..ix]), pairs)
+}
+
+/// The inverse of [`split_query`]: `base` with `pairs` as its query.
+pub fn join_query(base: &str, pairs: &[(String, String)]) -> String {
+    let (path, fragment) = match base.find('#') {
+        Some(ix) => (&base[..ix], &base[ix..]),
+        None => (base, ""),
+    };
+    if pairs.is_empty() {
+        return base.to_owned();
+    }
+    let query: Vec<String> = pairs
+        .iter()
+        .map(|(name, value)| if value.is_empty() { name.clone() } else { format!("{name}={value}") })
+        .collect();
+    format!("{path}?{}{fragment}", query.join("&"))
+}
+
+fn form_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            ' ' => out.push('+'),
+            '%' => out.push_str("%25"),
+            '&' => out.push_str("%26"),
+            '=' => out.push_str("%3D"),
+            '+' => out.push_str("%2B"),
+            '#' => out.push_str("%23"),
+            '\n' => out.push_str("%0A"),
+            '\r' => out.push_str("%0D"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn form_unescape(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut ix = 0;
+    while ix < bytes.len() {
+        match bytes[ix] {
+            b'+' => out.push(b' '),
+            b'%' if bytes.get(ix + 1..ix + 3).is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit)) => {
+                let hex = std::str::from_utf8(&bytes[ix + 1..ix + 3]).unwrap_or("00");
+                out.push(u8::from_str_radix(hex, 16).unwrap_or(b'?'));
+                ix += 2;
+            }
+            other => out.push(other),
+        }
+        ix += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Name/value pairs as an `application/x-www-form-urlencoded` body. Only the characters that would change
+/// the body's structure are escaped, so `{{variables}}` stay readable for the engine to substitute.
+pub fn encode_form(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(name, value)| format!("{}={}", form_escape(name), form_escape(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+pub fn decode_form(body: &str) -> Vec<(String, String)> {
+    body.split('&')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let (name, value) = part.split_once('=').unwrap_or((part, ""));
+            (form_unescape(name), form_unescape(value))
+        })
+        .collect()
+}
+
+/// How a request body is edited. The saved request stores only the body text and its headers, so the mode
+/// is read from, and written to, the `Content-Type` header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyMode {
+    None,
+    Json,
+    Text,
+    Xml,
+    Html,
+    Form,
+}
+
+impl BodyMode {
+    pub const ALL: [BodyMode; 6] =
+        [BodyMode::None, BodyMode::Json, BodyMode::Text, BodyMode::Xml, BodyMode::Html, BodyMode::Form];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BodyMode::None => "None",
+            BodyMode::Json => "JSON",
+            BodyMode::Text => "Text",
+            BodyMode::Xml => "XML",
+            BodyMode::Html => "HTML",
+            BodyMode::Form => "Form",
+        }
+    }
+
+    /// The `Content-Type` this mode sends, or `None` for a request without a body.
+    pub fn content_type(self) -> Option<&'static str> {
+        match self {
+            BodyMode::None => None,
+            BodyMode::Json => Some("application/json"),
+            BodyMode::Text => Some("text/plain"),
+            BodyMode::Xml => Some("application/xml"),
+            BodyMode::Html => Some("text/html"),
+            BodyMode::Form => Some("application/x-www-form-urlencoded"),
+        }
+    }
+
+    /// The mode a stored request opens in.
+    pub fn detect(content_type: Option<&str>, body: &str) -> Self {
+        let Some(content_type) = content_type.map(str::to_ascii_lowercase) else {
+            let trimmed = body.trim_start();
+            return if trimmed.is_empty() {
+                BodyMode::None
+            } else if trimmed.starts_with(['{', '[']) {
+                BodyMode::Json
+            } else if trimmed.starts_with('<') {
+                BodyMode::Xml
+            } else {
+                BodyMode::Text
+            };
+        };
+        if content_type.contains("json") {
+            BodyMode::Json
+        } else if content_type.contains("x-www-form-urlencoded") {
+            BodyMode::Form
+        } else if content_type.contains("html") {
+            BodyMode::Html
+        } else if content_type.contains("xml") {
+            BodyMode::Xml
+        } else {
+            BodyMode::Text
+        }
+    }
+}
+
+/// Re-indents JSON text. `None` if it is not JSON, which leaves the caller's text alone.
+pub fn pretty_json(text: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    serde_json::to_string_pretty(&value).ok()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestOutcome {
     pub name: String,
@@ -139,6 +320,11 @@ impl HttpResponse {
         self.body.clone()
     }
 
+    /// The body exactly as it was received (empty for a body that is not text).
+    pub fn display_body_raw(&self) -> String {
+        self.body.clone()
+    }
+
     pub fn body_size_label(&self) -> String {
         let bytes = self.size_bytes;
         if bytes < 1024 {
@@ -202,6 +388,49 @@ mod tests {
 
     fn encoded(text: &str) -> String {
         STANDARD.encode(text)
+    }
+
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter().map(|(a, b)| ((*a).to_owned(), (*b).to_owned())).collect()
+    }
+
+    #[test]
+    fn a_query_splits_into_pairs_and_joins_back_unchanged() {
+        let url = "{{HOST}}/users?active=1&q={{term}}&flag#top";
+        let (base, query) = split_query(url);
+        assert_eq!(base, "{{HOST}}/users#top");
+        assert_eq!(query, pairs(&[("active", "1"), ("q", "{{term}}"), ("flag", "")]));
+        assert_eq!(join_query(&base, &query), url);
+    }
+
+    #[test]
+    fn a_url_without_a_query_is_only_a_base() {
+        assert_eq!(split_query("http://x/y"), ("http://x/y".to_owned(), Vec::new()));
+        assert_eq!(join_query("http://x/y", &[]), "http://x/y");
+    }
+
+    #[test]
+    fn form_bodies_escape_structure_and_leave_variables_readable() {
+        let fields = pairs(&[("name", "a b&c=d"), ("token", "{{token}}"), ("pct", "100%")]);
+        let body = encode_form(&fields);
+        assert_eq!(body, "name=a+b%26c%3Dd&token={{token}}&pct=100%25");
+        assert_eq!(decode_form(&body), fields);
+    }
+
+    #[test]
+    fn the_body_mode_follows_the_content_type_and_falls_back_to_the_body() {
+        assert_eq!(BodyMode::detect(Some("application/json; charset=utf-8"), ""), BodyMode::Json);
+        assert_eq!(BodyMode::detect(Some("application/x-www-form-urlencoded"), "a=1"), BodyMode::Form);
+        assert_eq!(BodyMode::detect(Some("application/soap+xml"), ""), BodyMode::Xml);
+        assert_eq!(BodyMode::detect(None, ""), BodyMode::None);
+        assert_eq!(BodyMode::detect(None, " [1]"), BodyMode::Json);
+        assert_eq!(BodyMode::detect(None, "hello"), BodyMode::Text);
+    }
+
+    #[test]
+    fn header_pairs_keep_the_maps_order() {
+        let map = header_map(&pairs(&[("B", "2"), ("A", "1")]));
+        assert_eq!(header_pairs(&Value::Object(map)), pairs(&[("B", "2"), ("A", "1")]));
     }
 
     #[test]

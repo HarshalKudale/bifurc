@@ -13,10 +13,48 @@ use super::kind::RequestKind;
 pub struct WorkspaceInfo {
     pub id: String,
     pub name: String,
+    /// The git remote this workspace syncs with, if one is set.
+    pub sync: Option<SyncConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncConfig {
+    pub remote: String,
+    pub branch: String,
+    pub auto_sync: bool,
+}
+
+/// What the mocks tree shows for a mock rule. The whole rule is loaded by id when its tab opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MockStub {
+    pub id: String,
+    pub name: String,
+    pub method: String,
+    pub url_pattern: String,
+    pub enabled: bool,
+    pub folder_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlainFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+}
+
+/// The engine-wide settings a client may change with `settings.update`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EngineSettings {
+    pub proxy_port: u16,
+    pub forward_proxy_port: u16,
+    pub companion_port: u16,
+    pub minimize_to_tray: bool,
+    pub tls_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnvVariable {
+    pub id: String,
     pub key: String,
     pub value: String,
 }
@@ -77,8 +115,10 @@ pub struct ConfigSnapshot {
     pub mappings: Vec<MappingInfo>,
     pub requests: Vec<RequestStub>,
     pub folders: Vec<FolderInfo>,
-    pub proxy_port: u16,
-    pub forward_proxy_port: u16,
+    pub mocks: Vec<MockStub>,
+    pub mock_folders: Vec<PlainFolder>,
+    pub proxy_rule_count: usize,
+    pub settings: EngineSettings,
 }
 
 fn text(value: &Value, key: &str) -> Option<String> {
@@ -99,7 +139,16 @@ impl ConfigSnapshot {
 
         let workspaces = array(config, "workspaces")
             .iter()
-            .filter_map(|w| Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")? }))
+            .filter_map(|w| {
+                let sync = w.get("syncConfig").filter(|s| s.is_object()).and_then(|s| {
+                    Some(SyncConfig {
+                        remote: non_empty(s, "remote")?,
+                        branch: text(s, "branch").unwrap_or_default(),
+                        auto_sync: s.get("autoSync").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                });
+                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, sync })
+            })
             .collect();
 
         let environments = array(config, "environments")
@@ -110,7 +159,13 @@ impl ConfigSnapshot {
                     .and_then(Value::as_array)
                     .map(|vars| {
                         vars.iter()
-                            .filter_map(|v| Some(EnvVariable { key: text(v, "key")?, value: text(v, "value")? }))
+                            .filter_map(|v| {
+                                Some(EnvVariable {
+                                    id: text(v, "id").unwrap_or_default(),
+                                    key: text(v, "key")?,
+                                    value: text(v, "value")?,
+                                })
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -152,6 +207,27 @@ impl ConfigSnapshot {
         }
 
         let port = |key: &str| config.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
+        let flag = |key: &str| config.get(key).and_then(Value::as_bool).unwrap_or(false);
+
+        let mocks = array(config, "mocks")
+            .iter()
+            .filter_map(|m| {
+                Some(MockStub {
+                    id: text(m, "id")?,
+                    name: text(m, "name").unwrap_or_default(),
+                    method: text(m, "method").unwrap_or_default(),
+                    url_pattern: text(m, "urlPattern").unwrap_or_default(),
+                    enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+                    folder_id: non_empty(m, "folderId"),
+                })
+            })
+            .collect();
+        let mock_folders = array(config, "mockFolders")
+            .iter()
+            .filter_map(|f| {
+                Some(PlainFolder { id: text(f, "id")?, name: text(f, "name")?, parent_id: non_empty(f, "parentId") })
+            })
+            .collect();
 
         Ok(Self {
             workspaces,
@@ -161,8 +237,16 @@ impl ConfigSnapshot {
             mappings,
             requests,
             folders,
-            proxy_port: port("port"),
-            forward_proxy_port: port("forwardProxyPort"),
+            mocks,
+            mock_folders,
+            proxy_rule_count: array(config, "proxyRules").len(),
+            settings: EngineSettings {
+                proxy_port: port("port"),
+                forward_proxy_port: port("forwardProxyPort"),
+                companion_port: port("companionPort"),
+                minimize_to_tray: flag("minimizeToTray"),
+                tls_enabled: flag("tlsEnabled"),
+            },
         })
     }
 
@@ -182,6 +266,15 @@ impl ConfigSnapshot {
 
     pub fn request(&self, kind: RequestKind, id: &str) -> Option<&RequestStub> {
         self.requests.iter().find(|r| r.kind == kind && r.id == id)
+    }
+
+    pub fn mock(&self, id: &str) -> Option<&MockStub> {
+        self.mocks.iter().find(|m| m.id == id)
+    }
+
+    /// The environment every other one layers over.
+    pub fn global_environment(&self) -> Option<&EnvironmentInfo> {
+        self.environments.iter().find(|e| e.is_global())
     }
 
     pub fn folder(&self, kind: RequestKind, id: &str) -> Option<&FolderInfo> {

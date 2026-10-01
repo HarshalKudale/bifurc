@@ -1,112 +1,81 @@
-//! The window: title bar, module rail, dock area and status bar, and the commands that act on them.
+//! The window: title bar, left sidebar, the current screen, right sidebar and footer.
 //!
-//! The shell owns layout and open tabs and nothing about the workspace itself. It composes the dockable
-//! panels (explorer, request tabs, response, details, activity), keeps the response and details panels
-//! pointed at the active tab, and turns what the user does in them into engine commands. The workspace
-//! comes from [`AppModel`]; an open request is a [`Session`].
+//! The shell owns layout and navigation and nothing about the workspace itself. Only the area in the middle
+//! changes when the sidebar's selection changes; the bars around it stay. Each screen is its own view with
+//! its own state, kept alive while another screen is in front, so coming back to Requests finds its tabs as
+//! they were. The workspace comes from [`AppModel`].
 
 mod chrome;
-mod dialogs;
-mod module;
+mod nav;
 mod palette;
-mod tabs;
-
-use std::rc::Rc;
+mod right_sidebar;
 
 use gpui_kit::component::{
-    ActiveTheme as _,
+    ActiveTheme as _, WindowExt as _,
     command::CommandState,
-    dock::{DockArea, DockLayout, DockPlacement, DockSkin, panel_handle},
+    h_flex,
+    notification::Notification,
+    resizable::{h_resizable, resizable_panel},
     v_flex,
 };
 use gpui_kit::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, Styled as _, Subscription, Window, div, px,
+    AnyView, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
-pub use self::module::Module;
-use self::tabs::OpenTab;
+pub use self::nav::Screen;
+use self::right_sidebar::RightSidebar;
 use crate::{
     app_model::{AppModel, ModelEvent},
     commands::ShellHandle,
-    panels::{
-        activity::ActivityPanel,
-        details::DetailsPanel,
-        explorer::{ExplorerEvent, ExplorerPanel},
-        response::ResponsePanel,
-        welcome::WelcomePanel,
+    components::dialogs::{PromptField, confirm_danger, prompt},
+    model::{RequestKind, snippet::RequestParts},
+    preferences::Preferences,
+    screens::{
+        environments::EnvironmentsScreen, mappings::MappingsScreen, requests::RequestsScreen, settings::SettingsScreen,
     },
-    session::Session,
 };
+
+/// The thing open on the current screen: what the breadcrumb ends in and what the right sidebar is about.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveTarget {
+    pub title: SharedString,
+    /// The saved entity's id, once it has one.
+    pub entity_id: Option<String>,
+    /// The request as an HTTP call, when it can be written as a snippet.
+    pub request: Option<RequestParts>,
+}
 
 pub struct Shell {
     pub(crate) model: Entity<AppModel>,
-    dock: Entity<DockArea>,
-    /// Kept so the dock's appearance can be changed later; the area holds the same skin.
-    _skin: Rc<DockSkin>,
-    explorer: Entity<ExplorerPanel>,
-    response: Entity<ResponsePanel>,
-    details: Entity<DetailsPanel>,
-    activity: Entity<ActivityPanel>,
-    tabs: Vec<OpenTab>,
-    active: Option<Session>,
-    module: Module,
+    screen: Screen,
+    requests: Entity<RequestsScreen>,
+    mappings: Entity<MappingsScreen>,
+    environments: Entity<EnvironmentsScreen>,
+    settings: Entity<SettingsScreen>,
+    right: Entity<RightSidebar>,
+    right_open: bool,
+    /// A line a screen without countable entities gives the footer.
+    screen_note: Option<String>,
     palette: Entity<CommandState>,
-    /// Numbers drafts so each gets a stable identity before it has an id from the engine.
-    next_draft: u64,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Shell {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (dock, skin) = DockSkin::dock_area("bifurc-main", Some(1), window, cx);
-        let explorer = cx.new(|cx| ExplorerPanel::new(model.clone(), window, cx));
-        let response = cx.new(ResponsePanel::new);
-        let details = cx.new(|cx| DetailsPanel::new(model.clone(), cx));
-        let activity = cx.new(|cx| ActivityPanel::new(model.clone(), cx));
-        let home = cx.new(WelcomePanel::new);
+        let requests = cx.new(|cx| RequestsScreen::new(model.clone(), window, cx));
+        let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
+        let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
+        let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
+        let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
-
-        // Dock sizes are physical starting points the user resizes; they are not part of the rem scale.
-        dock.update(cx, |area, cx| {
-            area.set_center(
-                DockLayout::v_split()
-                    .child(DockLayout::tabs().panel_view(panel_handle(home.clone()), cx), None)
-                    .child(DockLayout::tabs().panel_view(panel_handle(response.clone()), cx), Some(px(300.))),
-                window,
-                cx,
-            );
-            area.set_dock(
-                DockPlacement::Left,
-                DockLayout::tabs().panel_view(panel_handle(explorer.clone()), cx),
-                window,
-                cx,
-            );
-            area.set_dock_size(DockPlacement::Left, px(300.), window, cx);
-            area.set_dock(
-                DockPlacement::Right,
-                DockLayout::tabs().panel_view(panel_handle(details.clone()), cx),
-                window,
-                cx,
-            );
-            area.set_dock_size(DockPlacement::Right, px(300.), window, cx);
-            area.set_dock(
-                DockPlacement::Bottom,
-                DockLayout::tabs().panel_view(panel_handle(activity.clone()), cx),
-                window,
-                cx,
-            );
-            area.set_dock_size(DockPlacement::Bottom, px(220.), window, cx);
-            // Activity is a reference, not the work: it starts folded away.
-            if area.is_dock_open(DockPlacement::Bottom) {
-                area.toggle_dock(DockPlacement::Bottom, window, cx);
-            }
-        });
 
         let subscriptions = vec![
             cx.subscribe_in(&model, window, Self::on_model_event),
-            cx.subscribe_in(&explorer, window, Self::on_explorer_event),
+            cx.observe(&model, |_, _, cx| cx.notify()),
+            // The breadcrumb and the right sidebar follow what is open on the screen in front.
+            cx.observe_in(&requests, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
         ];
 
         let handle = ShellHandle(cx.weak_entity());
@@ -114,17 +83,15 @@ impl Shell {
 
         Self {
             model,
-            dock,
-            _skin: skin,
-            explorer,
-            response,
-            details,
-            activity,
-            tabs: Vec::new(),
-            active: None,
-            module: Module::Requests,
+            screen: Screen::Requests,
+            requests,
+            mappings,
+            environments,
+            settings,
+            right,
+            right_open: false,
+            screen_note: None,
             palette,
-            next_draft: 1,
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -137,66 +104,152 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_kit::component::{WindowExt as _, notification::Notification};
         match event {
-            ModelEvent::ConfigChanged => {
-                self.close_vanished_tabs(window, cx);
+            ModelEvent::ConfigChanged | ModelEvent::WorkspaceSwitched => {
+                self.sync_right_sidebar(window, cx);
                 cx.notify();
             }
-            ModelEvent::WorkspaceSwitched => self.close_all_tabs(window, cx),
             ModelEvent::Notice(text) => window.push_notification(Notification::warning(text.clone()), cx),
             ModelEvent::SocketStatus(_) | ModelEvent::SocketMessage(_) | ModelEvent::Traffic(_) => {}
         }
     }
 
-    fn on_explorer_event(
-        &mut self,
-        _: &Entity<ExplorerPanel>,
-        event: &ExplorerEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            ExplorerEvent::Open(node) => self.open_node(node, window, cx),
-            ExplorerEvent::NewRequest { kind, folder } => self.new_request(*kind, folder.clone(), window, cx),
-            ExplorerEvent::NewFolder { kind, parent } => self.prompt_new_folder(*kind, parent.clone(), window, cx),
-            ExplorerEvent::Rename(node) => self.prompt_rename(node.clone(), window, cx),
-            ExplorerEvent::Delete(node) => self.confirm_delete(node.clone(), window, cx),
-            ExplorerEvent::NewMapping => self.prompt_new_mapping(window, cx),
-            ExplorerEvent::DeleteMapping(id) => self.confirm_delete_mapping(id.clone(), window, cx),
+    /// What is open on the current screen, if the screen has such a thing.
+    pub(super) fn active_target(&self, cx: &gpui_kit::App) -> Option<ActiveTarget> {
+        match self.screen {
+            Screen::Requests => self.requests.read(cx).active_session().map(|session| ActiveTarget {
+                title: session.title(cx),
+                entity_id: session.saved_id(cx),
+                request: session.request_parts(cx),
+            }),
+            _ => None,
         }
     }
 
-    pub fn show_module(&mut self, module: Module, window: &mut Window, cx: &mut Context<Self>) {
-        self.module = module;
-        self.explorer.update(cx, |explorer, cx| explorer.set_module(module, cx));
-        self.dock.update(cx, |area, cx| {
-            if !area.is_dock_open(DockPlacement::Left) {
-                area.toggle_dock(DockPlacement::Left, window, cx);
-            }
-        });
+    fn sync_right_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.active_target(cx);
+        let open = self.right_open;
+        self.right.update(cx, |right, cx| right.set_target(target, open, window, cx));
         cx.notify();
     }
 
-    fn toggle(&mut self, placement: DockPlacement, window: &mut Window, cx: &mut Context<Self>) {
-        self.dock.update(cx, |area, cx| area.toggle_dock(placement, window, cx));
+    fn screen_view(&self) -> Option<AnyView> {
+        match self.screen {
+            Screen::Requests => Some(self.requests.clone().into()),
+            Screen::Mappings => Some(self.mappings.clone().into()),
+            Screen::Environments => Some(self.environments.clone().into()),
+            Screen::Settings => Some(self.settings.clone().into()),
+            Screen::Services | Screen::HealthBar | Screen::ProxyRules | Screen::Capture | Screen::Mocks => None,
+        }
+    }
+
+    pub fn show_screen(&mut self, screen: Screen, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen != screen {
+            self.screen = screen;
+            self.screen_note = None;
+            self.sync_right_sidebar(window, cx);
+        }
         cx.notify();
     }
 
-    pub fn toggle_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle(DockPlacement::Left, window, cx);
+    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        Preferences::update(cx, |p| p.sidebar_collapsed = !p.sidebar_collapsed);
+        cx.notify();
     }
 
-    pub fn toggle_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle(DockPlacement::Right, window, cx);
+    pub fn toggle_right_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.right_open = !self.right_open;
+        // Opening it is what loads the history it shows.
+        self.sync_right_sidebar(window, cx);
     }
 
-    pub fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle(DockPlacement::Bottom, window, cx);
+    pub fn toggle_folder_tree(&mut self, cx: &mut Context<Self>) {
+        Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
+        self.requests.update(cx, |_, cx| cx.notify());
+        cx.notify();
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.model.update(cx, |model, cx| model.refresh(cx));
+    }
+
+    pub fn new_request(&mut self, kind: RequestKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Requests, window, cx);
+        self.requests.update(cx, |requests, cx| requests.new_request(kind, None, window, cx));
+    }
+
+    pub fn prompt_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Requests, window, cx);
+        self.requests.update(cx, |requests, cx| requests.prompt_new_folder(RequestKind::Rest, None, window, cx));
+    }
+
+    pub fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.save_active(window, cx)),
+            Screen::Environments => self.environments.update(cx, |screen, cx| screen.save(window, cx)),
+            _ => {}
+        }
+    }
+
+    pub fn revert_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.revert_active(window, cx)),
+            Screen::Environments => self.environments.update(cx, |screen, cx| screen.revert(window, cx)),
+            _ => {}
+        }
+    }
+
+    /// Send, or connect: the active request's main verb.
+    pub fn run_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen == Screen::Requests {
+            self.requests.update(cx, |screen, cx| screen.run_active(window, cx));
+        }
+    }
+
+    pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen == Screen::Requests {
+            self.requests.update(cx, |screen, cx| screen.close_active(window, cx));
+        }
+    }
+
+    pub(super) fn prompt_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        prompt(
+            cx.weak_entity(),
+            window,
+            cx,
+            "New workspace",
+            "Create",
+            vec![PromptField::new("Name", "Workspace name")],
+            |this, values, _, cx| this.model.update(cx, |model, cx| model.add_workspace(&values[0], cx)),
+        );
+    }
+
+    pub(super) fn prompt_rename_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.model.read(cx).config().active_workspace().cloned() else { return };
+        prompt(
+            cx.weak_entity(),
+            window,
+            cx,
+            format!("Rename “{}”", workspace.name),
+            "Rename",
+            vec![PromptField::new("Name", "Workspace name").initial(workspace.name.clone())],
+            move |this, values, _, cx| {
+                this.model.update(cx, |model, cx| model.rename_workspace(&workspace.id, &values[0], cx))
+            },
+        );
+    }
+
+    pub(super) fn confirm_delete_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.model.read(cx).config().active_workspace().cloned() else { return };
+        confirm_danger(
+            cx.weak_entity(),
+            window,
+            cx,
+            format!("Delete workspace “{}”?", workspace.name),
+            "Its requests, mocks, mappings and history are deleted from this computer. This can't be undone.",
+            "Delete",
+            move |this, _, cx| this.model.update(cx, |model, cx| model.delete_workspace(&workspace.id, cx)),
+        );
     }
 }
 
@@ -209,6 +262,18 @@ impl Focusable for Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let screen = match self.screen_view() {
+            Some(view) => view.into_any_element(),
+            None => crate::components::page::empty(
+                self.screen.label(),
+                "This screen is not part of the desktop UI yet. Use the Electron app or the bifurc CLI for it.",
+            ),
+        };
+        let center = v_flex()
+            .size_full()
+            .child(self.render_top_bar(cx))
+            .child(div().flex_1().min_h_0().bg(theme.background).child(screen));
+
         v_flex()
             .size_full()
             .bg(theme.background)
@@ -217,13 +282,19 @@ impl Render for Shell {
             .track_focus(&self.focus_handle)
             .child(self.render_title_bar(window, cx))
             .child(
-                gpui_kit::component::h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .items_stretch()
-                    .child(self.render_rail(cx))
-                    .child(div().flex_1().min_w_0().child(self.dock.clone())),
+                h_flex().flex_1().min_h_0().items_stretch().child(self.render_sidebar(window, cx)).child(
+                    // The right sidebar's width is a physical starting point the user resizes.
+                    div().flex_1().min_w_0().child(
+                        h_resizable("shell-split").child(resizable_panel().child(center)).child(
+                            resizable_panel()
+                                .visible(self.right_open)
+                                .size(px(340.))
+                                .size_range(px(260.)..px(640.))
+                                .child(self.right.clone()),
+                        ),
+                    ),
+                ),
             )
-            .child(self.render_status_bar(cx))
+            .child(self.render_footer(cx))
     }
 }
