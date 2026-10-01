@@ -123,6 +123,46 @@ describe("bifurc CLI", () => {
     expect(bad.err).toMatch(/unknown command "not\.a\.command"/);
   });
 
+  it("resolves variables with Global underneath, auto-selects a lone environment and keeps it when another is added", async () => {
+    const cfg = await json<{ activeWorkspaceId: string }>("call", "config.get");
+    const wsId = cfg.activeWorkspaceId;
+    const make = (name: string, vars: Record<string, string>) =>
+      json<{ id: string }>("call", "entity.create", JSON.stringify({
+        kind: "environments", workspaceId: wsId,
+        entity: { name, variables: Object.entries(vars).map(([key, value], i) => ({ id: `${name}${i}`, key, value })) },
+      }));
+
+    await cli("requests", "add", "--url", "http://127.0.0.1:{{port}}/{{who}}", "--name", "Vars");
+    const found = await json<{ id: string; name: string }[]>("requests", "list");
+    const reqId = found.find((r) => r.name === "Vars")!.id;
+    const sendPath = async (): Promise<string> => {
+      const res = await json<{ status: number; body: string }>("requests", "send", reqId);
+      return JSON.parse(Buffer.from(res.body, "base64").toString("utf8")).url;
+    };
+
+    // Global holds the port; the lone extra environment is selected without anyone choosing it.
+    await json("call", "entity.update", JSON.stringify({
+      kind: "environments",
+      entity: { id: "__global__", name: "Global", workspaceId: wsId, createdAt: 0,
+        variables: [{ id: "g1", key: "port", value: String(upstreamPort) }, { id: "g2", key: "who", value: "global" }] },
+    }));
+    const dev = await make("dev", { who: "dev" });
+    expect(await sendPath()).toBe("/dev");
+
+    // A second environment must not silently deselect the first.
+    const stage = await make("stage", { who: "stage" });
+    expect(await sendPath()).toBe("/dev");
+    const listed = await json<{ id: string; active: string }[]>("env", "list");
+    expect(listed.find((e) => e.id === dev.id)?.active).toBe("*");
+    expect(listed.find((e) => e.id === "__global__")?.active).toBe("base");
+
+    // Switching is engine state, shared with every client, by name.
+    expect((await cli("env", "use", "stage")).code).toBe(0);
+    expect(await sendPath()).toBe("/stage");
+    expect(loadSettings().workspaces.find((w) => w.id === wsId)?.activeEnvironmentId).toBe(stage.id);
+    expect((await cli("env", "use", "Global")).code).toBe(1);
+  });
+
   it("stops the engine gracefully, and then says none is running", async () => {
     const stopped = await cli("engine", "stop");
     expect(stopped.code).toBe(0);

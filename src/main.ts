@@ -13,6 +13,7 @@ import { startBlobSweeper } from "@bifurc/engine/workspace/blob/sweep";
 import { setDataRoot, dataDir, platformDefaultDataDir } from "@bifurc/engine/workspace/paths";
 import { preflight, bootstrapWorkspaces } from "@bifurc/engine/lifecycle/startup";
 import { shutdownEngine } from "@bifurc/engine/lifecycle/shutdown";
+import { attachEngineSocket, type AttachedSocket } from "@bifurc/engine/runtime/attachSocket";
 
 
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
@@ -29,6 +30,8 @@ let quitting = false;
  * engine performs — and an open listening handle is exactly the kind of thing that keeps a process alive.
  */
 let edgeRouter: EdgeRouterInstance | null = null;
+/** The engine's socket endpoint for the CLI; closed on quit so runtime.json never points at a dead engine. */
+let engineSocket: AttachedSocket | null = null;
 
 function getTitleBarOverlayTheme(themeId: string | null | undefined): { color: string; symbolColor: string } {
   return themeId === "light"
@@ -400,6 +403,12 @@ if (!gotTheLock) {
     bindEdgeInstance(edgeRouter);
     edgeRouter.start(edgePort);
 
+    // The same engine, also reachable over its data directory's socket: the CLI (and any other client) connects
+    // to this process instead of starting a second engine. Electron's own IPC stays as it is.
+    attachEngineSocket({ dataDir: dataDir(), engineVersion: app.getVersion() })
+      .then((attached) => { engineSocket = attached; })
+      .catch((err) => console.warn(`[engine] socket endpoint unavailable: ${String(err)}`));
+
     // Delegating to the bound instance above — `startServer()` acts on whatever `bindProxyInstance()` was
     // given, so this is the same call it always was.
     startServer(cfg.forwardProxyPort);
@@ -415,6 +424,8 @@ if (!gotTheLock) {
     // stopped listener. The same rule `bindProxyInstance()` / `bindWebhookInstance()` follow; see
     // `bindEdgeInstance()` for why a leak here is paid for by whatever runs next in the process, not by this one.
     bindEdgeInstance(null);
+    void engineSocket?.close();
+    engineSocket = null;
     // Idempotent by design (P2 work item 3): the shell quitting, a supervisor restarting a crashed
     // engine and a SIGTERM handler may all ask for this, in any order. See `packages/engine/src/shutdown.ts`.
     void shutdownEngine();
