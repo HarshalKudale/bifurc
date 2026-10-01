@@ -3,5 +3,6 @@
 
 pub mod environments;
 pub mod mappings;
+pub mod mocks;
 pub mod requests;
 pub mod settings;
