@@ -187,7 +187,7 @@ impl SettingsScreen {
                     h_flex()
                         .w_full()
                         .gap_2()
-                        .child(div().flex_1().child("Reverse proxy"))
+                        .child(div().flex_1().child("Forward proxy"))
                         .child(state)
                         .child(
                             Button::new("proxy-start-stop")
@@ -204,20 +204,26 @@ impl SettingsScreen {
                                 .on_click(move |_, _, cx| restart_model.update(cx, |m, cx| m.restart_proxy(cx))),
                         )
                 })
-                .keywords(["start", "stop", "restart", "server"]),
+                .keywords(["start", "stop", "restart", "server", "forward"]),
             ),
             SettingGroup::new()
                 .title("Ports")
                 .items(vec![
-                    self.port_item("Proxy port", "Where .localhost names are served.", "port"),
+                    self.port_item(
+                        "Reverse proxy port",
+                        "Where .localhost names are served and sent on to their mappings. 80 lets the names work without a port.",
+                        "port",
+                    ),
                     self.port_item(
                         "Forward proxy port",
-                        "Point a browser or a tool at this port to route its traffic through the proxy rules.",
+                        "Point a browser or a tool at this port to route its traffic through the proxy rules, mocks and capture.",
                         "forwardProxyPort",
                     ),
                     self.port_item("Companion port", "The browser extension connects here.", "companionPort"),
                 ])
-                .footer(|_, _| "A new port takes effect when the proxy restarts."),
+                .footer(|_, _| {
+                    "The two proxies move to a new port at once. The companion port takes effect when the engine restarts."
+                }),
             SettingGroup::new().title("Engine").item(
                 SettingItem::new(
                     "Keep running in the tray",

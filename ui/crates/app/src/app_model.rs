@@ -11,7 +11,7 @@ use gpui_kit::{AppContext as _, Context, EventEmitter};
 use serde_json::{Value, json};
 
 use crate::{
-    engine::{EngineSession, call, describe},
+    engine::{EngineSession, call, describe, failure},
     model::{ConfigSnapshot, git::GitStatus},
 };
 
@@ -38,7 +38,8 @@ pub enum Load {
     Failed(String),
 }
 
-/// The reverse proxy on the edge port, as `server.status` reports it.
+/// The forward proxy, as `server.status` reports it. (The reverse proxy that serves `.localhost` names is a
+/// separate listener on `settings.port`; the engine has no status command for it.)
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProxyStatus {
     pub running: bool,
@@ -60,6 +61,8 @@ pub enum ModelEvent {
     SocketMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
+    /// The entity with this id was put back to its last synced version; an editor showing it must re-read it.
+    EntityReverted(String),
     /// A short message for the user: a failed command, a lost connection.
     Notice(String),
 }
@@ -271,7 +274,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, action, json!({}), |this, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(ModelEvent::Notice(format!("Couldn't change the proxy. {}", describe(&error))));
+                cx.emit(ModelEvent::Notice(format!("Couldn't change the forward proxy. {}", describe(&error))));
             }
             // Whatever the command said, the status is the authority on what is running now.
             this.proxy.busy = false;
@@ -307,6 +310,39 @@ impl AppModel {
                 cx.emit(ModelEvent::Notice(format!("Couldn't publish. {message}")));
             }
             this.refresh_git(cx);
+            cx.notify();
+        });
+    }
+
+    /// Commits the file of the entity with `id` (and pushes, when the workspace has a remote).
+    pub fn sync_entity(&mut self, id: &str, cx: &mut Context<Self>) {
+        match self.git.entity_path(id).map(str::to_owned) {
+            Some(path) => self.publish(vec![path], cx),
+            None => cx.emit(ModelEvent::Notice("Couldn't sync. It has no file in the workspace yet.".to_owned())),
+        }
+    }
+
+    /// Puts the file of the entity with `id` back to the last synced version, discarding what was saved since.
+    pub fn revert_entity(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.publishing {
+            return;
+        }
+        let Some(path) = self.git.entity_path(id).map(str::to_owned) else {
+            cx.emit(ModelEvent::Notice("Couldn't revert. It has no file in the workspace yet.".to_owned()));
+            return;
+        };
+        self.publishing = true;
+        cx.notify();
+        let client = self.engine.client.clone();
+        let payload = json!({ "workspaceId": self.workspace_id(), "relPath": path });
+        let id = id.to_owned();
+        call(&client, cx, "git.discard", payload, move |this, outcome, cx| {
+            this.publishing = false;
+            match failure(&outcome) {
+                Some(message) => cx.emit(ModelEvent::Notice(format!("Couldn't revert. {message}"))),
+                None => cx.emit(ModelEvent::EntityReverted(id)),
+            }
+            this.refresh(cx);
             cx.notify();
         });
     }
