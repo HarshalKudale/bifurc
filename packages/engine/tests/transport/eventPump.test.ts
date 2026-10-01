@@ -128,6 +128,9 @@ function wire(seq: number): Record<string, unknown> {
     url: "https://example.test/",
     status: 200,
     durationMs: 3,
+    via: "proxy",
+    target: null,
+    size: 27,
   };
 }
 
@@ -446,6 +449,19 @@ describe("toLogEntryEvent", () => {
     expect(toLogEntryEvent(entry(7).payload)).toEqual(wire(7));
   });
 
+  it("adds workspaceId, contentType (case-insensitive) and the decoded size of the response body", () => {
+    const wired = toLogEntryEvent({
+      ...(entry(1).payload as Record<string, unknown>),
+      workspaceId: "ws1",
+      resHeaders: { "Content-Type": "image/png" },
+      resBody: "AAEC",
+    });
+    expect(wired).toMatchObject({ workspaceId: "ws1", contentType: "image/png", size: 3, via: "proxy", target: null });
+    expect(toLogEntryEvent({ resBody: "AA==" }).size).toBe(1);
+    expect(toLogEntryEvent({ resBody: "AAA=" }).size).toBe(2);
+    expect(Object.hasOwn(toLogEntryEvent(entry(1).payload), "contentType")).toBe(false);
+  });
+
   it("produces a payload the protocol's own schema accepts", () => {
     // The schema is the assertion rather than a structural `toEqual`, because the helper's whole job
     // is to produce *that* shape — and `z.object()` strips unknown keys silently, so a `toEqual`
@@ -488,6 +504,7 @@ describe("toLogEntryEvent", () => {
       url: "",
       status: null,
       durationMs: null,
+      size: 0,
     });
     expect(toLogEntryEvent({ id: "r", ts: "not a number", status: "200" })).toMatchObject({
       id: "r",

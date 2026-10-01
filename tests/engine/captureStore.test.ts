@@ -101,4 +101,32 @@ describe("capture.* commands", () => {
     expect(registry.invoke("capture.clear", { workspaceId: "ws1" }, ctx)).toEqual({ ok: true });
     expect(() => registry.invoke("capture.remove", { workspaceId: "ws1", ids: [] }, ctx)).toThrow(/Invalid payload/);
   });
+
+  it("list summary returns the wire shape; get returns the full entry or null; build* accept a reference", async () => {
+    const registry = new CommandRegistry();
+    registerCaptureCommands(registry);
+    const { registerRestCommands } = await import("@bifurc/engine/rest/commands");
+    const { registerMockCommands } = await import("@bifurc/engine/mocks/commands");
+    registerRestCommands(registry);
+    registerMockCommands(registry);
+    const ctx = { bus };
+    emitLog({ ...entry("a", "ws1"), resHeaders: { "Content-Type": "text/plain" }, resBody: "AAEC" });
+
+    const summary = (registry.invoke("capture.list", { workspaceId: "ws1", summary: true }, ctx) as { entries: Record<string, unknown>[] }).entries;
+    expect(summary).toEqual([{
+      id: "a", timestamp: 1, method: "GET", url: "http://x/a", status: 200, durationMs: 1,
+      workspaceId: "ws1", via: "proxy", target: null, contentType: "text/plain", size: 3,
+    }]);
+
+    const full = registry.invoke("capture.get", { workspaceId: "ws1", id: "a" }, ctx) as { entry: RequestLogEntry };
+    expect(full.entry.resBody).toBe("AAEC");
+    expect(registry.invoke("capture.get", { workspaceId: "ws1", id: "nope" }, ctx)).toEqual({ entry: null });
+
+    expect((registry.invoke("capture.buildRequest", { workspaceId: "ws1", id: "a" }, ctx) as { request: { url: string } }).request.url)
+      .toBe("http://x/a");
+    expect((registry.invoke("capture.buildMock", { workspaceId: "ws1", id: "a" }, ctx) as { mock: { urlPattern: string } }).mock.urlPattern)
+      .toBe("http://x/a");
+    expect(() => registry.invoke("capture.buildMock", { workspaceId: "ws1", id: "nope" }, ctx)).toThrow(/No captured entry/);
+    expect(() => registry.invoke("capture.buildMock", { entryId: "a" }, ctx)).toThrow(/Invalid payload/);
+  });
 });

@@ -65,6 +65,11 @@ export const LogEntryEventSchema = z.object({
   url: z.string(),
   status: z.number().nullable(),
   durationMs: z.number().nullable(),
+  workspaceId: z.string().optional(),
+  via: z.string().optional(),
+  target: z.string().nullable().optional(),
+  contentType: z.string().optional(),
+  size: z.number().optional(),
 });
 export type LogEntryEvent = z.infer<typeof LogEntryEventSchema>;
 

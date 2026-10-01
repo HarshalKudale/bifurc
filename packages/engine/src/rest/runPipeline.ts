@@ -61,6 +61,7 @@ import type { Environment } from "../workspace/types";
 import { resolveVars, resolveHeaders } from "../env/resolve";
 import { loadMergedEnvironment } from "../env/envState";
 import { executeIpcScript, type TestResultEntry } from "../mocks/scriptExecutor";
+import { resolveRequestBody, type RequestBodyPart } from "./requestBody";
 
 /** The protocol-independent view of a request. `body` is **text** — see the header's encoding table. */
 export interface PipelineRequest {
@@ -68,6 +69,8 @@ export interface PipelineRequest {
   url: string;
   headers: Record<string, string>;
   body: string;
+  bodyEncoding?: "utf8" | "base64";
+  bodyParts?: RequestBodyPart[];
 }
 
 /** What comes back off the wire. `body` is **base64**, the wire shape `plan/19` §5 keeps. */
@@ -159,7 +162,7 @@ export async function runRequestPipeline(
     method: opts.request.method,
     url: resolveVars(opts.request.url, env),
     headers: resolveHeaders(opts.request.headers, env),
-    body: resolveVars(opts.request.body, env),
+    ...resolveRequestBody(opts.request, env),
   };
   let effectiveEnv = env;
 
@@ -168,14 +171,14 @@ export async function runRequestPipeline(
     const pre = executeIpcScript({
       script: scripts.pre,
       context: "pre",
-      request: { ...resolved, headers: { ...resolved.headers } },
+      request: { method: resolved.method, url: resolved.url, headers: { ...resolved.headers }, body: resolved.body },
       envVars: envToMap(effectiveEnv),
     });
     preScriptError = pre.error;
     // The pre-script's request is ephemeral by contract: it changes what this send uses and is never
     // written back to disk. `executeIpcScript` always returns one (it falls back to the input), so the
     // fallback here only covers a shape change in the sandbox, not a failure.
-    if (pre.request) resolved = { ...pre.request };
+    if (pre.request) resolved = { ...resolved, ...pre.request };
     effectiveEnv = environmentAfterPreScript(effectiveEnv, pre.envVars);
   }
 

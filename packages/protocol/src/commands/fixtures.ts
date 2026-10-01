@@ -236,6 +236,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "capture.buildMock": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
   "engine.shutdown": { valid: {}, invalid: { now: true } },
   "capture.list": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "capture.get": { valid: { workspaceId: "ws1", id: "log-1" }, invalid: { workspaceId: "ws1" } },
   "capture.clear": { valid: { workspaceId: "ws1" }, invalid: {} },
   "capture.remove": { valid: { workspaceId: "ws1", ids: ["log-1"] }, invalid: { workspaceId: "ws1", ids: [] } },
 
