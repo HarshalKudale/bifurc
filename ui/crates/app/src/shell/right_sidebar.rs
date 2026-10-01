@@ -16,9 +16,10 @@ use gpui_kit::component::{
     tag::Tag,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
 };
 use serde_json::json;
 
@@ -41,6 +42,16 @@ enum Panel {
 }
 
 const PANELS: [Panel; 3] = [Panel::History, Panel::Snippet, Panel::Variables];
+
+impl Panel {
+    fn label(self) -> &'static str {
+        match self {
+            Panel::History => "History",
+            Panel::Snippet => "Snippet",
+            Panel::Variables => "Variables",
+        }
+    }
+}
 
 enum History {
     /// Nothing asked for yet, or nothing to ask about.
@@ -336,25 +347,37 @@ impl Render for RightSidebar {
             .size_full()
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
-            // The same tab strip the Requests and Mocks screens open their entities in, without close
-            // buttons: these three are always there.
-            // The strip sits at the foot of a band as tall as the top bar beside it, so the two share a
-            // bottom edge.
+            // The strip is as tall as the top bar beside it, and its tabs fill it: the kit's tabs come in
+            // fixed heights, none of them the bar's, so these are drawn here in the same colors.
             .child(
-                v_flex().flex_none().h_10().justify_end().bg(theme.tab_bar).child(
-                    TabBar::new("inspector-panels")
-                        .small()
-                        .selected_index(selected)
-                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.panel = PANELS[*ix];
-                            if this.panel == Panel::History {
-                                this.refresh_history(true, cx);
-                            }
-                            cx.notify();
-                        }))
-                        .child(Tab::new().label("History"))
-                        .child(Tab::new().label("Snippet"))
-                        .child(Tab::new().label("Variables")),
+                h_flex().flex_none().h_10().bg(theme.tab_bar).border_b_1().border_color(theme.border).children(
+                    PANELS.iter().enumerate().map(|(ix, panel)| {
+                        let active = ix == selected;
+                        h_flex()
+                            .id(("inspector-panel", ix))
+                            .h_full()
+                            .px_3()
+                            .text_sm()
+                            .border_r_1()
+                            .border_color(theme.border)
+                            .map(|this| {
+                                if active {
+                                    // The active tab reaches over the strip's bottom border into its panel.
+                                    this.bg(theme.tab_active).text_color(theme.tab_active_foreground).mb(px(-1.))
+                                } else {
+                                    this.text_color(theme.tab_foreground)
+                                        .hover(|this| this.text_color(theme.tab_active_foreground))
+                                }
+                            })
+                            .child(panel.label())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.panel = PANELS[ix];
+                                if this.panel == Panel::History {
+                                    this.refresh_history(true, cx);
+                                }
+                                cx.notify();
+                            }))
+                    }),
                 ),
             )
             .child(div().flex_1().min_h_0().child(body))

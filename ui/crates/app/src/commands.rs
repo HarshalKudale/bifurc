@@ -79,6 +79,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-p", OpenCommandPalette, None),
         KeyBinding::new("secondary-k", OpenCommandPalette, None),
         KeyBinding::new("secondary-n", NewRestRequest, None),
+        KeyBinding::new("secondary-t", NewRestRequest, None),
         KeyBinding::new("secondary-shift-n", NewWebSocketRequest, None),
         KeyBinding::new("secondary-shift-m", NewMock, None),
         KeyBinding::new("secondary-s", SaveRequest, None),

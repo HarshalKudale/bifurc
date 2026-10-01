@@ -6,7 +6,7 @@ import { dataDir } from "../workspace/paths";
 
 /**
  * The captured-traffic history, per workspace. **The engine records it**, whether or not any client is
- * watching: it used to live in the renderer's localStorage, filled only while the Capture panel was mounted,
+ * watching, unless the workspace's capture is paused ({@link setCapturePaused}): it used to live in the renderer's localStorage, filled only while the Capture panel was mounted,
  * so traffic that passed while the user was on another panel was never captured, and no other client (CLI,
  * another UI) could read it at all.
  *
@@ -19,6 +19,8 @@ const WRITE_DELAY_MS = 500;
 
 const entriesByWs = new Map<string, RequestLogEntry[]>();
 const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+/** Workspaces whose capture is paused. In memory only: an engine restart resumes capturing. */
+const pausedWs = new Set<string>();
 
 function captureFile(wsId: string): string {
   return path.join(dataDir(), ".capture", `${encodeURIComponent(wsId)}.json`);
@@ -57,9 +59,20 @@ function scheduleWrite(wsId: string): void {
   pendingWrites.set(wsId, timer);
 }
 
+/** Pause or resume recording for a workspace. Entries that pass while paused are dropped, not queued. */
+export function setCapturePaused(wsId: string, paused: boolean): void {
+  if (paused) pausedWs.add(wsId);
+  else pausedWs.delete(wsId);
+}
+
+export function isCapturePaused(wsId: string): boolean {
+  return pausedWs.has(wsId);
+}
+
 /** Record one exchange. An entry with no workspace (a host serving none) is not attributable, so not kept. */
 export function recordCapture(entry: RequestLogEntry): void {
   if (!entry.workspaceId) return;
+  if (pausedWs.has(entry.workspaceId)) return;
   const entries = entriesOf(entry.workspaceId).filter((e) => e.id !== entry.id);
   entries.unshift(entry);
   entries.length = Math.min(entries.length, MAX_CAPTURE_ENTRIES);
@@ -125,4 +138,5 @@ export function resetCaptureForTests(): void {
   for (const timer of pendingWrites.values()) clearTimeout(timer);
   pendingWrites.clear();
   entriesByWs.clear();
+  pausedWs.clear();
 }
