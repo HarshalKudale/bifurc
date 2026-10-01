@@ -65,6 +65,48 @@ pub fn call<V: 'static>(
     .detach();
 }
 
+/// The failure of a command, whether the call failed or the engine answered `{ ok: false, error }`.
+pub fn failure(outcome: &Result<Value, ClientError>) -> Option<String> {
+    match outcome {
+        Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
+            Some(result.get("error").and_then(Value::as_str).unwrap_or("The engine refused.").to_owned())
+        }
+        Ok(_) => None,
+        Err(error) => Some(describe(error)),
+    }
+}
+
+/// Changes some fields of a saved entity, addressed by id: the engine's copy is read, `patch` is written
+/// over it, and the result is written back. Fields the caller does not name are left as the engine has them.
+pub fn patch_entity<V: 'static>(
+    client: &EngineClient,
+    cx: &mut Context<V>,
+    workspace_id: &str,
+    kind: &'static str,
+    id: &str,
+    patch: serde_json::Map<String, Value>,
+    then: impl FnOnce(&mut V, Result<(), String>, &mut Context<V>) + 'static,
+) {
+    let load = serde_json::json!({ "workspaceId": workspace_id, "kind": kind, "id": id });
+    let update_client = client.clone();
+    call(client, cx, "entity.load", load, move |this, outcome, cx| {
+        let entity = match outcome {
+            Ok(result) => match result.get("entity").cloned() {
+                Some(Value::Object(mut entity)) => {
+                    entity.extend(patch);
+                    entity
+                }
+                _ => return then(this, Err("It no longer exists.".to_owned()), cx),
+            },
+            Err(error) => return then(this, Err(describe(&error)), cx),
+        };
+        let update = serde_json::json!({ "kind": kind, "entity": entity });
+        call(&update_client, cx, "entity.update", update, move |this, outcome, cx| {
+            then(this, failure(&outcome).map_or(Ok(()), Err), cx)
+        });
+    });
+}
+
 /// [`call`] for continuations that need the window, such as one that fills an input.
 pub fn call_in<V: 'static>(
     client: &EngineClient,

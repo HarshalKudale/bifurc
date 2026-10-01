@@ -1,30 +1,42 @@
 mod app_model;
 mod bootstrap;
 mod commands;
+mod components;
 mod engine;
 mod model;
 mod panels;
+mod preferences;
+mod screens;
 mod session;
 mod shell;
+mod theme;
 
+use bifurc_engine_client::SidecarConfig;
 use gpui_kit::component::TitleBar;
 use gpui_kit::{Bounds, WindowBounds, WindowOptions, px, size};
 
 use bootstrap::Bootstrap;
+use preferences::Preferences;
 
 fn main() {
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx| {
         gpui_kit::init(cx);
+
+        // The look is in place before the first frame: the bundled themes, then this client's choice.
+        theme::init(cx);
+        let preferences = Preferences::load(SidecarConfig::default().data_dir);
+        preferences.apply(cx);
+        cx.set_global(preferences);
 
         // Bound before anything that reads the keymap, so shortcuts show beside their commands.
         commands::bind_keys(cx);
         commands::register_actions(cx);
 
         // Window geometry is a physical, platform-level choice, not part of the rem-scaled layout.
-        let bounds = Bounds::centered(None, size(px(1360.), px(860.)), cx);
+        let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(960.), px(600.))),
+            window_min_size: Some(size(px(1080.), px(640.))),
             ..TitleBar::window_options()
         };
         let (_, bootstrap) = gpui_kit::open_window(options, cx, |window, cx| {

@@ -5,10 +5,14 @@
 
 pub mod config;
 pub mod explorer;
+pub mod git;
 pub mod http;
 pub mod kind;
+pub mod snippet;
 pub mod socket;
 pub mod traffic;
+pub mod tree;
+pub mod variables;
 
 pub use config::ConfigSnapshot;
 pub use explorer::{ExplorerNode, NodeRef, build_explorer};
