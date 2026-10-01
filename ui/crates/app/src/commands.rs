@@ -181,5 +181,7 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowEnvironments>(cx, Screen::Environments);
     show::<ShowSettings>(cx, Screen::Settings);
     on_shell::<ReloadWorkspace>(cx, |shell, _, cx| shell.reload(cx));
-    cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+    cx.on_action(|_: &Quit, cx: &mut App| {
+        cx.quit();
+    });
 }
