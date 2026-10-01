@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/engine-client", "crates/app"]
+
+[workspace.package]
+version = "0.3.3"
+edition = "2024"
+license = "SEE LICENSE IN LICENSE"
+authors = ["Harshal Kudale"]
