@@ -5,13 +5,16 @@
 //! baseline taken at the last load or save to know if there is anything to save, and written back as one
 //! `entity.update`. Fields the editor does not show — ids, timestamps — are carried through unchanged from
 //! the entity the engine returned, so saving here cannot erase what another client set.
+//!
+//! A draft is created by Save. Once it exists there is no Save step: an edit is written a moment after it
+//! is made. The request's name is edited in the window's breadcrumb, which shows this session's name field.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, WindowExt as _,
+    ActiveTheme as _, IndexPath, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Editor, Input, InputEvent, InputState},
+    input::{Editor, InputEvent, InputState},
     notification::Notification,
     select::{Select, SelectEvent, SelectState},
     tab::{Tab, TabBar},
@@ -24,10 +27,10 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{LoadState, SessionEvent, exchange::Exchange};
+use super::{Carry, LoadState, SaveMode, SessionEvent, exchange::Exchange};
 use crate::{
-    app_model::AppModel,
-    components::{KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    app_model::{AppModel, ModelEvent},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
     engine::{call_in, describe},
     model::{
         RequestKind,
@@ -98,6 +101,7 @@ pub struct RestSession {
     exchange: Entity<Exchange>,
     sending: bool,
     saving: bool,
+    autosave: Autosave,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -127,8 +131,15 @@ impl RestSession {
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
             InputEvent::Change => this.changed(cx),
-            InputEvent::PressEnter { .. } => this.send(window, cx),
-            _ => {}
+            InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
+            InputEvent::Focus => {}
+        }));
+        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
+            if let ModelEvent::EntityReverted(id) = event
+                && this.saved_id.as_deref() == Some(id.as_str())
+            {
+                this.reload(window, cx);
+            }
         }));
         subscriptions.push(cx.subscribe_in(
             url.state(),
@@ -191,6 +202,7 @@ impl RestSession {
             exchange,
             sending: false,
             saving: false,
+            autosave: Autosave::new(window),
             _subscriptions: subscriptions,
         };
         this.baseline = this.fields(cx);
@@ -209,10 +221,19 @@ impl RestSession {
 
     /// A saved request, loaded by id.
     pub fn open_saved(model: Entity<AppModel>, id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut this = Self::build(model, Some(id.clone()), None, window, cx);
+        let mut this = Self::build(model, Some(id), None, window, cx);
         this.load = LoadState::Loading;
-        let client = this.model.read(cx).client().clone();
-        let payload = json!({ "workspaceId": this.workspace_id, "kind": RequestKind::Rest.entity_kind(), "id": id });
+        this.reload(window, cx);
+        this
+    }
+
+    /// Reads the saved request from the engine into the editor, replacing what the editor holds.
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.saved_id.clone() else { return };
+        // An edit waiting to be written belongs to the copy that is being replaced.
+        self.autosave.cancel();
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": self.workspace_id, "kind": RequestKind::Rest.entity_kind(), "id": id });
         call_in(&client, window, cx, "entity.load", payload, |this, outcome, window, cx| {
             match outcome.map_err(|e| describe(&e)).and_then(|v| entity_of(&v)) {
                 Ok(entity) => {
@@ -224,11 +245,23 @@ impl RestSession {
             cx.emit(SessionEvent::Changed);
             cx.notify();
         });
-        this
     }
 
     pub fn saved_id(&self) -> Option<&str> {
         self.saved_id.as_deref()
+    }
+
+    pub fn folder_id(&self) -> Option<&str> {
+        self.folder_id.as_deref()
+    }
+
+    /// The field the request's name is typed in. The shell shows it in the breadcrumb.
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name
+    }
+
+    pub fn is_saving(&self) -> bool {
+        self.saving
     }
 
     pub fn exchange(&self) -> &Entity<Exchange> {
@@ -254,9 +287,62 @@ impl RestSession {
         RequestParts { method: fields.method, url: fields.url, headers: fields.headers, body: fields.body }
     }
 
+    /// Why the edit cannot be written as it stands, for a saved request that has one.
+    pub fn problem(&self, cx: &gpui_kit::App) -> Option<SharedString> {
+        if self.saved_id.is_none() || self.load != LoadState::Ready {
+            return None;
+        }
+        let fields = self.fields(cx);
+        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a URL.".into())
+    }
+
+    /// A saved request is written a moment after each change; a draft waits for Save.
     fn changed(&mut self, cx: &mut Context<Self>) {
         cx.emit(SessionEvent::Changed);
         cx.notify();
+        if self.saved_id.is_some() && self.load == LoadState::Ready {
+            self.autosave.schedule(cx, |this, window, cx| this.save(SaveMode::Auto, window, cx));
+        }
+    }
+
+    /// The name was confirmed, by Enter or by leaving the field. Naming a draft is what creates it, when it
+    /// has what it needs to be created.
+    fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_none() && self.fields(cx).name != self.baseline.name {
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Writes an edit that is still waiting, now: the tab is about to close.
+    pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_some() {
+            self.autosave.cancel();
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// What this draft keeps if it becomes a request of another type.
+    pub fn carry(&self, cx: &gpui_kit::App) -> Carry {
+        let fields = self.fields(cx);
+        Carry {
+            name: (!fields.name.is_empty() && fields.name != DEFAULT_NAME).then_some(fields.name),
+            url: fields.url,
+            headers: fields.headers,
+            body: fields.body,
+        }
+    }
+
+    /// Fills this draft with what was typed into a draft of another type.
+    pub fn apply_carry(&mut self, carry: &Carry, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(name) = &carry.name {
+            self.name.update(cx, |s, cx| s.set_value(name.clone(), window, cx));
+        }
+        self.url.set_value(carry.url.clone(), window, cx);
+        let (_, query) = split_query(&carry.url);
+        self.params.update(cx, |table, cx| table.set_pairs(&query, window, cx));
+        self.headers.update(cx, |table, cx| table.set_pairs(&carry.headers, window, cx));
+        self.show_body(carry.body.clone(), window, cx);
+        self.changed(cx);
     }
 
     fn fields(&self, cx: &gpui_kit::App) -> Fields {
@@ -369,13 +455,7 @@ impl RestSession {
         self.params.update(cx, |table, cx| table.set_pairs(&query, window, cx));
         self.headers.update(cx, |table, cx| table.set_pairs(&headers, window, cx));
 
-        self.body_mode = BodyMode::detect(self.content_type(cx).as_deref(), &body);
-        self.body.set_syntax(Self::body_syntax(self.body_mode), cx);
-        if self.body_mode == BodyMode::Form {
-            let pairs = decode_form(&body);
-            self.form.update(cx, |table, cx| table.set_pairs(&pairs, window, cx));
-        }
-        self.body.set_value(body, window, cx);
+        self.show_body(body, window, cx);
         self.pre_script.set_value(text("preScript"), window, cx);
         self.post_script.set_value(text("postScript"), window, cx);
         self.test_script.set_value(text("testScript"), window, cx);
@@ -386,14 +466,15 @@ impl RestSession {
         self.baseline = self.fields(cx);
     }
 
-    /// Puts the editor back to what was last saved.
-    pub fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut entity = self.entity.clone();
-        if self.saved_id.is_none() {
-            entity.insert("name".into(), json!(DEFAULT_NAME));
+    /// Shows `body` in the mode its content and the `Content-Type` header (already in the table) call for.
+    fn show_body(&mut self, body: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.body_mode = BodyMode::detect(self.content_type(cx).as_deref(), &body);
+        self.body.set_syntax(Self::body_syntax(self.body_mode), cx);
+        if self.body_mode == BodyMode::Form {
+            let pairs = decode_form(&body);
+            self.form.update(cx, |table, cx| table.set_pairs(&pairs, window, cx));
         }
-        self.adopt_entity(entity, window, cx);
-        self.changed(cx);
+        self.body.set_value(body, window, cx);
     }
 
     /// The loaded entity with the editor's fields written over it.
@@ -410,13 +491,22 @@ impl RestSession {
         entity
     }
 
-    pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Creates the request if it is a draft, or writes the edit over the saved one. A write that is asked
+    /// for while another is in flight is not lost: the one in flight looks for a newer edit when it lands.
+    pub fn save(&mut self, mode: SaveMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving || self.load != LoadState::Ready {
             return;
         }
         let fields = self.fields(cx);
+        let creating = self.saved_id.is_none();
+        if !creating && fields == self.baseline {
+            return;
+        }
         if fields.url.is_empty() {
-            window.push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+            if mode == SaveMode::Explicit {
+                window
+                    .push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+            }
             return;
         }
         let mut entity = self.edited_entity(&fields);
@@ -430,7 +520,6 @@ impl RestSession {
         cx.notify();
         let client = self.model.read(cx).client().clone();
         let kind = RequestKind::Rest.entity_kind();
-        let creating = self.saved_id.is_none();
         let (action, payload) = match &self.saved_id {
             Some(id) => {
                 entity.insert("id".into(), json!(id));
@@ -440,32 +529,37 @@ impl RestSession {
         };
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.saving = false;
+            // The controls are left alone: they may hold what was typed while this was in flight. What was
+            // sent becomes the baseline, so that newer text still reads as an edit.
             match outcome {
-                Ok(result) => {
-                    if creating {
-                        match result.get("entity").and_then(Value::as_object).cloned() {
-                            Some(saved) => {
-                                this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
-                                this.adopt_entity(saved, window, cx);
-                                if let Some(id) = this.saved_id.clone() {
-                                    cx.emit(SessionEvent::Saved { id });
-                                }
-                            }
-                            None => window.push_notification(
-                                Notification::error("The engine did not return the saved request."),
-                                cx,
-                            ),
+                Ok(result) if creating => match result.get("entity").and_then(Value::as_object).cloned() {
+                    Some(saved) => {
+                        this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                        this.entity = saved;
+                        this.baseline = fields;
+                        if let Some(id) = this.saved_id.clone() {
+                            cx.emit(SessionEvent::Saved { id });
                         }
-                    } else {
-                        let saved = this.edited_entity(&fields);
-                        this.adopt_entity(saved, window, cx);
                     }
-                    cx.emit(SessionEvent::Changed);
+                    None => window
+                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                },
+                Ok(_) => {
+                    this.entity = this.edited_entity(&fields);
+                    this.baseline = fields;
                 }
-                Err(error) => window
-                    .push_notification(Notification::error(describe(&error)).title("Couldn't save the request"), cx),
+                Err(error) => {
+                    window.push_notification(
+                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        cx,
+                    );
+                    cx.emit(SessionEvent::Changed);
+                    cx.notify();
+                    return;
+                }
             }
-            cx.notify();
+            // An edit made since this write was sent is the next write. (`changed` schedules it.)
+            this.changed(cx);
         });
     }
 
@@ -629,7 +723,6 @@ impl Render for RestSession {
             LoadState::Ready => {}
         }
 
-        let dirty = self.is_dirty(cx);
         let row_height = VarEditor::row_height(cx);
         let content = match self.section {
             Section::Params => self.params.clone().into_any_element(),
@@ -640,30 +733,6 @@ impl Render for RestSession {
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .pt_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.name).small().appearance(false)))
-                    .child(
-                        Button::new("revert-request")
-                            .ghost()
-                            .small()
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.revert(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-request")
-                            .small()
-                            .label("Save")
-                            .loading(self.saving)
-                            .disabled(!dirty && self.saved_id.is_some())
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
-            )
             .child(
                 h_flex()
                     .flex_none()

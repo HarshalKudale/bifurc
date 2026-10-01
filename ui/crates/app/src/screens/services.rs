@@ -12,10 +12,11 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, UniformListScrollHandle, Window, div, uniform_list,
 };
 use serde_json::{Value, json};
+use std::ops::Range;
 
 use crate::{
     app_model::AppModel,
@@ -69,6 +70,7 @@ pub struct ServicesScreen {
     listing: Listing,
     refreshing: bool,
     filter: Entity<InputState>,
+    scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -83,8 +85,14 @@ impl ServicesScreen {
                 }
             }),
         ];
-        let mut this =
-            Self { model, listing: Listing::Loading, refreshing: false, filter, _subscriptions: subscriptions };
+        let mut this = Self {
+            model,
+            listing: Listing::Loading,
+            refreshing: false,
+            filter,
+            scroll: UniformListScrollHandle::new(),
+            _subscriptions: subscriptions,
+        };
         this.refresh(cx);
         this
     }
@@ -169,70 +177,106 @@ impl ServicesScreen {
             .iter()
             .filter_map(|m| Some((target_port(&m.target)?, m.domain.clone())))
             .collect();
-        let rows: Vec<gpui_kit::AnyElement> = services
+        let shown: Vec<Service> = services
             .iter()
             .filter(|service| {
                 needle.is_empty()
                     || service.process.to_lowercase().contains(&needle)
                     || service.port.to_string().contains(&needle)
             })
-            .map(|service| {
-                let port = service.port;
-                let name = mapped.iter().find(|(mapped_port, _)| *mapped_port == port).map(|(_, name)| name.clone());
-                h_flex()
-                    .id(("service", usize::from(port)))
-                    .gap_3()
-                    .px_4()
-                    .py_2()
-                    .text_sm()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(div().w_20().flex_none().font_family(theme.mono_font_family.clone()).child(port.to_string()))
-                    .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(service.process.clone()))
-                    .child(
-                        div()
-                            .w_24()
-                            .flex_none()
-                            .text_color(theme.muted_foreground)
-                            .child(service.pid.map(|pid| pid.to_string()).unwrap_or_default()),
-                    )
-                    .child(
-                        div()
-                            .w_40()
-                            .flex_none()
-                            .text_color(theme.muted_foreground)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(service.address.clone()),
-                    )
-                    .child(
-                        div().w_64().flex_none().child(match name {
-                            Some(name) => h_flex()
-                                .gap_2()
-                                .child(Tag::success().small().child("Mapped"))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .font_family(theme.mono_font_family.clone())
-                                        .child(name),
-                                )
-                                .into_any_element(),
-                            None => Button::new(("map-service", usize::from(port)))
-                                .small()
-                                .label("Map…")
-                                .tooltip("Give this port a .localhost name")
-                                .on_click(cx.listener(move |this, _, window, cx| this.prompt_map(port, window, cx)))
-                                .into_any_element(),
-                        }),
-                    )
-                    .into_any_element()
-            })
+            .cloned()
             .collect();
-        if rows.is_empty() {
+        if shown.is_empty() {
             return page::empty("No matches", "No service matches the filter.");
         }
+        let count = shown.len();
+        let row_theme = theme.clone();
+        // Only the rows in view are built; the list measures one row and scrolls by that height.
+        let rows = uniform_list(
+            "service-rows",
+            count,
+            cx.processor(move |_, range: Range<usize>, _, cx| {
+                let theme = &row_theme;
+                range
+                    .filter_map(|ix| shown.get(ix))
+                    .map(|service| {
+                        let port = service.port;
+                        let name =
+                            mapped.iter().find(|(mapped_port, _)| *mapped_port == port).map(|(_, name)| name.clone());
+                        // A list row is as wide as its content unless told otherwise, and the columns only
+                        // line up with the header when every row spans the list.
+                        h_flex()
+                            .id(("service", usize::from(port)))
+                            .w_full()
+                            .gap_3()
+                            .px_4()
+                            .py_2()
+                            .text_sm()
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .child(
+                                div()
+                                    .w_20()
+                                    .flex_none()
+                                    .font_family(theme.mono_font_family.clone())
+                                    .child(port.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(service.process.clone()),
+                            )
+                            .child(
+                                div()
+                                    .w_24()
+                                    .flex_none()
+                                    .text_color(theme.muted_foreground)
+                                    .child(service.pid.map(|pid| pid.to_string()).unwrap_or_default()),
+                            )
+                            .child(
+                                div()
+                                    .w_40()
+                                    .flex_none()
+                                    .text_color(theme.muted_foreground)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(service.address.clone()),
+                            )
+                            .child(
+                                div().w_64().flex_none().child(match name {
+                                    Some(name) => h_flex()
+                                        .gap_2()
+                                        .child(Tag::success().small().child("Mapped"))
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .font_family(theme.mono_font_family.clone())
+                                                .child(name),
+                                        )
+                                        .into_any_element(),
+                                    None => Button::new(("map-service", usize::from(port)))
+                                        .small()
+                                        .label("Map…")
+                                        .tooltip("Give this port a .localhost name")
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| this.prompt_map(port, window, cx)),
+                                        )
+                                        .into_any_element(),
+                                }),
+                            )
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(&self.scroll)
+        .flex_1()
+        .min_h_0();
         v_flex()
             .size_full()
             .child(
@@ -251,7 +295,7 @@ impl ServicesScreen {
                     .child(div().w_40().flex_none().child("Address"))
                     .child(div().w_64().flex_none().child("Mapping")),
             )
-            .child(v_flex().id("service-rows").flex_1().min_h_0().overflow_y_scroll().children(rows))
+            .child(rows)
             .into_any_element()
     }
 }

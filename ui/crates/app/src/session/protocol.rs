@@ -6,13 +6,16 @@
 //!
 //! These protocols are sent by id (`graphql.send`, `grpc.send`, `soap.send`): the engine reads the stored
 //! request, resolves its variables and runs its scripts. So sending an edited request saves it first.
+//!
+//! A draft is created by Save. Once it exists there is no Save step: an edit is written a moment after it
+//! is made. The request's name is edited in the window's breadcrumb, which shows this session's name field.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Editor, Input, InputEvent, InputState},
+    input::{Editor, InputEvent, InputState},
     notification::Notification,
     tab::{Tab, TabBar},
     v_flex,
@@ -23,10 +26,10 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{LoadState, SessionEvent, exchange::Exchange};
+use super::{Carry, LoadState, SaveMode, SessionEvent, exchange::Exchange};
 use crate::{
-    app_model::AppModel,
-    components::{KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    app_model::{AppModel, ModelEvent},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
     engine::{call_in, describe},
     model::{
         RequestKind,
@@ -91,6 +94,20 @@ fn fields_of(kind: RequestKind) -> &'static [FieldSpec] {
     }
 }
 
+/// The name a request of this kind has until it is given another.
+fn default_name(kind: RequestKind) -> String {
+    format!("New {} request", kind.label())
+}
+
+/// The field a draft's body is carried to and from when its type changes. GraphQL has none.
+fn body_key(kind: RequestKind) -> Option<&'static str> {
+    match kind {
+        RequestKind::Soap => Some("body"),
+        RequestKind::Grpc => Some("requestBody"),
+        RequestKind::GraphQl | RequestKind::Rest | RequestKind::WebSocket => None,
+    }
+}
+
 /// What a new request of each protocol starts with, beyond empty fields.
 fn defaults_of(kind: RequestKind) -> Map<String, Value> {
     let value = match kind {
@@ -135,6 +152,7 @@ pub struct ProtocolSession {
     saving: bool,
     /// Set when Send was asked for with unsaved edits: the save that follows sends when it lands.
     send_after_save: bool,
+    autosave: Autosave,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -151,15 +169,23 @@ impl ProtocolSession {
     ) -> Self {
         debug_assert!(kind.send_command().is_some(), "{} is not an HTTP-like request type", kind.label());
         let workspace_id = model.read(cx).workspace_id().to_owned();
-        let default_name = format!("New {} request", kind.label());
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name").default_value(default_name));
+        let name =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Request name").default_value(default_name(kind)));
         let exchange = cx.new(|cx| Exchange::new(window, cx));
 
-        let mut subscriptions = vec![cx.subscribe_in(&name, window, |this, _, event: &InputEvent, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.changed(cx);
+        let mut subscriptions =
+            vec![cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => this.changed(cx),
+                InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
+                InputEvent::Focus => {}
+            })];
+        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
+            if let ModelEvent::EntityReverted(id) = event
+                && this.saved_id.as_deref() == Some(id.as_str())
+            {
+                this.reload(window, cx);
             }
-        })];
+        }));
         let controls: Vec<Control> = fields_of(kind)
             .iter()
             .map(|spec| match spec.kind {
@@ -209,6 +235,7 @@ impl ProtocolSession {
             sending: false,
             saving: false,
             send_after_save: false,
+            autosave: Autosave::new(window),
             _subscriptions: subscriptions,
         };
         this.baseline = this.values(cx);
@@ -236,10 +263,19 @@ impl ProtocolSession {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut this = Self::build(model, kind, Some(id.clone()), None, window, cx);
+        let mut this = Self::build(model, kind, Some(id), None, window, cx);
         this.load = LoadState::Loading;
-        let client = this.model.read(cx).client().clone();
-        let payload = json!({ "workspaceId": this.workspace_id, "kind": kind.entity_kind(), "id": id });
+        this.reload(window, cx);
+        this
+    }
+
+    /// Reads the saved request from the engine into the editor, replacing what the editor holds.
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.saved_id.clone() else { return };
+        // An edit waiting to be written belongs to the copy that is being replaced.
+        self.autosave.cancel();
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": self.workspace_id, "kind": self.kind.entity_kind(), "id": id });
         call_in(&client, window, cx, "entity.load", payload, |this, outcome, window, cx| {
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
                 v.get("entity")
@@ -253,9 +289,9 @@ impl ProtocolSession {
                 }
                 Err(message) => this.load = LoadState::Failed(message),
             }
-            this.changed(cx);
+            cx.emit(SessionEvent::Changed);
+            cx.notify();
         });
-        this
     }
 
     pub fn kind(&self) -> RequestKind {
@@ -264,6 +300,19 @@ impl ProtocolSession {
 
     pub fn saved_id(&self) -> Option<&str> {
         self.saved_id.as_deref()
+    }
+
+    pub fn folder_id(&self) -> Option<&str> {
+        self.folder_id.as_deref()
+    }
+
+    /// The field the request's name is typed in. The shell shows it in the breadcrumb.
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name
+    }
+
+    pub fn is_saving(&self) -> bool {
+        self.saving
     }
 
     pub fn exchange(&self) -> &Entity<Exchange> {
@@ -329,9 +378,93 @@ impl ProtocolSession {
         }
     }
 
+    /// Why the edit cannot be written as it stands, for a saved request that has one.
+    pub fn problem(&self, cx: &gpui_kit::App) -> Option<SharedString> {
+        if self.saved_id.is_none() || self.load != LoadState::Ready {
+            return None;
+        }
+        let values = self.values(cx);
+        (values != self.baseline && Self::target_is_empty(&values))
+            .then(|| format!("Not saved. Enter the {}.", self.target_label()).into())
+    }
+
+    /// The first field is the target; a request without one cannot be written.
+    fn target_is_empty(values: &(String, Vec<FieldValue>)) -> bool {
+        matches!(values.1.first(), Some(FieldValue::Text(text)) if text.is_empty())
+    }
+
+    fn target_label(&self) -> String {
+        fields_of(self.kind)[0].label.to_lowercase()
+    }
+
+    /// A saved request is written a moment after each change; a draft waits for Save.
     fn changed(&mut self, cx: &mut Context<Self>) {
         cx.emit(SessionEvent::Changed);
         cx.notify();
+        if self.saved_id.is_some() && self.load == LoadState::Ready {
+            self.autosave.schedule(cx, |this, window, cx| this.save(SaveMode::Auto, window, cx));
+        }
+    }
+
+    /// The name was confirmed, by Enter or by leaving the field. Naming a draft is what creates it, when it
+    /// has what it needs to be created.
+    fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_none() && self.values(cx).0 != self.baseline.0 {
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Writes an edit that is still waiting, now: the tab is about to close.
+    pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_some() {
+            self.autosave.cancel();
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// What this draft keeps if it becomes a request of another type.
+    pub fn carry(&self, cx: &gpui_kit::App) -> Carry {
+        let (name, values) = self.values(cx);
+        let mut carry =
+            Carry { name: (!name.is_empty() && name != default_name(self.kind)).then_some(name), ..Carry::default() };
+        let body_key = body_key(self.kind);
+        let mut has_headers = false;
+        for (ix, (spec, value)) in fields_of(self.kind).iter().zip(values).enumerate() {
+            match value {
+                FieldValue::Text(text) if ix == 0 => carry.url = text,
+                FieldValue::Text(text) if Some(spec.key) == body_key => carry.body = text,
+                FieldValue::Pairs(pairs) if !has_headers => {
+                    carry.headers = pairs;
+                    has_headers = true;
+                }
+                _ => {}
+            }
+        }
+        carry
+    }
+
+    /// Fills this draft with what was typed into a draft of another type.
+    pub fn apply_carry(&mut self, carry: &Carry, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(name) = &carry.name {
+            self.name.update(cx, |s, cx| s.set_value(name.clone(), window, cx));
+        }
+        let body_key = body_key(self.kind);
+        let mut has_headers = false;
+        for (ix, (spec, control)) in fields_of(self.kind).iter().zip(&self.controls).enumerate() {
+            match control {
+                Control::Text(editor) if ix == 0 => editor.set_value(carry.url.clone(), window, cx),
+                // A document is not blanked by a draft that had no such document.
+                Control::Text(editor) if Some(spec.key) == body_key && !carry.body.is_empty() => {
+                    editor.set_value(carry.body.clone(), window, cx)
+                }
+                Control::Pairs(table) if !has_headers => {
+                    has_headers = true;
+                    table.update(cx, |table, cx| table.set_pairs(&carry.headers, window, cx));
+                }
+                _ => {}
+            }
+        }
+        self.changed(cx);
     }
 
     fn values(&self, cx: &gpui_kit::App) -> (String, Vec<FieldValue>) {
@@ -372,47 +505,44 @@ impl ProtocolSession {
         self.baseline = self.values(cx);
     }
 
-    pub fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let entity = self.entity.clone();
-        self.adopt_entity(entity, window, cx);
-        self.changed(cx);
-    }
-
     /// The loaded entity with the editor's fields written over it.
-    fn edited_entity(&self, cx: &gpui_kit::App) -> Map<String, Value> {
-        let (name, values) = self.values(cx);
+    fn edited_entity(&self, (name, values): &(String, Vec<FieldValue>)) -> Map<String, Value> {
         let mut entity = self.entity.clone();
-        entity.insert(
-            "name".into(),
-            json!(if name.is_empty() { format!("{} request", self.kind.label()) } else { name }),
-        );
+        entity.insert("name".into(), json!(if name.is_empty() { default_name(self.kind) } else { name.clone() }));
         for (spec, value) in fields_of(self.kind).iter().zip(values) {
             entity.insert(
                 spec.key.into(),
                 match value {
                     FieldValue::Text(text) => json!(text),
-                    FieldValue::Pairs(pairs) => Value::Object(header_map(&pairs)),
+                    FieldValue::Pairs(pairs) => Value::Object(header_map(pairs)),
                 },
             );
         }
         entity
     }
 
-    pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Creates the request if it is a draft, or writes the edit over the saved one. A write that is asked
+    /// for while another is in flight is not lost: the one in flight looks for a newer edit when it lands.
+    pub fn save(&mut self, mode: SaveMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving || self.load != LoadState::Ready {
             return;
         }
-        let target_is_empty = matches!(self.values(cx).1.first(), Some(FieldValue::Text(text)) if text.is_empty());
-        if target_is_empty {
-            self.send_after_save = false;
-            window.push_notification(
-                Notification::warning(format!("Enter the {} first.", fields_of(self.kind)[0].label.to_lowercase()))
-                    .title("Can't save yet"),
-                cx,
-            );
+        let values = self.values(cx);
+        let creating = self.saved_id.is_none();
+        if !creating && values == self.baseline {
             return;
         }
-        let mut entity = self.edited_entity(cx);
+        if Self::target_is_empty(&values) {
+            self.send_after_save = false;
+            if mode == SaveMode::Explicit {
+                window.push_notification(
+                    Notification::warning(format!("Enter the {} first.", self.target_label())).title("Can't save yet"),
+                    cx,
+                );
+            }
+            return;
+        }
+        let mut entity = self.edited_entity(&values);
         entity.insert("workspaceId".into(), json!(self.workspace_id));
         if let Some(folder) = &self.folder_id {
             entity.insert("folderId".into(), json!(folder));
@@ -422,7 +552,6 @@ impl ProtocolSession {
         cx.notify();
         let client = self.model.read(cx).client().clone();
         let kind = self.kind.entity_kind();
-        let creating = self.saved_id.is_none();
         let edited = entity.clone();
         let (action, payload) = match &self.saved_id {
             Some(id) => {
@@ -434,43 +563,62 @@ impl ProtocolSession {
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.saving = false;
             let send_next = std::mem::take(&mut this.send_after_save);
-            match outcome {
-                Ok(result) => {
-                    let saved =
-                        if creating { result.get("entity").and_then(Value::as_object).cloned() } else { Some(edited) };
-                    match saved {
+            // The controls are left alone: they may hold what was typed while this was in flight. What was
+            // sent becomes the baseline, so that newer text still reads as an edit.
+            let saved = match outcome {
+                Ok(result) if creating => {
+                    let saved = result.get("entity").and_then(Value::as_object).cloned();
+                    match &saved {
                         Some(saved) => {
-                            if creating {
-                                this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
-                                if let Some(id) = this.saved_id.clone() {
-                                    cx.emit(SessionEvent::Saved { id });
-                                }
-                            }
-                            this.adopt_entity(saved, window, cx);
-                            if send_next {
-                                this.send(window, cx);
+                            this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                            this.entity = saved.clone();
+                            this.baseline = values;
+                            if let Some(id) = this.saved_id.clone() {
+                                cx.emit(SessionEvent::Saved { id });
                             }
                         }
                         None => window
                             .push_notification(Notification::error("The engine did not return the saved request."), cx),
                     }
+                    saved.is_some()
                 }
-                Err(error) => window
-                    .push_notification(Notification::error(describe(&error)).title("Couldn't save the request"), cx),
-            }
+                Ok(_) => {
+                    this.entity = edited;
+                    this.baseline = values;
+                    true
+                }
+                Err(error) => {
+                    window.push_notification(
+                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        cx,
+                    );
+                    cx.emit(SessionEvent::Changed);
+                    cx.notify();
+                    return;
+                }
+            };
+            // An edit made since this write was sent is the next write. (`changed` schedules it.)
             this.changed(cx);
+            if send_next && saved {
+                this.send(window, cx);
+            }
         });
     }
 
     /// Sends the stored request. Unsaved edits are saved first, because the engine sends what it has stored.
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(action) = self.kind.send_command() else { return };
-        if self.sending || self.saving || self.load != LoadState::Ready {
+        if self.sending || self.load != LoadState::Ready {
+            return;
+        }
+        // The write in flight may not hold the latest edit; the send waits for it and looks again.
+        if self.saving {
+            self.send_after_save = true;
             return;
         }
         let Some(id) = self.saved_id.clone().filter(|_| !self.is_dirty(cx)) else {
             self.send_after_save = true;
-            self.save(window, cx);
+            self.save(SaveMode::Explicit, window, cx);
             return;
         };
         self.sending = true;
@@ -517,7 +665,6 @@ impl Render for ProtocolSession {
             LoadState::Ready => {}
         }
 
-        let dirty = self.is_dirty(cx);
         let specs = fields_of(self.kind);
         let line = |ix: usize| match &self.controls[ix] {
             Control::Text(editor) => editor.line_field(cx).into_any_element(),
@@ -541,30 +688,6 @@ impl Render for ProtocolSession {
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .pt_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.name).small().appearance(false)))
-                    .child(
-                        Button::new("revert-request")
-                            .ghost()
-                            .small()
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.revert(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-request")
-                            .small()
-                            .label("Save")
-                            .loading(self.saving)
-                            .disabled(!dirty && self.saved_id.is_some())
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
-            )
             .child(
                 h_flex().flex_none().gap_2().px_3().py_2().child(div().flex_1().min_w_0().child(line(0))).child(
                     Button::new("send-request")

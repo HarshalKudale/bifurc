@@ -8,7 +8,7 @@
 //! model and asks the engine for the history.
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _, StyledExt as _,
+    ActiveTheme as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Editor, EditorState},
@@ -336,10 +336,13 @@ impl Render for RightSidebar {
             .size_full()
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
+            // The same tab strip the Requests and Mocks screens open their entities in, without close
+            // buttons: these three are always there.
+            // The strip sits at the foot of a band as tall as the top bar beside it, so the two share a
+            // bottom edge.
             .child(
-                h_flex().flex_none().h_10().px_2().border_b_1().border_color(theme.border).child(
+                v_flex().flex_none().h_10().justify_end().bg(theme.tab_bar).child(
                     TabBar::new("inspector-panels")
-                        .underline()
                         .small()
                         .selected_index(selected)
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {

@@ -4,13 +4,15 @@
 //! needed, compared with a baseline to know whether there is anything to save, and written back over the
 //! engine's copy, so fields this editor does not show (the captured request a mock was made from) survive.
 //!
+//! A draft is created by Save. Once it exists there is no Save step: an edit is written a moment after it
+//! is made. The mock's name is edited in the window's breadcrumb, which shows this editor's name field.
+//!
 //! The editor is one entity shown in two dock panels: [`MockEditor::render_rule`] and
 //! [`MockEditor::render_response`].
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, WindowExt as _,
+    ActiveTheme as _, IndexPath, Sizable as _, WindowExt as _,
     alert::Alert,
-    button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     h_flex,
     input::{Editor, Input, InputEvent, InputState},
@@ -27,11 +29,11 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    app_model::AppModel,
-    components::{KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    app_model::{AppModel, ModelEvent},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
     engine::{call_in, describe},
     model::http::{HTTP_METHODS, header_map, header_pairs},
-    session::LoadState,
+    session::{LoadState, SaveMode},
 };
 
 const DEFAULT_NAME: &str = "New mock";
@@ -102,6 +104,7 @@ pub struct MockEditor {
     section: Section,
     baseline: Fields,
     saving: bool,
+    autosave: Autosave,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -133,7 +136,19 @@ impl MockEditor {
         let body = VarEditor::code(Syntax::Json, "Response body", window, cx);
 
         let mut subscriptions = Vec::new();
-        for input in [&name, &pattern, &status, &delay, &chunk_delay] {
+        subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
+            InputEvent::Change => this.changed(cx),
+            InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
+            InputEvent::Focus => {}
+        }));
+        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
+            if let ModelEvent::EntityReverted(id) = event
+                && this.saved_id.as_deref() == Some(id.as_str())
+            {
+                this.reload(window, cx);
+            }
+        }));
+        for input in [&pattern, &status, &delay, &chunk_delay] {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.changed(cx);
@@ -194,6 +209,7 @@ impl MockEditor {
                 chunk_delay: String::new(),
             },
             saving: false,
+            autosave: Autosave::new(window),
             _subscriptions: subscriptions,
         };
         this.baseline = this.fields(cx);
@@ -210,11 +226,21 @@ impl MockEditor {
         Self::build(model, None, folder_id, window, cx)
     }
 
+    /// A saved mock, loaded by id.
     pub fn open_saved(model: Entity<AppModel>, id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut this = Self::build(model, Some(id.clone()), None, window, cx);
+        let mut this = Self::build(model, Some(id), None, window, cx);
         this.load = LoadState::Loading;
-        let client = this.model.read(cx).client().clone();
-        let payload = json!({ "workspaceId": this.workspace_id, "kind": "mocks", "id": id });
+        this.reload(window, cx);
+        this
+    }
+
+    /// Reads the saved mock from the engine into the editor, replacing what the editor holds.
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.saved_id.clone() else { return };
+        // An edit waiting to be written belongs to the copy that is being replaced.
+        self.autosave.cancel();
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": self.workspace_id, "kind": "mocks", "id": id });
         call_in(&client, window, cx, "entity.load", payload, |this, outcome, window, cx| {
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
                 v.get("entity")
@@ -230,11 +256,19 @@ impl MockEditor {
             }
             this.changed(cx);
         });
-        this
     }
 
     pub fn saved_id(&self) -> Option<&str> {
         self.saved_id.as_deref()
+    }
+
+    /// The field the mock's name is typed in. The shell shows it in the breadcrumb.
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name
+    }
+
+    pub fn is_saving(&self) -> bool {
+        self.saving
     }
 
     pub fn title(&self, cx: &gpui_kit::App) -> SharedString {
@@ -251,9 +285,41 @@ impl MockEditor {
         self.load == LoadState::Ready && self.fields(cx) != self.baseline
     }
 
+    /// Why the edit cannot be written as it stands, for a saved mock that has one.
+    pub fn problem(&self, cx: &gpui_kit::App) -> Option<SharedString> {
+        if self.saved_id.is_none() || self.load != LoadState::Ready {
+            return None;
+        }
+        let fields = self.fields(cx);
+        if fields == self.baseline {
+            return None;
+        }
+        self.edited_entity(&fields).err().map(|reason| format!("Not saved. {reason}").into())
+    }
+
+    /// A saved mock is written a moment after each change; a draft waits for Save.
     fn changed(&mut self, cx: &mut Context<Self>) {
         cx.emit(MockEvent::Changed);
         cx.notify();
+        if self.saved_id.is_some() && self.load == LoadState::Ready {
+            self.autosave.schedule(cx, |this, window, cx| this.save(SaveMode::Auto, window, cx));
+        }
+    }
+
+    /// The name was confirmed, by Enter or by leaving the field. Naming a draft is what creates it, when it
+    /// has what it needs to be created.
+    fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_none() && self.fields(cx).name != self.baseline.name {
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Writes an edit that is still waiting, now: the tab is about to close.
+    pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_some() {
+            self.autosave.cancel();
+            self.save(SaveMode::Auto, window, cx);
+        }
     }
 
     fn streaming_value(&self, cx: &gpui_kit::App) -> &'static str {
@@ -327,15 +393,6 @@ impl MockEditor {
         self.baseline = self.fields(cx);
     }
 
-    pub fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut entity = self.entity.clone();
-        if self.saved_id.is_none() {
-            entity.insert("name".into(), json!(DEFAULT_NAME));
-        }
-        self.adopt_entity(entity, window, cx);
-        self.changed(cx);
-    }
-
     /// The loaded entity with the editor's fields written over it, or what stops it from being saved.
     fn edited_entity(&self, fields: &Fields) -> Result<Map<String, Value>, &'static str> {
         if fields.pattern.is_empty() {
@@ -379,15 +436,23 @@ impl MockEditor {
         Ok(entity)
     }
 
-    pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Creates the mock if it is a draft, or writes the edit over the saved one. A write that is asked
+    /// for while another is in flight is not lost: the one in flight looks for a newer edit when it lands.
+    pub fn save(&mut self, mode: SaveMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving || self.load != LoadState::Ready {
             return;
         }
         let fields = self.fields(cx);
+        let creating = self.saved_id.is_none();
+        if !creating && fields == self.baseline {
+            return;
+        }
         let mut entity = match self.edited_entity(&fields) {
             Ok(entity) => entity,
             Err(reason) => {
-                window.push_notification(Notification::warning(reason).title("Can't save yet"), cx);
+                if mode == SaveMode::Explicit {
+                    window.push_notification(Notification::warning(reason).title("Can't save yet"), cx);
+                }
                 return;
             }
         };
@@ -402,39 +467,44 @@ impl MockEditor {
         self.saving = true;
         cx.notify();
         let client = self.model.read(cx).client().clone();
-        let creating = self.saved_id.is_none();
-        let edited = entity.clone();
+        if let Some(id) = &self.saved_id {
+            entity.insert("id".into(), json!(id));
+        }
+        let sent = entity.clone();
         let (action, payload) = match &self.saved_id {
-            Some(id) => {
-                entity.insert("id".into(), json!(id));
-                ("entity.update", json!({ "kind": "mocks", "entity": entity }))
-            }
+            Some(_) => ("entity.update", json!({ "kind": "mocks", "entity": entity })),
             None => ("entity.create", json!({ "kind": "mocks", "workspaceId": self.workspace_id, "entity": entity })),
         };
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.saving = false;
+            // The controls are left alone: they may hold what was typed while this was in flight. What was
+            // sent becomes the baseline, so that newer text still reads as an edit.
             match outcome {
-                Ok(result) => {
-                    let saved =
-                        if creating { result.get("entity").and_then(Value::as_object).cloned() } else { Some(edited) };
-                    match saved {
-                        Some(saved) => {
-                            if creating {
-                                this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
-                                if let Some(id) = this.saved_id.clone() {
-                                    cx.emit(MockEvent::Saved { id });
-                                }
-                            }
-                            this.adopt_entity(saved, window, cx);
+                Ok(result) if creating => match result.get("entity").and_then(Value::as_object).cloned() {
+                    Some(saved) => {
+                        this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                        this.entity = saved;
+                        this.baseline = fields;
+                        if let Some(id) = this.saved_id.clone() {
+                            cx.emit(MockEvent::Saved { id });
                         }
-                        None => window
-                            .push_notification(Notification::error("The engine did not return the saved mock."), cx),
                     }
+                    None => {
+                        window.push_notification(Notification::error("The engine did not return the saved mock."), cx)
+                    }
+                },
+                Ok(_) => {
+                    this.entity = sent;
+                    this.baseline = fields;
                 }
                 Err(error) => {
-                    window.push_notification(Notification::error(describe(&error)).title("Couldn't save the mock"), cx)
+                    window.push_notification(Notification::error(describe(&error)).title("Couldn't save the mock"), cx);
+                    cx.emit(MockEvent::Changed);
+                    cx.notify();
+                    return;
                 }
             }
+            // An edit made since this write was sent is the next write. (`changed` schedules it.)
             this.changed(cx);
         });
     }
@@ -456,41 +526,16 @@ impl MockEditor {
         }
     }
 
-    /// What the mock matches: its name, the method and URL pattern, and whether it is on.
+    /// What the mock matches: the method and URL pattern, and whether it is on.
     pub fn render_rule(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if let Some(placeholder) = self.placeholder() {
             return placeholder;
         }
         let theme = cx.theme().clone();
-        let dirty = self.is_dirty(cx);
         let row_height = VarEditor::row_height(cx);
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .pt_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.name).small().appearance(false)))
-                    .child(
-                        Button::new("revert-mock")
-                            .ghost()
-                            .small()
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.revert(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-mock")
-                            .small()
-                            .label("Save")
-                            .loading(self.saving)
-                            .disabled(!dirty && self.saved_id.is_some())
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
-            )
             .child(
                 h_flex()
                     .flex_none()
