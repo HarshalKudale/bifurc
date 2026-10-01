@@ -86,6 +86,48 @@ export async function workspaces(ctx: CommandContext, sub = "list"): Promise<voi
   throw new CliError(`unknown: workspaces ${sub}`);
 }
 
+/**
+ * Environments of the active workspace. `Global` is always applied underneath; the selected one overrides it.
+ * Selection is the engine's (and survives restarts), so it is shared with the desktop UI.
+ */
+export async function env(ctx: CommandContext, sub = "list"): Promise<void> {
+  const engine = await ctx.engine();
+  const cfg = await engine.request<{ activeWorkspaceId: string; activeEnvironmentId: string | null }>("config.get");
+  const wsId = flag(ctx.args, "workspace") ?? cfg.activeWorkspaceId;
+  if (sub === "list") {
+    const res = await engine.request<{ entities: Row[] }>("entity.list", { workspaceId: wsId, kind: "environments" });
+    const selectable = wsId === cfg.activeWorkspaceId;
+    const rows = res.entities.map((e) => ({
+      ...e,
+      active: e.id === "__global__" ? "base" : selectable && e.id === cfg.activeEnvironmentId ? "*" : "",
+      vars: Array.isArray(e.variables) ? e.variables.length : 0,
+    }));
+    ctx.out.print(rows, () => table(rows, ["active", "id", "name", "vars"]));
+    return;
+  }
+  if (sub === "show") {
+    const merged = await engine.request("env.getMerged", { workspaceId: wsId });
+    ctx.out.print(merged, () => JSON.stringify(merged, null, 2));
+    return;
+  }
+  if (sub === "use") {
+    if (wsId !== cfg.activeWorkspaceId) {
+      throw new CliError(`Environments are selected for the active workspace; run: bifurc workspaces use ${wsId}`);
+    }
+    const want = need(ctx.args.positionals[2], "environment id or name");
+    const res = await engine.request<{ entities: Row[] }>("entity.list", { workspaceId: wsId, kind: "environments" });
+    const hit =
+      res.entities.find((e) => e.id === want) ??
+      res.entities.find((e) => String(e.name).toLowerCase() === want.toLowerCase());
+    if (hit === undefined) throw new CliError(`no environment "${want}" (see: bifurc env list)`);
+    const out = await engine.request<{ ok: boolean; error?: string }>("env.setActive", { id: hit.id });
+    if (!out.ok) throw new CliError(out.error === "cannot_activate_global" ? "Global is always active; pick another environment." : String(out.error));
+    ctx.out.print({ ok: true, activeEnvironmentId: hit.id }, () => `Active environment: ${String(hit.name)} (${String(hit.id)})`);
+    return;
+  }
+  throw new CliError(`unknown: env ${sub}`);
+}
+
 export async function mappings(ctx: CommandContext, sub = "list"): Promise<void> {
   const engine = await ctx.engine();
   const pos = ctx.args.positionals;

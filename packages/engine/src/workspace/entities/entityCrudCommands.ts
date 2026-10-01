@@ -121,6 +121,8 @@ import { emitEntityStatus } from "../../runtime/entityStatus";
 import { mayAffectUnnamedEntities, type CommandContext, type CommandRegistry } from "../../kernel/registry";
 import { toEngineKind } from "../../kernel/kinds";
 import { gateCreate } from "../entityCount";
+import { effectiveEnvironmentId } from "../envSelection";
+import { loadSettings, saveSettings } from "../appSettings";
 
 /** The shape every CRUD-factory entity satisfies — pulled out so the extracted `*Core`
  * functions below can share it with `registerCrudKind`'s own generic constraint. */
@@ -490,6 +492,22 @@ function listSimpleEntitiesCore<T>(wsId: string, kind: string): T[] {
 // `entityCrudRegistry` nor `simpleEntityKinds` throws a clear error rather than silently
 // no-oping — today every `EntityKind` value is registered in one or the other.
 
+/**
+ * A lone environment is selected implicitly (`envSelection.ts`). Adding a second one would end that, so the
+ * implicit selection is written down first — otherwise creating an environment would silently deselect the
+ * one in use.
+ */
+function pinImplicitEnvironment(workspaceId: string | undefined): void {
+  const settings = loadSettings();
+  const wsId = workspaceId ?? settings.activeWorkspaceId;
+  const ws = settings.workspaces.find((w) => w.id === wsId);
+  if (!ws) return;
+  const implicit = effectiveEnvironmentId(readAllEntities<{ id: string }>(wsId, "environments"), ws.activeEnvironmentId);
+  if (implicit === null || implicit === ws.activeEnvironmentId) return;
+  ws.activeEnvironmentId = implicit;
+  saveSettings(settings);
+}
+
 export function registerEntityCrudCommands(registry: CommandRegistry): void {
   registry.register("entity.create", async ({ kind, entity, workspaceId }: EntityCreateParams, ctx: CommandContext) => {
     const engineKind = toEngineKind(kind);
@@ -507,6 +525,7 @@ export function registerEntityCrudCommands(registry: CommandRegistry): void {
         const gate = gateCreate(wsId, opts.gateKind);
         if (!gate.allowed) return { error: "limit_reached", ...gate };
       }
+      if (engineKind === "environments") pinImplicitEnvironment((mergedEntity as any).workspaceId);
       const created = await createEntityCore(opts, mergedEntity as any, mayAffectUnnamedEntities(ctx));
       return { id: created.id, entity: created as Record<string, unknown> };
     }
