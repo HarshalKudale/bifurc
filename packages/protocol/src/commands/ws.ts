@@ -96,8 +96,16 @@ export type WsMessage = z.infer<typeof WsMessageSchema>;
 export const WsConnectParams = z.object({
   workspaceId: z.string(),
   socketId: z.string(),
-  url: z.string(),
-  /** Header names are taken verbatim; only the values are resolved. */
+  /**
+   * Omit `url` (and `headers`) to connect a **saved WebSocket request**: `socketId` is then the saved
+   * entity's id and the engine reads the target from it, exactly as `request.send`, `graphql.send`,
+   * `soap.send` and `grpc.send` do for `{workspaceId, id}`. That is what makes a WebSocket one more
+   * request type rather than a feature with its own payload shape: a CLI or a second UI holds an id, not
+   * a copy of the stored fields. Supply `url` for a draft — a socket that is not saved — and `socketId`
+   * is then only the caller's name for it.
+   */
+  url: z.string().optional(),
+  /** Header names are taken verbatim; only the values are resolved. Draft form only: with `url` omitted the saved entity's headers are used. */
   headers: z.record(z.string(), z.string()).optional(),
 }).strict();
 export type WsConnectParams = z.infer<typeof WsConnectParams>;

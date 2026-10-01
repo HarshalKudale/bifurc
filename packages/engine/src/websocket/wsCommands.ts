@@ -31,7 +31,10 @@ import type {
     WsStatusParams,
     WsStatusResult,
 } from "@bifurc/protocol";
+import { EngineError } from "@bifurc/protocol";
 import type { CommandContext, CommandRegistry } from "../kernel/registry";
+import { loadEntity } from "../workspace/config";
+import type { SavedWsConnection } from "../workspace/types";
 import {
     MAX_WS_CONNECTIONS,
     clearSocketMessages,
@@ -42,6 +45,27 @@ import {
     sendSocketMessage,
     type SocketEmitters,
 } from "./wsRegistry";
+
+/**
+ * Where a connect gets its target. A draft carries `url`; a saved WebSocket request carries only its id
+ * (`socketId`), the same `{workspaceId, id}` form `request.send` and its siblings take, and the engine
+ * reads the stored fields. `headers` without `url` is refused: it would override half of a saved request
+ * and could not be told apart from a typo.
+ */
+function resolveTarget(params: WsConnectParams): { url: string; headers?: Record<string, string> } {
+    if (params.url !== undefined) return { url: params.url, headers: params.headers };
+    if (params.headers !== undefined) {
+        throw new EngineError("BAD_REQUEST", "ws.connect takes `headers` only together with `url`; a saved request supplies its own.");
+    }
+    const saved = loadEntity<SavedWsConnection>(params.workspaceId, "sockets", params.socketId);
+    if (!saved) {
+        throw new EngineError(
+            "NOT_FOUND",
+            `No saved sockets entity "${params.socketId}" in workspace "${params.workspaceId}". Pass \`url\` to connect a draft.`,
+        );
+    }
+    return { url: saved.url, headers: saved.headers };
+}
 
 export function registerWebsocketCommands(registry: CommandRegistry): void {
     /**
@@ -73,11 +97,13 @@ export function registerWebsocketCommands(registry: CommandRegistry): void {
             },
         };
 
+        const target = resolveTarget(params);
+
         return connectSocket({
             workspaceId: params.workspaceId,
             socketId: params.socketId,
-            url: params.url,
-            headers: params.headers,
+            url: target.url,
+            headers: target.headers,
             emit: emitters,
         });
     });

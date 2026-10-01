@@ -141,7 +141,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   // `ws.send`'s is a `data` of the wrong type, and the two read commands' is a missing `socketId`.
   "ws.connect": {
     valid: { workspaceId: "ws1", socketId: "tab-1", url: "wss://example.test/socket" },
-    invalid: { workspaceId: "ws1", socketId: "tab-1" },
+    invalid: { workspaceId: "ws1", socketId: "tab-1", url: 5 },
   },
   "ws.disconnect": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
   "ws.send": { valid: { workspaceId: "ws1", socketId: "tab-1", data: "ping" }, invalid: { workspaceId: "ws1", socketId: "tab-1", data: 1 } },

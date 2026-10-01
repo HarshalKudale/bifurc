@@ -1436,3 +1436,36 @@ Examples: a new command, a new optional field, a new capability string.
 3. Does the payload contain a filesystem path? It must not (`File_Ops_Protocol.md` §8).
 4. Is there a schema, and does the engine validate against it?
 5. Is it in the right scope class?
+
+---
+
+## 2026-10-01 — `ws.connect` takes a saved id; `desktop-ui` joins `ClientName` (additive)
+
+**What.** Two additive changes, both for the Rust desktop UI (`ui/`):
+
+1. `ws.connect`'s `url` becomes **optional**. Without it, `socketId` is the id of a saved WebSocket request
+   (engine kind `sockets`, protocol kind `wsConnections`) and the engine reads `url` and `headers` from the entity —
+   the `{workspaceId, id}` form `request.send`, `graphql.send`, `soap.send` and `grpc.send` already have. With it,
+   nothing changes: it is the draft form, and `socketId` is only the caller's name for the connection. `headers`
+   without `url` is refused (`BAD_REQUEST`), and an id with no saved entity is `NOT_FOUND`.
+2. `ClientNameSchema` gains `"desktop-ui"`, so the engine's session log can tell the Rust UI from the Electron
+   shell. Every client still receives the same scopes.
+
+**Why.** A WebSocket is one more request type in the UI's request tree. Before this, opening a saved socket meant
+the client loading the entity and re-sending its fields, which is the exact thing the `*.send` family exists to
+avoid (a second UI or the CLI holds an id, not a copy of the stored shape). Everything else a request type
+needs was already engine-side: its own saved kind and folder tree (`wsFolders`), `ws.status` / `ws.list` for the
+state in between, `event.ws.status` / `event.ws.message` for the stream, and a connection lifetime that is the
+engine's rather than the window's (D29), which is what lets a UI reattach to a live socket.
+
+**Not changed.** The kind keeps the name `wsConnections` (protocol) / `sockets` (disk) — renaming it to
+`wsRequests` to match `graphqlRequests` / `grpcRequests` / `soapRequests` would move every saved workspace's
+directory and is cosmetic. `ws.disconnect` / `ws.send` / `ws.status` / `ws.clearMessages` are unchanged.
+
+**Checklist:** no new command; schema is still one `.strict()` object; the `ws.connect` fixture's `invalid` row
+is now a wrong-typed `url` (a missing one is valid). Scope stays `execute`.
+
+**Affected:** `@bifurc/protocol` (`WsConnectParams`, `ClientNameSchema`), `packages/engine/src/websocket/wsCommands.ts`.
+**Migration:** none. Existing callers always send `url`.
+
+**Verified:** `tests/websocket/wsConnectById.test.ts` (4 cases).
