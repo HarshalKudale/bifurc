@@ -6,6 +6,7 @@
 //! The body is shown in a read-only code editor highlighted for its content type, either re-indented
 //! ("Pretty") or exactly as received ("Raw").
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Sizable as _,
     alert::Alert,
@@ -24,8 +25,15 @@ use gpui_kit::{
 use serde_json::Value;
 
 use crate::{
-    components::{Syntax, page},
-    model::http::{BodyEncoding, HttpResponse, pretty_json, status_text},
+    components::{
+        Syntax,
+        binary::{BinaryBody, save_to_file, suggested_file_name},
+        page,
+    },
+    model::{
+        http::{BodyEncoding, HttpResponse, pretty_json, status_text},
+        media::{self, BodyClass},
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,6 +69,10 @@ pub struct Exchange {
     /// not parse again.
     raw_text: String,
     pretty_text: Option<String>,
+    /// The body as bytes, when it is an image or other data rather than text.
+    binary: Option<BinaryBody>,
+    /// What saving the body to a file came to, shown beside the button until the next response.
+    saved_note: Option<SharedString>,
 }
 
 impl Exchange {
@@ -78,6 +90,8 @@ impl Exchange {
             body,
             raw_text: String::new(),
             pretty_text: None,
+            binary: None,
+            saved_note: None,
         }
     }
 
@@ -100,8 +114,23 @@ impl Exchange {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<u16> {
+        self.binary = None;
+        self.saved_note = None;
         let (syntax, status) = match HttpResponse::from_value(result, encoding) {
             Some(response) => {
+                let content_type = response.content_type().unwrap_or_default().to_owned();
+                // An image is shown as an image even when its bytes happen to be text (SVG aside, which
+                // is text and reads as such).
+                if encoding == BodyEncoding::Base64
+                    && (response.is_binary || media::classify(&content_type) == BodyClass::Image)
+                    && let Some(bytes) = result
+                        .get("body")
+                        .and_then(Value::as_str)
+                        .and_then(|raw| STANDARD.decode(raw.trim()).ok())
+                        .filter(|bytes| !bytes.is_empty())
+                {
+                    self.binary = Some(BinaryBody::new(bytes, content_type));
+                }
                 let syntax = if response.is_binary {
                     Syntax::Plain
                 } else {
@@ -211,10 +240,60 @@ impl Exchange {
             .into_any_element()
     }
 
+    fn save_binary(&mut self, cx: &mut Context<Self>) {
+        let Some(binary) = &self.binary else { return };
+        let name = suggested_file_name("", "response", binary.content_type());
+        save_to_file(binary.bytes().to_vec(), name, cx, |this, outcome, cx| {
+            this.saved_note = Some(match outcome {
+                Ok(path) => format!("Saved to {}", path.display()).into(),
+                Err(error) => format!("Couldn't save the file. {error}").into(),
+            });
+            cx.notify();
+        });
+    }
+
+    /// A body that is an image or other data: the image or a line about the data, and a way to keep it.
+    fn render_binary(&self, binary: &BinaryBody, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_3()
+                    .py_2()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .children(self.saved_note.clone()),
+                    )
+                    .child(
+                        Button::new("save-body")
+                            .ghost()
+                            .small()
+                            .icon(IconName::File)
+                            .label("Save to file…")
+                            .on_click(cx.listener(|this, _, _, cx| this.save_binary(cx))),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(binary.render(cx)))
+            .into_any_element()
+    }
+
     fn render_http(&self, response: &HttpResponse, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let content =
             match self.section {
+                Section::Body if self.binary.is_some() => {
+                    let binary = self.binary.clone().expect("checked by the guard");
+                    self.render_binary(&binary, cx)
+                }
                 Section::Body if response.is_binary => page::empty(
                     "Binary body",
                     format!("{} of data that can't be shown as text.", response.body_size_label()),

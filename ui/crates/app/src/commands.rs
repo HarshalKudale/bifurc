@@ -11,6 +11,7 @@ use std::rc::Rc;
 use gpui_kit::{Action, App, Context, Global, KeyBinding, WeakEntity, Window, actions};
 
 use crate::{
+    components::EntityAction,
     model::RequestKind,
     shell::{Screen, Shell},
 };
@@ -25,10 +26,31 @@ actions!(
         NewSoapRequest,
         NewWebSocketRequest,
         NewFolder,
+        NewGraphQlFolder,
+        NewGrpcFolder,
+        NewSoapFolder,
+        NewWebSocketFolder,
+        NewMock,
+        NewMockFolder,
+        NewMapping,
+        NewProxyRule,
+        NewEnvironment,
+        NewHealthCheck,
+        NewWorkspace,
+        RenameWorkspace,
         SaveRequest,
         RevertRequest,
+        SyncEntity,
+        DeleteEntity,
         RunRequest,
         CloseRequestTab,
+        CheckAllHealth,
+        RefreshServices,
+        ToggleCapturePaused,
+        ClearCapture,
+        ToggleForwardProxy,
+        RestartForwardProxy,
+        PublishChanges,
         ToggleSidebar,
         ToggleInspector,
         ToggleFolderTree,
@@ -58,6 +80,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-k", OpenCommandPalette, None),
         KeyBinding::new("secondary-n", NewRestRequest, None),
         KeyBinding::new("secondary-shift-n", NewWebSocketRequest, None),
+        KeyBinding::new("secondary-shift-m", NewMock, None),
         KeyBinding::new("secondary-s", SaveRequest, None),
         KeyBinding::new("secondary-enter", RunRequest, None),
         KeyBinding::new("secondary-w", CloseRequestTab, None),
@@ -71,6 +94,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-5", ShowCapture, None),
         KeyBinding::new("secondary-6", ShowRequests, None),
         KeyBinding::new("secondary-7", ShowMocks, None),
+        KeyBinding::new("secondary-8", ShowEnvironments, None),
         KeyBinding::new("secondary-,", ShowSettings, None),
         KeyBinding::new("f5", ReloadWorkspace, None),
         KeyBinding::new("secondary-q", Quit, None),
@@ -106,6 +130,10 @@ fn new_request<A: Action + Clone>(cx: &mut App, kind: RequestKind) {
     on_shell::<A>(cx, move |shell, window, cx| shell.new_request(kind, window, cx));
 }
 
+fn new_folder<A: Action + Clone>(cx: &mut App, kind: RequestKind) {
+    on_shell::<A>(cx, move |shell, window, cx| shell.prompt_new_folder(kind, window, cx));
+}
+
 pub fn register_actions(cx: &mut App) {
     on_shell::<OpenCommandPalette>(cx, |shell, window, cx| shell.open_command_palette(window, cx));
     new_request::<NewRestRequest>(cx, RequestKind::Rest);
@@ -113,11 +141,32 @@ pub fn register_actions(cx: &mut App) {
     new_request::<NewGrpcRequest>(cx, RequestKind::Grpc);
     new_request::<NewSoapRequest>(cx, RequestKind::Soap);
     new_request::<NewWebSocketRequest>(cx, RequestKind::WebSocket);
-    on_shell::<NewFolder>(cx, |shell, window, cx| shell.prompt_new_folder(window, cx));
-    on_shell::<SaveRequest>(cx, |shell, window, cx| shell.save_active(window, cx));
-    on_shell::<RevertRequest>(cx, |shell, window, cx| shell.revert_active(window, cx));
+    new_folder::<NewFolder>(cx, RequestKind::Rest);
+    new_folder::<NewGraphQlFolder>(cx, RequestKind::GraphQl);
+    new_folder::<NewGrpcFolder>(cx, RequestKind::Grpc);
+    new_folder::<NewSoapFolder>(cx, RequestKind::Soap);
+    new_folder::<NewWebSocketFolder>(cx, RequestKind::WebSocket);
+    on_shell::<NewMock>(cx, |shell, window, cx| shell.new_mock(window, cx));
+    on_shell::<NewMockFolder>(cx, |shell, window, cx| shell.prompt_new_mock_folder(window, cx));
+    on_shell::<NewMapping>(cx, |shell, window, cx| shell.prompt_new_mapping(window, cx));
+    on_shell::<NewProxyRule>(cx, |shell, window, cx| shell.new_proxy_rule(window, cx));
+    on_shell::<NewEnvironment>(cx, |shell, window, cx| shell.prompt_new_environment(window, cx));
+    on_shell::<NewHealthCheck>(cx, |shell, window, cx| shell.prompt_new_health_check(window, cx));
+    on_shell::<NewWorkspace>(cx, |shell, window, cx| shell.prompt_new_workspace(window, cx));
+    on_shell::<RenameWorkspace>(cx, |shell, window, cx| shell.prompt_rename_workspace(window, cx));
+    on_shell::<SaveRequest>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Save, window, cx));
+    on_shell::<RevertRequest>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Revert, window, cx));
+    on_shell::<SyncEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Sync, window, cx));
+    on_shell::<DeleteEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Delete, window, cx));
+    on_shell::<CloseRequestTab>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Close, window, cx));
     on_shell::<RunRequest>(cx, |shell, window, cx| shell.run_active(window, cx));
-    on_shell::<CloseRequestTab>(cx, |shell, window, cx| shell.close_active(window, cx));
+    on_shell::<CheckAllHealth>(cx, |shell, window, cx| shell.check_all_health(window, cx));
+    on_shell::<RefreshServices>(cx, |shell, window, cx| shell.refresh_services(window, cx));
+    on_shell::<ToggleCapturePaused>(cx, |shell, window, cx| shell.toggle_capture_paused(window, cx));
+    on_shell::<ClearCapture>(cx, |shell, window, cx| shell.clear_capture(window, cx));
+    on_shell::<ToggleForwardProxy>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.toggle_proxy(cx)));
+    on_shell::<RestartForwardProxy>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.restart_proxy(cx)));
+    on_shell::<PublishChanges>(cx, |shell, _, cx| shell.publish_changes(cx));
     on_shell::<ToggleSidebar>(cx, |shell, _, cx| shell.toggle_sidebar(cx));
     on_shell::<ToggleInspector>(cx, |shell, window, cx| shell.toggle_right_sidebar(window, cx));
     on_shell::<ToggleFolderTree>(cx, |shell, _, cx| shell.toggle_folder_tree(cx));

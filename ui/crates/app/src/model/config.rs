@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 
-use super::kind::RequestKind;
+use super::{kind::RequestKind, tree::FolderRow};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceInfo {
@@ -279,6 +279,22 @@ impl ConfigSnapshot {
 
     pub fn folder(&self, kind: RequestKind, id: &str) -> Option<&FolderInfo> {
         self.folders.iter().find(|f| f.kind == kind && f.id == id)
+    }
+
+    /// The folders requests of `kind` are kept in. Each request type has its own.
+    pub fn request_folder_rows(&self, kind: RequestKind) -> Vec<FolderRow<'_>> {
+        self.folders
+            .iter()
+            .filter(|f| f.kind == kind)
+            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
+            .collect()
+    }
+
+    pub fn mock_folder_rows(&self) -> Vec<FolderRow<'_>> {
+        self.mock_folders
+            .iter()
+            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
+            .collect()
     }
 }
 

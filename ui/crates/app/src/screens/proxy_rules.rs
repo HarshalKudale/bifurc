@@ -374,6 +374,11 @@ impl ProxyRulesScreen {
         }
     }
 
+    /// Starts a rule that Save will create.
+    pub fn new_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(Selection::Draft, window, cx);
+    }
+
     fn open(&mut self, selection: Selection, window: &mut Window, cx: &mut Context<Self>) {
         match &selection {
             Selection::Saved(id) => {
@@ -422,7 +427,7 @@ impl ProxyRulesScreen {
                 }
             }
             EntityAction::Delete => self.confirm_delete(window, cx),
-            EntityAction::Close => {}
+            EntityAction::Close | EntityAction::Move(_) => {}
         }
     }
 

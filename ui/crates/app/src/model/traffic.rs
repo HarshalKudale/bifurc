@@ -1,11 +1,22 @@
 //! Proxied traffic the engine has captured, and the live entries that extend it.
+//!
+//! Two shapes: the light `TrafficEntry` the list shows (it arrives with `capture.list` and live), and the
+//! full `Exchange` with headers and bodies that `capture.get` returns for one id.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
+use crate::model::{
+    http::split_query,
+    media::{self, BodyClass},
+};
+
 /// The engine keeps the last 200 exchanges; the view mirrors the bound so a long session stays bounded here
 /// too.
 pub const MAX_ENTRIES: usize = 200;
+
+/// The engine keeps this many bytes of a response body; a body of exactly this size was probably cut.
+pub const RESPONSE_BODY_LIMIT: usize = 512 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrafficEntry {
@@ -17,31 +28,30 @@ pub struct TrafficEntry {
     pub duration_ms: Option<u64>,
     /// How the proxy handled it: `rfc6761`, `mapping`, `proxy`, `rule`, `mock` or `error`.
     pub via: String,
-    /// The entry as the engine sent it. The detail pane reads headers and bodies from it, and the engine's
-    /// own commands (`capture.buildRequest`, `capture.buildMock`) take it back whole.
-    pub raw: Value,
-}
-
-/// A captured body: text when it is text, otherwise only its size.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CapturedBody {
-    Empty,
-    Text(String),
-    Binary { bytes: usize },
+    /// The workspace the exchange belongs to, when the engine says.
+    pub workspace_id: Option<String>,
+    /// The response's `Content-Type`; empty when there is none yet.
+    pub content_type: String,
+    /// The response body's size in bytes.
+    pub size: Option<u64>,
 }
 
 impl TrafficEntry {
-    /// Reads one entry of `capture.list` (which names the time `ts`) or of `event.log.entry` (`timestamp`).
+    /// Reads one entry of `capture.list` (older engines name the time `ts`) or of `event.log.entry`
+    /// (`timestamp`).
     pub fn from_value(value: &Value) -> Option<Self> {
+        let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
         Some(Self {
             id: value.get("id")?.as_str()?.to_owned(),
-            ts: value.get("ts").or_else(|| value.get("timestamp")).and_then(Value::as_u64).unwrap_or(0),
-            method: value.get("method").and_then(Value::as_str).unwrap_or_default().to_owned(),
-            url: value.get("url").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            ts: value.get("timestamp").or_else(|| value.get("ts")).and_then(Value::as_u64).unwrap_or(0),
+            method: text("method").unwrap_or_default(),
+            url: text("url").unwrap_or_default(),
             status: value.get("status").and_then(Value::as_u64).and_then(|s| u16::try_from(s).ok()),
             duration_ms: value.get("durationMs").and_then(Value::as_u64),
-            via: value.get("via").and_then(Value::as_str).unwrap_or_default().to_owned(),
-            raw: value.clone(),
+            via: text("via").unwrap_or_default(),
+            workspace_id: text("workspaceId"),
+            content_type: text("contentType").unwrap_or_default(),
+            size: value.get("size").and_then(Value::as_u64),
         })
     }
 
@@ -58,32 +68,18 @@ impl TrafficEntry {
         }
     }
 
-    /// The request's (`reqHeaders`) or the response's (`resHeaders`) headers, in the order received.
-    pub fn headers(&self, key: &str) -> Vec<(String, String)> {
-        self.raw
-            .get(key)
-            .and_then(Value::as_object)
-            .map(|map| {
-                map.iter().map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_owned())).collect()
-            })
-            .unwrap_or_default()
+    /// What the exchange is called in the list: see [`url_name`].
+    pub fn name(&self) -> String {
+        url_name(&self.url)
     }
 
-    /// The request's (`reqBody`) or the response's (`resBody`) body. The engine sends both base64-encoded.
-    pub fn body(&self, key: &str) -> CapturedBody {
-        let encoded = self.raw.get(key).and_then(Value::as_str).unwrap_or_default();
-        if encoded.is_empty() {
-            return CapturedBody::Empty;
-        }
-        match STANDARD.decode(encoded.trim()) {
-            Ok(bytes) if bytes.is_empty() => CapturedBody::Empty,
-            Ok(bytes) => {
-                let size = bytes.len();
-                String::from_utf8(bytes).map(CapturedBody::Text).unwrap_or(CapturedBody::Binary { bytes: size })
-            }
-            // Not base64 after all: show it as it arrived rather than nothing.
-            Err(_) => CapturedBody::Text(encoded.to_owned()),
-        }
+    /// The server the exchange went to: see [`url_host`].
+    pub fn host(&self) -> String {
+        url_host(&self.url)
+    }
+
+    pub fn type_label(&self) -> String {
+        media::short_label(&self.content_type)
     }
 
     pub fn matches(&self, needle: &str) -> bool {
@@ -92,6 +88,118 @@ impl TrafficEntry {
             || self.method.to_lowercase().contains(needle)
             || self.status.is_some_and(|status| status.to_string().contains(needle))
             || self.via_label().to_lowercase().contains(needle)
+            || self.type_label().contains(needle)
+    }
+}
+
+/// The part of a URL after the scheme, without a query or fragment: `host[:port][/path]`.
+fn without_scheme_and_query(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    rest.split(['?', '#']).next().unwrap_or_default()
+}
+
+/// The host (and port) of a URL, without any credentials. Empty when the text has none.
+pub fn url_host(url: &str) -> String {
+    let rest = without_scheme_and_query(url);
+    let authority = rest.split('/').next().unwrap_or_default();
+    authority.rsplit('@').next().unwrap_or_default().to_owned()
+}
+
+/// What a URL is called in a list: the last segment of its path, or its host when the path is only `/`.
+/// The query string is dropped.
+pub fn url_name(url: &str) -> String {
+    let rest = without_scheme_and_query(url);
+    let path = rest.split_once('/').map_or("", |(_, path)| path);
+    match path.rsplit('/').find(|segment| !segment.is_empty()) {
+        Some(segment) => segment.to_owned(),
+        None => url_host(url),
+    }
+}
+
+/// The class a body is shown as, or `None` when there is no body. Bytes that are not valid UTF-8 are never
+/// text, whatever the content type claims.
+pub fn body_class(content_type: &str, bytes: &[u8]) -> Option<BodyClass> {
+    if bytes.is_empty() {
+        return None;
+    }
+    match media::classify(content_type) {
+        BodyClass::Text if std::str::from_utf8(bytes).is_err() => Some(BodyClass::Binary),
+        class => Some(class),
+    }
+}
+
+/// A body as the engine sends it (base64). Text that is not base64 after all is kept as it arrived.
+pub fn decode_body(encoded: &str) -> Vec<u8> {
+    let trimmed = encoded.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    STANDARD.decode(trimmed).unwrap_or_else(|_| encoded.as_bytes().to_vec())
+}
+
+fn read_headers(value: Option<&Value>) -> Vec<(String, String)> {
+    value
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter().map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_owned())).collect()
+        })
+        .unwrap_or_default()
+}
+
+fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
+    headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map_or("", |(_, value)| value.as_str())
+}
+
+/// One exchange in full, as `capture.get` returns it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Exchange {
+    pub method: String,
+    pub url: String,
+    pub status: Option<u16>,
+    pub via: String,
+    pub target: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub request_headers: Vec<(String, String)>,
+    pub response_headers: Vec<(String, String)>,
+    pub request_body: Vec<u8>,
+    pub response_body: Vec<u8>,
+}
+
+impl Exchange {
+    /// Reads the `entry` of a `capture.get` answer. `None` when it is not an object.
+    pub fn from_value(value: &Value) -> Option<Self> {
+        value.as_object()?;
+        let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+        let body = |key: &str| decode_body(value.get(key).and_then(Value::as_str).unwrap_or_default());
+        Some(Self {
+            method: text("method").unwrap_or_default(),
+            url: text("url").unwrap_or_default(),
+            status: value
+                .get("status")
+                .and_then(Value::as_u64)
+                .or_else(|| value.get("resStatus").and_then(Value::as_u64))
+                .and_then(|s| u16::try_from(s).ok()),
+            via: text("via").unwrap_or_default(),
+            target: text("target").filter(|target| !target.is_empty()),
+            duration_ms: value.get("durationMs").and_then(Value::as_u64),
+            request_headers: read_headers(value.get("reqHeaders")),
+            response_headers: read_headers(value.get("resHeaders")),
+            request_body: body("reqBody"),
+            response_body: body("resBody"),
+        })
+    }
+
+    /// The URL's query as name/value pairs, as written (not decoded).
+    pub fn query(&self) -> Vec<(String, String)> {
+        split_query(&self.url).1
+    }
+
+    pub fn request_content_type(&self) -> &str {
+        find_header(&self.request_headers, "content-type")
+    }
+
+    pub fn response_content_type(&self) -> &str {
+        find_header(&self.response_headers, "content-type")
     }
 }
 
@@ -110,6 +218,11 @@ pub fn parse_event(payload: &Value) -> Vec<TrafficEntry> {
         Some(entries) => entries.iter().filter_map(TrafficEntry::from_value).collect(),
         None => TrafficEntry::from_value(payload).into_iter().collect(),
     }
+}
+
+/// Drops the entries that belong to another workspace than `active`. An entry that names none is kept.
+pub fn only_workspace(entries: Vec<TrafficEntry>, active: &str) -> Vec<TrafficEntry> {
+    entries.into_iter().filter(|entry| entry.workspace_id.as_deref().is_none_or(|id| id == active)).collect()
 }
 
 /// Puts `incoming` (oldest first, as batches arrive) at the front of `entries`, newest first. An entry the
@@ -150,8 +263,19 @@ mod tests {
         let from_event = parse_event(&json!({"entries": [
             {"id": "a", "timestamp": 5, "method": "GET", "url": "http://x/", "status": 200, "durationMs": 3},
         ]}));
-        let row = |e: &TrafficEntry| (e.id.clone(), e.ts, e.method.clone(), e.url.clone(), e.status, e.duration_ms);
-        assert_eq!(row(&from_list[0]), row(&from_event[0]));
+        assert_eq!(from_list, from_event);
+    }
+
+    #[test]
+    fn the_light_entry_carries_type_size_and_workspace() {
+        let e = TrafficEntry::from_value(&json!({
+            "id": "a", "timestamp": 1, "workspaceId": "w1", "contentType": "application/json; charset=utf-8",
+            "size": 42, "via": "proxy",
+        }))
+        .unwrap();
+        assert_eq!(e.workspace_id.as_deref(), Some("w1"));
+        assert_eq!(e.type_label(), "json");
+        assert_eq!(e.size, Some(42));
     }
 
     #[test]
@@ -177,27 +301,76 @@ mod tests {
     }
 
     #[test]
-    fn bodies_are_decoded_and_binary_ones_are_only_measured() {
-        let e = TrafficEntry::from_value(&json!({
-            "id": "a",
-            "reqBody": STANDARD.encode("{\"a\":1}"),
-            "resBody": STANDARD.encode([0xffu8, 0xfe, 0x00]),
-            "reqHeaders": { "Accept": "*/*" },
-        }))
-        .unwrap();
-        assert_eq!(e.body("reqBody"), CapturedBody::Text("{\"a\":1}".into()));
-        assert_eq!(e.body("resBody"), CapturedBody::Binary { bytes: 3 });
-        assert_eq!(e.body("missing"), CapturedBody::Empty);
-        assert_eq!(e.headers("reqHeaders"), [("Accept".to_owned(), "*/*".to_owned())]);
+    fn entries_of_another_workspace_are_dropped() {
+        let named =
+            |id: &str, ws: Option<&str>| TrafficEntry::from_value(&json!({ "id": id, "workspaceId": ws })).unwrap();
+        let kept = only_workspace(vec![named("a", Some("w1")), named("b", Some("w2")), named("c", None)], "w1");
+        assert_eq!(kept.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
     }
 
     #[test]
-    fn a_filter_matches_the_url_the_method_the_status_and_the_route() {
-        let e = TrafficEntry::from_value(
-            &json!({ "id": "a", "method": "POST", "url": "http://api.localhost/users", "status": 201, "via": "mock" }),
-        )
+    fn a_name_is_the_last_path_segment_or_the_host() {
+        assert_eq!(url_name("http://api.localhost:3000/v1/users?page=2"), "users");
+        assert_eq!(url_name("https://x.test/files/report.pdf#top"), "report.pdf");
+        assert_eq!(url_name("https://x.test/users/"), "users");
+        assert_eq!(url_name("https://x.test/"), "x.test");
+        assert_eq!(url_name("https://x.test?a=1"), "x.test");
+        assert_eq!(url_name("/relative/path"), "path");
+        assert_eq!(url_name(""), "");
+    }
+
+    #[test]
+    fn a_host_has_no_scheme_path_or_credentials() {
+        assert_eq!(url_host("http://api.localhost:3000/v1/users?x=1"), "api.localhost:3000");
+        assert_eq!(url_host("https://user:pw@x.test/a"), "x.test");
+        assert_eq!(url_host("x.test/a"), "x.test");
+        assert_eq!(url_host("https://x.test?q=/a"), "x.test");
+    }
+
+    #[test]
+    fn an_exchange_reads_headers_bodies_and_status() {
+        let e = Exchange::from_value(&json!({
+            "id": "a", "method": "POST", "url": "http://x/u?a=1&b=", "status": null, "resStatus": 201,
+            "reqBody": STANDARD.encode("{\"a\":1}"),
+            "resBody": STANDARD.encode([0xffu8, 0xfe, 0x00]),
+            "reqHeaders": { "Content-Type": "application/json", "Accept": "*/*" },
+            "resHeaders": { "content-type": "image/png" },
+            "target": "",
+        }))
         .unwrap();
-        assert!(e.matches("users") && e.matches("post") && e.matches("201") && e.matches("mock"));
+        assert_eq!(e.status, Some(201));
+        assert_eq!(e.request_body, b"{\"a\":1}");
+        assert_eq!(e.response_body, [0xff, 0xfe, 0x00]);
+        assert_eq!(e.request_content_type(), "application/json");
+        assert_eq!(e.response_content_type(), "image/png");
+        assert_eq!(e.target, None);
+        assert_eq!(e.query(), [("a".to_owned(), "1".to_owned()), ("b".to_owned(), String::new())]);
+        assert_eq!(e.request_headers.len(), 2);
+        assert!(Exchange::from_value(&Value::Null).is_none());
+    }
+
+    #[test]
+    fn a_body_that_is_not_base64_is_kept_as_it_arrived() {
+        assert_eq!(decode_body("not base64!"), b"not base64!");
+        assert_eq!(decode_body(""), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf8_are_never_text() {
+        assert_eq!(body_class("application/json", b"{}"), Some(BodyClass::Text));
+        assert_eq!(body_class("application/json", &[0xff, 0xfe]), Some(BodyClass::Binary));
+        assert_eq!(body_class("image/png", &[0x89, b'P']), Some(BodyClass::Image));
+        assert_eq!(body_class("text/plain", b""), None);
+    }
+
+    #[test]
+    fn a_filter_matches_the_url_the_method_the_status_the_route_and_the_type() {
+        let e = TrafficEntry::from_value(&json!({
+            "id": "a", "method": "POST", "url": "http://api.localhost/users", "status": 201, "via": "mock",
+            "contentType": "application/json",
+        }))
+        .unwrap();
+        assert!(e.matches("users") && e.matches("post") && e.matches("201") && e.matches("mock") && e.matches("json"));
         assert!(!e.matches("orders"));
         assert!(e.matches(""));
     }
