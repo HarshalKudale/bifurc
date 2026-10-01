@@ -119,11 +119,12 @@ impl Shell {
         let model = self.model.clone();
         let shell = cx.weak_entity();
 
-        SidebarHeader::new()
+        let switcher = SidebarHeader::new()
             .when(collapsed, |this| this.p_0().justify_center())
             .child(
                 h_flex()
                     .gap_2()
+                    .flex_1()
                     .min_w_0()
                     .child(
                         div()
@@ -170,7 +171,11 @@ impl Shell {
                             .disabled(!can_delete)
                             .on_click(on(&shell, Shell::confirm_delete_workspace)),
                     )
-            })
+            });
+        // The menu wraps its trigger in a box as wide as the trigger's content, and the sidebar lays its
+        // header out in a row. This column is what gives the switcher the sidebar's full width, like the
+        // items under it.
+        v_flex().flex_1().min_w_0().child(switcher)
     }
 
     pub(super) fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

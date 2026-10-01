@@ -2,35 +2,39 @@
 //!
 //! The list is the model's snapshot. The detail pane holds an *edit* of the selected environment: its name
 //! and variables as typed, compared with what the engine has to know whether there is anything to save.
-//! Saving writes those two fields over the engine's copy by id.
+//! There is no Save step: an edit is written over the engine's copy by id a moment after it is made, or at
+//! once when another environment is selected. The name is edited in the window's breadcrumb, which shows
+//! this screen's name field.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     list::ListItem,
     tag::Tag,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
 use crate::{
-    app_model::AppModel,
+    app_model::{AppModel, ModelEvent},
     components::{
-        KeyValueEvent, KeyValueTable,
+        Autosave, EntityAction, EntityBar, KeyValueEvent, KeyValueTable,
         dialogs::{PromptField, confirm_danger, prompt},
-        page,
+        entity_bar, page,
     },
     engine::{call, failure, patch_entity},
     model::config::EnvironmentInfo,
+    session::SaveMode,
+    shell::ActiveTarget,
 };
 
 type Edit = (String, Vec<(String, String)>);
@@ -43,6 +47,9 @@ pub struct EnvironmentsScreen {
     /// The selected environment as the controls showed it when it was last loaded or saved.
     baseline: Edit,
     saving: bool,
+    autosave: Autosave,
+    /// The selected environment was reverted on disk: the next snapshot is shown whatever the controls hold.
+    reload_due: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -51,13 +58,25 @@ impl EnvironmentsScreen {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
         let variables = cx.new(|cx| KeyValueTable::new("Variable", "Value", window, cx));
         let subscriptions = vec![
-            cx.observe_in(&model, window, |this, _, window, cx| this.follow_model(window, cx)),
-            cx.subscribe(&name, |_, _, event: &InputEvent, cx| {
+            cx.observe_in(&model, window, |this, _, window, cx| this.follow_model(false, window, cx)),
+            cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
+                ModelEvent::EntityReverted(id) if this.selected.as_deref() == Some(id.as_str()) => {
+                    // An edit waiting to be written belongs to the version that was just replaced.
+                    this.autosave.cancel();
+                    this.reload_due = true;
+                }
+                ModelEvent::ConfigChanged if this.reload_due => {
+                    this.reload_due = false;
+                    this.follow_model(true, window, cx);
+                }
+                _ => {}
+            }),
+            cx.subscribe(&name, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
-                    cx.notify();
+                    this.changed(cx);
                 }
             }),
-            cx.subscribe(&variables, |_, _, _: &KeyValueEvent, cx| cx.notify()),
+            cx.subscribe(&variables, |this, _, _: &KeyValueEvent, cx| this.changed(cx)),
         ];
         let mut this = Self {
             model,
@@ -66,9 +85,11 @@ impl EnvironmentsScreen {
             variables,
             baseline: (String::new(), Vec::new()),
             saving: false,
+            autosave: Autosave::new(window),
+            reload_due: false,
             _subscriptions: subscriptions,
         };
-        this.follow_model(window, cx);
+        this.follow_model(false, window, cx);
         this
     }
 
@@ -81,8 +102,42 @@ impl EnvironmentsScreen {
         (self.name.read(cx).value().trim().to_owned(), self.variables.read(cx).pairs(cx))
     }
 
+    /// What the controls hold once `environment` is shown in them, to compare with the baseline without
+    /// showing it.
+    fn engine_edit(environment: &EnvironmentInfo) -> Edit {
+        let pairs = environment
+            .variables
+            .iter()
+            .map(|v| (v.key.trim().to_owned(), v.value.clone()))
+            .filter(|(key, _)| !key.is_empty())
+            .collect();
+        (environment.name.trim().to_owned(), pairs)
+    }
+
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
         self.selected.is_some() && self.current(cx) != self.baseline
+    }
+
+    /// The selected environment, for the window's breadcrumb. The shell shows this screen's name field there.
+    pub fn active_target(&self, cx: &gpui_kit::App) -> Option<ActiveTarget> {
+        let id = self.selected.clone()?;
+        let name = self.name.read(cx).value();
+        let title = if name.is_empty() { SharedString::from("Environment") } else { name };
+        Some(ActiveTarget::named(title, Some(id), self.name.clone()))
+    }
+
+    /// An environment is written a moment after each change.
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+        if self.selected.is_some() {
+            self.autosave.schedule(cx, |this, window, cx| this.save(SaveMode::Auto, window, cx));
+        }
+    }
+
+    /// Writes an edit that is still waiting, now: another environment is about to be shown.
+    fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.autosave.cancel();
+        self.save(SaveMode::Auto, window, cx);
     }
 
     /// Shows `environment` in the detail pane as the engine has it.
@@ -100,17 +155,23 @@ impl EnvironmentsScreen {
         cx.notify();
     }
 
-    /// Keeps the detail pane on something that exists, and refreshes it when the engine's copy changed and
-    /// there is no edit here to lose.
-    fn follow_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Keeps the detail pane on something that exists. The controls are only written when the engine's copy
+    /// differs from what they were last shown or saved as, and there is no edit here to lose: every autosave
+    /// makes the model change, and writing the controls would move the cursor under the user. `force` shows
+    /// the engine's copy whatever the controls hold.
+    fn follow_model(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let config = self.model.read(cx).config().clone();
         let selected = self.selected.as_deref().and_then(|id| config.environments.iter().find(|e| e.id == id));
         match selected {
-            Some(environment) if !self.is_dirty(cx) => {
-                let environment = environment.clone();
-                self.load(&environment, window, cx);
+            Some(environment) => {
+                let differs = Self::engine_edit(environment) != self.baseline;
+                if force || (differs && !self.saving && !self.is_dirty(cx)) {
+                    let environment = environment.clone();
+                    self.load(&environment, window, cx);
+                } else {
+                    cx.notify();
+                }
             }
-            Some(_) => cx.notify(),
             None => {
                 let fallback = config.active_environment().or_else(|| config.environments.first()).cloned();
                 match fallback {
@@ -135,6 +196,12 @@ impl EnvironmentsScreen {
             self.load(&target, window, cx);
             return;
         }
+        // A write that is already in flight cannot also carry this edit, so that one is asked about.
+        if !self.saving {
+            self.flush(window, cx);
+            self.load(&target, window, cx);
+            return;
+        }
         let name = self.baseline.0.clone();
         confirm_danger(
             cx.weak_entity(),
@@ -151,13 +218,36 @@ impl EnvironmentsScreen {
         self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
     }
 
-    pub fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(environment) = self.environment(cx) {
-            self.load(&environment, window, cx);
+    /// What the footer of the detail pane asks for. There is no draft here, so Save has nothing to do.
+    pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            EntityAction::Save | EntityAction::Close => {}
+            EntityAction::Sync => {
+                if let Some(id) = self.selected.clone() {
+                    self.model.update(cx, |model, cx| model.sync_entity(&id, cx));
+                }
+            }
+            EntityAction::Revert => {
+                if let Some(id) = self.selected.clone() {
+                    let name = self.baseline.0.clone();
+                    confirm_danger(
+                        cx.weak_entity(),
+                        window,
+                        cx,
+                        format!("Revert “{name}” to the last synced version?"),
+                        "The changes saved since then are discarded.",
+                        "Revert",
+                        move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
+                    );
+                }
+            }
+            EntityAction::Delete => self.confirm_delete(window, cx),
         }
     }
 
-    pub fn save(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    /// Writes the edit over the saved environment. A write that is asked for while another is in flight is
+    /// not lost: the one in flight looks for a newer edit when it lands.
+    fn save(&mut self, _: SaveMode, _: &mut Window, cx: &mut Context<Self>) {
         let Some(environment) = self.environment(cx) else { return };
         if self.saving || !self.is_dirty(cx) {
             return;
@@ -190,14 +280,26 @@ impl EnvironmentsScreen {
         let client = model.client().clone();
         let workspace_id = model.workspace_id().to_owned();
         let saved = self.current(cx);
+        let environment_id = environment.id.clone();
         patch_entity(&client, cx, &workspace_id, "environments", &environment.id, patch, move |this, outcome, cx| {
             this.saving = false;
             match outcome {
-                // What was saved is the new baseline; the snapshot that follows will agree with it.
-                Ok(()) => this.baseline = saved,
-                Err(message) => this.report("Couldn't save the environment.", message, cx),
+                Ok(()) => {
+                    // The controls are left alone: they may hold what was typed while this was in flight. What
+                    // was sent is the new baseline, so that newer text still reads as an edit. If another
+                    // environment was selected meanwhile, the controls and baseline are its.
+                    if this.selected.as_deref() == Some(environment_id.as_str()) {
+                        this.baseline = saved;
+                    }
+                }
+                Err(message) => {
+                    this.report("Couldn't save the environment.", message, cx);
+                    cx.notify();
+                    return;
+                }
             }
-            cx.notify();
+            // An edit made since this write was sent is the next write. (`changed` schedules it.)
+            this.changed(cx);
         });
     }
 
@@ -246,6 +348,7 @@ impl EnvironmentsScreen {
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 // Nothing here is worth keeping once the environment is gone.
+                this.autosave.cancel();
                 this.baseline = this.current(cx);
                 call(&client, cx, "entity.delete", json!({ "kind": "environments", "id": id }), |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
@@ -312,59 +415,39 @@ impl EnvironmentsScreen {
         let is_active = self.model.read(cx).config().active_environment_id.as_deref() == Some(environment.id.as_str());
         let model = self.model.clone();
         let use_id = environment.id.clone();
+        let bar = EntityBar {
+            saving: self.saving,
+            unsaved: dirty,
+            problem: None,
+            closable: false,
+            deletable: !environment.is_global(),
+            ..EntityBar::of(self.model.read(cx), Some(environment.id.as_str()))
+        };
 
         v_flex()
             .size_full()
             .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(
-                        div().flex_1().min_w_0().font_medium().child(Input::new(&self.name).small().appearance(false)),
-                    )
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
                     .when(!environment.is_global(), |this| {
                         this.child(
-                            Button::new("use-environment")
-                                .ghost()
-                                .small()
-                                .label(if is_active { "In use" } else { "Use" })
-                                .disabled(is_active)
-                                .tooltip("Resolve variables against this environment")
-                                .on_click(move |_, _, cx| {
-                                    model.update(cx, |m, cx| m.set_active_environment(Some(&use_id), cx))
-                                }),
-                        )
-                        .child(
-                            Button::new("delete-environment")
-                                .ghost()
-                                .small()
-                                .icon(IconName::Delete)
-                                .tooltip("Delete this environment…")
-                                .on_click(cx.listener(|this, _, window, cx| this.confirm_delete(window, cx))),
+                            h_flex().flex_none().px_3().py_1().border_b_1().border_color(theme.border).child(
+                                Button::new("use-environment")
+                                    .ghost()
+                                    .small()
+                                    .label(if is_active { "In use" } else { "Use" })
+                                    .disabled(is_active)
+                                    .tooltip("Resolve variables against this environment")
+                                    .on_click(move |_, _, cx| {
+                                        model.update(cx, |m, cx| m.set_active_environment(Some(&use_id), cx))
+                                    }),
+                            ),
                         )
                     })
-                    .child(
-                        Button::new("revert-environment")
-                            .ghost()
-                            .small()
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.revert(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-environment")
-                            .small()
-                            .label("Save")
-                            .loading(self.saving)
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
+                    .child(div().flex_1().min_h_0().child(self.variables.clone())),
             )
-            .child(div().flex_1().min_h_0().child(self.variables.clone()))
+            .child(entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)))
             .into_any_element()
     }
 }

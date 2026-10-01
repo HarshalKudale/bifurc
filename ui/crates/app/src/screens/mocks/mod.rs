@@ -32,8 +32,9 @@ use self::editor::{MockEditor, MockEvent};
 use crate::{
     app_model::{AppModel, Load, ModelEvent},
     components::{
+        EntityAction, EntityBar,
         dialogs::{PromptField, confirm_danger, prompt},
-        page,
+        entity_bar, page,
     },
     engine::{call, failure, patch_entity},
     model::{
@@ -42,6 +43,8 @@ use crate::{
     },
     panels::host::{HostPanel, PartView},
     preferences::Preferences,
+    session::SaveMode,
+    shell::ActiveTarget,
 };
 
 /// How a tab is identified before and after it has an id from the engine.
@@ -184,10 +187,10 @@ impl MocksScreen {
         self.active.and_then(|ix| self.tabs.get(ix)).map(|tab| &tab.editor)
     }
 
-    /// The open mock's title and saved id, for the breadcrumb and the right sidebar.
-    pub fn active_target(&self, cx: &App) -> Option<(SharedString, Option<String>)> {
+    /// The open mock, for the breadcrumb and the right sidebar.
+    pub fn active_target(&self, cx: &App) -> Option<ActiveTarget> {
         let editor = self.active_editor()?.read(cx);
-        Some((editor.title(cx), editor.saved_id().map(str::to_owned)))
+        Some(ActiveTarget::named(editor.title(cx), editor.saved_id().map(str::to_owned), editor.name_input().clone()))
     }
 
     fn set_active(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
@@ -250,14 +253,20 @@ impl MocksScreen {
         self.set_active(next, cx);
     }
 
-    /// Closes a tab, asking first if it holds edits that would be lost.
+    /// Closes a tab. A saved mock has nothing to lose: an edit still waiting is written first. A draft with
+    /// edits asks first, since closing it discards them.
     fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(ix) else { return };
-        if !tab.editor.read(cx).is_dirty(cx) {
+        let editor = tab.editor.clone();
+        if editor.read(cx).saved_id().is_some() {
+            editor.update(cx, |editor, cx| editor.flush(window, cx));
             self.remove_tab(ix, cx);
             return;
         }
-        let editor = tab.editor.clone();
+        if !editor.read(cx).is_dirty(cx) {
+            self.remove_tab(ix, cx);
+            return;
+        }
         let title = editor.read(cx).title(cx);
         confirm_danger(
             cx.weak_entity(),
@@ -274,26 +283,41 @@ impl MocksScreen {
         );
     }
 
-    pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.active {
-            self.close_tab(ix, window, cx);
+    /// Does what the footer asked for to the mock in the active tab.
+    pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.active else { return };
+        let Some(editor) = self.active_editor().cloned() else { return };
+        let saved_id = editor.read(cx).saved_id().map(str::to_owned);
+        match action {
+            EntityAction::Save => editor.update(cx, |editor, cx| editor.save(SaveMode::Explicit, window, cx)),
+            EntityAction::Close => self.close_tab(ix, window, cx),
+            EntityAction::Sync => {
+                if let Some(id) = saved_id {
+                    self.model.update(cx, |model, cx| model.sync_entity(&id, cx));
+                }
+            }
+            EntityAction::Revert => {
+                let Some(id) = saved_id else { return };
+                let name = editor.read(cx).title(cx);
+                confirm_danger(
+                    cx.weak_entity(),
+                    window,
+                    cx,
+                    format!("Revert “{name}” to the last synced version?"),
+                    "The changes saved since then are discarded.",
+                    "Revert",
+                    move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
+                );
+            }
+            EntityAction::Delete => match saved_id {
+                Some(id) => self.confirm_delete(TreeKey::Item(id), window, cx),
+                None => self.close_tab(ix, window, cx),
+            },
         }
     }
 
-    pub fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.active_editor().cloned() {
-            editor.update(cx, |editor, cx| editor.save(window, cx));
-        }
-    }
-
-    pub fn revert_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.active_editor().cloned() {
-            editor.update(cx, |editor, cx| editor.revert(window, cx));
-        }
-    }
-
-    /// A saved mock that is gone from the workspace has nothing left to show. A tab with unsaved edits
-    /// stays: saving it creates the mock again.
+    /// A saved mock that is gone from the workspace has nothing left to show, edited or not: writing an
+    /// edit to it would only fail. A draft stays: saving it creates the mock.
     fn close_vanished_tabs(&mut self, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         if !matches!(model.load(), Load::Ready) {
@@ -303,7 +327,7 @@ impl MocksScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                TabKey::Saved(id) => model.config().mock(id).is_none() && !tab.editor.read(cx).is_dirty(cx),
+                TabKey::Saved(id) => model.config().mock(id).is_none(),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.editor.clone())
@@ -357,8 +381,8 @@ impl MocksScreen {
             && self.tabs.iter().any(|tab| tab.key == TabKey::Saved(id.clone()))
         {
             window.push_notification(
-                Notification::info("This mock is open. Change its name in the tab and save.")
-                    .title("Rename in the tab"),
+                Notification::info("This mock is open. Change its name in the breadcrumb above the tabs.")
+                    .title("Rename in the breadcrumb"),
                 cx,
             );
             return;
@@ -660,11 +684,26 @@ impl Render for MocksScreen {
         } else {
             self.dock.clone().into_any_element()
         };
+        let bar = self.active_editor().map(|editor| {
+            let editor = editor.read(cx);
+            let saved_id = editor.saved_id().map(str::to_owned);
+            EntityBar {
+                saving: editor.is_saving(),
+                unsaved: saved_id.is_some() && editor.is_dirty(cx),
+                problem: editor.problem(cx),
+                closable: true,
+                ..EntityBar::of(self.model.read(cx), saved_id.as_deref())
+            }
+        });
+        let footer = bar.map(|bar| {
+            entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)).into_any_element()
+        });
         let main = v_flex()
             .size_full()
             .bg(cx.theme().background)
             .child(self.render_tab_strip(tree_open, cx))
-            .child(div().flex_1().min_h_0().child(body));
+            .child(div().flex_1().min_h_0().child(body))
+            .children(footer);
         // The split's sizes are physical starting points the user resizes, not part of the rem scale.
         h_resizable("mocks-split")
             .child(

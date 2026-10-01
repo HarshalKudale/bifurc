@@ -1,17 +1,19 @@
 //! An open WebSocket request. It is an ordinary request type: it has a name, a saved entity in the engine, a
-//! place in the explorer tree, and Save/Revert like the REST editor beside it. What differs is the verb —
-//! Connect instead of Send — and that the "response" is a live stream owned by the engine
-//! ([`SocketConnection`]), which is why closing this tab does not close the socket.
+//! place in the explorer tree, and the same save model as the REST editor beside it: a draft is created by
+//! Save, and a saved request is written a moment after each edit. What differs is the verb — Connect
+//! instead of Send — and that the "response" is a live stream owned by the engine ([`SocketConnection`]),
+//! which is why closing this tab does not close the socket. The name is edited in the window's breadcrumb,
+//! which shows this session's name field.
 //!
 //! Connecting a saved, unedited request sends only its id (`ws.connect {workspaceId, socketId}`); a draft or
 //! an edited request sends the target it holds. The engine resolves environment variables either way.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{InputEvent, InputState},
     notification::Notification,
     v_flex,
 };
@@ -22,12 +24,12 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use super::{
-    LoadState, SessionEvent,
+    Carry, LoadState, SaveMode, SessionEvent,
     connection::{ConnectionEvent, SocketConnection},
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{KeyValueEvent, KeyValueTable, VarEditor, page},
+    components::{Autosave, KeyValueEvent, KeyValueTable, VarEditor, page},
     engine::{call, call_in, describe},
     model::{
         RequestKind,
@@ -60,6 +62,7 @@ pub struct WsSession {
     baseline: Fields,
     connection: Entity<SocketConnection>,
     saving: bool,
+    autosave: Autosave,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -83,8 +86,8 @@ impl WsSession {
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
             InputEvent::Change => this.changed(cx),
-            InputEvent::PressEnter { .. } => this.connect(window, cx),
-            _ => {}
+            InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
+            InputEvent::Focus => {}
         }));
         subscriptions.push(cx.subscribe_in(
             url.state(),
@@ -102,13 +105,16 @@ impl WsSession {
                 ConnectionEvent::Clear => this.clear_messages(cx),
             }
         }));
-        subscriptions.push(cx.subscribe(&model, |this, _, event: &ModelEvent, cx| match event {
+        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
             ModelEvent::SocketStatus(payload) if this.is_mine(payload) => {
                 this.connection.update(cx, |c, cx| c.apply_status_event(payload, cx));
                 cx.emit(SessionEvent::Changed);
             }
             ModelEvent::SocketMessage(payload) if this.is_mine(payload) => {
                 this.connection.update(cx, |c, cx| c.apply_message_event(payload, cx));
+            }
+            ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
+                this.reload(window, cx);
             }
             _ => {}
         }));
@@ -128,6 +134,7 @@ impl WsSession {
             baseline: baseline.clone(),
             connection,
             saving: false,
+            autosave: Autosave::new(window),
             _subscriptions: subscriptions,
         };
         this.apply_fields(&baseline, window, cx);
@@ -144,12 +151,23 @@ impl WsSession {
     }
 
     pub fn open_saved(model: Entity<AppModel>, id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut this = Self::build(model, Some(id.clone()), None, window, cx);
+        let mut this = Self::build(model, Some(id), None, window, cx);
         this.load = LoadState::Loading;
-        let client = this.model.read(cx).client().clone();
-        let workspace_id = this.workspace_id.clone();
-        let payload = json!({ "workspaceId": workspace_id, "kind": RequestKind::WebSocket.entity_kind(), "id": id });
+        this.reload(window, cx);
+        this
+    }
+
+    /// Reads the saved request from the engine into the editor, replacing what the editor holds.
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.saved_id.clone() else { return };
+        // An edit waiting to be written belongs to the copy that is being replaced.
+        self.autosave.cancel();
+        let client = self.model.read(cx).client().clone();
+        let payload =
+            json!({ "workspaceId": self.workspace_id, "kind": RequestKind::WebSocket.entity_kind(), "id": id });
         call_in(&client, window, cx, "entity.load", payload, |this, outcome, window, cx| {
+            // The connection's status is asked for once, when the tab opens; a re-read does not change it.
+            let opening = this.load == LoadState::Loading;
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
                 v.get("entity")
                     .and_then(Value::as_object)
@@ -159,14 +177,15 @@ impl WsSession {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
                     this.load = LoadState::Ready;
-                    this.attach(cx);
+                    if opening {
+                        this.attach(cx);
+                    }
                 }
                 Err(message) => this.load = LoadState::Failed(message),
             }
             cx.emit(SessionEvent::Changed);
             cx.notify();
         });
-        this
     }
 
     /// The engine keeps the connection (and its history) across tabs and windows. Asking for its status when
@@ -192,6 +211,19 @@ impl WsSession {
         self.saved_id.as_deref()
     }
 
+    pub fn folder_id(&self) -> Option<&str> {
+        self.folder_id.as_deref()
+    }
+
+    /// The field the request's name is typed in. The shell shows it in the breadcrumb.
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name
+    }
+
+    pub fn is_saving(&self) -> bool {
+        self.saving
+    }
+
     pub fn connection(&self) -> &Entity<SocketConnection> {
         &self.connection
     }
@@ -205,14 +237,65 @@ impl WsSession {
         self.load == LoadState::Ready && self.fields(cx) != self.baseline
     }
 
+    /// Why the edit cannot be written as it stands, for a saved request that has one.
+    pub fn problem(&self, cx: &gpui_kit::App) -> Option<SharedString> {
+        if self.saved_id.is_none() || self.load != LoadState::Ready {
+            return None;
+        }
+        let fields = self.fields(cx);
+        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a URL.".into())
+    }
+
+    /// A saved request is written a moment after each change; a draft waits for Save.
     fn changed(&mut self, cx: &mut Context<Self>) {
         cx.emit(SessionEvent::Changed);
         cx.notify();
+        if self.saved_id.is_some() && self.load == LoadState::Ready {
+            self.autosave.schedule(cx, |this, window, cx| this.save(SaveMode::Auto, window, cx));
+        }
     }
 
+    /// The name was confirmed, by Enter or by leaving the field. Naming a draft is what creates it, when it
+    /// has what it needs to be created.
+    fn commit_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_none() && self.fields(cx).name != self.baseline.name {
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// Writes an edit that is still waiting, now: the tab is about to close.
+    pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_some() {
+            self.autosave.cancel();
+            self.save(SaveMode::Auto, window, cx);
+        }
+    }
+
+    /// What this draft keeps if it becomes a request of another type.
+    pub fn carry(&self, cx: &gpui_kit::App) -> Carry {
+        let fields = self.fields(cx);
+        Carry {
+            name: (!fields.name.is_empty() && fields.name != DEFAULT_NAME).then_some(fields.name),
+            url: fields.url,
+            headers: fields.headers,
+            body: String::new(),
+        }
+    }
+
+    /// Fills this draft with what was typed into a draft of another type.
+    pub fn apply_carry(&mut self, carry: &Carry, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(name) = &carry.name {
+            self.name.update(cx, |s, cx| s.set_value(name.clone(), window, cx));
+        }
+        self.url.set_value(carry.url.clone(), window, cx);
+        self.headers.update(cx, |table, cx| table.set_pairs(&carry.headers, window, cx));
+        self.changed(cx);
+    }
+
+    /// The name is trimmed here and in [`fields_of`](Self::fields_of), so that a stray space is not an edit.
     fn fields(&self, cx: &gpui_kit::App) -> Fields {
         Fields {
-            name: self.name.read(cx).value().to_string(),
+            name: self.name.read(cx).value().trim().to_owned(),
             url: self.url.line_value(cx),
             headers: self.headers.read(cx).pairs(cx),
         }
@@ -220,7 +303,7 @@ impl WsSession {
 
     fn fields_of(entity: &Map<String, Value>) -> Fields {
         Fields {
-            name: entity.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            name: entity.get("name").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
             url: entity.get("url").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
             headers: header_pairs(entity.get("headers").unwrap_or(&Value::Null)),
         }
@@ -240,27 +323,34 @@ impl WsSession {
         self.entity = entity;
     }
 
-    pub fn revert(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let baseline = self.baseline.clone();
-        self.apply_fields(&baseline, window, cx);
-        cx.emit(SessionEvent::Changed);
-        cx.notify();
+    /// The loaded entity with the editor's fields written over it.
+    fn edited_entity(&self, fields: &Fields) -> Map<String, Value> {
+        let mut entity = self.entity.clone();
+        entity.insert("name".into(), json!(if fields.name.is_empty() { DEFAULT_NAME } else { fields.name.as_str() }));
+        entity.insert("url".into(), json!(fields.url));
+        entity.insert("headers".into(), Value::Object(header_map(&fields.headers)));
+        entity
     }
 
-    pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Creates the request if it is a draft, or writes the edit over the saved one. A write that is asked
+    /// for while another is in flight is not lost: the one in flight looks for a newer edit when it lands.
+    pub fn save(&mut self, mode: SaveMode, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving || self.load != LoadState::Ready {
             return;
         }
         let fields = self.fields(cx);
-        if fields.url.is_empty() {
-            window.push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+        let creating = self.saved_id.is_none();
+        if !creating && fields == self.baseline {
             return;
         }
-        let name = if fields.name.trim().is_empty() { DEFAULT_NAME.to_owned() } else { fields.name.trim().to_owned() };
-        let mut entity = self.entity.clone();
-        entity.insert("name".into(), json!(name));
-        entity.insert("url".into(), json!(fields.url));
-        entity.insert("headers".into(), Value::Object(header_map(&fields.headers)));
+        if fields.url.is_empty() {
+            if mode == SaveMode::Explicit {
+                window
+                    .push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+            }
+            return;
+        }
+        let mut entity = self.edited_entity(&fields);
         entity.insert("workspaceId".into(), json!(self.workspace_id));
         if let Some(folder) = &self.folder_id {
             entity.insert("folderId".into(), json!(folder));
@@ -270,7 +360,6 @@ impl WsSession {
         cx.notify();
         let client = self.model.read(cx).client().clone();
         let kind = RequestKind::WebSocket.entity_kind();
-        let creating = self.saved_id.is_none();
         let (action, payload) = match &self.saved_id {
             Some(id) => {
                 entity.insert("id".into(), json!(id));
@@ -280,41 +369,43 @@ impl WsSession {
         };
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.saving = false;
+            // The controls are left alone: they may hold what was typed while this was in flight. What was
+            // sent becomes the baseline, so that newer text still reads as an edit.
             match outcome {
-                Ok(result) => {
-                    if creating {
-                        match result.get("entity").and_then(Value::as_object).cloned() {
-                            Some(saved) => {
-                                this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
-                                this.adopt_entity(saved, window, cx);
-                                // A draft that is already connected stays under the name it connected with.
-                                if !this.connection.read(cx).state().is_live()
-                                    && let Some(id) = &this.saved_id
-                                {
-                                    this.socket_id = id.clone();
-                                }
-                                if let Some(id) = this.saved_id.clone() {
-                                    cx.emit(SessionEvent::Saved { id });
-                                }
-                            }
-                            None => window.push_notification(
-                                Notification::error("The engine did not return the saved request."),
-                                cx,
-                            ),
+                Ok(result) if creating => match result.get("entity").and_then(Value::as_object).cloned() {
+                    Some(saved) => {
+                        this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                        this.entity = saved;
+                        this.baseline = fields;
+                        // A draft that is already connected stays under the name it connected with.
+                        if !this.connection.read(cx).state().is_live()
+                            && let Some(id) = &this.saved_id
+                        {
+                            this.socket_id = id.clone();
                         }
-                    } else {
-                        let mut saved = this.entity.clone();
-                        saved.insert("name".into(), json!(name));
-                        saved.insert("url".into(), json!(fields.url));
-                        saved.insert("headers".into(), Value::Object(header_map(&fields.headers)));
-                        this.adopt_entity(saved, window, cx);
+                        if let Some(id) = this.saved_id.clone() {
+                            cx.emit(SessionEvent::Saved { id });
+                        }
                     }
-                    cx.emit(SessionEvent::Changed);
+                    None => window
+                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                },
+                Ok(_) => {
+                    this.entity = this.edited_entity(&fields);
+                    this.baseline = fields;
                 }
-                Err(error) => window
-                    .push_notification(Notification::error(describe(&error)).title("Couldn't save the request"), cx),
+                Err(error) => {
+                    window.push_notification(
+                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        cx,
+                    );
+                    cx.emit(SessionEvent::Changed);
+                    cx.notify();
+                    return;
+                }
             }
-            cx.notify();
+            // An edit made since this write was sent is the next write. (`changed` schedules it.)
+            this.changed(cx);
         });
     }
 
@@ -414,32 +505,12 @@ impl Render for WsSession {
             LoadState::Ready => {}
         }
 
-        let dirty = self.is_dirty(cx);
         let state = self.connection.read(cx).state();
         v_flex()
             .size_full()
             .bg(theme.background)
             .gap_2()
             .p_3()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.name).small().appearance(false)))
-                    .child(
-                        Button::new("revert-socket")
-                            .ghost()
-                            .label("Revert")
-                            .disabled(!dirty)
-                            .on_click(cx.listener(|this, _, window, cx| this.revert(window, cx))),
-                    )
-                    .child(
-                        Button::new("save-socket")
-                            .label("Save")
-                            .loading(self.saving)
-                            .disabled(!dirty && self.saved_id.is_some())
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
-            )
             .child(
                 h_flex()
                     .gap_2()

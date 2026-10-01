@@ -19,9 +19,10 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use serde_json::{Value, json};
+use std::ops::Range;
 
 use crate::{
     app_model::{AppModel, ModelEvent},
@@ -66,6 +67,7 @@ pub struct CaptureScreen {
     selected: Option<String>,
     side: Side,
     body: Entity<EditorState>,
+    scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -108,6 +110,7 @@ impl CaptureScreen {
             selected: None,
             side: Side::Response,
             body,
+            scroll: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
         };
         this.reload(window, cx);
@@ -272,7 +275,10 @@ impl CaptureScreen {
 
     fn render_list(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
-        let visible = self.visible(cx);
+        let needle = self.filter.read(cx).value().trim().to_lowercase();
+        // Positions in `entries`, so the rows in view can be read in place instead of copied.
+        let visible: Vec<usize> =
+            self.entries.iter().enumerate().filter(|(_, entry)| entry.matches(&needle)).map(|(ix, _)| ix).collect();
         if self.entries.is_empty() {
             return page::empty(
                 "No traffic captured",
@@ -286,38 +292,69 @@ impl CaptureScreen {
         if visible.is_empty() {
             return page::empty("No matches", "No captured exchange matches the filter.");
         }
-        let rows: Vec<gpui_kit::AnyElement> = visible
-            .into_iter()
-            .map(|entry| {
-                let id = entry.id.clone();
-                ListItem::new(gpui_kit::ElementId::Name(format!("capture-{}", entry.id).into()))
-                    .selected(self.selected.as_deref() == Some(entry.id.as_str()))
-                    .px_4()
-                    .py_1()
-                    .text_sm()
-                    .child(
-                        h_flex()
-                            .gap_3()
+        let count = visible.len();
+        let row_theme = theme.clone();
+        // Only the rows in view are built; the list measures one row and scrolls by that height.
+        let rows = uniform_list(
+            "capture-rows",
+            count,
+            cx.processor(move |this, range: Range<usize>, _, cx| {
+                let theme = &row_theme;
+                range
+                    .filter_map(|ix| this.entries.get(*visible.get(ix)?))
+                    .map(|entry| {
+                        let id = entry.id.clone();
+                        ListItem::new(gpui_kit::ElementId::Name(format!("capture-{}", entry.id).into()))
+                            .selected(this.selected.as_deref() == Some(entry.id.as_str()))
+                            .w_full()
+                            .px_4()
+                            .py_1()
+                            .text_sm()
                             .child(
-                                div().w_16().flex_none().text_color(theme.muted_foreground).child(clock_utc(entry.ts)),
+                                h_flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w_16()
+                                            .flex_none()
+                                            .text_color(theme.muted_foreground)
+                                            .child(clock_utc(entry.ts)),
+                                    )
+                                    .child(div().w_16().flex_none().child(entry.method.clone()))
+                                    .child(h_flex().w_16().flex_none().child(Self::status_tag(entry.status)))
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .flex_none()
+                                            .text_color(theme.muted_foreground)
+                                            .child(entry.via_label()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .child(entry.url.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .flex_none()
+                                            .text_right()
+                                            .text_color(theme.muted_foreground)
+                                            .child(entry.duration_ms.map(|ms| format!("{ms} ms")).unwrap_or_default()),
+                                    ),
                             )
-                            .child(div().w_16().flex_none().child(entry.method.clone()))
-                            .child(h_flex().w_16().flex_none().child(Self::status_tag(entry.status)))
-                            .child(div().w_20().flex_none().text_color(theme.muted_foreground).child(entry.via_label()))
-                            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(entry.url.clone()))
-                            .child(
-                                div()
-                                    .w_20()
-                                    .flex_none()
-                                    .text_right()
-                                    .text_color(theme.muted_foreground)
-                                    .child(entry.duration_ms.map(|ms| format!("{ms} ms")).unwrap_or_default()),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| this.select(Some(id.clone()), window, cx)))
-                    .into_any_element()
-            })
-            .collect();
+                            .on_click(cx.listener(move |this, _, window, cx| this.select(Some(id.clone()), window, cx)))
+                            .into_any_element()
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(&self.scroll)
+        .flex_1()
+        .min_h_0();
         v_flex()
             .size_full()
             .child(
@@ -337,7 +374,7 @@ impl CaptureScreen {
                     .child(div().flex_1().child("URL"))
                     .child(div().w_20().flex_none().text_right().child("Time taken")),
             )
-            .child(v_flex().id("capture-rows").flex_1().min_h_0().overflow_y_scroll().children(rows))
+            .child(rows)
             .into_any_element()
     }
 

@@ -30,14 +30,15 @@ use self::tree::{RequestTree, RequestTreeEvent, new_menu};
 use crate::{
     app_model::{AppModel, Load, ModelEvent},
     components::{
+        EntityAction,
         dialogs::{PromptField, confirm_danger, prompt},
-        page,
+        entity_bar, page,
     },
     engine::{call, describe},
     model::{NodeRef, RequestKind},
     panels::host::HostPanel,
     preferences::Preferences,
-    session::{Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, websocket::WsSession},
+    session::{SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, websocket::WsSession},
 };
 
 /// How a tab is identified before and after it has an id from the engine.
@@ -91,6 +92,8 @@ impl RequestsScreen {
 
         let subscriptions = vec![
             cx.subscribe_in(&model, window, Self::on_model_event),
+            // The tab's footer shows the request's git state, which the model holds.
+            cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe_in(&tree, window, Self::on_tree_event),
         ];
         Self {
@@ -174,6 +177,17 @@ impl RequestsScreen {
         self.add_tab(key, session, window, cx);
     }
 
+    fn draft(&self, kind: RequestKind, folder: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Session {
+        let model = self.model.clone();
+        match kind {
+            RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::new_draft(model, folder, window, cx))),
+            RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::new_draft(model, folder, window, cx))),
+            RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
+                Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
+            }
+        }
+    }
+
     /// Starts an unsaved request of `kind`, to be created in `folder` when it is saved.
     pub fn new_request(
         &mut self,
@@ -182,17 +196,30 @@ impl RequestsScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let model = self.model.clone();
-        let session = match kind {
-            RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::new_draft(model, folder, window, cx))),
-            RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::new_draft(model, folder, window, cx))),
-            RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
-                Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
-            }
-        };
+        let session = self.draft(kind, folder, window, cx);
         let key = TabKey::Draft(self.next_draft);
         self.next_draft += 1;
         self.add_tab(key, session, window, cx);
+    }
+
+    /// Makes the active draft a request of another type. A request's type is fixed once it is saved, so
+    /// this only applies to a draft: the tab is rebuilt as the new type and keeps what the two types share
+    /// (the name, the address, the headers, the body).
+    pub fn change_active_kind(&mut self, kind: RequestKind, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.active else { return };
+        let Some(tab) = self.tabs.get(ix) else { return };
+        if !matches!(tab.key, TabKey::Draft(_)) || tab.session.kind(cx) == kind {
+            return;
+        }
+        let carry = tab.session.carry(cx);
+        let folder = tab.session.folder_id(cx);
+        let session = self.draft(kind, folder, window, cx);
+        session.apply_carry(&carry, window, cx);
+        let subscription = session.subscribe_in(window, cx, Self::on_session_event);
+        let tab = &mut self.tabs[ix];
+        tab.session = session;
+        tab._subscription = subscription;
+        self.set_active(Some(ix), cx);
     }
 
     fn add_tab(&mut self, key: TabKey, session: Session, window: &mut Window, cx: &mut Context<Self>) {
@@ -240,9 +267,15 @@ impl RequestsScreen {
         self.set_active(next, cx);
     }
 
-    /// Closes a tab, asking first if it holds edits that would be lost.
+    /// Closes a tab. A saved request has nothing to lose: its last edit is written on the way out. A draft
+    /// that was typed into is asked about first, because closing it discards it.
     fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.get(ix) else { return };
+        if matches!(tab.key, TabKey::Saved { .. }) {
+            tab.session.clone().flush(window, cx);
+            self.remove_tab(ix, cx);
+            return;
+        }
         if !tab.session.is_dirty(cx) {
             self.remove_tab(ix, cx);
             return;
@@ -253,9 +286,9 @@ impl RequestsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Discard changes to “{title}”?"),
-            "The edits in this tab have not been saved.",
-            "Discard changes",
+            format!("Discard “{title}”?"),
+            "This request has not been saved. Closing its tab discards it.",
+            "Discard",
             move |this, _, cx| {
                 if let Some(ix) = this.tabs.iter().position(|tab| tab.session.same_as(&session)) {
                     this.remove_tab(ix, cx);
@@ -264,14 +297,38 @@ impl RequestsScreen {
         );
     }
 
-    pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.active {
-            self.close_tab(ix, window, cx);
+    /// What the active tab's footer asks for, and the keys that ask for the same things.
+    pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.active else { return };
+        let Some(session) = self.active_session().cloned() else { return };
+        let saved = session.saved_id(cx);
+        match (action, saved) {
+            (EntityAction::Save, _) => session.save(SaveMode::Explicit, window, cx),
+            (EntityAction::Close, _) => self.close_tab(ix, window, cx),
+            (EntityAction::Sync, Some(id)) => self.model.update(cx, |model, cx| model.sync_entity(&id, cx)),
+            (EntityAction::Revert, Some(id)) => {
+                let title = session.title(cx);
+                confirm_danger(
+                    cx.weak_entity(),
+                    window,
+                    cx,
+                    format!("Revert “{title}” to the last synced version?"),
+                    "The changes saved since then are discarded. This can't be undone.",
+                    "Revert",
+                    move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
+                );
+            }
+            (EntityAction::Delete, Some(id)) => {
+                self.confirm_delete(NodeRef::Request { kind: session.kind(cx), id }, window, cx)
+            }
+            // A draft is stored nowhere: discarding it is closing its tab.
+            (EntityAction::Delete, None) => self.close_tab(ix, window, cx),
+            (EntityAction::Sync | EntityAction::Revert, None) => {}
         }
     }
 
     /// A saved request that is gone from the workspace (deleted here, elsewhere, or with its folder) has
-    /// nothing left to show. A tab with unsaved edits stays: saving it creates the request again.
+    /// nothing left to show, and nothing an edit could be written to.
     fn close_vanished_tabs(&mut self, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         if !matches!(model.load(), Load::Ready) {
@@ -281,7 +338,7 @@ impl RequestsScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                TabKey::Saved { kind, id } => model.config().request(*kind, id).is_none() && !tab.session.is_dirty(cx),
+                TabKey::Saved { kind, id } => model.config().request(*kind, id).is_none(),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.session.clone())
@@ -290,18 +347,6 @@ impl RequestsScreen {
             if let Some(ix) = self.tabs.iter().position(|tab| tab.session.same_as(&session)) {
                 self.remove_tab(ix, cx);
             }
-        }
-    }
-
-    pub fn save_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(session) = self.active_session().cloned() {
-            session.save(window, cx);
-        }
-    }
-
-    pub fn revert_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(session) = self.active_session().cloned() {
-            session.revert(window, cx);
         }
     }
 
@@ -366,8 +411,8 @@ impl RequestsScreen {
             && self.has_open_tab(*kind, id)
         {
             window.push_notification(
-                Notification::info("This request is open. Change its name in the tab and save.")
-                    .title("Rename in the tab"),
+                Notification::info("This request is open. Change its name in the breadcrumb above the tabs.")
+                    .title("Rename it where it is open"),
                 cx,
             );
             return;
@@ -525,11 +570,16 @@ impl Render for RequestsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
         let body = if self.tabs.is_empty() { self.render_welcome(cx) } else { self.dock.clone().into_any_element() };
+        // The footer belongs to the tab, not to a dock panel: it stays put however the panels are arranged.
+        let footer = self.active_session().map(|session| session.bar(self.model.read(cx), cx)).map(|bar| {
+            entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)).into_any_element()
+        });
         let main = v_flex()
             .size_full()
             .bg(cx.theme().background)
             .child(self.render_tab_strip(tree_open, cx))
-            .child(div().flex_1().min_h_0().child(body));
+            .child(div().flex_1().min_h_0().child(body))
+            .children(footer);
         // The split's sizes are physical starting points the user resizes, not part of the rem scale.
         h_resizable("requests-split")
             .child(
