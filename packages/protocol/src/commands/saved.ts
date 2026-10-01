@@ -144,6 +144,14 @@ export const RequestSendRequest = z.object({
   url: z.string(),
   headers: HeaderMap,
   body: z.string(),
+  bodyEncoding: z.enum(["utf8", "base64"]).optional(),
+  bodyParts: z.array(z.object({
+    name: z.string(),
+    kind: z.enum(["text", "file"]),
+    value: z.string(),
+    fileName: z.string().optional(),
+    contentType: z.string().optional(),
+  }).strict()).optional(),
 }).strict();
 export type RequestSendRequest = z.infer<typeof RequestSendRequest>;
 

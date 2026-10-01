@@ -178,6 +178,7 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "capture.buildMock",
   // The engine's capture history: a read, a clear, and a removal by id — each leaves the same state twice.
   "capture.list",
+  "capture.get",
   "capture.clear",
   "capture.remove",
   "healthbar.saveServices",

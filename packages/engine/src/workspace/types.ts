@@ -83,6 +83,16 @@ export interface SavedRequest {
   url: string;
   headers: Record<string, string>;
   body: string;
+  /** `"base64"`: `body` is the raw bytes, base64-encoded. Default `"utf8"`. */
+  bodyEncoding?: "utf8" | "base64";
+  /** When non-empty, the body is a `multipart/form-data` payload built from these parts. */
+  bodyParts?: Array<{
+    name: string;
+    kind: "text" | "file";
+    value: string;
+    fileName?: string;
+    contentType?: string;
+  }>;
   protocol?: "rest" | "graphql" | "grpc" | "soap";
   preScript?: string;
   postScript?: string;

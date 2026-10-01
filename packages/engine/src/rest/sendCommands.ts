@@ -65,27 +65,19 @@ import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { loadEntity } from "../workspace/config";
 import type { SavedRequest } from "../workspace/types";
 import { runRequestPipeline, type PipelineRequest } from "./runPipeline";
-
-/**
- * `SavedRequest.body` (text) → the base64 `request.replay` expects.
- *
- * Byte-for-byte the engine-side equivalent of the renderer's `textToB64`
- * (`packages/gui/src/lib/utils.ts`), **including its blank-means-empty rule** — see the header.
- */
-function encodeBody(body: string | undefined): string {
-  const text = body ?? "";
-  if (!text.trim()) return "";
-  return Buffer.from(text, "utf-8").toString("base64");
-}
+import { encodeRequestBody } from "./requestBody";
 
 /** The stored entity's fields that the pipeline consumes, as the pipeline's own request shape. */
 function requestFromEntity(entity: SavedRequest): PipelineRequest {
-  return {
+  const request: PipelineRequest = {
     method: entity.method,
     url: entity.url,
     headers: entity.headers ?? {},
     body: entity.body ?? "",
   };
+  if (entity.bodyEncoding) request.bodyEncoding = entity.bodyEncoding;
+  if (entity.bodyParts) request.bodyParts = entity.bodyParts;
+  return request;
 }
 
 export function registerPipelineCommands(registry: CommandRegistry): void {
@@ -129,17 +121,19 @@ export function registerPipelineCommands(registry: CommandRegistry): void {
         scripts,
         // The environment is the pipeline's to choose (`plan/19` D23) — this closure deliberately
         // ignores the `env` argument, because every field it sends has already been resolved.
-        send: async (resolved) =>
-          (await registry.invoke(
+        send: async (resolved) => {
+          const encoded = encodeRequestBody(resolved);
+          return (await registry.invoke(
             "request.replay",
             {
               method: resolved.method,
               url: resolved.url,
-              headers: resolved.headers,
-              body: encodeBody(resolved.body),
+              headers: encoded.headers,
+              body: encoded.bodyBase64,
             },
             ctx,
-          )) as { status: number; headers: Record<string, string>; body: string },
+          )) as { status: number; headers: Record<string, string>; body: string };
+        },
       });
 
       return {
