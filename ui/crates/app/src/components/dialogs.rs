@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use gpui_kit::component::{
     WindowExt as _,
-    button::ButtonVariant,
-    dialog::DialogButtonProps,
+    button::{Button, ButtonVariant, ButtonVariants as _},
+    dialog::{DialogButtonProps, DialogFooter},
     form::{Field, Form},
     input::{Input, InputState},
     notification::Notification,
@@ -102,11 +102,27 @@ pub fn prompt<V: 'static>(
                         // vertical padding keeps descenders from being clipped.
                         form.child(Field::new().label(*label).child(Input::new(input).py_1p5()))
                     }))
-                    .button_props(
-                        DialogButtonProps::default()
-                            .ok_text(confirm)
-                            .show_cancel(true)
-                            .on_ok(move |_, window, cx| confirm_now(window, cx)),
+                    // Enter in a field confirms through the dialog; the footer gives the same two choices to
+                    // the pointer. A plain dialog draws no buttons of its own.
+                    .button_props(DialogButtonProps::default().on_ok({
+                        let confirm_now = confirm_now.clone();
+                        move |_, window, cx| confirm_now(window, cx)
+                    }))
+                    .footer(
+                        DialogFooter::new()
+                            .child(
+                                Button::new("prompt-cancel")
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(|_, window, cx| window.close_dialog(cx)),
+                            )
+                            .child(Button::new("prompt-confirm").primary().label(confirm).on_click(
+                                move |_, window, cx| {
+                                    if confirm_now(window, cx) {
+                                        window.close_dialog(cx);
+                                    }
+                                },
+                            )),
                     )
             }
         });
