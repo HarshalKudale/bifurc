@@ -128,7 +128,7 @@
  * it is recorded here rather than left to be discovered.
  */
 import type { EventEnvelope, LogEntryBatchEvent, LogEntryEvent } from "@bifurc/protocol";
-import type { RequestLogEntry } from "../kernel/telemetry";
+import { toLogEntryEvent } from "../utils/logEntryWire";
 import type { EngineEvent } from "./types";
 
 /**
@@ -227,20 +227,7 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
  * with the wrong shape means something upstream bypassed that type. Producing a zeroed entry keeps the
  * client's log list intact and one row meaningless, which is better than a frame the peer rejects.
  */
-export function toLogEntryEvent(payload: unknown): LogEntryEvent {
-  // A non-object payload (`undefined`, a string) would throw on the first property read, and this runs
-  // inside a bus listener — where a throw unwinds into machinery that is not expecting it. So the
-  // shape is checked rather than asserted.
-  const e = (typeof payload === "object" && payload !== null ? payload : {}) as Partial<RequestLogEntry>;
-  return {
-    id: typeof e.id === "string" ? e.id : "",
-    timestamp: typeof e.ts === "number" ? e.ts : 0,
-    method: typeof e.method === "string" ? e.method : "",
-    url: typeof e.url === "string" ? e.url : "",
-    status: typeof e.status === "number" ? e.status : null,
-    durationMs: typeof e.durationMs === "number" ? e.durationMs : null,
-  };
-}
+export { toLogEntryEvent };
 
 /**
  * Is this payload already the protocol's batch shape?

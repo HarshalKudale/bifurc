@@ -35,9 +35,9 @@
  */
 import type { CaptureBuildMockParams, ScriptExecuteParams } from "@bifurc/protocol";
 import type { CommandRegistry } from "../kernel/registry";
-import type { RequestLogEntry } from "../kernel/telemetry";
 import { executeIpcScript } from "./scriptExecutor";
 import { capturedToMock } from "../capture/captureEntities";
+import { resolveCaptureEntry } from "../capture/store";
 
 export function registerMockCommands(registry: CommandRegistry): void {
     registry.register("script.execute", (params: ScriptExecuteParams) => executeIpcScript(params));
@@ -49,6 +49,6 @@ export function registerMockCommands(registry: CommandRegistry): void {
      * has an explicit validity check because Node's decoder does not throw where `atob` did.
      */
     registry.register("capture.buildMock", (params: CaptureBuildMockParams) => ({
-        mock: capturedToMock(params.entry as unknown as RequestLogEntry),
+        mock: capturedToMock(resolveCaptureEntry(params)),
     }));
 }

@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { EngineError } from "@bifurc/protocol";
 import { logEmitter, type RequestLogEntry } from "../kernel/telemetry";
 import { dataDir } from "../workspace/paths";
 
@@ -73,6 +74,18 @@ export function listCapture(wsId: string): RequestLogEntry[] {
 
 export function getCapture(wsId: string, id: string): RequestLogEntry | undefined {
   return entriesOf(wsId).find((e) => e.id === id);
+}
+
+/** The entry a `capture.build*` call names: the whole `entry`, or a `{workspaceId, id}` reference into the store. */
+export function resolveCaptureEntry(
+  params: { entry: Record<string, unknown> } | { workspaceId: string; id: string },
+): RequestLogEntry {
+  if ("entry" in params) return params.entry as unknown as RequestLogEntry;
+  const found = getCapture(params.workspaceId, params.id);
+  if (!found) {
+    throw new EngineError("NOT_FOUND", `No captured entry "${params.id}" in workspace "${params.workspaceId}".`);
+  }
+  return found;
 }
 
 export function clearCapture(wsId: string): void {

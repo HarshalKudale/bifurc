@@ -224,6 +224,7 @@ export const COMMANDS = {
   "capture.buildMock": spec(MiscCmd.CaptureBuildMockParams, "capture.buildMock"),
   "engine.shutdown": spec(MiscCmd.EngineShutdownParams, "engine.shutdown"),
   "capture.list": spec(MiscCmd.CaptureListParams, "capture.list"),
+  "capture.get": spec(MiscCmd.CaptureGetParams, "capture.get"),
   "capture.clear": spec(MiscCmd.CaptureClearParams, "capture.clear"),
   "capture.remove": spec(MiscCmd.CaptureRemoveParams, "capture.remove"),
 

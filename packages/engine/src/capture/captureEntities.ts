@@ -48,6 +48,8 @@ export interface CapturedRequest {
   url: string;
   headers: Record<string, string>;
   body: string;
+  /** `"base64"` when `body` is the captured base64 itself (binary / multipart / non-UTF-8); absent for text. */
+  bodyEncoding?: "utf8" | "base64";
 }
 
 /** A captured exchange as a **mock**: the raw capture, plus the fields that make the mock stand alone. */
@@ -96,11 +98,26 @@ function headerOf(headers: Record<string, string>, name: string): string {
 
 /** A captured request → a saved request. Used by "Save" and by "Open in requests". */
 export function capturedToRequest(entry: RequestLogEntry): CapturedRequest {
+  const reqHeaders = entry.reqHeaders ?? {};
+  const reqBody = entry.reqBody ?? "";
   const headers: Record<string, string> = {};
-  for (const [k, v] of Object.entries(entry.reqHeaders)) {
+  for (const [k, v] of Object.entries(reqHeaders)) {
     if (!SKIP_CURL_HEADERS.has(k.toLowerCase())) headers[k] = v;
   }
-  return { name: "", method: entry.method, url: entry.url, headers, body: b64ToText(entry.reqBody) };
+  const base = { name: "", method: entry.method, url: entry.url, headers };
+  const ct = headerOf(reqHeaders, "content-type").toLowerCase();
+  if (reqBody && (isBinaryContentType(ct) || ct.startsWith("multipart/") || !isUtf8Base64(reqBody))) {
+    return { ...base, body: reqBody, bodyEncoding: "base64" };
+  }
+  return { ...base, body: b64ToText(reqBody) };
+}
+
+/** `true` when the base64 is valid and its bytes survive a UTF-8 round trip. Invalid base64 counts as text. */
+function isUtf8Base64(b64: string): boolean {
+  const stripped = b64.replace(/\s+/g, "");
+  if (stripped.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(stripped)) return true;
+  const buf = Buffer.from(stripped, "base64");
+  return Buffer.from(buf.toString("utf8"), "utf8").equals(buf);
 }
 
 /**
@@ -112,20 +129,22 @@ export function capturedToRequest(entry: RequestLogEntry): CapturedRequest {
  * where the renderer's pinned copy of the list is used).
  */
 export function capturedToMock(entry: RequestLogEntry): CapturedMock {
-  const resCt = headerOf(entry.resHeaders, "content-type").toLowerCase();
+  const resHeaders = entry.resHeaders ?? {};
+  const resBody = entry.resBody ?? "";
+  const resCt = headerOf(resHeaders, "content-type").toLowerCase();
   const isBinaryRes = isBinaryContentType(resCt);
   return {
     name: "",
     method: entry.method,
     urlPattern: entry.url,
     useRegex: false,
-    capturedHeaders: entry.reqHeaders,
-    capturedBody: entry.reqBody,
+    capturedHeaders: entry.reqHeaders ?? {},
+    capturedBody: entry.reqBody ?? "",
     responseStatus: entry.resStatus ?? 200,
     responseStatusMocked: true,
-    responseHeaders: entry.resHeaders,
+    responseHeaders: resHeaders,
     mockedResponseHeaders: [],
-    responseBody: isBinaryRes ? entry.resBody : (b64ToText(entry.resBody) || "{}"),
+    responseBody: isBinaryRes ? resBody : (b64ToText(resBody) || "{}"),
     responseBodyMocked: true,
     responseBodyEncoding: isBinaryRes ? "base64" : undefined,
     responseDelayMocked: true,
