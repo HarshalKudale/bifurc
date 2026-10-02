@@ -36,6 +36,8 @@ export interface RequestLogEntry {
     resStatus: number | null;
     /** The workspace whose config served this request — what the capture store files it under. */
     workspaceId?: string;
+    /** Which listener took it: the forward proxy (`forward`) or the reverse proxy serving mapped domains (`reverse`). */
+    origin?: "forward" | "reverse";
 }
 
 export const logEmitter = new EventEmitter();

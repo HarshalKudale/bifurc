@@ -243,6 +243,7 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
       id, ts: t0, method, url, host,
       reqHeaders: headers,
       reqBody: reqBodyB64,
+      origin: "reverse",
     };
 
     const cfg = opts.resolveConfig();
