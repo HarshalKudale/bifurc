@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import ContextMenu from "@/components/ui/ContextMenu";
 import { strings } from "@/lib/strings";
-import { sanitizeDirName } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { entityGitView, folderGitRollup, PLURAL_KIND_BY_TREE_KIND, type EntityGitView, type FolderGitRollup } from "@/lib/entityGit";
 import { FolderTreeProps, FolderNode, TreeContextType, FolderTreeItem, EntitySyncStatus } from "./FolderTree.types";
 import { FolderTreeContext } from "./FolderTreeContext";
@@ -63,22 +63,29 @@ export default function FolderTree({
     [getItemStatus, workspaceGitState],
   );
 
+  const { folderPrefixOf } = useEntityPaths();
+
   /**
    * The rollup for a folder — or for the whole kind when `folderId` is `null`, which is the tree's
    * **root row** and the "folder details" case the spec names.
    *
-   * The prefix is built with the *storage* sanitiser so it matches the paths on disk. A prefix (rather
-   * than a list of the folder's own items) means descendants count, which is what "Publish All" on a
-   * parent has to mean — the old context menu published only `kind/Folder/` and silently skipped
-   * subfolders.
+   * The prefix is the **engine's** now (`plan/19` WI 5 item 3): `kind/<sanitised folder name>/`, which is
+   * what the paths on disk are actually built from. This used to recompute it here with a hand-mirrored
+   * sanitiser, which is the class of thing that produced the folder-rename/folder-publish disagreement the
+   * hook header records.
+   *
+   * A prefix (rather than a list of the folder's own items) means descendants count, which is what
+   * "Publish All" on a parent has to mean — the old context menu published only `kind/Folder/` and
+   * silently skipped subfolders. An **empty** prefix — the engine has not reported this folder yet —
+   * yields an empty rollup, which is the answer the old `if (!folder)` guard gave.
    */
   const getFolderRollup = useCallback((folderId: string | null): FolderGitRollup => {
     const plural = PLURAL_KIND_BY_TREE_KIND[kind] ?? kind;
     if (folderId === null) return folderGitRollup([`${plural}/`], pathStatusMap ?? {}, workspaceGitState);
-    const folder = folders.find((f) => f.id === folderId);
-    if (!folder) return folderGitRollup([], pathStatusMap ?? {}, workspaceGitState);
-    return folderGitRollup([`${plural}/${sanitizeDirName(folder.name)}/`], pathStatusMap ?? {}, workspaceGitState);
-  }, [kind, folders, pathStatusMap, workspaceGitState]);
+    const prefix = folderPrefixOf(folderId);
+    if (!prefix) return folderGitRollup([], pathStatusMap ?? {}, workspaceGitState);
+    return folderGitRollup([prefix], pathStatusMap ?? {}, workspaceGitState);
+  }, [kind, folderPrefixOf, pathStatusMap, workspaceGitState]);
 
   /**
    * The **storage** kind for folder CRUD — `"request"` when this tree is a runner view.
@@ -88,7 +95,7 @@ export default function FolderTree({
    * Passing `kind` straight through was three type errors and, had they been silenced, three
    * runtime failures on a folder rename from the runner tree.
    */
-  const folderKind = (kind === "runner" ? "request" : kind) as "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
+  const folderKind = (kind === "runner" ? "request" : kind) as "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "grpcRequest" | "soapRequest";
 
   const toggleExpand = useCallback((id: string) => setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; }), []);
   const expandAll = useCallback(() => setExpanded(new Set(["__root__", ...folders.map((f) => f.id)])), [folders]);

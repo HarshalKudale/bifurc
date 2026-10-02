@@ -22,8 +22,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Capture the handlers the features register ────────────────────────────────
 
@@ -170,25 +170,25 @@ const createEntity = async <T = any>(kind: string, entity: any): Promise<T> => {
 beforeAll(async () => {
   ws = createWorkspace();
 
-  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
-  const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
+  const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
   // P6 §5c: `config.get`, `entity.load` and `workspace.setActive` moved out of `coreHandlers`' module
   // scope into the engine. The reduction's sixth group then deleted that file's channels and renamed it
   // to `coreKinds.ts` (`plan/07` §5b-septendecies), so `registerCoreKinds()` is the shell's
   // `environments` kind alone — a suite that registers handler groups by hand still has to wire the
   // commands, which is the `registerCoreCommands()` call below.
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+  const { registerCoreCommands } = await import("@bifurc/engine/workspace/entities/coreCommands");
   // P6 §5c slice 3: the four `folder.*` commands left `folderHandlers.ts`'s module scope. Every channel
   // in that file *delegated* through `commandRegistry.invoke()`, so the channel was only ever as alive as
   // this registry. **The channels are now deleted** (P6 reduction, third group, 2026-09-21), so
   // `DELETED_FOLDER_CHANNELS` invokes this registry directly and `registerFolderCommands()` is the only
   // registration the four need.
-  const { registerFolderCommands } = await import("@bifurc/engine/store/folderCommands");
+  const { registerFolderCommands } = await import("@bifurc/engine/workspace/entities/folderCommands");
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
   // `registerCrudKinds()` wires the per-kind options those four commands dispatch through. It registers
   // no channels — the reduction's fourth group took the file's last five on 2026-09-21.
-  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
   // The `workspace.*` commands this suite drives nine times come from `configCommands`, and until the
   // sixth group this suite never had to wire it: `coreHandlers.ts`'s `workspace:add` channel registered
   // them as a side effect of existing. Deleting the channel took the registration with it, and the
@@ -196,11 +196,12 @@ beforeAll(async () => {
   // envelope reached the registry and the registry had nothing to dispatch to.
   //
   // The general rule, now seen four times in one group (spike → `registerServerCommands`; protocolExecution
-  // → `registerMiscCommands` + `registerConfigCommands`; settingsMutations → `registerConfigCommands`):
+  // → `registerRestCommands` + `registerHealthbarCommands` + `registerConfigCommands`; settingsMutations →
+  // `registerConfigCommands`):
   // **a command whose only registration came from a handler file the reduction deleted must be wired
   // explicitly by every suite that drives it.** Compare against `src/ipc/handlers.ts`'s `register*Commands()`
   // list rather than against the suite's own history.
-  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
+  const { registerConfigCommands } = await import("@bifurc/engine/workspace/entities/configCommands");
 
   registerCoreKinds();
   registerCoreCommands(commandRegistry);

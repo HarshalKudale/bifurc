@@ -38,7 +38,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import type { ExporterFn, PathExporterFn } from "@bifurc/engine/importExport/registry";
+import type { ExporterFn, PathExporterFn } from "@bifurc/engine/importexport/registry";
 import type {
     CollisionStrategy,
     ExportResult,
@@ -46,7 +46,7 @@ import type {
     ImportSource,
     PathExportResult,
     PreflightResult,
-} from "@bifurc/engine/importExport/types";
+} from "@bifurc/engine/importexport/types";
 
 /** An `ImportSource` built the way the client builds one: content plus a basename, never a path. */
 export function sourceFromFile(file: string): ImportSource {

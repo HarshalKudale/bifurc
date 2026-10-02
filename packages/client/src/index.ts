@@ -198,7 +198,7 @@ function bytesToBase64(bytes: Uint8Array): string {
  * ```
  *
  * This is the **`window.api`-fidelity half** of a translation that has two halves. The engine owns
- * the other one — `toEngineKind()` in `packages/engine/src/commands/entityKindMap.ts` — and that is
+ * the other one — `toEngineKind()` in `packages/engine/src/kernel/kinds.ts` — and that is
  * the one that has always been on the live path, because the client used to forward the caller's
  * `kind` verbatim and `EntityLoadParams.kind` is the strict `EntityKind` enum. So the wire rejected
  * `"rules"` with a `BAD_REQUEST`, the two panels' `.catch(() => {})` swallowed it, and their entity
@@ -378,7 +378,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     mappings: "Mappings",
     proxyRules: "Proxy Rules",
     websockets: "WebSockets",
-    webhooks: "Webhooks",
   };
 
   /** `proxyRules` → `proxy-rules`, the kebab-case the default export file name uses. */
@@ -389,7 +388,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
    * extension.
    *
    * Asked of the engine rather than hard-coded, because the 17 formats and their extensions are
-   * `packages/engine/src/importExport/registry.ts`'s to declare, and a second list here is how the
+   * `packages/engine/src/importexport/registry.ts`'s to declare, and a second list here is how the
    * two would drift. It is the same cheap `export.formats` the modal already reads when it opens.
    * It is read *before* the dialog, which has one visible consequence worth stating plainly: with no
    * engine there is no dialog — correct, because there is nothing to export either way.
@@ -591,7 +590,7 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       }
       return call("setEntityEnabled", { workspaceId: wsId, kind, id, enabled }) as ReturnType<BifurcApi["setEntityEnabled"]>;
     },
-    saveConfig: (config) => call("saveConfig", { config }) as ReturnType<BifurcApi["saveConfig"]>,
+    updateSettings: (patch) => call("updateSettings", patch) as ReturnType<BifurcApi["updateSettings"]>,
 
     // ── import / export ─────────────────────────────────────────────────────
     getImportExportFormats: () => call("getImportExportFormats", {}) as ReturnType<BifurcApi["getImportExportFormats"]>,
@@ -718,9 +717,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     addWsConnection: async (c) => unwrapCreated(await call("addWsConnection", { kind: "wsConnections", entity: c })) as Awaited<ReturnType<BifurcApi["addWsConnection"]>>,
     updateWsConnection: (c) => call("updateWsConnection", { kind: "wsConnections", entity: c }) as ReturnType<BifurcApi["updateWsConnection"]>,
     deleteWsConnection: (id) => call("deleteWsConnection", { kind: "wsConnections", id }) as ReturnType<BifurcApi["deleteWsConnection"]>,
-    addWebhook: async (h) => unwrapCreated(await call("addWebhook", { kind: "webhooks", entity: h })) as Awaited<ReturnType<BifurcApi["addWebhook"]>>,
-    updateWebhook: (h) => call("updateWebhook", { kind: "webhooks", entity: h }) as ReturnType<BifurcApi["updateWebhook"]>,
-    deleteWebhook: (id) => call("deleteWebhook", { kind: "webhooks", id }) as ReturnType<BifurcApi["deleteWebhook"]>,
     addGraphQLRequest: async (r) => unwrapCreated(await call("addGraphQLRequest", { kind: "graphqlRequests", entity: r })) as Awaited<ReturnType<BifurcApi["addGraphQLRequest"]>>,
     updateGraphQLRequest: (r) => call("updateGraphQLRequest", { kind: "graphqlRequests", entity: r }) as ReturnType<BifurcApi["updateGraphQLRequest"]>,
     deleteGraphQLRequest: (id) => call("deleteGraphQLRequest", { kind: "graphqlRequests", id }) as ReturnType<BifurcApi["deleteGraphQLRequest"]>,
@@ -759,6 +755,39 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
 
     // ── environments / workspaces ───────────────────────────────────────────
     setActiveEnvironment: (id) => call("setActiveEnvironment", { id }) as ReturnType<BifurcApi["setActiveEnvironment"]>,
+    // ── env.resolveText: resolution for display (2026-09-30, plan/19 WI 5 item 4) ───────────────
+    //
+    // `workspaceId` is optional and resolved here when omitted, by the same mechanism as `request.send`:
+    // the protocol requires one because an environment is a per-workspace fact, and a caller that has the
+    // id should pass it rather than pay for a `config.get` round trip.
+    envResolveText: async (text, workspaceId) =>
+      call("envResolveText", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        text,
+      }) as ReturnType<BifurcApi["envResolveText"]>,
+    // ── env.getMerged: the merged environment as data (2026-09-30, plan/19 WI 6) ────────────────
+    //
+    // `workspaceId` is optional and resolved here when omitted, exactly as `envResolveText` does it: the
+    // protocol requires one because an environment is a per-workspace fact, and a caller that has the id
+    // should pass it rather than pay for a `config.get` round trip. The renderer's `App` always has one.
+    envGetMerged: async (workspaceId) =>
+      call("envGetMerged", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+      }) as ReturnType<BifurcApi["envGetMerged"]>,
+    // ── capture.buildRequest / capture.buildMock (2026-09-30, plan/19 WI 5 item 2) ──────────────
+    //
+    // 1:1 mappings. The entry is passed through untouched — the protocol deliberately does not model
+    // `RequestLogEntry` (`misc.ts` says why), and the *results* are typed by `BifurcApi` because
+    // `packages/gui/src/types/ipc.ts` is where entity bodies are hand-mirrored.
+    captureBuildRequest: (entry) =>
+      call("captureBuildRequest", { entry }) as ReturnType<BifurcApi["captureBuildRequest"]>,
+    captureBuildMock: (entry) =>
+      call("captureBuildMock", { entry }) as ReturnType<BifurcApi["captureBuildMock"]>,
+    captureList: async (wsId) =>
+      ((await call("captureList", { workspaceId: wsId })) as { entries: unknown[] }).entries as Awaited<ReturnType<BifurcApi["captureList"]>>,
+    captureClear: (wsId) => call("captureClear", { workspaceId: wsId }) as ReturnType<BifurcApi["captureClear"]>,
+    captureRemove: (wsId, ids) =>
+      call("captureRemove", { workspaceId: wsId, ids }) as ReturnType<BifurcApi["captureRemove"]>,
     addWorkspace: (name) => call("addWorkspace", { name }) as ReturnType<BifurcApi["addWorkspace"]>,
     renameWorkspace: (id, name) => call("renameWorkspace", { id, name }) as ReturnType<BifurcApi["renameWorkspace"]>,
     deleteWorkspace: (id) => call("deleteWorkspace", { id }) as ReturnType<BifurcApi["deleteWorkspace"]>,
@@ -767,6 +796,32 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     // ── server / proxy ──────────────────────────────────────────────────────
     replayRequest: (method, url, headers, body) =>
       call("replayRequest", { method, url, headers, body }) as ReturnType<BifurcApi["replayRequest"]>,
+    // ── request.parseCurl: the cURL parser (2026-09-30, plan/19 WI 5) ────────
+    //
+    // A 1:1 mapping with no workspace to resolve and no shim: the engine's `utils/curl.ts` parses the
+    // string and returns the request it describes, and the renderer's cURL import field calls this
+    // instead of carrying `lib/curlParser.ts` (deleted by that work item).
+    requestParseCurl: (curl) =>
+      call("requestParseCurl", { curl }) as ReturnType<BifurcApi["requestParseCurl"]>,
+    // ── request.send: the REST pipeline (2026-09-30, plan/19 D24/D27) ───────
+    //
+    // `workspaceId` is optional and resolved here when omitted, for the same reason and by the same
+    // mechanism as `listGraphQLSchemas` below: the renderer's tab knows an entity **id** and has no
+    // workspace id to send, while `request.send` requires one (an entity id is only unique within a
+    // workspace — `packages/protocol/src/commands/saved.ts`). Resolving it here keeps the protocol
+    // honest *and* keeps the renderer free of a prop it would otherwise have to thread through panels.
+    //
+    // A CLI targeting a specific workspace passes it explicitly, which is why the parameter exists
+    // rather than being resolved unconditionally.
+    //
+    // `params` is `request.send`'s union — `{id}` or `{request, scripts}` — spread onto the resolved
+    // workspace id, so both input forms travel as one call and the client does not offer two methods for
+    // what the protocol treats as one command.
+    requestSend: async (params, workspaceId) =>
+      call("requestSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["requestSend"]>,
     proxyStatus: () => call("proxyStatus", {}) as ReturnType<BifurcApi["proxyStatus"]>,
     serverStatus: () => call("serverStatus", {}) as ReturnType<BifurcApi["serverStatus"]>,
     restartServer: () => call("restartServer", {}) as ReturnType<BifurcApi["restartServer"]>,
@@ -832,15 +887,6 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("healthbarSaveServices", { workspaceId: wsId, services }) as ReturnType<BifurcApi["healthbarSaveServices"]>,
     healthbarCheckUrl: (url) => call("healthbarCheckUrl", { url }) as ReturnType<BifurcApi["healthbarCheckUrl"]>,
 
-    // ── webhook server ──────────────────────────────────────────────────────
-    registerActiveWebhook: (webhookId, urlSuffix) =>
-      call("registerActiveWebhook", { webhookId, urlSuffix }) as ReturnType<BifurcApi["registerActiveWebhook"]>,
-    unregisterActiveWebhook: (webhookId) =>
-      call("unregisterActiveWebhook", { webhookId }) as ReturnType<BifurcApi["unregisterActiveWebhook"]>,
-    getWebhookServerStatus: () => call("getWebhookServerStatus", {}) as ReturnType<BifurcApi["getWebhookServerStatus"]>,
-    webhookServerStatus: () => call("webhookServerStatus", {}) as ReturnType<BifurcApi["webhookServerStatus"]>,
-    startWebhookServer: (port) => call("startWebhookServer", port === undefined ? {} : { port }) as ReturnType<BifurcApi["startWebhookServer"]>,
-    stopWebhookServer: () => call("stopWebhookServer", {}) as ReturnType<BifurcApi["stopWebhookServer"]>,
 
     // ── SOAP / GraphQL / gRPC ───────────────────────────────────────────────
     soapFetchWsdl: (url) => call("soapFetchWsdl", { url }) as ReturnType<BifurcApi["soapFetchWsdl"]>,
@@ -853,6 +899,23 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     grpcExecute: (serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection) =>
       call("grpcExecute", { serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection }) as ReturnType<BifurcApi["grpcExecute"]>,
     grpcReflect: (serverAddress) => call("grpcReflect", { serverAddress }) as ReturnType<BifurcApi["grpcReflect"]>,
+    // The three saved-entity counterparts. Same optional-`workspaceId` treatment as
+    // `replayRequestSaved` above, and the same reason — see that note rather than a second copy of it.
+    soapSend: async (params, workspaceId) =>
+      call("soapSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["soapSend"]>,
+    graphqlSend: async (params, workspaceId) =>
+      call("graphqlSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["graphqlSend"]>,
+    grpcSend: async (params, workspaceId) =>
+      call("grpcSend", {
+        workspaceId: workspaceId ?? (await resolveWorkspaceId()),
+        ...params,
+      }) as ReturnType<BifurcApi["grpcSend"]>,
 
     // ── TLS ─────────────────────────────────────────────────────────────────
     //
@@ -967,6 +1030,39 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
       call("saveRunnerConfig", { workspaceId: wsId, folderId, config }) as ReturnType<BifurcApi["saveRunnerConfig"]>,
     loadRunnerConfig: (wsId, folderId) => call("loadRunnerConfig", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["loadRunnerConfig"]>,
     listRunnerFolderIds: (wsId) => call("listRunnerFolderIds", { workspaceId: wsId }) as ReturnType<BifurcApi["listRunnerFolderIds"]>,
+    // ── the run's own commands (plan/19 WI 4, D29/D30) ──────────────────────
+    //
+    // `runnerStart` resolves as soon as the run is *registered*, not when it finishes — that is D29, and it is
+    // why the progress and completion arrive as events rather than as this call's return value. `runnerStatus`
+    // is what a client that was disconnected asks on reconnect.
+    runnerStart: (wsId, folderId) =>
+      call("runnerStart", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerStart"]>,
+    runnerCancel: (wsId, folderId) =>
+      call("runnerCancel", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerCancel"]>,
+    runnerStatus: (wsId, folderId) =>
+      call("runnerStatus", { workspaceId: wsId, folderId }) as ReturnType<BifurcApi["runnerStatus"]>,
+
+    // ── the socket registry (plan/19 WI 6) ──────────────────────────────────
+    //
+    // 1:1 mappings, and the signature carries `wsId` **first and explicitly** rather than resolving the
+    // active workspace the way `envResolveText` does. That is not an inconsistency: a socket is keyed by
+    // `{workspaceId, socketId}` for its whole life, so inferring the workspace at connect time and then
+    // having the user switch would leave a connection addressed by a workspace it is no longer in. The
+    // caller always knows which workspace a tab belongs to; making it say so costs one argument.
+    //
+    // `wsStatus` and `wsList` are `read`-scoped, which is what lets a client that was disconnected ask what
+    // happened to its sockets without also being granted the right to open or close one.
+    wsConnect: (wsId, socketId, url, headers) =>
+      call("wsConnect", headers === undefined ? { workspaceId: wsId, socketId, url } : { workspaceId: wsId, socketId, url, headers }) as ReturnType<BifurcApi["wsConnect"]>,
+    wsDisconnect: (wsId, socketId) =>
+      call("wsDisconnect", { workspaceId: wsId, socketId }) as ReturnType<BifurcApi["wsDisconnect"]>,
+    wsSend: (wsId, socketId, data) =>
+      call("wsSend", { workspaceId: wsId, socketId, data }) as ReturnType<BifurcApi["wsSend"]>,
+    wsStatus: (wsId, socketId) =>
+      call("wsStatus", { workspaceId: wsId, socketId }) as ReturnType<BifurcApi["wsStatus"]>,
+    wsList: (wsId) => call("wsList", { workspaceId: wsId }) as ReturnType<BifurcApi["wsList"]>,
+    wsClearMessages: (wsId, socketId) =>
+      call("wsClearMessages", { workspaceId: wsId, socketId }) as ReturnType<BifurcApi["wsClearMessages"]>,
     shareCaptureJson: async (entries, suggestedName) => {
       const r = await artifactToFile(
         await call("shareCaptureJson", suggestedName === undefined ? { entries } : { entries, suggestedName }),
@@ -981,13 +1077,18 @@ export function createClient(transport: Transport, opts: CreateClientOptions): B
     onLogEntry,
     onLogChunk: (cb) => plain("event.log.chunk", cb as (p: never) => void),
     onServerError: (cb) => plain("event.server.error", cb as (p: never) => void),
-    onWebhookPayload: (cb) => plain("event.webhook.payload", cb as (p: never) => void),
     /**
      * `event.entity.changed` carries what changed; the renderer's `onCompanionRefresh` only wants
      * the signal. Discarding the payload here matches what the legacy `companion:refresh` channel
      * did, so the renderer's behaviour is unchanged — it re-fetches either way.
      */
     onCompanionRefresh: (cb) => hub.subscribe("event.entity.changed", () => cb()),
+    onRunnerProgress: (cb) => plain("event.runner.progress", cb as (p: never) => void),
+    onRunnerFinished: (cb) => plain("event.runner.finished", cb as (p: never) => void),
+    // `plan/19` WI 6. Unlike `onCompanionRefresh` these payloads are **not** discarded: the renderer needs
+    // `socketId` to route an event to the right tab, and `event.ws.message` carries the frame itself.
+    onWsStatus: (cb) => plain("event.ws.status", cb as (p: never) => void),
+    onWsMessage: (cb) => plain("event.ws.message", cb as (p: never) => void),
 
     // ── lifecycle (not part of window.api) ──────────────────────────────────
     close: async () => {

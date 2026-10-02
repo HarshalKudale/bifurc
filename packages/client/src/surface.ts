@@ -4,7 +4,7 @@
  * P5 exists to protect exactly one property (plan/README "Non-negotiables" #3):
  * `window.api` stays **byte-identical** through P5–P6. That property is the regression
  * signal for the whole critical path, so the surface is written down here as data rather
- * than left implicit in 132 hand-written methods.
+ * than left implicit in 136 hand-written methods.
  *
  * ## Why this file exists at all
  *
@@ -14,8 +14,19 @@
  *
  * | source | keys |
  * |---|---|
- * | `src/preload.ts` — what `window.api` actually **is** at runtime | **132** |
- * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 128 |
+ * | `src/preload.ts` — what `window.api` actually **is** at runtime | **136** |
+ * | `packages/gui/src/types/window.ts` — what it is **declared** to be | 132 |
+ *
+ * **2026-09-29: both rows +4** — the four `*Saved` execute methods. The gap between the rows is
+ * **still exactly four**, which is the property the table exists to show: a change that moved one row
+ * without the other would be a declared/runtime divergence, and this one moved both.
+ *
+ * **2026-09-30: `replayRequestSaved` → `requestSend`, and the rows do not move.** That is the other
+ * property worth pinning. The REST member of the four was **renamed and widened** into `plan/19` D24's
+ * pipeline (`request.send` — a union of `{id}` and `{request, scripts}`), so a method that used to execute
+ * a saved entity now also resolves the request and runs its scripts. Both rows stay at **136 / 132** — one
+ * key replaced by one key — and the gap stays exactly four, which is what tells a reader this was a
+ * *rename* rather than a drop hiding inside an addition.
  *
  * **`plan/17` work item 8 reduced both by twelve** — 144 → 132 and 140 → 128. Mocks became REST-only,
  * so the nine mock CRUD methods (`graphqlMocks` / `grpcMocks` / `soapMocks` × add/update/delete) and
@@ -139,7 +150,8 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
     "entity.setEnabled",
     "an out-of-enum kind resolves `{ok:false, error:'invalid_kind'}` rather than throwing",
   ),
-  saveConfig: t("config.save"),
+  // A patch of host settings. The whole-config `config.save` is deliberately not on this surface.
+  updateSettings: t("settings.update"),
 
   // ── import / export (all three are multi-step over the transport) ─────────
   getImportExportFormats: t("export.formats"),
@@ -167,9 +179,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   addWsConnection: e("wsConnections", "create"),
   updateWsConnection: e("wsConnections", "update"),
   deleteWsConnection: e("wsConnections", "delete"),
-  addWebhook: e("webhooks", "create"),
-  updateWebhook: e("webhooks", "update"),
-  deleteWebhook: e("webhooks", "delete"),
   addGraphQLRequest: e("graphqlRequests", "create"),
   updateGraphQLRequest: e("graphqlRequests", "update"),
   deleteGraphQLRequest: e("graphqlRequests", "delete"),
@@ -195,7 +204,7 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   // ── folders ──────────────────────────────────────────────────────────────
   // NOTE: `folder.*` takes a *singular* kind ("mock", "request", "ws", …) — a different
   // vocabulary from `EntityKindValue`'s plurals. That asymmetry is in the frozen protocol,
-  // not introduced here; see `packages/engine/src/commands/entityKindMap.ts`'s sibling.
+  // not introduced here; see `packages/engine/src/kernel/kinds.ts`'s sibling.
   addFolder: t("folder.add"),
   renameFolder: t("folder.rename"),
   moveFolder: t("folder.move"),
@@ -203,6 +212,24 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
 
   // ── environments / workspaces ────────────────────────────────────────────
   setActiveEnvironment: t("env.setActive"),
+  /**
+   * `plan/19` WI 5, item 4 — resolve `{{tokens}}` against the workspace's **merged** environment.
+   *
+   * Filed `transport`: one method, one command, no client half. It exists because WI 3 made the engine the
+   * resolving party, which left the renderer unable to show the value a probe will actually use — the
+   * health bar displays a resolved url. See `packages/protocol/src/commands/config.ts`.
+   */
+  envResolveText: t("env.resolveText", "resolves {{tokens}} for display; the engine owns the merge"),
+  /**
+   * `plan/19` WI 6 — the **merged environment itself**, for the one renderer need that is a *list* rather
+   * than a resolved string: `EnvVarHint`'s autocomplete.
+   *
+   * Filed `transport`: one method, one command, no client half. It replaced `App.tsx`'s `mergeEnvVars`, which
+   * was the last renderer implementation of a workspace fact the engine already owned (D23) — and the merge
+   * is the part that cannot stay: resolving against the *active* environment alone resolves a shadowed key
+   * differently, which is `plan/19` §8 trap 2.
+   */
+  envGetMerged: t("env.getMerged", "the merged environment; the list to choose from, not a resolved value"),
   addWorkspace: t("workspace.add"),
   renameWorkspace: t("workspace.rename"),
   deleteWorkspace: t("workspace.delete"),
@@ -210,6 +237,38 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
 
   // ── server / proxy ───────────────────────────────────────────────────────
   replayRequest: t("request.replay"),
+  /**
+   * `plan/19` WI 5 — the cURL parser.
+   *
+   * Filed as `transport` because it is a 1:1 command mapping: one method, one command, no shim and no
+   * client half. It exists so the renderer stops carrying `packages/gui/src/lib/curlParser.ts` — the
+   * boundary ratchet's `curlParser` construct — while its import field keeps parsing on every keystroke.
+   */
+  requestParseCurl: t("request.parseCurl", "parses a cURL command into the request it describes"),
+  /**
+   * The four **saved-entity** counterparts, added 2026-09-29. Each takes an entity id where its base
+   * takes the whole request, and the engine loads the entity and executes it.
+   *
+   * ## This is the one place a new key was added to a frozen surface
+   *
+   * The surface was frozen byte-identical through P5–P6, and that freeze had a job: it was the
+   * regression signal for the client extraction, and the pinned counts below are what made any change
+   * to it visible. P6 is complete, so the freeze has done its work — and a capability the renderer is
+   * being asked to *use* cannot be added without a key, because `window.api` is the only door the
+   * renderer has.
+   *
+   * So the freeze is **lifted deliberately rather than eroded**, which is why the four are filed as
+   * `transport` (they are 1:1 command mappings) and why every pinned count below moves by exactly
+   * four: a change that showed up as one count rising while another fell would be a reclassification
+   * hiding inside an addition.
+   *
+   * ## Why the CLI is the reason they exist at all
+   *
+   * A CLI has a request *id*, not a request payload, so the payload-passing commands cannot serve it —
+   * see `plan/protocol-changes.md`. The renderer is the first consumer because it is here; the id
+   * shape is what the CLI will use.
+   */
+  requestSend: t("request.send", "runs the REST pipeline, from a saved `requests` entity or an inline request"),
   proxyStatus: t("proxy.status"),
   serverStatus: t("server.status"),
   restartServer: t("server.restart"),
@@ -267,15 +326,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   healthbarSaveServices: t("healthbar.saveServices"),
   healthbarCheckUrl: t("healthbar.checkUrl"),
 
-  // ── webhook server ───────────────────────────────────────────────────────
-  registerActiveWebhook: t("webhook.registerActive"),
-  unregisterActiveWebhook: t("webhook.unregisterActive"),
-  // Two names, one channel. Kept as two entries because the renderer may call either, and
-  // "byte-identical" means both must exist.
-  getWebhookServerStatus: t("webhookServer.status"),
-  webhookServerStatus: t("webhookServer.status"),
-  startWebhookServer: t("webhookServer.start"),
-  stopWebhookServer: t("webhookServer.stop"),
 
   // ── SOAP / GraphQL / gRPC ────────────────────────────────────────────────
   soapFetchWsdl: t("soap.fetchWsdl"),
@@ -284,6 +334,12 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   graphqlExecute: t("graphql.execute"),
   grpcExecute: t("grpc.execute"),
   grpcReflect: t("grpc.reflect"),
+  // The saved-entity counterparts of the three above — see `requestSend`'s note for why the surface
+  // gained keys at all, and `plan/protocol-changes.md` for the protocol half. These three are still thin
+  // counterparts; the REST member stopped being one on 2026-09-30 and is `requestSend` above.
+  soapSend: t("soap.send", "resolves and POSTs a SOAP envelope, from a saved entity or inline"),
+  graphqlSend: t("graphql.send", "resolves and executes a GraphQL request, from a saved entity or inline"),
+  grpcSend: t("grpc.send", "resolves and dispatches a gRPC call, from a saved entity or inline"),
 
   // ── TLS / certificates ───────────────────────────────────────────────────
   //
@@ -324,7 +380,43 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   saveRunnerConfig: t("runner.saveConfig"),
   loadRunnerConfig: t("runner.loadConfig"),
   listRunnerFolderIds: t("runner.listFolderIds"),
+  // The run's own commands (`plan/19` WI 4, D29/D30). **Additive** — the six above store a run's report and
+  // its per-folder configuration and are unchanged, so a client that never calls these three behaves exactly
+  // as it did before.
+  runnerStart: t("runner.start", "starts a run and returns; progress arrives as events"),
+  runnerCancel: t("runner.cancel"),
+  runnerStatus: t("runner.status", "the run's state, running or finished, or null if never started"),
+
+  // ── websocket (`plan/19` WI 6) ───────────────────────────────────────────
+  //
+  // The one namespace with **no legacy channel**: `useWebSocket.ts` spoke to the browser's `WebSocket`
+  // constructor rather than to the shell, so nothing was ever registered under these names and there is
+  // nothing here that maps onto a pre-existing `window.api` method. Six commands, two events — the four
+  // decisions `Protocol_Module_Contract.md` §4 asks for are made in `packages/protocol/src/commands/ws.ts`.
+  //
+  // `wsConnect` resolves when the socket has been *constructed*, not opened: the transition to `connected`
+  // arrives as `event.ws.status`, and `wsStatus` answers for the state in between. That is D29's shape
+  // (`runnerStart`'s), and for the same reason — a caller that had to await the open would hold the
+  // connection's lifetime, which is exactly what moved to the engine.
+  wsConnect: t("ws.connect", "opens or re-opens a socket; the state arrives as events"),
+  wsDisconnect: t("ws.disconnect", "the ONLY thing that closes a socket — a client disconnect does not"),
+  wsSend: t("ws.send", "resolves the payload engine-side, then writes it"),
+  wsStatus: t("ws.status", "the socket's state, live or finished, or null if never opened"),
+  wsList: t("ws.list", "the live sockets, plus the registry's limit"),
+  wsClearMessages: t("ws.clearMessages", "drops the engine's retained log for one socket"),
   shareCaptureJson: t("capture.shareJson", "returns an artifact; the CLIENT writes the file, not the engine"),
+  /**
+   * `plan/19` WI 5, item 2 — capture → entity construction, the two halves the renderer used to compute.
+   *
+   * Filed `transport`: 1:1 mappings, no shim and no client half. They exist because the renderer cannot
+   * import the engine, so `captureUtils.ts` had to stop holding a second implementation of "which headers
+   * to drop, how to decode a body, how a response is stored".
+   */
+  captureBuildRequest: t("capture.buildRequest", "a captured entry → a `requests` entity body"),
+  captureBuildMock: t("capture.buildMock", "a captured exchange → a `mocks` entity body"),
+  captureList: t("capture.list", "the engine's captured-traffic history for a workspace, newest first"),
+  captureClear: t("capture.clear"),
+  captureRemove: t("capture.remove"),
 
   // ── the 7 subscriptions ──────────────────────────────────────────────────
   onSyncStatus: sub("event.sync.status"),
@@ -332,7 +424,6 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
   onLogEntry: sub("event.log.entry"),
   onLogChunk: sub("event.log.chunk"),
   onServerError: sub("event.server.error"),
-  onWebhookPayload: sub("event.webhook.payload"),
   /**
    * A shim in disguise, and **the name is a fossil — it does not mean the companion**.
    *
@@ -346,10 +437,20 @@ export const SURFACE: Readonly<Record<string, SurfaceEntry>> = {
    * **Do not remove this with the companion server (2026-09-23).** It was checked when the v1 bridge
    * was deleted and it is **live**: `event.entity.changed` is emitted by `entityCrudCommands` and
    * `folderCommands` on the ordinary CRUD path, `useAppConfigSync` re-reads the config on it, and it
-   * is one of the 132 keys `shape.test-d.ts` pins. Only the *name* is historical. A rename would be a
+   * is one of the 136 keys `shape.test-d.ts` pins. Only the *name* is historical. A rename would be a
    * change to the frozen client surface, which is a separate decision from this one.
    */
   onCompanionRefresh: sub("event.entity.changed", "payload discarded; the renderer only wants the signal"),
+  // The run's own events (`plan/19` WI 4). `progress` carries the result object, so a UI renders results as
+  // they arrive instead of waiting for the run to end; `finished` carries the whole report, which is what a
+  // client that was disconnected for the run's entire life has to render from.
+  onRunnerProgress: sub("event.runner.progress"),
+  onRunnerFinished: sub("event.runner.finished"),
+  // The socket's two events (`plan/19` WI 6). **Every payload carries `socketId`**, because one bus serves
+  // every socket in the process and the renderer has one subscriber per open tab — a subscriber that could
+  // not tell which socket an event belonged to could only guess.
+  onWsStatus: sub("event.ws.status"),
+  onWsMessage: sub("event.ws.message"),
 };
 
 /** The keys the client must expose. Derived, so it cannot disagree with `SURFACE`. */

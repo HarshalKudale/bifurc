@@ -1,7 +1,7 @@
 import React, { useCallback } from "react";
 import { AppConfig, SavedRequest, MockRule, Environment, ApiProtocol } from "@/types";
 import CollectionRunner from "@/components/rest/CollectionRunner";
-import { CollectionRunReport } from "@/lib/collectionRunner";
+import { CollectionRunReport } from "@/types";
 import ProtocolSelectorTab from "@/components/editor/ProtocolSelectorTab";
 import { SidebarLayout } from "@/components/ui";
 import { strings } from "@/lib/strings";
@@ -170,7 +170,6 @@ export default function RequestsPanel({
                       folderId={folderId}
                       folderName={folder?.name ?? "Collection"}
                       requests={folderRequests}
-                      activeEnv={activeEnv}
                       wsId={config.activeWorkspaceId}
                       onClose={() => closeTab(tabId)}
                       onSaveReport={handleSaveRunnerReport}

@@ -63,7 +63,6 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "application.getAllStates",
   "application.getLogs",
   "application.checkPort",
-  "webhookServer.status",
   "runner.getHistory",
   "runner.loadConfig",
   "runner.listFolderIds",
@@ -82,12 +81,28 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "blob.read",
   "healthbar.getServices",
   "healthbar.checkUrl",
+  // `plan/19` WI 5, item 4 — the resolution display path. A read with no stored effect, so a retry cannot
+  // duplicate anything. **⚠ It is not *deterministic* though**: `{{random.*}}` mints a fresh value per
+  // call, so a retry returns a *different* string. That is safe here precisely because the caller uses the
+  // result to *display* a url, not to send one — a caller that sent the resolved value would need the
+  // pipeline's engine-side resolution instead. Recorded because "idempotent" is not the same claim as
+  // "same answer twice".
+  "env.resolveText",
+  // `plan/19` WI 6 — the merged environment. A read of engine state that stores nothing, so a retry cannot
+  // duplicate anything. Unlike `env.resolveText` above it is also **deterministic**: it mints no
+  // `{{random.*}}` value, it returns the same two entity lists merged the same way.
+  "env.getMerged",
+  // `plan/19` WI 5 — the cURL parser. A pure function of its argument: the same string always parses to the
+  // same request, so a retry cannot produce a different outcome.
+  "request.parseCurl",
 
   // ── writes that are a function of their arguments alone ──────────────────
   "entity.update",
   "entity.delete",
   "entity.setEnabled",
   "config.save",
+  // A patch of host settings: applying the same patch twice leaves the same settings.
+  "settings.update",
   "folder.rename",
   "folder.move",
   "folder.delete",
@@ -99,10 +114,6 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "server.start",
   "server.stop",
   "server.restart",
-  "webhook.registerActive",
-  "webhook.unregisterActive",
-  "webhookServer.start",
-  "webhookServer.stop",
   "sync.disconnect",
   "sync.setAutoSync",
   "git.discard",
@@ -110,6 +121,15 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "tls.importCert",
   "tls.importKey",
   "blob.release",
+  // The run's own commands (`plan/19` WI 4). `status` is a read of engine state; `cancel` sets a flag the
+  // loop checks, so a retry is the same request twice and the second is a no-op on an already-cancelled run.
+  "runner.status",
+  "runner.cancel",
+  // The socket registry (`plan/19` WI 6). Both are reads of the registry's own state — `status` returns one
+  // snapshot, `list` the live set — so a retry re-asks the same question. `ws.status` in particular is the
+  // command a client calls **on reconnect**, which is the moment a retry is most likely and least dangerous.
+  "ws.status",
+  "ws.list",
 ]);
 
 /**
@@ -121,8 +141,10 @@ export const IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
  */
 export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "entity.create", // allocates an id; a retry is a second entity
+  "entity.duplicate", // creates through entity.create; a retry is a second copy
   "folder.add", // allocates an id
   "workspace.add", // allocates an id
+  "engine.shutdown", // a retry after an unknown outcome could stop an engine that has since restarted
   "application.save", // allocates an id
   "application.delete",
   "application.start",
@@ -131,6 +153,7 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "runner.saveReport",
   "runner.exportReport",
   "runner.saveConfig",
+  "runner.start", // starts a run; a retry after an unknown outcome is a run the caller did not ask for
   "sync.setRemote",
   "sync.push", // sends whatever is dirty at call time
   "sync.pull",
@@ -149,7 +172,57 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "soap.execute",
   "grpc.execute",
   "capture.shareJson",
+  // `plan/19` WI 5, item 2 — capture → entity construction. Pure functions of the entry they are handed:
+  // the same capture always builds the same payload, so a retry cannot produce a different one. (Unlike
+  // `env.resolveText`, nothing here mints anything — these are genuinely deterministic as well.)
+  "capture.buildRequest",
+  "capture.buildMock",
+  // The engine's capture history: a read, a clear, and a removal by id — each leaves the same state twice.
+  "capture.list",
+  "capture.get",
+  "capture.setPaused",
+  "capture.setDisableCache",
+  "capture.clear",
+  "capture.remove",
   "healthbar.saveServices",
+  // The saved-entity counterparts of the `*.execute`/`replay` rows above, classified the same way and
+  // for the same reason. They *read* an entity first, which is idempotent on its own, but the command's
+  // effect is the outbound request that follows — and a retry after an unknown-outcome failure re-sends
+  // it. Classifying them by their read half would be the "wrongly retryable → duplicated mutation"
+  // direction the header calls the asymmetric one, so the read does not soften the answer.
+  //
+  // `request.send` (2026-09-30, `plan/19` D24/D27) is the same answer for a **stronger** reason, and it
+  // is worth stating because it makes this row load-bearing twice over: it is no longer a mere
+  // load-and-dispatch, it is the pipeline — and `{{random.*}}` is **non-deterministic**, so a retry does
+  // not re-send the same request, it sends a **different** one (`plan/19` §8 trap 3). A future change
+  // that made `request.*` retryable would therefore silently start sending different data.
+  "request.send",
+  "graphql.send",
+  "soap.send",
+  "grpc.send",
+  // ── the socket registry (`plan/19` WI 6) ─────────────────────────────────
+  //
+  // All four are non-idempotent, and two of them for the §8-trap-3 reason rather than the obvious one:
+  //
+  //   `ws.connect` — a retry after an unknown outcome is a **second** connect. The registry's policy is that
+  //   a connect on a live key *replaces* rather than refuses (see `wsRegistry.ts`), so a retry is not merely
+  //   wasteful: it tears down a working socket and opens a new one, and the user sees a connection drop for a
+  //   request that had already succeeded.
+  //   `ws.send` — the payload is resolved engine-side and `{{random.*}}` **re-mints per send**, which is the
+  //   correct behaviour for a stream (each frame is its own event, not a retry of an earlier one). That is
+  //   exactly why a transport-level retry is wrong here: it would write a *different* frame than the one the
+  //   caller asked for. Same class as `request.send`, opposite reason — there the re-mint is a hazard, here it
+  //   is the feature, and in both cases the answer is the same.
+  //   `ws.disconnect` — a retry cannot duplicate anything (closing a closed socket is a no-op), but it is
+  //   classified here because its *effect* is not a function of its arguments alone: it depends on what is
+  //   open at call time. Same reasoning as `sync.push`.
+  //   `ws.clearMessages` — drops the retained log, so a retry after an unknown outcome can erase messages the
+  //   caller never saw. `plan/19`'s rule that a retry must not lose data is why this is not idempotent in the
+  //   sense that matters here.
+  "ws.connect",
+  "ws.disconnect",
+  "ws.send",
+  "ws.clearMessages",
 ]);
 
 /** The frozen command list, so the partition can be asserted against it. */

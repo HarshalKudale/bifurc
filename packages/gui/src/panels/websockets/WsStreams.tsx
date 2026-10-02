@@ -7,9 +7,8 @@ import RandomizerHint from '@/components/editor/RandomizerHint';
 import { Send, Radio } from '@/lib/icons';
 import { strings } from '@/lib/strings';
 import { KVRow, mkRowId } from '@/lib/utils';
-import { Environment } from '@/types';
+import { Environment, WsMessage } from '@/types';
 import WsMessageRow from './WsMessageRow';
-import { WsMessage } from '@/hooks/useWebSocket';
 
 interface WsStreamsProps {
   reqTab: "headers";
@@ -60,7 +59,7 @@ export default function WsStreams({
               <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border/40 bg-background/10 flex-shrink-0 justify-end">
                 <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mr-1">Insert</span>
                 <EnvVarHint
-                  env={activeEnv}
+                  env={activeEnv ?? null}
                   onInsert={(token) => {
                     setHeaders((prev) => {
                       if (prev.length === 0) return [{ id: mkRowId(), enabled: true, key: "", value: token }];
@@ -105,7 +104,7 @@ export default function WsStreams({
               <div className="flex items-center gap-1.5 px-3 py-1 border-t border-border/40 bg-background/10 justify-end">
                 <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mr-1">Insert</span>
                 <EnvVarHint
-                  env={activeEnv}
+                  env={activeEnv ?? null}
                   onInsert={(token) => setOutgoingInput((v) => v + token)}
                 />
                 <RandomizerHint

@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { ProxyRule, Folder } from "@/types";
 import { strings } from "@/lib/strings";
-import { entityRelPath } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { Settings, History, Copy, Trash2 } from "@/lib/icons";
 import { Button, IconButton, DataTable, EmptyState, StatusDot, Switch } from "@/components/ui";
 import type { TableColumn } from "@/components/ui";
@@ -44,9 +44,11 @@ export default function ProxyRulesTable({
   onDelete,
   onOpenAdd,
 }: Props) {
+  /** The engine's `rules/<id>.json` (`plan/19` WI 5 item 3) — see `useEntityPaths`. */
+  const { relPathOf } = useEntityPaths();
+
   const getSyncStatus = (r: ProxyRule) => {
-    const relPath = entityRelPath("rules", r, folders);
-    return entitySyncStatus?.[relPath];
+    return entitySyncStatus?.[relPathOf(r.id)];
   };
 
   /**
@@ -151,7 +153,7 @@ export default function ProxyRulesTable({
         width: "w-32",
         render: (r) => {
           const view = getView(r);
-          const relPath = entityRelPath("rules", r, folders);
+          const relPath = relPathOf(r.id);
           return (
             <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
               {/* One primary button, labelled Publish or Sync by the rule's state. */}

@@ -109,7 +109,7 @@
 import { createServer as createHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
-import { DEFAULT_HOST_DOMAIN, isAllowedOrigin, isLoopbackHost, LOOPBACK_HOSTS } from "../lib/net";
+import { DEFAULT_HOST_DOMAIN, isAllowedOrigin, isLoopbackHost, LOOPBACK_HOSTS } from "../utils/net";
 import {
   Capability,
   EngineError,
@@ -128,8 +128,8 @@ import {
   ENGINE_EVENT_NAMES,
   type EngineEventBus,
   type EngineEvents,
-} from "../eventBus";
-import type { CommandContext, CommandRegistry } from "../commands/registry";
+} from "../kernel/eventBus";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import {
   createAuthenticatedTransport,
   IDENTITY_FAILURE_CODES,

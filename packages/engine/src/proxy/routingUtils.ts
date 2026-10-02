@@ -1,8 +1,8 @@
 import * as net from "net";
-import { AppConfig, Environment } from "../store/config";
-import { RequestLogEntry, emitLog } from "./logEmitter";
-import { sendHtml } from "./pages";
-import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "./mockHandler";
+import { AppConfig, Environment } from "../workspace/config";
+import { RequestLogEntry, emitLog } from "../kernel/telemetry";
+import { sendHtml } from "../utils/sendHtml";
+import { matchMock, serveMock, isFullyMocked, mergeMockWithUpstream, resolveMockOnlyResponse, serveResolvedResponse } from "../mocks/mockHandler";
 import { matchProxyRule, proxyWithScripts, proxyToUpstream, fetchUpstreamResponse } from "./proxyHandler";
 import { replayRequest } from "./server";
 

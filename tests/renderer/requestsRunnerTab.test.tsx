@@ -19,7 +19,9 @@ import type { AppConfig, Folder, SavedRequest } from "@/types";
  * panel down with it.
  *
  * That crash is why this file renders the panel and not the component: `CollectionRunner` was always
- * correct, and its own logic is covered by `collectionRunner.test.ts`. Every prop the fix restored
+ * correct, and its own logic **used to be** covered by `collectionRunner.test.ts` — that file went with the
+ * renderer's run loop on 2026-09-30 (`plan/19` WI 4), and the loop's behaviour is now
+ * `tests/runner/runRegistry.test.ts`'s subject. Every prop the fix restored
  * gets a case here, because they fail differently — a missing `requests` crashes loudly, but a
  * missing `wsId` or `onSaveReport` fails *silently*, and a missing `folderName` renders "Collection"
  * for every folder in the app.
@@ -82,12 +84,15 @@ beforeEach(() => {
   api = {
     loadRunnerConfig: vi.fn(async () => null),
     saveRunnerConfig: vi.fn(async () => undefined),
-    // `handleRun` re-reads each request in full before sending it, keyed by `wsId`.
-    loadEntity: vi.fn(async (_ws: string, _kind: string, id: string) => ({
-      ok: true,
-      entity: config().requests.find((r) => r.id === id),
-    })),
-    replayRequest: vi.fn(async () => ({ status: 200, headers: {}, body: "" })),
+    // The run's own commands and events (`plan/19` WI 4). The hook asks the engine what it knows on mount
+    // (`runnerStatus`) and then subscribes; it no longer loops, which is why there is no `loadEntity` /
+    // `replayRequest` stub here any more — the engine reads the entities and sends the requests.
+    runnerStatus: vi.fn(async () => null),
+    runnerStart: vi.fn(async () => ({ ok: true, total: 0 })),
+    runnerCancel: vi.fn(async () => ({ ok: true })),
+    exportRunnerReport: vi.fn(async () => undefined),
+    onRunnerProgress: vi.fn(() => () => {}),
+    onRunnerFinished: vi.fn(() => () => {}),
     saveRunnerReport: vi.fn(async () => ({ ok: true })),
   };
   (window as any).api = api;
@@ -149,26 +154,43 @@ describe("RequestsPanel — the collection runner tab", () => {
     await waitFor(() => expect(api.loadRunnerConfig).toHaveBeenCalledWith("ws-1", "f1"));
   });
 
-  it("runs the folder's requests and hands the report to the panel", async () => {
+  it("starts the run in the engine and renders the report the engine emits", async () => {
     panel();
     openRunner("Payments");
 
     fireEvent.click(screen.getByRole("button", { name: strings.collectionRunner.run }));
 
-    await waitFor(() => expect(api.saveRunnerReport).toHaveBeenCalled());
+    /**
+     * **The run is the engine's now** (`plan/19` WI 4, D29/D30). This case used to assert that the renderer
+     * hydrated each request through `loadEntity`, replayed it, and saved the report — that loop is gone, so
+     * what it asserts instead is the contract that replaced it: the UI *asks* the engine to start, and
+     * renders what the engine emits.
+     */
+    await waitFor(() => expect(api.runnerStart).toHaveBeenCalledWith("ws-1", "f1"));
 
-    // Both of the folder's requests were hydrated (through `wsId`) and sent — and only those two.
-    expect(api.loadEntity).toHaveBeenCalledWith("ws-1", "requests", "r1");
-    expect(api.loadEntity).toHaveBeenCalledWith("ws-1", "requests", "r2");
-    expect(api.replayRequest).toHaveBeenCalledTimes(2);
-    expect(api.replayRequest.mock.calls[0][1]).toBe("http://api.test/charge");
+    // The hook re-reads the engine's state after a successful start, because the engine's answer is the
+    // authority — it does not construct a snapshot of its own.
+    await waitFor(() => expect(api.runnerStatus).toHaveBeenCalledWith("ws-1", "f1"));
+
+    const report = {
+      folderId: "f1",
+      folderName: "Payments",
+      startedAt: 1,
+      completedAt: 2,
+      totalRequests: 2,
+      totalTests: 0,
+      passedTests: 0,
+      failedTests: 0,
+      results: [
+        { requestId: "r1", requestName: "Charge", method: "POST", url: "http://api.test/charge", status: 200, responseTime: 3, tests: [], testLogs: [] },
+        { requestId: "r2", requestName: "Refund", method: "POST", url: "http://api.test/refund", status: 200, responseTime: 4, tests: [], testLogs: [] },
+      ],
+    };
+    const onFinished = api.onRunnerFinished.mock.calls[0][0] as (p: unknown) => void;
+    await act(async () => { onFinished({ workspaceId: "ws-1", folderId: "f1", report }); });
 
     // `onSaveReport` is the only path that persists a run; without it the report dies with the tab.
-    const [wsId, report] = api.saveRunnerReport.mock.calls[0] as [string, any];
-    expect(wsId).toBe("ws-1");
-    expect(report.folderId).toBe("f1");
-    expect(report.totalRequests).toBe(2);
-    expect(report.results.map((r: any) => r.requestName)).toEqual(["Charge", "Refund"]);
+    await waitFor(() => expect(api.saveRunnerReport).toHaveBeenCalledWith("ws-1", report));
 
     // The UI agrees: a summary bar, a result card per request, and the export affordance. The cards
     // are located by the resolved URL, which only they render — the list rows carry name and method.

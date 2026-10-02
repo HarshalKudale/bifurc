@@ -4,7 +4,7 @@ import PanelHeader from "@/components/layout/PanelHeader";
 import ProxyRuleDetailsPanel, { RuleSavePayload } from "@/components/rules/ProxyRuleDetailsPanel";
 import ProxyRulesTable from "./ProxyRulesTable";
 import { strings } from "@/lib/strings";
-import { entityRelPath } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 import { Button } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 
@@ -190,10 +190,12 @@ export default function ProxyRulesPanel({
     }
   };
 
+  /** The engine's `rules/<id>.json` (`plan/19` WI 5 item 3) — see `useEntityPaths`. */
+  const { relPathOf } = useEntityPaths();
+
   const getSyncStatus = useCallback((r: ProxyRule) => {
-    const relPath = entityRelPath("rules", r, folders);
-    return entitySyncStatus?.[relPath];
-  }, [entitySyncStatus, folders]);
+    return entitySyncStatus?.[relPathOf(r.id)];
+  }, [entitySyncStatus, relPathOf]);
 
   const isDetailsOpen = isCreatingNew || !!selectedRuleId;
 
@@ -204,7 +206,7 @@ export default function ProxyRulesPanel({
   }, [isCreatingNew, selectedRuleId, loadedEntities, rules]);
 
   const selectedRuleSyncStatus = activeRule ? getSyncStatus(activeRule) : undefined;
-  const selectedRuleRelPath = activeRule ? entityRelPath("rules", activeRule, folders) : "";
+  const selectedRuleRelPath = activeRule ? relPathOf(activeRule.id) : "";
 
   return (
     <>

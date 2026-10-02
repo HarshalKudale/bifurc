@@ -74,14 +74,14 @@ import {
   type WorkspaceFixture,
 } from "./proxyHarness";
 import { startServer, stopServer, isRunning, getPort } from "@bifurc/engine/proxy/server";
-import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
-import { isCALoaded } from "@bifurc/engine/proxy/tlsCert";
-import { generateCA } from "@bifurc/engine/proxy/certManager";
-import { loadSettings, type AppSettings } from "@bifurc/engine/store/appSettings";
-import { loadConfig } from "@bifurc/engine/store/config";
-import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/reverseproxy/edge";
+import { isCALoaded } from "@bifurc/engine/certificates/tlsCert";
+import { generateCA } from "@bifurc/engine/certificates/certManager";
+import { loadSettings, type AppSettings } from "@bifurc/engine/workspace/appSettings";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { setDataDirOverride } from "@bifurc/engine/workspace/gitStore";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Capture the handlers the Settings screen drives ───────────────────────────
 
@@ -336,9 +336,9 @@ beforeEach(async () => {
   });
   setDataDirOverride(ws.dataRoot);
 
-  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
   const { registerClientHandlers } = await import("@/ipc/handlers/clientHandlers");
-  const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
+  const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
   registerCoreKinds();
   registerClientHandlers();
   registerCrudKinds();
@@ -364,14 +364,14 @@ beforeEach(async () => {
 // after it with `Command "config.get" is already registered.` — which is exactly how it was found:
 // 29 failures in this file, all from one throw inside the second test's `beforeEach`.
 beforeAll(async () => {
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-  const { registerCoreCommands } = await import("@bifurc/engine/store/coreCommands");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+  const { registerCoreCommands } = await import("@bifurc/engine/workspace/entities/coreCommands");
   registerCoreCommands(commandRegistry);
   // P6 §5c slice 7: the four collapsed `entity.*` commands left `entityCrudFactory.ts`'s module scope.
   // This goes in the `beforeAll` above, **not** next to `registerCrudKinds()` in the `beforeEach` —
   // see the note above for why a registry registration in `beforeEach` kills every test after the
   // first. The channels below are the ones `beforeEach` re-registers harmlessly.
-  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
   registerEntityCrudCommands(commandRegistry);
   // P6 reduction, fifth group: the three `server:*` channels are gone, so `DELETED_SERVER_CHANNELS`
   // invokes the commands directly and this is the only registration they need. Same shape as the
@@ -385,7 +385,7 @@ beforeAll(async () => {
   // `No handler registered for "config:save"`: the message names the *old* surface and points the reader
   // at a file that no longer contains it, which is why the rule is to compare this suite's
   // `register*Commands()` set against `src/ipc/handlers.ts` rather than against its own history.
-  const { registerConfigCommands } = await import("@bifurc/engine/store/configCommands");
+  const { registerConfigCommands } = await import("@bifurc/engine/workspace/entities/configCommands");
   registerConfigCommands(commandRegistry);
 });
 
@@ -432,7 +432,7 @@ async function bootOnConfiguredPort(): Promise<void> {
   edge = createEdgeRouter({ resolveConfig: () => loadConfig() });
   /**
    * **Bound as well as started — `plan/17` §5 work item 7.** `config.save` re-binds the edge through the
-   * module-level binding, and `restartEdge()` is a **no-op** when nothing is bound: `proxy/edge.ts` has no lazy
+   * module-level binding, and `restartEdge()` is a **no-op** when nothing is bound: `reverseproxy/edge.ts` has no lazy
    * default, unlike the proxy and the webhook. So a suite that created an edge without binding it would leave
    * the entire rebind path unexercised while every case still passed — the "assertion that cannot fail" shape
    * `TRAPS.md` warns about. Mirrors `runtime/host.ts`, which binds its edge the same way.
@@ -460,7 +460,7 @@ async function bootOnConfiguredPort(): Promise<void> {
 /**
  * The one request every routing assertion uses — sent to the **edge**.
  *
- * `app.localhost` is a mapped host, i.e. reverse-half traffic, and the reverse half is `proxy/edge.ts` after
+ * `app.localhost` is a mapped host, i.e. reverse-half traffic, and the reverse half is `reverseproxy/edge.ts` after
  * work item 3. Sending this to the forward proxy is what produced this suite's `400 to be 200` mass: the
  * forward proxy answers every relative request with a deliberate 400 whose body names the edge. Kept as a
  * one-line seam so a case that *means* the forward half reaches for `proxyRequest()` directly through

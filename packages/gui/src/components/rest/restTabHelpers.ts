@@ -1,10 +1,9 @@
 import { SavedRequest, MockRule } from "@/types";
 import {
   KVRow, mkRowId, headersToRows, rowsToHeaders,
-  b64ToText, textToB64, tryFormat,
+  b64ToText, textToB64, tryFormat, SKIP_CURL_HEADERS,
 } from "@/lib/utils";
 import { contentTypeToMode } from "@/lib/bodyUtils";
-import { SKIP_CURL_HEADERS } from "@/lib/curlParser";
 import { TabState, RequestDraft, MockDraft, TabType } from "./restTabReducer";
 
 // -- Helper for case-insensitive header lookup -----------------------------

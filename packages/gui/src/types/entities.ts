@@ -100,15 +100,6 @@ export interface SavedWsConnection {
   workspaceId: string;
 }
 
-export interface SavedWebhook {
-  id: string;
-  name: string;
-  /** User-defined suffix appended after /bifurc/webhooks/ */
-  urlSuffix: string;
-  createdAt: number;
-  folderId?: string | null;
-  workspaceId: string;
-}
 
 export interface SavedGrpcRequest {
   id: string;

@@ -18,7 +18,7 @@ import {
     readEnabledSet,
     writeEnabledSet,
     bootstrapEnabledSet,
-} from "@bifurc/engine/store/workspaceFs";
+} from "@bifurc/engine/workspace/workspaceFs";
 
 describe("workspaceFs", () => {
     let tmpDir: string;
@@ -62,7 +62,6 @@ describe("workspaceFs", () => {
             expect(fs.existsSync(path.join(wsPath, "mocks"))).toBe(true);
             expect(fs.existsSync(path.join(wsPath, "requests"))).toBe(true);
             expect(fs.existsSync(path.join(wsPath, "sockets"))).toBe(true);
-            expect(fs.existsSync(path.join(wsPath, "webhooks"))).toBe(true);
         });
 
         it("creates workspace.json file", () => {

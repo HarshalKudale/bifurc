@@ -1,12 +1,13 @@
 /**
- * Happy-path workflow test for the **Capture** screen's pure logic —
+ * Happy-path workflow test for the **Capture** screen's presentation logic —
  * `packages/gui/src/components/capture/captureUtils.ts`.
  *
- * This module is what turns a captured `RequestLogEntry` into something the user can keep:
- * `buildMockInitial()` builds the mock, `reqToHeadersBody()` builds the saved request, and
- * `deriveType()`/`fulfilledBy()`/`statusColor()` drive what the table actually renders. A
- * regression here silently produces wrong mocks (wrong status, body base64-vs-text, headers
- * that should have been stripped) — and nothing asserted it.
+ * **This file's scope shrank on 2026-09-30** (`plan/19` WI 5, item 2). The constructing half —
+ * `buildMockInitial()` and `reqToHeadersBody()`, which turned a captured `RequestLogEntry` into a mock or a
+ * saved request — moved to the engine (`packages/engine/src/utils/captureEntities.ts`), and its cases moved
+ * with it to `tests/engine/captureEntities.test.ts`. What is asserted here is what the module still owns:
+ * base64/text plumbing, the table's formatting, resource-type derivation and the fulfilled-by labels. A
+ * regression in these mislabels a row or mis-formats a duration, which is why they are still worth pinning.
  *
  * NOTE ON COVERAGE SCOPE: `captureUtils.ts` is a `.ts` file under `packages/gui/src/components/`,
  * but the coverage `include` glob only matched `.tsx` files there — so it was invisible to
@@ -29,8 +30,6 @@ import {
     deriveType,
     fulfilledBy,
     fulfilledColor,
-    reqToHeadersBody,
-    buildMockInitial,
 } from "@/components/capture/captureUtils";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -187,95 +186,9 @@ describe("captureUtils — deriveType", () => {
     });
 });
 
-// ── capture → saved request ──────────────────────────────────────────────────
-
-describe("captureUtils — turning a capture into a saved request", () => {
-    it("decodes the body and keeps the caller's headers", () => {
-        const req = reqToHeadersBody(entry({ reqBody: b64('{"name":"ada"}') }));
-
-        expect(req.method).toBe("GET");
-        expect(req.url).toBe("http://api.localhost/users");
-        expect(req.body).toBe('{"name":"ada"}');
-        expect(req.headers["accept"]).toBe("application/json");
-    });
-
-    it("strips headers that must be recomputed on replay", () => {
-        const req = reqToHeadersBody(entry({
-            reqHeaders: {
-                host: "api.localhost",
-                connection: "keep-alive",
-                "content-length": "13",
-                "transfer-encoding": "chunked",
-                "proxy-connection": "keep-alive",
-                "x-keep": "yes",
-            },
-        }));
-
-        expect(req.headers).toEqual({ "x-keep": "yes" });
-    });
-
-    it("leaves the name blank so the caller can label it", () => {
-        expect(reqToHeadersBody(entry()).name).toBe("");
-    });
-});
-
-// ── capture → mock ───────────────────────────────────────────────────────────
-
-describe("captureUtils — turning a capture into a mock", () => {
-    it("carries the request and response across verbatim", () => {
-        const mock = buildMockInitial(entry({
-            reqHeaders: { host: "api.localhost", accept: "application/json" },
-            reqBody: b64('{"q":1}'),
-            resHeaders: { "content-type": "application/json" },
-            resBody: b64('{"ok":true}'),
-        }));
-
-        expect(mock.method).toBe("GET");
-        expect(mock.urlPattern).toBe("http://api.localhost/users");
-        expect(mock.useRegex).toBe(false);
-        // The mock stores the *raw* capture, so it can replay byte-for-byte.
-        expect(mock.capturedHeaders).toEqual({ host: "api.localhost", accept: "application/json" });
-        expect(mock.capturedBody).toBe(b64('{"q":1}'));
-        expect(mock.responseStatus).toBe(200);
-        expect(mock.responseBody).toBe('{"ok":true}');
-        expect(mock.responseBodyEncoding).toBeUndefined();
-    });
-
-    it("marks the response status, body and delay as mocked so the mock stands alone", () => {
-        const mock = buildMockInitial(entry());
-
-        expect(mock.responseStatusMocked).toBe(true);
-        expect(mock.responseBodyMocked).toBe(true);
-        expect(mock.responseDelayMocked).toBe(true);
-        expect(mock.mockedResponseHeaders).toEqual([]);
-    });
-
-    it("keeps a binary response as base64 and flags the encoding", () => {
-        const mock = buildMockInitial(entry({
-            resHeaders: { "content-type": "image/png" },
-            resBody: b64bytes(32),
-        }));
-
-        expect(mock.responseBodyEncoding).toBe("base64");
-        expect(mock.responseBody).toBe(b64bytes(32));
-    });
-
-    it("falls back to '{}' when a text response has no body", () => {
-        const mock = buildMockInitial(entry({ resBody: "" }));
-
-        expect(mock.responseBody).toBe("{}");
-        expect(mock.responseBodyEncoding).toBeUndefined();
-    });
-
-    it("defaults the status to 200 when the capture never got a response", () => {
-        const mock = buildMockInitial(entry({ resStatus: null, status: null, via: "error" }));
-
-        expect(mock.responseStatus).toBe(200);
-    });
-
-    it("preserves a non-2xx captured status", () => {
-        const mock = buildMockInitial(entry({ resStatus: 503, status: 503 }));
-
-        expect(mock.responseStatus).toBe(503);
-    });
-});
+// ── moved out, 2026-09-30 ────────────────────────────────────────────────────
+//
+// The "turning a capture into a saved request" and "turning a capture into a mock" blocks were here.
+// `plan/19` WI 5 item 2 moved `reqToHeadersBody` / `buildMockInitial` into the engine, and the cases went
+// with them — `tests/engine/captureEntities.test.ts`. They are not duplicated back here: two copies of one
+// suite is the same defect as two copies of one implementation, one layer up.

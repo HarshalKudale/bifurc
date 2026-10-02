@@ -15,7 +15,7 @@ const { mockIpcMain, registeredHandlers } = vi.hoisted(() => {
 
 let currentSettings: any;
 
-vi.mock("@bifurc/engine/store/appSettings", () => ({
+vi.mock("@bifurc/engine/workspace/appSettings", () => ({
   loadSettings: vi.fn(() => currentSettings),
   saveSettings: vi.fn((s: any) => { currentSettings = s; }),
   appDataDir: vi.fn(() => "/tmp/test-user-data"),
@@ -26,7 +26,7 @@ vi.mock("@/main", () => ({
 }));
 
 /**
- * `tls:installCA` used to be mocked at `@bifurc/engine/proxy/certManager`, because the handler
+ * `tls:installCA` used to be mocked at `@bifurc/engine/certificates/certManager`, because the handler
  * called `installCA()` from inside the engine. P3 work item 5 moved the OS trust store to the
  * client (`src/ipc/certTrust.ts`) and the composition to `src/ipc/certLifecycle.ts`, so the seam to
  * mock moved with it. The platform command shapes are asserted exactly, with no mocking at all, in

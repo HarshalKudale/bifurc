@@ -28,7 +28,6 @@ export const EntityKind = z.enum([
   "mocks",
   "requests",
   "wsConnections",
-  "webhooks",
   "graphqlRequests",
   "grpcRequests",
   "soapRequests",
@@ -86,6 +85,17 @@ export type EntityLoadParams = z.infer<typeof EntityLoadParams>;
 export interface EntityLoadResult {
   ok: boolean;
   entity?: Record<string, unknown>;
+}
+
+/** `entity.duplicate` — a copy of a saved entity, created through `entity.create`; named "<name> copy". */
+export const EntityDuplicateParams = z.object({
+  workspaceId: z.string(),
+  kind: EntityKind,
+  id: z.string(),
+}).strict();
+export type EntityDuplicateParams = z.infer<typeof EntityDuplicateParams>;
+export interface EntityDuplicateResult {
+  entity: Record<string, unknown>;
 }
 
 export const EntityListParams = z.object({

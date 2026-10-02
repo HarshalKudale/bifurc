@@ -67,6 +67,8 @@
  */
 
 /** The parsed command line. `dataDir` is the one required field — see `parseHostArgs`. */
+import { platformDefaultDataDir } from "../workspace/paths";
+
 export interface HostArgs {
   /** The data root. Required, and never invented: `store/paths.ts` throws rather than defaulting. */
   dataDir: string;
@@ -86,6 +88,8 @@ export interface HostArgs {
    * write, which is why that coherence check is gone rather than kept.
    */
   wsPort?: number;
+  /** How the RPC endpoint is exposed. Always set by the parser. */
+  transport?: "socket" | "ws" | "stdio";
   /**
    * The port the **edge router** binds — `plan/15` work item 3. Omitted → `app.json`'s `port`
    * (`settings.port`, default 80), which is the port existing `*.localhost` mappings already point at.
@@ -96,6 +100,12 @@ export interface HostArgs {
    * container's volume.
    */
   edgePort?: number;
+  /** The tray helper's executable. Absent → `BIFURC_TRAY`, then a search (`runtime/desktop.ts`). */
+  tray?: string;
+  /** The interface the tray opens. Absent → `BIFURC_UI`, then the one beside the tray helper. */
+  ui?: string;
+  /** `--no-tray`: run without a tray icon, and without the lifetime rules that come with one. */
+  noTray?: boolean;
 }
 
 export type HostArgsResult =
@@ -106,7 +116,15 @@ export type HostArgsResult =
   | { kind: "error"; message: string };
 
 /** Printed on `--help`, and on any parse failure so the operator sees what was expected. */
-export const HOST_USAGE = `Usage: node <engine>/dist/runtime/hostCli.js --data-dir <path> [options]
+export const HOST_USAGE = `Usage: bifurc-engine [--data-dir <path>] [--transport socket|ws|stdio] [options]
+
+The Bifurc engine, standalone. One engine serves one data directory; it records where it listens in
+<data-dir>/runtime.json so the desktop app, the CLI and other clients can find it.
+
+  --data-dir <path>       The data root. Defaults to the desktop app's data directory.
+  --transport <kind>      socket (default): a named pipe on Windows, a unix socket elsewhere, at a path
+                          derived from the data dir. ws: WebSocket on loopback. stdio: frames on
+                          stdin/stdout, for a parent process that spawned the engine.
 
 A workspace host: N workspaces behind ONE RPC endpoint, no app-level singleton server.
 
@@ -129,6 +147,12 @@ Options
                           for the whole host (plan/15 §3.1). Defaults to the port in app.json (80),
                           which is the port existing *.localhost mappings already point at, so no
                           existing mapping has to change.
+  --tray <path>           The tray helper (bifurc-tray). Defaults to BIFURC_TRAY, then the one found
+                          beside the engine. While its icon is up the engine keeps running after its
+                          interfaces close; the icon opens the interface, restarts and quits.
+  --ui <path>             The interface the tray icon opens. Defaults to BIFURC_UI, then the one
+                          beside the tray helper.
+  --no-tray               No tray icon, and the engine does not stop when its interfaces close.
   -h, --help              Print this.
 
 Environment
@@ -149,6 +173,9 @@ const VALUE_FLAGS = new Set([
   "--ws-port",
   "--workspace",
   "--edge-port",
+  "--transport",
+  "--tray",
+  "--ui",
 ]);
 
 /**
@@ -163,7 +190,7 @@ const VALUE_FLAGS = new Set([
  * All nine went on **2026-09-25** for the same underlying reason: the engine is never deployed remotely,
  * so there is no address to publish and no boundary for a token to guard. The token half is
  * `transport/auth/token.ts`'s deletion; the bind half is the unconditional loopback guard in
- * `transport/ws.ts`, `proxy/server.ts` and `proxy/edge.ts`.
+ * `transport/ws.ts`, `proxy/server.ts` and `reverseproxy/edge.ts`.
  */
 const REMOVED_FLAGS = new Map<string, string>([
   ["--ws-host", "every listener binds loopback, so the bind host is not a choice"],
@@ -192,6 +219,10 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
   let rpcSocket: string | undefined;
   let wsPort: number | undefined;
   let edgePort: number | undefined;
+  let transport: HostArgs["transport"];
+  let tray: string | undefined;
+  let ui: string | undefined;
+  let noTray = false;
   const workspaceIds: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -199,6 +230,10 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
 
     if (raw === "-h" || raw === "--help") {
       return { kind: "help" };
+    }
+    if (raw === "--no-tray") {
+      noTray = true;
+      continue;
     }
 
     // Split the `=` form once, so `--data-dir=/data` and `--data-dir /data` reach the same branch.
@@ -262,6 +297,18 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       case "--workspace":
         workspaceIds.push(value);
         break;
+      case "--transport":
+        if (value !== "socket" && value !== "ws" && value !== "stdio") {
+          return { kind: "error", message: `--transport must be socket, ws or stdio.\n\n${HOST_USAGE}` };
+        }
+        transport = value;
+        break;
+      case "--tray":
+        tray = value;
+        break;
+      case "--ui":
+        ui = value;
+        break;
       case "--edge-port": {
         // Validated the way `--ws-port` is, and for the same reason: a non-numeric port reaches
         // `listen()` as `NaN` and surfaces as an obscure `ERR_SOCKET_BAD_PORT` from inside the host,
@@ -276,11 +323,20 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
     }
   }
 
-  if (dataDir === undefined || dataDir === "") {
-    return {
-      kind: "error",
-      message: `--data-dir is required (or set BIFURC_DATA_DIR).\n\n${HOST_USAGE}`,
-    };
+  // The desktop app's own data directory, so a sidecar started with no flags serves what the app shows.
+  if (dataDir === undefined || dataDir === "") dataDir = platformDefaultDataDir();
+
+  if (transport === "stdio" && (rpcSocket !== undefined || wsPort !== undefined)) {
+    return { kind: "error", message: `--transport stdio takes no --rpc-socket or --ws-port.\n\n${HOST_USAGE}` };
+  }
+  if (noTray && tray !== undefined) {
+    return { kind: "error", message: `--no-tray cannot be combined with --tray.\n\n${HOST_USAGE}` };
+  }
+  if (transport === "socket" && wsPort !== undefined) {
+    return { kind: "error", message: `--transport socket cannot be combined with --ws-port.\n\n${HOST_USAGE}` };
+  }
+  if (transport === "ws" && rpcSocket !== undefined) {
+    return { kind: "error", message: `--transport ws cannot be combined with --rpc-socket.\n\n${HOST_USAGE}` };
   }
 
   /**
@@ -292,7 +348,7 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
    *
    * **The *policy* is still not restated here.** A bind policy belongs to the module that binds, and since
    * 2026-09-25 there is no policy to state: loopback is not a default the parser could contradict, it is
-   * the only value the guards accept. See `transport/ws.ts`, `proxy/server.ts` and `proxy/edge.ts`.
+   * the only value the guards accept. See `transport/ws.ts`, `proxy/server.ts` and `reverseproxy/edge.ts`.
    */
   if (rpcSocket !== undefined && wsPort !== undefined) {
     return {
@@ -307,6 +363,8 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
     kind: "args",
     args: {
       dataDir,
+      // `--ws-port` alone still selects WebSocket, as it always has.
+      transport: transport ?? (wsPort !== undefined ? "ws" : "socket"),
       rpcSocket,
       wsPort,
       // Omitted rather than empty when nothing was passed, so the host's own default applies and
@@ -316,6 +374,9 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       // Left `undefined` when absent so the host applies its own default — `app.json`'s `port` — rather
       // than the parser inventing one here, which would put the migration decision in a second place.
       edgePort,
+      ...(tray !== undefined ? { tray } : {}),
+      ...(ui !== undefined ? { ui } : {}),
+      ...(noTray ? { noTray } : {}),
     },
   };
 }

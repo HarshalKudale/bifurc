@@ -21,6 +21,7 @@ ASSIGN = {
         application.checkPort
         audit.list audit.diff
         blob.stat blob.read
+        capture.list capture.get
         config.get
         entity.load entity.list
         export.formats
@@ -43,8 +44,9 @@ ASSIGN = {
         audit.export
         blob.put blob.release
         capture.shareJson
-        config.save
-        entity.create entity.update entity.delete entity.setEnabled entity.publish entity.restore
+        capture.clear capture.remove capture.setPaused capture.setDisableCache
+        config.save settings.update
+        entity.create entity.duplicate entity.update entity.delete entity.setEnabled entity.publish entity.restore
         env.setActive
         export.create
         folder.add folder.rename folder.move folder.delete folder.publish
@@ -68,7 +70,7 @@ ASSIGN = {
         application.delete application.start application.stop application.killPort
         server.start server.stop server.restart
         tls.generate tls.removeCert
-        webhookServer.start webhookServer.stop
+        engine.shutdown
     """,
 }
 

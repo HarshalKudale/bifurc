@@ -707,6 +707,704 @@ its own entry) and WI 8. This entry records the landing, not a new decision.
 
 ---
 
+### 2026-09-29 — four `*Saved` commands: execute a saved request entity by id
+
+**Phase:** post-P18 housekeeping — the engine-side prerequisite for the parked CLI (P8)
+**Type:** additive
+**Change:** four new commands, in a new file `packages/protocol/src/commands/saved.ts`:
+
+| command | counterpart of | entity kind it loads |
+|---|---|---|
+| `request.replaySaved` | `request.replay` | `requests` |
+| `graphql.executeSaved` | `graphql.execute` | `graphqlRequests` |
+| `soap.executeSaved` | `soap.execute` | `soapRequests` |
+| `grpc.executeSaved` | `grpc.execute` | `grpcRequests` |
+
+All four take the same params — `{ workspaceId: string, id: string }`, `.strict()` — and nothing else, and
+each returns exactly what the command it delegates to returns. **No existing command, payload, error code
+or event changed.** The protocol goes 89 → **93** commands.
+
+**Why it could not wait:** it is not urgent — nothing is broken — but it is *cheap now and expensive
+later*, and that asymmetry is the whole argument. Today no client depends on the new shape, and the change
+is four additive names plus one engine module that alters no existing file's behaviour. The first consumer
+that needs it (D15's CLI: `bifurc requests send <id>`) would otherwise arrive with a client already built
+against the payload-passing commands, and the fix would then be a protocol change *and* a client change at
+once.
+
+**The problem, in one sentence:** every request-executing command takes the **whole request** — correct for
+an editor, since an unsaved tab has nothing else to send, and wrong for every other consumer, which has an
+*id*. The renderer is the only caller today, so the engine has never had to serve the id case; a second
+consumer would have to load the entity itself and re-send every field, which puts the stored shape in the
+client's hands — exactly the coupling the engine exists to remove.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **Yes, deliberately, and that is
+   this entry's central point.** The payload difference *is* the feature: `{method, url, headers, body}`
+   versus `{workspaceId, id}`. The originals cannot be reshaped — the editor genuinely has an unsaved state
+   to send — so a counterpart is the only shape that serves both. This is the one place the checklist's
+   rule is answered by adding a near-duplicate, and the reason is recorded rather than left to be
+   rediscovered.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No.** `entity.*` is CRUD *over* the entity;
+   these *execute* it, which is a different scope class (`write`/`read` versus `execute`). Four commands
+   rather than one `entity.execute{kind}` because the kind is fixed by the name — a single command would
+   accept `kind: "grpcRequests"` for a REST replay, which is an answer about neither.
+3. *Does the payload contain a filesystem path?* — No: `{workspaceId, id}`.
+4. *Is there a schema, and does the engine validate against it?* — Yes. `SavedEntityRef` is declared once
+   and reused by all four, `.strict()` on the outermost call; the registry validates every inbound payload
+   against it.
+5. *Is it in the right scope class?* — `execute`, the same as the four commands they delegate to. A
+   *weaker* scope would have been a widening: a counterpart delegates through `registry.invoke()`, which
+   does **not** re-check scopes (the check is in the transport decorator), so a `read`-scoped session could
+   otherwise reach `graphql.execute` by the saved-entity door.
+
+**Two things the counterparts deliberately do not do**, recorded in `saved.ts`'s header so the omission
+reads as a decision: they do **not** resolve `{{variables}}` against the active environment, and they do
+**not** run the pre/post/test scripts. Both are the renderer's half today and neither has ever been part of
+`request.replay` — the collection runner drives scripts through `script.execute` *around* the replay. A
+caller that wants either must ask for it.
+
+**Four near-misses were considered and left out**, on the same rule — a counterpart is only meaningful when
+the command's *entire* input is derivable from a saved entity: `graphql.introspect` and `soap.fetchWsdl`
+(the GUI drives both from a typed-in address, and `wsdls` stores the fetched document, not a target),
+`grpc.reflect` (typed-in address), `script.execute` (a script is a *field* of a request entity, and the
+command also needs the response context), and `healthbar.checkUrl` (healthbar services are not a CRUD kind
+and have no id). Listed in `saved.ts`, so a reader can tell an omission from an oversight.
+
+**One engine module, not four.** The four are one capability — *load the entity the caller named and hand
+it to the command that runs it* — and the module reads only the entity (`workspace/`) and dispatches only
+through the `CommandRegistry` (`kernel/`), naming its targets as strings and importing no feature module at
+all. It lives at `packages/engine/src/workspace/entities/savedRequestCommands.ts`, beside `entity.load`,
+whose job it composes. Splitting it per protocol would not distribute any behaviour; it would put four
+copies of one body in four directories.
+
+**Affected:** commands — four new names. Clients — **none required to change.** `@bifurc/client`'s
+`window.api` surface is deliberately untouched (it is frozen and byte-identical, and no renderer call site
+is migrated here), so the two totality tables that *do* track the protocol were the only client-side edits:
+`packages/engine/src/transport/auth/scopes.ts` (four `execute` rows) and `packages/client/src/retry.ts`
+(four non-idempotent rows). Both assert total coverage of `COMMANDS` and throw at import time otherwise, so
+adding a command without them is a load failure rather than a silent gap.
+
+**Migration:** none. Existing clients keep calling the existing commands unchanged; a consumer that wants
+the id shape calls the new name.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **241 → 249** (+8 = 4 commands × the 2 generated
+cases each — the per-command pair, not the `workspaceId` block, which covers a fixed 17-command list and was
+not added to). The unit project total moved with it, **2,281 → 2,289**, which is the whole of the change:
+no other unit test's count changed. `tests/integration/protocolExecution.integration.test.ts` **41 → 54**
+(+13), driving all four
+against **real** HTTP servers: the REST case asserts the bytes the upstream received — including that the
+stored *text* body arrives as text, which is the group's one real transformation — and each command's
+`NOT_FOUND` case is what proves the load half runs at all, since the gRPC target is a stub that ignores
+every parameter. `tests/integration/workspaceHost.integration.test.ts`'s shell↔engine drift guard needed a
+row in its hand-maintained path table for the new owner and passes with it. Full unit project green;
+`typecheck:packages` and the root `tsc --noEmit` clean. (Incidental: the three "93-entry table" mentions in
+the protocol source, which read 93 while the real count was 89, are now accurate.)
+
+**Approved by:** the owner's direction, 2026-09-29 — *"if request is saved then it is on disk and UI should
+only be passing request's entity id where backend loads the entity and does the request … CLI is out of
+scope now but we can at least make engine work correctly for saved entities."* This entry records the
+landing, not a new decision.
+
+> **⚠ Amended 2026-09-30 for the REST case** — `request.replaySaved` becomes **`request.send`** with a
+> widened payload; see the entry below. The other three names are unchanged *for now*: they are renamed one
+> at a time as each protocol's pipeline lands (`plan/19` §8 trap 1 — one commit per protocol).
+
+---
+
+
+### 2026-09-30 — `request.send`: the REST pipeline, and the id form's payload widens
+
+**Phase:** `plan/19` WI 3, first protocol (D24 / D27)
+**Type:** **breaking in name only** — and why that is not a `PROTOCOL_VERSION` bump is below
+**Change:** `request.replaySaved` → **`request.send`**, and its params widen from `{workspaceId, id}` to a
+union of two complete forms:
+
+| input form | payload | who uses it |
+|---|---|---|
+| **id** | `{ workspaceId, id }` | a saved tab holding no unsaved changes, and the CLI |
+| **inline** | `{ workspaceId, request, scripts }` | a draft tab, and any caller that has not saved yet |
+
+`request` is `{method, url, headers, body}` with **`body` as text**; `scripts` is `{pre?, post?, test?}`.
+The result widens too: the response (`status` / `headers` / `body` base64 — the fields `request.replay`
+already returns) **plus** what the pipeline did on the way through — the request as actually sent, the test
+results and logs, and the two script error strings.
+
+**Why the name changes instead of a fifth command being added.** §5 option B was chosen for the pipeline
+surface (D27), and B's cost — as §5 itself says — is that it leaves the `*Saved` family as a near-duplicate.
+That cost is avoidable here and *only* here: **the `*Saved` family has never been committed.** No client has
+ever seen `request.replaySaved`, so there is nothing to migrate. Adding `request.send` beside it would have
+created the near-duplicate §5 warns about, in the one change that had the opportunity to avoid it.
+
+**Why this is not a `PROTOCOL_VERSION` bump.** `## Guidance` lists "rename a command" as breaking, and it
+is — for a **released** name. This one has never been released: it exists only in the protocol source,
+`PROTOCOL_VERSION` stays `"1.0.0"`, and the command **count is unchanged at 93** (one name replaced by one
+name). The honest framing is that this corrects an unreleased landing. It gets its own entry rather than an
+edit into the 2026-09-29 one because the *reasoning* differs: that entry argued for adding an id-shaped
+command; this one argues for the pipeline, and the rename is a consequence of it.
+
+**Why the id form carries the body as text while `request.replay` stays base64.** §5's sub-decision. The
+pipeline's input *is* the stored entity — `SavedRequest.body` is text, and all five importers store text —
+so carrying base64 would have meant the caller encoding, the engine decoding, and the blank-means-empty rule
+re-derived at both ends. The raw primitive keeps base64 because binary safety is a wire concern and
+`request.replay` predates this. The pipeline's REST `send` closure encodes **once**, in the one place that
+talks to `request.replay`.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **It replaces one.** The inline
+   form is `request.replay` plus resolution and scripts; the id form is the 2026-09-29 counterpart. One name
+   covers both because D24 makes them **the same pipeline** with two sources of request, and two names for
+   that would be the duplication this checklist item exists to prevent.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**, for the 2026-09-29 reason: `entity.*` is
+   CRUD *over* the entity, while this *executes* it — a different scope class.
+3. *Does the payload contain a filesystem path?* — No. `{workspaceId, id}` or `{workspaceId, request,
+   scripts}`.
+4. *Is there a schema, and does the engine validate against it?* — Yes: a `z.union` of two `.strict()`
+   objects, so a payload that is neither form is rejected rather than half-read.
+5. *Is it in the right scope class?* — `execute`, unchanged and the same as the `request.replay` it
+   invokes. A pipeline that resolved and ran scripts at `read` scope would be a widening.
+
+**The union is the one thing to be careful about, and it is not option C.** §5 rejected option C —
+folding the id form into `request.replay` — because *"one command with two mutually-exclusive input modes is
+a schema nothing can validate honestly"*. That objection does not carry over, and the distinction is worth
+stating rather than assuming: option C would have put two modes on the **raw primitive**, whose whole value
+is being one thing; `request.send` is a *new* command whose two forms are each a complete description of a
+request, and `z.union` validates them exhaustively. What must not happen is a payload that is *partly* one
+form — `{workspaceId, id, scripts}` — and `.strict()` on **both** members is what turns that into a
+rejection rather than a silent half-read.
+
+**Affected:** commands — `request.replaySaved` → `request.send`; count unchanged at 93. Clients —
+`@bifurc/client`'s `replayRequestSaved` → `requestSend` (a **rename**, so the surface count is unchanged),
+and `packages/gui/src/types/window.ts` likewise. Renderer — `useRestActions` stops resolving and
+orchestrating; `savedEntitySend.ts` shrinks to `!isDraft && !hasLocalChanges`, which is `plan/19` §7's
+predicted end state and the reason its two domain terms disappear.
+
+**Migration:** none. The only caller is this repository's REST tab, migrated in the same change — which is
+`plan/19` §8 trap 1's *"one commit per protocol: the engine starts and the renderer stops"*, not an option.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **249** — unchanged, and that is the point: one
+name replaced by one name. The generated pair now exercises the union's **inline** member as `valid`, and as
+`invalid` a payload that is **partly both** forms — the rejection a two-member union introduces, and the
+thing `.strict()` on both members exists for.
+
+`tests/integration/protocolExecution.integration.test.ts` **54 → 54**: the block's cases were *rewritten*
+rather than added to. Call sites renamed, and the case that pinned *"forwards the stored values literally —
+no `{{variable}}` resolution"* **inverted** — because that boundary is precisely what this entry moves. It now
+asserts that a stored `{{apiToken}}` resolves against the workspace's `__global__` environment, which is
+`plan/19` §10's acceptance criterion stated end to end.
+
+**The first integration run failed, and the failure is worth recording.** `No handler registered for command
+"request.send"` for **7** cases: `protocolExecution.integration.test.ts` registers handler groups by calling
+each `register*Commands()` by name, and it had never heard of `registerPipelineCommands`. **A new
+`register*Commands` owner needs its call site added there as well as in the shell** — the same *"a command's
+registration is not the whole of its dependency"* shape `registerAll.ts` warns about, one consumer over.
+
+Unit and integration both green apart from the standing environment failures; `plan/19` §11 records the
+totals.
+
+---
+
+
+### 2026-09-30 — `graphql.send`: the second protocol, and what "resolve every field" actually means
+
+**Phase:** `plan/19` WI 3, second protocol (D23 / D24 / D27)
+**Type:** **breaking in name only** — same argument as `request.send` above, and it holds for the same
+reason: the name it replaces was never released
+**Change:** `graphql.executeSaved` → **`graphql.send`**, params widened to a union:
+
+| input form | payload | who uses it |
+|---|---|---|
+| **id** | `{ workspaceId, id }` | a saved tab with no unsaved changes, and the CLI |
+| **inline** | `{ workspaceId, request }` | a draft tab, and any caller that has not saved yet |
+
+`request` is `{endpointUrl, headers, query, variables, operationName}` — **the stored entity's own shape**,
+not `graphql.execute`'s. The inline form carries what the *editor* holds, and the editor holds `endpointUrl`;
+the `endpointUrl` → `url` rename stays the engine's business, exactly as it already is for the id form.
+Command count stays **93** — one name replaced by one name.
+
+**No `scripts` field, and that is a decision rather than an omission.** `request.send` has one; this command
+does not, because the script sandbox's context *is* a `{method, url, headers, body}` request
+(`mocks/scriptExecutor.ts`'s `IpcScriptOpts`) and a GraphQL request is not one. A `scripts` object nothing
+could run would be a field that lies about what the command does. It arrives when the sandbox grows a
+protocol-neutral context — the same change that would let this command use `runRequestPipeline`.
+
+**⚠ This entry fixes a latent inconsistency, and the gate is what documented it.** Each non-REST tab resolved
+*some* of its fields in the renderer:
+
+| tab | fields the gate's token scan treats as resolvable | fields `handleSend` actually resolved |
+|---|---|---|
+| GraphQL | `endpointUrl`, `query`, `variables`, `operationName`, `headers` | `endpointUrl`, `variables`, `headers` |
+| SOAP | `endpointUrl`, `soapAction`, `body`, `headers` | `endpointUrl`, `body`, `headers` |
+| gRPC | `serverAddress`, `serviceName`, `methodName`, `requestBody`, `metadata` | `serverAddress`, `requestBody`, `metadata` |
+
+**The gate was written from intent and the tab from practice, and the gate is the better spec.** A
+`{{token}}` in a GraphQL `query` — or a SOAP `soapAction`, or a gRPC `serviceName` — has therefore never
+resolved, in *either* path: the gate only ever chose between two ways of sending the same unresolved field.
+Engine-side resolution removes the disagreement by construction. **The engine resolves every field**, which is
+the only form under which `usesVariables` can leave the gate at all (`plan/19` §7); resolving the narrower set
+would have preserved the bug *and* kept the term forever.
+
+**Checklist (`## Guidance`, "Before adding any command"):** the same five answers as `request.send` above —
+it replaces an existing name rather than being added beside it; it is not an `entity.*` kind discriminator;
+it carries no filesystem path; it is a `.strict()`-on-both-members union; and it keeps the `execute` scope of
+the `graphql.execute` it invokes.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **249** — unchanged again, one name replaced by
+one name. `graphql.send`'s generated pair exercises the union's **inline** member and, as `invalid`, a payload
+that is partly both forms.
+
+`tests/integration/protocolExecution.integration.test.ts` **54 → 55**: the `graphql.executeSaved` cases were
+renamed, and **one case was added** — *"graphql.send resolves EVERY field — including the query and the
+operation name"* — because this migration changes behaviour rather than only moving it. It writes a
+`graphqlRequests` entity whose endpoint, header, query, variables **and** operation name each contain
+`{{apiToken}}`, and asserts the upstream received all five resolved. That is the assertion for the table above:
+a `{{token}}` in a query never resolved before, in **either** path.
+
+Unit and integration green apart from the standing environment failures; `plan/19` §11 records the totals.
+
+---
+
+
+### 2026-09-30 — `soap.send`: the third protocol, and the simplest shape of the three
+
+**Phase:** `plan/19` WI 3, third protocol (D23 / D24 / D27)
+**Type:** **breaking in name only** — the same argument as `request.send` and `graphql.send` above
+**Change:** `soap.executeSaved` → **`soap.send`**, params widened to a union:
+
+| input form | payload | who uses it |
+|---|---|---|
+| **id** | `{ workspaceId, id }` | a saved tab with no unsaved changes, and the CLI |
+| **inline** | `{ workspaceId, request }` | a draft tab, and any caller that has not saved yet |
+
+`request` is `{endpointUrl, soapAction, headers, body}` — **the stored entity's shape, which for SOAP is also
+`soap.execute`'s.** All four fields are already named identically on both sides, so unlike GraphQL there is no
+rename for the engine to perform and this is the simplest of the three unions. Command count stays **93**.
+
+**No `scripts` member**, for the reason recorded in the `graphql.send` entry above: the sandbox's context is a
+`{method, url, headers, body}` request and a SOAP request is not one.
+
+**The same class of latent under-resolution, one field wide.** The tab resolved `endpointUrl`, `headers` and
+`body` but **not `soapAction`**, while the Send gate's token scan treated all four as resolvable — so a
+`{{token}}` in a SOAPAction never resolved in *either* path. `soap.send` resolves all four. The full argument
+is in the `graphql.send` entry and applies unchanged; this one is recorded separately because the *field* is
+different, and a reader looking for "was `soapAction` ever resolved?" should find the answer here rather than
+infer it from a GraphQL entry.
+
+**Checklist (`## Guidance`, "Before adding any command"):** the same five answers as `request.send` — it
+replaces an existing name rather than being added beside it, it is not an `entity.*` kind discriminator, it
+carries no filesystem path, it is a `.strict()`-on-both-members union, and it keeps the `execute` scope of the
+`soap.execute` it invokes.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **249** — unchanged again, one name replaced by
+one name. `tests/integration/protocolExecution.integration.test.ts` **55 → 56**: the `soap.executeSaved`
+cases renamed, plus **one added** — *"soap.send resolves EVERY field — including the SOAPAction"* — asserting
+that a `{{token}}` in the endpoint, the SOAPAction, a header **and** the body all arrived at the upstream
+resolved. That is the assertion for the under-resolution this entry fixes.
+
+Unit and integration green apart from the standing environment failures; `plan/19` §11 records the totals.
+
+### 2026-09-30 — `grpc.send`: the fourth protocol, and the end of the `*Saved` family
+
+**Phase:** `plan/19` WI 3, fourth and last protocol (D23 / D24 / D27)
+**Type:** **breaking in name only** — the same argument as the three entries above
+**Change:** `grpc.executeSaved` → **`grpc.send`**, params widened to a union:
+
+| input form | payload | who uses it |
+|---|---|---|
+| **id** | `{ workspaceId, id }` | a saved tab with no unsaved changes, and the CLI |
+| **inline** | `{ workspaceId, request }` | a draft tab, and any caller that has not saved yet |
+
+`request` is `{serverAddress, serviceName, methodName, requestBody, metadata, protoFileId, useReflection}` — the
+stored entity's shape, and `grpc.execute`'s, so like SOAP there is no rename. **`protoFileId` and
+`useReflection` are required rather than optional**, because the editor always has both: a proto file may be
+`null` and reflection may be off, but neither is *absent*, and optionality would invite a caller to omit a
+decision rather than make one. Command count stays **93**.
+
+**No `scripts` member**, for the reason recorded in the `graphql.send` and `soap.send` entries.
+
+**⚠ `protoFileId` is deliberately NOT resolved.** Every other field is — including `serviceName` and
+`methodName`, which the tab never resolved while the Send gate treated them as resolvable — but `protoFileId`
+names a stored file rather than being template text, and the gate never scanned it. Resolving it would be a new
+behaviour nothing asked for.
+
+**⚠ This entry closes the family.** With all four protocols migrated,
+`packages/engine/src/workspace/entities/savedRequestCommands.ts` — the module that held four load-and-dispatch
+bodies — is **deleted**, and its registrations go with it from `registerAll.ts`, `src/ipc/handlers.ts` and both
+integration harnesses. Its *"one module, not four"* argument had already narrowed three times (one member grew
+a pipeline, two grew resolution); the fourth made it empty.
+
+**Verified:** the resolution is **not observable for this protocol, and the gap is recorded rather than papered
+over** — see `grpc/commands.ts`'s header. `grpc.execute` is a `wontfix` stub that ignores every parameter, so
+an integration case could assert only the stub's message; replacing it with an echo needs a monkey-patched
+registry, because `CommandRegistry.register()` throws on a duplicate. The `NOT_FOUND` case is what proves the
+load half. `packages/protocol/src/commands/index.test.ts` **249** unchanged; `protocolExecution`
+**56 → 56** (renamed, not added to). `plan/19` §11 records the totals.
+
+**Checklist (`## Guidance`, "Before adding any command"):** the same five answers as `request.send` — it
+replaces an existing name, it is not an `entity.*` kind discriminator, it carries no filesystem path, it is a
+`.strict()`-on-both-members union, and it keeps the `execute` scope of the `grpc.execute` it invokes.
+
+### 2026-09-30 — the run's own commands and events: `runner.start` / `runner.cancel` / `runner.status`
+
+**Phase:** `plan/19` WI 4 (D29 / D30)
+**Type:** **additive** — three new commands and two new events, with no existing name, payload or event changed
+**Change:**
+
+| command | params | result |
+|---|---|---|
+| `runner.start` | `{workspaceId, folderId}` | `{ok, total?, error?}` |
+| `runner.cancel` | `{workspaceId, folderId}` | `{ok, error?}` |
+| `runner.status` | `{workspaceId, folderId}` | the run's state, or `null` |
+
+and two events:
+
+| event | payload | who needs it |
+|---|---|---|
+| `event.runner.progress` | `{workspaceId, folderId, index, total, result}` | a UI rendering results as they arrive |
+| `event.runner.finished` | `{workspaceId, folderId, report}` | a client that was disconnected for the whole run |
+
+Protocol: **93 → 96** commands, **9 → 11** events.
+
+**Why the run needed its own commands rather than extending the six `runner.*` ones above.** Those six store a
+run's *report* and its per-folder *configuration* — file operations with no state — and their contract is
+unchanged. These three drive the run itself, and that state is the engine's (D29), so folding them into
+`runner.saveReport`'s family would have put two different lifetimes behind one namespace.
+
+**Why `runner.start` answers `{ok:false}` rather than throwing for "already running"** (D30): the caller asked
+a question — *may I start this?* — and "no, because X" is an answer. A throw would make it an error envelope,
+which the transport shapes differently and every client would have to unwrap separately.
+
+**Why two events rather than one.** `progress` carries a single result so a UI renders it as it arrives;
+`finished` carries the whole report so a client that saw no progress at all still has everything. Collapsing
+them would make either the incremental case re-send the report or the reconnect case replay N events.
+
+**`total` rides on every progress event**, not only on `runner.start`'s result, because a client that attaches
+mid-run (D29) never saw the start call.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No**, and the near-miss is recorded
+   above: the six storage commands have no run state to drive.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: `entity.*` is CRUD *over* an entity, and a
+   run is not one — it has no id, no folder and no file.
+3. *Does the payload contain a filesystem path?* — No: `{workspaceId, folderId}`.
+4. *Is there a schema, and does the engine validate against it?* — Yes, three `.strict()` objects; the fixtures
+   use the same pair the storage commands do, with the same near-miss.
+5. *Is it in the right scope class?* — **Two classes, deliberately**: `start` and `cancel` are `execute` (they
+   make something happen), `status` is `read` (it reads engine state) — which is what lets a reconnecting
+   client ask what happened without being granted the right to start or stop anything.
+
+**Affected:** clients — `@bifurc/client` gains `runnerStart` / `runnerCancel` / `runnerStatus` and
+`onRunnerProgress` / `onRunnerFinished`. **The surface grows 136 → 141** (transport 66 → 69, subscribe 7 → 9):
+the second growth after 2026-09-29's four `*Saved` methods, and pinned in `surface.test.ts` and
+`client.test.ts`.
+
+**Migration:** none. All five names are new; the six storage commands are untouched.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **249 → 255** (+6 = 3 commands × the 2 generated
+cases each). The conformance suite's every-command and every-event matrices widen **automatically** — both are
+derived from `COMMANDS` / `EVENT_NAMES`, so a new name cannot be left out of them. `plan/19` §11 records the
+totals.
+
+---
+
+## 2026-09-30 — `request.parseCurl` (additive; `plan/19` WI 5)
+
+**What.** One new command: `request.parseCurl { curl }` → `{ method, url, headers, body }`. A pure parse of a
+cURL command, returning the request it describes. Header keys are lower-cased; the map is **unfiltered**.
+
+**Why it is a command rather than an engine-internal helper.** The REST tab parses a pasted cURL on every
+keystroke, and the renderer **cannot import the engine** — `@bifurc/gui` has no `@bifurc/engine` dependency by
+design (`plan/19` finding 1). So either the parser is reachable over the wire, or the capability stays
+duplicated in the renderer. `window.api` is the only door.
+
+**The duplication it removes — and the second copy nobody had counted.** `packages/gui/src/lib/curlParser.ts`
+was the renderer's copy, `plan/19` §1's last table row. The cURL importer
+(`importexport/importers/requests-curl.ts`) held a **third**: its own comment read *"duplicated from
+packages/gui/src/lib/curlParser.ts for main process use"*, so that one file had two near-verbatim copies of
+itself in two packages. Both are gone; the parser is `packages/engine/src/utils/curl.ts`, and the importer
+reaches it through `parseCurlCommand()` (which adds the importer's own *"must start with `curl` and yield a
+url"* contract, rather than re-implementing the parse).
+
+**Why unfiltered, and what that costs.** `SKIP_CURL_HEADERS` (host / proxy-connection / connection /
+content-length / transfer-encoding) is a *caller's* policy: the tab drops them when it imports, the importer
+drops them at its own point in its pipeline. A parser that dropped them would be choosing for both. The
+renderer therefore keeps a copy of the list for one read-side job the engine cannot do for it — filtering a
+**stored** mock's `capturedHeaders` on load — and the copy is **pinned** by
+`tests/gui/curlHeaderSkip.test.ts`, the `plan/19` D28 list-vs-logic split. The boundary ratchet's `curlParser`
+construct was narrowed to the parser accordingly; flagging the list would contradict the pin, exactly as
+flagging `RANDOMIZER_TOKENS` would contradict D28.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** `request.replay` takes a
+   request and sends it; this takes a string and parses it. They share no field and no behaviour.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: it is not CRUD over an entity, and it has
+   no id and no file. It is a pure function.
+3. *Does the payload contain a filesystem path?* — No: `{ curl }`, a string.
+4. *Is there a schema, and does the engine validate against it?* — Yes, one `.strict()` object with one
+   required field. The fixture's `invalid` row is a **near-miss** (the right shape under the wrong key name),
+   because `{}` would fail for "missing `curl`" before and after any schema edit — the non-discriminating
+   fixture that table's header warns about.
+5. *Is it in the right scope class?* — **`read`.** It observes and reaches nothing: no file, no upstream, no
+   side effect. The contrast with `request.replay`'s `execute` two lines above is the point.
+
+**Affected:** clients — `@bifurc/client` gains `requestParseCurl`. **The surface grows 141 → 142**
+(transport 69 → 70): the third growth after 2026-09-29's four `*Saved` methods and the same day's five
+`runner.*` keys, and pinned in `surface.test.ts` and `client.test.ts`.
+
+**Migration:** none. `request.parseCurl` is new; `request.replay` is untouched.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **255 → 257** (+2 = 1 command × the 2 generated
+cases). `packages/client/src/retry.ts` classifies it **idempotent** (a pure function of its argument) and
+`transport/auth/scopes.ts` gives it `read`; both tables are asserted total at import. The parser's 19 cases
+moved from `tests/renderer/curlParser.test.ts` to `tests/engine/curlParser.test.ts` with the implementation.
+
+---
+
+## 2026-09-30 — `env.resolveText` (additive; `plan/19` WI 5, item 4)
+
+**What.** One new command: `env.resolveText { workspaceId, text }` → `{ text }`. Resolves `{{key}}` against the
+workspace's **effective** environment — `__global__` with the active environment merged over it — and mints
+`{{random.*}}` values.
+
+**Why it exists.** `plan/19` WI 3 made the engine the resolving party: a request's fields reach the engine
+verbatim and are resolved there. That removed the renderer's resolver, and with it the renderer's ability to
+**display** a resolved value — which the health bar needs, because it shows the url a check is about to probe.
+
+**The alternative, and why it is worse.** The obvious design is for `healthbar.checkUrl` to return the url it
+resolved. It fails on its own terms: the card shows the resolved url *before* the first check (a service with
+auto-refresh off may never be checked at all), so a check-only path would leave the card showing
+`{{host}}/health` indefinitely. Resolving on demand is the shape that matches what the UI is asking.
+
+**Why "effective" and not "active".** `loadMergedEnvironment()` puts `__global__` under the active environment.
+Resolving against the active environment **alone** resolves a *shadowed* key differently, and every test that
+uses no shadowed key passes either way — `plan/19` §8 trap 2, which is why `mergeEnvVars` travelled with the
+*call* rather than being added beside `resolveVars`. There is deliberately no parameter for the un-merged
+behaviour: that option existed in the renderer, and it is what made the UI the authority for a workspace fact
+the engine already owns.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** `config.get` returns the
+   environments *unresolved*, and nothing else resolves on request.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: it is not CRUD over an entity, it has no id
+   and no file, and it is a pure function of the workspace's settings.
+3. *Does the payload contain a filesystem path?* — No: `{ workspaceId, text }`.
+4. *Is there a schema, and does the engine validate against it?* — Yes, a `.strict()` object. The fixture's
+   `invalid` row is a **near-miss** (the right shape under the wrong key), because `{}` would fail for a missing
+   required field before and after any schema edit.
+5. *Is it in the right scope class?* — **`read`.** Nothing is written and no upstream is reached.
+
+**⚠ The one thing a caller must know: the result is not *stable*.** `{{random.*}}` mints a fresh value per call,
+so the command is **idempotent** (no stored effect, safe to retry) but **not deterministic** (two calls
+disagree). That is safe here precisely because the caller uses the result to *display* a url — a caller that
+sent the resolved value would need the pipeline's engine-side resolution instead, where resolution and the send
+happen once, together. `packages/client/src/retry.ts` records both halves of that distinction.
+
+**Affected:** clients — `@bifurc/client` gains `envResolveText`, with `workspaceId` optional and resolved from
+the active workspace when omitted (the treatment `request.send` gets). **The surface grows 142 → 143**
+(transport 70 → 71), pinned in `surface.test.ts` and `client.test.ts`.
+
+**Migration:** none. `env.resolveText` is new; `env.setActive` is untouched.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **257 → 259** (+2 = 1 command × the 2 generated
+cases), and the conformance matrices widen automatically from `COMMANDS` / `EVENT_NAMES`. `HealthBarPanel` no
+longer imports `@/lib/resolveVars` — **but the boundary ratchet's allowlist is unchanged at three entries**,
+because that entry is keyed on the resolver's *definition*, and `useWebSocket.ts` is still a user of it. WI 6
+is what retires it.
+
+---
+
+## 2026-09-30 — `capture.buildRequest` / `capture.buildMock` (additive; `plan/19` WI 5, item 2)
+
+**What.** Two new commands, both `{ entry }` → one entity body each: `capture.buildRequest` → `{ request }` (a
+`requests` body) and `capture.buildMock` → `{ mock }` (a `mocks` body).
+
+**Why they exist.** They replace `reqToHeadersBody` / `buildMockInitial` in
+`packages/gui/src/components/capture/captureUtils.ts`. Those decided **which headers to drop**, **how to
+decode a body** and **how a response is stored** — engine work by D22's test — and the renderer cannot import
+the engine, so the only way to stop it holding a second implementation is to ask over the wire.
+
+**Why two commands rather than one with a discriminator.** The two produce *different shapes*, and the two call
+sites need one each ("Save" builds a request; "Open in mocks" builds a mock; the context menu offers them as
+separate actions). One command with a `target` field would return a union every reader has to narrow, for no
+caller that wants both.
+
+**Why `entry` is loose — and the results with it.** `z.record(z.string(), z.unknown())`, following
+`capture.shareJson`'s `z.array(z.unknown())`: the protocol deliberately does not model `RequestLogEntry` (it is
+engine-local, and the remote transports project it down before the wire — `kernel/telemetry.ts` says so at
+length), so a schema here would be a fourth mirror of a type the wire does not carry. The results are loose for
+the same reason `entity.create`'s result is: entity bodies are typed in `@bifurc/engine` and hand-mirrored into
+`packages/gui/src/types/ipc.ts`.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** `entity.create` stores an
+   entity the caller has already assembled; nothing turned a capture into one.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No**: it is not CRUD, and the payload is not an
+   entity yet.
+3. *Does the payload contain a filesystem path?* — No: `{ entry }`.
+4. *Is there a schema, and does the engine validate against it?* — Yes, both `.strict()`. The `invalid` fixture
+   is a **near-miss** (the right shape under the wrong key) rather than `{}`.
+5. *Is it in the right scope class?* — **`read`**, and the contrast with `capture.shareJson`'s `write` is the
+   point: `shareJson` stages a blob, so it writes; these build a payload and touch nothing. The storing is
+   `entity.create`'s, which is `write`. A `read`-scoped session may prepare an entity it may not save.
+
+**Affected:** clients — `@bifurc/client` gains `captureBuildRequest` / `captureBuildMock`. **The surface grows
+143 → 145** (transport 71 → 73), pinned in `surface.test.ts` and `client.test.ts`.
+
+**Migration:** none. Both names are new; `capture.shareJson` is untouched.
+
+**⚠ One behaviour that deliberately did NOT move.** `useCaptureActions.mockEntries` stores only the response
+side plus method/url — it has never persisted `capturedHeaders` / `capturedBody` / the `*Mocked` flags.
+`capture.buildMock` returns the whole body (a mock replays the capture byte-for-byte), so spreading it would
+have silently started persisting the captured request. The caller's field picking is unchanged.
+
+**⚠ And one that had to be *ported* rather than copied.** The renderer decoded base64 with `atob`, which
+**throws**, and its `catch` returned the *raw input* so an odd capture shows as-is. Node's
+`Buffer.from(x, "base64")` never throws — it silently skips offending characters — so the engine's decode
+carries an explicit validity check. Without it the behaviour changes on the way over, and nothing in the old
+suite would have noticed; `tests/engine/captureEntities.test.ts` now pins it, including a whitespace-wrapped
+case, because `atob` tolerates ASCII whitespace and a naive strict check would not.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` **259 → 263** (+4 = 2 commands × the 2 generated
+cases). The cases that pinned the two functions moved from `tests/renderer/captureUtils.test.ts` to
+`tests/engine/captureEntities.test.ts`. **The boundary ratchet's allowlist is unchanged** — neither function was
+one of §1's constructs — but the renderer's copy of the binary-content-type predicate is now a **pinned** copy
+(`tests/gui/binaryContentType.test.ts`), the D28 split a third time.
+
+---
+
+
+## 2026-09-30 — `ws.*` (six commands + two events) and `env.getMerged` (additive; `plan/19` WI 6)
+
+**What.** Seven commands and two events.
+
+| name | params → result | scope |
+|---|---|---|
+| `ws.connect` | `{ workspaceId, socketId, url, headers? }` → `{ ok, error? }` | `execute` |
+| `ws.disconnect` | `{ workspaceId, socketId, code?, reason? }` → `{ ok, error? }` | `execute` |
+| `ws.send` | `{ workspaceId, socketId, data }` → `{ ok, error? }` | `execute` |
+| `ws.status` | `{ workspaceId, socketId }` → `WsStatusResult \| null` | `read` |
+| `ws.list` | `{ workspaceId }` → `{ connections, max }` | `read` |
+| `ws.clearMessages` | `{ workspaceId, socketId }` → `{ ok, error? }` | `write` |
+| `env.getMerged` | `{ workspaceId }` → the merged `Environment \| null` | `read` |
+| `event.ws.status` | `{ workspaceId, socketId, status, error, code?, reason? }` | — |
+| `event.ws.message` | `{ workspaceId, socketId, message }` | — |
+
+**Why they exist.** `packages/gui/src/hooks/useWebSocket.ts` was the WebSocket *client*: a module-level
+`Map<string, WebSocket>`, its own constructor call, its own `resolveVars` for the url and the outgoing frame,
+and the message log in React state. Two consequences, and both are `plan/19`'s subject:
+
+1. **The socket died with the window** — the object holding it was a browser object, so a reload, a closed
+   window or a build without the panel dropped every connection. Nothing in that design could have been
+   otherwise.
+2. **A CLI could not open one.** `Protocol_Module_Contract.md` §1: every byte reaching the wire is the
+   engine's.
+
+`env.getMerged` is the smaller half of the same item. `App.tsx` merged `__global__` with the active
+environment on every render (`mergeEnvVars`) and threaded the result down as `activeEnv`, which every
+`EnvVarHint` lists variable names from. The merge is D23's — the engine already owns the `environments` kind,
+the `activeEnvironmentId` pointer and the synthetic `__global__` — so leaving it in the renderer would have
+kept the UI the authority for a workspace fact, and kept `lib/resolveVars.ts` alive with it.
+
+**Why `workspaceId` is required rather than `WorkspaceScope`'s optional.** A socket is keyed by
+`{workspaceId, socketId}` for its whole life, so a workspace inferred at connect time and changed under the
+socket would leave a connection nobody can address. `runner.start` / `runner.cancel` / `runner.status` made
+the same call for the same reason.
+
+**Why `socketId` is the caller's name.** The engine has no idea what a tab is and does not pretend to: the
+caller supplies the name (for the UI, the tab id it already had; for a CLI, whatever it likes) and the engine
+enforces one live socket per key.
+
+**Why a second `ws.connect` on a live key REPLACES rather than being refused — and this is deliberately *not*
+D30.** D30 refused a second run of the same folder, and the difference is the kind of thing each command makes:
+a **run** is a unit of work, so a duplicate is effort nobody asked for twice; a **socket** is a channel, so a
+second connect is a *reconnect* — the renderer did exactly that ("close any existing connection for this
+tab"), and refusing would make a broken socket unrecoverable without a separate disconnect first. The
+replacement is atomic in the sense that matters: the old socket is marked superseded before it is closed, so
+its close event cannot emit a `disconnected` that arrives *after* the new `connecting`.
+
+**Why `ws.list` returns `max`.** The registry is what refuses the sixth connection, so the registry reports
+the number. A pinned `5` in the renderer would be the D28 list-vs-logic split spent on a constant the engine
+can simply answer, and would have been wrong the day the limit became configurable.
+
+**Why `ws.clearMessages` is a command.** The log is engine state — `ws.status` returns it — so a
+renderer-only clear would be undone by the next re-attach. That is the exact class of bug this work item
+removes.
+
+**Why both events carry `socketId`.** One bus serves every socket in the process and the renderer has one
+subscriber per open tab, so an event that did not say which socket it belonged to could only be routed by
+guessing.
+
+**Two behaviour changes that are improvements rather than ports**, both unreachable before because the
+renderer had no way to express them:
+
+- **Headers now reach the wire.** The browser `WebSocket` constructor cannot send headers at all — the
+  renderer's own comment said the resolved headers were "stored, not injected". The engine's `ws` client can,
+  so a `{{TOKEN}}` in an Authorization header went from *resolved and discarded* to *resolved and sent*.
+- **Binary frames are detected properly.** The renderer decided with `typeof ev.data === "string"`, which is a
+  proxy for the frame's opcode rather than a reading of it; the `ws` client hands over `isBinary` directly.
+
+**Checklist (`## Guidance`, "Before adding any command"):**
+
+1. *Does an existing command already do this with a different payload?* — **No.** Nothing opened a socket.
+   `env.getMerged` is the one exception in spirit: it *replaces* `App.tsx`'s `mergeEnvVars`, which was a
+   renderer function rather than a command.
+2. *Should this be a `kind` discriminator on `entity.*`?* — **No, and the contrast is worth keeping.** The
+   `wsConnections` entity kind already exists and is untouched: a *saved* connection is workspace data, a
+   *live* one is engine state. Different lifetimes; only the second is these commands' business.
+3. *Does the payload contain a filesystem path?* — No.
+4. *Is there a schema, and does the engine validate against it?* — Yes, all seven `.strict()`. The `invalid`
+   fixtures are near-misses chosen per command (a missing `url` for `ws.connect`, a numeric `data` for
+   `ws.send`, a missing `socketId` for the two reads).
+5. *Is it in the right scope class?* — Chosen per command rather than inherited, which is what
+   `Protocol_Module_Contract.md` §4 requires: `connect`/`disconnect`/`send` reach a peer the engine does not
+   control, so `execute`; `status`/`list` observe, so `read` — **and that split is what lets a reconnecting
+   client ask what happened without being granted the right to open or close anything**; `clearMessages`
+   mutates engine state and reaches no upstream, so `write`. `env.getMerged` is `read`, and deliberately not
+   `execute`: it merges two lists and resolves nothing.
+
+**Affected:** commands **100 → 107**, events **11 → 13**. Clients: `@bifurc/client` gains seven methods and two
+subscriptions — **the surface grows 145 → 154**, its largest single step, and pinned in `surface.test.ts` and
+`client.test.ts`. This is a *growth* rather than a rename, and the honest reading is that there was nothing to
+rename: the renderer's socket never spoke to the shell at all. The conformance matrices widen automatically
+(both are derived from `COMMANDS` / `EVENT_NAMES`), and `assertScopesAreTotal()` / `assertRetryPolicyIsTotal()`
+/ `COMMAND_FIXTURES` equality each throw at import if a row is missing.
+
+**Migration:** none. Every name is new; no existing command, payload or event changed. `ws.*` has **no legacy
+channel** — `useWebSocket.ts` spoke to the browser's `WebSocket` constructor, so no `namespace:verb` channel
+ever existed for the P6 reduction to find.
+
+**⚠ Two `ws.*` commands are classified NON-idempotent for reasons that are not the obvious ones.**
+`ws.connect` because a retry is a second connect, and this registry *replaces* on a live key — so the retry
+tears down a working socket and opens a new one, which the user sees as a dropped connection for a request
+that had already succeeded. `ws.send` because the payload is resolved engine-side and `{{random.*}}` re-mints
+per send: correct for a stream (each frame is its own event, not a retry of an earlier one), and exactly why a
+transport-level retry would write a *different* frame than the caller asked for. `ws.disconnect` and
+`ws.clearMessages` are here for `sync.push`'s reason — their effect is not a function of their arguments
+alone.
+
+**⚠ And one implementation detail that a test caught rather than a review.** A `ws.disconnect` issued while
+the socket is still CONNECTING aborts the handshake, and `ws` reports that as `close(1006)` — abnormal. Read by
+close code alone, a user pressing Disconnect mid-connect would have been shown "Connection closed (code
+1006)". So the registry's `closeRequested` flag, which the `error` handler already consulted, is consulted by
+the `close` handler too: **a close the caller asked for is clean whatever code the client reports**, because
+the code describes how the *handshake* ended and the flag describes who ended it.
+
+**Verified:** `packages/protocol/src/commands/index.test.ts` widens by 7 commands × the 2 generated cases.
+`tests/websocket/wsRegistry.test.ts` (32 cases) drives the registry directly, including the three that make
+the §4 decisions checkable rather than asserted — the snapshot outliving the socket, a superseded socket's late
+close not overwriting the new state, and a reconnect not being refused by the limit it is already part of.
+`tests/renderer/websocket.test.ts` (12 cases) covers the hook as a mirror, including the hydration race and
+**that an unmount does not disconnect**. **Both `plan/19` ratchets reached `{}`**: the boundary allowlist lost
+its last two entries (`lib/resolveVars.ts` deleted, `lib/randomizer.ts`'s generator gone) and the protocol-module
+allowlist lost its single entry — see `plan/19` §9.
+
+---
+
 
 ## Guidance
 
@@ -738,3 +1436,36 @@ Examples: a new command, a new optional field, a new capability string.
 3. Does the payload contain a filesystem path? It must not (`File_Ops_Protocol.md` §8).
 4. Is there a schema, and does the engine validate against it?
 5. Is it in the right scope class?
+
+---
+
+## 2026-10-01 — `ws.connect` takes a saved id; `desktop-ui` joins `ClientName` (additive)
+
+**What.** Two additive changes, both for the Rust desktop UI (`ui/`):
+
+1. `ws.connect`'s `url` becomes **optional**. Without it, `socketId` is the id of a saved WebSocket request
+   (engine kind `sockets`, protocol kind `wsConnections`) and the engine reads `url` and `headers` from the entity —
+   the `{workspaceId, id}` form `request.send`, `graphql.send`, `soap.send` and `grpc.send` already have. With it,
+   nothing changes: it is the draft form, and `socketId` is only the caller's name for the connection. `headers`
+   without `url` is refused (`BAD_REQUEST`), and an id with no saved entity is `NOT_FOUND`.
+2. `ClientNameSchema` gains `"desktop-ui"`, so the engine's session log can tell the Rust UI from the Electron
+   shell. Every client still receives the same scopes.
+
+**Why.** A WebSocket is one more request type in the UI's request tree. Before this, opening a saved socket meant
+the client loading the entity and re-sending its fields, which is the exact thing the `*.send` family exists to
+avoid (a second UI or the CLI holds an id, not a copy of the stored shape). Everything else a request type
+needs was already engine-side: its own saved kind and folder tree (`wsFolders`), `ws.status` / `ws.list` for the
+state in between, `event.ws.status` / `event.ws.message` for the stream, and a connection lifetime that is the
+engine's rather than the window's (D29), which is what lets a UI reattach to a live socket.
+
+**Not changed.** The kind keeps the name `wsConnections` (protocol) / `sockets` (disk) — renaming it to
+`wsRequests` to match `graphqlRequests` / `grpcRequests` / `soapRequests` would move every saved workspace's
+directory and is cosmetic. `ws.disconnect` / `ws.send` / `ws.status` / `ws.clearMessages` are unchanged.
+
+**Checklist:** no new command; schema is still one `.strict()` object; the `ws.connect` fixture's `invalid` row
+is now a wrong-typed `url` (a missing one is valid). Scope stays `execute`.
+
+**Affected:** `@bifurc/protocol` (`WsConnectParams`, `ClientNameSchema`), `packages/engine/src/websocket/wsCommands.ts`.
+**Migration:** none. Existing callers always send `url`.
+
+**Verified:** `tests/websocket/wsConnectById.test.ts` (4 cases).

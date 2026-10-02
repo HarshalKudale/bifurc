@@ -1,5 +1,5 @@
 import React from 'react';
-import { WsMessage } from '@/hooks/useWebSocket';
+import { WsMessage } from '@/types';
 import CodeEditor from '@/components/common/CodeEditor';
 import { tryFormat } from '@/lib/utils';
 
