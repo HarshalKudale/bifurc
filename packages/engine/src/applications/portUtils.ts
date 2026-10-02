@@ -42,7 +42,7 @@ export function killProcessOnPort(port: number): Promise<{ ok: boolean }> {
                 process.platform === "win32"
                     ? `taskkill /F /PID ${pid}`
                     : `kill -9 ${pid}`;
-            exec(cmd, (err) => resolve({ ok: !err }));
+            exec(cmd, { windowsHide: true }, (err) => resolve({ ok: !err }));
         });
     });
 }
@@ -54,7 +54,7 @@ function findPidOnPort(port: number): Promise<number | undefined> {
         if (process.platform === "win32") {
             // netstat -ano gives lines like:
             //   TCP    0.0.0.0:3000    0.0.0.0:0    LISTENING    1234
-            exec("netstat -ano -p TCP", (err, stdout) => {
+            exec("netstat -ano -p TCP", { windowsHide: true }, (err, stdout) => {
                 if (err) return resolve(undefined);
                 const re = new RegExp(
                     `(?:0\\.0\\.0\\.0|127\\.0\\.0\\.1|\\[::\\]):${port}\\s+\\S+\\s+LISTENING\\s+(\\d+)`,

@@ -16,6 +16,8 @@ function discoverWindows(): ServiceInfo[] {
     return execSync(`"${PS}" -NoProfile -NonInteractive -Command "${command}"`, {
       encoding: "utf-8",
       timeout: 10000,
+      // The standalone engine has no console, so without this each call opens a terminal window.
+      windowsHide: true,
     });
   }
 

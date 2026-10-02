@@ -179,7 +179,7 @@ class ProcessSpawner {
         // Kill process tree
         if (process.platform === "win32") {
             // Windows: taskkill with /T (tree) and /F (force)
-            spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { shell: true });
+            spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { shell: true, windowsHide: true });
         } else {
             // Unix: SIGTERM to process group
             try {
@@ -194,7 +194,7 @@ class ProcessSpawner {
             if (entry.proc && !entry.proc.killed) {
                 this.emitLog(appId, entry.logBuffer, "system", "[Force killing...]\n");
                 if (process.platform === "win32") {
-                    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { shell: true });
+                    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { shell: true, windowsHide: true });
                 } else {
                     try { process.kill(-pid!, "SIGKILL"); } catch {
                         try { proc.kill("SIGKILL"); } catch { /* dead */ }
