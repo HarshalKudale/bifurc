@@ -10,8 +10,8 @@
  * that the engine runs as a child. The two talk in lines over the helper's stdio: the helper prints `ready`
  * once its icon is up, then `open`, `restart` or `quit` as the user picks them; the engine closes the
  * helper's stdin to take the icon down. A helper that is missing, or that cannot show an icon on this
- * platform, leaves the engine without one — and an engine nobody can reach must not linger, so it then stops
- * when its last interface closes. The same applies when the user turned "keep running in the tray" off.
+ * platform, leaves the engine without one — and an engine nobody can reach must not linger, so only then does
+ * it stop when its last interface closes. With its icon up the engine stays until it is told to quit.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -83,8 +83,6 @@ export interface DesktopOptions {
   /** The engine's data directory, handed to an interface the tray starts so it joins this engine. */
   dataDir: string;
   bus: EngineEventBus;
-  /** The user's "keep running in the tray" setting, read when the last interface closes. */
-  keepInTray: () => boolean;
   /** Stops the engine the way `engine.shutdown` does. */
   shutdown: (restart: boolean) => void;
   notice: (message: string) => void;
@@ -189,12 +187,8 @@ export function createDesktop(opts: DesktopOptions): Desktop {
     onSessionEnd(identity: SessionIdentity): void {
       if (!interfaces.delete(identity.sessionId)) return;
       if (stopping || interfaces.size > 0) return;
-      if (trayReady && opts.keepInTray()) return;
-      notice(
-        trayReady
-          ? "the last interface closed and the engine is not kept in the tray — stopping"
-          : "the last interface closed and there is no tray icon to reach the engine by — stopping",
-      );
+      if (trayReady) return;
+      notice("the last interface closed and there is no tray icon to reach the engine by — stopping");
       opts.shutdown(false);
     },
   };

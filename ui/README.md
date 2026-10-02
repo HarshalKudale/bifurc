@@ -43,14 +43,14 @@ without a refresh.
 
 The engine's lifetime is its own, whichever client started it:
 
-- The engine shows a **tray icon** (`crates/tray`, the `bifurc-tray` helper it runs as a child). Closing the
+- The engine shows a **tray icon** (`crates/tray`, the `bifurc-tray` helper it runs as a child; building the app builds it too). Closing the
   window closes this app only; the engine keeps running behind the icon. The icon opens the app again (or
   brings an open one to the front), restarts the engine and quits.
 - **Quit** in the tray, or `bifurc engine stop`, stops the engine and every interface attached to it closes.
 - A **restart** (the tray, Settings → Servers, or `bifurc engine restart`) starts a new engine with the same
   command line; attached interfaces wait for it and reconnect.
-- With no tray icon (the helper is missing, or the platform has none yet), or with "Keep running in the tray"
-  switched off, the engine stops when its last interface closes.
+- Only with no tray icon at all (the platform has none yet) does the engine stop when its last interface
+  closes, so it is never left running out of reach.
 
 | Variable               | Meaning                                                                                 |
 | ---------------------- | --------------------------------------------------------------------------------------- |
