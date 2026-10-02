@@ -11,6 +11,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
     list::ListItem,
@@ -21,27 +22,41 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use serde_json::{Value, json};
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
+        dialogs::{PromptField, prompt},
         page,
     },
     engine::{call, call_in, describe, failure},
     model::{
+        git::date_time_utc,
         http::{pretty_json, status_text},
         media::{self, BodyClass},
-        traffic::{self, Exchange, RESPONSE_BODY_LIMIT, TrafficEntry, body_class, clock_utc},
+        traffic::{self, Exchange, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
     },
 };
+
+/// Several exchanges being saved one after the other as requests or mocks.
+struct SaveRun {
+    /// `(capture id, name)` still to save, in the order they are saved.
+    pending: Vec<(String, String)>,
+    mock: bool,
+    /// The folder they go into; `None` saves at the top level.
+    folder: Option<(String, String)>,
+    saved: usize,
+    last: Option<String>,
+    first_failure: Option<String>,
+}
 
 /// What happened on this screen that the window should act on.
 #[derive(Debug, Clone)]
@@ -142,6 +157,12 @@ pub struct CaptureScreen {
     paused: bool,
     filter: Entity<InputState>,
     selected: Option<String>,
+    /// Exchanges ticked in the list, for saving several at once.
+    checked: HashSet<String>,
+    /// Show only this kind of response; `None` shows all.
+    type_filter: Option<ResourceType>,
+    /// Also list what the reverse proxy served (mapped domains); the list is the forward proxy's by default.
+    show_local: bool,
     detail: Detail,
     section: Section,
     response_view: BodyView,
@@ -184,6 +205,7 @@ impl CaptureScreen {
                 }
                 ModelEvent::WorkspaceSwitched => {
                     this.selected = None;
+                    this.checked.clear();
                     this.detail = Detail::Idle;
                     this.reload(window, cx);
                 }
@@ -204,6 +226,9 @@ impl CaptureScreen {
             paused: false,
             filter,
             selected: None,
+            checked: HashSet::new(),
+            type_filter: None,
+            show_local: false,
             detail: Detail::Idle,
             section: Section::Headers,
             response_view: BodyView::Pretty,
@@ -231,9 +256,16 @@ impl CaptureScreen {
         line
     }
 
+    /// Whether the list shows `entry`: it passes the text filter, the type filter and the local-traffic switch.
+    fn shows(&self, entry: &TrafficEntry, needle: &str) -> bool {
+        (self.show_local || !entry.is_local())
+            && self.type_filter.is_none_or(|kind| entry.resource_type() == kind)
+            && entry.matches(needle)
+    }
+
     fn visible(&self, cx: &gpui_kit::App) -> Vec<&TrafficEntry> {
         let needle = self.filter.read(cx).value().trim().to_lowercase();
-        self.entries.iter().filter(|entry| entry.matches(&needle)).collect()
+        self.entries.iter().filter(|entry| self.shows(entry, &needle)).collect()
     }
 
     fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -289,6 +321,7 @@ impl CaptureScreen {
             Some(message) => this.report("Couldn't clear captured traffic.", message, cx),
             None => {
                 this.entries.clear();
+                this.checked.clear();
                 this.selected = None;
                 this.detail = Detail::Idle;
                 cx.notify();
@@ -373,6 +406,7 @@ impl CaptureScreen {
     fn remove_selected(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected.take() else { return };
         self.detail = Detail::Idle;
+        self.checked.remove(&id);
         self.entries.retain(|entry| entry.id != id);
         let model = self.model.read(cx);
         let client = model.client().clone();
@@ -398,58 +432,183 @@ impl CaptureScreen {
             return;
         }
         let Some(entry) = self.selected_entry() else { return };
-        let id = entry.id.clone();
-        let name = entry.name();
-        let (build, field, kind, done) = if mock {
-            ("capture.buildMock", "mock", "mocks", "Saved as a mock.")
+        let run = SaveRun {
+            pending: vec![(entry.id.clone(), entry.name())],
+            mock,
+            folder: None,
+            saved: 0,
+            last: None,
+            first_failure: None,
+        };
+        self.saving = true;
+        cx.notify();
+        self.save_next(run, window, cx);
+    }
+
+    /// The ticked exchanges, oldest first, with the names they are saved under.
+    fn checked_exchanges(&self) -> Vec<(String, String)> {
+        self.entries
+            .iter()
+            .rev()
+            .filter(|entry| self.checked.contains(&entry.id))
+            .map(|entry| (entry.id.clone(), entry.name()))
+            .collect()
+    }
+
+    /// Saves every ticked exchange as a request or a mock. One goes to the top level like a single save; several
+    /// go into a new folder, which is asked for first.
+    fn save_checked(&mut self, mock: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        let pending = self.checked_exchanges();
+        if pending.len() < 2 {
+            if pending.is_empty() {
+                return;
+            }
+            self.saving = true;
+            cx.notify();
+            let run = SaveRun { pending, mock, folder: None, saved: 0, last: None, first_failure: None };
+            return self.save_next(run, window, cx);
+        }
+        let default_name = format!("Capture {}", date_time_utc(traffic::now_ms()));
+        let title = if mock { "Save as mocks" } else { "Save as requests" };
+        prompt(
+            cx.weak_entity(),
+            window,
+            cx,
+            title,
+            "Save",
+            vec![PromptField::new("Folder", "Folder name").initial(default_name)],
+            move |this, values, window, cx| this.create_folder_then_save(pending.clone(), mock, values[0].clone(), window, cx),
+        );
+    }
+
+    fn create_folder_then_save(
+        &mut self,
+        pending: Vec<(String, String)>,
+        mock: bool,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.saving {
+            return;
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let folder_kind = if mock { "mock" } else { "request" };
+        let payload = json!({
+            "kind": folder_kind, "name": name, "parentId": Value::Null, "workspaceId": model.workspace_id(),
+        });
+        self.saving = true;
+        cx.notify();
+        call_in(&client, window, cx, "folder.add", payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                return this.save_failed("Couldn't create the folder.", message, cx);
+            }
+            let id = outcome.ok().and_then(|folder| folder.get("id")?.as_str().map(str::to_owned));
+            let Some(id) = id else {
+                return this.save_failed("Couldn't create the folder.", "The engine returned nothing.".into(), cx);
+            };
+            let run = SaveRun { pending, mock, folder: Some((id, name)), saved: 0, last: None, first_failure: None };
+            this.save_next(run, window, cx);
+        });
+    }
+
+    /// Saves the next pending exchange, then the one after it; reports once they have all been tried. The engine
+    /// builds each entity from the entry it holds; what it built is created as it is, named after the exchange
+    /// when it has no name (the method is shown beside the name already).
+    fn save_next(&mut self, mut run: SaveRun, window: &mut Window, cx: &mut Context<Self>) {
+        if run.pending.is_empty() {
+            return self.finish_save(run, window, cx);
+        }
+        let (id, name) = run.pending.remove(0);
+        let (build, field, kind) = if run.mock {
+            ("capture.buildMock", "mock", "mocks")
         } else {
-            ("capture.buildRequest", "request", "requests", "Saved as a request.")
+            ("capture.buildRequest", "request", "requests")
         };
         let model = self.model.read(cx);
         let client = model.client().clone();
         let workspace_id = model.workspace_id().to_owned();
         let create_client = client.clone();
-        self.saving = true;
-        cx.notify();
+        let folder_id = run.folder.as_ref().map(|(id, _)| id.clone());
         let payload = json!({ "workspaceId": workspace_id, "id": id });
         call_in(&client, window, cx, build, payload, move |this, outcome, window, cx| {
-            if let Some(message) = failure(&outcome) {
-                return this.save_failed("Couldn't build it from this exchange.", message, cx);
-            }
-            let entity = outcome.ok().and_then(|result| result.get(field).cloned()).filter(Value::is_object);
-            let Some(mut entity) = entity else {
-                return this.save_failed(
-                    "Couldn't build it from this exchange.",
-                    "The engine returned nothing.".into(),
-                    cx,
-                );
+            let entity = match failure(&outcome) {
+                Some(message) => Err(message),
+                None => outcome
+                    .ok()
+                    .and_then(|result| result.get(field).cloned())
+                    .filter(Value::is_object)
+                    .ok_or_else(|| "The engine returned nothing.".to_owned()),
+            };
+            let mut entity = match entity {
+                Ok(entity) => entity,
+                Err(message) => {
+                    run.first_failure.get_or_insert(message);
+                    return this.save_next(run, window, cx);
+                }
             };
             if let Some(object) = entity.as_object_mut() {
                 let unnamed = object.get("name").and_then(Value::as_str).is_none_or(str::is_empty);
                 if unnamed {
                     object.insert("name".to_owned(), Value::String(name));
                 }
+                if let Some(folder_id) = folder_id {
+                    object.insert("folderId".to_owned(), Value::String(folder_id));
+                }
             }
             let payload = json!({ "kind": kind, "workspaceId": workspace_id, "entity": entity });
             call_in(&create_client, window, cx, "entity.create", payload, move |this, outcome, window, cx| {
-                if let Some(message) = failure(&outcome) {
-                    return this.save_failed("Couldn't save it.", message, cx);
-                }
-                let created =
-                    outcome.ok().and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned));
-                let Some(created) = created else {
-                    return this.save_failed("Couldn't save it.", "The engine returned nothing.".into(), cx);
+                let created = match failure(&outcome) {
+                    Some(message) => Err(message),
+                    None => outcome
+                        .ok()
+                        .and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned))
+                        .ok_or_else(|| "The engine returned nothing.".to_owned()),
                 };
-                this.saving = false;
-                window.push_notification(Notification::success(done), cx);
-                cx.emit(if mock {
+                match created {
+                    Ok(created) => {
+                        run.saved += 1;
+                        run.last = Some(created);
+                    }
+                    Err(message) => {
+                        run.first_failure.get_or_insert(message);
+                    }
+                }
+                this.save_next(run, window, cx);
+            });
+        });
+    }
+
+    fn finish_save(&mut self, run: SaveRun, window: &mut Window, cx: &mut Context<Self>) {
+        self.saving = false;
+        if let Some(message) = run.first_failure {
+            self.report("Couldn't save everything.", message, cx);
+        }
+        let noun = if run.mock { "mock" } else { "request" };
+        match (&run.folder, run.last, run.saved) {
+            (_, _, 0) => {}
+            (None, Some(created), _) => {
+                window.push_notification(Notification::success(format!("Saved as a {noun}.")), cx);
+                cx.emit(if run.mock {
                     CaptureEvent::SavedMock { id: created }
                 } else {
                     CaptureEvent::SavedRequest { id: created }
                 });
-                cx.notify();
-            });
-        });
+            }
+            (folder, _, saved) => {
+                let place = folder.as_ref().map_or(String::new(), |(_, name)| format!(" to “{name}”"));
+                let plural = if saved == 1 { "" } else { "s" };
+                window.push_notification(Notification::success(format!("Saved {saved} {noun}{plural}{place}.")), cx);
+            }
+        }
+        if run.saved > 0 {
+            self.checked.clear();
+        }
+        cx.notify();
     }
 
     /// Asks where to save the body of one side and writes it there.
@@ -475,12 +634,84 @@ impl CaptureScreen {
         }
     }
 
+    /// The type filter, the switch for local traffic, and what can be done with the ticked exchanges.
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let ticked = self.checked.len();
+        let selected_tab = self.type_filter.map_or(0, |kind| {
+            ResourceType::ALL.iter().position(|candidate| *candidate == kind).map_or(0, |ix| ix + 1)
+        });
+        let types = ResourceType::ALL.iter().fold(
+            TabBar::new("capture-types")
+                .segmented()
+                .small()
+                .selected_index(selected_tab)
+                .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                    this.type_filter = ix.checked_sub(1).and_then(|ix| ResourceType::ALL.get(ix).copied());
+                    cx.notify();
+                }))
+                .child(Tab::new().label("All")),
+            |bar, kind| bar.child(Tab::new().label(kind.label())),
+        );
+        h_flex()
+            .flex_none()
+            .gap_3()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(types)
+            .child(
+                Checkbox::new("capture-local")
+                    .small()
+                    .label("Local mappings")
+                    .checked(self.show_local)
+                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                        this.show_local = *checked;
+                        cx.notify();
+                    })),
+            )
+            .child(div().flex_1())
+            .children((ticked > 0).then(|| {
+                h_flex()
+                    .gap_2()
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{ticked} selected")))
+                    .child(
+                        Button::new("capture-save-checked-requests")
+                            .small()
+                            .label("Save as requests")
+                            .disabled(self.saving)
+                            .on_click(cx.listener(|this, _, window, cx| this.save_checked(false, window, cx))),
+                    )
+                    .child(
+                        Button::new("capture-save-checked-mocks")
+                            .small()
+                            .label("Save as mocks")
+                            .disabled(self.saving)
+                            .on_click(cx.listener(|this, _, window, cx| this.save_checked(true, window, cx))),
+                    )
+                    .child(
+                        Button::new("capture-uncheck")
+                            .ghost()
+                            .small()
+                            .label("Clear selection")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.checked.clear();
+                                cx.notify();
+                            })),
+                    )
+            }))
+            .into_any_element()
+    }
+
     fn render_list(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let needle = self.filter.read(cx).value().trim().to_lowercase();
         // Positions in `entries`, so the rows in view can be read in place instead of copied.
         let visible: Vec<usize> =
-            self.entries.iter().enumerate().filter(|(_, entry)| entry.matches(&needle)).map(|(ix, _)| ix).collect();
+            self.entries.iter().enumerate().filter(|(_, entry)| self.shows(entry, &needle)).map(|(ix, _)| ix).collect();
+        let visible_ids: Vec<String> = visible.iter().map(|ix| self.entries[*ix].id.clone()).collect();
+        let all_checked = !visible_ids.is_empty() && visible_ids.iter().all(|id| self.checked.contains(id));
         if self.entries.is_empty() {
             return page::empty(
                 "No traffic captured",
@@ -516,6 +747,28 @@ impl CaptureScreen {
                                 h_flex()
                                     .w_full()
                                     .gap_3()
+                                    .child({
+                                        let toggled = id.clone();
+                                        // The tick is not a selection of the row: stop the press reaching it.
+                                        div()
+                                            .flex_none()
+                                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                            .child(
+                                                Checkbox::new(gpui_kit::ElementId::Name(
+                                                    format!("capture-check-{}", entry.id).into(),
+                                                ))
+                                                .small()
+                                                .checked(this.checked.contains(&entry.id))
+                                                .on_change(cx.listener(move |this, checked: &bool, _, cx| {
+                                                    if *checked {
+                                                        this.checked.insert(toggled.clone());
+                                                    } else {
+                                                        this.checked.remove(&toggled);
+                                                    }
+                                                    cx.notify();
+                                                })),
+                                            )
+                                    })
                                     .child(
                                         h_flex()
                                             .flex_1()
@@ -594,6 +847,20 @@ impl CaptureScreen {
                     .text_color(theme.muted_foreground)
                     .border_b_1()
                     .border_color(theme.border)
+                    .child(div().flex_none().child(
+                        Checkbox::new("capture-check-all").small().checked(all_checked).on_change(cx.listener(
+                            move |this, checked: &bool, _, cx| {
+                                for id in &visible_ids {
+                                    if *checked {
+                                        this.checked.insert(id.clone());
+                                    } else {
+                                        this.checked.remove(id);
+                                    }
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    ))
                     .child(div().flex_1().child("Name"))
                     .child(div().w_16().flex_none().child("Method"))
                     .child(div().w_20().flex_none().child("Status"))
@@ -903,9 +1170,13 @@ impl Render for CaptureScreen {
         let detail = self.selected_entry().cloned().map(|entry| self.render_detail(&entry, cx));
         let has_detail = detail.is_some();
         // The split's size is a physical starting point the user resizes, not part of the rem scale.
-        let body = v_resizable("capture-split").child(resizable_panel().child(self.render_list(cx))).child(
+        let split = v_resizable("capture-split").child(resizable_panel().child(self.render_list(cx))).child(
             resizable_panel().visible(has_detail).size(px(360.)).size_range(px(200.)..px(900.)).children(detail),
         );
+        let body = v_flex()
+            .size_full()
+            .child(self.render_toolbar(cx))
+            .child(div().flex_1().min_h_0().child(split));
         page::screen(header, body, cx)
     }
 }

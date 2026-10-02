@@ -17,6 +17,7 @@ export function toLogEntryEvent(payload: unknown): LogEntryEvent {
   };
   if (typeof e.workspaceId === "string") out.workspaceId = e.workspaceId;
   if (typeof e.via === "string") out.via = e.via;
+  if (e.origin === "forward" || e.origin === "reverse") out.origin = e.origin;
   if (typeof e.target === "string" || e.target === null) out.target = e.target;
   const contentType = headerValue(e.resHeaders, "content-type");
   if (contentType !== undefined) out.contentType = contentType;

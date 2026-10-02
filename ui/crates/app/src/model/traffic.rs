@@ -34,9 +34,83 @@ pub struct TrafficEntry {
     pub content_type: String,
     /// The response body's size in bytes.
     pub size: Option<u64>,
+    /// `forward` or `reverse`: the listener that took the request. Entries recorded before the engine said so have none.
+    pub origin: Option<String>,
+}
+
+/// What a response is, for the type filter of the list: the groups of a browser's Network tab, told apart by
+/// the response's content type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceType {
+    Fetch,
+    Doc,
+    Css,
+    Js,
+    Font,
+    Img,
+    Media,
+    Other,
+}
+
+impl ResourceType {
+    pub const ALL: [Self; 8] =
+        [Self::Fetch, Self::Doc, Self::Css, Self::Js, Self::Font, Self::Img, Self::Media, Self::Other];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetch/XHR",
+            Self::Doc => "Doc",
+            Self::Css => "CSS",
+            Self::Js => "JS",
+            Self::Font => "Font",
+            Self::Img => "Img",
+            Self::Media => "Media",
+            Self::Other => "Other",
+        }
+    }
+
+    pub fn of(content_type: &str) -> Self {
+        let kind = media::essence(content_type);
+        if kind == "text/html" || kind == "application/xhtml+xml" {
+            Self::Doc
+        } else if kind == "text/css" {
+            Self::Css
+        } else if kind.contains("javascript") || kind.contains("ecmascript") {
+            Self::Js
+        } else if kind.starts_with("font/") || kind.contains("font-") || kind.ends_with("fontobject") {
+            Self::Font
+        } else if kind.starts_with("image/") {
+            Self::Img
+        } else if kind.starts_with("audio/") || kind.starts_with("video/") || kind.contains("mpegurl") {
+            Self::Media
+        } else if kind.contains("json")
+            || kind.contains("xml")
+            || kind == "text/plain"
+            || kind == "application/x-www-form-urlencoded"
+            || kind == "application/graphql"
+            || kind == "application/x-ndjson"
+            || kind == "text/event-stream"
+        {
+            Self::Fetch
+        } else {
+            Self::Other
+        }
+    }
 }
 
 impl TrafficEntry {
+    /// Served by the reverse proxy (a mapped domain) rather than the forward proxy.
+    pub fn is_local(&self) -> bool {
+        match self.origin.as_deref() {
+            Some(origin) => origin == "reverse",
+            None => matches!(self.via.as_str(), "rfc6761" | "mapping"),
+        }
+    }
+
+    pub fn resource_type(&self) -> ResourceType {
+        ResourceType::of(&self.content_type)
+    }
+
     /// Reads one entry of `capture.list` (older engines name the time `ts`) or of `event.log.entry`
     /// (`timestamp`).
     pub fn from_value(value: &Value) -> Option<Self> {
@@ -52,6 +126,7 @@ impl TrafficEntry {
             workspace_id: text("workspaceId"),
             content_type: text("contentType").unwrap_or_default(),
             size: value.get("size").and_then(Value::as_u64),
+            origin: text("origin"),
         })
     }
 
@@ -238,6 +313,13 @@ pub fn merge_live(entries: &mut Vec<TrafficEntry>, incoming: Vec<TrafficEntry>) 
     entries.truncate(MAX_ENTRIES);
 }
 
+/// The current time in epoch milliseconds.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(0))
+}
+
 /// `HH:MM:SS` of an epoch-millisecond timestamp, in UTC. The standard library has no time zone, so the
 /// views that show this say UTC rather than guessing a zone.
 pub fn clock_utc(epoch_ms: u64) -> String {
@@ -373,6 +455,30 @@ mod tests {
         assert!(e.matches("users") && e.matches("post") && e.matches("201") && e.matches("mock") && e.matches("json"));
         assert!(!e.matches("orders"));
         assert!(e.matches(""));
+    }
+
+    #[test]
+    fn a_response_is_grouped_by_its_content_type() {
+        let of = ResourceType::of;
+        assert_eq!(of("application/json; charset=utf-8"), ResourceType::Fetch);
+        assert_eq!(of("text/html"), ResourceType::Doc);
+        assert_eq!(of("text/css"), ResourceType::Css);
+        assert_eq!(of("application/javascript"), ResourceType::Js);
+        assert_eq!(of("font/woff2"), ResourceType::Font);
+        assert_eq!(of("application/x-font-ttf"), ResourceType::Font);
+        assert_eq!(of("image/svg+xml"), ResourceType::Img);
+        assert_eq!(of("video/mp4"), ResourceType::Media);
+        assert_eq!(of("application/pdf"), ResourceType::Other);
+        assert_eq!(of(""), ResourceType::Other);
+    }
+
+    #[test]
+    fn local_traffic_is_what_the_reverse_proxy_served() {
+        let local = |value: Value| TrafficEntry::from_value(&value).unwrap().is_local();
+        assert!(local(json!({ "id": "a", "origin": "reverse", "via": "mock" })));
+        assert!(!local(json!({ "id": "a", "origin": "forward", "via": "mock" })));
+        assert!(local(json!({ "id": "a", "via": "mapping" })));
+        assert!(!local(json!({ "id": "a", "via": "proxy" })));
     }
 
     #[test]
