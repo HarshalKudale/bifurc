@@ -13,6 +13,7 @@ pub mod snippet;
 pub mod socket;
 pub mod traffic;
 pub mod tree;
+pub mod trust;
 pub mod variables;
 
 pub use config::ConfigSnapshot;

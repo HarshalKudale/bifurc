@@ -144,6 +144,35 @@ impl Sidecar {
     }
 }
 
+impl Sidecar {
+    /// Stops the engine whoever started it, for a restart: asks it to shut down and waits until it is gone.
+    /// An engine this process started is killed if it will not leave; one that belongs to another client is
+    /// only asked, and `false` says it is still there.
+    pub fn stop(&mut self, client: &EngineClient) -> bool {
+        let _ = client.call_blocking("engine.shutdown", serde_json::json!({}));
+        let deadline = Instant::now() + Duration::from_secs(8);
+        if let Some(mut child) = self.child.take() {
+            while Instant::now() < deadline {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return true;
+        }
+        while Instant::now() < deadline {
+            // The engine removes runtime.json as it stops.
+            if read_runtime_info(&self.data_dir).is_none_or(|info| info.pid != self.info.pid) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+}
+
 /// Connects to the engine for `config.data_dir`, starting one if none is running.
 pub fn attach_or_start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, Hello, Sidecar)> {
     if let Some(info) = read_runtime_info(&config.data_dir).filter(|i| i.transport == "socket")
