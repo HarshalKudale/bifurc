@@ -86,6 +86,7 @@ import { EngineError } from "@bifurc/protocol";
 import { isLoopbackHost } from "../utils/net";
 import { AppConfig } from "../workspace/config";
 import { HOP_BY_HOP } from "../utils/http";
+import { stripCacheHeaders } from "../utils/cachePolicy";
 import { sendHtml } from "../utils/sendHtml";
 import { buildHomePage, buildNotMappedPage, buildUnservedPage } from "./pages";
 import {
@@ -379,6 +380,7 @@ export function createEdgeRouter(opts: EdgeRouterOptions): EdgeRouterInstance {
         if (HOP_BY_HOP.has(key)) continue;
         headers[key] = Array.isArray(v) ? v.join(", ") : v;
       }
+      stripCacheHeaders(headers);
 
       const chunks: Buffer[] = [];
       req.on("data", (c: Buffer) => chunks.push(c));
