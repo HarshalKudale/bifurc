@@ -98,12 +98,53 @@ impl ResourceType {
     }
 }
 
+/// What answered an exchange, for the list's handler filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Handler {
+    /// A mapped domain, served by the reverse proxy.
+    Mapping,
+    /// Traffic sent through the forward proxy to its real target.
+    Proxy,
+    Mock,
+}
+
+impl Handler {
+    pub const ALL: [Handler; 3] = [Handler::Mapping, Handler::Proxy, Handler::Mock];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Handler::Mapping => "Mapping",
+            Handler::Proxy => "Proxy",
+            Handler::Mock => "Mock",
+        }
+    }
+
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            Handler::Mapping => "Served by a local mapping (localhost domains)",
+            Handler::Proxy => "Sent through the forward proxy to its real target",
+            Handler::Mock => "Answered by a mock",
+        }
+    }
+}
+
 impl TrafficEntry {
     /// Served by the reverse proxy (a mapped domain) rather than the forward proxy.
-    pub fn is_local(&self) -> bool {
+    fn is_local(&self) -> bool {
         match self.origin.as_deref() {
             Some(origin) => origin == "reverse",
             None => matches!(self.via.as_str(), "rfc6761" | "mapping"),
+        }
+    }
+
+    /// Who answered it: a mock, a mapping, or the forward proxy. A failed exchange belongs to the side it came in on.
+    pub fn handler(&self) -> Handler {
+        match self.via.as_str() {
+            "mock" => Handler::Mock,
+            "rfc6761" | "mapping" => Handler::Mapping,
+            "proxy" | "rule" => Handler::Proxy,
+            _ if self.is_local() => Handler::Mapping,
+            _ => Handler::Proxy,
         }
     }
 
@@ -473,12 +514,15 @@ mod tests {
     }
 
     #[test]
-    fn local_traffic_is_what_the_reverse_proxy_served() {
-        let local = |value: Value| TrafficEntry::from_value(&value).unwrap().is_local();
-        assert!(local(json!({ "id": "a", "origin": "reverse", "via": "mock" })));
-        assert!(!local(json!({ "id": "a", "origin": "forward", "via": "mock" })));
-        assert!(local(json!({ "id": "a", "via": "mapping" })));
-        assert!(!local(json!({ "id": "a", "via": "proxy" })));
+    fn the_handler_is_what_answered() {
+        let handler = |value: Value| TrafficEntry::from_value(&value).unwrap().handler();
+        assert_eq!(handler(json!({ "id": "a", "origin": "reverse", "via": "mock" })), Handler::Mock);
+        assert_eq!(handler(json!({ "id": "a", "via": "mapping" })), Handler::Mapping);
+        assert_eq!(handler(json!({ "id": "a", "via": "rfc6761" })), Handler::Mapping);
+        assert_eq!(handler(json!({ "id": "a", "via": "proxy" })), Handler::Proxy);
+        assert_eq!(handler(json!({ "id": "a", "via": "rule" })), Handler::Proxy);
+        assert_eq!(handler(json!({ "id": "a", "origin": "reverse", "via": "error" })), Handler::Mapping);
+        assert_eq!(handler(json!({ "id": "a", "origin": "forward", "via": "error" })), Handler::Proxy);
     }
 
     #[test]

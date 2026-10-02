@@ -26,6 +26,7 @@
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",
     "package": "npm run build && electron-builder",
+    "package:desktop": "node scripts/package-desktop.mjs",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",

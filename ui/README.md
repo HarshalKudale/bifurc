@@ -8,6 +8,7 @@ no entity state: every change is an engine command, and the engine's events say 
 ui/
 ├── crates/engine-client   socket framing, hello, request/response + events, sidecar attach-or-start (no GPUI)
 ├── crates/tray            the engine's tray icon (bifurc-tray): a helper the engine runs, no GPUI
+├── crates/cli             the installed `bifurc` command: starts the bundled CLI on the bundled Node
 └── crates/app             the GPUI app (bifurc-ui); build.rs gives the Windows main thread a larger stack
     └── src/
         ├── model/         typed views of engine data and the logic over them (no GPUI; unit-tested)
@@ -55,13 +56,47 @@ The engine's lifetime is its own, whichever client started it:
 | Variable               | Meaning                                                                                 |
 | ---------------------- | --------------------------------------------------------------------------------------- |
 | `BIFURC_DATA_DIR`      | Data directory (default: the desktop app's, e.g. `%LOCALAPPDATA%\Bifurc` on Windows)    |
-| `BIFURC_NODE`          | The `node` executable to start the engine with (default: `node` on `PATH`)              |
+| `BIFURC_NODE`          | The `node` executable to start the engine with (default: the installed app's own, else `node` on `PATH`) |
 | `BIFURC_ENGINE_ENTRY`  | The engine's `hostCli.js` (default: found above the executable or the working directory) |
 | `BIFURC_TRAY`          | The tray helper (default: `bifurc-tray` beside this executable, else the engine's search) |
 | `BIFURC_UI`            | The interface the tray icon opens (default: this executable)                            |
 
 On Windows the executable is linked with an 8 MB main-thread stack (`crates/app/build.rs`). Windows gives the
 main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree overflows it in a debug build.
+The same build script compiles `build/icon.ico` into the executable, which is the icon the taskbar shows.
+
+## Package
+
+```sh
+npm run package:desktop                        # Windows: installer + Store package; Linux: AppImage
+npm run package:desktop -- --target nsis       # one of nsis, msix, appimage, dir
+npm run package:desktop -- --skip-build        # package what is already built
+```
+
+`scripts/package-desktop.mjs` builds the engine and the release executables, lays out one folder
+(`release/desktop/<platform>-unpacked`) and wraps it. Every package installs the same things: the interface, the
+engine and the Node it runs on, the tray helper (Windows), and the `bifurc` command.
+
+```
+bifurc-ui[.exe]      the interface
+bifurc-tray.exe      the engine's tray icon (Windows)
+bin/bifurc[.exe]     the bifurc command (crates/cli): runs the bundled CLI on the bundled Node
+runtime/node[.exe]   the official Node build, downloaded once and checked against its published checksum
+resources/node_modules/@bifurc/{engine,cli,protocol} and their production dependencies
+```
+
+| Package | File | `bifurc` on `PATH` |
+| ------- | ---- | ------------------ |
+| Installer (NSIS, `packaging/windows/bifurc.nsi`) | `Bifurc-<version>-setup.exe` | Adds `<install>\bin` to the user's `PATH`; removed on uninstall. Per-user, no elevation, installs to `%LOCALAPPDATA%\Programs\bifurc-desktop`. |
+| Store (`packaging/windows/AppxManifest.xml`) | `Bifurc-<version>.msix` | An app execution alias, `bifurc.exe`. Unsigned: the Store signs it; sign it yourself to sideload. |
+| AppImage (`packaging/linux/AppRun`) | `Bifurc-<version>-x86_64.AppImage` | The first run links `~/.local/bin/bifurc`; `Bifurc.AppImage cli …` works too. |
+
+The AppImage does not run the app from inside the image: the engine outlives the window, and the image's files are
+only there while the process it launched runs. Its first run copies the app to `~/.local/share/bifurc/app/<build>`
+and adds a launcher entry; everything runs from that copy.
+
+The installer needs NSIS (`makensis` on `PATH`, in `Program Files`, or `MAKENSIS`), the Store package needs the
+Windows SDK (`makeappx`, `makepri`). `.github/workflows/package-desktop.yml` builds all three.
 
 ## Using it
 
@@ -161,7 +196,7 @@ Everything else the palette lists has a command but no key.
 - Schema explorers for GraphQL, gRPC and SOAP.
 - An updater: Settings only links to the releases page.
 - Saving the dock layout between runs (the sidebar state and the theme are kept).
-- A packaged build that bundles Node and the engine.
+- A tray icon on Linux, so there the engine stops when its last interface closes.
 - The engine is not stopped if the UI is killed rather than closed; `bifurc engine stop` stops it.
 
 ## Tests
