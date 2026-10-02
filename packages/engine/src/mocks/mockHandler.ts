@@ -104,6 +104,8 @@ function mockBodyIsText(mock: MockRule): boolean {
 
 export function isFullyMocked(mock: MockRule): boolean {
   if (mock.streamingMode && mock.streamingMode !== "none") return true;
+  // Nothing real to merge with (the endpoint does not exist yet): the mock is the whole response.
+  if (mock.standalone) return true;
   if (!mockBodyIsText(mock)) return false;
   // The response's Content-Type is always the real server's, so it is never a header the mock has to set.
   const keys = Object.keys(resolveMockHeaders(mock, null)).filter((key) => key.trim() && key.toLowerCase() !== "content-type");
@@ -135,18 +137,13 @@ export function mergeMockWithUpstream(
   upstream: { status: number; headers: Record<string, string>; body: Buffer; durationMs: number },
   env: Environment | null,
 ): ResolvedMockResponse {
-  // Data (an image, a PDF) cannot be mocked: what the server sent is what the caller gets.
-  if (!isTextContentType(headerValue(upstream.headers, "content-type"))) {
-    return {
-      status: upstream.status,
-      headers: ensureResponseHeaders({ ...upstream.headers }, upstream.body),
-      body: upstream.body,
-      delayMs: 0,
-    };
-  }
-
   const resolvedMockHeaders = resolveMockHeaders(mock, env);
-  const body = ((mock.responseBodyMocked ?? true) && mockBodyIsText(mock)) ? resolveMockBody(mock, env) : upstream.body;
+  // Data (an image, a PDF) cannot be mocked: the body the server sent is the body the caller gets. Status,
+  // the other headers and the delay can still be.
+  const upstreamIsText = isTextContentType(headerValue(upstream.headers, "content-type"));
+  const body = ((mock.responseBodyMocked ?? true) && mockBodyIsText(mock) && upstreamIsText)
+    ? resolveMockBody(mock, env)
+    : upstream.body;
   const headers = { ...upstream.headers };
   const mockedKeys = mockedHeaderKeys(mock);
   for (const [key, value] of Object.entries(resolvedMockHeaders)) {
