@@ -49,7 +49,8 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runWorkspaceHost, type WorkspaceHostOptions, type HostTransport } from "./host";
+import { findDesktopCompanions } from "./desktop";
+import { runWorkspaceHost, type StandaloneHostOptions, type HostTransport } from "./host";
 import { HOST_USAGE, parseHostArgs } from "./hostArgs";
 
 /** The engine package's version, reported to clients in the `hello` response and in runtime.json. */
@@ -103,7 +104,7 @@ async function main(argv: readonly string[]): Promise<void> {
     console.debug = toStderr;
   }
 
-  const opts: WorkspaceHostOptions = {
+  const opts: StandaloneHostOptions = {
     dataDir: args.dataDir,
     engineVersion: packageVersion(),
     // **No `domain`.** The host answers as `localhost`, which it composes itself, and the parser no longer has
@@ -120,6 +121,12 @@ async function main(argv: readonly string[]): Promise<void> {
     // not have to change), and an operator whose machine already has something on 80 needs a way to say so
     // without editing JSON inside a volume.
     edgePort: args.edgePort,
+    // The tray icon is the engine's, whoever started it: the interface, or the CLI from a terminal that may
+    // close. `--no-tray` is for a container and for a caller that manages the engine's lifetime itself.
+    desktop:
+      args.noTray === true || transport.kind === "stdio"
+        ? undefined
+        : findDesktopCompanions({ tray: args.tray, ui: args.ui, searchFrom: __dirname }),
   };
 
   const host = await runWorkspaceHost(opts);

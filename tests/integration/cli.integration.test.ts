@@ -167,7 +167,7 @@ describe("bifurc CLI", () => {
     const stopped = await cli("engine", "stop");
     expect(stopped.code).toBe(0);
     expect(readRuntimeInfo(root)).toBeNull();
-    const after = await cli("status");
+    const after = await cli("status", "--no-start");
     expect(after.code).toBe(1);
     expect(after.err).toMatch(/No engine is running/);
   });

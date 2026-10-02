@@ -8,7 +8,11 @@ use bifurc_engine_client::{SidecarConfig, attach_or_start};
 use gpui_kit::component::{ActiveTheme as _, TitleBar, alert::Alert, button::Button, h_flex, spinner::Spinner, v_flex};
 use gpui_kit::{AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div};
 
-use crate::{app_model::AppModel, engine::EngineSession, shell::Shell};
+use crate::{
+    app_model::AppModel,
+    engine::{EngineSession, sidecar_config},
+    shell::Shell,
+};
 
 enum Phase {
     Starting,
@@ -23,7 +27,7 @@ pub struct Bootstrap {
 
 impl Bootstrap {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let config = SidecarConfig::default();
+        let config = sidecar_config();
         let mut this = Self { phase: Phase::Starting, data_dir: config.data_dir.display().to_string() };
         this.start(config, window, cx);
         this
@@ -56,7 +60,7 @@ impl Bootstrap {
     }
 
     fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.start(SidecarConfig::default(), window, cx);
+        self.start(sidecar_config(), window, cx);
         cx.notify();
     }
 

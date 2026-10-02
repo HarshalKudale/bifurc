@@ -24,10 +24,3 @@ gpui-kit = { version = "0.7", features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.54", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
-tray-icon = "0.1"
-# The tray icon ships as a PNG; the window's handle comes back as a raw handle.
-png = "0.17"
-raw-window-handle = "0.6"

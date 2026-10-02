@@ -7,6 +7,7 @@ no entity state: every change is an engine command, and the engine's events say 
 ```
 ui/
 ├── crates/engine-client   socket framing, hello, request/response + events, sidecar attach-or-start (no GPUI)
+├── crates/tray            the engine's tray icon (bifurc-tray): a helper the engine runs, no GPUI
 └── crates/app             the GPUI app (bifurc-ui); build.rs gives the Windows main thread a larger stack
     └── src/
         ├── model/         typed views of engine data and the logic over them (no GPUI; unit-tested)
@@ -35,16 +36,29 @@ cargo run -p bifurc-ui
 ```
 
 On start the UI reads `<data dir>/runtime.json`. If an engine is already running for that data directory (for
-example one started with `bifurc engine start`) it **joins** it and leaves it running on exit. Otherwise it starts
-`node packages/engine/dist/runtime/hostCli.js --transport socket` and stops it when the window closes. Either
-way the CLI and the UI see the same workspace live: a request created with `bifurc call entity.create …` shows up
-in the request tree without a refresh.
+example one started with `bifurc engine start`) it **joins** it. Otherwise it starts
+`node packages/engine/dist/runtime/hostCli.js --transport socket`, detached. Either way the CLI and the UI see
+the same workspace live: a request created with `bifurc call entity.create …` shows up in the request tree
+without a refresh.
+
+The engine's lifetime is its own, whichever client started it:
+
+- The engine shows a **tray icon** (`crates/tray`, the `bifurc-tray` helper it runs as a child). Closing the
+  window closes this app only; the engine keeps running behind the icon. The icon opens the app again (or
+  brings an open one to the front), restarts the engine and quits.
+- **Quit** in the tray, or `bifurc engine stop`, stops the engine and every interface attached to it closes.
+- A **restart** (the tray, Settings → Servers, or `bifurc engine restart`) starts a new engine with the same
+  command line; attached interfaces wait for it and reconnect.
+- With no tray icon (the helper is missing, or the platform has none yet), or with "Keep running in the tray"
+  switched off, the engine stops when its last interface closes.
 
 | Variable               | Meaning                                                                                 |
 | ---------------------- | --------------------------------------------------------------------------------------- |
 | `BIFURC_DATA_DIR`      | Data directory (default: the desktop app's, e.g. `%LOCALAPPDATA%\Bifurc` on Windows)    |
 | `BIFURC_NODE`          | The `node` executable to start the engine with (default: `node` on `PATH`)              |
 | `BIFURC_ENGINE_ENTRY`  | The engine's `hostCli.js` (default: found above the executable or the working directory) |
+| `BIFURC_TRAY`          | The tray helper (default: `bifurc-tray` beside this executable, else the engine's search) |
+| `BIFURC_UI`            | The interface the tray icon opens (default: this executable)                            |
 
 On Windows the executable is linked with an 8 MB main-thread stack (`crates/app/build.rs`). Windows gives the
 main thread 1 MB, and GPUI lays out and paints by recursion, so a deep view tree overflows it in a debug build.
