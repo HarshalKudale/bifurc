@@ -334,8 +334,6 @@ impl SettingsScreen {
     }
 
     fn servers_page(&self) -> SettingPage {
-        let tray_read = self.model.clone();
-        let tray_write = self.model.clone();
         let engine_model = self.model.clone();
         SettingPage::new("Servers").icon(IconName::Network).groups(vec![
             SettingGroup::new()
@@ -370,24 +368,8 @@ impl SettingsScreen {
                     .keywords(["restart", "kill", "respawn", "runtime", "process"]),
                 )
                 .footer(|_, _| {
-                    "Restart stops the engine and starts a new one. Connections it holds, such as open WebSockets and captured traffic, are lost."
+                    "The engine keeps running behind its tray icon after this window closes; quit it from the icon. Restart stops the engine and starts a new one. Connections it holds, such as open WebSockets and captured traffic, are lost."
                 }),
-            SettingGroup::new().title("Background").item(
-                    SettingItem::new(
-                        "Keep running in the tray",
-                        SettingField::switch(
-                            move |cx: &App| tray_read.read(cx).config().settings.minimize_to_tray,
-                            move |value: bool, cx: &mut App| {
-                                tray_write.update(cx, |model, cx| {
-                                    model.update_settings(json!({ "minimizeToTray": value }), cx)
-                                })
-                            },
-                        ),
-                    )
-                    .description(
-                        "The engine keeps running behind its tray icon after the last window closes; the icon opens Bifurc again, restarts the engine and quits. When off, or when there is no tray icon, the engine stops with the last window.",
-                    ),
-                ),
             SettingGroup::new()
                 .title("Proxy")
                 .item(self.listener_item(
