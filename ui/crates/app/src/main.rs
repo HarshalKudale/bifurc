@@ -1,3 +1,6 @@
+// An installed app opens no console window; a debug build keeps one for its output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod app_model;
 mod bootstrap;
 mod commands;
@@ -41,6 +44,8 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(1080.), px(640.))),
+            // What a Linux desktop matches against `bifurc.desktop` to find the window's icon and name.
+            app_id: Some("bifurc".to_owned()),
             ..TitleBar::window_options()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
