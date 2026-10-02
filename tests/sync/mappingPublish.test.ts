@@ -28,9 +28,9 @@ let tmpDir: string;
 async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-mapping-pub-"));
 
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   fs.writeFileSync(
@@ -44,16 +44,16 @@ async function setup() {
     "utf-8",
   );
 
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
-  const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/workspace/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* safe-delete shim holds handles */ }
 }
@@ -68,12 +68,12 @@ let registry: any;
 let ctx: any;
 
 beforeAll(async () => {
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-  const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
-  const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
-  const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
-  const { registerSyncCommands } = await import("@bifurc/engine/sync/syncCommands");
-  const { bus } = await import("@bifurc/engine/eventBus");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+  const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
+  const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
+  const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
+  const { registerSyncCommands } = await import("@bifurc/engine/gitops/syncCommands");
+  const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
   registerCrudKinds();
   registerCoreKinds();
@@ -96,7 +96,7 @@ async function createMapping(domain: string) {
 
 describe("entity.publish — a mapping, through the command the button issues", () => {
   it("commits the mapping's file and the status stops saying 'new'", async () => {
-    const { getWorkspaceSyncStatus } = await import("@bifurc/engine/sync/statusTracker");
+    const { getWorkspaceSyncStatus } = await import("@bifurc/engine/gitops/statusTracker");
 
     const created = await createMapping("app.localhost");
     const relPath = `mappings/${created.id}.json`;
@@ -132,7 +132,7 @@ describe("entity.publish — a mapping, through the command the button issues", 
   });
 
   it("publishes an edited mapping as an update, and leaves nothing untracked behind it", async () => {
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("edit.localhost");
     const relPath = `mappings/${created.id}.json`;
@@ -216,7 +216,7 @@ describe("entity.publish — a mapping, through the command the button issues", 
    * ever release.
    */
   it("publishes anyway when a stale index.lock was left behind by a killed process", async () => {
-    const { getWorkspaceSyncStatus } = await import("@bifurc/engine/sync/statusTracker");
+    const { getWorkspaceSyncStatus } = await import("@bifurc/engine/gitops/statusTracker");
     const created = await createMapping("locked.localhost");
     const relPath = `mappings/${created.id}.json`;
     const lock = path.join(tmpDir, WS_ID, ".git", "index.lock");

@@ -3,7 +3,6 @@ import { Zap, Download, Share2, Ban, Trash2, ArrowUpRight } from "@/lib/icons";
 import { strings } from "@/lib/strings";
 import { RequestLogEntry, MockRule, SavedRequest } from "@/types";
 import { ContextMenuItem } from "@/components/ui";
-import { buildMockInitial, reqToHeadersBody } from "./captureUtils";
 import { blockKey } from "@/lib/blocks";
 
 interface CtxMenuState {
@@ -67,8 +66,11 @@ export function useCaptureContextMenu({
     const e = ctxMenu.entry;
     const isBlocked = blockedKeys.has(blockKey(e.method, e.url));
     return [
-      { label: strings.capture.ctxMock, icon: <Zap size={14} />, action: run(() => onOpenInMocks(buildMockInitial(e))) },
-      { label: strings.capture.ctxOpen, icon: <ArrowUpRight size={14} />, action: run(() => onOpenInRequests(reqToHeadersBody(e))) },
+      // Both builders are the engine's now (`plan/19` WI 5, item 2), so these are fire-and-forget: `run()`
+      // closes the menu and calls the action, and the tab opens when the loopback round trip answers.
+      // `void` rather than `await` because `ContextMenuItem.action` is typed `() => void`.
+      { label: strings.capture.ctxMock, icon: <Zap size={14} />, action: run(() => { void window.api.captureBuildMock(e).then(({ mock }) => onOpenInMocks(mock)); }) },
+      { label: strings.capture.ctxOpen, icon: <ArrowUpRight size={14} />, action: run(() => { void window.api.captureBuildRequest(e).then(({ request }) => onOpenInRequests(request)); }) },
       { label: strings.capture.ctxCreate, icon: <Download size={14} />, action: run(() => saveEntries([e], false)) },
       { sep: true },
       isBlocked

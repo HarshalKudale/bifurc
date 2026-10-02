@@ -8,8 +8,8 @@ import {
     getPathExporter,
     getPathImporter,
     registerFormat,
-} from "@bifurc/engine/importExport/registry";
-import type { EntityKind } from "@bifurc/engine/importExport/types";
+} from "@bifurc/engine/importexport/registry";
+import type { EntityKind } from "@bifurc/engine/importexport/types";
 
 /**
  * The registry is the single source of truth for what the Import/Export dialog
@@ -40,7 +40,6 @@ const ALL_KINDS: EntityKind[] = [
     "mappings",
     "proxyRules",
     "websockets",
-    "webhooks",
 ];
 
 describe("importExport registry", () => {
@@ -209,12 +208,12 @@ describe("importExport registry", () => {
     });
 
     it("appends newly registered formats instead of replacing existing ones", () => {
-        const before = getFormats("webhooks").length;
-        registerFormat("webhooks", {
-            definition: { id: "webhooks-test-only", label: "Test Only", extensions: ["json"], supportsExport: false, supportsImport: false },
+        const before = getFormats("websockets").length;
+        registerFormat("websockets", {
+            definition: { id: "websockets-test-only", label: "Test Only", extensions: ["json"], supportsExport: false, supportsImport: false },
         });
-        const after = getFormats("webhooks");
+        const after = getFormats("websockets");
         expect(after.length).toBe(before + 1);
-        expect(after[after.length - 1].id).toBe("webhooks-test-only");
+        expect(after[after.length - 1].id).toBe("websockets-test-only");
     });
 });

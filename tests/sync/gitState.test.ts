@@ -38,10 +38,10 @@ let tmpDir: string;
 async function setup() {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-gitstate-test-"));
 
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
 
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(path.join(tmpDir, "app.json"));
 
   fs.writeFileSync(
@@ -55,17 +55,17 @@ async function setup() {
     "utf-8",
   );
 
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Test Workspace");
 
-  const { initWorkspaceRepo } = await import("@bifurc/engine/store/gitStore");
+  const { initWorkspaceRepo } = await import("@bifurc/engine/workspace/gitStore");
   await initWorkspaceRepo(WS_ID);
 }
 
 async function teardown() {
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
-  const { setSettingsPathOverride } = await import("@bifurc/engine/store/appSettings");
+  const { setSettingsPathOverride } = await import("@bifurc/engine/workspace/appSettings");
   setSettingsPathOverride(null);
   // Best-effort. On Windows the safe-delete shim holds handles on the temp tree and `rmSync` throws
   // `EBUSY`, which vitest reports as a *test* failure even though the assertions all passed. The
@@ -98,7 +98,7 @@ describe("getWorkspaceGitState — where the workspace stands relative to its re
   afterEach(teardown);
 
   it("reports no remote, and never claims to be ahead of one", async () => {
-    const { getWorkspaceGitState } = await import("@bifurc/engine/sync/gitState");
+    const { getWorkspaceGitState } = await import("@bifurc/engine/gitops/gitState");
 
     const state = await getWorkspaceGitState(WS_ID);
 
@@ -110,8 +110,8 @@ describe("getWorkspaceGitState — where the workspace stands relative to its re
   });
 
   it("treats a configured-but-never-pushed branch as ahead", async () => {
-    const { getWorkspaceGitState } = await import("@bifurc/engine/sync/gitState");
-    const { getGit } = await import("@bifurc/engine/store/gitStore");
+    const { getWorkspaceGitState } = await import("@bifurc/engine/gitops/gitState");
+    const { getGit } = await import("@bifurc/engine/workspace/gitStore");
     await addOrigin();
 
     // The engine's own git handle must see the same remote the setup just added — if these disagree,
@@ -131,7 +131,7 @@ describe("getWorkspaceGitState — where the workspace stands relative to its re
   });
 
   it("reports in-sync when HEAD matches the remote-tracking ref", async () => {
-    const { getWorkspaceGitState } = await import("@bifurc/engine/sync/gitState");
+    const { getWorkspaceGitState } = await import("@bifurc/engine/gitops/gitState");
     await addOrigin();
     await setRemoteRef(await head());
 
@@ -142,7 +142,7 @@ describe("getWorkspaceGitState — where the workspace stands relative to its re
   });
 
   it("reports ahead when there is a local commit the remote ref lacks", async () => {
-    const { getWorkspaceGitState } = await import("@bifurc/engine/sync/gitState");
+    const { getWorkspaceGitState } = await import("@bifurc/engine/gitops/gitState");
     await addOrigin();
     await setRemoteRef(await head());
 
@@ -157,7 +157,7 @@ describe("getWorkspaceGitState — where the workspace stands relative to its re
   });
 
   it("reports behind when the remote ref has a commit HEAD lacks", async () => {
-    const { getWorkspaceGitState } = await import("@bifurc/engine/sync/gitState");
+    const { getWorkspaceGitState } = await import("@bifurc/engine/gitops/gitState");
     await addOrigin();
 
     // A commit that exists only on the remote side: make it, remember it, then wind HEAD back.
@@ -185,11 +185,11 @@ describe("deleting a flat kind — the deletion must survive until it is publish
    * kind containers (`entityCrudRegistry`, `simpleEntityKinds`) are singletons for the same reason.
    */
   beforeAll(async () => {
-    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-    const { registerEntityCrudCommands } = await import("@bifurc/engine/store/entityCrudCommands");
-    const { registerCrudKinds } = await import("@bifurc/engine/store/kinds/crudKinds");
-    const { registerCoreKinds } = await import("@bifurc/engine/store/kinds/coreKinds");
-    const { bus } = await import("@bifurc/engine/eventBus");
+    const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+    const { registerEntityCrudCommands } = await import("@bifurc/engine/workspace/entities/entityCrudCommands");
+    const { registerCrudKinds } = await import("@bifurc/engine/workspace/entities/kinds/crudKinds");
+    const { registerCoreKinds } = await import("@bifurc/engine/workspace/entities/kinds/coreKinds");
+    const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
     registerCrudKinds();
     registerCoreKinds();
@@ -210,9 +210,9 @@ describe("deleting a flat kind — the deletion must survive until it is publish
   afterEach(teardown);
 
   it("keeps a published mapping visible as a stub, with its deletion pending", async () => {
-    const { syncChanges } = await import("@bifurc/engine/sync/gitOps");
-    const { getPendingDeletions } = await import("@bifurc/engine/store/workspaceFs");
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { syncChanges } = await import("@bifurc/engine/gitops/gitOps");
+    const { getPendingDeletions } = await import("@bifurc/engine/workspace/workspaceFs");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("tracked.localhost");
     // Make it tracked — this is what makes the deletion something that has to be *committed*.
@@ -234,8 +234,8 @@ describe("deleting a flat kind — the deletion must survive until it is publish
   });
 
   it("leaves no trace of an untracked mapping's deletion, because there is nothing to commit", async () => {
-    const { getPendingDeletions } = await import("@bifurc/engine/store/workspaceFs");
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { getPendingDeletions } = await import("@bifurc/engine/workspace/workspaceFs");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("untracked.localhost");
 
@@ -249,9 +249,9 @@ describe("deleting a flat kind — the deletion must survive until it is publish
   });
 
   it("drops the stub once the deletion is published", async () => {
-    const { syncChanges } = await import("@bifurc/engine/sync/gitOps");
-    const { getPendingDeletions } = await import("@bifurc/engine/store/workspaceFs");
-    const { loadConfig } = await import("@bifurc/engine/store/config");
+    const { syncChanges } = await import("@bifurc/engine/gitops/gitOps");
+    const { getPendingDeletions } = await import("@bifurc/engine/workspace/workspaceFs");
+    const { loadConfig } = await import("@bifurc/engine/workspace/config");
 
     const created = await createMapping("commitme.localhost");
     await syncChanges(WS_ID, [`mappings/${created.id}.json`]);
@@ -269,8 +269,8 @@ describe("deleting a flat kind — the deletion must survive until it is publish
   });
 
   it("never writes a names.json for a flat kind", async () => {
-    const { syncChanges } = await import("@bifurc/engine/sync/gitOps");
-    const { discardChanges } = await import("@bifurc/engine/sync/gitOps");
+    const { syncChanges } = await import("@bifurc/engine/gitops/gitOps");
+    const { discardChanges } = await import("@bifurc/engine/gitops/gitOps");
 
     const created = await createMapping("names.localhost");
     await syncChanges(WS_ID, [`mappings/${created.id}.json`]);

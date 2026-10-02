@@ -33,6 +33,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "entity.create": { valid: { kind: "mocks", entity: { name: "x" } }, invalid: { kind: "not-a-kind", entity: {} } },
   "entity.update": { valid: { kind: "mocks", entity: { id: "m1" } }, invalid: { kind: "mocks" } },
   "entity.delete": { valid: { kind: "mocks", id: "m1" }, invalid: { kind: "mocks" } },
+  "entity.duplicate": { valid: { workspaceId: "ws1", kind: "mocks", id: "m1" }, invalid: { kind: "mocks", id: "m1" } },
   "entity.load": { valid: { workspaceId: "ws1", kind: "mocks", id: "m1" }, invalid: { kind: "mocks", id: "m1" } },
   "entity.list": { valid: { workspaceId: "ws1", kind: "mocks" }, invalid: { kind: "mocks" } },
   "entity.setEnabled": {
@@ -48,11 +49,18 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
 
   "config.get": { valid: {}, invalid: { extra: true } },
   "config.save": { valid: { config: { port: 80 } }, invalid: {} },
+  "settings.update": { valid: { forwardProxyPort: 8081, minimizeToTray: true }, invalid: { port: 70000 } },
   "workspace.add": { valid: { name: "WS" }, invalid: {} },
   "workspace.rename": { valid: { id: "w1", name: "New" }, invalid: { id: "w1" } },
   "workspace.delete": { valid: { id: "w1" }, invalid: {} },
   "workspace.setActive": { valid: { id: "w1" }, invalid: {} },
   "env.setActive": { valid: { id: null }, invalid: {} },
+  // `plan/19` WI 5, item 4. The `invalid` row is a **near-miss** — the right shape under the wrong key —
+  // because `{}` would fail for "missing `workspaceId`" before and after any schema edit.
+  "env.resolveText": { valid: { workspaceId: "ws1", text: "{{host}}/health" }, invalid: { workspaceId: "ws1", value: "{{host}}/health" } },
+  // `plan/19` WI 6. `{}` is the invalid row because `workspaceId` is **required** here — the merge is per
+  // workspace and there is no "active workspace" to fall back to (`WorkspaceScope` is deliberately not used).
+  "env.getMerged": { valid: { workspaceId: "ws1" }, invalid: {} },
 
   // P14 WI 1 (D13): these six carry an optional `workspaceId` so a host can address one of N workspaces
   // behind a single RPC endpoint. The `valid` fixture supplies it, because "omitted" is already covered by
@@ -95,19 +103,6 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "application.checkPort": { valid: { port: 3000 }, invalid: { port: "3000" } },
   "application.killPort": { valid: { port: 3000 }, invalid: { port: "3000" } },
 
-  // P14 WI 1 (D13): same `workspaceId` treatment as `server.*` above — supplied in `valid` (the new
-  // capability is what needs covering, not the status quo), and the near-miss on the new field replaces the
-  // generic extra-key case. `webhookServer.start` keeps its `port: "abc"` rejection, which is a better
-  // near-miss than `workspaceId` here since `port` is the field that command is actually about.
-  "webhook.registerActive": {
-    valid: { webhookId: "w1", urlSuffix: "/x", workspaceId: "ws1" },
-    invalid: { webhookId: "w1", workspaceId: "ws1" },
-  },
-  "webhook.unregisterActive": { valid: { webhookId: "w1", workspaceId: "ws1" }, invalid: {} },
-  "webhookServer.start": { valid: { workspaceId: "ws1" }, invalid: { port: "abc" } },
-  "webhookServer.stop": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
-  "webhookServer.status": { valid: { workspaceId: "ws1" }, invalid: { workspaceId: 42 } },
-
   "runner.saveReport": {
     valid: { workspaceId: "ws1", report: { folderId: "f1", startedAt: 1 } },
     invalid: { workspaceId: "ws1", report: {} },
@@ -135,6 +130,25 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   },
   "runner.loadConfig": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
   "runner.listFolderIds": { valid: { workspaceId: "ws1" }, invalid: {} },
+  // The run's own commands (`plan/19` WI 4). Each takes the same `{workspaceId, folderId}` pair the storage
+  // commands above take, and the `invalid` fixture is the same near-miss — a missing `folderId` — because the
+  // rejection being exercised is the *pair's*, not a command-specific rule.
+  "runner.start": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
+  "runner.cancel": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
+  "runner.status": { valid: { workspaceId: "ws1", folderId: "f1" }, invalid: { workspaceId: "ws1" } },
+
+  // `ws.*` (`plan/19` WI 6). The near-misses are chosen per command rather than copied: `ws.connect`'s is a
+  // missing `url` (the pair that identifies the socket is present, so the rejection is the *url's*),
+  // `ws.send`'s is a `data` of the wrong type, and the two read commands' is a missing `socketId`.
+  "ws.connect": {
+    valid: { workspaceId: "ws1", socketId: "tab-1", url: "wss://example.test/socket" },
+    invalid: { workspaceId: "ws1", socketId: "tab-1", url: 5 },
+  },
+  "ws.disconnect": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
+  "ws.send": { valid: { workspaceId: "ws1", socketId: "tab-1", data: "ping" }, invalid: { workspaceId: "ws1", socketId: "tab-1", data: 1 } },
+  "ws.status": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
+  "ws.list": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "ws.clearMessages": { valid: { workspaceId: "ws1", socketId: "tab-1" }, invalid: { workspaceId: "ws1" } },
 
   "sync.setRemote": { valid: { workspaceId: "ws1", remote: "r", branch: "main" }, invalid: { workspaceId: "ws1", remote: "r" } },
   "sync.disconnect": { valid: { workspaceId: "ws1" }, invalid: {} },
@@ -208,8 +222,124 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
 
   "script.execute": { valid: { script: "1+1", context: "pre", envVars: {} }, invalid: { script: "1+1", context: "bogus", envVars: {} } },
   "request.replay": { valid: { method: "GET", url: "http://x", headers: {}, body: "" }, invalid: { method: "GET", url: "http://x" } },
+  // `plan/19` WI 5. One required field, so the discriminating invalid is a **near-miss**: the right shape
+  // under the wrong key name. `{}` would fail for "missing `curl`" before and after any schema edit, which
+  // is the non-discriminating fixture this table's header warns about.
+  "request.parseCurl": { valid: { curl: "curl http://x" }, invalid: { curlCommand: "curl http://x" } },
   "healthbar.getServices": { valid: { workspaceId: "ws1" }, invalid: {} },
   "healthbar.saveServices": { valid: { workspaceId: "ws1", services: [] }, invalid: { workspaceId: "ws1" } },
   "healthbar.checkUrl": { valid: { url: "http://x" }, invalid: {} },
   "capture.shareJson": { valid: { entries: [], workspaceId: "ws1" }, invalid: {} },
+  // `plan/19` WI 5, item 2. One required field each, so the discriminating `invalid` is a **near-miss**:
+  // the right shape under the wrong key. `{}` would fail for "missing `entry`" before and after any schema
+  // edit, which is the non-discriminating fixture this table's header warns about.
+  "capture.buildRequest": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
+  "capture.buildMock": { valid: { entry: { id: "log-1", method: "GET", url: "http://x" } }, invalid: { entryId: "log-1" } },
+  "engine.shutdown": { valid: {}, invalid: { now: true } },
+  "capture.list": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "capture.get": { valid: { workspaceId: "ws1", id: "log-1" }, invalid: { workspaceId: "ws1" } },
+  "capture.setPaused": { valid: { workspaceId: "ws1", paused: true }, invalid: { workspaceId: "ws1" } },
+  "capture.setDisableCache": { valid: { disableCache: true }, invalid: {} },
+  "capture.clear": { valid: { workspaceId: "ws1" }, invalid: {} },
+  "capture.remove": { valid: { workspaceId: "ws1", ids: ["log-1"] }, invalid: { workspaceId: "ws1", ids: [] } },
+
+  // The saved-entity counterparts (`saved.ts`). All four share one schema, so all four get the same
+  // pair — and the `invalid` row is `entity.load`'s: a **near-miss** that drops the required
+  // `workspaceId` while keeping `id`, rather than `{}`. `{}` would fail for the same reason before and
+  // after any change to the schema, which is the non-discriminating fixture this table's header warns
+  // about; a missing required field is the shape that actually exercises the rejection path here.
+  // `request.send` is the one command here with a **union** payload, so its two fixtures are chosen for
+  // the union rather than for the id form its three siblings share. `valid` is the **inline** form — the
+  // second member, with the nested `request` / `scripts` shapes, which is the part a schema is most
+  // likely to get wrong; the id form is structurally `SavedEntityRef`, already exercised by three
+  // fixtures and driven end-to-end by `tests/integration/protocolExecution.integration.test.ts`.
+  // `invalid` is a payload that is **partly both** forms — it matches neither member, and `.strict()` on
+  // each member is what turns that into a rejection rather than a half-read. That is the failure mode a
+  // two-member union introduces, so it is the near-miss worth spending the fixture on.
+  "request.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: { method: "GET", url: "http://example.test/", headers: {}, body: "" },
+      scripts: {},
+    },
+    invalid: { workspaceId: "ws1", id: "req-1", scripts: {} },
+  },
+  // `graphql.send` is the second union payload (after `request.send`), and its two fixtures follow the same
+  // rule: `valid` is the **inline** member, because the nested request shape is the part a schema can get
+  // wrong, and `invalid` is a payload that is **partly both** forms — `{workspaceId, id, request}` matches
+  // neither member, which is what `.strict()` on each member turns into a rejection.
+  "graphql.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: {
+        endpointUrl: "http://example.test/graphql",
+        headers: {},
+        query: "query { __typename }",
+        variables: "",
+        operationName: "",
+      },
+    },
+    invalid: {
+      workspaceId: "ws1",
+      id: "gql-1",
+      request: {
+        endpointUrl: "http://example.test/graphql",
+        headers: {},
+        query: "query { __typename }",
+        variables: "",
+        operationName: "",
+      },
+    },
+  },
+  // `soap.send` — the third union payload, and the same fixture rule: `valid` is the **inline** member, and
+  // `invalid` is a payload that is **partly both** forms.
+  "soap.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: {
+        endpointUrl: "http://example.test/ws",
+        soapAction: "urn:Ping",
+        headers: {},
+        body: "<ping/>",
+      },
+    },
+    invalid: {
+      workspaceId: "ws1",
+      id: "soap-1",
+      request: {
+        endpointUrl: "http://example.test/ws",
+        soapAction: "urn:Ping",
+        headers: {},
+        body: "<ping/>",
+      },
+    },
+  },
+  // `grpc.send` — the fourth and last union payload, and the same fixture rule as its three siblings.
+  "grpc.send": {
+    valid: {
+      workspaceId: "ws1",
+      request: {
+        serverAddress: "127.0.0.1:50051",
+        serviceName: "Greeter",
+        methodName: "SayHello",
+        requestBody: "{}",
+        metadata: {},
+        protoFileId: null,
+        useReflection: false,
+      },
+    },
+    invalid: {
+      workspaceId: "ws1",
+      id: "grpc-1",
+      request: {
+        serverAddress: "127.0.0.1:50051",
+        serviceName: "Greeter",
+        methodName: "SayHello",
+        requestBody: "{}",
+        metadata: {},
+        protoFileId: null,
+        useReflection: false,
+      },
+    },
+  },
 };

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { CommandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { CommandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // `CommandRegistry` validates against the real, frozen `@bifurc/protocol` schemas — no mocking
 // needed, per work item 7's design (an engine command is unreachable unless the protocol package

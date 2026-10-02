@@ -41,7 +41,7 @@ vi.mock("@/hooks/useAppConfigSync", () => ({
     refreshEntitySyncStatus: vi.fn(),
     syncStatus: "idle",
     handleConfigChange: vi.fn(),
-    handleWsConfigChange: vi.fn(),
+    handleSettingsChange: vi.fn(),
     refreshConfig: vi.fn(),
     clearWorkspaceContext: vi.fn(),
   }),
@@ -75,9 +75,17 @@ vi.mock("@/hooks/useEntityGitActions", () => ({
   }),
 }));
 
-vi.mock("@/lib/resolveVars", () => ({
-  mergeEnvVars: () => null,
-}));
+/**
+ * **This mock is deleted, and its absence is the assertion.** Until 2026-09-30 there was a
+ * `vi.mock("@/lib/resolveVars", …)` here supplying `mergeEnvVars`, because `App` merged `__global__` with the
+ * active environment on every render. `plan/19` WI 6 replaced that with `env.getMerged`, and
+ * `lib/resolveVars.ts` no longer exists — so a mock of it would be a stub for a module nothing imports, which
+ * reads as "`App` still has a resolver" to anyone scanning this file.
+ *
+ * What replaced it is not a mock: the `window.api` stub below has no `envGetMerged`, which is the *partial
+ * bridge* case `App`'s guarded read exists for. If that guard is ever removed, this file fails with
+ * `envGetMerged is not a function` — which is how the guard was found in the first place.
+ */
 
 vi.mock("@/lib/panelRegistry", () => ({
   enabledPanels: [{ id: "services", label: "Services" }],

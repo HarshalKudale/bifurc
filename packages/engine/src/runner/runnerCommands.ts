@@ -86,15 +86,25 @@
 import * as fs from "fs";
 import * as path from "path";
 import type {
+    RunnerCancelParams,
+    RunnerCancelResult,
+    RunnerExportReportParams,
+    RunnerExportReportResult,
     RunnerGetHistoryParams,
     RunnerListFolderIdsParams,
     RunnerLoadConfigParams,
     RunnerSaveConfigParams,
     RunnerSaveReportParams,
+    RunnerStartParams,
+    RunnerStartResult,
+    RunnerStatusParams,
+    RunnerStatusResult,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
-import { wsDir } from "../store/workspaceFs";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
+import { cancelRun, getRun, startRun } from "./runRegistry";
+import { wsDir } from "../workspace/workspaceFs";
 import { renderRunnerHtml } from "./reportHtml";
+import { publishArtifact } from "../workspace/blob/publish";
 
 export function registerRunnerCommands(registry: CommandRegistry): void {
     registry.register("runner.saveReport", (params: RunnerSaveReportParams) => {
@@ -139,6 +149,11 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
      * Adding a message would be a contract change smuggled in under a move, and the renderer's
      * declared result is `{ ok: boolean }`.
      */
+    // `runner.exportReport` came here from `fileops/commands.ts` in the layout cleanup: it renders the
+    // report through `renderRunnerHtml` — the same function `runner.saveReport` above uses — and
+    // `fileops/` was an aggregator holding three domains' commands. It is the runner's.
+    registry.register("runner.exportReport", (p: RunnerExportReportParams) => runnerExportReport(p));
+
     registry.register("runner.saveConfig", (params: RunnerSaveConfigParams) => {
         try {
             const runsDir = path.join(wsDir(params.workspaceId), "requests", ".runs", params.folderId);
@@ -236,4 +251,100 @@ export function registerRunnerCommands(registry: CommandRegistry): void {
             return [];
         }
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // The run's own commands — plan/19 WI 4 (D29/D30)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * `runner.start` — hand the run to the engine and return.
+     *
+     * ## Where the events come from
+     *
+     * `startRun` takes `onProgress` / `onFinished` rather than reaching for the bus itself, and that is
+     * `runner/`'s §6 row doing its job: the module may import `kernel/` for **types** and nothing else, so the
+     * bus is injected here. **`ctx.bus`, not the module singleton** — a headless host builds its own registry
+     * *and* its own bus, so reaching for the singleton would deliver a run's events to a bus nobody is
+     * listening to, which is the same trap `savedRequestCommands.ts` recorded for the registry before it was
+     * deleted.
+     *
+     * ## `total` on every progress event
+     *
+     * Read back from the snapshot rather than captured, so it is the run's real total. A client that attached
+     * mid-run never saw `runner.start`'s answer, and this is the only other place the number appears.
+     */
+    registry.register("runner.start", (params: RunnerStartParams, ctx: CommandContext): RunnerStartResult =>
+        startRun({
+            registry,
+            ctx,
+            workspaceId: params.workspaceId,
+            folderId: params.folderId,
+            onProgress: (index, result) => {
+                ctx.bus.emitTyped("runner.progress", {
+                    workspaceId: params.workspaceId,
+                    folderId: params.folderId,
+                    index,
+                    total: getRun(params.workspaceId, params.folderId)?.total ?? 0,
+                    result,
+                });
+            },
+            onFinished: (report) => {
+                ctx.bus.emitTyped("runner.finished", {
+                    workspaceId: params.workspaceId,
+                    folderId: params.folderId,
+                    report,
+                });
+            },
+        }),
+    );
+
+    /** `runner.cancel` — the only lever that stops a run, which is D29 stated as code. */
+    registry.register("runner.cancel", (params: RunnerCancelParams): RunnerCancelResult =>
+        cancelRun(params.workspaceId, params.folderId),
+    );
+
+    /**
+     * `runner.status` — the snapshot, or `null`.
+     *
+     * **Returned as-is, and that is the point.** `RunSnapshot` and the protocol's `RunnerStatusResult` are
+     * declared twice on purpose — the wire shape has to be readable by a browser and `runner/` is a Node
+     * module — and this return type is what keeps them in step: a field added to one and not the other is a
+     * compile error here rather than a silently dropped field on the way out. That is the failure mode
+     * `RunnerConfigSchema`'s note records this feature already paying for once, which is why there is no cast
+     * on this line.
+     */
+    registry.register("runner.status", (params: RunnerStatusParams): RunnerStatusResult | null =>
+        getRun(params.workspaceId, params.folderId),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runner.exportReport
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Render a collection-run report as HTML or JSON.
+ *
+ * `format` is supplied by the **client**, because only the client knows what the user chose — the
+ * pre-P3 shell decided it by testing whether the chosen path ended in `.json`, and that test has to
+ * happen before the command is called, not after.
+ *
+ * The report itself arrives over the wire rather than being read back from the workspace: the
+ * renderer can export a run it has not saved yet. That is why `RunReport` is widened in
+ * `@bifurc/protocol` to carry every field the renderer's real `RunnerRequestResult` has — a schema
+ * narrower than its only caller truncates the JSON export without saying so.
+ */
+function runnerExportReport(params: RunnerExportReportParams): RunnerExportReportResult {
+  const { report, format } = params;
+  const folderName = report.folderName ?? "collection";
+  const ts = new Date(report.startedAt).toISOString().replace(/[:.]/g, "-");
+
+  const content = format === "json" ? JSON.stringify(report, null, 2) : renderRunnerHtml(report);
+  const mimeType = format === "json" ? "application/json" : "text/html";
+
+  // `params.workspaceId` (P14 WI 8) is for the blob half only: above `BLOB_INLINE_THRESHOLD_BYTES` a
+  // report stages a blob, and the client reads it scoped to its own workspace. A *large* report is
+  // exactly the case the threshold exists for, so omitting it made the engine's own export unreadable
+  // by the client that requested it — see `blob/publish.ts`.
+  return publishArtifact(content, `${folderName}-report-${ts}.${format}`, mimeType, params.workspaceId);
 }

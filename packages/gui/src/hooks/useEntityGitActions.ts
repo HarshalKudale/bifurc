@@ -55,12 +55,9 @@
  */
 import { useCallback, useState } from "react";
 import type { AppConfig } from "@/types";
-import { entityRelPath } from "@/lib/utils";
 import {
     panelEntityKind,
     panelSingletonPath,
-    foldersForKind,
-    ALL_ENTITY_KINDS_IN_UI,
 } from "@/lib/entityGit";
 
 /** What the caller wants acted on. */
@@ -106,19 +103,10 @@ export interface GitWriteResult {
     commit?: string | null;
 }
 
-function getItemFromConfig(cfg: any, kind: string, id: string) {
-    if (kind === "rules") return (cfg.proxyRules ?? []).find((r: any) => r.id === id);
-    if (kind === "requests") return (cfg.requests ?? []).find((r: any) => r.id === id);
-    if (kind === "mocks") return (cfg.mocks ?? []).find((m: any) => m.id === id);
-    if (kind === "webhooks") return (cfg.webhooks ?? []).find((h: any) => h.id === id);
-    if (kind === "sockets") return (cfg.wsConnections ?? []).find((c: any) => c.id === id);
-    if (kind === "graphqlRequests") return (cfg.graphqlRequests ?? []).find((r: any) => r.id === id);
-    if (kind === "soapRequests") return (cfg.soapRequests ?? []).find((r: any) => r.id === id);
-    if (kind === "grpcRequests") return (cfg.grpcRequests ?? []).find((r: any) => r.id === id);
-    if (kind === "mappings") return (cfg.mappings ?? []).find((m: any) => m.id === id);
-    if (kind === "environments") return (cfg.environments ?? []).find((e: any) => e.id === id);
-    return null;
-}
+// `getItemFromConfig()` lived here until 2026-09-30. It scanned the config for an id, because the kind a
+// caller named was not always the kind that held it — the multiplexed Requests panel is bound to
+// `"requests"` while its tree also holds GraphQL, SOAP and gRPC requests. The engine's map is keyed by
+// **id alone**, so that recovery stopped being a caller-side concern (`plan/19` WI 5, item 3).
 
 /** A stable key for one target — used for the in-flight set, so a button can spin. */
 function targetKey(op: string, target: GitTarget): string {
@@ -149,6 +137,7 @@ export function useEntityGitActions({
     wsId,
     refreshConfig,
     refreshEntitySyncStatus,
+    relPathOf,
     panel,
     onAfterWrite,
 }: {
@@ -156,6 +145,14 @@ export function useEntityGitActions({
     wsId: string;
     refreshConfig: () => Promise<void>;
     refreshEntitySyncStatus: (id: string) => void;
+    /**
+     * The engine's `entity id → relPath` lookup (`plan/19` WI 5 item 3).
+     *
+     * **Passed in rather than read from `useEntityPaths()`**, and that is not a shortcut: this hook runs in
+     * `App`'s own body, above any provider `App` renders, so a context read here would return the default
+     * (empty) lookup. `App` builds it with `entityPathLookup(entityPaths)` and passes it down.
+     */
+    relPathOf: (id: string) => string;
     panel: string;
     onAfterWrite?: () => void;
 }): EntityGitActions {
@@ -163,47 +160,31 @@ export function useEntityGitActions({
     const [lastError, setLastError] = useState<string | null>(null);
 
     /**
-     * An entity's path, read from the **freshest** config available and with the folder list matched
-     * to the kind that actually holds the id.
+     * An entity's path — from the **engine's** map, with one re-ask before giving up.
      *
-     * Two things are happening here, and both are fixes rather than caution:
+     * This used to compute the path here, and two of the three things it did are now the engine's or gone:
      *
-     *  1. **The fresh read.** `wsConfig` is a render-time snapshot, and a create that has not
-     *     round-tripped yet leaves the new entity missing from it. The old mapping handler had this
-     *     fallback; the folder-tree handlers did not, which is why publishing a just-created mock
-     *     from the tree could silently no-op (`if (!item) return`).
-     *  2. **The kind recovery.** A caller that named the wrong kind is the *normal* case for the
-     *     multiplexed Requests panel — it is bound to `"requests"` but its tree holds GraphQL, SOAP
-     *     and gRPC requests too. Scanning for the kind that actually contains the id turns a silent
-     *     no-op into the right path. Entity ids are unique, so the scan can only confirm.
+     *  1. **The kind recovery is gone because it is no longer needed.** The old code scanned every kind
+     *     looking for the id, because the multiplexed Requests panel is bound to `"requests"` while its tree
+     *     also holds GraphQL, SOAP and gRPC requests. The engine's map is keyed by **id alone** — ids are
+     *     unique — so a caller that names the wrong kind gets the right path anyway.
+     *  2. **The fresh read is now a fallback rather than the first move.** The map is a render-time snapshot
+     *     too, and the bug the fresh read fixed was real (publishing a just-created mock from the tree
+     *     silently no-op'd — `if (!item) return`). So an id the map does not know re-asks the engine
+     *     **once**, which keeps that fix without keeping a second path implementation.
      */
     const entityPath = useCallback(
-        async (kind: string, id: string): Promise<string | null> => {
-            let cfg: any = wsConfig;
-            let item = getItemFromConfig(cfg, kind, id);
-            if (!item) {
-                try {
-                    cfg = await window.api.getConfig();
-                    item = getItemFromConfig(cfg, kind, id);
-                } catch {
-                    return null;
-                }
+        async (id: string): Promise<string | null> => {
+            const known = relPathOf(id);
+            if (known) return known;
+            try {
+                const payload = await window.api.getEntitySyncStatus(wsId);
+                return payload.paths?.entities[id] ?? null;
+            } catch {
+                return null;
             }
-            if (!item) {
-                for (const candidate of ALL_ENTITY_KINDS_IN_UI) {
-                    if (candidate === kind) continue;
-                    const found = getItemFromConfig(cfg, candidate, id);
-                    if (found) {
-                        kind = candidate;
-                        item = found;
-                        break;
-                    }
-                }
-            }
-            if (!item) return null;
-            return entityRelPath(kind, item as any, foldersForKind(cfg, kind));
         },
-        [wsConfig],
+        [relPathOf, wsId],
     );
 
     /** Both writers share this: mark busy, run, report, refresh. Never rejects. */
@@ -257,7 +238,7 @@ export function useEntityGitActions({
                 const path =
                     target.type === "path"
                         ? target.path
-                        : await entityPath(target.kind, target.id);
+                        : await entityPath(target.id);
                 if (!path) return { ok: false, error: "This entity is no longer in the workspace." };
                 return window.api.publishEntity(wsId, [path], message);
             }),
@@ -278,7 +259,7 @@ export function useEntityGitActions({
                 const path =
                     target.type === "path"
                         ? target.path
-                        : await entityPath(target.kind, target.id);
+                        : await entityPath(target.id);
                 if (!path) return { ok: false, error: "This entity is no longer in the workspace." };
                 return window.api.gitDiscard(wsId, path);
             }),

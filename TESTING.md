@@ -529,6 +529,259 @@ throwing on every call (§7).
 | `tests/proxy/edge.test.ts` | 47 | **The edge router** (`proxy/edge.ts`, `plan/15` work items 3 and 4) — the reverse half, on the host-level listener. Drives the real `http.Server` by capturing `http.createServer`'s handler: proxying a mapped `*.localhost` to its target, mocks applied **ahead** of mappings, hop-by-hop filtering, array-valued headers, mid-stream errors, the 512 KB log slice, the home page (**including that it never writes through `res`** — the measured basis for the whole design), the unmapped-domain 404, **re-resolving the active workspace per request**, the bind guard, `listen` called **exactly once** (D16: bound, not scanned), and lifecycle. **Work item 4:** any configured domain routes — a mapped `app.example.com` proxies and logs `via=mapping`, a mock applies to it, a LAN `target` reaches the upstream call verbatim, the two `via` labels are asserted **as a pair**, and the **negative** that matters: a host that is neither mapped nor `*.localhost` gets the home page and is neither proxied nor logged. |
 | `tests/integration/edgeSplit.integration.test.ts` | 18 | **The split itself, end to end** — two listeners with two jobs, real I/O. A `*.localhost` request reaches its mapped target **through the edge**; the forward proxy refuses a relative request **naming the edge**; and the assertion no other suite can make — **the same `Host` and path answered on each port gives two different answers**, because that difference *is* `plan/15` work item 3. Plus §3.4's headline: a forward-proxied request can now be **mocked**, with no upstream contacted. **Work item 4:** a mapped non-`.localhost` domain forwards to its target, a mock applies to it, an unmapped one gets the home page **without the upstream being contacted**, and an unmapped `*.localhost` still gets its 404. The request is made from the same machine — the *"from a machine that is not the engine's"* half of that work item's verification step is the deployment half, and is not claimed here. |
 
+### 3.5 Tests do **not** mirror `src/` — and this is the decision, not an oversight
+
+`Engine_Module_Plan.md` §7.2 row 8 left one thing open: phases 1–7 moved engine sources into feature modules
+without moving their test mirrors, so a test's directory no longer names the module it exercises. The plan's
+own words: *"Either mirror the test tree or state explicitly that tests do not mirror."*
+
+**Decision (2026-09-29): tests do not mirror `src/`.** Test directories are organised by **concern** — the
+feature area a suite was written for — and the suite keeps its name when the source moves, because the
+*source path* is not what the test is about. Renaming 25 files to chase directory parity buys nothing the
+table below does not already give, and it is exactly the kind of churn that makes a refactor's diff
+unreadable.
+
+The alternative — mirroring — is not obviously wrong; it is simply not what this suite does, and a
+half-mirrored tree is worse than either. If a future change decides to mirror, this section is the
+inventory of what has to move.
+
+**The mapping, for navigation.** Every row below is a *mismatch*; anything not listed still matches.
+
+| Test path | Actually tests |
+|---|---|
+| `tests/proxy/certManager.test.ts` | `packages/engine/src/certificates/certManager.ts` |
+| `tests/proxy/decompressUtils.test.ts` | `packages/engine/src/utils/decompress.ts` |
+| `tests/proxy/edge.test.ts` | `packages/engine/src/reverseproxy/edge.ts` |
+| `tests/proxy/mockHandler.test.ts` | `packages/engine/src/mocks/mockHandler.ts` |
+| `tests/proxy/proxyHandler.test.ts` | `packages/engine/src/proxy/proxyHandler.ts` |
+| `tests/proxy/responseUtils.test.ts` | `packages/engine/src/proxy/response.ts` |
+| `tests/proxy/scriptContext.test.ts` | `packages/engine/src/mocks/scriptContext.ts` |
+| `tests/proxy/scriptExecutor.test.ts` | `packages/engine/src/mocks/scriptExecutor.ts` |
+| `tests/proxy/server.test.ts` | `packages/engine/src/proxy/server.ts` |
+| `tests/proxy/serverUtils.test.ts` | `packages/engine/src/workspace/dispatch.ts` + `utils/id.ts` + `utils/net.ts` (the file was split) |
+| `tests/proxy/service-discovery.test.ts` | `packages/engine/src/proxy/service-discovery.ts` |
+| `tests/proxy/tlsCert.test.ts` | `packages/engine/src/certificates/tlsCert.ts` |
+| `tests/store/appSettings.test.ts` | `packages/engine/src/workspace/appSettings.ts` |
+| `tests/store/config.test.ts` | `packages/engine/src/workspace/config.ts` |
+| `tests/store/paths.test.ts` | `packages/engine/src/workspace/paths.ts` |
+| `tests/store/workspaceFs.test.ts` | `packages/engine/src/workspace/workspaceFs.ts` |
+| `tests/sync/{autoSync,gitLock,gitOps,gitState,mappingPublish,syncManager}.test.ts` | `packages/engine/src/gitops/*` |
+| `tests/blob/{commands,store,sweep}.test.ts` | `packages/engine/src/workspace/blob/*` |
+| `tests/store/gitStore.test.ts` | `packages/engine/src/workspace/gitStore.ts` |
+| `tests/ipc/importExport/{postman,registry}.test.ts` | `packages/engine/src/importexport/*` |
+| `packages/engine/tests/commands/registry.test.ts` | `packages/engine/src/kernel/registry.ts` |
+| `packages/engine/tests/lib/net.test.ts` | `packages/engine/src/utils/net.ts` |
+
+`tests/proxy/` is the worst case — one directory spanning five modules (`proxy/`, `utils/`, `mocks/`,
+`certificates/`, `reverseproxy/`) — and it is the clearest illustration of why concern-based naming survived:
+those twelve suites were written as "the proxy's tests" long before the module split gave the word a
+narrower meaning.
+
+**Nothing enforces this table**, and that is deliberate: §7.1's ratchet covers `src/` layout, and a
+test-directory ratchet would be enforcing a naming convention the project has just decided not to have.
+
+### 3.6 The module-layout ratchet — `tests/engine/layout.test.ts`
+
+The one new suite engine-layout phase 8 added, and the reason it exists is in its own docblock: §5.2 says
+enforcement *"must be added in the same phase as the first move, or the rule decays"*, it was not, and the
+cost is now measured — **24 file-level contract violations** accumulated across phases 1–7 with nothing to
+catch them. **Two of those 24 are already fixed** (see below); the other 22 are allowlisted with a reason each.
+
+Seven assertions, each verified fail-able by mutation (planting `blob → gitops` fails with the exact
+`file → file` pair; adding a bogus allowlist entry fails the staleness check; planting a `bogus/`
+directory fails the converse check; and an `ORPHANS_ALLOWED` entry for a module that *is* imported fails
+the second staleness check — both added 2026-09-29/30):
+
+| Assertion | What it catches |
+|---|---|
+| every contract module is a real directory | a module renamed in `src/` but not in the contract — its files would silently fall outside the rule |
+| **every real directory is named in the contract** | a **new** module directory — see below; without this row a new module's imports were never checked at all |
+| every relative import obeys the §6 contract | a new import crossing a layer, reported as `file → file` with both module names |
+| the allowlist has no stale entries | an allowlist that has become a permission slip — it can only shrink |
+| **`ORPHANS_ALLOWED` has no stale entries** | the file's *other* permission map, which nothing else reads: an entry for a module that **is** imported is inert, and it silently pre-excuses the next orphan of that name |
+| no contract module is orphaned | a module nothing imports (an empty directory that looks wired) |
+| every `register*Commands` owner is reachable from `registerAll.ts` | a command module a headless consumer would answer `UNKNOWN_COMMAND` for |
+
+**The two bold rows were both missing for the whole of phases 0–8, and each was a silent exit.**
+
+- **`every real directory`.** `contractViolations()` returns `false` for a module that has no `CONTRACT`
+  row, so none of its imports are ever examined, and the orphan assertion only iterates `CONTRACT`'s keys —
+  so **creating a directory was the one way to escape the layering rule without failing anything**. Found
+  on 2026-09-29 while `plan/19` WI 3 added `packages/engine/src/pipeline/`.
+- **`ORPHANS_ALLOWED` staleness.** That same `pipeline` entry was added with "delete this when the `*.send`
+  command arrives" in its own text, and the command arrived the next day. Nothing would have failed if the
+  entry had stayed: the orphan assertion reads the map as a permission, never as a claim. Closed on
+  2026-09-30, in the change that retired the entry.
+
+Both were closed in the change that would otherwise have slipped past them, which is the §5.2 rule applied
+to this file itself.
+
+**The worst finding it surfaced is fixed, and the fix is the model for the rest.** `kernel/eventBus.ts`
+imported `getWorkspaceSyncStatus` and `getWorkspaceGitState` from `gitops/` — two *values* — so §5.1's
+"`kernel/` imports nothing engine-internal" was false. `emitEntityStatus()` moved to
+**`runtime/entityStatus.ts`**, the engine's **second seam module** (the first is `runtime/instances.ts`,
+§4.1). It could not go to `gitops/`: three of its four callers are `workspace/`-side, and §6 lets `workspace/`
+import only `kernel/` and `utils/`, so a sideways move would have turned two `kernel → gitops` edges into
+three `workspace → gitops` ones and changed nothing. **`kernel/eventBus.ts` now has exactly one
+engine-internal import and it is a type.** Its two allowlist entries were deleted in the same commit — which
+is the shrink the staleness assertion exists to force, and the reason that assertion is worth having.
+
+It is **not** an ESLint rule, and §5.2 asks for one. **This repository has no ESLint at all** — no config,
+no dependency, nothing in `node_modules/.bin` — so that half is recorded in the plan rather than taken
+unilaterally; adding a linter is a toolchain decision. The ratchet is the enforcement in the meantime.
+
+### 3.7 The renderer boundary ratchet — `tests/gui/boundary.test.ts`
+
+The one suite **P19 work item 1** adds, and the *second* boundary ratchet in the project — the same idiom
+as §3.6 applied one directory over. `plan/19` §1 found the renderer carrying **five re-implementations of
+engine logic** (two resolvers, two `{{random.*}}` generators whose data pools are identical and pinned
+equal by nothing, the pre/post/test pipeline written twice, a second HTML report renderer, a second cURL
+parser) plus a second set of entity-path helpers. It grew while nobody was looking, which is exactly the
+decay §5.2 describes.
+
+**It lands first, on purpose.** Every later item deletes a copy of something; without this suite, "the
+migration is in progress" and "the migration added a seventh duplicate" look the same from a green test
+run. It is also the reason §6's allowlist counts are checkable rather than remembered.
+
+Five assertions:
+
+| Assertion | What it catches |
+|---|---|
+| the scanner is looking at a real, non-empty renderer tree | a moved `packages/gui/src` — every other assertion would pass by measuring nothing |
+| no engine-owned construct is defined in the renderer | a new resolver / randomizer / pipeline / cURL parser / report renderer / path helper, reported as `file   [defines <construct>]` |
+| the allowlist has no stale entries | an allowlist that has become a permission slip — it can only shrink |
+| every allowlist entry names the work item that deletes it | debt with no owner, i.e. an entry that outlives the phase |
+| each landed authority is where the table says it is | a violation "fixed" by deleting the engine's copy too, leaving the renderer as the only implementation |
+
+**Detection is by *definition*, not by *use*.** `App.tsx` calls `mergeEnvVars` and `RandomizerHint.tsx`
+reads the token catalogue; neither is an implementation and neither is an allowlist entry. Flagging the
+~25 call sites instead would produce an unreadable allowlist and a staleness assertion that fires on
+unrelated edits. The one construct with no named function is the **pipeline**, which is an *orchestration*,
+so it is detected at its call sites — with the step wrappers kept as a separate construct because they are
+deleted by a different work item.
+
+**Nine allowlist entries, in nine files, measured rather than taken from `plan/19` §6.** §6 predicts
+`−2 / −1 / −1 / −2` across WI 2–5, which sums to 6; the census sums to 9. §6 counts *files deleted* and the
+suite counts *constructs present* — `collectionRunner.ts` carries the pipeline, the run loop and the report
+renderer's only caller, and `scriptRunner.ts` / `testRunner.ts` are not in §1's table at all. **§11 warned
+that these counts were predictions and wrong more often than right; re-measuring is the point, and the
+number is a reading, not a target.** The measured split is WI 2 → 2, WI 3 → 4, WI 4 → 1, WI 5 → 2.
+
+**The list is now `{}` — empty — and `plan/19` §9's acceptance criterion is met.** Every step is recorded in
+the suite itself: 9 → 8 when WI 3's REST slice stopped `useRestActions.ts` orchestrating; 8 → 4 when WI 4
+deleted the run loop and everything that hung off it; 4 → 3 when WI 5 deleted `lib/curlParser.ts`; 3 → 2 when
+WI 5 item 3 deleted the `lib/utils.ts` path helpers; **2 → 0 in WI 6**, which deleted `lib/resolveVars.ts` and
+the `lib/randomizer.ts` generator. **The staleness assertion forced all nine retirements** — with the construct
+gone the entry could not be kept, which is what makes the shrink checkable rather than remembered.
+
+**⚠ The last two were `plan/19` §6's mis-attribution to WI 3, and the correction is recorded because a reader
+looking for remaining debt would otherwise think they had been forgotten.** The resolver and the randomizer
+outlive the four protocol tabs: `useWebSocket.ts` resolved a url and its headers, and `HealthBarPanel.tsx`
+resolved a service url. WI 5's item 4 moved the second and left the first, and the entries are keyed on the
+resolver's **definition** — so they could only retire when the last *user* stopped, which is WI 6.
+
+**⚠ `lib/randomizer.ts` survives with its catalogue, and that is not a missed deletion.** The construct is the
+*generator*; `RANDOMIZER_TOKENS` stays for `RandomizerHint`'s autocomplete under D28's list-vs-resolver split,
+pinned by `tests/gui/randomizerCatalogue.test.ts`. Same shape as WI 4's `lib/runnerReport.ts`, which kept its
+two storage wrappers — the `file#construct` keying doing its job: the file stayed, the construct the ratchet
+tracked did not.
+
+**⚠ And with no entries left, the authority assertion covers all eight constructs for the first time.** No row
+is `planned:` any more, so `each landed authority is where the table says it is` is now a real check on every
+construct rather than on five of them — which is also what stops the last two retirements from being "fixed" by
+repointing the table at nothing.
+
+**Teeth verified by mutation, three ways:** planting a new `packages/gui/src/lib/*.ts` exporting
+`resolveVars` fails assertion 2 with that exact file; renaming `generateRandom` in the engine's randomizer
+fails assertion 5; renaming the renderer's `generateHtmlReport` so the construct disappears fails the
+staleness assertion with `lib/runnerReport.ts#reportRenderer`.
+
+**⚠ A construct's `detect` pattern may be *narrowed*, and WI 5 narrowed one — the only edit to this suite that
+loosens it.** `curlParser` used to match the header *list* (`SKIP_CURL_HEADERS`) as well as the parser. It
+matches the parser only now, because the renderer legitimately keeps a **pinned copy** of that list for a
+read-side job the engine cannot do for it: filtering a *stored* mock's `capturedHeaders` when that mock is
+loaded into a tab. That is `plan/19` D28's **list vs logic** split applied a second time, and the same
+consequence follows — the copy is permitted only alongside a pin, `tests/gui/curlHeaderSkip.test.ts`, which
+asserts set equality **and** that the list is load-bearing (the engine's `parseCurlCommand` drops exactly
+these headers; the raw `parseCurl` does not). **A narrowing with no pin beside it would be indistinguishable
+from deleting a construct to silence a violation**, which is why the two changes ship in one commit.
+
+**What it does not catch, and the gap is recorded rather than papered over:** detection is by **name**, so
+a copy re-implemented under a different name passes. The stronger form is a per-construct **content
+fingerprint** (the `{{key}}` substitution regex, the `env.variables.find` lookup), and **its precondition is
+now met — the renderer holds zero copies of every construct, so a fingerprint list would open with no false
+positive to allowlist — and it is still deliberately not added here.** It is a second scan category with its
+own unmeasured false-positive surface (a fingerprint for `resolver` is `/\{\{(\w+)\}\}/`, which the editor's own
+hint components legitimately touch), and the phase's goal is reached without it. Recorded as the next
+strengthening rather than smuggled in with the retirement that enabled it. As with §3.6, the structurally
+complete answer is §5.2's ESLint rule, which this repo cannot have.
+
+**The engine's authorities, as of WI 6.** `resolveVars`, `resolveHeaders` **and `mergeEnvVars`** live in
+`packages/engine/src/utils/resolve.ts` — extracted **down** per §5.1 — and `mocks/mockHandler.ts` imports them
+instead of carrying the engine's private copy. The cases that pinned `resolveVars` moved with the function, to
+`tests/proxy/resolve.test.ts`, so `tests/proxy/mockHandler.test.ts` no longer tests a module it does not own.
+**`mergeEnvVars` landed with the *call* rather than with the function**, which is `plan/19` §8 trap 2: the
+merge decides *which* environment we resolve against, so a copy beside the resolver while `App.tsx:288`'s
+stayed authoritative would have been trap 1's duplication introduced rather than removed. It arrived in WI 3
+(`workspace/envState.ts` reads it) and the renderer's copy left in WI 6, when `App.tsx`'s merge was replaced by
+`env.getMerged` — the read that exists because `EnvVarHint` needs the merged *list* for autocomplete, which is
+D28's list-vs-logic split rather than a second resolver. `plan/19` §11 records the reasoning.
+
+### 3.8 The protocol-module ratchet — `tests/gui/protocolModule.test.ts`
+
+The **third** boundary ratchet (after §3.6's engine layering and §3.7's renderer boundary), added by
+`plan/19` WI 7, and the enforcement half of `Protocol_Module_Contract.md`.
+
+**It asks the complementary question to §3.7.** That suite asks *"is engine logic implemented in the
+renderer?"* and answers by **name**, for the constructs `plan/19` §1 enumerated. This one asks ***"does a tab
+speak the wire itself?"*** and answers by **construction site** — `new WebSocket`, `new EventSource`,
+`http.request` / `https.request`, `net.connect` / `createConnection`, `dgram.createSocket`, `new
+XMLHttpRequest`, and a bare `fetch(`. A tab may call `window.api`; it may not open its own connection.
+
+**Five assertions**, the §3.7 set minus the authority check (there is no engine symbol to point at — the
+authority is *absence*) plus a control §3.7 does not need: the tree is real and non-empty; no construction is
+present outside the allowlist; the allowlist has no stale entries; every entry names the work item that
+deletes it; **and every `detect` pattern still matches a real construction, and still refuses a near miss.**
+
+**⚠ It is a separate file rather than a seventh construct in §3.7, and that is a decision.** The two hold
+different categories — engine *logic* vs engine *I/O* — and their entries retire on different schedules: §3.7's
+allowlist empties when the last renderer resolver goes, this one when the last tab stops opening its own
+connection. Merged, one list would have two retirement schedules and the staleness assertion would stop being
+readable, because an entry's owner would no longer be a single work item.
+
+**The allowlist reached `{}` in `plan/19` WI 6, which is the goal it opened with.** It opened at one entry,
+`hooks/useWebSocket.ts#websocket`; that entry retired with the hook's rewrite, because the socket is now the
+engine's (`packages/engine/src/websocket/`) and the tab reaches it through `window.api` like every other
+client. The reserved directory was filled with the content that existed in the wrong process rather than with
+invented content — `Engine_Module_Plan.md` §9's "do not give `websocket/` invented content" was honoured, not
+overridden.
+
+**⚠ Emptying the allowlist removed the vacuity guard the file's own docblock advertised, and the replacement
+had to be designed rather than assumed.** While there was one entry, the staleness assertion did double duty:
+it passed only if the scan found that live violation, so a `detect` pattern that silently matched nothing — the
+failure mode a regex-based ratchet is most prone to — failed the run instead of passing quietly. **With `{}`
+there is no entry whose liveness depends on a hit**, so every assertion above could have gone green while the
+scanner measured nothing. Hence the fifth assertion: each pattern is run against a sample that must match
+**and one that must not**, with the control table checked in both directions against the construct table (so
+adding a construct without a control fails too). The negatives are **near misses** — `WebSocketServer` for
+`WebSocket`, an unqualified `createSocket`, `https.get` for `https.request`, `myFetch` for `fetch` — because a
+control that only tried `"not a socket"` would pass for any regex at all.
+
+**⚠ And a factual error in this suite's docblock, found by the change that emptied it and corrected.**
+It claimed *"a comment mentioning `new WebSocket` in a design note is not a violation"*. The scan reads the file
+as **text**, so a comment that quotes a construction **is** one — and it bit immediately: WI 6's new
+`useWebSocket.ts` docblock described what it used to do by writing the constructor out, and the suite failed on
+its own explanation. The docblock was reworded rather than the scanner loosened, because **a false positive is
+safe and a false negative is not**: a scan that errs toward flagging prose is better than one that strips
+comments and can therefore hide a real construction on the same line as a `//` inside a string literal. The
+`strings.sockets.createSocket` half of the claim *was* accurate — the pattern needs the `dgram.` qualifier —
+which is why the claim read as verified when half of it was not.
+
+**What it does not catch:** a transport reached through an alias, or a socket dependency added to
+`packages/gui/package.json`. The contract's §6 records the dependency assertion as the cheap strengthening to
+add with the first module that needs one. As with §3.6 and §3.7, the structurally complete answer is an ESLint
+rule, which this repo cannot have.
+
 ---
 
 ## 4. Coverage report
@@ -581,7 +834,8 @@ entire value is a shape guarantee should look like. Re-measure rather than copy.
 Suite size: **101 files / 2,471 tests** (measured 2026-09-18 after 3b-2's second slice, undeselected:
 `2430 passed | 1 failed | 40 skipped`; the failure is the documented `soap.execute` dead-endpoint flake
 below). The last steps were P6's shell seam — 101 / 2,471 after moving `config.save` + the three
-`workspace.*` commands into `packages/engine/src/store/configCommands.ts` and splitting the ratchet by
+`workspace.*` commands into `packages/engine/src/store/configCommands.ts` *(now
+`workspace/entities/configCommands.ts` — engine-layout phase 3, 2026-09-29)* and splitting the ratchet by
 category (+2), 101 / 2,469 after the six proxy/server-lifecycle commands moved into
 `packages/engine/src/proxy/serverCommands.ts` (+2), 101 / 2,467 after the
 registry-coverage ratchet in `tests/ipc/handlers.test.ts` (+3), 101 / 2,464 after step 3a (the push
@@ -812,7 +1066,22 @@ first six now live under `packages/engine/src/`): `applications` 1.1% → 87.5%,
 `renderer/panels` is still ~0%: the panels are covered by the Playwright E2E suite instead
 (see `HAPPY_PATH_COVERAGE.md`), which is not measured here.
 
-### 4.3 The routing path specifically
+## 4.3 The routing path specifically
+
+> **Path note (engine-layout phase 4, 2026-09-29; extended phase 7 and the layout cleanup).** This table
+> records a **past measurement**; the reorganisation has since moved six of the eight rows. `proxy/` now
+> holds only the forward half, so `proxy/mockHandler.ts` → `mocks/mockHandler.ts`, `proxy/tlsCert.ts` →
+> `certificates/tlsCert.ts`, `proxy/serverReplay.ts` → `utils/replay.ts` (extracted down because both
+> `proxy/` and `rest/` need it), while `proxyHandler.ts`, `routingUtils.ts`, `server.ts` and
+> `tlsIntercept.ts` stay put.
+>
+> **`proxy/serverUtils.ts` and `proxy/responseUtils.ts` have moved twice, and the second move is the one
+> worth knowing:** phase 4 sent both to `utils/` on the reasoning that *both proxy halves need them*, and
+> the layout cleanup found that reasoning was half wrong. `responseUtils.ts` had exactly **one** importer
+> (`proxy/proxyHandler.ts`), so it is now **`proxy/response.ts`**; `serverUtils.ts` was not pure (it reads
+> `enabled.json`), so it was **split** — `workspace/dispatch.ts` (the config derivations), `utils/id.ts`
+> (`mkId`) and `utils/net.ts` (`hostnameOf`). The numbers are unchanged and still describe these files —
+> only the paths are historical.
 
 | File | Statements before | Statements after |
 |---|---:|---:|
@@ -831,6 +1100,10 @@ first six now live under `packages/engine/src/`): `applications` 1.1% → 87.5%,
 The protocol execution handlers were the largest untouched area. They are now driven
 against real local servers.
 
+> **Path note (engine-layout phase 7, 2026-09-29).** The `serverReplay.ts` row below is a **past
+> measurement**: the file is now `packages/engine/src/utils/replay.ts`, and the command that drives it is
+> `rest/commands.ts` (formerly `miscCommands.ts`). The numbers are unchanged — only the paths are historical.
+
 | File | Statements before | Statements after |
 |---|---:|---:|
 | `src/ipc/handlers/graphqlHandlers.ts` | 10.9% | **98.4%** |
@@ -845,6 +1118,15 @@ against real local servers.
 > will fail the suite until the tests are updated deliberately.
 
 ### 4.5 The git sync / publish path specifically
+
+> **Path note (engine-layout phase 6, 2026-09-29; extended by the layout cleanup).** This table records a
+> **past measurement**, and every `sync/` row has since moved: `packages/engine/src/sync/*` →
+> `packages/engine/src/gitops/*`, together with `store/gitStore.ts` → `gitops/gitStore.ts` (the phase-6
+> merge) and then → **`workspace/gitStore.ts`** (the cleanup: it resolves paths through `workspaceFs`,
+> holds a *per-workspace* handle cache, and `gitops/` imported `workspace/` in seven files, so
+> `workspace → gitops` was a cycle). The numbers are unchanged and still
+> describe these files — only the paths are historical. The `src/ipc/handlers/syncHandlers.ts` row is
+> doubly historical: that shell file was deleted in the P6 reduction (2026-09-21).
 
 Publishing is how a change becomes a shared, auditable fact, and `setRemote()` is the
 gateway to every remote workspace. Both were mocked-unit only; they are now driven against
@@ -864,6 +1146,11 @@ a real repository and a real bare remote.
 > cloning inline, and `getRemoteHead()` duplicates `fetchRemoteHead()`. See §7.
 
 ### 4.6 The capture path specifically
+
+> **Path note (engine-layout phase 4, 2026-09-29).** Like §4.3 above, this table is a **past measurement** and
+> two rows have since moved: `proxy/tlsCert.ts` → `certificates/tlsCert.ts`. The retired companion row is
+> doubly historical — `companion/companionServer.ts` was deleted on 2026-09-23 (`plan/15` §6.4) and is
+> described under its second path in the note below the table.
 
 Capture is in-memory: the proxy builds a `RequestLogEntry` per request and emits it on
 `logEmitter`, which the Capture screen renders and turns into a mock or a saved request.
@@ -903,6 +1190,10 @@ method, and because the retired code's 94% is part of the record.
 > `packages/engine/src/transport/legacyCompanion.ts`, and `companion/allowedActions.ts` is
 > `packages/engine/src/transport/legacyCompanionActions.ts`. **`src/companion/` no longer exists.** The
 > numbers are unchanged and still describe these two files — only the paths are historical.
+> **Engine-module-layout phase 3 (2026-09-29)** moves `subscription/entityCount.ts` to
+> `packages/engine/src/workspace/entityCount.ts`; **phase 4 (same day)** moves `proxy/tlsCert.ts` to
+> `packages/engine/src/certificates/tlsCert.ts` and `proxy/mockHandler.ts` to
+> `packages/engine/src/mocks/mockHandler.ts`.
 >
 > The move deliberately did **not** rewrite the four action bodies, and the reason is recorded in
 > `legacyCompanion.ts`'s header and `plan/05`'s "Item 1": aliasing them onto `config.get` /
@@ -1092,9 +1383,9 @@ A full HTML report is written to `coverage/index.html` by `npm run test:coverage
 
 | File | Statements | Branches | Functions | Lines |
 |---|---:|---:|---:|---:|
-| `packages/engine/src/blob/commands.ts` | **100%** | **100%** | **100%** | **100%** |
-| `packages/engine/src/blob/store.ts` | **98.3%** | **95.9%** | **100%** | **99.1%** |
-| `packages/engine/src/blob/sweep.ts` | **90.1%** | **91.7%** | **100%** | **92.2%** |
+| `packages/engine/src/workspace/blob/commands.ts` | **100%** | **100%** | **100%** | **100%** |
+| `packages/engine/src/workspace/blob/store.ts` | **98.3%** | **95.9%** | **100%** | **99.1%** |
+| `packages/engine/src/workspace/blob/sweep.ts` | **90.1%** | **91.7%** | **100%** | **92.2%** |
 | `packages/protocol/src/commands/blob.ts` | **100%** | **100%** | **100%** | **100%** |
 
 89 tests in `tests/blob/{store,sweep,commands}.test.ts`. Every one runs against a **real temp data
@@ -1717,9 +2008,24 @@ nothing about the line you changed".
   Vitest uses), so without it the 13 moved files would silently vanish from the report.
   `coverage.exclude`'s type-only entries followed the move: `src/store/types.ts` →
   `packages/engine/src/store/types.ts` (layer 1) and `src/sync/types.ts` →
-  `packages/engine/src/sync/types.ts` (layer 2). **Check this every layer** — an exclude entry that
+  `packages/engine/src/sync/types.ts` (layer 2) — *both paths are historical; see the re-checks below,
+  the live entries are `workspace/types.ts` and `gitops/types.ts`.* **Check this every layer** — an exclude entry that
   no longer matches does not error, it just silently starts counting a type-only module as
   uncovered code.
+  **Engine-module-layout phase 3 (2026-09-29) is the first re-check since:** the entry is now
+  `packages/engine/src/workspace/types.ts` (`store/` → `workspace/`); `sync/types.ts` and
+  `importExport/types.ts` stay as written until their own phases (6 and 7). **Phase 4 (same day) added no
+  proxy entry** — the split touched no file named in the exclude list, so there was nothing to re-check,
+  which is itself the answer. **Phase 5 (same day) likewise added no protocol entry.** **Phase 6 moved the
+  second entry:** `sync/types.ts` → `packages/engine/src/gitops/types.ts` (the `sync/` + `gitStore` merge).
+  **Phase 7 (same day) moved the last one:** `importExport/types.ts` →
+  `packages/engine/src/importexport/types.ts` (capitalisation). **All three entries now name live files** —
+  this is the first time since the list was written that no entry points at a future target. Phase 7's other
+  new files (`rest/commands.ts`, `mocks/commands.ts`, `workspace/healthbarCommands.ts`,
+  `workspace/statusCache.ts`, `utils/replay.ts`) are **not** excluded: none is type-only. The codemod **cannot**
+  rewrite these — they are bare path strings in a config array, not import specifiers — so each
+  move phase has to update them by hand. `tests/runtime/singleDataRoot.test.ts` carries the same
+  class of hand-maintained path, in a `toEqual` assertion rather than an exclude.
 - **Layer 3 found the mirror-image bug: an exclude that was always wrong.** The list carried
   `src/applications/types.ts` under "Type-only modules", but that file exports three runtime
   constants. The exclusion was made on the strength of the filename and had been hiding live,
@@ -1782,7 +2088,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > `importExportFormats.integration`, `registry.test`, and — added in the eighth pass, once the
 > P3 blob layer existed to test against — `importExportBlob.integration` plus the `blob/**`
 > store, sweep and command suites), `packages/engine/src/applications/**` (87%),
-> `packages/engine/src/subscription/entityCount.ts` (100%), `packages/engine/src/companion/allowedActions.ts` (100%), the
+> `packages/engine/src/workspace/entityCount.ts` (100%), `packages/engine/src/~~companion/allowedActions.ts~~` (100%; the companion was retired 2026-09-23 — `plan/15` §6.4), the
 > Audit Log screen (`auditLog.integration`), **the "hit Send" path**
 > (`protocolExecution.integration` — REST replay, GraphQL execute/introspect, SOAP
 > execute/fetchWsdl, Health Bar polling), **folder management** and **workspace CRUD**
@@ -1803,7 +2109,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
 > remains is listed here.
 
 ### High — security / correctness
-1. ~~**`packages/engine/src/companion/companionServer.ts` has no authentication.**~~ **RESOLVED
+1. ~~**`packages/engine/src/companion/companionServer.ts` (now `transport/legacyCompanion.ts`) has no authentication.**~~ **RESOLVED
    2026-09-23 by removal.** The finding was real and deliberate to state: the server bound to
    `127.0.0.1`, which was the whole of its access control, and `ALLOWED_ACTIONS` was proven *enforced*
    (a forbidden action was refused and wrote nothing) — but any local process could still open a socket
@@ -1854,7 +2160,7 @@ Ordered by risk. Each item names the file(s) and what a test would need to do.
     `screenshots.spec.ts` (1, zero assertions). Harden them the same way as the ones already
     converted, then delete `screenshots.spec.ts`'s `test()` wrapper or mark it clearly as a
     screenshot generator rather than a test.
-12. **`mkId()` collision risk** — `packages/engine/src/proxy/serverUtils.ts` appends only 4 base-36 random
+12. **`mkId()` collision risk** — `packages/engine/src/utils/id.ts` appends only 4 base-36 random
     characters (~1.6M space) to a millisecond timestamp, so a burst of ids within one
     millisecond has a small real collision probability. Widen the random suffix.
 13. **E2E binds port 80** — `e2e/fixtures/sampleData.ts` writes `port: 80`, which needs root
@@ -1913,24 +2219,24 @@ is why neither could be found by reading the code, only by asserting on the data
 
 | Bug | Where | Fix |
 |---|---|---|
-| Proxy-rule export wrote the **UI stubs** (`targetType`, `targetExternal`, `targetMappingId`, `useRegex` and both scripts blanked), so re-importing silently destroyed every rule | `packages/engine/src/importExport/exporters/{proxyrules-json,workspace-json}.ts` | read `readAllEntities(wsId, "rules")` + re-inject `enabled` from `enabled.json` |
-| Workspace import **never wrote rule files to disk** (relied on `saveConfig()`, which deliberately skips them) → imported workspace proxied nothing | `packages/engine/src/importExport/importers/workspace-json.ts` | explicit `writeEntity(..., "rules", …)` loop + enabled set + `upsertNameEntry` |
-| Disabled mappings/mocks came back **enabled** after import (`if (m.enabled) set.add()` with no `else`; missing flag ⇒ enabled) | `packages/engine/src/importExport/importers/workspace-json.ts` | both-branch enabled sets (`set.add` / `set.delete`) |
-| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/store/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
-| REST **Send** could fail with a spurious **400 / "socket hang up"** on a later request to the same origin | `packages/engine/src/proxy/serverReplay.ts` `replayRequest` | it sent `connection: close` but did not pin an agent, so Node returned the socket to the global pool whenever the upstream answered `keep-alive` (servers routinely ignore the request's close) and the next request was rejected by the server with `HPE_CLOSED_CONNECTION`. Fixed with `agent: false`. |
+| Proxy-rule export wrote the **UI stubs** (`targetType`, `targetExternal`, `targetMappingId`, `useRegex` and both scripts blanked), so re-importing silently destroyed every rule | `packages/engine/src/importexport/exporters/{proxyrules-json,workspace-json}.ts` | read `readAllEntities(wsId, "rules")` + re-inject `enabled` from `enabled.json` |
+| Workspace import **never wrote rule files to disk** (relied on `saveConfig()`, which deliberately skips them) → imported workspace proxied nothing | `packages/engine/src/importexport/importers/workspace-json.ts` | explicit `writeEntity(..., "rules", …)` loop + enabled set + `upsertNameEntry` |
+| Disabled mappings/mocks came back **enabled** after import (`if (m.enabled) set.add()` with no `else`; missing flag ⇒ enabled) | `packages/engine/src/importexport/importers/workspace-json.ts` | both-branch enabled sets (`set.add` / `set.delete`) |
+| Audit Log showed **no changed files for a workspace's first commit** | `packages/engine/src/workspace/gitStore.ts` `getCommitChangedFiles` | `diff-tree` → `diff-tree --root --no-commit-id -r --name-only` |
+| REST **Send** could fail with a spurious **400 / "socket hang up"** on a later request to the same origin | `packages/engine/src/utils/replay.ts` `replayRequest` | it sent `connection: close` but did not pin an agent, so Node returned the socket to the global pool whenever the upstream answered `keep-alive` (servers routinely ignore the request's close) and the next request was rejected by the server with `HPE_CLOSED_CONNECTION`. Fixed with `agent: false`. |
 | The exported/saved **HTML run report rendered raw `${…}` placeholders** instead of data — the whole report was inert. The same escaped-interpolation mistake sat in the update-checker's fallback URL | `src/ipc/handlers/runnerHandlers.ts` `generateRunnerHtml`, `src/ipc/handlers/systemHandlers.ts` | un-escaped all 15 interpolations and hardened `esc()` to coerce + escape quotes; fixed the URL template |
-| Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `packages/engine/src/sync/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
-| A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/sync/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/sync/statusTracker.ts` and shared |
-| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/store/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
+| Publishing a folder that contained **exactly one new entity recorded a create as `update mock folder "X"`** and dropped the per-entity `entity-id` link. Cause: `simple-git` reports a newly-added file in **both** `status.staged` and `status.created`, so concatenating them double-counted every new file and made the single-entity branch unreachable | `packages/engine/src/gitops/publishService.ts` `publishEntities` | dedupe with `Array.from(new Set([...staged, ...created, ...deleted]))` |
+| A new entity inside a folder whose name contains a **space** was classified `update` instead of `create`. Cause: the pre-staging status map was built from C-quoted porcelain output (`"mocks/My Folder/x.json"`), so the lookup never matched | `packages/engine/src/gitops/publishService.ts` | unquote git paths when building `preStatusMap`; `unquoteGitPath` is now exported from `packages/engine/src/gitops/statusTracker.ts` and shared |
+| Cloning a workspace from a remote **never adopted the remote's identity** and landed **without a `workspace.json`**. Cause: `initWorkspaceRepo()` committed only `.gitignore`, so the identity file was never version-controlled — making the adoption branch in `setRemote()` dead code | `packages/engine/src/workspace/gitStore.ts` `initWorkspaceRepo` | commit `workspace.json` alongside `.gitignore` on repo init |
 | The companion server's **entity-status broadcast always sent an empty map**, so an entity added from the browser extension never showed its unsaved-changes dot. Cause: `broadcastEntityStatus()` serialized `getWorkspaceSyncStatus(wsId)` — an async call — **without awaiting it**, and `JSON.stringify()` turns a Promise into `{}` | `packages/engine/src/companion/companionServer.ts` `broadcastEntityStatus` | keep the broadcast non-blocking (the WebSocket reply must not wait on a git call) but send the *resolved* map via `.then()`, and log a rejected status query instead of swallowing it |
 | **Discarding changes on a GraphQL / SOAP / gRPC tab left the editor showing the discarded edits.** `createTabReducer` handled only the save/send actions, so the `REFRESH` the panels dispatch after reloading the entity (`RequestTabContent` → `tabRefs.current[tabId].refresh(entity)`) fell through to each protocol reducer's `default:` branch and returned the state unchanged. REST was unaffected because it implements `REFRESH` itself and passes no `init` | `packages/gui/src/lib/createTabReducer.ts`, `packages/gui/src/components/grpc/grpcTabReducer.ts` | implement `LOAD_ENTITY` / `LOAD_DRAFT` / `REFRESH` in the shared layer, guarded on `options.init` so REST still falls through to its own reducer; `REFRESH` re-derives the entity fields and preserves the runtime/response fields, mirroring `restTabReducer` |
 | **Adding, editing or deleting a mock/mapping/rule/request/websocket/webhook did not take effect on the running proxy until something else reloaded the config.** `entityCrudFactory` called `saveConfig(cfg)` then `reloadConfig()` **before** writing the entity file and **before** `syncEnabledSet()`. `reloadConfig()` snapshots the enabled-sets out of `enabled.json`, so `workspaceCfg()` filtered the new entity straight back out of routing — a mock you just added was not served, and a mock you just **deleted kept being served**, until an unrelated action (a settings save, a workspace switch, an app restart) happened to reload. A test that only inspects the handler's return value cannot see this: the config object is correct, the *running server* is stale | `src/ipc/handlers/entityCrudFactory.ts` (`add`, `update`, `delete`) | move `reloadConfig()` to **after** every on-disk write in all three handlers, so the reload sees both the entity file and the updated enabled-set. Proven by mutation: restoring the old ordering makes "stops serving a mock deleted through mock:delete" fail with `expected { from: 'mock' } to deeply equal { upstream: true, … }` |
-| **`workspace-zip` export threw on every call.** The file opened with `import archiver from "archiver"` and called `archiver("zip", …)` — the **v5–v7** API. `archiver` 8 is pure ESM with **no default export** (`require("archiver").default` is `undefined`, so the call was `undefined(...)`), and its README's quick start is `new ZipArchive({ zlib: { level: 9 } })`. Nothing caught it: `@types/archiver` was pinned at **7**, so the declarations described the default-export API and `tsc` was satisfied, and no test had ever executed the exporter. Exports of a workspace as a ZIP — the one format that streams, and the only one that can be hundreds of megabytes — simply never worked | `packages/engine/src/importExport/exporters/workspace-zip.ts`; root `package.json` | `import { ZipArchive } from "archiver"` + `new ZipArchive({ zlib: { level: 6 } })`, **and** `@types/archiver` bumped `^7.0.0` → `^8.0.0`. The two halves must move together: fixing only the import leaves the compiler endorsing a call shape the runtime rejects, which is exactly how this stayed hidden |
-| **A YAML OpenAPI spec was previewed with a fabricated item count, and a malformed file was offered as importable.** `importers/requests-openapi.ts` had two parsers: `run()` used `loadSpec()`, which picked JSON vs YAML and parsed properly, while `preflight()` tried `JSON.parse` and — on failure — returned `Math.floor(lines containing ":" / 3)` as `itemCount`. So a YAML spec's count was fiction, and *any* text that failed `JSON.parse` came back `ok: true`. `loadSpec()` was `async` (it used `await import("js-yaml")`) and `preflight` is a **synchronous** method on `ImporterFn`, which is why the two had drifted apart | `packages/engine/src/importExport/importers/requests-openapi.ts` | static `import * as yaml from "js-yaml"`, `loadSpec()` made synchronous and **shared by both halves**, and the line-count branch deleted. This is what `ImporterFn`'s contract already said they were — "preflight is a dry run against the same bytes `run` will consume" |
+| **`workspace-zip` export threw on every call.** The file opened with `import archiver from "archiver"` and called `archiver("zip", …)` — the **v5–v7** API. `archiver` 8 is pure ESM with **no default export** (`require("archiver").default` is `undefined`, so the call was `undefined(...)`), and its README's quick start is `new ZipArchive({ zlib: { level: 9 } })`. Nothing caught it: `@types/archiver` was pinned at **7**, so the declarations described the default-export API and `tsc` was satisfied, and no test had ever executed the exporter. Exports of a workspace as a ZIP — the one format that streams, and the only one that can be hundreds of megabytes — simply never worked | `packages/engine/src/importexport/exporters/workspace-zip.ts`; root `package.json` | `import { ZipArchive } from "archiver"` + `new ZipArchive({ zlib: { level: 6 } })`, **and** `@types/archiver` bumped `^7.0.0` → `^8.0.0`. The two halves must move together: fixing only the import leaves the compiler endorsing a call shape the runtime rejects, which is exactly how this stayed hidden |
+| **A YAML OpenAPI spec was previewed with a fabricated item count, and a malformed file was offered as importable.** `importers/requests-openapi.ts` had two parsers: `run()` used `loadSpec()`, which picked JSON vs YAML and parsed properly, while `preflight()` tried `JSON.parse` and — on failure — returned `Math.floor(lines containing ":" / 3)` as `itemCount`. So a YAML spec's count was fiction, and *any* text that failed `JSON.parse` came back `ok: true`. `loadSpec()` was `async` (it used `await import("js-yaml")`) and `preflight` is a **synchronous** method on `ImporterFn`, which is why the two had drifted apart | `packages/engine/src/importexport/importers/requests-openapi.ts` | static `import * as yaml from "js-yaml"`, `loadSpec()` made synchronous and **shared by both halves**, and the line-count branch deleted. This is what `ImporterFn`'s contract already said they were — "preflight is a dry run against the same bytes `run` will consume" |
 | **Exporting a collection run as JSON silently truncated the report.** `RunReport` in `@bifurc/protocol` was typed from the HTML renderer's field *usage* rather than from the renderer's real `CollectionRunReport`, so `requestId`, `url`, `testLogs`, `preScriptError`, `postScriptError` and `TestResultEntry.durationMs` were absent. `z.object()` **strips unknown keys** — it does not reject them — so routing a real report through the schema dropped those fields without a word. The HTML export was unaffected *because* the HTML renderer touches only fields the schema happened to have, which is precisely why this would have shipped unnoticed: the one consumer that existed could not observe the loss | `packages/protocol/src/commands/runner.ts` `RunReport` / `RunResult` | widened to carry every field of the renderer's `RunnerRequestResult`, and asserted field by field in `tests/integration/fileOps.integration.test.ts` rather than by a round-trip `toEqual` — a round-trip against a schema that strips would compare two equally-truncated objects and pass. **Same class as the `collisionStrategy` defect:** a wire type that disagrees with its only caller, where the compiler is satisfied either way |
-| **`tls.importCert` leaked an absolute engine filesystem path in a protocol result.** It read `blobContentPath(blobId)` directly, and that helper validates the id's *shape* (`^blob_[0-9a-f]{32}$`) but never checks that the blob exists. So a blob that had been released, or swept past `BLOB_TTL_MS`, produced a raw `ENOENT: no such file or directory, open 'I:\…\blobs\blob_…\content'` — an engine-side path, in a result the client receives, from a channel whose entire purpose is that no path crosses the boundary (`File_Ops_Protocol.md` §8). It is also not a *typed* error, so P4's transport could not have classified it | `packages/engine/src/fileOps/commands.ts` `tlsImport` | read through `statBlob()` first, which converts absence into a `BlobError("blob-not-found")` and therefore into a path-free `blob-not-found: …` message. `statBlob` deliberately does **not** slide the lease, which is correct here — the bytes are consumed immediately after. **The generalisable lesson:** the item-6 acceptance criterion is checked by grepping for `filePath` in *types*, and this leak was a runtime string, so no grep could have found it |
+| **`tls.importCert` leaked an absolute engine filesystem path in a protocol result.** It read `blobContentPath(blobId)` directly, and that helper validates the id's *shape* (`^blob_[0-9a-f]{32}$`) but never checks that the blob exists. So a blob that had been released, or swept past `BLOB_TTL_MS`, produced a raw `ENOENT: no such file or directory, open 'I:\…\blobs\blob_…\content'` — an engine-side path, in a result the client receives, from a channel whose entire purpose is that no path crosses the boundary (`File_Ops_Protocol.md` §8). It is also not a *typed* error, so P4's transport could not have classified it | `packages/engine/src/fileops/commands.ts` `tlsImport` | read through `statBlob()` first, which converts absence into a `BlobError("blob-not-found")` and therefore into a path-free `blob-not-found: …` message. `statBlob` deliberately does **not** slide the lease, which is correct here — the bytes are consumed immediately after. **The generalisable lesson:** the item-6 acceptance criterion is checked by grepping for `filePath` in *types*, and this leak was a runtime string, so no grep could have found it |
 | **`certutil -delstore` reports success for a certificate it did not remove.** Measured, not assumed: `certutil -delstore -user Root "00112233445566778899AABBCCDDEEFF00112233"` — a thumbprint that is **not in the store** — prints `CertUtil: -delstore command completed successfully.` and exits **0**. An un-trust result built on that exit code would tell the user their CA had been removed from the OS trust store when it had not: a security-relevant lie rather than an ordinary bug, and invisible to any test that asserts on the command's status. The mirror-image query *is* discriminating — `certutil -store -user Root <thumbprint>` exits **0** when present and **17** (`NTE_NOT_FOUND`) when absent — so the two are not interchangeable, and only measurement tells you which is which | `src/ipc/certTrust.ts` (`probeTrust`, `uninstallCA`) | `probeTrust()` split out from `run()` as a separate concept — "what does the store say?" is a different question from "did the command succeed?", and a non-zero exit is the *expected answer* half the time. `TrustResult.verified` is a separate field from `TrustResult.ok`, `uninstallCA()` re-queries after deleting instead of trusting the exit status, and `probeTrust()` returns `true \| false \| null` so Linux can say *cannot answer* rather than `false`. Pinned in both directions, including *"reports ok but not verified when the delete command exits 0 and the store still has it"* |
-| **`generateCA()` could return an `ENOENT` carrying the engine's absolute path** — the same class as the `tls.importCert` leak above, reachable with no blob involved. `fs.writeFileSync` does not create parent directories, and `appDataDir()` only exists once `loadSettings()` has written the settings file at least once; a `tls.generate` before that would produce `{ok: false, error: "ENOENT: no such file or directory, open 'C:\\Users\\…\\Bifurc\\ca-cert.pem'"}`. **Latent, not demonstrated** — in the app `loadSettings()` runs at startup, so the directory is there by the time a user can click the button, and no test provoked it | `packages/engine/src/proxy/certManager.ts` `generateCA` | `fs.mkdirSync(dataDir, { recursive: true })` before writing, plus a test that generates into a non-existent nested directory. Creating the directory is cheaper than sanitising the message, and it removes the failure rather than the evidence of it — which is also why it is a one-line fix rather than a new error branch |
+| **`generateCA()` could return an `ENOENT` carrying the engine's absolute path** — the same class as the `tls.importCert` leak above, reachable with no blob involved. `fs.writeFileSync` does not create parent directories, and `appDataDir()` only exists once `loadSettings()` has written the settings file at least once; a `tls.generate` before that would produce `{ok: false, error: "ENOENT: no such file or directory, open 'C:\\Users\\…\\Bifurc\\ca-cert.pem'"}`. **Latent, not demonstrated** — in the app `loadSettings()` runs at startup, so the directory is there by the time a user can click the button, and no test provoked it | `packages/engine/src/certificates/certManager.ts` `generateCA` | `fs.mkdirSync(dataDir, { recursive: true })` before writing, plus a test that generates into a non-existent nested directory. Creating the directory is cheaper than sanitising the message, and it removes the failure rather than the evidence of it — which is also why it is a one-line fix rather than a new error branch |
 
 ### Build-robustness fixes
 
@@ -2020,9 +2326,9 @@ npm run test:integration
 
 # 3. Confirm the engine really is tested from source, not from a stale build.
 #    This is the check whose absence hid 14 files at 0% coverage until 2026-09-15 (§4.8).
-#    Append a marker to packages/engine/src/store/paths.ts, then:
+#    Append a marker to packages/engine/src/workspace/paths.ts, then:
 npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=coverage-local
-#    → the coverage table must list packages/engine/src/store/paths.ts. If the engine files are
+#    → the coverage table must list packages/engine/src/workspace/paths.ts. If the engine files are
 #      absent or at 0%, the alias in vitest.config.ts has been lost — and a green suite is then
 #      meaningless, because tests are running against dist/ instead of your edits.
 
@@ -2030,7 +2336,7 @@ npx vitest run --coverage --coverage.clean=false --coverage.reportsDirectory=cov
 #    a) Edit packages/engine/src/proxy/proxyHandler.ts so matchProxyRule never matches, then:
 npm run test:integration
 #    → 6 rule tests fail. Revert the edit.
-#    b) In packages/engine/src/proxy/serverReplay.ts, replace decompressBody(raw, ce) with raw, then:
+#    b) In packages/engine/src/utils/replay.ts, replace decompressBody(raw, ce) with raw, then:
 npx vitest run --project integration tests/integration/protocolExecution.integration.test.ts
 #    → "decodes a gzip response and strips content-encoding" fails. Revert.
 #    c) In src/ipc/handlers/soapHandlers.ts, use body.length instead of xmlBody.length:
@@ -2038,24 +2344,26 @@ npx vitest run --project integration tests/integration/protocolExecution.integra
 #    d) In src/ipc/handlers/runnerHandlers.ts, re-escape one ${…} in generateRunnerHtml, then:
 npx vitest run --project integration tests/integration/runnerStorage.integration.test.ts
 #    → the report-content assertions fail. Revert.
-#    e) In packages/engine/src/sync/publishService.ts, drop the Set() dedupe, then:
+#    e) In packages/engine/src/gitops/publishService.ts, drop the Set() dedupe, then:
 npx vitest run --project integration tests/integration/gitSync.integration.test.ts
 #    → "treats a folder holding exactly one entity as a single-entity commit" fails. Revert.
-#    f) In packages/engine/src/store/gitStore.ts, remove the workspace.json add, then:
+#    f) In packages/engine/src/workspace/gitStore.ts, remove the workspace.json add, then:
 npx vitest run --project integration tests/integration/gitRemote.integration.test.ts
 #    → "clones the remote and adopts its workspace identity" fails. Revert.
 #    g) In packages/engine/src/proxy/server.ts, change the 512 * 1024 capture slice to 256 * 1024, then:
 npx vitest run --project integration tests/integration/capture.integration.test.ts
 #    → "caps an oversized captured response body" fails. Revert.
-#    h) In packages/engine/src/companion/companionServer.ts, drop the `await` on getWorkspaceSyncStatus (or
+#    h) [RETIRED — no longer runnable. The companion server was removed outright (plan/15 §6.4) and
+#       `tests/integration/companionServer.integration.test.ts` with it. Kept as a record of the check.]
+#       In packages/engine/src/companion/companionServer.ts, drop the `await` on getWorkspaceSyncStatus (or
 #       serialize the promise again), then:
-npx vitest run --project integration tests/integration/companionServer.integration.test.ts
+# npx vitest run --project integration tests/integration/companionServer.integration.test.ts
 #    → "tells the renderer to refresh, and reports the new entity as dirty" fails. Revert.
 #    i) In packages/gui/src/lib/createTabReducer.ts, change `if (!options.init)` to `if (options.init)`
 #       so the shared layer always delegates, then:
 npx vitest run --project unit tests/renderer/protocolTabReducers.test.ts
 #    → 7 REFRESH/LOAD tests fail. Revert.
-#    j) In packages/engine/src/proxy/tlsCert.ts, make generateHostCert ignore the loaded CA (issue from a
+#    j) In packages/engine/src/certificates/tlsCert.ts, make generateHostCert ignore the loaded CA (issue from a
 #       throwaway key), then:
 npx vitest run --project integration tests/integration/tlsIntercept.integration.test.ts
 #    → the `rejectUnauthorized: true` handshake fails. Revert.
@@ -2067,7 +2375,7 @@ npx vitest run --project integration tests/integration/settingsMutations.integra
 #      `expected { from: 'mock' } to deeply equal { upstream: true, path: '/api/hello' }`. Revert.
 #    l) In src/ipc/handlers/entityCrudFactory.ts, do the same in the ADD handler, then the same
 #       command fails on "serves a mock added through mock:add immediately". Revert.
-#    m) P3 blob store. In packages/engine/src/blob/store.ts, disable the `bytes.length !== params.size`
+#    m) P3 blob store. In packages/engine/src/workspace/blob/store.ts, disable the `bytes.length !== params.size`
 #       check in putBlob, then:
 npx vitest run tests/blob
 #    → 3 tests fail: "rejects a decoded length that disagrees with the declared size" and
@@ -2076,17 +2384,17 @@ npx vitest run tests/blob
 #      (commands.test.ts). That is the whole point of the check — Node's base64 decoder ignores
 #      characters it does not recognise, so without it a truncated payload stages as a smaller but
 #      valid-looking blob. Revert.
-#    n) In packages/engine/src/blob/store.ts, disable the content-existence check in readMeta, then:
+#    n) In packages/engine/src/workspace/blob/store.ts, disable the content-existence check in readMeta, then:
 npx vitest run tests/blob
 #    → exactly 1 test fails: "treats a blob directory with metadata but no content as not found".
 #      Without the check, statBlob reports a size and a SHA-256 for bytes that are not on disk.
 #      Revert.
-#    o) In packages/engine/src/blob/sweep.ts, change `meta.createdAt + ttlMs <= now` to `< now`, then:
+#    o) In packages/engine/src/workspace/blob/sweep.ts, change `meta.createdAt + ttlMs <= now` to `< now`, then:
 npx vitest run tests/blob
 #    → 4 tests fail, led by "reclaims a blob whose lease has run out, and reports what it freed":
 #      the boundary is inclusive by contract (`createdAt + TTL` is expired, not "expires in 1 ms").
 #      The other three sweep exactly at the boundary. Revert.
-#    p) In packages/engine/src/blob/sweep.ts, disable the `entry.name === BLOB_STAGING_DIR_NAME`
+#    p) In packages/engine/src/workspace/blob/sweep.ts, disable the `entry.name === BLOB_STAGING_DIR_NAME`
 #       branch so `.staging/` falls through to the blob-directory path, then:
 npx vitest run tests/blob
 #    → 2 tests fail: "reclaims an abandoned staged file once it is old" and "does not resurrect a

@@ -49,12 +49,13 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { loadConfig } from "@bifurc/engine/store/config";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 import { writeSampleWorkspace } from "../../e2e/fixtures/sampleData";
 
 describe("the e2e fixture's seeded workspace survives the engine's own read path", () => {
   let root: string;
-  let previousLocalAppData: string | undefined;
+
   let cfg: Record<string, any>;
 
   beforeAll(() => {
@@ -63,19 +64,14 @@ describe("the e2e fixture's seeded workspace survives the engine's own read path
     const dataDir = path.join(appDir, "data");
     fs.mkdirSync(dataDir, { recursive: true });
 
-    // Before `loadConfig()`, and before anything resolves a path — see the header.
-    previousLocalAppData = process.env.LOCALAPPDATA;
-    process.env.LOCALAPPDATA = root;
-
-    // The fixture writes `app.json` to the parent of its data argument, which is where `settingsPath()`
-    // looks once `%LOCALAPPDATA%` points here.
+    // The fixture writes `app.json` beside its `data/` dir — i.e. into the data root, set here.
+    setDataRoot(appDir);
     writeSampleWorkspace(dataDir, null);
     cfg = loadConfig() as Record<string, any>;
   });
 
   afterAll(() => {
-    if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-    else process.env.LOCALAPPDATA = previousLocalAppData;
+    resetDataRootForTests();
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -109,13 +105,6 @@ describe("the e2e fixture's seeded workspace survives the engine's own read path
     expect(cfg.wsConnections).toHaveLength(2);
   });
 
-  it("reads every seeded webhook's name and urlSuffix — webhooks key on `urlSuffix`, not `url`", () => {
-    const hook = byId(cfg.webhooks, "wh-001");
-    expect(hook?.name).toBe("Order Created");
-    expect(hook?.urlSuffix).toBe("orders/created");
-    expect(cfg.webhooks).toHaveLength(2);
-  });
-
   it("has no empty name anywhere a names index backs the kind", () => {
     /**
      * The generalisation of the bug, stated as a property rather than as four spot checks: **an empty name
@@ -144,7 +133,6 @@ describe("the e2e fixture's seeded workspace survives the engine's own read path
       ["proxyRules", cfg.proxyRules],
       ["requests", cfg.requests],
       ["wsConnections", cfg.wsConnections],
-      ["webhooks", cfg.webhooks],
       ["mocks", cfg.mocks],
     ];
     const blank: string[] = [];

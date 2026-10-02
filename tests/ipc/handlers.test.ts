@@ -19,7 +19,7 @@ const { mockLogEmitter, mockIpcMain, registeredHandlers } = vi.hoisted(() => {
   return { mockLogEmitter: logEmitter, mockIpcMain: ipcMain, registeredHandlers: handlers };
 });
 
-vi.mock("@bifurc/engine/subscription/entityCount", () => ({
+vi.mock("@bifurc/engine/workspace/entityCount", () => ({
   gateCreate: vi.fn(() => ({ allowed: true })),
   gateEnable: vi.fn(() => ({ allowed: true })),
 }));
@@ -39,18 +39,39 @@ vi.mock("@bifurc/engine/proxy/server", () => ({
   replayRequest: vi.fn(),
 }));
 
-vi.mock("@bifurc/engine/proxy/logEmitter", () => ({
+/**
+ * `Engine_Module_Plan.md` §4.1 — the **reload** fan-out now enters through `runtime/instances.ts`.
+ *
+ * **Only `notifyConfigChanged` is stubbed; `rebindRuntimePorts` is left real**, and that split is the whole
+ * point of this mock. The command under test calls *two* things: a reload (whose target is the proxy, mocked
+ * above) and a port rebind (whose targets are the edge / proxy / webhook, each already mocked at *their own*
+ * module). Stubbing both here would make the port assertions below vacuous — they would observe a stub
+ * calling nothing. So this file mocks the seam's *reload* half and lets the *rebind* half run for real against
+ * the listener mocks, which keeps every existing assertion meaningful.
+ *
+ * `importOriginal` is spread in for the same reason `reverseproxy/edge`'s mock below is: a whole-module replacement
+ * makes `rebindRuntimePorts` `undefined` and turns the call into a `TypeError` inside the command.
+ */
+vi.mock("@bifurc/engine/runtime/instances", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/runtime/instances")>()),
+  notifyConfigChanged: vi.fn(),
+}));
+
+vi.mock("@bifurc/engine/kernel/telemetry", () => ({
   logEmitter: mockLogEmitter,
 }));
 
-vi.mock("@bifurc/engine/proxy/service-discovery", () => ({
+vi.mock("@bifurc/engine/services/discovery", () => ({
   discoverServices: vi.fn(() => []),
 }));
 
-// `serverReplay.ts` makes a real outbound HTTP call, so it must be mocked — and it is mocked at *its
-// own* path rather than through `proxy/server`'s re-export, because `miscCommands.ts` imports it
+// `replayRequest` makes a real outbound HTTP call, so it must be mocked — and it is mocked at *its
+// own* path rather than through `proxy/server`'s re-export, because `rest/commands.ts` imports it
 // directly (importing the lighter module beats pulling in the whole proxy server for one function).
-vi.mock("@bifurc/engine/proxy/serverReplay", () => ({
+// Engine-layout phase 7 moved the implementation out of `proxy/serverReplay.ts` into `utils/replay.ts`:
+// both the proxy's routing path and the `request.replay` command need it, and §5.1 forbids two feature
+// modules importing each other, so it was extracted down. The mock path follows the file.
+vi.mock("@bifurc/engine/utils/replay", () => ({
   replayRequest: vi.fn(() => Promise.resolve({ status: 200, headers: {}, body: "" })),
 }));
 
@@ -58,15 +79,6 @@ vi.mock("@bifurc/engine/proxy/serverReplay", () => ({
 // must not be reached from a unit test — `webhookServer.start` would bind a port. Mocked rather than
 // left real for the same reason `proxy/server` is. `webhookEmitter` is deliberately absent: nothing
 // outside `webhookServer.ts` itself reads it, so omitting it proves no consumer depends on it.
-vi.mock("@bifurc/engine/proxy/webhookServer", () => ({
-  registerActiveWebhook: vi.fn(),
-  unregisterActiveWebhook: vi.fn(),
-  startWebhookServer: vi.fn(),
-  stopWebhookServer: vi.fn(),
-  isWebhookServerRunning: vi.fn(() => false),
-  getWebhookPort: vi.fn(() => 9101),
-  getWebhookServerError: vi.fn(() => null),
-}));
 
 /**
  * `plan/17` §5 work item 7 — `config.save` re-binds the **edge** when `settings.port` changes, and the edge is
@@ -78,15 +90,15 @@ vi.mock("@bifurc/engine/proxy/webhookServer", () => ({
  * a replacement mock would make `restartEdge` the only defined export and turn any future import from it into
  * a `TypeError` inside an unrelated command. Only the two names under assertion are stubbed.
  */
-vi.mock("@bifurc/engine/proxy/edge", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/proxy/edge")>()),
+vi.mock("@bifurc/engine/reverseproxy/edge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/reverseproxy/edge")>()),
   restartEdge: vi.fn(),
   // `true`, so the **port-change** arm is the one that fires. With `false` the `!isEdgeRunning()` recovery arm
   // would restart on *every* save, and the `config.save` case below would pass for the wrong reason.
   isEdgeRunning: vi.fn(() => true),
 }));
 
-vi.mock("@bifurc/engine/store/gitStore", () => ({
+vi.mock("@bifurc/engine/workspace/gitStore", () => ({
   commitMutation: vi.fn(() => Promise.resolve("abc123")),
   queryLog: vi.fn(() => Promise.resolve({ entries: [], total: 0 })),
   getEntityAtCommit: vi.fn(() => Promise.resolve(null)),
@@ -96,7 +108,7 @@ vi.mock("@bifurc/engine/store/gitStore", () => ({
   AuditAction: {},
 }));
 
-vi.mock("@bifurc/engine/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/workspace/workspaceFs", () => ({
   writeEntity: vi.fn(),
   deleteEntityFile: vi.fn(),
   writeFlatEntity: vi.fn(),
@@ -125,7 +137,7 @@ vi.mock("@bifurc/engine/store/workspaceFs", () => ({
   clearPendingDeletions: vi.fn(),
 }));
 
-vi.mock("@bifurc/engine/store/appSettings", () => ({
+vi.mock("@bifurc/engine/workspace/appSettings", () => ({
   loadSettings: vi.fn(() => ({
     port: 80,
     minimizeToTray: true,
@@ -167,7 +179,7 @@ vi.mock("electron", () => ({
 
 // ── Store mock ────────────────────────────────────────────────────────────────
 
-import type { AppConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, Folder, Environment, Workspace, SavedWsConnection } from "@bifurc/engine/store/config";
+import type { AppConfig, LocalMapping, ProxyRule, MockRule, SavedRequest, Folder, Environment, Workspace, SavedWsConnection } from "@bifurc/engine/workspace/config";
 
 const makeDefaultConfig = (): AppConfig => ({
   port: 80,
@@ -188,7 +200,7 @@ const makeDefaultConfig = (): AppConfig => ({
 
 let currentConfig: AppConfig = makeDefaultConfig();
 
-vi.mock("@bifurc/engine/store/config", () => ({
+vi.mock("@bifurc/engine/workspace/config", () => ({
   loadConfig: vi.fn(() => currentConfig),
   saveConfig: vi.fn((cfg: AppConfig) => { currentConfig = cfg; }),
   generateId: vi.fn(() => `id-${Date.now()}`),
@@ -210,27 +222,21 @@ vi.mock("@bifurc/engine/store/config", () => ({
   // Types only — no runtime value needed for interfaces
 }));
 
-import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/store/config";
-import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/store/gitStore";
-import { startServer, stopServer, isRunning, getPort, getServerError, reloadConfig, replayRequest } from "@bifurc/engine/proxy/server";
+import { loadConfig, saveConfig, generateId, loadEntity } from "@bifurc/engine/workspace/config";
+import { commitMutation, queryLog, getEntityAtCommit, getCommitChangedFiles } from "@bifurc/engine/workspace/gitStore";
+import { startServer, stopServer, isRunning, getPort, getServerError, replayRequest } from "@bifurc/engine/proxy/server";
+// `Engine_Module_Plan.md` §4.1 — the reload fan-out is asserted at the seam now, not at `proxy/server`. The
+// proxy's own `reloadConfig` stays mocked above because `notifyConfigChanged` (real) calls it.
+import { notifyConfigChanged } from "@bifurc/engine/runtime/instances";
 // `plan/17` §5 work item 7 — `config.save` re-binds the edge, and the edge is the one listener reached through
 // a module-level binding rather than through a facade with a lazy default.
-import { restartEdge } from "@bifurc/engine/proxy/edge";
-import { discoverServices } from "@bifurc/engine/proxy/service-discovery";
-import {
-  registerActiveWebhook,
-  unregisterActiveWebhook,
-  startWebhookServer,
-  stopWebhookServer,
-  isWebhookServerRunning,
-  getWebhookPort,
-  getWebhookServerError,
-} from "@bifurc/engine/proxy/webhookServer";
-import { replayRequest as replayRequestImpl } from "@bifurc/engine/proxy/serverReplay";
+import { restartEdge } from "@bifurc/engine/reverseproxy/edge";
+import { discoverServices } from "@bifurc/engine/services/discovery";
+import { replayRequest as replayRequestImpl } from "@bifurc/engine/utils/replay";
 import { dialog, BrowserWindow } from "electron";
 import * as fs from "fs";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 // ── Helper: get registered handler ───────────────────────────────────────────
 
@@ -354,6 +360,10 @@ const entityLoad = (wsId: string, kind: string, id: string): any =>
 describe("src/ipc/handlers.ts", () => {
   // Register handlers once before all tests.
   beforeAll(async () => {
+    // The engine half is the host's job in the app (`main.ts`); this suite stands in for it.
+    const { registerAllEngineCommands, wireEngineEvents } = await import("@bifurc/engine/registerAll");
+    registerAllEngineCommands(commandRegistry);
+    wireEngineEvents();
     const { registerIpcHandlers } = await import("../../src/ipc/handlers");
     registerIpcHandlers();
   });
@@ -490,9 +500,11 @@ describe("src/ipc/handlers.ts", () => {
      * It has now shrunk five times, and the `MOVABLE` half of it is empty. Step 3b-2's slices moved
      * the six proxy/server-lifecycle commands into `packages/engine/src/proxy/serverCommands.ts`
      * (25 → 19); `config.save` + the three `workspace.*` commands into
-     * `packages/engine/src/store/configCommands.ts` (19 → 15); the five `webhook.*` /
-     * `webhookServer.*` commands into `packages/engine/src/proxy/webhookCommands.ts` (15 → 10); the
-     * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5); and
+     * `packages/engine/src/workspace/entities/configCommands.ts` (19 → 15); the five `webhook.*` /
+     * `webhookServer.*` commands into `packages/engine/src/webhooks/webhookCommands.ts` (15 → 10); the
+     * five `misc.ts` commands into `packages/engine/src/miscCommands.ts` (10 → 5 — that file was itself
+     * dissolved by engine-layout phase 7 on 2026-09-29 into `rest/`, `mocks/` and
+     * `workspace/healthbarCommands.ts`; the count history below is unaffected); and
      * `runner.saveReport` into `packages/engine/src/runner/runnerCommands.ts` (5 → 4). Every edit is
      * the ratchet doing its job rather than a change to the assertion.
      *
@@ -565,7 +577,7 @@ describe("src/ipc/handlers.ts", () => {
        * **live**, and routing this command as it stood would have broken the audit panel's date
        * filter — invisibly to every test here, because these tests drive the *handler*, not the panel.
        *
-       * The schema was widened on 2026-09-19 and `packages/engine/src/store/auditCommands.ts` now
+       * The schema was widened on 2026-09-19 and `packages/engine/src/workspace/entities/auditCommands.ts` now
        * implements it. The lesson generalises past this command: **"no caller found by grepping the
        * method name" is not evidence that there is no caller.**
        */
@@ -605,11 +617,14 @@ describe("src/ipc/handlers.ts", () => {
        */
       const SPLIT: string[] = [];
 
-      const NOT_IN_REGISTRY = [...SPLIT];
+      // Registered only by a standalone engine (`runtime/host.ts`), which owns its process; the desktop embeds
+      // the engine in its own process and must not expose a command that stops it.
+      const HOST_ONLY = ["engine.shutdown"];
+      const NOT_IN_REGISTRY = [...SPLIT, ...HOST_ONLY];
 
       it("implements every protocol command — the pinned list is empty", async () => {
         const { COMMANDS } = await import("@bifurc/protocol");
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
 
         // Non-vacuity. An empty or unreadable `COMMANDS` would make the assertion below pass while
         // checking nothing, and this is the one test that is supposed to notice a missing
@@ -705,13 +720,13 @@ describe("src/ipc/handlers.ts", () => {
         // legacy channel. A command that is neither is unreachable on both paths at once — a silent
         // regression the surface test cannot see, because the key stays exposed either way.
         const { COMMANDS } = await import("@bifurc/protocol");
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
 
         const all = Object.keys(COMMANDS);
         expect(all.length).toBeGreaterThan(80);
 
         const unreachable = all.filter((command) => {
-          if (commandRegistry.isRegistered(command as never)) return false;
+          if (commandRegistry.isRegistered(command as never) || HOST_ONLY.includes(command)) return false;
           const channel = (COMMANDS as Record<string, { legacyChannel?: string }>)[command]
             ?.legacyChannel;
           return !channel || !registeredHandlers.has(channel);
@@ -723,7 +738,7 @@ describe("src/ipc/handlers.ts", () => {
         // because the *registry* covers everything. If the channels were doing the covering instead,
         // the registry would be short and the filter above would be exercising its fallback.
         const registered = all.filter((c) => commandRegistry.isRegistered(c as never));
-        expect(registered.length).toBe(all.length);
+        expect(registered.length).toBe(all.length - HOST_ONLY.length);
       });
 
       it("every routed surface entry names a command the registry implements", async () => {
@@ -744,7 +759,7 @@ describe("src/ipc/handlers.ts", () => {
         // `surface.ts` has it) and the alias in `vitest.config.ts` covers `@bifurc/engine/*` only.
         // Read-only data, so the relative hop costs nothing but honesty about where the contract lives.
         const { SURFACE } = await import("../../packages/client/src/surface");
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
 
         const routed = Object.entries(SURFACE)
           .filter(([, e]) => e.kind === "transport" || e.kind === "shim")
@@ -786,8 +801,8 @@ describe("src/ipc/handlers.ts", () => {
        * **no session**, since a session-less caller is the engine itself and holds every scope.
        */
       it("delivers the 21 moved commands through the registry, not just the channel", async () => {
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-        const { bus } = await import("@bifurc/engine/eventBus");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+        const { bus } = await import("@bifurc/engine/kernel/eventBus");
         const ctx = { bus };
 
         vi.mocked(isRunning).mockReturnValue(true);
@@ -895,11 +910,10 @@ describe("src/ipc/handlers.ts", () => {
          */
         vi.mocked(restartEdge).mockClear();
         vi.mocked(startServer).mockClear();
-        vi.mocked(startWebhookServer).mockClear();
         expect(
           commandRegistry.invoke(
             "config.save",
-            { config: { ...makeDefaultConfig(), port: 9876, forwardProxyPort: 8081, webhookPort: 9123 } },
+            { config: { ...makeDefaultConfig(), port: 9876, forwardProxyPort: 8081 } },
             ctx,
           ),
         ).toEqual({ ok: true });
@@ -911,7 +925,6 @@ describe("src/ipc/handlers.ts", () => {
          * `isWebhookServerRunning` is mocked `false` in this file's `beforeEach`, so `not.toHaveBeenCalled()` is
          * the assertion rather than an omission.
          */
-        expect(startWebhookServer).not.toHaveBeenCalled();
         // The edge's port did not change in this save, so its branch must not fire either.
         expect(restartEdge).not.toHaveBeenCalled();
 
@@ -942,62 +955,6 @@ describe("src/ipc/handlers.ts", () => {
         expect(await commandRegistry.invoke("workspace.delete", { id: added.id }, ctx)).toEqual({ ok: true });
         expect((currentConfig.workspaces ?? []).find((w) => w.id === added.id)).toBeUndefined();
         expect((currentConfig.workspaces ?? []).length).toBe(wsCountBefore);
-
-        // ── slice 3: webhook.* and webhookServer.* ────────────────────────
-
-        // `webhook.registerActive` / `unregisterActive` take the pair the renderer already sends; the
-        // assertion is that both halves reach the engine's active-suffix registry rather than only one.
-        expect(
-          commandRegistry.invoke("webhook.registerActive", { webhookId: "w1", urlSuffix: "/x" }, ctx),
-        ).toEqual({ ok: true });
-        expect(registerActiveWebhook).toHaveBeenCalledWith("w1", "/x");
-
-        expect(commandRegistry.invoke("webhook.unregisterActive", { webhookId: "w1" }, ctx)).toEqual({
-          ok: true,
-        });
-        expect(unregisterActiveWebhook).toHaveBeenCalledWith("w1");
-
-        // `webhookServer.start` — the port resolution is the whole point of this assertion. With no
-        // `port` on the wire it must fall back to the config chain exactly as the shell body did,
-        // because that is what every existing caller sends.
-        currentConfig = { ...makeDefaultConfig(), webhookPort: 9200 };
-        expect(commandRegistry.invoke("webhookServer.start", {}, ctx)).toEqual({ ok: true });
-        expect(startWebhookServer).toHaveBeenCalledWith(9200);
-
-        // …and a declared `port` must win, since `WebhookServerStartParams` advertises one. This is
-        // the one handler in this batch that is not a literal copy of its shell body.
-        expect(commandRegistry.invoke("webhookServer.start", { port: 9300 }, ctx)).toEqual({ ok: true });
-        expect(startWebhookServer).toHaveBeenCalledWith(9300);
-
-        /**
-         * **The `?? 9101` last resort is gone, and the case that asserted it is retired rather than fixed.**
-         *
-         * It read: delete `webhookPort` from the config, then expect `startWebhookServer(9101)` — "a config
-         * written by an older release is exactly how it would be missing". `plan/17` §1 removed the constant,
-         * and the reason the case cannot be restated is the interesting part: the chain is now
-         * `params.port ?? loadConfig().webhookPort`, with **one link and no constant**, and `loadConfig()`
-         * cannot return a missing `webhookPort` — `loadSettings()` merges `makeDefaultSettings()` under
-         * whatever the file holds, so a legacy `app.json` without the key gets `randomWebhookPort()` rather
-         * than `undefined`. The branch is therefore unreachable, and a test for an unreachable branch is a
-         * test that can only ever be satisfied by re-introducing the thing that was deleted.
-         *
-         * The two cases above are what remains, and they cover the whole chain: no `port` on the wire falls
-         * back to the config (9200), and a declared `port` wins (9300).
-         */
-
-        expect(commandRegistry.invoke("webhookServer.stop", {}, ctx)).toEqual({ ok: true });
-        expect(stopWebhookServer).toHaveBeenCalled();
-
-        // `webhookServer.status` — three fields, and `error` is `null` rather than absent because the
-        // renderer's status widget reads it unconditionally.
-        vi.mocked(isWebhookServerRunning).mockReturnValue(true);
-        vi.mocked(getWebhookPort).mockReturnValue(9200);
-        vi.mocked(getWebhookServerError).mockReturnValue(null);
-        expect(commandRegistry.invoke("webhookServer.status", {}, ctx)).toEqual({
-          running: true,
-          port: 9200,
-          error: null,
-        });
 
         // ── slice 4: the five misc.ts commands ─────────────────────────────
 
@@ -1091,8 +1048,8 @@ describe("src/ipc/handlers.ts", () => {
         // The registry validates **before** the handler runs, so a transport gets `BAD_REQUEST` from
         // the same place for every command. Asserted here because 3b-2's new handlers take no params,
         // which makes it tempting to assume `{}` is merely conventional — it is enforced.
-        const { commandRegistry } = await import("@bifurc/engine/commands/registry");
-        const { bus } = await import("@bifurc/engine/eventBus");
+        const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
+        const { bus } = await import("@bifurc/engine/kernel/eventBus");
 
         expect(() => commandRegistry.invoke("server.status", { unexpected: 1 }, { bus }))
           .toThrow(/Invalid payload for command "server\.status"/);
@@ -1348,7 +1305,7 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("entity.delete — proxyRules", () => {
     it("deletes the entity file for the given id", async () => {
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
       currentConfig.proxyRules = [
         { id: "r1", name: "a", pattern: ".*a.*", targetMappingId: "m1", enabled: true, workspaceId: "default" },
         { id: "r2", name: "b", pattern: ".*b.*", targetMappingId: "m1", enabled: true, workspaceId: "default" },
@@ -1470,7 +1427,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("writes the updated mock entity to disk", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const mock: MockRule = {
         id: "m1", name: "m", method: "GET", urlPattern: "http://x.com",
         useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "",
@@ -1501,7 +1458,7 @@ describe("src/ipc/handlers.ts", () => {
 
   describe("entity.delete — mocks", () => {
     it("deletes the entity file for the given id", async () => {
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
       currentConfig.mocks = [
         { id: "m1", name: "a", method: "GET", urlPattern: "http://a.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 200, responseHeaders: {}, responseBody: "{}", createdAt: 1, workspaceId: "default" },
         { id: "m2", name: "b", method: "POST", urlPattern: "http://b.com", useRegex: false, enabled: true, capturedHeaders: {}, capturedBody: "", responseStatus: 201, responseHeaders: {}, responseBody: "{}", createdAt: 2, workspaceId: "default" },
@@ -1549,7 +1506,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("writes the new request to disk via writeEntity", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await createEntity("requests", baseReq);
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1569,7 +1526,7 @@ describe("src/ipc/handlers.ts", () => {
   describe("entity.update — requests", () => {
     it("writes the updated request to disk via writeEntity", async () => {
       const req: SavedRequest = { id: "r1", name: "old", method: "GET", url: "http://x.com", headers: {}, body: "", createdAt: 1 };
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await updateEntity("requests", { ...req, name: "updated" });
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1588,7 +1545,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.requests = [
         { id: "r1", name: "a", method: "GET", url: "http://a.com", headers: {}, body: "", createdAt: 1, workspaceId: "default" } as SavedRequest,
       ];
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
 
       await deleteEntity("requests", "r1");
 
@@ -1945,7 +1902,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("writes the new ws connection to disk via writeEntity", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await createEntity("wsConnections", baseConn);
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1954,7 +1911,7 @@ describe("src/ipc/handlers.ts", () => {
   describe("entity.update — wsConnections", () => {
     it("writes the updated ws connection to disk via writeEntity", async () => {
       const conn: SavedWsConnection = { id: "c1", name: "old", url: "ws://localhost:1", headers: {}, createdAt: 1, workspaceId: "default" };
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       await updateEntity("wsConnections", { ...conn, name: "updated" });
       expect(writeEntity).toHaveBeenCalled();
     });
@@ -1971,7 +1928,7 @@ describe("src/ipc/handlers.ts", () => {
       currentConfig.wsConnections = [
         { id: "c1", name: "a", url: "ws://a", headers: {}, createdAt: 1, workspaceId: "default" } as SavedWsConnection,
       ];
-      const { deleteEntityFile } = await import("@bifurc/engine/store/workspaceFs");
+      const { deleteEntityFile } = await import("@bifurc/engine/workspace/workspaceFs");
       await deleteEntity("wsConnections", "c1");
       expect(deleteEntityFile).toHaveBeenCalledWith("default", "sockets", "c1");
     });
@@ -2119,13 +2076,13 @@ describe("src/ipc/handlers.ts", () => {
      * The contrast with `env.setActive` below is now **symmetry**, not asymmetry — see that case.
      */
     it("DOES reload the proxy — one host-level proxy follows the selection (plan/17 §1)", () => {
-      vi.mocked(reloadConfig).mockClear();
+      vi.mocked(notifyConfigChanged).mockClear();
 
       const result = workspaceSetActive("ws2");
 
       expect(result.ok).toBe(true);
       expect(currentConfig.activeWorkspaceId).toBe("ws2");
-      expect(reloadConfig).toHaveBeenCalled();
+      expect(notifyConfigChanged).toHaveBeenCalled();
     });
 
     /**
@@ -2139,11 +2096,11 @@ describe("src/ipc/handlers.ts", () => {
      * proxy's config, and a future change that drops one of the two calls should be caught in both places.
      */
     it("env.setActive DOES reload the proxy — environments are proxy state", () => {
-      vi.mocked(reloadConfig).mockClear();
+      vi.mocked(notifyConfigChanged).mockClear();
 
       commandRegistry.invoke("env.setActive", { id: "env-1" }, ENTITY_CTX);
 
-      expect(reloadConfig).toHaveBeenCalled();
+      expect(notifyConfigChanged).toHaveBeenCalled();
     });
   });
 
@@ -2400,7 +2357,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("a rule is created with kind \"proxyRules\" and still stores under \"rules\"", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const input: Omit<ProxyRule, "id"> = {
         name: "API rule", pattern: ".*\\.api\\.com.*", targetMappingId: "m1", enabled: true,
       };
@@ -2409,14 +2366,14 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("a websocket connection is created with kind \"wsConnections\" and still stores under \"sockets\"", async () => {
-      const { writeEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const input: Omit<SavedWsConnection, "id"> = { name: "conn", url: "ws://localhost" } as any;
       await createEntity("wsConnections", input);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("sockets");
     });
 
     it("graphql schemas round-trip through entity.create / entity.delete / entity.list", async () => {
-      const { writeEntity, deleteEntityFile, readAllEntities } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeEntity, deleteEntityFile, readAllEntities } = await import("@bifurc/engine/workspace/workspaceFs");
       await createEntity("graphqlSchemas", { name: "s", content: "type Query {}" } as any);
       expect(vi.mocked(writeEntity).mock.calls[0][1]).toBe("graphqlSchemas");
 
@@ -2435,7 +2392,7 @@ describe("src/ipc/handlers.ts", () => {
     // like every other kind, with those quirks preserved.
 
     it("an environment is created with kind \"environments\" and stores flat", async () => {
-      const { writeFlatEntity } = await import("@bifurc/engine/store/workspaceFs");
+      const { writeFlatEntity } = await import("@bifurc/engine/workspace/workspaceFs");
       const input = { name: "Dev", variables: [] };
       const result = await createEntity("environments", input);
       expect(result.id).toBeTruthy();
@@ -2444,7 +2401,7 @@ describe("src/ipc/handlers.ts", () => {
     });
 
     it("a gated create returns { error: \"limit_reached\", ... } and creates nothing", async () => {
-      const { gateCreate } = await import("@bifurc/engine/subscription/entityCount");
+      const { gateCreate } = await import("@bifurc/engine/workspace/entityCount");
       vi.mocked(gateCreate).mockReturnValueOnce({ allowed: false, current: 1, limit: 1 });
 
       currentConfig.environments = [];

@@ -3,16 +3,16 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-vi.mock("@bifurc/engine/store/gitStore", () => ({
+vi.mock("@bifurc/engine/workspace/gitStore", () => ({
   checkGitInstalled: vi.fn(),
 }));
 vi.mock("@bifurc/engine/applications/portUtils", () => ({
   checkPortInUse: vi.fn(),
 }));
 
-import { checkGitInstalled } from "@bifurc/engine/store/gitStore";
+import { checkGitInstalled } from "@bifurc/engine/workspace/gitStore";
 import { checkPortInUse } from "@bifurc/engine/applications/portUtils";
-import { preflight } from "@bifurc/engine/startup";
+import { preflight } from "@bifurc/engine/lifecycle/startup";
 
 describe("startup/preflight", () => {
   let tmpDir: string;

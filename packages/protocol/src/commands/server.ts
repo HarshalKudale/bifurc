@@ -21,7 +21,13 @@
 import { z } from "zod";
 import { WorkspaceScope } from "./scope";
 
-export const ServerStatusParams = WorkspaceScope.strict();
+/**
+ * Which listener a `server.*` command is about. Omitted means the forward proxy, which is what these commands
+ * always meant; `reverse` is the edge that serves the `.localhost` names on `settings.port`.
+ */
+export const ServerTarget = z.object({ target: z.enum(["forward", "reverse"]).optional() });
+
+export const ServerStatusParams = WorkspaceScope.merge(ServerTarget).strict();
 export type ServerStatusParams = z.infer<typeof ServerStatusParams>;
 export interface ServerStatusResult {
   running: boolean;
@@ -31,13 +37,13 @@ export interface ServerStatusResult {
   workspaceId?: string;
 }
 
-export const ServerStartParams = WorkspaceScope.strict();
+export const ServerStartParams = WorkspaceScope.merge(ServerTarget).strict();
 export type ServerStartParams = z.infer<typeof ServerStartParams>;
 
-export const ServerStopParams = WorkspaceScope.strict();
+export const ServerStopParams = WorkspaceScope.merge(ServerTarget).strict();
 export type ServerStopParams = z.infer<typeof ServerStopParams>;
 
-export const ServerRestartParams = WorkspaceScope.strict();
+export const ServerRestartParams = WorkspaceScope.merge(ServerTarget).strict();
 export type ServerRestartParams = z.infer<typeof ServerRestartParams>;
 
 export interface ServerLifecycleResult {

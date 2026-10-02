@@ -8,16 +8,16 @@ import simpleGit from "simple-git";
 // the duration of the suite. Everything else runs for real: real temp data root, real directories,
 // real `git init`, real settings persistence. Mocking the store layer here would test nothing,
 // because the whole point of the extraction is that the *same* on-disk effects still happen.
-vi.mock("@bifurc/engine/sync/autoSync", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/sync/autoSync")>()),
+vi.mock("@bifurc/engine/gitops/autoSync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/gitops/autoSync")>()),
   startAutoSync: vi.fn(),
 }));
 
-import { bootstrapWorkspaces } from "@bifurc/engine/startup";
-import { startAutoSync } from "@bifurc/engine/sync/autoSync";
-import { setDataDirOverride } from "@bifurc/engine/store/gitStore";
-import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
-import type { AppSettings } from "@bifurc/engine/store/appSettings";
+import { bootstrapWorkspaces } from "@bifurc/engine/lifecycle/startup";
+import { startAutoSync } from "@bifurc/engine/gitops/autoSync";
+import { setDataDirOverride } from "@bifurc/engine/workspace/gitStore";
+import { loadSettings, setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
+import type { AppSettings } from "@bifurc/engine/workspace/appSettings";
 
 type WorkspaceMeta = AppSettings["workspaces"][number];
 

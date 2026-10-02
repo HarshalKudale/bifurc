@@ -6,7 +6,7 @@
  *
  * `plan/14` WI 3's highest-risk decision was **where the host lives**, and the answer was "in
  * `packages/engine`, not a new package" for exactly this reason: `tsup` runs `bundle: false` so that
- * `store/paths.ts` stays **one module instance per process**, and a second package — or a bundling change —
+ * `workspace/paths.ts` stays **one module instance per process**, and a second package — or a bundling change —
  * would silently give the process a *second* data root. `host.ts`'s own header calls that out: *"a host in
  * its own package would be a second copy of `_dataRootOverride` waiting to happen."*
  *
@@ -16,10 +16,15 @@
  *
  * ## The two roots, and why there are two *variables* but one *root*
  *
- * `store/paths.ts#dataRoot` is **the** root (`setDataRoot`). `store/workspaceFs.ts#_dataRootOverride` is a
- * **test-only override layered on top of it** — `dataRoot()` returns the override when set and falls through
- * to `path.join(dataDir(), "data")` otherwise. Two variables, one root; this file pins the layering so a
- * change that made the override independent would fail here rather than in production.
+ * `workspace/paths.ts#dataRoot` is **the** root (`setDataRoot`). `workspace/workspaceFs.ts#_dataRootOverride`
+ * is a **test-only override layered on top of it** — `dataRoot()` returns the override when set and falls
+ * through to `path.join(dataDir(), "data")` otherwise. Two variables, one root; this file pins the layering so
+ * a change that made the override independent would fail here rather than in production.
+ *
+ * **⚠ `store/` → `workspace/` (`Engine_Module_Plan.md` phase 3).** Both files above moved, and the criterion
+ * quote at the top names them at their *pre-move* paths because it is a verbatim quote of the P14 text. The
+ * assertions below are the live ones and name the new paths — a rename that updates one and not the other is
+ * exactly the drift this file exists to catch.
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -27,8 +32,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { dataDir, setDataRoot, resetDataRootForTests } from "@bifurc/engine/store/paths";
-import { dataRoot, setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
+import { dataDir, setDataRoot, resetDataRootForTests } from "@bifurc/engine/workspace/paths";
+import { dataRoot, setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
 
 const ENGINE_SRC = path.resolve(process.cwd(), "packages/engine/src");
 
@@ -67,14 +72,14 @@ describe("one data root per process (P14 §8 criterion 16)", () => {
     // **Exactly one of each, and named.** `toEqual` on the path list rather than `toHaveLength(1)` so the
     // failure says *which* second module appeared — that is the diagnostic, since a duplicate is what this
     // criterion exists to catch.
-    expect(declaredRoot).toEqual(["packages/engine/src/store/paths.ts"]);
-    expect(declaredOverride).toEqual(["packages/engine/src/store/workspaceFs.ts"]);
+    expect(declaredRoot).toEqual(["packages/engine/src/workspace/paths.ts"]);
+    expect(declaredOverride).toEqual(["packages/engine/src/workspace/workspaceFs.ts"]);
   });
 
   it("keeps `bundle: false` in the engine's tsup config — the mechanism that makes one declaration one instance", () => {
     const cfg = fs.readFileSync(path.resolve(process.cwd(), "packages/engine/tsup.config.ts"), "utf-8");
     // The declaration count above is a *source* fact. `bundle: false` is what keeps it a *runtime* fact:
-    // bundling would inline a private copy of `store/paths.ts` into every entry point, so a `setDataRoot()`
+    // bundling would inline a private copy of `workspace/paths.ts` into every entry point, so a `setDataRoot()`
     // through one entry would not be seen through another. Both halves are needed, so both are asserted.
     expect(cfg).toMatch(/bundle:\s*false/);
   });

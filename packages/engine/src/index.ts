@@ -32,8 +32,8 @@
  *     `import { loadConfig } from "@bifurc/engine"` before P6 freezes the real API.
  */
 
-import { setDataRoot, dataDir, isDataRootSet } from "./store/paths";
-import { loadSettings, type AppSettings } from "./store/appSettings";
+import { setDataRoot, dataDir, isDataRootSet } from "./workspace/paths";
+import { loadSettings, type AppSettings } from "./workspace/appSettings";
 import { startServer, isRunning, getPort, getServerError } from "./proxy/server";
 // The **edge router** — `plan/15` §3.3, work item 3. Host-level: one listener for the reverse half
 // (the `*.localhost` mappings and the home page) and, later, the GUI.
@@ -41,14 +41,15 @@ import { startServer, isRunning, getPort, getServerError } from "./proxy/server"
 // `bindEdgeInstance` is `plan/17` §5 work item 7: the edge is per-engine state, so it is *named* to the
 // module-level binding here rather than being found through it — which is what lets `config.save` re-bind it
 // when `settings.port` changes.
-import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./proxy/edge";
+import { bindEdgeInstance, createEdgeRouter, type EdgeRouterInstance } from "./reverseproxy/edge";
 // `DEFAULT_HOST_DOMAIN` was imported here for the edge's `hostDomain`, removed 2026-09-26.
-import { loadConfig } from "./store/config";
-import { bus, wireLogEventsToBus } from "./eventBus";
-import { preflight, bootstrapWorkspaces, type StartupCheck } from "./startup";
-import { shutdownEngine } from "./shutdown";
-import { startBlobSweeper } from "./blob/sweep";
-import { commandRegistry, type CommandRegistry } from "./commands/registry";
+import { loadConfig } from "./workspace/config";
+import { bus } from "./kernel/eventBus";
+import { wireEngineEvents } from "./registerAll";
+import { preflight, bootstrapWorkspaces, type StartupCheck } from "./lifecycle/startup";
+import { shutdownEngine } from "./lifecycle/shutdown";
+import { startBlobSweeper } from "./workspace/blob/sweep";
+import { commandRegistry, type CommandRegistry } from "./kernel/registry";
 import { EventLog } from "./transport/eventLog";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,7 +251,6 @@ export function createEngine(opts: EngineOptions): Engine {
         // of work item 3. The forward proxy's port is resolved after this, from D16's base, so there
         // is nothing to check here for it.
         { name: "edge", port: settings.port },
-        { name: "webhook", port: settings.webhookPort ?? 9101 },
       ],
     });
     for (const check of checks) if (!check.ok) warn(check);
@@ -266,7 +266,7 @@ export function createEngine(opts: EngineOptions): Engine {
     // Wired here and **not only** in the shell's `registerIpcHandlers()` so that P7's web UI, P8's CLI
     // and P9's Docker image inherit it from the lifecycle instead of each re-solving it. That is the
     // whole reason the function lives in the engine rather than in the shell.
-    stopLogWiring = wireLogEventsToBus(bus);
+    stopLogWiring = wireEngineEvents(bus);
 
     /**
      * ## The edge first, then the proxy — `plan/15` §3.3, work item 3
@@ -501,18 +501,17 @@ export {
 // Provisional surface — removed at P6 (see the header)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export * as paths from "./store/paths";
-export * as types from "./store/types";
-export * as appSettings from "./store/appSettings";
-export * as config from "./store/config";
-export * as workspaceFs from "./store/workspaceFs";
-export * as gitStore from "./store/gitStore";
-export * as subscription from "./subscription/entityCount";
-export * as randomNames from "./lib/randomNames";
-export * as randomizer from "./lib/randomizer";
-export * as eventBus from "./eventBus";
+export * as paths from "./workspace/paths";
+export * as types from "./workspace/types";
+export * as appSettings from "./workspace/appSettings";
+export * as config from "./workspace/config";
+export * as workspaceFs from "./workspace/workspaceFs";
+export * as gitStore from "./workspace/gitStore";
+export * as subscription from "./workspace/entityCount";
+export * as randomNames from "./utils/randomNames";
+export * as randomizer from "./utils/randomizer";
+export * as eventBus from "./kernel/eventBus";
 export * as proxy from "./proxy/server";
-export * as webhookServer from "./proxy/webhookServer";
 // P14 WI 3 — the workspace **host**: the composition a deployable unit runs. It owns one listener per port
 // for the whole host — the edge, the forward proxy, the webhook receiver and the RPC endpoint — plus the
 // signal handling.
@@ -533,12 +532,12 @@ export { registerAllEngineCommands, registerAllEngineKinds } from "./registerAll
 // `PortRangeExhaustedError`, `AllocatedPorts` and its provenance flags) was deleted along with the model that
 // needed it. One finder remains — `findFreePortFrom`, for the single companion port (Electron's path).
 export * as ports from "./runtime/portAllocator";
-export * as sync from "./sync/syncManager";
+export * as sync from "./gitops/syncManager";
 export * as applications from "./applications/processSpawner";
-export * as commands from "./commands/registry";
-export * as startup from "./startup";
-export * as shutdown from "./shutdown";
-export * as blob from "./blob/store";
-export * as blobSweep from "./blob/sweep";
-export * as importExport from "./importExport/registry";
-export * as importExportCommands from "./importExport/commands";
+export * as commands from "./kernel/registry";
+export * as startup from "./lifecycle/startup";
+export * as shutdown from "./lifecycle/shutdown";
+export * as blob from "./workspace/blob/store";
+export * as blobSweep from "./workspace/blob/sweep";
+export * as importExport from "./importexport/registry";
+export * as importExportCommands from "./importexport/commands";

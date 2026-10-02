@@ -22,8 +22,8 @@
  */
 import { EventEmitter } from "events";
 import { describe, expect, it } from "vitest";
-import { EngineEventBus, bus, wireLogEventsToBus } from "../src/eventBus";
-import { logEmitter, type RequestLogEntry } from "../src/proxy/logEmitter";
+import { EngineEventBus, bus, wireLogEventsToBus } from "../src/kernel/eventBus";
+import { logEmitter, type RequestLogEntry } from "../src/kernel/telemetry";
 
 function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
   return {

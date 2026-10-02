@@ -1,7 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { AppConfig, RequestLogEntry } from "@/types";
 import { blockKey, findBlocksFolder, ensureBlocksFolderId, buildBlockMock, blockedKeySet } from "@/lib/blocks";
-import { buildMockInitial, reqToHeadersBody } from "./captureUtils";
 
 export function useCaptureActions({
   wsConfig,
@@ -12,6 +11,17 @@ export function useCaptureActions({
 }) {
   const blockedKeys = useMemo(() => blockedKeySet(wsConfig), [wsConfig.mocks, wsConfig.mockFolders]);
 
+  /**
+   * The two builders are the **engine's** now (`plan/19` WI 5, item 2 — `capture.buildMock` /
+   * `capture.buildRequest`). This hook used to call `buildMockInitial` / `reqToHeadersBody` from
+   * `./captureUtils`; those decided which headers to drop, how to decode a body and how a response is
+   * stored, which is engine work, and `@bifurc/gui` cannot import the engine.
+   *
+   * **The field lists below are unchanged on purpose.** `capture.buildMock` returns the whole `mocks` body
+   * — captured headers and body included — but this path has always stored only the response side plus the
+   * method/url, so spreading the payload would silently start persisting the captured request too. The
+   * picking is the caller's, and it stays exactly as it was.
+   */
   const mockEntries = useCallback(async (list: RequestLogEntry[], inFolder: boolean) => {
     if (list.length === 0) return;
     let folderId: string | null = null;
@@ -21,7 +31,7 @@ export function useCaptureActions({
       folderId = folder.id;
     }
     for (const entry of list) {
-      const mock = buildMockInitial(entry);
+      const { mock } = await window.api.captureBuildMock(entry);
       await window.api.addMock({
         name: `${entry.method} ${entry.url}`,
         method: mock.method ?? "GET",
@@ -47,7 +57,8 @@ export function useCaptureActions({
       folderId = folder.id;
     }
     for (const entry of list) {
-      await window.api.addRequest({ ...reqToHeadersBody(entry), name: `${entry.method} ${entry.url}`, folderId } as any);
+      const { request } = await window.api.captureBuildRequest(entry);
+      await window.api.addRequest({ ...request, name: `${entry.method} ${entry.url}`, folderId } as any);
     }
     window.api.getConfig();
   }, []);

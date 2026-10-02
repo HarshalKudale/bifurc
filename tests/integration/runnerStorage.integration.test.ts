@@ -1,7 +1,7 @@
 /**
  * Happy-path workflow test for the **Collection Runner's persistence** — the `runner.*` commands in
  * `packages/engine/src/runner/runnerCommands.ts` plus `runner.exportReport` in
- * `packages/engine/src/fileOps/commands.ts`. The runner's Run button is only useful if the report
+ * `packages/engine/src/fileops/commands.ts`. The runner's Run button is only useful if the report
  * survives: saved runs are what the History list and the "Export Report" action read back.
  *
  * These drive the REAL commands on the REAL registry against a REAL workspace on disk and assert the
@@ -33,7 +33,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vites
 import * as fs from "fs";
 import * as path from "path";
 import type { CommandAction } from "@bifurc/protocol";
-import type { CommandContext, CommandRegistry } from "@bifurc/engine/commands/registry";
+import type { CommandContext, CommandRegistry } from "@bifurc/engine/kernel/registry";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 
 const { handlers, dialogState } = vi.hoisted(() => ({
@@ -128,9 +128,9 @@ beforeAll(async () => {
   //
   // (`runnerHandlers.ts` used to supply this; its dialog+format composition is what
   // `packages/client/tests/client.test.ts` pins for the real surface. See `plan/07` §5b-novendecies.)
-  const { registerBlobCommands } = await import("@bifurc/engine/blob/commands");
-  const { registerFileOpsCommands } = await import("@bifurc/engine/fileOps/commands");
-  const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+  const { registerBlobCommands } = await import("@bifurc/engine/workspace/blob/commands");
+  const { registerFileOpsCommands } = await import("@bifurc/engine/fileops/commands");
+  const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
   const { registerRunnerCommands } = await import("@bifurc/engine/runner/runnerCommands");
   registerBlobCommands(commandRegistry);
   registerFileOpsCommands(commandRegistry);

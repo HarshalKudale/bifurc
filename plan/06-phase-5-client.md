@@ -8,6 +8,20 @@ needs **zero changes** when the shell switches over.
 > This phase exists to protect one property: **`window.api` stays byte-identical.** That property is the
 > regression signal for the entire critical path. If it holds, P6 is a wiring change. If it breaks, P6
 > becomes a renderer refactor and the schedule is gone.
+>
+> **Update 2026-09-29 — the freeze was lifted, once, deliberately, and this is the record.** The surface
+> is no longer byte-identical: it gained the four `*Saved` execute methods (`replayRequestSaved` /
+> `graphqlExecuteSaved` / `soapExecuteSaved` / `grpcExecuteSaved`), **132 → 136** at runtime and
+> **128 → 132** in `packages/gui/src/types/window.ts`. The reasoning is worth keeping rather than
+> summarising as "requirements changed": the freeze had exactly one job — to make the P5→P6 switch a
+> wiring change instead of a renderer refactor — and P6 is complete, so the property has discharged it. A
+> capability the renderer is asked to *use* cannot be added without a key, because `window.api` is the
+> renderer's only door; refusing here would mean the id-based Send path could never be exercised by the
+> one consumer that exists. What now stands in the freeze's place is what always backed it: the pinned
+> counts in `packages/client/tests/surface.test.ts` and `client.test.ts`, which make any further change to
+> the surface a deliberate edit to a number rather than an accident. Protocol half →
+> `plan/protocol-changes.md`; UI half → the four tabs' Send path, gated by
+> `packages/gui/src/lib/savedEntitySend.ts`.
 
 ---
 

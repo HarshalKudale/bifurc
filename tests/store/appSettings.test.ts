@@ -12,9 +12,7 @@ import {
     loadSettings,
     saveSettings,
     appDataDir,
-    WEBHOOK_PORT_BAND_MIN,
-    WEBHOOK_PORT_BAND_MAX,
-} from "@bifurc/engine/store/appSettings";
+} from "@bifurc/engine/workspace/appSettings";
 
 describe("appSettings", () => {
     let tmpDir: string;
@@ -49,8 +47,6 @@ describe("appSettings", () => {
              * still fails loudly if the default reverts to a constant outside it, which is the regression
              * this guards.
              */
-            expect(s.webhookPort).toBeGreaterThanOrEqual(WEBHOOK_PORT_BAND_MIN);
-            expect(s.webhookPort).toBeLessThanOrEqual(WEBHOOK_PORT_BAND_MAX);
             expect(s.minimizeToTray).toBe(true);
             expect(s.workspaces).toHaveLength(1);
             expect(s.activeWorkspaceId).toBeTruthy();
@@ -87,8 +83,6 @@ describe("appSettings", () => {
             // The `webhookPort` default, and the same band-not-value reasoning as the case above: this asserts
             // that a *partial* file still gets a usable webhook port from the band, which is what the merge
             // exists to guarantee.
-            expect(s.webhookPort).toBeGreaterThanOrEqual(WEBHOOK_PORT_BAND_MIN);
-            expect(s.webhookPort).toBeLessThanOrEqual(WEBHOOK_PORT_BAND_MAX);
         });
     });
 

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { AppConfig, ServiceInfo, SyncStatus, EntitySyncStatus, WorkspaceGitState } from "@/types";
+import { AppConfig, ServiceInfo, SyncStatus, EntitySyncStatus, WorkspaceGitState, SettingsPatch } from "@/types";
+import type { EntityPathMaps } from "@/lib/entityPaths";
 
 export const EMPTY_CONFIG: AppConfig = {
   port: 80,
@@ -22,8 +23,6 @@ export const EMPTY_CONFIG: AppConfig = {
   requestFolders: [],
   wsConnections: [],
   wsFolders: [],
-  webhooks: [],
-  webhookFolders: [],
   graphqlRequests: [],
   graphqlSchemas: [],
   graphqlRequestFolders: [],
@@ -33,7 +32,6 @@ export const EMPTY_CONFIG: AppConfig = {
   soapRequests: [],
   savedWsdls: [],
   soapRequestFolders: [],
-  webhookPort: 9101,
   environments: [],
   activeEnvironmentId: null,
 };
@@ -117,12 +115,23 @@ export function useAppConfigSync() {
     }
   }, []);
 
+  /**
+   * The engine's path maps (`plan/19` WI 5, item 3) — `entity id → relPath` and `folder id → prefix`.
+   *
+   * Declared here rather than beside `entitySyncStatus` because the two arrive in the **same** payload and
+   * are written in the same callback; keeping them together is what makes that visible. `undefined` means
+   * the engine has not answered yet, which `EntityPathsProvider` reads as "unknown" rather than "no paths".
+   */
+  const [entityPaths, setEntityPaths] = useState<EntityPathMaps | undefined>(undefined);
+
   const refreshEntitySyncStatus = useCallback((wsId: string) => {
     window.api.getEntitySyncStatus(wsId).then((payload) => {
       setEntitySyncStatus(payload.files ?? {});
       // A missing `git` is treated as unknown rather than as "no remote": an engine that predates
       // the field must not make every entity look unpushed and grow a Sync button out of nowhere.
       if (payload.git) setWorkspaceGitState(payload.git);
+      // The path maps travel in the same payload and are absent for the same reason (`paths?`).
+      setEntityPaths(payload.paths);
     }).catch(() => { });
   }, []);
 
@@ -162,13 +171,26 @@ export function useAppConfigSync() {
     return () => { unsubError(); unsubSync(); unsubEntityStatus(); unsubCompanion(); };
   }, [loadConfig, refreshServices, refreshEntitySyncStatus]);
 
-  const handleConfigChange = useCallback(async (next: AppConfig) => {
-    setConfig(next);
-    await window.api.saveConfig(next);
-    setServerRunning(true);
-    setServerError(null);
-    refreshEntitySyncStatus(next.activeWorkspaceId);
+  /**
+   * Adopt a config the engine just returned. **It writes nothing.** Every change reaches the engine as its own
+   * command first (`entity.*`, `settings.update`, …); this only replaces the UI's copy with the engine's.
+   * It used to send the whole config back through `config.save`, which rewrote the settings and every mock,
+   * mapping and environment from the UI's copy — so a stale copy reverted other clients' changes, and the save's
+   * port re-bind restarted a proxy the user had stopped.
+   */
+  const handleConfigChange = useCallback(async (fresh: AppConfig) => {
+    setConfig(fresh);
+    refreshEntitySyncStatus(fresh.activeWorkspaceId);
   }, [refreshEntitySyncStatus]);
+
+  /** Patch the host settings in the engine, then adopt the engine's config and listener state. */
+  const handleSettingsChange = useCallback(async (patch: SettingsPatch) => {
+    await window.api.updateSettings(patch);
+    const [fresh, status] = await Promise.all([window.api.getConfig(), window.api.serverStatus()]);
+    setConfig(fresh);
+    setServerRunning(status.running);
+    setServerError(status.error);
+  }, []);
 
   /**
    * Re-read the config after something changed.
@@ -193,34 +215,6 @@ export function useAppConfigSync() {
     }
   }, []);
 
-  const handleWsConfigChange = useCallback(async (next: AppConfig, wsId: string) => {
-    const hasCrossWs = (
-      (next.mappings ?? []).some((m) => m.workspaceId !== wsId) ||
-      (next.mocks ?? []).some((m) => m.workspaceId !== wsId) ||
-      (next.requests ?? []).some((r) => r.workspaceId !== wsId)
-    );
-    if (hasCrossWs) {
-      await handleConfigChange(next);
-      return;
-    }
-    const merged: AppConfig = {
-      ...next,
-      mappings: [...(config.mappings ?? []).filter((m) => m.workspaceId !== wsId), ...(next.mappings ?? [])],
-      proxyRules: [...(config.proxyRules ?? []).filter((r) => r.workspaceId !== wsId), ...(next.proxyRules ?? [])],
-      ruleFolders: [...(config.ruleFolders ?? []).filter((f) => f.workspaceId !== wsId), ...(next.ruleFolders ?? [])],
-      mocks: [...(config.mocks ?? []).filter((m) => m.workspaceId !== wsId), ...(next.mocks ?? [])],
-      requests: [...(config.requests ?? []).filter((r) => r.workspaceId !== wsId), ...(next.requests ?? [])],
-      mockFolders: [...(config.mockFolders ?? []).filter((f) => f.workspaceId !== wsId), ...(next.mockFolders ?? [])],
-      requestFolders: [...(config.requestFolders ?? []).filter((f) => f.workspaceId !== wsId), ...(next.requestFolders ?? [])],
-      wsConnections: [...(config.wsConnections ?? []).filter((c) => c.workspaceId !== wsId), ...(next.wsConnections ?? [])],
-      wsFolders: [...(config.wsFolders ?? []).filter((f) => f.workspaceId !== wsId), ...(next.wsFolders ?? [])],
-      webhooks: [...(config.webhooks ?? []).filter((h) => h.workspaceId !== wsId), ...(next.webhooks ?? [])],
-      webhookFolders: [...(config.webhookFolders ?? []).filter((f) => f.workspaceId !== wsId), ...(next.webhookFolders ?? [])],
-      environments: [...(config.environments ?? []).filter((e) => e.workspaceId !== wsId), ...(next.environments ?? [])],
-    };
-    await handleConfigChange(merged);
-  }, [config, handleConfigChange]);
-
   const clearWorkspaceContext = useCallback((loadingMsg = "Switching workspace…") => {
     setConfig(EMPTY_CONFIG);
     setWsLoading(loadingMsg);
@@ -234,10 +228,11 @@ export function useAppConfigSync() {
     serverRunning, setServerRunning,
     serverError, setServerError,
     entitySyncStatus, refreshEntitySyncStatus,
+    entityPaths,
     workspaceGitState,
     syncStatus,
     handleConfigChange,
-    handleWsConfigChange,
+    handleSettingsChange,
     refreshConfig,
     clearWorkspaceContext,
   };

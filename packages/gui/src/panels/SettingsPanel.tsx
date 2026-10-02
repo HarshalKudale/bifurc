@@ -1,5 +1,5 @@
 import React from "react";
-import { AppConfig } from "@/types";
+import { AppConfig, SettingsPatch } from "@/types";
 import { strings } from "@/lib/strings";
 import { ColorMode } from "@/hooks/useTheme";
 import PanelLayout from "@/components/ui/PanelLayout";
@@ -13,7 +13,7 @@ interface SettingsPanelProps {
   config: AppConfig;
   serverRunning: boolean;
   serverError: string | null;
-  onConfigChange: (cfg: AppConfig) => Promise<void>;
+  onSettingsChange: (patch: SettingsPatch) => Promise<void>;
   onServerRestart: () => Promise<void>;
   colorMode: ColorMode;
   onColorModeChange: (m: ColorMode) => void;
@@ -25,7 +25,7 @@ export default function SettingsPanel({
   config,
   serverRunning,
   serverError,
-  onConfigChange,
+  onSettingsChange,
   onServerRestart,
   colorMode,
   onColorModeChange,
@@ -41,18 +41,18 @@ export default function SettingsPanel({
           config={config}
           serverRunning={serverRunning}
           serverError={serverError}
-          onConfigChange={onConfigChange}
+          onSettingsChange={onSettingsChange}
           onServerRestart={onServerRestart}
           colorMode={colorMode}
           onColorModeChange={onColorModeChange}
         />
 
         {/* The four host-level ports, in one place (`plan/17` work item 6). */}
-        <PortsSettingsSection config={config} onConfigChange={onConfigChange} />
+        <PortsSettingsSection config={config} onSettingsChange={onSettingsChange} />
 
         <TlsSettingsSection
           config={config}
-          onConfigChange={onConfigChange}
+          onSettingsChange={onSettingsChange}
         />
 
         <AppearanceSection

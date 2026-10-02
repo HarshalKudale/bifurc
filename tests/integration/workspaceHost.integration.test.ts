@@ -74,11 +74,11 @@ import * as os from "os";
 import * as path from "path";
 import * as net from "net";
 
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import { createWorkspaceHost } from "@bifurc/engine/runtime/host";
 import { createSocketTransport } from "@bifurc/engine/transport/socket";
-import { CommandRegistry, commandRegistry } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, commandRegistry } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
 
@@ -310,10 +310,9 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
       // default, the user starts it, and the user owns the port."* So the receiver exists (the facade is
       // bound to it) but nothing is listening — which is why `status.webhookPort` is `null` while
       // `host.webhook` is not.
-      expect(status.webhookPort).toBeNull();
-      expect(status.webhookError).toBeNull();
-      expect(host.webhook).not.toBeNull();
-      expect(host.webhook!.isRunning()).toBe(false);
+      // The webhook receiver is decommissioned: the host has no such listener and reports no such port.
+      expect("webhookPort" in status).toBe(false);
+      expect("webhook" in host).toBe(false);
 
       // ── THE ACCEPTANCE CRITERION: no companion, and the edge is the host's ────
       // Real bind attempts, in both directions, because a status read cannot express either claim.
@@ -411,7 +410,11 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
       // and with one host-level listener per port there is nothing per workspace to remember. The surviving
       // half of the rule is the half that mattered — **no port is in the git-tracked `workspace.json`**,
       // which syncs between machines and must not carry one machine's port allocation.
-      expect(fs.existsSync(path.join(dataRoot, "runtime.json"))).toBe(false);
+      // `runtime.json` is now the engine's discovery record (runtime/discovery.ts): where it listens, not ports.
+      const runtime = JSON.parse(fs.readFileSync(path.join(dataRoot, "runtime.json"), "utf-8"));
+      expect(Object.keys(runtime).sort()).toEqual(
+        ["address", "dataDir", "engineVersion", "pid", "protocolVersion", "startedAt", "transport"],
+      );
       const wsJson = fs.readFileSync(path.join(dataRoot, WS_A, "workspace.json"), "utf-8");
       expect(wsJson).not.toMatch(/Port/i);
     } finally {
@@ -427,7 +430,6 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
       }
       // The webhook was never started, so there is nothing here to release — and that is asserted rather
       // than assumed, because "the teardown released it" and "it was never bound" are different facts.
-      expect(host.status().webhookPort).toBeNull();
       // `stop()` is idempotent, and a stopped host refuses to restart rather than half-working.
       await expect(host.stop()).resolves.toBeUndefined();
       await expect(host.start()).rejects.toThrow(/already been stopped/i);
@@ -443,7 +445,7 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
    * serving nothing and exited 0. The only symptom was `serving 0 workspace(s)`, which reads as an empty
    * data root rather than as "the settings file was read from somewhere else". The cause in that run was
    * exactly that — on Windows `settingsPath()` prefers `%LOCALAPPDATA%` regardless of `setDataRoot()`
-   * (recorded in `proxy/certManager.ts`), so a `--data-dir` run read the user's real settings and the
+   * (recorded in `certificates/certManager.ts`), so a `--data-dir` run read the user's real settings and the
    * requested id was absent from a list nobody could see.
    *
    * **Why the notice names the directory.** That is the whole diagnostic: without it, an operator has no
@@ -492,133 +494,23 @@ describe("createWorkspaceHost — one listener per port, one RPC endpoint, no co
 });
 
 /**
- * The drift guard between the engine's `registerAllEngineCommands()` and the shell's
- * `registerIpcHandlers()`.
- *
- * ## Why this is needed at all
- *
- * The two lists are deliberately **not** one list (`registerAll.ts`'s header records why: the shell's
- * eighteen calls each carry a comment naming which P6 deletion made it the only registration, and
- * collapsing them would delete that record). Two lists of the same thing drift. This is the check that
- * makes the drift visible.
- *
- * ## What it asserts, and why not equality
- *
- * **A superset, in the direction that can actually bite.** The dangerous failure is a command the shell
- * registers and `registerAllEngineCommands()` does not: the desktop works, the container answers
- * `UNKNOWN_COMMAND`, and nothing in the desktop's own suite can see it — which is precisely how the gap
- * this whole file is about survived until now. So the assertion is *"everything the shell registers, the
- * engine-side list also registers."*
- *
- * The reverse direction is **not** asserted as an error: an engine command the shell chooses not to expose
- * is a legitimate P3 decision ("the consumer declares what it is willing to serve"), not drift. It is
- * reported in the failure message instead, so a reader can judge.
- *
- * It runs on its **own** registry rather than the shared singleton — `register()` throws on a duplicate, so
- * registering into the global one would corrupt every other suite in this worker.
+ * The shell and the headless host are **one** composition: `main.ts` starts `createWorkspaceHost()`, which makes
+ * the two registration calls, builds the proxy and the edge, and opens the socket. The shell may not repeat any
+ * of that — it was hand-built there once, and the copy drifted.
  */
-describe("registerAllEngineCommands — the engine-side list covers the shell's", () => {
-  /** A `CommandRegistry` that records names instead of registering them — see the note above on why. */
-  function recordingRegistry(): { registry: CommandRegistry; names: Set<string> } {
-    const names = new Set<string>();
-    const registry = {
-      register(name: string): void {
-        names.add(name);
-      },
-      invoke(): never {
-        throw new Error("not used");
-      },
-      has: (name: string) => names.has(name),
-      names: () => [...names],
-    } as unknown as CommandRegistry;
-    return { registry, names };
-  }
+describe("the Electron shell composes the engine the way the host does", () => {
+  const read = (...p: string[]) => fs.readFileSync(path.join(process.cwd(), ...p), "utf-8");
+  const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-  it("registers a name set that contains every command the Electron shell serves", async () => {
-    const { registry, names } = recordingRegistry();
-    registerAllEngineCommands(registry);
+  it("main.ts starts the engine through createWorkspaceHost()", () => {
+    expect(read("src", "main.ts")).toMatch(/createWorkspaceHost\(/);
+  });
 
-    // Guard against a vacuous pass: an empty list is trivially a superset of nothing, and that is exactly
-    // what this function looked like before it existed. The floor is a *sanity* bound, not the real
-    // assertion — the real one is the comparison against the shell's set below. Kept well under the measured
-    // count so it does not become a second, accidental lock on the command total: this file is not the
-    // ratchet, and `packages/protocol/src/commands/index.test.ts` already moves by exactly 2× per command
-    // change. Measured 2026-09-21: **92** names.
-    expect(names.size).toBeGreaterThan(80);
-
-    // The shell's set, read from its source rather than by calling it: `registerIpcHandlers()` also registers
-    // `ipcMain` channels and would need an Electron mock, and what is being compared is the *command* list.
-    const handlersSrc = fs.readFileSync(path.join(process.cwd(), "src", "ipc", "handlers.ts"), "utf-8");
-    const shellCalls = [...handlersSrc.matchAll(/^\s*register([A-Za-z]+)Commands\(commandRegistry\);/gm)].map(
-      (m) => m[1],
-    );
-    // If the regex stops matching, the comparison silently becomes "nothing vs nothing" — the
-    // guard-that-matches-nothing trap. Fail loudly instead.
-    expect(shellCalls.length).toBeGreaterThanOrEqual(15);
-
-    // Each shell call site corresponds to a function imported from the engine; take the names it registers.
-    // The comparison that matters is on the *command names*, so the shell's modules are loaded for real.
-    const shellRegistry = recordingRegistry();
-    for (const fn of shellCalls) {
-      const mod = await loadRegisterFn(fn);
-      expect(mod, `the shell calls register${fn}Commands() but no such export was importable`).toBeTypeOf(
-        "function",
-      );
-      mod(shellRegistry.registry);
-    }
-
-    const missing = [...shellRegistry.names].filter((n) => !names.has(n));
-    const extra = [...names].filter((n) => !shellRegistry.names.has(n));
-
-    expect(
-      missing,
-      `registerAllEngineCommands() is missing ${missing.length} command(s) the shell serves: ` +
-        `${missing.slice(0, 10).join(", ")}${missing.length > 10 ? " …" : ""}. A headless host will answer ` +
-        `UNKNOWN_COMMAND for these.`,
-    ).toEqual([]);
-
-    // Informational, not a failure — see the docblock.
-    if (extra.length > 0) {
-      console.info(
-        `[registerAll] ${extra.length} engine command(s) are not exposed by the shell's registerIpcHandlers(): ` +
-          `${extra.slice(0, 12).join(", ")}${extra.length > 12 ? " …" : ""}`,
-      );
-    }
-  }, 30000);
+  it("main.ts and handlers.ts build no listener and register no engine module on their own", () => {
+    const src = stripComments(read("src", "main.ts")) + stripComments(read("src", "ipc", "handlers.ts"));
+    expect(src).not.toMatch(/createProxyServer|createEdgeRouter|bindProxyInstance|bindEdgeInstance|startBlobSweeper|bootstrapWorkspaces/);
+    expect(src).not.toMatch(/registerAllEngineCommands|wireEngineEvents/);
+    const own = [...src.matchAll(/^\s*(register[A-Za-z]+(?:Commands|Kinds))\(/gm)].map((m) => m[1]);
+    expect(own).toEqual([]);
+  });
 });
-
-/**
- * Resolve one `register<Name>Commands` export by the short name the shell's call site uses.
- *
- * The mapping is explicit rather than computed: module paths are the one thing that cannot be derived from
- * the function name (they are `proxy/certCommands`, `store/coreCommands`, `miscCommands`, …), and a computed
- * guess that silently resolved to the wrong module would make the guard above compare against the wrong list.
- * An entry appearing in the shell's source without a row here is a **failure** in the test, not a skip —
- * that is what keeps this table from rotting as the shell adds calls.
- */
-async function loadRegisterFn(shortName: string): Promise<((r: CommandRegistry) => void) | undefined> {
-  const paths: Record<string, string> = {
-    Blob: "@bifurc/engine/blob/commands",
-    ImportExport: "@bifurc/engine/importExport/commands",
-    FileOps: "@bifurc/engine/fileOps/commands",
-    Cert: "@bifurc/engine/proxy/certCommands",
-    Server: "@bifurc/engine/proxy/serverCommands",
-    Webhook: "@bifurc/engine/proxy/webhookCommands",
-    Config: "@bifurc/engine/store/configCommands",
-    Misc: "@bifurc/engine/miscCommands",
-    Runner: "@bifurc/engine/runner/runnerCommands",
-    Audit: "@bifurc/engine/store/auditCommands",
-    Core: "@bifurc/engine/store/coreCommands",
-    Folder: "@bifurc/engine/store/folderCommands",
-    Graphql: "@bifurc/engine/protocols/graphqlCommands",
-    Soap: "@bifurc/engine/protocols/soapCommands",
-    Grpc: "@bifurc/engine/protocols/grpcCommands",
-    Application: "@bifurc/engine/applications/applicationCommands",
-    Sync: "@bifurc/engine/sync/syncCommands",
-    EntityCrud: "@bifurc/engine/store/entityCrudCommands",
-  };
-  const specifier = paths[shortName];
-  if (specifier === undefined) return undefined;
-  const mod = (await import(/* @vite-ignore */ specifier)) as Record<string, unknown>;
-  return mod[`register${shortName}Commands`] as ((r: CommandRegistry) => void) | undefined;
-}

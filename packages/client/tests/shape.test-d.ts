@@ -123,7 +123,6 @@ type SubscriptionMethod =
   | "onLogEntry"
   | "onLogChunk"
   | "onServerError"
-  | "onWebhookPayload"
   | "onCompanionRefresh";
 
 type ReturnsUnsubscribe<K extends SubscriptionMethod> =
@@ -135,7 +134,6 @@ const _unsubscribeContract: { [K in SubscriptionMethod]: ReturnsUnsubscribe<K> }
   onLogEntry: true,
   onLogChunk: true,
   onServerError: true,
-  onWebhookPayload: true,
   onCompanionRefresh: true,
 };
 

@@ -11,10 +11,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
-import { registerBlobCommands } from "@bifurc/engine/blob/commands";
-import { blobRoot, putBlob, statBlob } from "@bifurc/engine/blob/store";
-import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
+import { registerBlobCommands } from "@bifurc/engine/workspace/blob/commands";
+import { blobRoot, putBlob, statBlob } from "@bifurc/engine/workspace/blob/store";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
 
 const b64 = (input: string): string => Buffer.from(input, "utf-8").toString("base64");
 

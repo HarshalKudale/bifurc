@@ -49,30 +49,40 @@
  * This function must be **called**, and that is the §5c rule preserved rather than undone. What changed is
  * that there is now a non-shell way to call it.
  */
-import type { CommandRegistry } from "./commands/registry";
-import { registerBlobCommands } from "./blob/commands";
-import { registerImportExportCommands } from "./importExport/commands";
-import { registerFileOpsCommands } from "./fileOps/commands";
-import { registerCertCommands } from "./proxy/certCommands";
+import type { CommandRegistry } from "./kernel/registry";
+import { bus as defaultBus, wireLogEventsToBus, type EngineEventBus } from "./kernel/eventBus";
+import { onSyncStatusChange } from "./gitops/syncManager";
+import { registerCaptureCommands } from "./capture/commands";
+import { startCaptureRecording } from "./capture/store";
+import { registerBlobCommands } from "./workspace/blob/commands";
+import { registerImportExportCommands } from "./importexport/commands";
+import { registerFileOpsCommands } from "./fileops/commands";
+import { registerCertCommands } from "./certificates/certCommands";
 import { registerServerCommands } from "./proxy/serverCommands";
-import { registerWebhookCommands } from "./proxy/webhookCommands";
-import { registerConfigCommands } from "./store/configCommands";
-import { registerMiscCommands } from "./miscCommands";
+import { getEdgeError, getEdgePort, isEdgeRunning, restartEdge, stopEdge } from "./reverseproxy/edge";
+import { registerConfigCommands } from "./workspace/entities/configCommands";
+import { registerRestCommands } from "./rest/commands";
+import { registerMockCommands } from "./mocks/commands";
+import { registerHealthbarCommands } from "./services/healthbarCommands";
+import { registerServicesCommands } from "./services/commands";
+import { registerEnvCommands } from "./env/commands";
 import { registerRunnerCommands } from "./runner/runnerCommands";
-import { registerAuditCommands } from "./store/auditCommands";
-import { registerCoreCommands } from "./store/coreCommands";
-import { registerFolderCommands } from "./store/folderCommands";
-import { registerGraphqlCommands } from "./protocols/graphqlCommands";
-import { registerSoapCommands } from "./protocols/soapCommands";
-import { registerGrpcCommands } from "./protocols/grpcCommands";
+import { registerWebsocketCommands } from "./websocket/wsCommands";
+import { registerAuditCommands } from "./workspace/entities/auditCommands";
+import { registerCoreCommands } from "./workspace/entities/coreCommands";
+import { registerFolderCommands } from "./workspace/entities/folderCommands";
+import { registerGraphqlCommands } from "./graphql/commands";
+import { registerSoapCommands } from "./soap/commands";
+import { registerGrpcCommands } from "./grpc/commands";
 import { registerApplicationCommands } from "./applications/applicationCommands";
-import { registerSyncCommands } from "./sync/syncCommands";
-import { registerEntityCrudCommands } from "./store/entityCrudCommands";
-import { registerSoapKinds } from "./store/kinds/soapKinds";
-import { registerGraphqlKinds } from "./store/kinds/graphqlKinds";
-import { registerGrpcKinds } from "./store/kinds/grpcKinds";
-import { registerCrudKinds } from "./store/kinds/crudKinds";
-import { registerCoreKinds } from "./store/kinds/coreKinds";
+import { registerSyncCommands } from "./gitops/syncCommands";
+import { registerEntityCrudCommands } from "./workspace/entities/entityCrudCommands";
+import { registerPipelineCommands } from "./rest/sendCommands";
+import { registerSoapKinds } from "./soap/kinds";
+import { registerGraphqlKinds } from "./graphql/kinds";
+import { registerGrpcKinds } from "./grpc/kinds";
+import { registerCrudKinds } from "./workspace/entities/kinds/crudKinds";
+import { registerCoreKinds } from "./workspace/entities/kinds/coreKinds";
 
 /**
  * Register every CRUD **kind** the four `entity.*` commands dispatch through.
@@ -99,7 +109,8 @@ import { registerCoreKinds } from "./store/kinds/coreKinds";
  * **`true`** throughout — so `@bifurc/client` advertised a command that could not run, and the error
  * blamed the *kind* rather than the host. That is this file's own bug class one layer down: the commands
  * moved engine-side, the containers they consult did not. The files now live in
- * `packages/engine/src/store/kinds/`.
+ * `packages/engine/src/workspace/entities/kinds/` (phase 5 moved them out of
+ * `packages/engine/src/store/kinds/`).
  *
  * ## The shell keeps its own five explicit calls
  *
@@ -139,10 +150,19 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerImportExportCommands(registry);
   registerFileOpsCommands(registry);
   registerCertCommands(registry);
-  registerServerCommands(registry);
+  registerServerCommands(registry, {
+    isRunning: isEdgeRunning,
+    port: getEdgePort,
+    error: getEdgeError,
+    start: restartEdge,
+    stop: stopEdge,
+  });
   registerConfigCommands(registry);
-  registerWebhookCommands(registry);
-  registerMiscCommands(registry);
+  registerRestCommands(registry);
+  registerMockCommands(registry);
+  registerHealthbarCommands(registry);
+  registerServicesCommands(registry);
+  registerEnvCommands(registry);
   registerRunnerCommands(registry);
   registerAuditCommands(registry);
   registerCoreCommands(registry);
@@ -153,4 +173,41 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerApplicationCommands(registry);
   registerSyncCommands(registry);
   registerEntityCrudCommands(registry);
+  // **The socket registry** (`plan/19` WI 6). The `websocket/` directory existed and was reserved before this
+  // line did — `Engine_Module_Plan.md` §9 said not to give it invented content, and it did not need any: the
+  // content was a renderer module's, and this is the move. `ws.*` has **no legacy channel** at all, because
+  // `useWebSocket.ts` spoke to the browser's `WebSocket` constructor rather than to the shell.
+  registerWebsocketCommands(registry);
+  // **The saved-entity family, after `plan/19` WI 3 (2026-09-30): four `*.send` commands, four feature
+  // modules, and no shared counterpart module.** `request.send` (REST's pipeline) registers from
+  // `rest/sendCommands.ts`; `graphql.send`, `soap.send` and `grpc.send` register from their own feature
+  // modules, each resolving its fields before dispatching to the raw command. The module that used to hold
+  // four load-and-dispatch bodies — `workspace/entities/savedRequestCommands.ts` — is **deleted**, because
+  // "one module, not four" stopped applying the moment the four stopped being identical.
+  //
+  // Placed last for readability only: `CommandRegistry.invoke()` resolves the handler **at invoke time**, so
+  // this line's position relative to the commands it dispatches to is not observable — unlike the
+  // `registerAllEngineKinds()` call above, which genuinely must run first.
+  registerPipelineCommands(registry);
+  registerCaptureCommands(registry);
+}
+
+/**
+ * Put the engine's own notifications on the bus, where every transport reads them: captured traffic
+ * (`log.entry` / `log.chunk` / `server.error`) and git sync state (`sync.status`).
+ *
+ * Every composition calls this — the desktop shell, `createEngine()` and the headless host. It used to be
+ * wired only by the shell, so a client of the headless host (the CLI's path to a sidecar) never saw captured
+ * traffic or sync status. It also starts the engine's capture history (`capture/store.ts`), which records
+ * every exchange whether or not a client is listening. Returns the undo.
+ */
+export function wireEngineEvents(target: EngineEventBus = defaultBus): () => void {
+  onSyncStatusChange((wsId, state) => target.emitTyped("sync.status", { wsId, ...state }));
+  const unwireLogs = wireLogEventsToBus(target);
+  const stopRecording = startCaptureRecording();
+  return () => {
+    stopRecording();
+    unwireLogs();
+    onSyncStatusChange(() => {});
+  };
 }

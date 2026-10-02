@@ -94,12 +94,56 @@ beforeEach(() => {
   });
 });
 
+/**
+ * What the engine's map would say for this config.
+ *
+ * `plan/19` WI 5 item 3 moved path computation into `workspace/entityPaths.ts`, so this suite no longer
+ * relies on the hook to *derive* a path — it supplies the answer, as the engine would. The table below is
+ * the same kind → config-array → folder-array mapping the engine's registry walk uses; the engine's own
+ * copy is pinned by `tests/engine/entityPaths.test.ts`, and this one exists so these cases can stay about
+ * **the payload that reaches the bridge** rather than about path arithmetic.
+ */
+const KIND_TABLES: Array<[string, keyof AppConfig, keyof AppConfig | null]> = [
+  ["mappings", "mappings", null],
+  ["environments", "environments", null],
+  ["rules", "proxyRules", "ruleFolders"],
+  ["requests", "requests", "requestFolders"],
+  ["mocks", "mocks", "mockFolders"],
+  ["sockets", "wsConnections", "wsFolders"],
+  ["webhooks", "webhooks", "webhookFolders"],
+  ["graphqlRequests", "graphqlRequests", "graphqlRequestFolders"],
+  ["grpcRequests", "grpcRequests", "grpcRequestFolders"],
+  ["soapRequests", "soapRequests", "soapRequestFolders"],
+];
+
+function enginePaths(cfg: AppConfig): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [kind, listKey, folderKey] of KIND_TABLES) {
+    const list = ((cfg[listKey] as unknown as any[]) ?? []);
+    const folders = folderKey ? ((cfg[folderKey] as unknown as any[]) ?? []) : [];
+    for (const e of list) {
+      const folder = e.folderId ? folders.find((f: any) => f.id === e.folderId) : null;
+      out[e.id] = folder ? `${kind}/${folder.name}/${e.id}.json` : `${kind}/${e.id}.json`;
+    }
+  }
+  return out;
+}
+
 function mount(config: AppConfig, panel = "mappings") {
   const refreshConfig = vi.fn().mockResolvedValue(undefined);
   const refreshEntitySyncStatus = vi.fn();
   const onAfterWrite = vi.fn();
+  const paths = enginePaths(config);
   const hook = renderHook(() =>
-    useEntityGitActions({ wsConfig: config, wsId: WS, refreshConfig, refreshEntitySyncStatus, panel, onAfterWrite }),
+    useEntityGitActions({
+      wsConfig: config,
+      wsId: WS,
+      refreshConfig,
+      refreshEntitySyncStatus,
+      relPathOf: (id: string) => paths[id] ?? "",
+      panel,
+      onAfterWrite,
+    }),
   );
   return { ...hook, refreshConfig, refreshEntitySyncStatus, onAfterWrite };
 }

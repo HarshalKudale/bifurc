@@ -21,7 +21,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { ReadFileOptions, ReadFileResult, SavePathOptions } from "@bifurc/client";
 import { BLOB_MAX_INGRESS_BYTES } from "@bifurc/protocol";
-import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
+import { loadSettings, saveSettings } from "@bifurc/engine/workspace/appSettings";
 import { getMainWindow } from "@/main";
 import { installEngineCa, readCertStatus, uninstallEngineCa } from "@/ipc/certLifecycle";
 import { mimeFor } from "@/ipc/fileOpsClient";

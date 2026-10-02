@@ -94,7 +94,6 @@ export default function RequestTabContent({
           draftTabId={isUnsaved ? tabId : null}
           initial={initialData}
           folders={folders}
-          activeEnv={activeEnv}
           onSave={(data) => handleSaveEntity(tabId, "graphql", data)}
           onClose={() => closeTab(tabId)}
           onDirtyChange={(dirty) => setDirtyTabs((prev) => ({ ...prev, [tabId]: dirty }))}
@@ -125,7 +124,6 @@ export default function RequestTabContent({
           draftTabId={isUnsaved ? tabId : null}
           initial={initialData}
           folders={folders}
-          activeEnv={activeEnv}
           onSave={(data) => handleSaveEntity(tabId, "grpc", data)}
           onClose={() => closeTab(tabId)}
           onSync={onPublishItem ? async (savedId?: string) => {
@@ -155,7 +153,6 @@ export default function RequestTabContent({
           draftTabId={isUnsaved ? tabId : null}
           initial={initialData}
           folders={folders}
-          activeEnv={activeEnv}
           onSave={(data) => handleSaveEntity(tabId, "soap", data)}
           onClose={() => closeTab(tabId)}
           onDirtyChange={(dirty) => setDirtyTabs((prev) => ({ ...prev, [tabId]: dirty }))}

@@ -10,7 +10,6 @@ export const FolderKind = z.enum([
   "mock",
   "request",
   "ws",
-  "webhook",
   "rule",
   "graphqlRequest",
   "grpcRequest",
