@@ -24,7 +24,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as net from "net";
-import type { CommandAction, CommandContext, CommandRegistry } from "@bifurc/engine/commands/registry";
+import type { CommandAction, CommandContext, CommandRegistry } from "@bifurc/engine/kernel/registry";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 
 // `electron` is still mocked, because the command modules this suite now drives reach `processSpawner`
@@ -118,7 +118,7 @@ beforeAll(async () => {
     // P6 §5c slice 5 moved these ten out of `applicationHandlers.ts`'s module scope, and the reduction's
     // seventh group then deleted the channels — so this call is now the commands' only wiring here, not
     // a second one. It is also the *only* suite that ever drove them, so no other file needed the move.
-    const { commandRegistry } = await import("@bifurc/engine/commands/registry");
+    const { commandRegistry } = await import("@bifurc/engine/kernel/registry");
     const { registerApplicationCommands } = await import("@bifurc/engine/applications/applicationCommands");
     registerApplicationCommands(commandRegistry);
     registry = commandRegistry;

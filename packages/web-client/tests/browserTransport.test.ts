@@ -31,8 +31,8 @@
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
-import { EngineEventBus } from "@bifurc/engine/eventBus";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
+import { EngineEventBus } from "@bifurc/engine/kernel/eventBus";
 import { EventLog } from "@bifurc/engine/transport/eventLog";
 import { createWsServer, type WsServer } from "@bifurc/engine/transport/ws";
 import type { Transport } from "@bifurc/protocol";

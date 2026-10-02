@@ -43,8 +43,8 @@
  * design that cannot survive a reconnect.
  */
 import type { EventName } from "@bifurc/protocol";
-import type { EngineEvents } from "../eventBus";
-import { EngineEventBus } from "../eventBus";
+import type { EngineEvents } from "../kernel/eventBus";
+import { EngineEventBus } from "../kernel/eventBus";
 import { BUS_NAME_BY_WIRE_NAME, type EngineEvent } from "./types";
 
 /** One retained event. `at` is on the injected clock, so the age bound is testable without sleeping. */

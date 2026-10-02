@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { CheckCircle2, XCircle, ChevronUp, ChevronDown, AlertTriangle, Terminal } from "lucide-react";
 import { strings } from "@/lib/strings";
-import { RunnerRequestResult } from "@/lib/collectionRunner";
+import { RunnerRequestResult } from "@/types";
 import { statusColor } from "@/lib/utils";
 
 export function methodColor(method: string): string {

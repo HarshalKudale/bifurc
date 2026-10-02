@@ -10,7 +10,7 @@ vi.mock("mkcert", () => ({
     })),
 }));
 
-import { loadCA, unloadCA, isCALoaded, generateHostCert, clearCertCache } from "@bifurc/engine/proxy/tlsCert";
+import { loadCA, unloadCA, isCALoaded, generateHostCert, clearCertCache } from "@bifurc/engine/certificates/tlsCert";
 
 describe("tlsCert", () => {
     let tmpDir: string;

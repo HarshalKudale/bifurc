@@ -24,15 +24,15 @@ let tmpDir: string;
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lp-lock-guard-"));
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride(tmpDir);
-  const { initWorkspaceDir } = await import("@bifurc/engine/store/workspaceFs");
+  const { initWorkspaceDir } = await import("@bifurc/engine/workspace/workspaceFs");
   initWorkspaceDir(WS_ID, "Lock Guard");
   fs.mkdirSync(path.join(tmpDir, WS_ID, ".git"), { recursive: true });
 });
 
 afterEach(async () => {
-  const { setDataDirOverride } = await import("@bifurc/engine/store/gitStore");
+  const { setDataDirOverride } = await import("@bifurc/engine/workspace/gitStore");
   setDataDirOverride("");
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* safe-delete shim */ }
 });
@@ -41,7 +41,7 @@ const gitMessage = (p: string) => `fatal: Unable to create '${p}': File exists.`
 
 describe("removeStaleIndexLock — what it will and will not delete", () => {
   it("removes the workspace's own index lock", async () => {
-    const { removeStaleIndexLock } = await import("@bifurc/engine/sync/gitLock");
+    const { removeStaleIndexLock } = await import("@bifurc/engine/gitops/gitLock");
     const lock = path.join(tmpDir, WS_ID, ".git", "index.lock");
     fs.writeFileSync(lock, "");
 
@@ -50,7 +50,7 @@ describe("removeStaleIndexLock — what it will and will not delete", () => {
   });
 
   it("leaves a file that is not called index.lock, however git's message reads", async () => {
-    const { removeStaleIndexLock } = await import("@bifurc/engine/sync/gitLock");
+    const { removeStaleIndexLock } = await import("@bifurc/engine/gitops/gitLock");
     // A plausible-looking message naming something else entirely. `git add` can report other locks
     // (a ref lock, a packed-refs lock) with the same "Unable to create" wording.
     const victim = path.join(tmpDir, WS_ID, ".git", "HEAD.lock");
@@ -61,7 +61,7 @@ describe("removeStaleIndexLock — what it will and will not delete", () => {
   });
 
   it("leaves an index.lock that belongs to another repository", async () => {
-    const { removeStaleIndexLock } = await import("@bifurc/engine/sync/gitLock");
+    const { removeStaleIndexLock } = await import("@bifurc/engine/gitops/gitLock");
     // The guard is the prefix check, not the basename: `index.lock` is a common name and the message
     // could come from a repo we do not own.
     const other = path.join(tmpDir, "another-workspace", ".git");
@@ -74,7 +74,7 @@ describe("removeStaleIndexLock — what it will and will not delete", () => {
   });
 
   it("does nothing when the message names no path at all", async () => {
-    const { removeStaleIndexLock } = await import("@bifurc/engine/sync/gitLock");
+    const { removeStaleIndexLock } = await import("@bifurc/engine/gitops/gitLock");
     expect(removeStaleIndexLock(WS_ID, "fatal: Unable to create '': File exists.")).toBe(false);
     expect(removeStaleIndexLock(WS_ID, "something else went wrong")).toBe(false);
   });

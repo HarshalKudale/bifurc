@@ -52,21 +52,27 @@
  * library that re-pointed `SIGTERM` behind its back would break that caller's shutdown. The handler is a
  * five-line wrapper, so the composition stays testable without a signal ever being raised.
  */
-import { createSocketServer, defaultSocketPath, type SocketServer } from "../transport/socket";
+import { createSocketServer, type SocketServer } from "../transport/socket";
+import { createStdioServer, type StdioServer } from "../transport/stdio";
+import { spawn } from "node:child_process";
+import { PROTOCOL_VERSION } from "@bifurc/protocol";
+import { createDesktop, type Desktop, type DesktopCompanions } from "./desktop";
+import { engineSocketPath, findRunningEngine, removeRuntimeInfo, writeRuntimeInfo } from "./discovery";
 // The host's own name: the value an engine that was not told one answers as. Taken from `lib/net` rather than
 // from `../transport/ws` so that "what is this hostname?" does not read as a transport question. Same
 // reasoning `hostArgs.ts` records.
 //
 // `DEFAULT_WS_HOST` and `isLoopbackHost` were imported here too, for the step -1 bind guard that read them;
 // both went with that guard on 2026-09-25 — see `doStart`'s note and `transport/ws.ts`'s header.
-import { DEFAULT_HOST_DOMAIN } from "../lib/net";
+import { DEFAULT_HOST_DOMAIN } from "../utils/net";
 import { createWsServer, type WsServer } from "../transport/ws";
-import { commandRegistry, type CommandRegistry } from "../commands/registry";
-import { registerAllEngineCommands } from "../registerAll";
-import { bus as defaultBus, type EngineEventBus } from "../eventBus";
-import { loadSettings, appDataDir, type AppSettings } from "../store/appSettings";
-import { bootstrapWorkspaces } from "../startup";
-import { setDataRoot, dataDir } from "../store/paths";
+import { commandRegistry, type CommandRegistry, type SessionIdentity } from "../kernel/registry";
+import { registerAllEngineCommands, wireEngineEvents } from "../registerAll";
+import { startBlobSweeper } from "../workspace/blob/sweep";
+import { bus as defaultBus, type EngineEventBus } from "../kernel/eventBus";
+import { loadSettings, appDataDir, type AppSettings } from "../workspace/appSettings";
+import { bootstrapWorkspaces } from "../lifecycle/startup";
+import { setDataRoot, dataDir } from "../workspace/paths";
 import { EventLog } from "../transport/eventLog";
 // `DEFAULT_EDGE_BIND_HOST` is imported rather than defaulted to a literal here: the host needs the same
 // value `createEdgeRouter()` will apply, to report the edge's address, and a second copy of `"127.0.0.1"`
@@ -75,13 +81,8 @@ import { EventLog } from "../transport/eventLog";
 // `bindEdgeInstance` is `plan/17` §5 work item 7 — the same treatment the forward proxy and the webhook
 // already get below, one port over: the host *names* its edge to the module-level binding so `config.save`
 // can re-bind it when `settings.port` changes.
-import { bindEdgeInstance, createEdgeRouter, DEFAULT_EDGE_BIND_HOST, type EdgeRouterInstance } from "../proxy/edge";
+import { bindEdgeInstance, createEdgeRouter, DEFAULT_EDGE_BIND_HOST, type EdgeRouterInstance } from "../reverseproxy/edge";
 import { createProxyServer, bindProxyInstance, type ProxyServerInstance } from "../proxy/server";
-import {
-  createWebhookServer,
-  bindWebhookInstance,
-  type WebhookServerInstance,
-} from "../proxy/webhookServer";
 // The **single**-port finder and the bound on its scan. The companion is the one listener whose port is
 // *found* rather than bound (`plan/17` §1): the host scans upward from `settings.companionPort`, skipping the
 // ports it has already bound, so the port a client is told to connect to is one that is really free.
@@ -99,6 +100,12 @@ import { findFreePortFrom, nextFreePortAbove, SCAN_LIMIT } from "./portAllocator
  * value with exactly one legal setting. Their removal is what makes the image's loopback guarantee structural
  * rather than a property of the command line an operator happened to use.
  */
+/** What `engine.shutdown` stops: the host running in this process, if any. */
+let activeShutdown: ((restart: boolean) => void) | null = null;
+
+/** Long enough for the `engine.stopping` event and the command's reply to leave before the endpoint closes. */
+const SHUTDOWN_FLUSH_MS = 100;
+
 export type HostTransport =
   | {
       kind: "socket";
@@ -109,6 +116,10 @@ export type HostTransport =
       kind: "ws";
       /** Defaults to `0` — an ephemeral port, so two hosts on one machine cannot collide. */
       port?: number;
+    }
+  | {
+      /** RPC over this process's stdin/stdout — for a parent process that spawned the engine as a sidecar. */
+      kind: "stdio";
     };
 
 export interface WorkspaceHostOptions {
@@ -137,6 +148,14 @@ export interface WorkspaceHostOptions {
   registry?: CommandRegistry;
   /** Notified once per workspace whose ports had to be moved off the base. **Not** an error — see below. */
   onNotice?: (message: string, workspaceId?: string) => void;
+  /**
+   * Called after `engine.shutdown` has stopped the host. A standalone process exits here, and when `restart`
+   * is set it starts its successor first.
+   */
+  onShutdownRequested?: (restart: boolean) => void;
+  /** A client opened a session on the socket endpoint, or that session ended. */
+  onSessionStart?: (identity: SessionIdentity) => void;
+  onSessionEnd?: (identity: SessionIdentity) => void;
 }
 
 export interface WorkspaceHostStatus {
@@ -184,15 +203,6 @@ export interface WorkspaceHostStatus {
   /** Whatever the forward proxy reported on a failed bind, if anything. */
   forwardProxyError: string | null;
   /**
-   * The **webhook receiver** — host-level, and **off by default** (`plan/17` §1).
-   *
-   * `null` is therefore the ordinary value: the receiver is a *feature*, not infrastructure, and it is the
-   * user who starts it. A non-null port means it is listening.
-   */
-  webhookPort: number | null;
-  /** Whatever the webhook receiver reported on a failed bind, if anything. */
-  webhookError: string | null;
-  /**
    * The **companion** — the RPC endpoint over WebSocket that the browser extension connects to.
    *
    * `null` when this host runs no companion, which is the default: a `--ws-port` host has one, and a
@@ -215,6 +225,11 @@ export interface WorkspaceHost {
   start(): Promise<WorkspaceHostStatus>;
   /** Stop every listener and close the RPC endpoint. Idempotent. */
   stop(): Promise<void>;
+  /**
+   * What `engine.shutdown` does: tell every client (`engine.stopping`), stop, then hand over to
+   * `onShutdownRequested`. Returns at once; a second call while one is under way does nothing.
+   */
+  shutdown(restart?: boolean): void;
   status(): WorkspaceHostStatus;
   /**
    * The one forward proxy for this host, or `null` before `start()`.
@@ -223,10 +238,8 @@ export interface WorkspaceHost {
    * the host's summary of them — the same reason `rpc` and `edge` are.
    */
   readonly forwardProxy: ProxyServerInstance | null;
-  /** The one webhook receiver for this host, or `null` before `start()`. */
-  readonly webhook: WebhookServerInstance | null;
   /** The one RPC endpoint for this host. `null` before `start()`. */
-  readonly rpc: SocketServer | WsServer | null;
+  readonly rpc: SocketServer | WsServer | StdioServer | null;
   /**
    * The one edge router for this host. `null` before `start()`.
    *
@@ -286,8 +299,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   const domain = DEFAULT_HOST_DOMAIN;
 
   let forwardProxy: ProxyServerInstance | null = null;
-  let webhook: WebhookServerInstance | null = null;
-  let rpc: SocketServer | WsServer | null = null;
+  let rpc: SocketServer | WsServer | StdioServer | null = null;
   let edge: EdgeRouterInstance | null = null;
   /** The edge's URL. Set when the edge is created, and read only while it is running. */
   let edgeUrl = "";
@@ -298,6 +310,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   let rpcAddress = "";
   let startPromise: Promise<WorkspaceHostStatus> | null = null;
   let stopped = false;
+  let shutdownPending = false;
 
   function status(): WorkspaceHostStatus {
     return {
@@ -314,9 +327,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       edgeError: edge?.getError() ?? null,
       forwardProxyPort: forwardProxy !== null && forwardProxy.isRunning() ? forwardProxy.getPort() : null,
       forwardProxyError: forwardProxy?.getError() ?? null,
-      // `null` is the ordinary value here: the webhook is off by default (`plan/17` §1).
-      webhookPort: webhook !== null && webhook.isRunning() ? webhook.getPort() : null,
-      webhookError: webhook?.getError() ?? null,
       companionPort,
       workspaces: served,
     };
@@ -325,6 +335,8 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   /** The log is per host, not per runtime: `seq` is only meaningful across a reconnect if one authority
    * issues it (`transport/eventLog.ts`), and D13 puts one RPC endpoint in front of all the runtimes. */
   const log = new EventLog({ bus });
+  let unwireEvents: (() => void) | null = null;
+  let stopBlobSweeper: (() => void) | null = null;
 
   async function doStart(): Promise<WorkspaceHostStatus> {
     /**
@@ -351,6 +363,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      */
     const transport = opts.transport ?? { kind: "socket" };
 
+    // One engine per data directory: a second one would fight the first over the same files and ports.
+    const running = findRunningEngine(opts.dataDir);
+    if (running !== null && running.pid !== process.pid) {
+      throw new Error(
+        `an engine (pid ${running.pid}) is already serving ${opts.dataDir} over ${running.transport} at ` +
+          `${running.address} — connect to it, or stop it first`,
+      );
+    }
+
     // ── 0. register the command surface, before anything can be asked to serve it ─
     /**
      * **The step this file's first integration run proved was missing.**
@@ -365,9 +386,21 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      * already decided what goes in it, and registering into it would double-register and throw.
      */
     if (opts.registry === undefined) registerAllEngineCommands(registry);
+    unwireEvents = wireEngineEvents(bus);
+    // A standalone engine is the one composition that owns its process, so it is the one that can stop it.
+    activeShutdown = (restart) => host.shutdown(restart);
+    if (!registry.isRegistered("engine.shutdown")) {
+      registry.register("engine.shutdown", (params: { restart?: boolean } = {}) => {
+        if (activeShutdown === null) throw new Error("no engine is running in this process");
+        activeShutdown(params.restart === true);
+        return { ok: true };
+      });
+    }
 
     // ── 1. the data root, first ──────────────────────────────────────────────
     setDataRoot(opts.dataDir);
+    // Housekeeping for `workspace/blob/`; `createEngine()` has always run it, and the host never did.
+    stopBlobSweeper = startBlobSweeper();
 
     // ── 2. settings, then the engine's own bootstrap ─────────────────────────
     // `bootstrapWorkspaces()` is reused rather than reimplemented: it creates each workspace's dirs and repo,
@@ -386,7 +419,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
        * a settings file read from somewhere else.
        *
        * The directory is included because **that is the diagnostic**: on Windows `settingsPath()` prefers
-       * `%LOCALAPPDATA%` regardless of `setDataRoot()` (recorded in `proxy/certManager.ts`), so a
+       * `%LOCALAPPDATA%` regardless of `setDataRoot()` (recorded in `certificates/certManager.ts`), so a
        * `--data-dir` run reads the user's real settings. Naming the location turns that into one readable
        * line. Not fatal — the other requested workspaces may still be serveable, which is the same
        * "skip loudly, do not refuse to start" rule D16 applies to a taken port override.
@@ -486,30 +519,11 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      */
     await waitUntilReady(() => proxyListener.isRunning(), () => proxyListener.getError());
 
-    // ── 3c. the webhook receiver — host-level, and OFF by default ────────────
-    /**
-     * `plan/17` §1: *"the webhook does NOT scan either. It is a **feature, not infrastructure**: it is **off
-     * by default**, the user starts it, and the user owns the port."* So this is **created and not started**
-     * — the `webhookServer.start` command is what binds it, exactly as the desktop has always done
-     * (`WebhooksPanel` → `window.api.startWebhookServer()`).
-     *
-     * Creating it here rather than leaving it lazy is what makes `webhookServer.status` answerable before any
-     * tab has opened, and it is what the binding below needs: the facade must point at *this* instance, not
-     * at a lazily-created default that would become a second, competing authority.
-     *
-     * **Known gap, stated rather than implied.** The receiver's *active* set — the suffixes it will accept a
-     * POST for — is registered by the UI when a webhook tab opens, and it is not keyed by workspace. So
-     * switching workspace does not by itself retire the previous workspace's active webhooks. `plan/17` §1
-     * lists *"which webhook endpoints are in force"* among the things a switch changes; this host makes the
-     * **port** host-level but not yet the **active set**, because `createWebhookServer()`'s active maps are
-     * not workspace-keyed. Recorded here so it is a known limit rather than a surprise.
-     */
-    webhook = createWebhookServer({ workspaceId: null });
 
     /**
      * ## Binding the facade is what makes a command reach these two
      *
-     * `proxy/server.ts` and `proxy/webhookServer.ts` each keep a module-level **facade** over a lazily created
+     * `proxy/server.ts` and `webhooks/webhookServer.ts` each keep a module-level **facade** over a lazily created
      * default instance, and the `server.*` / `webhookServer.*` commands go through it. `bindProxyInstance()` /
      * `bindWebhookInstance()` point that facade at an instance the caller owns — the desktop has always used
      * them, and this host now uses the same mechanism.
@@ -522,7 +536,6 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
      * `plan/17` §3: the routing *collapses*.
      */
     bindProxyInstance(forwardProxy);
-    bindWebhookInstance(webhook);
 
     // ── 3d. the edge router — one listener for the whole host (`plan/15` §3.3) ─
     /**
@@ -690,9 +703,28 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     };
 
     if (transport.kind === "socket") {
-      const path = transport.path ?? defaultSocketPath();
-      rpc = await createSocketServer({ path, registry, bus, log, auth });
+      const path = transport.path ?? engineSocketPath(opts.dataDir);
+      rpc = await createSocketServer({
+        path,
+        registry,
+        bus,
+        log,
+        auth,
+        onSessionStart: opts.onSessionStart,
+        onSessionEnd: opts.onSessionEnd,
+      });
       rpcAddress = path;
+    } else if (transport.kind === "stdio") {
+      rpc = createStdioServer({
+        input: process.stdin,
+        output: process.stdout,
+        registry,
+        bus,
+        engineVersion: auth.engineVersion,
+        // The parent closed our stdin: it is gone, so this sidecar has no one left to serve.
+        onFatal: () => void runtimeStop(),
+      });
+      rpcAddress = "stdio";
     } else {
       /**
        * ## The companion's port is **found**, not bound — `plan/17` §5 work item 4
@@ -749,6 +781,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       rpcAddress = rpc.url;
     }
     notice(`rpc endpoint: ${rpcAddress}`);
+    writeRuntimeInfo({
+      pid: process.pid,
+      transport: transport.kind,
+      address: rpcAddress,
+      dataDir: opts.dataDir,
+      protocolVersion: PROTOCOL_VERSION,
+      engineVersion: auth.engineVersion,
+      startedAt: Date.now(),
+    });
 
     /**
      * **The `engine token: <path>` line was here**, and there is nothing left to report — the token step
@@ -764,7 +805,9 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     return status();
   }
 
-  return {
+  const runtimeStop = (): Promise<void> => host.stop();
+
+  const host: WorkspaceHost = {
     start(): Promise<WorkspaceHostStatus> {
       if (stopped) {
         return Promise.reject(
@@ -778,6 +821,8 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     async stop(): Promise<void> {
       if (stopped) return;
       stopped = true;
+      activeShutdown = null;
+      removeRuntimeInfo(opts.dataDir);
       // The endpoint first: closing it stops new sessions before the servers behind it go away, so a client
       // cannot get a request in against a listener that is mid-teardown.
       if (rpc !== null) {
@@ -799,12 +844,11 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       // Then the two listeners. Both are null-guarded internally, so a host that never reached them tears
       // down cleanly.
       forwardProxy?.stop();
-      webhook?.stop();
       /**
        * **The facade binding is undone here, because `start()` made it.**
        *
        * `bindProxyInstance()` / `bindWebhookInstance()` are **process-global** — they set module-level state in
-       * `proxy/server.ts` and `proxy/webhookServer.ts`, and every module function in those files acts on
+       * `proxy/server.ts` and `webhooks/webhookServer.ts`, and every module function in those files acts on
        * whatever is bound. So a host that binds and does not unbind leaves the *next* consumer in the same
        * process talking to **this** host's stopped instances: `startServer()` would resurrect them rather than
        * build a fresh one, and `server.status` would keep reporting a dead instance's last error forever.
@@ -823,8 +867,11 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
        *
        * `null` restores the lazy default, which is the state a process that never ran a host is in.
        */
+      unwireEvents?.();
+      unwireEvents = null;
+      stopBlobSweeper?.();
+      stopBlobSweeper = null;
       bindProxyInstance(null);
-      bindWebhookInstance(null);
       // The edge's binding is released with the other two, and for the same reason — see the block above. It
       // was added by `plan/17` §5 work item 7, and the obligation came with the mechanism rather than later.
       bindEdgeInstance(null);
@@ -837,20 +884,27 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       log.close();
     },
 
+    shutdown(restart = false): void {
+      if (stopped || shutdownPending) return;
+      shutdownPending = true;
+      bus.emitTyped("engine.stopping", { restart });
+      setTimeout(() => {
+        void host.stop().finally(() => opts.onShutdownRequested?.(restart));
+      }, SHUTDOWN_FLUSH_MS);
+    },
+
     status,
     get forwardProxy(): ProxyServerInstance | null {
       return forwardProxy;
     },
-    get webhook(): WebhookServerInstance | null {
-      return webhook;
-    },
-    get rpc(): SocketServer | WsServer | null {
+    get rpc(): SocketServer | WsServer | StdioServer | null {
       return rpc;
     },
     get edge(): EdgeRouterInstance | null {
       return edge;
     },
   };
+  return host;
 }
 
 /**
@@ -865,9 +919,28 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
  * will not die" is a worse failure than an early exit.
  */
 export async function runWorkspaceHost(
-  opts: WorkspaceHostOptions,
+  opts: StandaloneHostOptions,
 ): Promise<WorkspaceHost> {
-  const host = createWorkspaceHost(opts);
+  let desktop: Desktop | null = null;
+  const host = createWorkspaceHost({
+    onShutdownRequested: (restart) => {
+      if (restart) startSuccessor();
+      process.exit(0);
+    },
+    onSessionStart: (identity) => desktop?.onSessionStart(identity),
+    onSessionEnd: (identity) => desktop?.onSessionEnd(identity),
+    ...opts,
+  });
+  // A stdio engine belongs to the process that spawned it, which is its own way in and out.
+  if (opts.desktop !== undefined && opts.transport?.kind !== "stdio") {
+    desktop = createDesktop({
+      companions: opts.desktop,
+      dataDir: opts.dataDir,
+      bus: opts.bus ?? defaultBus,
+      shutdown: (restart) => host.shutdown(restart),
+      notice: opts.onNotice ?? ((message: string) => console.log(`[host] ${message}`)),
+    });
+  }
   let shuttingDown = false;
 
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -883,5 +956,21 @@ export async function runWorkspaceHost(
   process.on("SIGINT", () => shutdown("SIGINT"));
 
   await host.start();
+  desktop?.start();
   return host;
+}
+
+/** `runWorkspaceHost()`'s options: a host, plus what only a process of its own can have. */
+export interface StandaloneHostOptions extends WorkspaceHostOptions {
+  /** The tray helper and the interface it opens. Absent means no desktop presence: a container, a test. */
+  desktop?: DesktopCompanions;
+}
+
+/** Starts this engine again, detached, with the command line it was started with. For `engine.shutdown {restart}`. */
+function startSuccessor(): void {
+  spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+    detached: true,
+    stdio: ["ignore", "inherit", "inherit"],
+    windowsHide: true,
+  }).unref();
 }

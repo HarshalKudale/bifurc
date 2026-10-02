@@ -47,8 +47,8 @@
  * `inProcess.ts` no longer knows what a sequence number is.
  */
 import { EngineError, type CommandAction } from "@bifurc/protocol";
-import { bus, ENGINE_EVENT_NAMES } from "../eventBus";
-import type { CommandContext, CommandRegistry } from "../commands/registry";
+import { bus, ENGINE_EVENT_NAMES } from "../kernel/eventBus";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { EventLog } from "./eventLog";
 import { toClientEvent } from "./eventPump";
 import {

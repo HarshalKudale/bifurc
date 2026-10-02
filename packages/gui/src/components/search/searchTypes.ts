@@ -11,7 +11,7 @@ export interface SearchResultItem {
   isDraft?: boolean;
   folderName?: string;
   section: string;
-  entityType: "tab" | "request" | "mock" | "rule" | "websocket" | "webhook" | "mapping" | "service" | "environment";
+  entityType: "tab" | "request" | "mock" | "rule" | "websocket" | "mapping" | "service" | "environment";
   original?: any;
   isMapped?: boolean;
   mappingLabel?: string;

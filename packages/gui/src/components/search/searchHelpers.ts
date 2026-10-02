@@ -1,4 +1,4 @@
-import { AppConfig, Folder, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, SavedWebhook, Mapping } from "@/types";
+import { AppConfig, Folder, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, LocalMapping } from "@/types";
 import { SearchResultItem } from "./searchTypes";
 
 export function getFolderName(folderId: string | null | undefined, folders: Folder[] = []): string | undefined {

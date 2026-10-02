@@ -24,7 +24,6 @@ import type { AppConfig } from "@/types";
 const cfg = (over: Partial<AppConfig> = {}): AppConfig =>
   ({
     port: 80,
-    webhookPort: 9101,
     forwardProxyPort: 8080,
     companionPort: 4747,
     ...over,
@@ -35,57 +34,50 @@ const valueOf = (label: string): string =>
 
 describe("PortsSettingsSection", () => {
   it("renders one input per host-level port, seeded from the config", () => {
-    render(<PortsSettingsSection config={cfg()} onConfigChange={vi.fn()} />);
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={vi.fn()} />);
 
     expect(valueOf(strings.settings.edgePort)).toBe("80");
     expect(valueOf(strings.settings.forwardProxyPort)).toBe("8080");
-    expect(valueOf(strings.settings.webhookServerPort)).toBe("9101");
     expect(valueOf(strings.settings.companionPort)).toBe("4747");
   });
 
-  it("offers exactly four ports — one per host-level port", () => {
-    render(<PortsSettingsSection config={cfg()} onConfigChange={vi.fn()} />);
+  it("offers exactly three ports — one per host-level port", () => {
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={vi.fn()} />);
 
     const inputs = screen.getAllByRole("spinbutton");
-    expect(inputs).toHaveLength(4);
+    expect(inputs).toHaveLength(3);
     // This case also asserted that no input carried a `gui` label, because a *fifth*, derived port — the web
     // GUI's, `companionPort + 1` — was the thing that must never become a setting. The browser host was
     // decommissioned on 2026-09-26 and that port does not exist any more, so the guard lost its subject and
     // the count is the whole assertion.
   });
 
-  it("commits a new forward proxy port on blur, carrying every other field through", () => {
-    const onConfigChange = vi.fn(async () => {});
-    render(<PortsSettingsSection config={cfg()} onConfigChange={onConfigChange} />);
+  it("commits a new forward proxy port on blur as a patch of that one setting", () => {
+    const onSettingsChange = vi.fn(async () => {});
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={onSettingsChange} />);
 
     const input = screen.getByLabelText(strings.settings.forwardProxyPort);
     fireEvent.change(input, { target: { value: "9090" } });
     fireEvent.blur(input);
 
-    expect(onConfigChange).toHaveBeenCalledTimes(1);
-    expect(onConfigChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        port: 80,
-        forwardProxyPort: 9090,
-        webhookPort: 9101,
-        companionPort: 4747,
-      })
-    );
+    expect(onSettingsChange).toHaveBeenCalledTimes(1);
+    // Only the changed field: a whole config here is what let a stale copy revert other clients' changes.
+    expect(onSettingsChange).toHaveBeenCalledWith({ forwardProxyPort: 9090 });
   });
 
   it("commits a new companion port on Enter", () => {
-    const onConfigChange = vi.fn(async () => {});
-    render(<PortsSettingsSection config={cfg()} onConfigChange={onConfigChange} />);
+    const onSettingsChange = vi.fn(async () => {});
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={onSettingsChange} />);
 
     const input = screen.getByLabelText(strings.settings.companionPort);
     fireEvent.change(input, { target: { value: "5000" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(onConfigChange).toHaveBeenCalledWith(expect.objectContaining({ companionPort: 5000 }));
+    expect(onSettingsChange).toHaveBeenCalledWith({ companionPort: 5000 });
   });
 
   it("marks the companion as needing a restart, and only the companion", () => {
-    render(<PortsSettingsSection config={cfg()} onConfigChange={vi.fn()} />);
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={vi.fn()} />);
 
     // Exactly one badge: the edge, the forward proxy and the webhook are re-bound at runtime, so a badge on
     // any of them would be a false claim.
@@ -93,43 +85,35 @@ describe("PortsSettingsSection", () => {
   });
 
   it("reverts a value that is not a port instead of committing it", () => {
-    const onConfigChange = vi.fn(async () => {});
-    render(<PortsSettingsSection config={cfg()} onConfigChange={onConfigChange} />);
+    const onSettingsChange = vi.fn(async () => {});
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={onSettingsChange} />);
 
     const input = screen.getByLabelText(strings.settings.edgePort);
     fireEvent.change(input, { target: { value: "99999" } });
     fireEvent.blur(input);
 
-    expect(onConfigChange).not.toHaveBeenCalled();
+    expect(onSettingsChange).not.toHaveBeenCalled();
     expect(valueOf(strings.settings.edgePort)).toBe("80");
   });
 
   it("does not commit when the value is unchanged", () => {
-    const onConfigChange = vi.fn(async () => {});
-    render(<PortsSettingsSection config={cfg()} onConfigChange={onConfigChange} />);
+    const onSettingsChange = vi.fn(async () => {});
+    render(<PortsSettingsSection config={cfg()} onSettingsChange={onSettingsChange} />);
 
     const input = screen.getByLabelText(strings.settings.forwardProxyPort);
     fireEvent.blur(input);
 
-    expect(onConfigChange).not.toHaveBeenCalled();
+    expect(onSettingsChange).not.toHaveBeenCalled();
   });
 
-  it("shows the configured webhook port rather than a hardcoded default", () => {
-    // Discriminating on purpose: the engine deleted a fixed webhook default in favour of a random one, so a
-    // `?? 9101` reappearing in this row's copy would be a second answer to "which port is the receiver on".
-    render(<PortsSettingsSection config={cfg({ webhookPort: 4321 })} onConfigChange={vi.fn()} />);
-
-    expect(valueOf(strings.settings.webhookServerPort)).toBe("4321");
-    expect(screen.getByText(/localhost:4321\/bifurc\/webhooks\//)).toBeInTheDocument();
-  });
 
   it("follows a config change from the outside", () => {
     const { rerender } = render(
-      <PortsSettingsSection config={cfg()} onConfigChange={vi.fn()} />
+      <PortsSettingsSection config={cfg()} onSettingsChange={vi.fn()} />
     );
 
     rerender(
-      <PortsSettingsSection config={cfg({ forwardProxyPort: 8888 })} onConfigChange={vi.fn()} />
+      <PortsSettingsSection config={cfg({ forwardProxyPort: 8888 })} onSettingsChange={vi.fn()} />
     );
 
     expect(valueOf(strings.settings.forwardProxyPort)).toBe("8888");
@@ -155,7 +139,7 @@ describe("SettingsPanel → Ports section", () => {
         config={cfg({ tlsEnabled: false, tlsCaCertPath: null, tlsCaKeyPath: null })}
         serverRunning
         serverError={null}
-        onConfigChange={vi.fn(async () => {})}
+        onSettingsChange={vi.fn(async () => {})}
         onServerRestart={vi.fn(async () => {})}
         colorMode="dark"
         onColorModeChange={vi.fn()}

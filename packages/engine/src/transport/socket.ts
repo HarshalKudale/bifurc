@@ -100,8 +100,8 @@ import {
   UnsubscribeRequestSchema,
   type CapabilityValue,
 } from "@bifurc/protocol";
-import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEventBus } from "../eventBus";
-import type { CommandContext, CommandRegistry } from "../commands/registry";
+import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEventBus } from "../kernel/eventBus";
+import type { CommandContext, CommandRegistry, SessionIdentity } from "../kernel/registry";
 import {
   createAuthenticatedTransport,
   IDENTITY_FAILURE_CODES,
@@ -396,6 +396,9 @@ export interface SocketServerOptions {
   auth?: SocketServerAuthOptions;
   /** Notified when a connection dies for a reason the engine did not ask for. */
   onFatal?: (error: Error, peer: string) => void;
+  /** Notified when a connection has said `hello` and is a session, and again when that session ends. */
+  onSessionStart?: (identity: SessionIdentity) => void;
+  onSessionEnd?: (identity: SessionIdentity) => void;
 }
 
 export interface SocketServer {
@@ -588,6 +591,7 @@ export async function createSocketServer(opts: SocketServerOptions): Promise<Soc
              */
             onSession: (identity) => {
               ctx.session = identity;
+              opts.onSessionStart?.(identity);
             },
             // Passed straight through: the decorator owns the handshake, so it owns what the handshake
             // reports. `undefined` here means the host was never told its own name, which is a real state —
@@ -621,6 +625,7 @@ export async function createSocketServer(opts: SocketServerOptions): Promise<Soc
     function shutdown(): void {
       if (connectionClosed) return;
       connectionClosed = true;
+      if (ctx.session !== undefined) opts.onSessionEnd?.(ctx.session);
       void session.close();
       // Best-effort by now, and knowingly so: `connectionClosed` above already makes `send` a no-op, so
       // the pump's flush cannot land. That is the acceptable half of the trade — this server is given

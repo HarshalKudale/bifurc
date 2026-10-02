@@ -58,6 +58,7 @@ export type CapabilityValue = (typeof Capability)[keyof typeof Capability];
 export const ClientNameSchema = z.enum([
   "electron-shell",
   "web-ui",
+  "desktop-ui", // the Rust GPUI app in `ui/`
   "cli",
   "bifurc-extension", // the externally-released companion extension — see work item 7 exception
 ]);

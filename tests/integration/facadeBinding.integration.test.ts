@@ -5,7 +5,7 @@
  * ----------------------------------------------------------
  * `src/main.ts` creates one forward proxy and one webhook receiver, then calls
  * `bindProxyInstance(proxy)` / `bindWebhookInstance(webhook)`. Every module function in `proxy/server.ts`
- * and `proxy/webhookServer.ts` then acts on **that** instance — which is the whole point, because 23 engine
+ * and `webhooks/webhookServer.ts` then acts on **that** instance — which is the whole point, because 23 engine
  * modules import `reloadConfig()` from `proxy/server.ts` and would otherwise be updating a lazily created
  * *phantom* whose config the running proxy never sees.
  *
@@ -65,7 +65,6 @@ import * as path from "path";
 import * as net from "net";
 
 import { createProxyServer, type ProxyServerInstance } from "@bifurc/engine/proxy/server";
-import { createWebhookServer, type WebhookServerInstance } from "@bifurc/engine/proxy/webhookServer";
 import {
   bindProxyInstance,
   startServer,
@@ -74,13 +73,6 @@ import {
   getPort,
   reloadConfig,
 } from "@bifurc/engine/proxy/server";
-import {
-  bindWebhookInstance,
-  startWebhookServer,
-  stopWebhookServer,
-  isWebhookServerRunning,
-  getWebhookPort,
-} from "@bifurc/engine/proxy/webhookServer";
 import {
   createWorkspace,
   getFreePort,
@@ -153,9 +145,7 @@ describe("P14 WI 7 — the bound facades act on the instance the host adopts", (
   let ws: WorkspaceFixture;
   let upstream: UpstreamServer;
   let proxy: ProxyServerInstance;
-  let webhook: WebhookServerInstance;
   let proxyPort: number;
-  let webhookPort: number;
 
   beforeAll(async () => {
     // No rules at boot: the rule below is written later, so only `reloadConfig()` can put it in play.
@@ -165,43 +155,31 @@ describe("P14 WI 7 — the bound facades act on the instance the host adopts", (
       res.end(JSON.stringify({ from: "bound" }));
     });
     proxyPort = await getFreePort();
-    webhookPort = await getFreePort();
 
     // `workspaceId: null` — follow the active workspace, which is what `src/main.ts` and `host.ts` both
     // pass. `ownsCA: true` is the default and the desktop's value; asserted here so a change to the
     // default cannot silently alter whether the host's proxy unloads the shared CA on stop.
     proxy = createProxyServer({ workspaceId: null, ownsCA: true });
-    webhook = createWebhookServer({ workspaceId: null });
     bindProxyInstance(proxy);
-    bindWebhookInstance(webhook);
   });
 
   afterEach(() => {
-    stopWebhookServer();
     stopServer();
   });
 
   afterAll(async () => {
     proxy.stop();
-    webhook.stop();
     // Unbind before releasing the overrides: a leak here would redirect every later integration test in
     // this worker, the same hazard `e2eFixtureContract` records for the data root.
     bindProxyInstance(null);
-    bindWebhookInstance(null);
     await upstream.close();
     ws.cleanup();
   });
 
   it("binding starts nothing — neither server, and no port is opened", async () => {
     expect(proxy.isRunning()).toBe(false);
-    expect(webhook.isRunning()).toBe(false);
     expect(isRunning()).toBe(false);
-    expect(isWebhookServerRunning()).toBe(false);
-
-    // The load-bearing one: a host that started both would have bound these, and the webhook port is one
-    // this product has never opened at boot.
     expect(await portIsFree(proxyPort)).toBe(true);
-    expect(await portIsFree(webhookPort)).toBe(true);
   });
 
   it("startServer() binds the BOUND proxy — not a second instance", async () => {
@@ -256,18 +234,6 @@ describe("P14 WI 7 — the bound facades act on the instance the host adopts", (
     expect(proxy.isRunning()).toBe(false);
     expect(isRunning()).toBe(false);
     expect(await portIsFree(proxyPort)).toBe(true);
-  });
-
-  it("startWebhookServer() binds the BOUND webhook, and only when asked", async () => {
-    expect(await portIsFree(webhookPort)).toBe(true);
-
-    startWebhookServer(webhookPort);
-    await settle();
-
-    expect(webhook.isRunning()).toBe(true);
-    expect(webhook.getPort()).toBe(webhookPort);
-    expect(isWebhookServerRunning()).toBe(true);
-    expect(getWebhookPort()).toBe(webhookPort);
   });
 
   it("a lazily created default from before the binding does not win over the bound instance", async () => {

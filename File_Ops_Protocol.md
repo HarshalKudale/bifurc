@@ -27,7 +27,7 @@ Every crossing is bytes over RPC, never a path.
 
 ### 2.1 The import/export interface is already string-in / string-out
 
-This is the single biggest finding. `packages/engine/src/importExport/registry.ts`:
+This is the single biggest finding. `packages/engine/src/importexport/registry.ts`:
 
 ```ts
 export interface ExporterFn { run(wsId: string, filePath: string): Promise<ExportResult>; }
@@ -215,8 +215,8 @@ silently drift apart.
 >
 > | Piece | Where it lives now |
 > |---|---|
-> | the engine half — generate, identify, delete | `packages/engine/src/proxy/certManager.ts` |
-> | the three lifecycle commands | `packages/engine/src/proxy/certCommands.ts` |
+> | the engine half — generate, identify, delete | `packages/engine/src/certificates/certManager.ts` |
+> | the three lifecycle commands | `packages/engine/src/certificates/certCommands.ts` |
 > | the client half — install, un-trust, probe, Firefox | `src/ipc/certTrust.ts` |
 > | the composition — bytes + trust store + drift record | `src/ipc/certLifecycle.ts` |
 >
@@ -372,7 +372,7 @@ dropped:
 And one behavioural leak — the only place a **display name is derived from a path**:
 
 ```ts
-// packages/engine/src/importExport/importers/environments-dotenv.ts:55
+// packages/engine/src/importexport/importers/environments-dotenv.ts:55
 const name = filePath.split(/[/\\]/).pop()?.replace(/\.env.*$/, "") ?? "Imported";
 ```
 

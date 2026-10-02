@@ -20,7 +20,7 @@ import {
   type CommandContext,
   type Scope,
   type SessionIdentity,
-} from "../../src/commands/registry";
+} from "../../src/kernel/registry";
 import {
   COMPANION_SCOPES,
   READ_ONLY_SCOPES,

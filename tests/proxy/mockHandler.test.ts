@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@bifurc/engine/lib/randomizer", () => ({
+vi.mock("@bifurc/engine/utils/randomizer", () => ({
     resolveRandomizers: vi.fn((text: string) => text),
 }));
 
-import { resolveVars, matchMock, serveMock, serveStreamingMock, isFullyMocked, mergeMockWithUpstream } from "@bifurc/engine/proxy/mockHandler";
+import { matchMock, serveMock, serveStreamingMock, isFullyMocked, mergeMockWithUpstream } from "@bifurc/engine/mocks/mockHandler";
 
 const createSocket = () => ({ writable: true, write: vi.fn(), end: vi.fn() } as any);
 
@@ -30,85 +30,95 @@ function makeMock(overrides: Partial<any> = {}): any {
     };
 }
 
-// ── resolveVars ──────────────────────────────────────────────────────────
+// ── partial mock merging ─────────────────────────────────────────────────
 
-describe("resolveVars()", () => {
-    it("returns text as-is when env is null", () => {
-        expect(resolveVars("hello {{name}}", null)).toBe("hello {{name}}");
+// `resolveVars()`'s own cases live in `tests/proxy/resolve.test.ts`, with the function: `plan/19` WI 2
+// moved it down into `packages/engine/src/utils/resolve.ts`, and a test that pins a split moves with it.
+// The randomizer stays stubbed above because `matchMock`/`serveMock` reach it through `resolveVars`.
+
+describe("partial mock merging", () => {
+    it("treats header mocking as explicit only", () => {
+        const mock = makeMock();
+        expect(isFullyMocked(mock)).toBe(false);
     });
 
-    describe("partial mock merging", () => {
-        it("treats header mocking as explicit only", () => {
-            const mock = makeMock();
-            expect(isFullyMocked(mock)).toBe(false);
+    it("uses upstream headers when a header is not explicitly mocked", () => {
+        const merged = mergeMockWithUpstream(
+            makeMock({
+                responseHeaders: { "set-cookie": "old=1", "x-custom": "mocked" },
+                mockedResponseHeaders: ["x-custom"],
+            }),
+            {
+                status: 201,
+                headers: { "set-cookie": "fresh=1", "x-custom": "real" },
+                body: Buffer.from('{"real":true}'),
+                durationMs: 25,
+            },
+            null,
+        );
+        expect(merged.headers["set-cookie"]).toBe("fresh=1");
+        expect(merged.headers["x-custom"]).toBe("mocked");
+    });
+
+    it("keeps upstream status and body when those fields are unmocked", () => {
+        const merged = mergeMockWithUpstream(
+            makeMock({
+                responseStatus: 418,
+                responseStatusMocked: false,
+                responseBody: '{"mocked":true}',
+                responseBodyMocked: false,
+            }),
+            {
+                status: 202,
+                headers: { "content-type": "application/json" },
+                body: Buffer.from('{"actual":true}'),
+                durationMs: 10,
+            },
+            null,
+        );
+        expect(merged.status).toBe(202);
+        expect(merged.body.toString("utf8")).toBe('{"actual":true}');
+    });
+
+    it("never overrides the server's Content-Type, even when the mock lists one as mocked", () => {
+        const merged = mergeMockWithUpstream(
+            makeMock({
+                responseHeaders: { "content-type": "text/plain", "x-custom": "mocked" },
+                mockedResponseHeaders: ["content-type", "x-custom"],
+            }),
+            { status: 200, headers: { "content-type": "application/json" }, body: Buffer.from("{}"), durationMs: 1 },
+            null,
+        );
+        expect(merged.headers["content-type"]).toBe("application/json");
+        expect(merged.headers["x-custom"]).toBe("mocked");
+    });
+
+    it("passes an image through untouched instead of mocking it", () => {
+        const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+        const merged = mergeMockWithUpstream(
+            makeMock({ responseStatus: 500, responseDelay: 300, responseBody: "mocked" }),
+            { status: 200, headers: { "content-type": "image/png", "content-length": "999" }, body: png, durationMs: 1 },
+            null,
+        );
+        expect(merged.status).toBe(200);
+        expect(merged.body.equals(png)).toBe(true);
+        expect(merged.headers["content-type"]).toBe("image/png");
+        expect(merged.headers["content-length"]).toBe(String(png.length));
+        expect(merged.delayMs).toBe(0);
+    });
+
+    it("does not answer a mock whose body is data on its own", () => {
+        const mock = makeMock({
+            responseHeaders: { "content-type": "image/png" },
+            responseBody: "iVBORw0K",
+            responseBodyEncoding: "base64",
         });
-
-        it("uses upstream headers when a header is not explicitly mocked", () => {
-            const merged = mergeMockWithUpstream(
-                makeMock({
-                    responseHeaders: { "set-cookie": "old=1", "x-custom": "mocked" },
-                    mockedResponseHeaders: ["x-custom"],
-                }),
-                {
-                    status: 201,
-                    headers: { "set-cookie": "fresh=1", "x-custom": "real" },
-                    body: Buffer.from('{"real":true}'),
-                    durationMs: 25,
-                },
-                null,
-            );
-            expect(merged.headers["set-cookie"]).toBe("fresh=1");
-            expect(merged.headers["x-custom"]).toBe("mocked");
-        });
-
-        it("keeps upstream status and body when those fields are unmocked", () => {
-            const merged = mergeMockWithUpstream(
-                makeMock({
-                    responseStatus: 418,
-                    responseStatusMocked: false,
-                    responseBody: '{"mocked":true}',
-                    responseBodyMocked: false,
-                }),
-                {
-                    status: 202,
-                    headers: { "content-type": "application/json" },
-                    body: Buffer.from('{"actual":true}'),
-                    durationMs: 10,
-                },
-                null,
-            );
-            expect(merged.status).toBe(202);
-            expect(merged.body.toString("utf8")).toBe('{"actual":true}');
-        });
+        expect(isFullyMocked(mock)).toBe(false);
     });
 
-    it("returns empty string for empty input", () => {
-        expect(resolveVars("", null)).toBe("");
-    });
-
-    it("returns falsy value unchanged", () => {
-        expect(resolveVars(undefined as any, null)).toBe(undefined);
-    });
-
-    it("replaces known env variables", () => {
-        const env = { variables: [{ key: "host", value: "localhost" }] } as any;
-        expect(resolveVars("http://{{host}}/api", env)).toBe("http://localhost/api");
-    });
-
-    it("leaves unknown variables as {{key}}", () => {
-        const env = { variables: [{ key: "a", value: "1" }] } as any;
-        expect(resolveVars("{{a}} and {{b}}", env)).toBe("1 and {{b}}");
-    });
-
-    it("does not resolve random.* tokens itself (delegates to resolveRandomizers)", () => {
-        const env = { variables: [] } as any;
-        const result = resolveVars("id={{random.uuid}}", env);
-        expect(result).toBe("id={{random.uuid}}");
-    });
-
-    it("replaces multiple occurrences of the same variable", () => {
-        const env = { variables: [{ key: "v", value: "X" }] } as any;
-        expect(resolveVars("{{v}}-{{v}}", env)).toBe("X-X");
+    it("answers on its own once only the locked Content-Type is left unmocked", () => {
+        const mock = makeMock({ responseHeaders: { "content-type": "application/json" }, mockedResponseHeaders: [] });
+        expect(isFullyMocked(mock)).toBe(true);
     });
 });
 
