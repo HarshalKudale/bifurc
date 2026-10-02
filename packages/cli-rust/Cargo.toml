@@ -6,10 +6,27 @@ license.workspace = true
 authors.workspace = true
 description = "The Bifurc command line: a client of a Bifurc engine over its socket (a named pipe on Windows)."
 
+[lib]
+name = "bifurc_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bifurc"
 path = "src/main.rs"
 
 [dependencies]
-bifurc-engine-client = { path = "../../ui/crates/engine-client" }
+base64 = "0.22"
 serde_json = { version = "1", features = ["preserve_order"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"
