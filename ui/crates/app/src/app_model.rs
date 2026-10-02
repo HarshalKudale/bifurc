@@ -5,7 +5,7 @@
 //! the engine's socket events to whichever views care. Everything that changes the workspace is an engine
 //! command; this model then re-reads.
 
-use bifurc_engine_client::{ClientError, EngineClient, Incoming, SidecarConfig, attach_or_start};
+use bifurc_engine_client::{ClientError, EngineClient, Incoming, reconnect};
 use futures::StreamExt as _;
 use gpui_kit::{AppContext as _, Context, EventEmitter};
 use serde_json::{Value, json};
@@ -20,7 +20,9 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 10] = [
+const EVENTS: [&str; 12] = [
+    "event.engine.stopping",
+    "event.ui.activate",
     "event.entity.changed",
     "event.sync.entityStatus",
     "event.sync.status",
@@ -203,6 +205,22 @@ impl AppModel {
                 cx.notify();
             }
             Incoming::Event(event) => match event.event.as_str() {
+                // The engine is stopping on purpose. With a successor on its way this app waits for it; with
+                // none, the engine is gone and every interface goes with it.
+                "event.engine.stopping" => {
+                    if event.payload.get("restart").and_then(Value::as_bool) == Some(true) {
+                        self.await_successor(cx);
+                    } else {
+                        cx.quit();
+                    }
+                }
+                // The engine's tray icon was asked for the interface, and this is it.
+                "event.ui.activate" => {
+                    cx.activate(true);
+                    for window in cx.windows() {
+                        window.update(cx, |_, window, _| window.activate_window()).ok();
+                    }
+                }
                 "event.entity.changed" | "event.sync.entityStatus" | "event.settings.changed" => self.refresh(cx),
                 "event.sync.status" => {
                     self.refresh_git(cx);
@@ -313,20 +331,32 @@ impl AppModel {
         });
     }
 
-    /// Stops the engine and starts a new one, then reconnects to it. Everything the old one held in memory
-    /// (open WebSocket connections, captured traffic) is gone; what is saved in the workspace is not.
+    /// Asks the engine to restart itself, then reconnects to its successor. Everything the old one held in
+    /// memory (open WebSocket connections, captured traffic) is gone; what is saved in the workspace is not.
     pub fn restart_engine(&mut self, cx: &mut Context<Self>) {
+        if self.restarting_engine {
+            return;
+        }
+        let client = self.engine.client.clone();
+        call(&client, cx, "engine.shutdown", json!({ "restart": true }), |this, outcome, cx| match outcome {
+            // The engine announces the restart to every client, this one included; the announcement is what
+            // starts the wait. A reply lost to the closing connection is the same answer.
+            Ok(_) | Err(ClientError::Closed) => this.await_successor(cx),
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't restart the engine. {}", describe(&error)))),
+        });
+    }
+
+    /// The engine said it is restarting: waits for the one that replaces it and moves this app onto it.
+    fn await_successor(&mut self, cx: &mut Context<Self>) {
         if self.restarting_engine {
             return;
         }
         self.restarting_engine = true;
         cx.notify();
-        let old = self.engine.clone();
+        let data_dir = self.engine.data_dir.clone();
+        let old_pid = self.engine.info.pid;
         let restarting = cx.background_spawn(async move {
-            if !old.stop() {
-                return Err("The engine did not stop. Another program is using it.".to_owned());
-            }
-            attach_or_start(&SidecarConfig::default(), env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())
+            reconnect(&data_dir, old_pid, env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, cx| {
             let outcome = restarting.await;

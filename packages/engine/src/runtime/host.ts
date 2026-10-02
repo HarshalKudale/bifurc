@@ -54,7 +54,9 @@
  */
 import { createSocketServer, type SocketServer } from "../transport/socket";
 import { createStdioServer, type StdioServer } from "../transport/stdio";
+import { spawn } from "node:child_process";
 import { PROTOCOL_VERSION } from "@bifurc/protocol";
+import { createDesktop, type Desktop, type DesktopCompanions } from "./desktop";
 import { engineSocketPath, findRunningEngine, removeRuntimeInfo, writeRuntimeInfo } from "./discovery";
 // The host's own name: the value an engine that was not told one answers as. Taken from `lib/net` rather than
 // from `../transport/ws` so that "what is this hostname?" does not read as a transport question. Same
@@ -64,7 +66,7 @@ import { engineSocketPath, findRunningEngine, removeRuntimeInfo, writeRuntimeInf
 // both went with that guard on 2026-09-25 — see `doStart`'s note and `transport/ws.ts`'s header.
 import { DEFAULT_HOST_DOMAIN } from "../utils/net";
 import { createWsServer, type WsServer } from "../transport/ws";
-import { commandRegistry, type CommandRegistry } from "../kernel/registry";
+import { commandRegistry, type CommandRegistry, type SessionIdentity } from "../kernel/registry";
 import { registerAllEngineCommands, wireEngineEvents } from "../registerAll";
 import { startBlobSweeper } from "../workspace/blob/sweep";
 import { bus as defaultBus, type EngineEventBus } from "../kernel/eventBus";
@@ -99,7 +101,10 @@ import { findFreePortFrom, nextFreePortAbove, SCAN_LIMIT } from "./portAllocator
  * rather than a property of the command line an operator happened to use.
  */
 /** What `engine.shutdown` stops: the host running in this process, if any. */
-let activeShutdown: (() => void) | null = null;
+let activeShutdown: ((restart: boolean) => void) | null = null;
+
+/** Long enough for the `engine.stopping` event and the command's reply to leave before the endpoint closes. */
+const SHUTDOWN_FLUSH_MS = 100;
 
 export type HostTransport =
   | {
@@ -143,8 +148,14 @@ export interface WorkspaceHostOptions {
   registry?: CommandRegistry;
   /** Notified once per workspace whose ports had to be moved off the base. **Not** an error — see below. */
   onNotice?: (message: string, workspaceId?: string) => void;
-  /** Called after `engine.shutdown` has stopped the host. A standalone process exits here. */
-  onShutdownRequested?: () => void;
+  /**
+   * Called after `engine.shutdown` has stopped the host. A standalone process exits here, and when `restart`
+   * is set it starts its successor first.
+   */
+  onShutdownRequested?: (restart: boolean) => void;
+  /** A client opened a session on the socket endpoint, or that session ended. */
+  onSessionStart?: (identity: SessionIdentity) => void;
+  onSessionEnd?: (identity: SessionIdentity) => void;
 }
 
 export interface WorkspaceHostStatus {
@@ -214,6 +225,11 @@ export interface WorkspaceHost {
   start(): Promise<WorkspaceHostStatus>;
   /** Stop every listener and close the RPC endpoint. Idempotent. */
   stop(): Promise<void>;
+  /**
+   * What `engine.shutdown` does: tell every client (`engine.stopping`), stop, then hand over to
+   * `onShutdownRequested`. Returns at once; a second call while one is under way does nothing.
+   */
+  shutdown(restart?: boolean): void;
   status(): WorkspaceHostStatus;
   /**
    * The one forward proxy for this host, or `null` before `start()`.
@@ -294,6 +310,7 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
   let rpcAddress = "";
   let startPromise: Promise<WorkspaceHostStatus> | null = null;
   let stopped = false;
+  let shutdownPending = false;
 
   function status(): WorkspaceHostStatus {
     return {
@@ -371,14 +388,11 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
     if (opts.registry === undefined) registerAllEngineCommands(registry);
     unwireEvents = wireEngineEvents(bus);
     // A standalone engine is the one composition that owns its process, so it is the one that can stop it.
-    activeShutdown = () => {
-      void host.stop().finally(() => opts.onShutdownRequested?.());
-    };
+    activeShutdown = (restart) => host.shutdown(restart);
     if (!registry.isRegistered("engine.shutdown")) {
-      registry.register("engine.shutdown", () => {
+      registry.register("engine.shutdown", (params: { restart?: boolean } = {}) => {
         if (activeShutdown === null) throw new Error("no engine is running in this process");
-        // After the reply is written, so the client hears the acknowledgement before the endpoint closes.
-        setImmediate(activeShutdown);
+        activeShutdown(params.restart === true);
         return { ok: true };
       });
     }
@@ -690,7 +704,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
 
     if (transport.kind === "socket") {
       const path = transport.path ?? engineSocketPath(opts.dataDir);
-      rpc = await createSocketServer({ path, registry, bus, log, auth });
+      rpc = await createSocketServer({
+        path,
+        registry,
+        bus,
+        log,
+        auth,
+        onSessionStart: opts.onSessionStart,
+        onSessionEnd: opts.onSessionEnd,
+      });
       rpcAddress = path;
     } else if (transport.kind === "stdio") {
       rpc = createStdioServer({
@@ -862,6 +884,15 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
       log.close();
     },
 
+    shutdown(restart = false): void {
+      if (stopped || shutdownPending) return;
+      shutdownPending = true;
+      bus.emitTyped("engine.stopping", { restart });
+      setTimeout(() => {
+        void host.stop().finally(() => opts.onShutdownRequested?.(restart));
+      }, SHUTDOWN_FLUSH_MS);
+    },
+
     status,
     get forwardProxy(): ProxyServerInstance | null {
       return forwardProxy;
@@ -888,9 +919,29 @@ export function createWorkspaceHost(opts: WorkspaceHostOptions): WorkspaceHost {
  * will not die" is a worse failure than an early exit.
  */
 export async function runWorkspaceHost(
-  opts: WorkspaceHostOptions,
+  opts: StandaloneHostOptions,
 ): Promise<WorkspaceHost> {
-  const host = createWorkspaceHost({ onShutdownRequested: () => process.exit(0), ...opts });
+  let desktop: Desktop | null = null;
+  const host = createWorkspaceHost({
+    onShutdownRequested: (restart) => {
+      if (restart) startSuccessor();
+      process.exit(0);
+    },
+    onSessionStart: (identity) => desktop?.onSessionStart(identity),
+    onSessionEnd: (identity) => desktop?.onSessionEnd(identity),
+    ...opts,
+  });
+  // A stdio engine belongs to the process that spawned it, which is its own way in and out.
+  if (opts.desktop !== undefined && opts.transport?.kind !== "stdio") {
+    desktop = createDesktop({
+      companions: opts.desktop,
+      dataDir: opts.dataDir,
+      bus: opts.bus ?? defaultBus,
+      keepInTray: () => loadSettings().minimizeToTray,
+      shutdown: (restart) => host.shutdown(restart),
+      notice: opts.onNotice ?? ((message: string) => console.log(`[host] ${message}`)),
+    });
+  }
   let shuttingDown = false;
 
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -906,5 +957,21 @@ export async function runWorkspaceHost(
   process.on("SIGINT", () => shutdown("SIGINT"));
 
   await host.start();
+  desktop?.start();
   return host;
+}
+
+/** `runWorkspaceHost()`'s options: a host, plus what only a process of its own can have. */
+export interface StandaloneHostOptions extends WorkspaceHostOptions {
+  /** The tray helper and the interface it opens. Absent means no desktop presence: a container, a test. */
+  desktop?: DesktopCompanions;
+}
+
+/** Starts this engine again, detached, with the command line it was started with. For `engine.shutdown {restart}`. */
+function startSuccessor(): void {
+  spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+    detached: true,
+    stdio: ["ignore", "inherit", "inherit"],
+    windowsHide: true,
+  }).unref();
 }

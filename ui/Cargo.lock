@@ -606,6 +606,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bifurc-tray"
+version = "0.3.3"
+dependencies = [
+ "png 0.17.16",
+ "tray-icon",
+ "windows 0.54.0",
+]
+
+[[package]]
 name = "bifurc-ui"
 version = "0.3.3"
 dependencies = [
@@ -613,12 +622,8 @@ dependencies = [
  "bifurc-engine-client",
  "futures",
  "gpui-kit",
- "png 0.17.16",
- "raw-window-handle",
  "serde",
  "serde_json",
- "tray-icon",
- "windows 0.54.0",
 ]
 
 [[package]]

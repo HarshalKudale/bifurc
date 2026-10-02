@@ -57,6 +57,9 @@ const DOCUMENTED_FLAGS = [
   "--workspace",
   "--edge-port",
   "--transport",
+  "--tray",
+  "--ui",
+  "--no-tray",
   "--help",
 ];
 

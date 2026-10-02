@@ -42,20 +42,28 @@ export async function connect(dataDir: string, clientVersion: string): Promise<E
   };
 }
 
+/** The session for `dataDir`'s engine, starting one in the background first if none is running. */
+export async function connectOrStart(dataDir: string, clientVersion: string): Promise<EngineConnection> {
+  if (findRunningEngine(dataDir) === null) await startEngine(dataDir, "socket");
+  return connect(dataDir, clientVersion);
+}
+
 /**
  * Start a standalone engine for `dataDir` in the background and wait until it has published its address.
- * Its output goes to `<dataDir>/engine.log`.
+ * Its output goes to `<dataDir>/engine.log`. The engine is detached and shows its own tray icon, so it
+ * outlives this process and the terminal it ran in; `tray: false` starts it without one.
  */
 export async function startEngine(
   dataDir: string,
   transport: "socket" | "ws",
-  timeoutMs = 20_000,
+  { tray = true, timeoutMs = 20_000 }: { tray?: boolean; timeoutMs?: number } = {},
 ): Promise<EngineRuntimeInfo> {
   const hostCli = require.resolve("@bifurc/engine/runtime/hostCli");
   fs.mkdirSync(dataDir, { recursive: true });
   const logPath = path.join(dataDir, "engine.log");
   const log = fs.openSync(logPath, "a");
-  const child = spawn(process.execPath, [hostCli, "--data-dir", dataDir, "--transport", transport], {
+  const args = [hostCli, "--data-dir", dataDir, "--transport", transport, ...(tray ? [] : ["--no-tray"])];
+  const child = spawn(process.execPath, args, {
     detached: true,
     stdio: ["ignore", log, log],
     windowsHide: true,
@@ -92,6 +100,26 @@ export async function stopEngine(conn: EngineConnection, dataDir: string, timeou
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new CliError(`The engine (pid ${conn.info.pid}) acknowledged the shutdown but is still running.`);
+}
+
+/** Ask the engine to restart itself and wait until its successor has published its address. */
+export async function restartEngine(
+  conn: EngineConnection,
+  dataDir: string,
+  timeoutMs = 30_000,
+): Promise<EngineRuntimeInfo> {
+  await conn.request("engine.shutdown", { restart: true });
+  await conn.close().catch(() => undefined);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = findRunningEngine(dataDir);
+    if (info !== null && info.pid !== conn.info.pid) return info;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new CliError(
+    `The engine (pid ${conn.info.pid}) acknowledged the restart but no new engine appeared. ` +
+      `See ${path.join(dataDir, "engine.log")}.\n${tailOf(path.join(dataDir, "engine.log"))}`,
+  );
 }
 
 function tailOf(file: string, lines = 12): string {
