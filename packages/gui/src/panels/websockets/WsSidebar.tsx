@@ -3,7 +3,7 @@ import { Folder as FolderType, SavedWsConnection, WorkspaceGitState } from "@/ty
 import FolderTree, { FolderTreeItem } from "@/components/sidebar/FolderTree";
 import { SidebarHeader } from "@/components/ui";
 import { strings } from "@/lib/strings";
-import { entityRelPath } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 
 interface WsSidebarProps {
   connections: SavedWsConnection[];
@@ -34,6 +34,9 @@ export default function WsSidebar({
   entitySyncStatus, workspaceGitState, onPublishItem, onPublishPaths, onPublishFolder,
   onRestoreItem, setSidebarOpen
 }: WsSidebarProps) {
+  /** The engine's `sockets/<id>.json` (`plan/19` WI 5 item 3) — see `useEntityPaths`. */
+  const { relPathOf } = useEntityPaths();
+
   // Folder view items
   const folderViewItems: FolderTreeItem[] = useMemo(() =>
     connections.map((c): FolderTreeItem => ({
@@ -42,9 +45,9 @@ export default function WsSidebar({
       folderId: c.folderId ?? null,
       isActive: activeTab === c.id,
       isEnabled: true,
-      relPath: entityRelPath("sockets", c, folders),
+      relPath: relPathOf(c.id),
     })),
-    [connections, folders, activeTab],
+    [connections, relPathOf, activeTab],
   );
 
   return (

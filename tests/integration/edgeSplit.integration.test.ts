@@ -58,10 +58,10 @@ import {
   type UpstreamServer,
   type WorkspaceFixture,
 } from "./proxyHarness";
-import { createEdgeRouter } from "@bifurc/engine/proxy/edge";
-import { loadConfig } from "@bifurc/engine/store/config";
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
+import { createEdgeRouter } from "@bifurc/engine/reverseproxy/edge";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 
 /** Write one more mapping into the live workspace's tree — the per-request-resolution probe needs this. */
 function addMapping(ws: WorkspaceFixture, mapping: { id: string; domain: string; target: string }): void {

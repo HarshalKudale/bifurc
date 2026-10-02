@@ -9,13 +9,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // `DEFAULT_COMPANION_PORT` from here, and when those were added (2026-09-25) all ten cases in this file
 // died at `loadConfig()` with `No "DEFAULT_WEBHOOK_PORT" export is defined on the ... mock`. Spreading the
 // real module means a *future* constant cannot break this file the same way.
-vi.mock("@bifurc/engine/store/appSettings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@bifurc/engine/store/appSettings")>()),
+vi.mock("@bifurc/engine/workspace/appSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@bifurc/engine/workspace/appSettings")>()),
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));
 
-vi.mock("@bifurc/engine/store/workspaceFs", () => ({
+vi.mock("@bifurc/engine/workspace/workspaceFs", () => ({
   readAllEntities: vi.fn(() => []),
   readEntityStubs: vi.fn(() => []),
   readIndex: vi.fn(() => ({ folders: [], order: [] })),
@@ -42,8 +42,8 @@ vi.mock("@bifurc/engine/store/workspaceFs", () => ({
 
 // electron is mocked globally in tests/setup.ts
 
-import { loadSettings, saveSettings } from "@bifurc/engine/store/appSettings";
-import { readAllEntities, readIndex, autoSyncFsDirectories } from "@bifurc/engine/store/workspaceFs";
+import { loadSettings, saveSettings } from "@bifurc/engine/workspace/appSettings";
+import { readAllEntities, readIndex, autoSyncFsDirectories } from "@bifurc/engine/workspace/workspaceFs";
 
 const makeDefaultSettings = () => ({
   port: 80,
@@ -52,9 +52,9 @@ const makeDefaultSettings = () => ({
   activeWorkspaceId: "default",
 });
 
-describe("@bifurc/engine/store/config", () => {
-  let loadConfig: () => import("@bifurc/engine/store/config").AppConfig;
-  let saveConfig: (cfg: import("@bifurc/engine/store/config").AppConfig) => void;
+describe("@bifurc/engine/workspace/config", () => {
+  let loadConfig: () => import("@bifurc/engine/workspace/config").AppConfig;
+  let saveConfig: (cfg: import("@bifurc/engine/workspace/config").AppConfig) => void;
   let generateId: () => string;
 
   beforeEach(async () => {
@@ -65,7 +65,7 @@ describe("@bifurc/engine/store/config", () => {
     vi.mocked(readAllEntities).mockReturnValue([]);
     vi.mocked(readIndex).mockReturnValue({ folders: [], order: [] });
 
-    const mod = await import("@bifurc/engine/store/config");
+    const mod = await import("@bifurc/engine/workspace/config");
     loadConfig = mod.loadConfig;
     saveConfig = mod.saveConfig;
     generateId = mod.generateId;
@@ -133,8 +133,23 @@ describe("@bifurc/engine/store/config", () => {
         ...makeDefaultSettings(),
         workspaces: [{ id: "default", name: "W1", activeEnvironmentId: "env-99" }],
       });
+      vi.mocked(readAllEntities).mockImplementation((_ws, kind) =>
+        kind === "environments" ? ([{ id: "env-99" }, { id: "env-2" }] as any) : []);
       const cfg = loadConfig();
       expect(cfg.activeEnvironmentId).toBe("env-99");
+    });
+
+    it("selects the only non-global environment when none is chosen, and nothing when there are several", () => {
+      vi.mocked(loadSettings).mockReturnValue({
+        ...makeDefaultSettings(),
+        workspaces: [{ id: "default", name: "W1", activeEnvironmentId: null }],
+      });
+      vi.mocked(readAllEntities).mockImplementation((_ws, kind) =>
+        kind === "environments" ? ([{ id: "__global__" }, { id: "only" }] as any) : []);
+      expect(loadConfig().activeEnvironmentId).toBe("only");
+      vi.mocked(readAllEntities).mockImplementation((_ws, kind) =>
+        kind === "environments" ? ([{ id: "a" }, { id: "b" }] as any) : []);
+      expect(loadConfig().activeEnvironmentId).toBeNull();
     });
   });
 

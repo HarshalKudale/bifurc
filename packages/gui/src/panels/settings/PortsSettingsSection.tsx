@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { AppConfig } from "@/types";
+import { AppConfig, SettingsPatch } from "@/types";
 import { strings } from "@/lib/strings";
 import { Badge, Input, SectionCard, SectionLabel, SettingsRow } from "@/components/ui";
 
 interface PortsSettingsSectionProps {
   config: AppConfig;
-  onConfigChange: (cfg: AppConfig) => Promise<void>;
+  onSettingsChange: (patch: SettingsPatch) => Promise<void>;
 }
 
 /**
@@ -44,7 +44,7 @@ function usePortDraft(saved: number, commit: (port: number) => void) {
  * user to point their browser's proxy at the **edge** port, which is the reverse proxy's.
  *
  * **Only the companion needs a restart** (`plan/17` §1). The edge, the forward proxy and the webhook are
- * re-bound at runtime by `config.save` (item 7); the companion is not, so its row carries a badge rather than
+ * re-bound at runtime by `settings.update`; the companion is not, so its row carries a badge rather than
  * the app silently keeping the old port. The badge is **static** rather than appearing only once the value has
  * changed, because the port the *running* companion is on is not on the wire: `companionPort` appears in no
  * protocol command — `serverStatus` is the edge's — so "this differs from the running one" would be a claim
@@ -55,14 +55,13 @@ function usePortDraft(saved: number, commit: (port: number) => void) {
  * single build target — so nothing serves a separate browser bundle and there is no companion-adjacent port to
  * state. `plan/17` §1's pair (companion plus a GUI neighbour) is gone; the companion stands alone.
  */
-export default function PortsSettingsSection({ config, onConfigChange }: PortsSettingsSectionProps) {
-  const edge = usePortDraft(config.port, (port) => onConfigChange({ ...config, port }));
+export default function PortsSettingsSection({ config, onSettingsChange }: PortsSettingsSectionProps) {
+  const edge = usePortDraft(config.port, (port) => onSettingsChange({ port }));
   const forward = usePortDraft(config.forwardProxyPort, (port) =>
-    onConfigChange({ ...config, forwardProxyPort: port })
+    onSettingsChange({ forwardProxyPort: port })
   );
-  const webhook = usePortDraft(config.webhookPort, (port) => onConfigChange({ ...config, webhookPort: port }));
   const companion = usePortDraft(config.companionPort, (port) =>
-    onConfigChange({ ...config, companionPort: port })
+    onSettingsChange({ companionPort: port })
   );
 
   const portHint = config.port === 80 ? "example.localhost" : `example.localhost:${config.port}`;
@@ -110,13 +109,6 @@ export default function PortsSettingsSection({ config, onConfigChange }: PortsSe
           desc={strings.settings.forwardProxyPortDesc}
         >
           {renderPortInput(forward.draft, forward.setDraft, forward.onCommit, strings.settings.forwardProxyPort)}
-        </SettingsRow>
-
-        <SettingsRow
-          title={strings.settings.webhookServerPort}
-          desc={`${strings.settings.webhookServerPortDesc} ${strings.settings.currentlyLabel} localhost:${config.webhookPort}/bifurc/webhooks/`}
-        >
-          {renderPortInput(webhook.draft, webhook.setDraft, webhook.onCommit, strings.settings.webhookServerPort)}
         </SettingsRow>
 
         <SettingsRow

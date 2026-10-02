@@ -27,11 +27,11 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
-import { getExporter, getImporter } from "@bifurc/engine/importExport/registry";
+import { getExporter, getImporter } from "@bifurc/engine/importexport/registry";
 import { exportToFile, importFile, preflightFile, sourceFromFile } from "./importExportHarness";
-import { loadConfig } from "@bifurc/engine/store/config";
-import { readAllEntities } from "@bifurc/engine/store/workspaceFs";
-import type { EntityKind, CollisionStrategy } from "@bifurc/engine/importExport/types";
+import { loadConfig } from "@bifurc/engine/workspace/config";
+import { readAllEntities } from "@bifurc/engine/workspace/workspaceFs";
+import type { EntityKind, CollisionStrategy } from "@bifurc/engine/importexport/types";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 // `workspaceId` is set on every fixture because that is what the real CRUD
@@ -183,13 +183,6 @@ const CASES: Case[] = [
         seed: (ws) => seedEntities(ws, "sockets", [SOCKET]),
         pick: (e) => pick(e, ["name", "url", "headers"]),
         expected: { name: "RT Socket", url: "ws://api.rt/ws", headers: { "x-a": "1" } },
-    },
-    {
-        label: "webhooks (Bifurc JSON)",
-        kind: "webhooks", format: "webhooks-json", dir: "webhooks", id: WEBHOOK.id,
-        seed: (ws) => seedEntities(ws, "webhooks", [WEBHOOK]),
-        pick: (e) => pick(e, ["name", "urlSuffix"]),
-        expected: { name: "RT Hook", urlSuffix: "rt-hook" },
     },
 ];
 
@@ -428,7 +421,6 @@ describe("preflight", () => {
             ["proxyRules", "proxyrules-json"],
             ["environments", "environments-json"],
             ["websockets", "websockets-json"],
-            ["webhooks", "webhooks-json"],
         ] as Array<[EntityKind, string]>) {
             const pf = preflightFile(getImporter(kind, format)!, TEST_WS, file);
             expect(pf.ok, `${kind}/${format} accepted a foreign schema`).toBe(false);

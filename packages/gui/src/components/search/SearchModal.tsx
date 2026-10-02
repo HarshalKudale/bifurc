@@ -114,8 +114,7 @@ export default function SearchModal({
         item.entityType === "request" ||
         item.entityType === "mock" ||
         item.entityType === "rule" ||
-        item.entityType === "websocket" ||
-        item.entityType === "webhook"
+        item.entityType === "websocket"
       ) {
         onOpenEntity(item.panel, item.id, item.entityType, item.original);
       } else if (item.entityType === "service" && item.original?.port) {

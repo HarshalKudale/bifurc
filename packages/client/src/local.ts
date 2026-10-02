@@ -3,7 +3,7 @@
  *
  * ## Why this is an injected interface rather than an implementation
  *
- * Fourteen of the 132 keys are not RPC at all. They act on **the machine the client is running on**:
+ * Sixteen of the 136 keys are not RPC at all. They act on **the machine the client is running on**:
  * native file pickers, the OS trust store, Electron's `BrowserWindow`/`nativeTheme`, shell launch
  * state. On a remote engine they are meaningless at best and a hole at worst — `tlsInstallCA` mutates
  * the *client's* OS trust store, and routing it would let a server install a root certificate on a
@@ -202,7 +202,7 @@ export interface ClientLocal {
    * `queryLog({ limit: 0 })`, which is the workspace's *entire* `git log`, so cancelling after the
    * command still pays for the whole query — exactly the cost the shell file `syncHandlers.ts` (since
    * deleted by the P6 reduction) recorded P3 removing by making this channel dialog-first, and exactly what
-   * `packages/engine/src/fileOps/commands.ts` means by "the one egress artifact with no natural size
+   * `packages/engine/src/fileops/commands.ts` means by "the one egress artifact with no natural size
    * ceiling". This docblock named the method as cheap, `exportAudit` then took `artifactToFile`'s
    * artifact-first default on that basis, and the regression and the rationale sanctioning it arrived
    * together — which is why reading the call looked like reading the design. Corrected in the same

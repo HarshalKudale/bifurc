@@ -63,20 +63,21 @@ import {
     type TlsImportResult,
     type TlsRemoveCertResult,
 } from "@bifurc/protocol";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
-import { registerBlobCommands } from "@bifurc/engine/blob/commands";
-import { registerFileOpsCommands } from "@bifurc/engine/fileOps/commands";
-import { registerCertCommands } from "@bifurc/engine/proxy/certCommands";
-import { identifyCert } from "@bifurc/engine/proxy/certManager";
-import { blobRoot } from "@bifurc/engine/blob/store";
-import { appDataDir } from "@bifurc/engine/store/appSettings";
-import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/store/paths";
-import { initWorkspaceDir } from "@bifurc/engine/store/workspaceFs";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
+import { registerBlobCommands } from "@bifurc/engine/workspace/blob/commands";
+import { registerFileOpsCommands } from "@bifurc/engine/fileops/commands";
+import { registerCertCommands } from "@bifurc/engine/certificates/certCommands";
+import { registerRunnerCommands } from "@bifurc/engine/runner/runnerCommands";
+import { identifyCert } from "@bifurc/engine/certificates/certManager";
+import { blobRoot } from "@bifurc/engine/workspace/blob/store";
+import { appDataDir } from "@bifurc/engine/workspace/appSettings";
+import { resetDataRootForTests, setDataRoot } from "@bifurc/engine/workspace/paths";
+import { initWorkspaceDir } from "@bifurc/engine/workspace/workspaceFs";
 import {
     commitMutation,
     initWorkspaceRepo,
     setDataDirOverride,
-} from "@bifurc/engine/store/gitStore";
+} from "@bifurc/engine/workspace/gitStore";
 import { createWorkspace, TEST_WS, type WorkspaceFixture } from "./proxyHarness";
 
 const ctx: CommandContext = { bus: {} as CommandContext["bus"] };
@@ -107,6 +108,9 @@ function newRegistry(): CommandRegistry {
     registerBlobCommands(registry);
     registerFileOpsCommands(registry);
     registerCertCommands(registry);
+    // `runner.exportReport` lives here now — it moved out of `fileops/` in the layout cleanup, because
+    // it renders through `renderRunnerHtml`, which `runner.saveReport` in the same module already calls.
+    registerRunnerCommands(registry);
     return registry;
 }
 
@@ -177,17 +181,25 @@ function expectArtifactKeys(artifact: object, branch: "inline" | "blobId"): void
 // ── Registration ──────────────────────────────────────────────────────────────
 
 describe("registration", () => {
-    it("registers the six file-operation channels plus the three cert-lifecycle ones", () => {
+    it("registers the nine tls/runner/audit/capture commands, across the three modules that now own them", () => {
         const registry = newRegistry();
+        // The filter names the nine channels this suite is about rather than every `runner.*`: the
+        // harness now calls `registerRunnerCommands()` (for `runner.exportReport`), and that module
+        // also owns `runner.saveReport` / `saveConfig` / `loadConfig` / `getHistory` /
+        // `listFolderIds`, which this file does not exercise. An exact-equality assertion is the point
+        // — it pins the set — so the filter has to be as narrow as the claim.
         const owned = registry
             .list()
-            .filter((c) => /^(tls|runner|audit|capture)\./.test(c))
+            .filter((c) => /^(tls|audit|capture)\./.test(c) || c === "runner.exportReport")
             .sort();
 
         // `tls.generate` / `tls.certStatus` / `tls.removeCert` used to be registered in the shell
-        // (`src/ipc/handlers/tlsHandlers.ts`). P3 work item 5 moved them here, because they touch
-        // nothing but the engine's own data dir and a remote engine (P4) cannot serve them from the
-        // client half.
+        // (`src/ipc/handlers/tlsHandlers.ts`). P3 work item 5 moved them to `certCommands.ts`, because
+        // they touch nothing but the engine's own data dir and a remote engine (P4) cannot serve them
+        // from the client half. The **layout cleanup** then moved the other four out of `fileops/`:
+        // the `tls.*` trio to `certCommands.ts` (they resolve `caCertPath()`/`caKeyPath()`, that
+        // module's own constants) and `runner.exportReport` to `runnerCommands.ts`. The set is
+        // unchanged; only which module registers each name is.
         expect(owned).toEqual([
             "audit.export",
             "capture.shareJson",
@@ -201,23 +213,36 @@ describe("registration", () => {
         ]);
     });
 
-    it("keeps the split: fileOps owns the file-crossing three, certCommands owns the rest", () => {
-        // The boundary item 5 drew. `tls:installCA` is in neither — it is CLIENT-classified
-        // (`src/ipc/handlers/clientHandlers.ts`) and is not a registry command at all.
+    it("keeps the split: fileOps owns what is nobody else's, certCommands every `tls.*`, runner the report", () => {
+        // The boundary item 5 drew, redrawn by the layout cleanup. `tls:installCA` is in none of them —
+        // it is CLIENT-classified (`src/ipc/handlers/clientHandlers.ts`) and is not a registry command
+        // at all.
+        //
+        // **`fileops/` now owns two commands, and that is the point of the cleanup.** It held six, and
+        // its own docblock argued for that on the grounds that *"the boundary they implement is one
+        // thing"* — true, and irrelevant to placement. Three of the six resolved `caCertPath()` /
+        // `caKeyPath()`, which `certificates/certManager.ts` owns; one rendered through
+        // `renderRunnerHtml()`, which `runner/runnerCommands.ts` already called. Both were
+        // one-consumer dependencies, so the code belonged *with* its dependency, not next to the
+        // contract it happened to share.
         const fileOps = new CommandRegistry();
         registerFileOpsCommands(fileOps);
-        expect(fileOps.list().sort()).toEqual([
-            "audit.export",
-            "capture.shareJson",
-            "runner.exportReport",
-            "tls.exportCert",
-            "tls.importCert",
-            "tls.importKey",
-        ]);
+        expect(fileOps.list().sort()).toEqual(["audit.export", "capture.shareJson"]);
 
         const cert = new CommandRegistry();
         registerCertCommands(cert);
-        expect(cert.list().sort()).toEqual(["tls.certStatus", "tls.generate", "tls.removeCert"]);
+        expect(cert.list().sort()).toEqual([
+            "tls.certStatus",
+            "tls.exportCert",
+            "tls.generate",
+            "tls.importCert",
+            "tls.importKey",
+            "tls.removeCert",
+        ]);
+
+        const runner = new CommandRegistry();
+        registerRunnerCommands(runner);
+        expect(runner.list()).toContain("runner.exportReport");
     });
 
     it("refuses a double registration, so two implementations cannot compete for one wire name", () => {

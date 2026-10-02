@@ -1,21 +1,23 @@
 import * as net from "net";
 import { EngineError } from "@bifurc/protocol";
-import { isLoopbackHost } from "../lib/net";
-import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../store/config";
-import { readAllEntities } from "../store/workspaceFs";
-import { HOP_BY_HOP } from "./constants";
-import { sendHtml } from "./pages";
+import { isLoopbackHost } from "../utils/net";
+import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../workspace/config";
+import { readAllEntities } from "../workspace/workspaceFs";
+import { HOP_BY_HOP } from "../utils/http";
+import { stripCacheHeaders } from "../utils/cachePolicy";
+import { sendHtml } from "../utils/sendHtml";
 import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";
-import { loadCA, unloadCA, isCALoaded, clearCertCache } from "./tlsCert";
+import { loadCA, unloadCA, isCALoaded, clearCertCache } from "../certificates/tlsCert";
+import { caCertPath, caKeyPath } from "../certificates/certManager";
 import { interceptTls } from "./tlsIntercept";
 import { handleProxyRouting } from "./routingUtils";
-import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "./logEmitter";
-export { RequestLogEntry, logEmitter, emitLogChunk } from "./logEmitter";
+import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "../kernel/telemetry";
+export { RequestLogEntry, logEmitter, emitLogChunk } from "../kernel/telemetry";
 
 // `plan/15` work item 3 took this module's **reverse half**, and its imports went with it: the home
 // page and the mapping/mock dispatch — `buildHomePage`, `buildNotMappedPage`, `matchMock`, `serveMock`,
 // `isFullyMocked`, `mergeMockWithUpstream`, `resolveMockOnlyResponse`, `serveResolvedResponse`,
-// `proxyToUpstream`, `fetchUpstreamResponse` — are `proxy/edge.ts`'s now. The forward half never used
+// `proxyToUpstream`, `fetchUpstreamResponse` — are `reverseproxy/edge.ts`'s now. The forward half never used
 // any of them.
 //
 // `http` and `https` were **already** unused here before the split and are gone with the rest. Worth
@@ -24,7 +26,8 @@ export { RequestLogEntry, logEmitter, emitLogChunk } from "./logEmitter";
 // which of a dozen imports a module actually needs.
 
 
-import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./serverUtils";
+import { mkId } from "../utils/id";
+import { activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "../workspace/dispatch";
 
 /**
  * The proxy server, as an instance (P14 work item 2, step 2).
@@ -70,7 +73,7 @@ import { mkId, activeEnv, EnabledSets, loadEnabledSets, workspaceCfg } from "./s
  *
  * This module used to serve **two** jobs on one socket: the reverse proxy (a mapped `Host` forwarded to
  * its target) and the forward proxy (a browser configured to use this port). They are now two servers,
- * and only the forward half is here — `proxy/edge.ts` holds the reverse half, on a **host-level** port.
+ * and only the forward half is here — `reverseproxy/edge.ts` holds the reverse half, on a **host-level** port.
  *
  * The reason is §1's second problem: sharing one socket meant a mock could not be applied to
  * forward-proxied traffic without also affecting reverse-proxied traffic, which is exactly what the
@@ -250,11 +253,15 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     currentPort = port;
     lastError = null;
 
-    if (currentConfig.tlsEnabled && currentConfig.tlsCaCertPath && currentConfig.tlsCaKeyPath) {
+    // A CA made or imported through `tls.*` lives at the engine's own CA paths and is never written into the
+    // settings, so those paths are the fallback when the settings name none.
+    const tlsCertPath = currentConfig.tlsEnabled ? (currentConfig.tlsCaCertPath ?? caCertPath()) : null;
+    const tlsKeyPath = currentConfig.tlsEnabled ? (currentConfig.tlsCaKeyPath ?? caKeyPath()) : null;
+    if (currentConfig.tlsEnabled && tlsCertPath && tlsKeyPath) {
       // Idempotent for a shared CA: the paths come from the same config, so re-loading yields the same
       // PEMs. Not gated on `ownsCA` — a member of a host still needs *its* configured CA loaded before
       // it can intercept, it just does not get to unload it.
-      loadCA(currentConfig.tlsCaCertPath, currentConfig.tlsCaKeyPath);
+      loadCA(tlsCertPath, tlsKeyPath);
     } else if (ownsCA) {
       // Only an owner may clear the CA for a config that has TLS off. A non-owner seeing TLS off means
       // *its own* workspace is not intercepting; unloading would silently break a sibling that is.
@@ -375,7 +382,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
    * ## This is the **forward** half — `plan/15` work item 3
    *
    * The reverse half is no longer here. A request whose `Host` is a mapped domain, and the home page
-   * that listed those mappings, are served by `proxy/edge.ts` on the host-level **edge** port. What
+   * that listed those mappings, are served by `reverseproxy/edge.ts` on the host-level **edge** port. What
    * remains is what a browser sends when it has been *configured to use this port as its proxy*: an
    * absolute-form target for `http://`, and `CONNECT` for the https it wants tunnelled — the latter
    * handled by the connection handler, not here.
@@ -402,6 +409,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       const key = line.slice(0, idx).trim().toLowerCase();
       if (!HOP_BY_HOP.has(key)) headers[key] = line.slice(idx + 1).trim();
     }
+    stripCacheHeaders(headers);
 
     const hostHeader = (headers["host"] ?? "").toLowerCase();
     const host = hostHeader.split(":")[0];
@@ -420,6 +428,8 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       id, ts: t0, method, url, host,
       reqHeaders: headers,
       reqBody: reqBodyB64,
+      workspaceId: cfg.activeWorkspaceId,
+      origin: "forward",
     };
 
     // ── the forward-proxy path — the only HTTP path this port serves ─────────
@@ -486,6 +496,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       const key = line.slice(0, idx).trim().toLowerCase();
       if (!HOP_BY_HOP.has(key)) headers[key] = line.slice(idx + 1).trim();
     }
+    stripCacheHeaders(headers);
 
     const reqPath = rawTarget || "/";
     const portSuffix = port === 443 ? "" : `:${port}`;
@@ -496,6 +507,8 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       id, ts: t0, method, url, host: hostname,
       reqHeaders: headers,
       reqBody: reqBodyB64,
+      workspaceId: cfg.activeWorkspaceId,
+      origin: "forward",
     };
 
     // Proxy routing (mocks, rules)
@@ -536,11 +549,17 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
 // receiver took. Lazy rather than eager so importing this module has no side effect.
 //
 // **Not "removed in WI 7", which is what this header used to say.** WI 7's desktop half landed 2026-09-22
-// and kept the facade *deliberately*: 23 engine modules import `reloadConfig()` from here (17 ×
-// `importExport/importers/*`, plus `startup.ts`, `store/{configCommands,coreCommands,entityCrudCommands}.ts`,
-// `sync/syncCommands.ts`, `transport/legacyCompanion.ts`), and the facade is what lets that keep meaning
-// "the active workspace's server, wherever it lives". What changed is that it can now be **bound** to an
-// instance someone else owns — see `bindProxyInstance()`.
+// and kept the facade *deliberately*, and `Engine_Module_Plan.md` §4.1 later confirmed the reason: the facade
+// is what lets a call mean "the active workspace's server, wherever it lives". What changed is that it can now
+// be **bound** to an instance someone else owns — see `bindProxyInstance()`.
+//
+// **The fan-out no longer lands here.** This header used to enumerate the importers of `reloadConfig()`
+// (17 × `importExport/importers/*`, `startup.ts`, `store/{configCommands,coreCommands,entityCrudCommands}.ts`,
+// `sync/syncCommands.ts`, and a `transport/legacyCompanion.ts` that has since been deleted). Those 29 call
+// sites across 21 files now go through `runtime/instances.ts`'s `notifyConfigChanged()`, and **no module
+// outside `runtime/` imports this function for the fan-out any more** (`Engine_Module_Plan.md` §10 criterion 4).
+// `reloadConfig` remains a legitimate *proxy* API — `tests/integration/facadeBinding.integration.test.ts`
+// exercises it as one, and `runtime/instances.ts` calls it — but it is no longer the engine's config seam.
 
 let defaultInstance: ProxyServerInstance | null = null;
 
@@ -561,9 +580,13 @@ let defaultInstance: ProxyServerInstance | null = null;
  * it. `src/main.ts` binds its one `WorkspaceRuntime`'s proxy here; `createEngine()` and every test bind
  * nothing and get the lazy default, unchanged.
  *
- * **Why this module does not import `runtime/`:** `runtimeRegistry.ts`'s header records that its graph must
- * stay acyclic, and `runtime/workspaceRuntime.ts` imports *this* module as a value. A value import in the
- * other direction would close that loop. A binding is a parameter, not a lookup, so there is no edge at all.
+ * **Why this module does not import `runtime/`:** `runtime/host.ts` imports *this* module as a value (it is
+ * the composition root, and it binds each listener here). A value import in the other direction would close
+ * that loop, so a binding — a parameter — is the only edge this module may have to the runtime layer.
+ *
+ * (This note used to cite `runtimeRegistry.ts` and `runtime/workspaceRuntime.ts`. **Both are deleted** —
+ * `runtime/host.ts` replaced them, as its own header records. The acyclicity requirement is unchanged; only
+ * the files satisfying it moved.)
  */
 let boundInstance: ProxyServerInstance | null = null;
 
@@ -624,5 +647,10 @@ export function reloadConfig(): void {
 }
 
 // ── Replay a captured request, return {status, headers, body (base64)} ────
+//
+// Re-exported from `utils/replay.ts`, where the implementation moved in engine-layout phase 7: both
+// this module's routing path and the `request.replay` command (`rest/commands.ts`) need it, and §5.1
+// forbids two feature modules importing each other, so the shared behaviour was extracted down.
+// `routingUtils.ts` still imports it from here, unchanged.
 
-export { replayRequest } from "./serverReplay";
+export { replayRequest } from "../utils/replay";

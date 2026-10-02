@@ -30,7 +30,7 @@ export type { EntitySyncStatus } from "@/types";
 export type FolderStatus = "enabled" | "mixed" | "disabled";
 
 export interface FolderTreeProps {
-  kind: "mock" | "request" | "ws" | "webhook" | "rule" | "graphqlRequest" | "soapRequest" | "grpcRequest" | "runner";
+  kind: "mock" | "request" | "ws" | "rule" | "graphqlRequest" | "soapRequest" | "grpcRequest" | "runner";
   folders: FolderType[];
   items: FolderTreeItem[];
   onOpenItem(id: string): void;

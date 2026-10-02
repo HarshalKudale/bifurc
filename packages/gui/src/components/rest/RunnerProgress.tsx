@@ -1,7 +1,7 @@
 import React from "react";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { strings } from "@/lib/strings";
-import { CollectionRunReport, RunnerRequestResult } from "@/lib/collectionRunner";
+import { CollectionRunReport, RunnerRequestResult } from "@/types";
 
 interface RunnerProgressProps {
   running: boolean;

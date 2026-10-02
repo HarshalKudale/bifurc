@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { AppConfig, Environment, HealthBarService } from "@/types";
+import { AppConfig, HealthBarService } from "@/types";
 import PanelHeader from "@/components/layout/PanelHeader";
-import { resolveVars } from "@/lib/resolveVars";
 import { Button, EmptyState } from "@/components/ui";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 import { useDebouncedAutosave } from "@/hooks/useDebouncedAutosave";
@@ -33,7 +32,6 @@ const defaultState: ServiceState = { status: "idle", statusCode: null, body: nul
 export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitState, onPublish, onRevert, onHistoryOpen, onAfterSave }: Props) {
   const wsId = config.activeWorkspaceId;
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
-  const activeEnv: Environment | null = (config.environments ?? []).find((e) => e.id === config.activeEnvironmentId) ?? null;
 
   const [services, setServices] = useState<HealthBarService[]>([]);
   const [checkStates, setCheckStates] = useState<Record<string, ServiceState>>({});
@@ -45,6 +43,56 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
   const inflightRef = useRef<Set<string>>(new Set());
   /** JSON of what is already on disk, so an autosave that changes nothing writes nothing. */
   const persistedRef = useRef<string>("");
+
+  /**
+   * The resolved url of each service — what a check actually probes, and what the card shows beneath the
+   * raw url when the two differ.
+   *
+   * **Resolution is the engine's** (`plan/19` D23, WI 5 item 4). Until 2026-09-30 this panel resolved it
+   * here, with `resolveVars(svc.url, activeEnv)` — a second resolver in the renderer, which is the defect
+   * `tests/gui/boundary.test.ts` exists to catch. `window.api.envResolveText` asks the engine instead, and
+   * the engine merges `__global__` under the active environment before resolving (`plan/19` §8 trap 2 —
+   * resolving against the active environment *alone* resolves a shadowed key differently).
+   *
+   * Held in state rather than computed per render, because it is asynchronous now. `loadServices` resolves
+   * **before** `loading` clears, which is what keeps the first painted card from showing a raw
+   * `{{host}}/health`: no cards render while `loading` is true.
+   */
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
+
+  /**
+   * The same map as a **ref**, and this is the copy the checks read.
+   *
+   * `checkService` is reached from closures built before the last resolution landed — the mount effect's
+   * `loadServices().then(...)` is the clear case, and its deps are `[wsId]`, so it never re-reads state.
+   * Reading the ref is what makes that check probe the engine's resolved url instead of the raw
+   * `{{host}}/…`, which is the entire point of resolving at all. State stays the render path.
+   */
+  const resolvedUrlsRef = useRef<Record<string, string>>({});
+
+  /** Resolve one url through the engine, recording it in both copies. */
+  const resolveOne = useCallback(async (id: string, url: string) => {
+    const { text } = await window.api.envResolveText(url, wsId);
+    resolvedUrlsRef.current = { ...resolvedUrlsRef.current, [id]: text };
+    setResolvedUrls(prev => ({ ...prev, [id]: text }));
+  }, [wsId]);
+
+  /** Resolve every service's url — one round trip each, in parallel. */
+  const resolveUrls = useCallback(async (svcs: HealthBarService[]) => {
+    await Promise.all(svcs.map((s) => resolveOne(s.id, s.url)));
+  }, [resolveOne]);
+
+  /**
+   * The active environment is an **input** to resolution, so switching it re-resolves every url. Keyed on
+   * the environment id alone: `services` is read through a ref, because a service edit resolves its own
+   * url and must not re-resolve the whole list (nor race the edit).
+   */
+  const servicesRef = useRef<HealthBarService[]>([]);
+  useEffect(() => { servicesRef.current = services; }, [services]);
+  useEffect(() => {
+    if (servicesRef.current.length) void resolveUrls(servicesRef.current);
+  }, [config.activeEnvironmentId, resolveUrls]);
+
 
   /**
    * The singleton file's git view.
@@ -63,9 +111,13 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
       const svcs = await window.api.healthbarGetServices(wsId);
       persistedRef.current = JSON.stringify(svcs);
       setServices(svcs);
+      // Resolve **before** `loading` clears, so the first painted card already shows the url a check will
+      // probe rather than a raw `{{host}}/…`. The panel renders no cards while `loading` is true, which is
+      // what makes this a load step instead of a visible flash.
+      await resolveUrls(svcs);
       return svcs;
     } finally { setLoading(false); }
-  }, [wsId]);
+  }, [wsId, resolveUrls]);
 
   const persistServices = useCallback(async (svcs: HealthBarService[]) => {
     const json = JSON.stringify(svcs);
@@ -81,7 +133,9 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
   const checkService = useCallback(async (svc: HealthBarService) => {
     if (inflightRef.current.has(svc.id)) return;
     inflightRef.current.add(svc.id);
-    const resolvedUrl = resolveVars(svc.url, activeEnv);
+    // The engine's answer, read from the **ref** — see `resolvedUrlsRef`. `svc.url` is the fallback for a
+    // service whose resolution has not landed; probing a raw `{{host}}/…` is the failure it bounds.
+    const resolvedUrl = resolvedUrlsRef.current[svc.id] ?? svc.url;
     setCheckStates(prev => ({
       ...prev,
       [svc.id]: { ...(prev[svc.id] ?? defaultState), status: "checking" }
@@ -105,7 +159,7 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
         }
       }));
     } finally { inflightRef.current.delete(svc.id); }
-  }, [activeEnv]);
+  }, []);
 
   const checkAll = useCallback((svcs: HealthBarService[]) => {
     svcs.forEach(checkService);
@@ -124,7 +178,10 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
   /** Name / URL typed straight on a card. The debounce below is what writes it. */
   const handleEditField = useCallback((id: string, patch: Partial<HealthBarService>) => {
     setServices(prev => prev.map(s => (s.id === id ? { ...s, ...patch } : s)));
-  }, []);
+    // A url edit changes what a check will probe, so that one resolution is refreshed. Fire-and-forget:
+    // the card falls back to the raw url until it lands, and the debounced autosave does not wait for it.
+    if (patch.url !== undefined) void resolveOne(id, patch.url);
+  }, [resolveOne]);
 
   /**
    * Autosave. Gated on `!loading` so the services arriving from disk arm the hook silently instead
@@ -143,6 +200,9 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
     setAddModalOpen(false);
     setEditingServiceId(null);
     await persistServices(updated);
+    // Resolve **before** checking: `checkService` reads `resolvedUrlsRef`, so awaiting the resolution is
+    // what makes the immediate first check probe the engine's url rather than the raw one.
+    await resolveOne(created.id, url);
     checkService(created);
   };
 
@@ -235,7 +295,7 @@ export default function HealthBarPanel({ config, entitySyncStatus, workspaceGitS
           {!loading && services.length > 0 && (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {services.map(svc => (
-                <ServiceCard key={svc.id} service={svc} state={checkStates[svc.id] ?? defaultState} resolvedUrl={resolveVars(svc.url, activeEnv)}
+                <ServiceCard key={svc.id} service={svc} state={checkStates[svc.id] ?? defaultState} resolvedUrl={resolvedUrls[svc.id] ?? svc.url}
                   onRefresh={handleRefresh} onToggleAutoRefresh={handleToggleAutoRefresh} onDelete={handleDelete} onClick={handleCardClick}
                   onEdit={handleOpenEdit} onEditField={handleEditField} />
               ))}

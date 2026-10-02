@@ -75,15 +75,17 @@ import type { Readable, Writable } from "node:stream";
 import {
   EngineError,
   EVENT_NAMES,
+  HELLO_ACTION,
   makeError,
+  PROTOCOL_VERSION,
   SubscribeRequestSchema,
   UnsubscribeRequestSchema,
   type CommandAction,
   type EventName,
   type RpcResponse,
 } from "@bifurc/protocol";
-import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEvents } from "../eventBus";
-import type { CommandContext, CommandRegistry } from "../commands/registry";
+import { bus as defaultBus, ENGINE_EVENT_NAMES, type EngineEvents } from "../kernel/eventBus";
+import type { CommandContext, CommandRegistry } from "../kernel/registry";
 import { createFrameDecoder, encodeFrame, frameFailure, type FrameDecoder } from "./framing";
 import { createEventPump } from "./eventPump";
 import {
@@ -488,6 +490,8 @@ export function spawnStdioEngine(opts: StdioSpawnOptions): Transport {
 // ── the engine side ──────────────────────────────────────────────────────────
 
 export interface StdioServerOptions {
+  /** Reported in the `hello` response. */
+  engineVersion?: string;
   /** Frames arrive here — the engine's stdin. */
   input: Readable;
   /** Frames are written here — the engine's stdout. */
@@ -703,6 +707,22 @@ export function createStdioServer(opts: StdioServerOptions): StdioServer {
     }
     if (action === "unsubscribe") {
       handleUnsubscribe(id, record.payload);
+      return;
+    }
+    // The same session opener the socket and WebSocket servers answer, so one client works over any of the
+    // three. A stdio peer is the process that spawned the engine, so there is nothing further to check.
+    if (action === HELLO_ACTION) {
+      reply({
+        id,
+        ok: true,
+        data: {
+          protocolVersion: PROTOCOL_VERSION,
+          engineVersion: opts.engineVersion ?? PROTOCOL_VERSION,
+          capabilities: [],
+          sessionId: randomUUID(),
+          hostDomain: "localhost",
+        },
+      });
       return;
     }
 

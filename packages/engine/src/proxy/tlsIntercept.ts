@@ -1,6 +1,6 @@
 import * as net from "net";
 import * as tls from "tls";
-import { generateHostCert } from "./tlsCert";
+import { generateHostCert } from "../certificates/tlsCert";
 
 export type DecryptedRequestCallback = (
   socket: tls.TLSSocket,

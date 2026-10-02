@@ -30,6 +30,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HOST_USAGE, parseHostArgs } from "../../src/runtime/hostArgs";
+import { platformDefaultDataDir } from "../../src/workspace/paths";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -55,6 +56,10 @@ const DOCUMENTED_FLAGS = [
   "--ws-port",
   "--workspace",
   "--edge-port",
+  "--transport",
+  "--tray",
+  "--ui",
+  "--no-tray",
   "--help",
 ];
 
@@ -69,6 +74,7 @@ describe("parseHostArgs", () => {
       kind: "args",
       args: {
         dataDir: "/data",
+        transport: "socket",
         rpcSocket: undefined,
         wsPort: undefined,
         workspaceIds: undefined,
@@ -99,19 +105,25 @@ describe("parseHostArgs", () => {
     if (res.kind === "args") expect(res.args.dataDir).toBe("/from-flag");
   });
 
-  it("fails when there is no data root at all, and says so", () => {
+  it("defaults the data root to the desktop app's, so a bare `bifurc-engine` serves what the app shows", () => {
     vi.stubEnv("BIFURC_DATA_DIR", "");
-    // `--data-dir` is the **only** required flag, since `--domain` was removed on 2026-09-24, so an empty
-    // command line reaches exactly one check — this one. (The case below it used to pin the *order* of two
-    // required-field checks; with one required field there is no order left to pin.)
     const res = parseHostArgs([]);
-    expect(res.kind).toBe("error");
-    // The message must name the missing thing AND carry the usage text — an operator reading a container
-    // log has only this line to work from.
-    if (res.kind === "error") {
-      expect(res.message).toMatch(/--data-dir is required/);
-      expect(res.message).toContain("Usage:");
-    }
+    expect(res.kind).toBe("args");
+    if (res.kind === "args") expect(res.args.dataDir).toBe(platformDefaultDataDir());
+  });
+
+  it("selects the transport with --transport, defaulting to socket", () => {
+    const pick = (argv: string[]) => {
+      const res = parseHostArgs(["--data-dir", "/d", ...argv]);
+      return res.kind === "args" ? res.args.transport : res.kind === "error" ? res.message : res.kind;
+    };
+    expect(pick([])).toBe("socket");
+    expect(pick(["--transport", "stdio"])).toBe("stdio");
+    expect(pick(["--transport", "ws"])).toBe("ws");
+    expect(pick(["--ws-port", "0"])).toBe("ws");
+    expect(pick(["--transport", "pipe"])).toMatch(/--transport must be socket, ws or stdio/);
+    expect(pick(["--transport", "stdio", "--ws-port", "0"])).toMatch(/takes no --rpc-socket or --ws-port/);
+    expect(pick(["--transport", "ws", "--rpc-socket", "/s"])).toMatch(/cannot be combined with --rpc-socket/);
   });
 
   it("REFUSES --domain, which was removed rather than left inert", () => {
@@ -388,7 +400,7 @@ describe("parseHostArgs — the flags removed on 2026-09-25", () => {
  * it chooses which port one loopback listener uses, which is a question an operator whose machine already has
  * something on 80 still has to answer.
  *
- * What is *not* asserted here is the bind policy itself. That belongs to `proxy/edge.ts`, which owns it, and
+ * What is *not* asserted here is the bind policy itself. That belongs to `reverseproxy/edge.ts`, which owns it, and
  * `tests/proxy/edge.test.ts` is where it is pinned — a copy of the rule here would be a copy that can drift.
  */
 describe("parseHostArgs — --edge-port (plan/15 work item 3)", () => {

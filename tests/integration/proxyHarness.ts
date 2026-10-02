@@ -23,7 +23,7 @@
  * mappings and the 404 for an unmapped `*.localhost`) and the forward half (a browser configured to use
  * the port as its proxy). **WI 3 split them, and the split is the port model, not a refactor:**
  *
- *   - the **edge router** (`proxy/edge.ts`) is **host-level** and owns the reverse half. It reads which
+ *   - the **edge router** (`reverseproxy/edge.ts`) is **host-level** and owns the reverse half. It reads which
  *     workspace is active **per request** through `resolveConfig`.
  *   - the **forward proxy** (`proxy/server.ts`) is **per workspace** and owns absolute-form traffic,
  *     mocks, and rules on the absolute-form path.
@@ -48,14 +48,14 @@ import * as os from "os";
 import * as path from "path";
 import * as net from "net";
 import * as http from "http";
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import {
   createProxyServer,
   bindProxyInstance,
   type ProxyServerInstance,
 } from "@bifurc/engine/proxy/server";
-import { createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/proxy/edge";
+import { createEdgeRouter, type EdgeRouterInstance } from "@bifurc/engine/reverseproxy/edge";
 
 export const TEST_WS = "ws-test";
 export const TEST_WS_NAME = "Integration Workspace";
@@ -329,7 +329,7 @@ export function proxyRequest(
 }
 
 /**
- * Send a raw HTTP request **to the edge router** (`proxy/edge.ts`) — the reverse half.
+ * Send a raw HTTP request **to the edge router** (`reverseproxy/edge.ts`) — the reverse half.
  *
  * Use this for a mapped `Host` (forwarded to its mapping's target), the home page, and the 404 that an
  * unmapped `*.localhost` gets. `host` is the whole routing input: the edge looks the `Host` up in the

@@ -11,7 +11,7 @@
  * 2. **`lastSeq` outside the retained window is a resync, never a silent partial replay.**
  */
 import { describe, expect, it } from "vitest";
-import { EngineEventBus } from "../../src/eventBus";
+import { EngineEventBus } from "../../src/kernel/eventBus";
 import { EventLog } from "../../src/transport/eventLog";
 import type { EngineEvent } from "../../src/transport/types";
 

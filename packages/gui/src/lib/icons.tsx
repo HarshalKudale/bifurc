@@ -61,7 +61,6 @@ export {
   ArrowDown,     // pull
   ArrowRight,    // navigate / map
   Activity,      // health bar nav
-  Webhook,       // webhooks nav/panel
   User,          // account nav
   Network,       // gRPC nav
   FileCode,      // SOAP nav

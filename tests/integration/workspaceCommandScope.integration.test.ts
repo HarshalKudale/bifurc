@@ -44,10 +44,10 @@ import * as os from "os";
 import * as path from "path";
 import * as net from "net";
 
-import { setDataRootOverride } from "@bifurc/engine/store/workspaceFs";
-import { setSettingsPathOverride } from "@bifurc/engine/store/appSettings";
+import { setDataRootOverride } from "@bifurc/engine/workspace/workspaceFs";
+import { setSettingsPathOverride } from "@bifurc/engine/workspace/appSettings";
 import { createWorkspaceHost, type WorkspaceHost } from "@bifurc/engine/runtime/host";
-import { CommandRegistry, type CommandContext } from "@bifurc/engine/commands/registry";
+import { CommandRegistry, type CommandContext } from "@bifurc/engine/kernel/registry";
 import { registerAllEngineCommands } from "@bifurc/engine/registerAll";
 
 const WS_A = "scope-ws-a";
@@ -102,8 +102,6 @@ describe("plan/17 — the server commands act on the host's one listener", () =>
   let forwardProxyPort: number;
   /** The port the host's **edge** is configured for — deliberately a different one. */
   let edgePort: number;
-  /** The webhook setting, so "started on the configured port" is a real assertion rather than a default. */
-  let webhookPort: number;
   let host: WorkspaceHost;
   let registry: CommandRegistry;
 
@@ -117,7 +115,6 @@ describe("plan/17 — the server commands act on the host's one listener", () =>
     // a fixed number happened to be taken on the machine running the suite.
     edgePort = await freePort();
     forwardProxyPort = await freePort();
-    webhookPort = await freePort();
 
     fs.writeFileSync(
       path.join(root, "app.json"),
@@ -128,7 +125,6 @@ describe("plan/17 — the server commands act on the host's one listener", () =>
           // port, not the edge's" an assertion rather than a coincidence.
           port: edgePort,
           forwardProxyPort,
-          webhookPort,
           companionPort: 4747,
           minimizeToTray: true,
           tlsEnabled: false,
@@ -271,40 +267,5 @@ describe("plan/17 — the server commands act on the host's one listener", () =>
 
   // ── the webhook: host-level, and off until the user starts it ────────────────
 
-  it("the host does NOT start the webhook — plan/17 §1's off-by-default rule", () => {
-    const status = registry.invoke("webhookServer.status", {}, ctx) as {
-      running: boolean;
-      error: string | null;
-    };
 
-    // `plan/17` §1: the webhook *"is a **feature, not infrastructure**: it is **off by default**, the user
-    // starts it, and the user owns the port."* A host that opened it at boot would add a listening port this
-    // product has never had.
-    expect(status.running).toBe(false);
-    expect(status.error).toBeNull();
-    expect(host.status().webhookPort).toBeNull();
-  });
-
-  it("webhookServer.start binds the host's receiver on the configured port", async () => {
-    expect((registry.invoke("webhookServer.start", {}, ctx) as { ok: boolean }).ok).toBe(true);
-
-    await waitUntil(() => host.webhook!.isRunning());
-    expect(host.webhook!.isRunning()).toBe(true);
-    expect(host.webhook!.getPort()).toBe(webhookPort);
-    expect(host.status().webhookPort).toBe(webhookPort);
-
-    const status = registry.invoke("webhookServer.status", { workspaceId: WS_A }, ctx) as {
-      running: boolean;
-      port: number;
-      workspaceId?: string;
-    };
-    expect(status.running).toBe(true);
-    expect(status.port).toBe(webhookPort);
-    // The same echo rule as `server.status`, and asserted here because the two commands must agree about when
-    // the key is present — which is why `commands/echoWorkspace.ts` is one function rather than two copies.
-    expect(status.workspaceId).toBe(WS_A);
-
-    expect((registry.invoke("webhookServer.stop", {}, ctx) as { ok: boolean }).ok).toBe(true);
-    expect(host.webhook!.isRunning()).toBe(false);
-  });
 });

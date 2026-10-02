@@ -1,82 +1,116 @@
 import { useCallback } from "react";
-import { resolveVars, resolveHeaders } from "@/lib/resolveVars";
 import { textToB64, b64ToText, tryFormat, rowsToHeaders } from "@/lib/utils";
-import { runPreScript, runPostScript } from "@/lib/scriptRunner";
-import { runTestScript } from "@/lib/testRunner";
 import { contentTypeToMode, isBinaryContentType } from "@/lib/bodyUtils";
 import { strings } from "@/lib/strings";
 import { TabState, TabType } from "./restTabReducer";
-import { ReplayResult, Environment, MockRule } from "@/types";
+import { MockRule, RequestSendResult } from "@/types";
 
-export function useRestActions(state: TabState, dispatch: any, activeEnv: Environment | null, tabType: TabType, onCreateMock?: (mock: Partial<MockRule>) => void) {
+/**
+ * `savedEntityId` is the saved `requests` entity to run **by id**, or `null` to send what the editor
+ * holds — computed by the caller (`RestTab`) through `canSendByEntityId`, which owns the reasoning.
+ * Taking the *decision* rather than its inputs keeps this hook free of the tab-state questions the gate
+ * asks and leaves exactly one place where "is the id form equivalent?" is answered.
+ *
+ * ## What this hook no longer does, and why that is the point
+ *
+ * Until 2026-09-30 it **was** the request pipeline — `resolveVars` → `runPreScript` →
+ * `window.api.replayRequest` → `runPostScript` → `runTestScript` — and `collectionRunner.ts:94` held a
+ * second copy of the same five steps (`plan/19` §1 rows 3 and 4). D24 makes that one engine function, and
+ * `window.api.requestSend` now runs it: this hook assembles the request **unresolved**, sends it, and
+ * dispatches what came back.
+ *
+ * `plan/19` §8 trap 1 is why both halves moved together rather than in two steps — resolving in both
+ * places, even briefly, double-resolves a value that itself contains `{{…}}`. So the tokens in
+ * `state.url` / `state.reqBody` now reach the engine **verbatim**, and so do the three scripts. That is the
+ * whole change: the renderer stopped knowing what `{{host}}` is.
+ */
+export function useRestActions(
+  state: TabState,
+  dispatch: any,
+  tabType: TabType,
+  onCreateMock?: (mock: Partial<MockRule>) => void,
+  savedEntityId?: string | null,
+) {
   const handleSend = useCallback(async () => {
     if (!state.url.trim()) return;
     dispatch({ type: "SEND_START" });
     try {
-      const resolvedUrl = resolveVars(state.url.trim(), activeEnv);
-      const resolvedHdr = resolveHeaders(rowsToHeaders(state.reqHeaders), activeEnv);
-      const resolvedBod = resolveVars(state.reqBody, activeEnv);
+      /**
+       * **The one branch, and it is now only about *where the request comes from*.** The id form lets the
+       * engine read the stored entity; the inline form carries what the editor holds, for a draft or for a
+       * tab with unsaved edits. Both run the same pipeline — that is D24 — so there is no second
+       * preparation path that has to be argued to stay in step with the first.
+       */
+      const res: RequestSendResult = savedEntityId
+        ? await window.api.requestSend({ id: savedEntityId })
+        : await window.api.requestSend({
+            request: {
+              method: state.method,
+              url: state.url.trim(),
+              headers: rowsToHeaders(state.reqHeaders),
+              body: state.reqBody,
+            },
+            scripts: {
+              pre: state.preScript,
+              post: state.postScript,
+              test: state.testScript,
+            },
+          });
 
-      let finalUrl = resolvedUrl;
-      let finalHeaders = resolvedHdr;
-      let finalBody = resolvedBod;
-      let scriptEnv = activeEnv;
-
-      if (state.preScript.trim()) {
-        const pre = await runPreScript(state.preScript, { method: state.method, url: finalUrl, headers: finalHeaders, body: finalBody }, activeEnv);
-        if (pre.error) dispatch({ type: "SET_FIELD", field: "scriptErr", value: strings.editor.preScriptError.replace("{error}", pre.error) });
-        finalUrl = pre.req.url;
-        finalHeaders = pre.req.headers;
-        finalBody = pre.req.body;
-        if (activeEnv && Object.keys(pre.envVars).length > 0) {
-          scriptEnv = { ...activeEnv, variables: Object.entries(pre.envVars).map(([key, value]) => ({ id: key, key, value })) };
-        }
-      }
-
-      const sendStart = Date.now();
-      const res: ReplayResult = await window.api.replayRequest(state.method, finalUrl, finalHeaders, textToB64(finalBody));
-      const responseTime = Date.now() - sendStart;
       const ct = res.headers["content-type"];
       const resMode = ct ? contentTypeToMode(ct) : state.resMode;
-      dispatch({ type: "SEND_SUCCESS", result: res, resMode, durationMs: responseTime });
+      dispatch({ type: "SEND_SUCCESS", result: res, resMode, durationMs: res.durationMs });
 
-      if (state.postScript.trim()) {
-        const post = await runPostScript(
-          state.postScript,
-          { status: res.status, headers: res.headers, body: b64ToText(res.body) },
-          scriptEnv,
-        );
-        if (post.error) {
-          const existing = state.scriptErr;
-          const postErr = strings.editor.postScriptError.replace("{error}", post.error);
-          dispatch({ type: "SET_FIELD", field: "scriptErr", value: existing ? `${existing}; ${postErr}` : postErr });
-        }
+      // The two script errors are the engine's now, and they arrive as **values on a successful send**: a
+      // script that threw still produced a request and a response, and this pane has always shown the
+      // error beside them. Appended to whatever is already there, which is the previous behaviour.
+      const scriptErrs: string[] = [];
+      if (res.preScriptError) {
+        scriptErrs.push(strings.editor.preScriptError.replace("{error}", res.preScriptError));
+      }
+      if (res.postScriptError) {
+        scriptErrs.push(strings.editor.postScriptError.replace("{error}", res.postScriptError));
+      }
+      if (scriptErrs.length > 0) {
+        const joined = scriptErrs.join("; ");
+        dispatch({
+          type: "SET_FIELD",
+          field: "scriptErr",
+          value: state.scriptErr ? `${state.scriptErr}; ${joined}` : joined,
+        });
       }
 
       if (state.testScript.trim()) {
         dispatch({ type: "RUN_TESTS_START" });
-        const testResult = await runTestScript(
-          state.testScript,
-          { status: res.status, headers: res.headers, body: b64ToText(res.body), responseTime },
-          scriptEnv,
-        );
-        dispatch({ type: "RUN_TESTS_DONE", results: testResult.tests, logs: testResult.logs });
+        dispatch({ type: "RUN_TESTS_DONE", results: res.tests, logs: res.testLogs });
       }
     } catch (e) {
       dispatch({ type: "SEND_ERROR", error: e instanceof Error ? e.message : strings.editor.requestFailed });
     }
-  }, [state.url, state.method, state.reqHeaders, state.reqBody, state.preScript, state.postScript, state.testScript, state.resMode, state.scriptErr, activeEnv, dispatch]);
+  }, [state.url, state.method, state.reqHeaders, state.reqBody, state.preScript, state.postScript, state.testScript, state.resMode, state.scriptErr, dispatch, savedEntityId]);
 
   const handleTest = useCallback(async () => {
     if (!state.url.trim()) return;
     dispatch({ type: "TEST_START" });
     try {
       const testMethod = state.method === "*" ? "GET" : state.method;
-      const resolvedUrl = resolveVars(state.url.trim(), activeEnv);
-      const resolvedHdr = resolveHeaders(rowsToHeaders(state.reqHeaders), activeEnv);
-      const resolvedBod = resolveVars(state.reqBody, activeEnv);
-      const bodyB64 = resolvedBod.trim() ? textToB64(resolvedBod) : "";
-      const res: ReplayResult = await window.api.replayRequest(testMethod, resolvedUrl, resolvedHdr, bodyB64);
+      /**
+       * `scripts: {}` — the Test action sends the request and shows the response; it has never run the
+       * three scripts, and the engine is told so rather than left to infer it.
+       *
+       * Resolution, though, is the engine's here **too**, and that is deliberate: a `{{host}}` in the url
+       * must resolve the same way on Test as on Send, and after D23 the only way to guarantee that is for
+       * one implementation to do both.
+       */
+      const res: RequestSendResult = await window.api.requestSend({
+        request: {
+          method: testMethod,
+          url: state.url.trim(),
+          headers: rowsToHeaders(state.reqHeaders),
+          body: state.reqBody,
+        },
+        scripts: {},
+      });
       const ct = res.headers["content-type"];
       const resMode = ct ? contentTypeToMode(ct) : state.resMode;
       const { headersToRows } = await import("@/lib/utils");
@@ -95,7 +129,7 @@ export function useRestActions(state: TabState, dispatch: any, activeEnv: Enviro
     } catch (e) {
       dispatch({ type: "TEST_ERROR", error: e instanceof Error ? e.message : strings.editor.requestFailed });
     }
-  }, [state.url, state.method, state.reqHeaders, state.reqBody, state.resMode, state.resHeaders, activeEnv, dispatch]);
+  }, [state.url, state.method, state.reqHeaders, state.reqBody, state.resMode, state.resHeaders, dispatch]);
 
   const handleCreateMock = useCallback(() => {
     if (!onCreateMock) return;

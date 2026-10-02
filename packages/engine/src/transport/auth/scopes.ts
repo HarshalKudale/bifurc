@@ -36,7 +36,7 @@
  * asks. The presets below exist so callers do not hand-roll the sets.
  */
 import { COMMANDS, type CommandAction } from "@bifurc/protocol";
-import type { Scope } from "../../commands/registry";
+import type { Scope } from "../../kernel/registry";
 
 /**
  * Re-exported, **not declared here**. `Scope` is the vocabulary a handler reads off
@@ -62,6 +62,7 @@ export const SCOPES = ["read", "write", "execute", "admin"] as const satisfies r
  */
 export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "entity.create": "write",
+  "entity.duplicate": "write",
   "entity.update": "write",
   "entity.delete": "write",
   "entity.load": "read",
@@ -74,11 +75,16 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "folder.publish": "write",
   "config.get": "read",
   "config.save": "write",
+  "settings.update": "write",
   "workspace.add": "write",
   "workspace.rename": "write",
   "workspace.delete": "write",
   "workspace.setActive": "write",
   "env.setActive": "write",
+  // `plan/19` WI 5, item 4 — the resolution *display* path. `read`: it observes and writes nothing. The
+  // `{{random.*}}` values it mints are not a side effect (nothing is stored), but they are why a caller
+  // must not treat the result as stable — see `config.ts`.
+  "env.resolveText": "read",
   "server.status": "read",
   "server.start": "admin",
   "server.stop": "admin",
@@ -101,11 +107,6 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "application.getLogs": "read",
   "application.checkPort": "read",
   "application.killPort": "admin",
-  "webhook.registerActive": "write",
-  "webhook.unregisterActive": "write",
-  "webhookServer.start": "admin",
-  "webhookServer.stop": "admin",
-  "webhookServer.status": "read",
   "runner.saveReport": "write",
   "runner.exportReport": "write",
   "runner.getHistory": "read",
@@ -146,10 +147,80 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "blob.release": "write",
   "script.execute": "execute",
   "request.replay": "execute",
+  // `plan/19` WI 5 — the cURL parser. `read` rather than `execute`, and the contrast with the line above is
+  // the point: parsing a string touches nothing outside the process and reaches no upstream, so it is the
+  // "observes; changes nothing" class. A `read`-scoped session may import a cURL command.
+  "request.parseCurl": "read",
   "healthbar.getServices": "read",
   "healthbar.saveServices": "write",
   "healthbar.checkUrl": "read",
   "capture.shareJson": "write",
+  // `plan/19` WI 5, item 2 — capture → entity construction. **`read`, and the contrast with the line above
+  // is the point:** `capture.shareJson` stages a blob, so it writes. These two build a *payload* and touch
+  // nothing — the storing is `entity.create`'s, which is `write`. A `read`-scoped session may prepare an
+  // entity it is not allowed to save, which is the correct amount of authority for a pure function.
+  "capture.buildRequest": "read",
+  "capture.buildMock": "read",
+  "engine.shutdown": "admin",
+  "capture.list": "read",
+  "capture.get": "read",
+  "capture.setPaused": "write",
+  "capture.setDisableCache": "write",
+  "capture.clear": "write",
+  "capture.remove": "write",
+  // The four saved-entity counterparts (`packages/protocol/src/commands/saved.ts`). `execute` for the
+  // same reason as the commands they delegate to: each one's effect is an **outbound request the engine
+  // does not control**, which is the class this scope exists to single out for rate limiting. Loading
+  // the entity is a read, but the command as a whole is not, and a scope is per command.
+  //
+  // The `execute` choice is also what keeps the pair consistent rather than privileged: a counterpart
+  // delegates through `registry.invoke()`, which does **not** re-check scopes (the check lives in the
+  // transport decorator), so a counterpart carrying a *weaker* scope than its target would be a
+  // widening — a `read`-scoped session could reach `graphql.execute` by the saved-entity door. Same
+  // scope, no widening.
+  // `request.send` replaced `request.replaySaved` (2026-09-30, `plan/19` D24/D27). Same `execute` class
+  // as the `request.replay` it invokes — the pipeline resolves and runs scripts, and a `read` scope for
+  // that would be a widening, not a reclassification.
+  "request.send": "execute",
+  // `graphql.send` replaced `graphql.executeSaved` (2026-09-30, `plan/19` WI 3's second protocol). Same
+  // `execute` class as the `graphql.execute` it invokes — it resolves the request now, and a `read` scope
+  // for that would be a widening rather than a reclassification.
+  "graphql.send": "execute",
+  // `soap.send` replaced `soap.executeSaved` (2026-09-30, `plan/19` WI 3's third protocol). Same `execute`
+  // class as the `soap.execute` it invokes — it resolves the request now, and a `read` scope would be a
+  // widening rather than a reclassification.
+  "soap.send": "execute",
+  // `grpc.send` replaced `grpc.executeSaved` (2026-09-30, `plan/19` WI 3's fourth and last protocol). Same
+  // `execute` class as the `grpc.execute` it invokes.
+  "grpc.send": "execute",
+  // The run's own commands (`plan/19` WI 4). **Two different scopes, and the split is the interesting part:**
+  // starting and cancelling a run both *make something happen*, so they are `execute`; `runner.status` only
+  // reads the engine's own run state, so it is `read` — which is what lets a reconnecting client ask what
+  // happened (D29) without also being granted the right to start or stop anything.
+  "runner.start": "execute",
+  "runner.cancel": "execute",
+  "runner.status": "read",
+  // The socket registry (`plan/19` WI 6), and the split is `runner.*`'s one namespace over —
+  // `Protocol_Module_Contract.md` §4 requires it to be *chosen* rather than inherited:
+  //
+  //   `ws.connect` / `ws.disconnect` / `ws.send` are `execute`, because each reaches a peer the engine does
+  //   not control — opening a connection, writing a frame to it. `ws.status` / `ws.list` are `read`, which is
+  //   what lets a reconnecting client ask *what happened to my socket* (D29) without also being granted the
+  //   right to open or close one.
+  //
+  //   `ws.clearMessages` is `write`: it mutates engine state (the retained log) and reaches no upstream, so it
+  //   is neither of the two classes above. Note it is deliberately *not* `read` — a `read`-scoped session that
+  //   could erase the log a `status` call reports would make `ws.status` unreliable for everyone else.
+  "ws.connect": "execute",
+  "ws.disconnect": "execute",
+  "ws.send": "execute",
+  "ws.status": "read",
+  "ws.list": "read",
+  "ws.clearMessages": "write",
+  // `plan/19` WI 6 — the read that replaced `App.tsx`'s `mergeEnvVars`. `read`: it merges two entity lists the
+  // caller could have read itself and stores nothing. It is **not** a resolver — `env.resolveText` is — so it
+  // is not `execute`, and the distinction matters because this one returns a list to choose from.
+  "env.getMerged": "read",
 };
 
 /**

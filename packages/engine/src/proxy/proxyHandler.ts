@@ -1,13 +1,13 @@
 import * as net from "net";
 import * as http from "http";
 import * as https from "https";
-import { ProxyRule, LocalMapping } from "../store/config";
-import { HOP_BY_HOP } from "./constants";
-import { sendHtml } from "./pages";
-import { executeRequestScript, executeResponseScript } from "./scriptExecutor";
-import { decompressBody, stripContentEncoding } from "./decompressUtils";
-import { emitLogChunk } from "./logEmitter";
-import { handleProxyResponse, parseRawHeaders } from "./responseUtils";
+import { ProxyRule, LocalMapping } from "../workspace/config";
+import { HOP_BY_HOP } from "../utils/http";
+import { sendHtml } from "../utils/sendHtml";
+import { executeRequestScript, executeResponseScript } from "../mocks/scriptExecutor";
+import { decompressBody, stripContentEncoding } from "../utils/decompress";
+import { emitLogChunk } from "../kernel/telemetry";
+import { handleProxyResponse, parseRawHeaders } from "./response";
 
 export function tcpTunnel(
   socket: net.Socket,
@@ -81,7 +81,7 @@ export {
   passthroughToUpstreamHttps,
   fetchUpstreamResponse,
   BufferedProxyResponse
-} from "./responseUtils";
+} from "./response";
 
 export interface RuleMatchResult {
   matched: boolean;

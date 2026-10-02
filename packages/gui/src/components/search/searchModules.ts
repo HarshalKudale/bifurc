@@ -1,4 +1,4 @@
-import { AppConfig, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, SavedWebhook, Mapping } from "@/types";
+import { AppConfig, ServiceInfo, SavedRequest, MockRule, ProxyRule, SavedWsConnection, LocalMapping } from "@/types";
 import { SearchResultItem } from "./searchTypes";
 import { getFolderName, matches } from "./searchHelpers";
 
@@ -32,7 +32,7 @@ export function searchMocks(q: string, allMocks: MockRule[], mockFolders: any[],
   allMocks.forEach((m) => {
     if (isEntityOpen("mocks", m.id)) return;
     const folderName = getFolderName(m.folderId, mockFolders);
-    const path = m.path || (m as any).urlPattern;
+    const path = m.urlPattern;
     if (matches(q, m.name, path, folderName, m.method)) {
       items.push({
         id: m.id,
@@ -102,37 +102,14 @@ export function searchSockets(q: string, allSockets: SavedWsConnection[], wsFold
   return items;
 }
 
-export function searchWebhooks(q: string, allWebhooks: SavedWebhook[], whFolders: any[], isEntityOpen: (p: string, id: string) => boolean): SearchResultItem[] {
-  const items: SearchResultItem[] = [];
-  allWebhooks.forEach((w) => {
-    if (isEntityOpen("webhooks", w.id)) return;
-    const folderName = getFolderName(w.folderId, whFolders);
-    if (matches(q, w.name, w.urlSuffix, folderName)) {
-      items.push({
-        id: w.id,
-        tabId: w.id,
-        title: w.name || "Untitled Webhook",
-        subtitle: `/bifurc/webhooks/${w.urlSuffix}`,
-        method: "HOOK",
-        folderName,
-        panel: "webhooks",
-        isOpenTab: false,
-        section: "Webhooks",
-        entityType: "webhook",
-        original: w,
-      });
-    }
-  });
-  return items;
-}
 
-export function searchMappings(q: string, mappings: Mapping[]): SearchResultItem[] {
+export function searchMappings(q: string, mappings: LocalMapping[]): SearchResultItem[] {
   const items: SearchResultItem[] = [];
   mappings.forEach((m) => {
-    if (matches(q, m.subdomain, m.target, m.label)) {
+    if (matches(q, m.domain, m.target, m.label)) {
       items.push({
         id: m.id,
-        title: m.subdomain,
+        title: m.domain,
         subtitle: `→ ${m.target}${m.label ? ` (${m.label})` : ""}`,
         method: "MAP",
         panel: "mappings",
@@ -146,10 +123,10 @@ export function searchMappings(q: string, mappings: Mapping[]): SearchResultItem
   return items;
 }
 
-export function searchServices(q: string, services: ServiceInfo[], mappings: Mapping[]): SearchResultItem[] {
+export function searchServices(q: string, services: ServiceInfo[], mappings: LocalMapping[]): SearchResultItem[] {
   const items: SearchResultItem[] = [];
   const portToMapping = new Map(
-    mappings.map((m: Mapping) => {
+    mappings.map((m: LocalMapping) => {
       const parts = m.target.split(":");
       const port = parseInt(parts[parts.length - 1], 10);
       return [port, m];
@@ -161,7 +138,7 @@ export function searchServices(q: string, services: ServiceInfo[], mappings: Map
     const pidStr = String(s.pid);
     const mapping = portToMapping.get(s.port);
     const isMapped = !!mapping;
-    const mappingDisplay = mapping ? (mapping.label || mapping.subdomain || mapping.target) : "";
+    const mappingDisplay = mapping ? (mapping.label || mapping.domain || mapping.target) : "";
 
     if (matches(q, s.processName, portStr, pidStr, s.address, mappingDisplay)) {
       items.push({

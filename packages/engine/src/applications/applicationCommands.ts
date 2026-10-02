@@ -67,8 +67,8 @@
  */
 import {
     readAllEntities, writeEntity, deleteEntityFile,
-} from "../store/workspaceFs";
-import { generateId } from "../store/config";
+} from "../workspace/workspaceFs";
+import { generateId } from "../workspace/config";
 import { processSpawner } from "./processSpawner";
 import { generateResolvedCommand } from "./commandGenerator";
 import { checkPortInUse, killProcessOnPort } from "./portUtils";
@@ -78,7 +78,7 @@ import type {
     ApplicationStopParams, ApplicationGetStateParams, ApplicationGetAllStatesParams,
     ApplicationGetLogsParams, ApplicationCheckPortParams, ApplicationKillPortParams,
 } from "@bifurc/protocol";
-import type { CommandRegistry } from "../commands/registry";
+import type { CommandRegistry } from "../kernel/registry";
 
 /**
  * P2 work item 7 — all ten convert, and the reason is the schema rather than the bodies:

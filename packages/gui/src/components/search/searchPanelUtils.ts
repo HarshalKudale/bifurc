@@ -13,8 +13,7 @@ export function isTabSupportedPanel(panel: Panel): boolean {
     panel === "mock-graphql" ||
     panel === "mock-soap" ||
     panel === "mock-grpc" ||
-    panel === "sockets" ||
-    panel === "webhooks"
+    panel === "sockets"
   );
 }
 
@@ -48,8 +47,6 @@ export function getPanelDisplayName(panel: Panel): string {
       return "Proxy Rules";
     case "sockets":
       return "WebSockets";
-    case "webhooks":
-      return "Webhooks";
     case "mappings":
       return "Mappings";
     case "services":

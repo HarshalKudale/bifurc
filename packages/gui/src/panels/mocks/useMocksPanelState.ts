@@ -185,7 +185,7 @@ export function useMocksPanelState({
 
   const blocksFolder = useMemo(() => findBlocksFolder(folders), [folders]);
   const handleBlockItem = useCallback(async (id: string) => {
-    const m = restMocks.find((x) => x.id === id);
+    const m = restMocks.find((x) => x.id === id) as MockRule | undefined; // mock mode: rest items are mocks
     if (!m) return;
     const folderId = await ensureBlocksFolderId(folders);
     await window.api.deleteMock(id);

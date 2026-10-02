@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from "react";
 import { AppConfig, ApiProtocol, Folder } from "@/types";
-import { entityRelPath } from "@/lib/utils";
+import { useEntityPaths } from "@/lib/entityPaths";
 
 interface MultiplexedOptions {
   mode: "request" | "mock";
@@ -42,6 +42,15 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
     return map;
   }, [restItems, graphqlItems, grpcItems, soapItems]);
 
+  /**
+   * The engine's `id → relPath` map (`plan/19` WI 5 item 3).
+   *
+   * Every entry below used to compute its own path from `(kind, entity, folders)` with a hand-mirrored
+   * helper. The engine computes it once and keys it by **id**, so this hook's central awkwardness — the
+   * panel is bound to one kind while its tree holds four — stops mattering to the path at all.
+   */
+  const { relPathOf } = useEntityPaths();
+
   // Unified item metadata map for fast lookups
   const allItemsMap = useMemo(() => {
     const map = new Map<string, { id: string; name: string; folderId?: string | null; protocol: ApiProtocol; summary: string; methodBadge: string; enabled: boolean; relPath: string }>();
@@ -55,7 +64,7 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         summary: isRequest ? (r.url || "REST Request") : (r.urlPattern || "REST Mock"),
         methodBadge: r.method || "GET",
         enabled: r.enabled ?? true,
-        relPath: entityRelPath(isRequest ? "requests" : "mocks", r, folders),
+        relPath: relPathOf(r.id),
       });
     });
 
@@ -68,7 +77,7 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         summary: m.endpointUrl || "GraphQL Operation",
         methodBadge: "GQL",
         enabled: m.enabled ?? true,
-        relPath: entityRelPath("graphqlRequests", m, folders),
+        relPath: relPathOf(m.id),
       });
     });
 
@@ -81,7 +90,7 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         summary: m.serviceName && m.methodName ? `${m.serviceName}/${m.methodName}` : "gRPC Call",
         methodBadge: "gRPC",
         enabled: m.enabled ?? true,
-        relPath: entityRelPath("grpcRequests", m, folders),
+        relPath: relPathOf(m.id),
       });
     });
 
@@ -94,12 +103,12 @@ export function useMultiplexedEntities({ mode, config, reload }: MultiplexedOpti
         summary: m.soapAction || m.endpointUrl || "SOAP Request",
         methodBadge: "SOAP",
         enabled: m.enabled ?? true,
-        relPath: entityRelPath("soapRequests", m, folders),
+        relPath: relPathOf(m.id),
       });
     });
 
     return map;
-  }, [restItems, graphqlItems, grpcItems, soapItems, folders, isRequest]);
+  }, [restItems, graphqlItems, grpcItems, soapItems, folders, isRequest, relPathOf]);
 
   // Unified entities array for useEntityTabs
   const allEntities = useMemo(() => {

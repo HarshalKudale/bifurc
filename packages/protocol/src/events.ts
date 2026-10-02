@@ -14,6 +14,8 @@
  * visible rather than silent, and it is now down to `process.statusChange` alone.
  */
 import { z } from "zod";
+import { RunReportResultSchema, RunReportSchema } from "./commands/runner";
+import { WsConnectionStateSchema, WsMessageSchema } from "./commands/ws";
 
 
 /** Every event carries a monotonic `seq`. See "Sequence numbers" below for why. */
@@ -63,6 +65,12 @@ export const LogEntryEventSchema = z.object({
   url: z.string(),
   status: z.number().nullable(),
   durationMs: z.number().nullable(),
+  workspaceId: z.string().optional(),
+  via: z.string().optional(),
+  origin: z.enum(["forward", "reverse"]).optional(),
+  target: z.string().nullable().optional(),
+  contentType: z.string().optional(),
+  size: z.number().optional(),
 });
 export type LogEntryEvent = z.infer<typeof LogEntryEventSchema>;
 
@@ -92,15 +100,6 @@ export const EntityChangedEventSchema = z.object({
   action: z.enum(["created", "updated", "deleted"]),
 });
 export type EntityChangedEvent = z.infer<typeof EntityChangedEventSchema>;
-
-export const WebhookPayloadEventSchema = z.object({
-  webhookId: z.string(),
-  method: z.string(),
-  headers: z.record(z.string(), z.string()),
-  body: z.string(),
-  receivedAt: z.number(),
-});
-export type WebhookPayloadEvent = z.infer<typeof WebhookPayloadEventSchema>;
 
 /**
  * A child process writing to its stdout/stderr, or the engine writing a system line about it.
@@ -135,6 +134,94 @@ export type ProcessOutputEvent = z.infer<typeof ProcessOutputEventSchema>;
 export const SettingsChangedEventSchema = z.object({});
 export type SettingsChangedEvent = z.infer<typeof SettingsChangedEventSchema>;
 
+/**
+ * `event.runner.progress` — one request of a collection run has finished (`plan/19` WI 4).
+ *
+ * `index` is 0-based and matches the position in the finished report's `results`, so a client can place an
+ * arriving result without counting. **`total` rides on every event rather than being remembered from the start
+ * call**, because a client that attaches mid-run (`runner.status`, D29) never saw one.
+ *
+ * The bus name is `runner.progress` — the bridge derives it from `EVENT_NAMES` by stripping `event.`, so
+ * there is no second table to keep in step (`wire/types.ts`).
+ */
+export const RunnerProgressEventSchema = z.object({
+  workspaceId: z.string(),
+  folderId: z.string(),
+  index: z.number(),
+  total: z.number(),
+  result: RunReportResultSchema,
+});
+export type RunnerProgressEvent = z.infer<typeof RunnerProgressEventSchema>;
+
+/**
+ * `event.runner.finished` — a collection run ended, cancelled or not.
+ *
+ * **The whole report is carried**, and it is the same shape `runner.saveReport` takes. A client that was
+ * disconnected for the run's entire life still gets its results from this one event, and a client that watched
+ * the whole thing gets the object it would otherwise have assembled itself — which is what makes the event the
+ * *only* thing a runner UI needs to render from.
+ */
+export const RunnerFinishedEventSchema = z.object({
+  workspaceId: z.string(),
+  folderId: z.string(),
+  report: RunReportSchema,
+});
+export type RunnerFinishedEvent = z.infer<typeof RunnerFinishedEventSchema>;
+
+/**
+ * `event.ws.status` — a socket changed state (`plan/19` WI 6).
+ *
+ * **The payload carries `socketId`, and that is not decoration.** Every socket in the process emits on one
+ * bus, so a subscriber that did not know which socket an event belonged to could only guess — and the
+ * renderer has one hook instance per tab, all subscribed to the same two events.
+ *
+ * **The full state rides the event rather than a delta**, because a client that attached mid-stream never
+ * saw the connect call: `status`, `error` and the close code are what it needs to render the dot and the
+ * message line, and none of them can be recovered from "the state changed".
+ */
+export const WsStatusEventSchema = z.object({
+  workspaceId: z.string(),
+  socketId: z.string(),
+  status: WsConnectionStateSchema,
+  error: z.string().nullable(),
+  /** Present once the socket has closed. */
+  code: z.number().optional(),
+  reason: z.string().optional(),
+});
+export type WsStatusEvent = z.infer<typeof WsStatusEventSchema>;
+
+/**
+ * `event.ws.message` — one frame, in either direction.
+ *
+ * The whole `WsMessage` is carried, `id` and `ts` included, so a client that re-attaches can place an
+ * arriving frame against the retained log `ws.status` returned instead of appending a duplicate. `direction`
+ * is what separates the two panes the socket editor renders.
+ */
+export const WsMessageEventSchema = z.object({
+  workspaceId: z.string(),
+  socketId: z.string(),
+  message: WsMessageSchema,
+});
+export type WsMessageEvent = z.infer<typeof WsMessageEventSchema>;
+
+/**
+ * `event.engine.stopping` — the engine is about to stop, on purpose (`engine.shutdown`, or Quit in its tray
+ * menu). Sent before the endpoint closes.
+ *
+ * `restart` is what an interface acts on: `false` means the engine is going away and every interface closes
+ * with it; `true` means a successor is starting for the same data directory, so a client waits for the new
+ * `runtime.json` and reconnects. A connection that drops with no such event before it is a crash.
+ */
+export const EngineStoppingEventSchema = z.object({ restart: z.boolean() });
+export type EngineStoppingEvent = z.infer<typeof EngineStoppingEventSchema>;
+
+/**
+ * `event.ui.activate` — the user asked for the interface (Open in the engine's tray menu) while one is
+ * already connected. A graphical client brings its window to the front; nothing is carried.
+ */
+export const UiActivateEventSchema = z.object({});
+export type UiActivateEvent = z.infer<typeof UiActivateEventSchema>;
+
 export const EVENT_NAMES = [
   "event.sync.status",
   "event.sync.entityStatus",
@@ -142,9 +229,18 @@ export const EVENT_NAMES = [
   "event.log.chunk",
   "event.server.error",
   "event.entity.changed",
-  "event.webhook.payload",
   "event.process.output",
   "event.settings.changed",
+  "event.runner.progress",
+  "event.runner.finished",
+  // `plan/19` WI 6 — the socket's two events. The list is total, so adding these is a deliberate protocol
+  // change rather than a side effect of the module landing: a socket whose state the UI cannot watch would be
+  // a connection the engine owns and nobody can render.
+  "event.ws.status",
+  "event.ws.message",
+  // The engine's own lifetime, and its tray asking a connected interface to come forward.
+  "event.engine.stopping",
+  "event.ui.activate",
 ] as const;
 export type EventName = (typeof EVENT_NAMES)[number];
 

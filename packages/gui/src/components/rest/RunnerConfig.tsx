@@ -1,7 +1,7 @@
 import React from "react";
 import { Play, Square, Download } from "lucide-react";
 import { strings } from "@/lib/strings";
-import { CollectionRunReport } from "@/lib/collectionRunner";
+import { CollectionRunReport } from "@/types";
 
 interface RunnerConfigProps {
   /**
@@ -15,6 +15,14 @@ interface RunnerConfigProps {
   delayMs: number;
   running: boolean;
   report: CollectionRunReport | null;
+  /**
+   * Why the engine refused to start a run, or `null`.
+   *
+   * **This is D30 made visible.** A second run of a folder already in flight is refused rather than queued,
+   * and "the button did nothing" is the one outcome a Run button must not produce silently — so the refusal
+   * is rendered here rather than swallowed in the hook.
+   */
+  startError: string | null;
   onDelayChange: (val: number) => void;
   onExport: () => void;
   onRun: () => void;
@@ -37,6 +45,7 @@ export function RunnerConfig({
   delayMs,
   running,
   report,
+  startError,
   onDelayChange,
   onExport,
   onRun,
@@ -57,6 +66,12 @@ export function RunnerConfig({
         />
         <span>{strings.collectionRunner.ms}</span>
       </label>
+
+      {startError && (
+        <span className="text-[10px] text-destructive truncate max-w-64" title={startError}>
+          {startError}
+        </span>
+      )}
 
       <div className="ml-auto flex items-center gap-2">
         {report && !running && (

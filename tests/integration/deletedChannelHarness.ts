@@ -25,8 +25,8 @@
  * assertions about git.
  */
 import type { CommandAction } from "@bifurc/protocol";
-import { commandRegistry } from "@bifurc/engine/commands/registry";
-import { bus } from "@bifurc/engine/eventBus";
+import { commandRegistry } from "@bifurc/engine/kernel/registry";
+import { bus } from "@bifurc/engine/kernel/eventBus";
 
 type Builder = (args: any[]) => unknown;
 
