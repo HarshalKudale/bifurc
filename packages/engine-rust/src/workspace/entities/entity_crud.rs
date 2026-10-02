@@ -268,8 +268,14 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register("entity.create", |params, ctx| async move {
         let wire_kind = str_of(&params, "kind");
         let engine_kind = to_engine_kind(wire_kind);
-        let entity = params.get("entity").cloned().unwrap_or_else(|| json!({}));
-        let workspace_id = opt_str(&params, "workspaceId").or_else(|| opt_str(&entity, "workspaceId"));
+        let mut entity = params.get("entity").cloned().unwrap_or_else(|| json!({}));
+        let workspace_id =
+            opt_str(&params, "workspaceId").or_else(|| opt_str(&entity, "workspaceId")).map(str::to_string);
+        // `workspaceId` takes its place right after the caller's own fields, ahead of `id` and `createdAt`.
+        if let Some(fields) = entity.as_object_mut() {
+            fields.insert("workspaceId".to_string(), json!(workspace_id));
+        }
+        let workspace_id = workspace_id.as_deref();
         if let Some(kind) = crud_kind(engine_kind) {
             if kind.kind == "environments" {
                 pin_implicit_environment(workspace_id)?;
