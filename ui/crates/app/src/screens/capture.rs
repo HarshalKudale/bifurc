@@ -8,9 +8,9 @@
 //! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt as _,
     alert::Alert,
-    button::{Button, ButtonVariants as _},
+    button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
@@ -42,7 +42,7 @@ use crate::{
         git::date_time_utc,
         http::{pretty_json, status_text},
         media::{self, BodyClass},
-        traffic::{self, Exchange, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
+        traffic::{self, Exchange, Handler, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
     },
 };
 
@@ -163,8 +163,8 @@ pub struct CaptureScreen {
     checked: HashSet<String>,
     /// Show only this kind of response; `None` shows all.
     type_filter: Option<ResourceType>,
-    /// Also list what the reverse proxy served (mapped domains); the list is the forward proxy's by default.
-    show_local: bool,
+    /// Which handlers' exchanges are listed, in [`Handler::ALL`] order. Mappings are off by default.
+    handlers: [bool; 3],
     detail: Detail,
     section: Section,
     response_view: BodyView,
@@ -231,7 +231,7 @@ impl CaptureScreen {
             selected: None,
             checked: HashSet::new(),
             type_filter: None,
-            show_local: false,
+            handlers: [false, true, true],
             detail: Detail::Idle,
             section: Section::Headers,
             response_view: BodyView::Pretty,
@@ -259,9 +259,9 @@ impl CaptureScreen {
         line
     }
 
-    /// Whether the list shows `entry`: it passes the text filter, the type filter and the local-traffic switch.
+    /// Whether the list shows `entry`: it passes the text filter, the type filter and the handler filter.
     fn shows(&self, entry: &TrafficEntry, needle: &str) -> bool {
-        (self.show_local || !entry.is_local())
+        Handler::ALL.iter().zip(self.handlers).any(|(handler, on)| on && *handler == entry.handler())
             && self.type_filter.is_none_or(|kind| entry.resource_type() == kind)
             && entry.matches(needle)
     }
@@ -687,22 +687,25 @@ impl CaptureScreen {
             .border_color(theme.border)
             .child(types)
             .child(
-                Checkbox::new("capture-local")
-                    .small()
-                    .label("Local mappings")
-                    .checked(self.show_local)
-                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                        this.show_local = *checked;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Checkbox::new("capture-disable-cache")
                     .small()
                     .label("Disable cache")
                     .tooltip("Strips cache related headers from requests before sending them to the target")
                     .checked(self.disable_cache)
                     .on_change(cx.listener(|this, checked: &bool, _, cx| this.set_disable_cache(*checked, cx))),
+            )
+            .child(
+                ButtonGroup::new("capture-handlers")
+                    .multiple(true)
+                    .outline()
+                    .small()
+                    .children(Handler::ALL.iter().zip(self.handlers).map(|(handler, on)| {
+                        Button::new(handler.label()).label(handler.label()).tooltip(handler.tooltip()).selected(on)
+                    }))
+                    .on_click(cx.listener(|this, selected: &Vec<usize>, _, cx| {
+                        this.handlers = std::array::from_fn(|ix| selected.contains(&ix));
+                        cx.notify();
+                    })),
             )
             .child(div().flex_1())
             .children((ticked > 0).then(|| {
