@@ -3,13 +3,14 @@
 //! The rendezvous is the engine's own: one engine per data directory, and it advertises itself in
 //! `<dataDir>/runtime.json` (`packages/engine/src/runtime/discovery.ts`). The UI therefore never picks a
 //! socket address; it reads the file the engine wrote. If a live engine is already there — started by the
-//! CLI, or by another UI window — the UI attaches to it and leaves it running on exit. Otherwise it starts
-//! `bifurc-engine --transport socket` and owns that process's lifetime.
+//! CLI, or by another UI window — the UI attaches to it. Otherwise it starts `bifurc-engine --transport
+//! socket`, detached. Either way the engine's lifetime is its own: it shows a tray icon, keeps running when
+//! its clients close, and stops when asked to (or, with no tray icon, when its last interface closes).
 
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -24,6 +25,7 @@ use crate::{
 const RUNTIME_FILE: &str = "runtime.json";
 const ENGINE_ENTRY_RELATIVE: &str = "packages/engine/dist/runtime/hostCli.js";
 const START_TIMEOUT: Duration = Duration::from_secs(20);
+const RESTART_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The contents of `runtime.json`.
 #[derive(Debug, Clone, Deserialize)]
@@ -99,6 +101,11 @@ pub struct SidecarConfig {
     pub node: PathBuf,
     /// `None` searches with [`locate_engine_entry`].
     pub engine_entry: Option<PathBuf>,
+    /// The engine's tray helper (`bifurc-tray`), handed to an engine this process starts. `None` leaves the
+    /// engine to find one itself.
+    pub tray: Option<PathBuf>,
+    /// The interface the engine's tray icon opens: the executable of the client that starts the engine.
+    pub ui: Option<PathBuf>,
 }
 
 impl Default for SidecarConfig {
@@ -110,66 +117,26 @@ impl Default for SidecarConfig {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("node")),
             engine_entry: None,
+            tray: None,
+            ui: None,
         }
     }
 }
 
-/// An engine this process is connected to, and whether it also started it.
+/// The engine this process is connected to, and whether this process is the one that started it.
+///
+/// Starting it is all the ownership there is. The engine runs on its own once started: it shows its own tray
+/// icon and decides itself when to stop, so a client closing never stops it and never has to.
 pub struct Sidecar {
     pub info: RuntimeInfo,
     pub data_dir: PathBuf,
-    child: Option<Child>,
+    started_here: bool,
 }
 
 impl Sidecar {
-    /// `true` when this process started the engine and so is responsible for stopping it.
-    pub fn is_owned(&self) -> bool {
-        self.child.is_some()
-    }
-
-    /// Stops an engine this process started: asks it to shut down, then makes sure it is gone. An engine
-    /// that was already running is left alone — it belongs to whoever started it.
-    pub fn release(&mut self, client: &EngineClient) {
-        let Some(mut child) = self.child.take() else { return };
-        let _ = client.call_blocking("engine.shutdown", serde_json::json!({}));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if matches!(child.try_wait(), Ok(Some(_))) {
-                return;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-}
-
-impl Sidecar {
-    /// Stops the engine whoever started it, for a restart: asks it to shut down and waits until it is gone.
-    /// An engine this process started is killed if it will not leave; one that belongs to another client is
-    /// only asked, and `false` says it is still there.
-    pub fn stop(&mut self, client: &EngineClient) -> bool {
-        let _ = client.call_blocking("engine.shutdown", serde_json::json!({}));
-        let deadline = Instant::now() + Duration::from_secs(8);
-        if let Some(mut child) = self.child.take() {
-            while Instant::now() < deadline {
-                if matches!(child.try_wait(), Ok(Some(_))) {
-                    return true;
-                }
-                thread::sleep(Duration::from_millis(100));
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-            return true;
-        }
-        while Instant::now() < deadline {
-            // The engine removes runtime.json as it stops.
-            if read_runtime_info(&self.data_dir).is_none_or(|info| info.pid != self.info.pid) {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-        false
+    /// `true` when this process started the engine rather than joining one that was already running.
+    pub fn started_here(&self) -> bool {
+        self.started_here
     }
 }
 
@@ -178,10 +145,30 @@ pub fn attach_or_start(config: &SidecarConfig, client_version: &str) -> Result<(
     if let Some(info) = read_runtime_info(&config.data_dir).filter(|i| i.transport == "socket")
         && let Ok((client, hello)) = EngineClient::connect_attempts(&info.address, client_version, 1)
     {
-        let sidecar = Sidecar { info, data_dir: config.data_dir.clone(), child: None };
+        let sidecar = Sidecar { info, data_dir: config.data_dir.clone(), started_here: false };
         return Ok((client, hello, sidecar));
     }
     start(config, client_version)
+}
+
+/// Connects to the engine that replaces the one with `old_pid`, once it has announced itself. For a client
+/// that heard the engine say it is restarting.
+pub fn reconnect(data_dir: &Path, old_pid: u32, client_version: &str) -> Result<(EngineClient, Hello, Sidecar)> {
+    let deadline = Instant::now() + RESTART_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Some(info) = read_runtime_info(data_dir).filter(|i| i.pid != old_pid && i.transport == "socket")
+            && let Ok((client, hello)) = EngineClient::connect_attempts(&info.address, client_version, 1)
+        {
+            let sidecar = Sidecar { info, data_dir: data_dir.to_path_buf(), started_here: false };
+            return Ok((client, hello, sidecar));
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    Err(ClientError::Protocol(format!(
+        "the engine did not come back within {}s. See {}.",
+        RESTART_TIMEOUT.as_secs(),
+        data_dir.join("engine.log").display()
+    )))
 }
 
 fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, Hello, Sidecar)> {
@@ -209,7 +196,13 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
-    hide_console(&mut command);
+    if let Some(tray) = &config.tray {
+        command.arg("--tray").arg(tray);
+    }
+    if let Some(ui) = &config.ui {
+        command.arg("--ui").arg(ui);
+    }
+    detach(&mut command);
     let mut child = command.spawn().map_err(|e| {
         ClientError::Protocol(format!(
             "could not start `{}` for the engine: {e}. Install Node.js, or set BIFURC_NODE to the executable.",
@@ -229,7 +222,7 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
             read_runtime_info(&config.data_dir).filter(|i| i.pid == child.id() && i.transport == "socket")
             && let Ok((client, hello)) = EngineClient::connect_attempts(&info.address, client_version, 1)
         {
-            let sidecar = Sidecar { info, data_dir: config.data_dir.clone(), child: Some(child) };
+            let sidecar = Sidecar { info, data_dir: config.data_dir.clone(), started_here: true };
             return Ok((client, hello, sidecar));
         }
         thread::sleep(Duration::from_millis(150));
@@ -244,15 +237,24 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
     )))
 }
 
+/// The engine outlives the client that starts it, so it gets no console and no share in this process's
+/// signals: closing the client, or the terminal it was run from, leaves the engine running.
 #[cfg(windows)]
-fn hide_console(command: &mut Command) {
+fn detach(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
 }
 
-#[cfg(not(windows))]
-fn hide_console(_: &mut Command) {}
+#[cfg(unix)]
+fn detach(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(any(windows, unix)))]
+fn detach(_: &mut Command) {}
 
 fn log_tail(path: &Path) -> String {
     let text = fs::read_to_string(path).unwrap_or_default();
@@ -294,6 +296,8 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             node: PathBuf::from("node"),
             engine_entry: Some(dir.path().join("missing").join("hostCli.js")),
+            tray: None,
+            ui: None,
         };
         // `node` may not exist on the machine running the tests; either way the failure names the cause.
         let err = start(&config, "test").err().expect("no engine at that path");

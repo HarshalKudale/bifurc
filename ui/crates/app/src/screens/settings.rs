@@ -385,7 +385,7 @@ impl SettingsScreen {
                         ),
                     )
                     .description(
-                        "Closing the Electron app's window leaves the engine running. This app stops an engine it started.",
+                        "The engine keeps running behind its tray icon after the last window closes; the icon opens Bifurc again, restarts the engine and quits. When off, or when there is no tray icon, the engine stops with the last window.",
                     ),
                 ),
             SettingGroup::new()
@@ -573,7 +573,7 @@ impl SettingsScreen {
                 }),
             )
         };
-        let origin = if engine.is_owned() { "Started by this app" } else { "Shared with another client" };
+        let origin = if engine.started_here() { "Started by this app" } else { "Already running" };
         SettingPage::new("About").icon(IconName::Info).groups(vec![
             SettingGroup::new().title("Bifurc").items(vec![
                 fact("Desktop app", format!("Version {}", env!("CARGO_PKG_VERSION"))),

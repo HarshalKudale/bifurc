@@ -100,6 +100,12 @@ export interface HostArgs {
    * container's volume.
    */
   edgePort?: number;
+  /** The tray helper's executable. Absent → `BIFURC_TRAY`, then a search (`runtime/desktop.ts`). */
+  tray?: string;
+  /** The interface the tray opens. Absent → `BIFURC_UI`, then the one beside the tray helper. */
+  ui?: string;
+  /** `--no-tray`: run without a tray icon, and without the lifetime rules that come with one. */
+  noTray?: boolean;
 }
 
 export type HostArgsResult =
@@ -141,6 +147,12 @@ Options
                           for the whole host (plan/15 §3.1). Defaults to the port in app.json (80),
                           which is the port existing *.localhost mappings already point at, so no
                           existing mapping has to change.
+  --tray <path>           The tray helper (bifurc-tray). Defaults to BIFURC_TRAY, then the one found
+                          beside the engine. While its icon is up the engine keeps running after its
+                          interfaces close; the icon opens the interface, restarts and quits.
+  --ui <path>             The interface the tray icon opens. Defaults to BIFURC_UI, then the one
+                          beside the tray helper.
+  --no-tray               No tray icon, and the engine does not stop when its interfaces close.
   -h, --help              Print this.
 
 Environment
@@ -162,6 +174,8 @@ const VALUE_FLAGS = new Set([
   "--workspace",
   "--edge-port",
   "--transport",
+  "--tray",
+  "--ui",
 ]);
 
 /**
@@ -206,6 +220,9 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
   let wsPort: number | undefined;
   let edgePort: number | undefined;
   let transport: HostArgs["transport"];
+  let tray: string | undefined;
+  let ui: string | undefined;
+  let noTray = false;
   const workspaceIds: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -213,6 +230,10 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
 
     if (raw === "-h" || raw === "--help") {
       return { kind: "help" };
+    }
+    if (raw === "--no-tray") {
+      noTray = true;
+      continue;
     }
 
     // Split the `=` form once, so `--data-dir=/data` and `--data-dir /data` reach the same branch.
@@ -282,6 +303,12 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
         }
         transport = value;
         break;
+      case "--tray":
+        tray = value;
+        break;
+      case "--ui":
+        ui = value;
+        break;
       case "--edge-port": {
         // Validated the way `--ws-port` is, and for the same reason: a non-numeric port reaches
         // `listen()` as `NaN` and surfaces as an obscure `ERR_SOCKET_BAD_PORT` from inside the host,
@@ -301,6 +328,9 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
 
   if (transport === "stdio" && (rpcSocket !== undefined || wsPort !== undefined)) {
     return { kind: "error", message: `--transport stdio takes no --rpc-socket or --ws-port.\n\n${HOST_USAGE}` };
+  }
+  if (noTray && tray !== undefined) {
+    return { kind: "error", message: `--no-tray cannot be combined with --tray.\n\n${HOST_USAGE}` };
   }
   if (transport === "socket" && wsPort !== undefined) {
     return { kind: "error", message: `--transport socket cannot be combined with --ws-port.\n\n${HOST_USAGE}` };
@@ -344,6 +374,9 @@ export function parseHostArgs(argv: readonly string[]): HostArgsResult {
       // Left `undefined` when absent so the host applies its own default — `app.json`'s `port` — rather
       // than the parser inventing one here, which would put the migration decision in a second place.
       edgePort,
+      ...(tray !== undefined ? { tray } : {}),
+      ...(ui !== undefined ? { ui } : {}),
+      ...(noTray ? { noTray } : {}),
     },
   };
 }

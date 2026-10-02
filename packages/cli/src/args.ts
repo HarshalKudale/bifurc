@@ -5,7 +5,7 @@ export interface ParsedArgs {
 }
 
 /** Flags that take no value. */
-const BOOLEAN_FLAGS = new Set(["json", "help"]);
+const BOOLEAN_FLAGS = new Set(["json", "help", "no-start", "no-tray"]);
 /** Single-letter aliases. */
 const ALIASES: Record<string, string> = { H: "header", X: "method", d: "body", h: "help", w: "workspace" };
 
