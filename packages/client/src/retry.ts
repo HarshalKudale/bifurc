@@ -181,6 +181,7 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "capture.list",
   "capture.get",
   "capture.setPaused",
+  "capture.setDisableCache",
   "capture.clear",
   "capture.remove",
   "healthbar.saveServices",

@@ -2,6 +2,7 @@ import * as net from "net";
 import { MockRule, Environment } from "../workspace/config";
 import { HOP_BY_HOP } from "../utils/http";
 import { resolveVars } from "../env/resolve";
+import { isTextContentType } from "../utils/contentType";
 
 export interface ResolvedMockResponse {
   status: number;
@@ -86,9 +87,26 @@ function mockedHeaderKeys(mock: MockRule): Set<string> {
   return new Set((mock.mockedResponseHeaders ?? []).map((key) => key.toLowerCase()));
 }
 
+function headerValue(headers: Record<string, string>, name: string): string {
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === name);
+  return key === undefined ? "" : headers[key];
+}
+
+/**
+ * A mock only replaces text. A body stored as bytes under a data type (an image, a PDF) is not text, so
+ * the mock is not answered on its own: the real response goes through as it is.
+ */
+function mockBodyIsText(mock: MockRule): boolean {
+  const contentType = headerValue(mock.responseHeaders, "content-type");
+  if (contentType === "") return mock.responseBodyEncoding !== "base64";
+  return isTextContentType(contentType);
+}
+
 export function isFullyMocked(mock: MockRule): boolean {
   if (mock.streamingMode && mock.streamingMode !== "none") return true;
-  const keys = Object.keys(resolveMockHeaders(mock, null)).filter((key) => key.trim());
+  if (!mockBodyIsText(mock)) return false;
+  // The response's Content-Type is always the real server's, so it is never a header the mock has to set.
+  const keys = Object.keys(resolveMockHeaders(mock, null)).filter((key) => key.trim() && key.toLowerCase() !== "content-type");
   const mockedKeys = mockedHeaderKeys(mock);
   const allHeadersMocked = keys.every((key) => mockedKeys.has(key.toLowerCase()));
   return (mock.responseStatusMocked ?? true)
@@ -117,11 +135,23 @@ export function mergeMockWithUpstream(
   upstream: { status: number; headers: Record<string, string>; body: Buffer; durationMs: number },
   env: Environment | null,
 ): ResolvedMockResponse {
+  // Data (an image, a PDF) cannot be mocked: what the server sent is what the caller gets.
+  if (!isTextContentType(headerValue(upstream.headers, "content-type"))) {
+    return {
+      status: upstream.status,
+      headers: ensureResponseHeaders({ ...upstream.headers }, upstream.body),
+      body: upstream.body,
+      delayMs: 0,
+    };
+  }
+
   const resolvedMockHeaders = resolveMockHeaders(mock, env);
-  const body = (mock.responseBodyMocked ?? true) ? resolveMockBody(mock, env) : upstream.body;
+  const body = ((mock.responseBodyMocked ?? true) && mockBodyIsText(mock)) ? resolveMockBody(mock, env) : upstream.body;
   const headers = { ...upstream.headers };
   const mockedKeys = mockedHeaderKeys(mock);
   for (const [key, value] of Object.entries(resolvedMockHeaders)) {
+    // Content-Type is locked: whatever type the server answered with is the one the caller gets.
+    if (key.toLowerCase() === "content-type") continue;
     if (mockedKeys.has(key.toLowerCase())) headers[key] = value;
   }
 

@@ -7,8 +7,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Image, ImageFormat, IntoElement, ObjectFit, ParentElement as _,
-    PathPromptOptions, Styled as _, StyledImage as _, div, img,
+    AnyElement, App, AppContext as _, Context, Image, ImageFormat, InteractiveElement as _, IntoElement, ObjectFit,
+    ParentElement as _, PathPromptOptions, StatefulInteractiveElement as _, Styled as _, StyledImage as _, div, img,
 };
 
 use crate::model::media::{self, BodyClass};
@@ -94,16 +94,47 @@ impl BinaryBody {
                 )
                 .child(caption)
                 .into_any_element(),
-            None => v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .child(div().child("This body is data, not text"))
-                .child(caption)
-                .into_any_element(),
+            None => {
+                let shown = self.bytes.len().min(HEX_PREVIEW_BYTES);
+                let note = if shown < self.bytes.len() {
+                    format!("Data, not text · first {} of {} as hex", media::size_label(shown), media::size_label(self.bytes.len()))
+                } else {
+                    "Data, not text · shown as hex".to_owned()
+                };
+                v_flex()
+                    .size_full()
+                    .gap_2()
+                    .p_3()
+                    .child(caption)
+                    .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child(note))
+                    .child(
+                        div()
+                            .id("binary-hex")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .text_xs()
+                            .font_family(theme.mono_font_family.clone())
+                            .child(hex_dump(&self.bytes[..shown])),
+                    )
+                    .into_any_element()
+            }
         }
     }
+}
+
+/// How much of a data body is laid out as hex: enough to recognise the format, small enough to draw.
+const HEX_PREVIEW_BYTES: usize = 4096;
+
+/// `bytes` as classic hex-dump lines: offset, sixteen hex bytes, and the printable characters.
+fn hex_dump(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for (row, chunk) in bytes.chunks(16).enumerate() {
+        let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
+        let text: String = chunk.iter().map(|b| if (0x20..0x7f).contains(b) { *b as char } else { '.' }).collect();
+        out.push_str(&format!("{:08x}  {:<47}  {text}\n", row * 16, hex.join(" ")));
+    }
+    out
 }
 
 fn downloads_dir() -> PathBuf {
@@ -188,6 +219,12 @@ mod tests {
         assert_eq!(suggested_file_name("https://x.test/avatar", "response", "image/jpeg"), "response.jpg");
         assert_eq!(suggested_file_name("https://x.test", "response", "application/pdf"), "response.pdf");
         assert_eq!(suggested_file_name("", "body", ""), "body.bin");
+    }
+
+    #[test]
+    fn a_hex_dump_has_offset_bytes_and_printable_text() {
+        assert_eq!(hex_dump(b"PDF-1.7\n"), format!("00000000  {:<47}  PDF-1.7.\n", "50 44 46 2d 31 2e 37 0a"));
+        assert_eq!(hex_dump(&[0u8; 17]).lines().count(), 2);
     }
 
     #[test]

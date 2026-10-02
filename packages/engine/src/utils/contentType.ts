@@ -29,6 +29,31 @@
  * so the pin compares behaviour on a sample rather than comparing two arrays.
  */
 
+const TEXT_APPLICATION_TYPES = [
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/ecmascript",
+  "application/x-www-form-urlencoded",
+  "application/graphql",
+  "application/x-ndjson",
+  "application/yaml",
+];
+
+/**
+ * `true` when a body of this type is text a mock can replace: JSON, HTML, XML, JavaScript, plain text and the
+ * other text formats. An empty type counts as text. Images, audio, video, fonts, archives and any other
+ * `application/*` data are not. Mirrors the desktop UI's `media::classify`.
+ */
+export function isTextContentType(ct: string): boolean {
+  const kind = ct.split(";")[0].trim().toLowerCase();
+  if (kind === "" || kind.startsWith("text/") || TEXT_APPLICATION_TYPES.includes(kind)) return true;
+  if (kind.endsWith("+json") || kind.endsWith("+xml")) return true;
+  const family = kind.split("/")[0];
+  return !(family === "image" || family === "audio" || family === "video" || family === "font"
+    || family === "application" || family === "multipart");
+}
+
 /**
  * `true` when a body of this type must be kept as base64 rather than decoded to text.
  *

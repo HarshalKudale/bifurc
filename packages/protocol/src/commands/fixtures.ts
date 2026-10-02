@@ -239,6 +239,7 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
   "capture.list": { valid: { workspaceId: "ws1" }, invalid: {} },
   "capture.get": { valid: { workspaceId: "ws1", id: "log-1" }, invalid: { workspaceId: "ws1" } },
   "capture.setPaused": { valid: { workspaceId: "ws1", paused: true }, invalid: { workspaceId: "ws1" } },
+  "capture.setDisableCache": { valid: { disableCache: true }, invalid: {} },
   "capture.clear": { valid: { workspaceId: "ws1" }, invalid: {} },
   "capture.remove": { valid: { workspaceId: "ws1", ids: ["log-1"] }, invalid: { workspaceId: "ws1", ids: [] } },
 
