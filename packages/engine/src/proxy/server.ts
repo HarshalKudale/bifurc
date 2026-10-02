@@ -8,6 +8,7 @@ import { stripCacheHeaders } from "../utils/cachePolicy";
 import { sendHtml } from "../utils/sendHtml";
 import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";
 import { loadCA, unloadCA, isCALoaded, clearCertCache } from "../certificates/tlsCert";
+import { caCertPath, caKeyPath } from "../certificates/certManager";
 import { interceptTls } from "./tlsIntercept";
 import { handleProxyRouting } from "./routingUtils";
 import { RequestLogEntry, logEmitter, emitLog, emitLogChunk } from "../kernel/telemetry";
@@ -252,11 +253,15 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
     currentPort = port;
     lastError = null;
 
-    if (currentConfig.tlsEnabled && currentConfig.tlsCaCertPath && currentConfig.tlsCaKeyPath) {
+    // A CA made or imported through `tls.*` lives at the engine's own CA paths and is never written into the
+    // settings, so those paths are the fallback when the settings name none.
+    const tlsCertPath = currentConfig.tlsEnabled ? (currentConfig.tlsCaCertPath ?? caCertPath()) : null;
+    const tlsKeyPath = currentConfig.tlsEnabled ? (currentConfig.tlsCaKeyPath ?? caKeyPath()) : null;
+    if (currentConfig.tlsEnabled && tlsCertPath && tlsKeyPath) {
       // Idempotent for a shared CA: the paths come from the same config, so re-loading yields the same
       // PEMs. Not gated on `ownsCA` — a member of a host still needs *its* configured CA loaded before
       // it can intercept, it just does not get to unload it.
-      loadCA(currentConfig.tlsCaCertPath, currentConfig.tlsCaKeyPath);
+      loadCA(tlsCertPath, tlsKeyPath);
     } else if (ownsCA) {
       // Only an owner may clear the CA for a config that has TLS off. A non-owner seeing TLS off means
       // *its own* workspace is not intercepting; unloading would silently break a sibling that is.
