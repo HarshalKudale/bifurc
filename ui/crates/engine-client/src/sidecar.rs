@@ -24,6 +24,10 @@ use crate::{
 
 const RUNTIME_FILE: &str = "runtime.json";
 const ENGINE_ENTRY_RELATIVE: &str = "packages/engine/dist/runtime/hostCli.js";
+/// Where an installed app keeps the engine and the Node it runs on, relative to the app's executable
+/// (`scripts/package-desktop.mjs` lays this out).
+const PACKAGED_ENGINE_ENTRY: &str = "resources/node_modules/@bifurc/engine/dist/runtime/hostCli.js";
+const PACKAGED_NODE_DIR: &str = "runtime";
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const RESTART_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -78,7 +82,7 @@ pub fn locate_engine_entry() -> Option<PathBuf> {
     if let Ok(exe) = env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        let packaged = dir.join("engine").join("runtime").join("hostCli.js");
+        let packaged = dir.join(PACKAGED_ENGINE_ENTRY);
         if packaged.is_file() {
             return Some(packaged);
         }
@@ -94,10 +98,27 @@ pub fn locate_engine_entry() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// The `node` to run the engine with: `BIFURC_NODE` if set, then the one an installed app ships beside its
+/// executable, otherwise whatever `node` resolves to on `PATH`.
+pub fn locate_node() -> PathBuf {
+    if let Some(explicit) = env::var_os("BIFURC_NODE").filter(|v| !v.is_empty()) {
+        return PathBuf::from(explicit);
+    }
+    if let Ok(exe) = env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let packaged = dir.join(PACKAGED_NODE_DIR).join(format!("node{}", env::consts::EXE_SUFFIX));
+        if packaged.is_file() {
+            return packaged;
+        }
+    }
+    PathBuf::from("node")
+}
+
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     pub data_dir: PathBuf,
-    /// The `node` executable. `BIFURC_NODE` if set, otherwise whatever `node` resolves to on `PATH`.
+    /// The `node` executable, from [`locate_node`].
     pub node: PathBuf,
     /// `None` searches with [`locate_engine_entry`].
     pub engine_entry: Option<PathBuf>,
@@ -112,10 +133,7 @@ impl Default for SidecarConfig {
     fn default() -> Self {
         Self {
             data_dir: default_data_dir(),
-            node: env::var_os("BIFURC_NODE")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("node")),
+            node: locate_node(),
             engine_entry: None,
             tray: None,
             ui: None,
