@@ -146,6 +146,69 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     expect(res.body).not.toContain("not an image");
   });
 
+  it("still mocks the status and other headers of a data response, but not its body", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const imageUpstream = await startUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "image/png" });
+      res.end(png);
+    });
+    ws = createWorkspace({
+      mappings: [mappingFixture({ id: "map-app", domain: "app.localhost", target: imageUpstream.target })],
+      mocks: [
+        mockFixture({
+          id: "mock-bin",
+          method: "GET",
+          urlPattern: "http://app.localhost/logo.png",
+          useRegex: false,
+          responseStatus: 203,
+          responseHeaders: { "content-type": "image/png", "x-mocked": "1" },
+          mockedResponseHeaders: ["x-mocked"],
+          responseBody: "not an image",
+        }),
+      ],
+    });
+    proxy = await startProxy();
+
+    const res = await edgeRequest(proxy.edgePort, { target: "/logo.png", host: "app.localhost" });
+
+    expect(res.status).toBe(203);
+    expect(res.headers["x-mocked"]).toBe("1");
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(res.body).toContain("PNG");
+  });
+
+  it("answers a standalone mock on its own, with its own Content-Type, when the target has nothing there", async () => {
+    const empty = await startUpstream((_req, res) => {
+      res.writeHead(404, { "content-type": "text/html" });
+      res.end("<h1>nope</h1>");
+    });
+    ws = createWorkspace({
+      mappings: [mappingFixture({ id: "map-app", domain: "app.localhost", target: empty.target })],
+      mocks: [
+        mockFixture({
+          id: "mock-new",
+          method: "GET",
+          urlPattern: "http://app.localhost/api/new",
+          useRegex: false,
+          standalone: true,
+          responseStatus: 200,
+          responseStatusMocked: false,
+          responseBodyMocked: false,
+          responseHeaders: { "content-type": "application/json" },
+          mockedResponseHeaders: [],
+          responseBody: JSON.stringify({ contract: true }),
+        }),
+      ],
+    });
+    proxy = await startProxy();
+
+    const res = await edgeRequest(proxy.edgePort, { target: "/api/new", host: "app.localhost" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(res.body)).toEqual({ contract: true });
+  });
+
   it("logs a mock-served response with via=mock", async () => {
     ws = createWorkspace({
       mappings: [mappingFixture({ id: "map-app", domain: "app.localhost", target: upstream.target })],
