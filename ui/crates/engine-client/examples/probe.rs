@@ -11,13 +11,13 @@ fn main() {
     }
     println!("data dir: {}", config.data_dir.display());
 
-    let (client, hello, mut sidecar) = attach_or_start(&config, env!("CARGO_PKG_VERSION")).expect("engine");
+    let (client, hello, sidecar) = attach_or_start(&config, env!("CARGO_PKG_VERSION")).expect("engine");
     println!(
-        "hello: engine {} protocol {} session {} (owned: {})",
+        "hello: engine {} protocol {} session {} (started here: {})",
         hello.engine_version,
         hello.protocol_version,
         hello.session_id,
-        sidecar.is_owned()
+        sidecar.started_here()
     );
 
     let cfg = client.call_blocking("config.get", json!({})).expect("config.get");
@@ -30,6 +30,9 @@ fn main() {
     let missing = client.call_blocking("entity.load", json!({"workspaceId": "nope", "kind": "requests", "id": "x"}));
     println!("entity.load on a missing id: {missing:?}");
 
-    sidecar.release(&client);
-    println!("released");
+    // The engine does not stop when its clients leave, so one this probe started is stopped by hand.
+    if sidecar.started_here() {
+        let _ = client.call_blocking("engine.shutdown", json!({}));
+        println!("stopped");
+    }
 }

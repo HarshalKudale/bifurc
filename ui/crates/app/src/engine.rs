@@ -4,44 +4,55 @@
 //! payload and a continuation to [`call`], which runs the request off the UI thread and runs the
 //! continuation back on it, on the view that asked, if that view is still alive.
 
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
-use bifurc_engine_client::{ClientError, EngineClient, Hello, RuntimeInfo, Sidecar};
+use bifurc_engine_client::{ClientError, EngineClient, Hello, RuntimeInfo, Sidecar, SidecarConfig};
 use gpui_kit::{AppContext as _, AsyncApp, Context, Global, Window};
 use serde_json::Value;
 
-/// A connected engine and, if this process started it, the means to stop it.
+/// A connected engine.
+///
+/// The engine is not this app's to stop: it has its own tray icon and its own lifetime, and this app is one
+/// of the interfaces attached to it. Closing the window only ends the session.
 #[derive(Clone)]
 pub struct EngineSession {
     pub client: EngineClient,
     pub hello: Hello,
     pub info: RuntimeInfo,
-    sidecar: Arc<Mutex<Sidecar>>,
+    pub data_dir: PathBuf,
+    started_here: bool,
 }
 
 impl Global for EngineSession {}
 
 impl EngineSession {
     pub fn new(client: EngineClient, hello: Hello, sidecar: Sidecar) -> Self {
-        let info = sidecar.info.clone();
-        Self { client, hello, info, sidecar: Arc::new(Mutex::new(sidecar)) }
+        let started_here = sidecar.started_here();
+        Self { client, hello, info: sidecar.info, data_dir: sidecar.data_dir, started_here }
     }
 
-    /// `true` when this UI started the engine (and so stops it on exit) rather than joining one that was
-    /// already running, for example the one `bifurc engine start` launched for the CLI.
-    pub fn is_owned(&self) -> bool {
-        self.sidecar.lock().unwrap().is_owned()
+    /// `true` when this UI started the engine rather than joining one that was already running, for example
+    /// the one `bifurc engine start` launched for the CLI.
+    pub fn started_here(&self) -> bool {
+        self.started_here
     }
+}
 
-    /// Stops the engine if this process started it. Blocks for up to a few seconds; for app shutdown only.
-    pub fn release(&self) {
-        self.sidecar.lock().unwrap().release(&self.client);
+/// How this app finds or starts the engine: the defaults, plus what an engine it starts needs to know about
+/// the desktop — the tray helper built beside this executable, and this executable as the interface the
+/// tray icon opens.
+pub fn sidecar_config() -> SidecarConfig {
+    let mut config = SidecarConfig::default();
+    if let Ok(exe) = std::env::current_exe() {
+        let tray = exe.with_file_name(format!("bifurc-tray{}", std::env::consts::EXE_SUFFIX));
+        if std::env::var_os("BIFURC_TRAY").is_none() && tray.is_file() {
+            config.tray = Some(tray);
+        }
+        if std::env::var_os("BIFURC_UI").is_none() {
+            config.ui = Some(exe);
+        }
     }
-
-    /// Stops the engine whoever started it and waits for it to be gone. Blocks; call it off the UI thread.
-    pub fn stop(&self) -> bool {
-        self.sidecar.lock().unwrap().stop(&self.client)
-    }
+    config
 }
 
 /// Short text for a failed call, as the UI shows it.

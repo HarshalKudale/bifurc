@@ -20,7 +20,14 @@ import { EventEmitter } from "events";
 import { logEmitter, type RequestLogEntry } from "./telemetry";
 // `import type`, so the "zero **value** imports from the rest of the engine" property above is untouched —
 // and `@bifurc/protocol` is a separate package rather than an engine-internal module in any case.
-import type { RunnerFinishedEvent, RunnerProgressEvent, WsMessageEvent, WsStatusEvent } from "@bifurc/protocol";
+import type {
+  EngineStoppingEvent,
+  RunnerFinishedEvent,
+  RunnerProgressEvent,
+  UiActivateEvent,
+  WsMessageEvent,
+  WsStatusEvent,
+} from "@bifurc/protocol";
 
 export interface EngineEvents {
   "sync.status": { wsId: string; status: string; error?: string | null; updatedIds?: string[] };
@@ -67,6 +74,10 @@ export interface EngineEvents {
    */
   "ws.status": WsStatusEvent;
   "ws.message": WsMessageEvent;
+  /** The engine is stopping on purpose; `restart` says whether a successor follows. Sent before the endpoint closes. */
+  "engine.stopping": EngineStoppingEvent;
+  /** The engine's tray was asked to open the interface while one is connected: that one comes forward. */
+  "ui.activate": UiActivateEvent;
 }
 
 /**
@@ -96,6 +107,8 @@ export const ENGINE_EVENT_NAMES: readonly (keyof EngineEvents)[] = [
   "runner.finished",
   "ws.status",
   "ws.message",
+  "engine.stopping",
+  "ui.activate",
 ];
 
 /**

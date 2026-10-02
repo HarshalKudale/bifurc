@@ -3,18 +3,28 @@ import { platformDefaultDataDir } from "@bifurc/engine/workspace/paths";
 import { findRunningEngine } from "@bifurc/engine/runtime/discovery";
 import { flag, has, parseArgs, type ParsedArgs } from "./args";
 import * as cmd from "./commands";
-import { CliError, connect, startEngine, stopEngine, type EngineConnection } from "./engine";
+import {
+  CliError,
+  connect,
+  connectOrStart,
+  restartEngine,
+  startEngine,
+  stopEngine,
+  type EngineConnection,
+} from "./engine";
 
 const VERSION = "0.1.0";
 
 export const USAGE = `Usage: bifurc <command> [options]
 
 Talks to the Bifurc engine that serves a data directory, over its socket (a named pipe on Windows).
-The engine is found through <data-dir>/runtime.json.
+The engine is found through <data-dir>/runtime.json. A command that needs the engine starts one in the
+background if none is running; it keeps running with a tray icon after this terminal closes.
 
 Engine
-  engine start [--transport socket|ws]   Start a standalone engine in the background
-  engine stop                            Stop it gracefully
+  engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
+  engine stop                            Stop it gracefully; the interfaces using it close too
+  engine restart                         Stop it and start it again; the interfaces reconnect
   engine status                          Where it runs, without opening a session
   status                                 Engine, proxy and active workspace
 
@@ -50,6 +60,7 @@ Anything else
 Options
   --data-dir <path>    Default: the desktop app's data directory (or BIFURC_DATA_DIR)
   -w, --workspace <id> Default: the active workspace
+  --no-start           Fail instead of starting an engine when none is running
   --json               Machine-readable output
   -h, --help`;
 
@@ -74,8 +85,14 @@ async function engineCommand(args: ParsedArgs, out: cmd.Output, dataDir: string)
     }
     const transport = flag(args, "transport") ?? "socket";
     if (transport !== "socket" && transport !== "ws") throw new CliError("--transport must be socket or ws");
-    const info = await startEngine(dataDir, transport);
+    const info = await startEngine(dataDir, transport, { tray: !has(args, "no-tray") });
     out.print(info, () => `started  pid ${info.pid}, ${info.transport} ${info.address}`);
+    return;
+  }
+  if (sub === "restart") {
+    const conn = await connect(dataDir, VERSION);
+    const info = await restartEngine(conn, dataDir);
+    out.print(info, () => `restarted  pid ${info.pid}, ${info.transport} ${info.address}`);
     return;
   }
   if (sub === "stop") {
@@ -107,7 +124,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   const ctx: cmd.CommandContext = {
     args,
     out,
-    engine: async () => (conn ??= await connect(dataDir, VERSION)),
+    engine: async () =>
+      (conn ??= await (has(args, "no-start") ? connect(dataDir, VERSION) : connectOrStart(dataDir, VERSION))),
   };
 
   try {

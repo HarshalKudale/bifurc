@@ -198,8 +198,11 @@ export interface CaptureBuildMockResult {
  * `engine.shutdown` — stop a standalone engine gracefully: listeners close, runtime.json is removed, the process
  * exits. Served only by a standalone engine (`bifurc-engine`); an engine embedded in another process has no
  * process of its own to stop, so it does not register it.
+ *
+ * `restart: true` has the engine start a successor with the same command line once it has stopped. Either way
+ * every client hears `event.engine.stopping` first, so an interface knows whether to close or to reconnect.
  */
-export const EngineShutdownParams = z.object({}).strict();
+export const EngineShutdownParams = z.object({ restart: z.boolean().optional() }).strict();
 export type EngineShutdownParams = z.infer<typeof EngineShutdownParams>;
 
 export const CaptureListParams = z.object({ workspaceId: z.string(), summary: z.boolean().optional() }).strict();

@@ -204,6 +204,24 @@ export const WsMessageEventSchema = z.object({
 });
 export type WsMessageEvent = z.infer<typeof WsMessageEventSchema>;
 
+/**
+ * `event.engine.stopping` — the engine is about to stop, on purpose (`engine.shutdown`, or Quit in its tray
+ * menu). Sent before the endpoint closes.
+ *
+ * `restart` is what an interface acts on: `false` means the engine is going away and every interface closes
+ * with it; `true` means a successor is starting for the same data directory, so a client waits for the new
+ * `runtime.json` and reconnects. A connection that drops with no such event before it is a crash.
+ */
+export const EngineStoppingEventSchema = z.object({ restart: z.boolean() });
+export type EngineStoppingEvent = z.infer<typeof EngineStoppingEventSchema>;
+
+/**
+ * `event.ui.activate` — the user asked for the interface (Open in the engine's tray menu) while one is
+ * already connected. A graphical client brings its window to the front; nothing is carried.
+ */
+export const UiActivateEventSchema = z.object({});
+export type UiActivateEvent = z.infer<typeof UiActivateEventSchema>;
+
 export const EVENT_NAMES = [
   "event.sync.status",
   "event.sync.entityStatus",
@@ -220,6 +238,9 @@ export const EVENT_NAMES = [
   // a connection the engine owns and nobody can render.
   "event.ws.status",
   "event.ws.message",
+  // The engine's own lifetime, and its tray asking a connected interface to come forward.
+  "event.engine.stopping",
+  "event.ui.activate",
 ] as const;
 export type EventName = (typeof EVENT_NAMES)[number];
 
