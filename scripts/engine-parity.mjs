@@ -404,7 +404,21 @@ async function main() {
     selected.forEach((scenario, i) => {
       const [a, b] = [results.node[i], results.rust[i]];
       const diffs = [];
-      diffValues(a.transcript, b.transcript, "transcript", diffs);
+      const steps = Math.max(a.transcript.length, b.transcript.length);
+      for (let step = 0; step < steps; step += 1) {
+        const [left, right] = [a.transcript[step], b.transcript[step]];
+        if (JSON.stringify(left) === JSON.stringify(right)) continue;
+        const label = `step ${step} ${left?.call ?? left?.note ?? right?.call ?? right?.note ?? ""}`;
+        const unported = [right?.result?.code, right?.value?.code].includes("UNKNOWN_COMMAND");
+        if (unported) {
+          diffs.push(`${label}: the rust engine has no such command`);
+          continue;
+        }
+        const stepDiffs = [];
+        diffValues(left?.result ?? left?.value ?? left, right?.result ?? right?.value ?? right, label, stepDiffs);
+        diffs.push(...stepDiffs.slice(0, 8));
+        if (stepDiffs.length > 8) diffs.push(`${label}: … and ${stepDiffs.length - 8} more differences`);
+      }
       const eventDiffs = [];
       diffValues(a.events, b.events, "events", eventDiffs);
       diffs.push(...eventDiffs.slice(0, 3));
