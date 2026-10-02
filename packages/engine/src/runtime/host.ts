@@ -937,7 +937,6 @@ export async function runWorkspaceHost(
       companions: opts.desktop,
       dataDir: opts.dataDir,
       bus: opts.bus ?? defaultBus,
-      keepInTray: () => loadSettings().minimizeToTray,
       shutdown: (restart) => host.shutdown(restart),
       notice: opts.onNotice ?? ((message: string) => console.log(`[host] ${message}`)),
     });
