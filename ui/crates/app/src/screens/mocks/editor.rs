@@ -42,13 +42,25 @@ use crate::{
     },
     engine::{call_in, describe},
     model::{
-        http::{HTTP_METHODS, header_map, header_pairs},
+        http::{BodyEncoding, HTTP_METHODS, HttpResponse, header_map, header_pairs, pretty_json},
         media::{self, BodyClass},
     },
     session::{LoadState, SaveMode},
 };
 
 const DEFAULT_NAME: &str = "New mock";
+/// The types a mock with no real response behind it can answer with. They are all text.
+const CONTENT_TYPES: [&str; 7] = [
+    "application/json",
+    "text/plain",
+    "text/html",
+    "application/xml",
+    "text/css",
+    "application/javascript",
+    "text/csv",
+];
+/// Headers that describe how the real server framed its body. A mock never sets them.
+const FRAMING_HEADERS: [&str; 5] = ["connection", "content-length", "transfer-encoding", "keep-alive", "content-encoding"];
 /// The engine's value for "any method"; the editor shows it as a word.
 const ANY_METHOD: &str = "*";
 const ANY_METHOD_LABEL: &str = "ANY";
@@ -83,6 +95,26 @@ struct Fields {
     mock_delay: bool,
     streaming: String,
     chunk_delay: String,
+    /// There is no real response behind this mock: it answers on its own, with the type it was given.
+    standalone: bool,
+    content_type: String,
+}
+
+/// The response controls as they stand, to tell whether anyone has edited them since they were filled in.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct ResponseState {
+    status: String,
+    body: String,
+    headers: Vec<(String, String)>,
+    content_type: String,
+    standalone: bool,
+}
+
+/// `request.replay` can only be sent for a URL that names its host, and only for a method that reads.
+fn probe_url(method: &str, pattern: &str, use_regex: bool) -> Option<String> {
+    let reads = matches!(method, ANY_METHOD_LABEL | "GET" | "HEAD");
+    let absolute = pattern.starts_with("http://") || pattern.starts_with("https://");
+    (reads && absolute && !use_regex && !pattern.contains("{{")).then(|| pattern.to_owned())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -127,6 +159,18 @@ pub struct MockEditor {
     mock_delay: bool,
     streaming: Entity<SelectState<Vec<&'static str>>>,
     chunk_delay: Entity<InputState>,
+    /// See [`Fields::standalone`]. Set when the real server has nothing at the URL, or could not be asked.
+    standalone: bool,
+    content_type_select: Entity<SelectState<Vec<&'static str>>>,
+    /// The real response's headers as they were when it was fetched. A header in the table that still
+    /// matches one of these passes through; one that was changed or added is what the mock sets.
+    probed_headers: Vec<(String, String)>,
+    /// The method and URL the real response was last asked for.
+    probe_key: Option<(String, String)>,
+    probing: bool,
+    probe_note: Option<SharedString>,
+    /// The response controls as they were last filled in; while they still match, a new answer may replace them.
+    pristine: ResponseState,
     section: Section,
     baseline: Fields,
     saving: bool,
@@ -158,6 +202,8 @@ impl MockEditor {
         let streaming = cx.new(|cx| {
             SelectState::new(STREAMING.map(|(_, label)| label).to_vec(), Some(IndexPath::default()), window, cx)
         });
+        let content_type_select =
+            cx.new(|cx| SelectState::new(CONTENT_TYPES.to_vec(), Some(IndexPath::default()), window, cx));
         let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
         let body = VarEditor::code(Syntax::Json, "Response body", window, cx);
 
@@ -174,17 +220,40 @@ impl MockEditor {
                 this.reload(window, cx);
             }
         }));
-        for input in [&pattern, &status, &delay, &chunk_delay] {
+        for input in [&status, &delay, &chunk_delay] {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.changed(cx);
                 }
             }));
         }
-        for select in [&method, &streaming] {
-            subscriptions
-                .push(cx.subscribe(select, |this, _, _: &SelectEvent<Vec<&'static str>>, cx| this.changed(cx)));
-        }
+        // Entering the URL is what asks the real server for its response.
+        subscriptions.push(cx.subscribe_in(&pattern, window, |this, _, event: &InputEvent, window, cx| match event {
+            InputEvent::Change => this.changed(cx),
+            InputEvent::PressEnter { .. } | InputEvent::Blur => this.maybe_probe(window, cx),
+            InputEvent::Focus => {}
+        }));
+        subscriptions.push(cx.subscribe_in(
+            &method,
+            window,
+            |this, _, _: &SelectEvent<Vec<&'static str>>, window, cx| {
+                this.changed(cx);
+                this.maybe_probe(window, cx);
+            },
+        ));
+        subscriptions
+            .push(cx.subscribe(&streaming, |this, _, _: &SelectEvent<Vec<&'static str>>, cx| this.changed(cx)));
+        subscriptions.push(cx.subscribe(
+            &content_type_select,
+            |this, _, event: &SelectEvent<Vec<&'static str>>, cx| {
+                let SelectEvent::Confirm(Some(value)) = event else { return };
+                if this.standalone && this.locked_content_type != *value {
+                    this.locked_content_type = (*value).to_owned();
+                    this.follow_content_type(cx);
+                    this.changed(cx);
+                }
+            },
+        ));
         subscriptions.push(cx.subscribe(&headers, |this, _, _: &KeyValueEvent, cx| {
             this.follow_content_type(cx);
             this.changed(cx);
@@ -221,6 +290,13 @@ impl MockEditor {
             mock_delay: true,
             streaming,
             chunk_delay,
+            standalone: false,
+            content_type_select,
+            probed_headers: Vec::new(),
+            probe_key: None,
+            probing: false,
+            probe_note: None,
+            pristine: ResponseState::default(),
             section: Section::Body,
             baseline: Fields {
                 name: String::new(),
@@ -239,12 +315,15 @@ impl MockEditor {
                 mock_delay: true,
                 streaming: String::new(),
                 chunk_delay: String::new(),
+                standalone: false,
+                content_type: String::new(),
             },
             saving: false,
             autosave: Autosave::new(window),
             _subscriptions: subscriptions,
         };
         this.baseline = this.fields(cx);
+        this.pristine = this.response_state(cx);
         this
     }
 
@@ -398,7 +477,180 @@ impl MockEditor {
             mock_delay: self.mock_delay,
             streaming: self.streaming_value(cx).to_owned(),
             chunk_delay: text(&self.chunk_delay),
+            standalone: self.standalone,
+            content_type: self.locked_content_type.clone(),
         }
+    }
+
+    fn response_state(&self, cx: &gpui_kit::App) -> ResponseState {
+        ResponseState {
+            status: self.status.read(cx).value().trim().to_owned(),
+            body: self.body.value(cx),
+            headers: self.headers.read(cx).pairs(cx),
+            content_type: self.locked_content_type.clone(),
+            standalone: self.standalone,
+        }
+    }
+
+    /// Shows the chosen type in the type list, when it is one of them.
+    fn sync_content_type_select(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let content_type = media::essence(&self.locked_content_type);
+        if let Some(listed) = CONTENT_TYPES.iter().find(|t| **t == content_type) {
+            self.content_type_select.update(cx, |s, cx| s.set_selected_value(listed, window, cx));
+        }
+    }
+
+    /// Turns the mock into the whole response (or back into a change to the real server's).
+    fn set_standalone(&mut self, standalone: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.standalone = standalone;
+        if standalone {
+            if self.locked_content_type.is_empty() || media::classify(&self.locked_content_type) != BodyClass::Text {
+                self.locked_content_type = CONTENT_TYPES[0].to_owned();
+            }
+            // Whatever data the real response had cannot be what the mock answers with.
+            self.data = None;
+            self.data_view = None;
+            self.sync_content_type_select(window, cx);
+        }
+        self.follow_content_type(cx);
+        self.changed(cx);
+    }
+
+    /// Asks the real server what it answers at this URL, to start the mock from. Only a draft whose response
+    /// has not been touched is filled in: what someone typed is never replaced.
+    fn maybe_probe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved_id.is_some() || self.load != LoadState::Ready {
+            return;
+        }
+        let pattern = self.pattern.read(cx).value().trim().to_owned();
+        if pattern.is_empty() {
+            return;
+        }
+        let method = self.badge(cx);
+        let key = (method.to_owned(), pattern.clone());
+        if self.probe_key.as_ref() == Some(&key) || self.response_state(cx) != self.pristine {
+            return;
+        }
+        self.probe_key = Some(key.clone());
+        let Some(url) = probe_url(method, &pattern, self.use_regex) else {
+            self.probing = false;
+            self.apply_standalone(
+                "There is no real response to start from for this URL, so this mock answers on its own.".into(),
+                window,
+                cx,
+            );
+            return;
+        };
+        self.probing = true;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        let method = if method == ANY_METHOD_LABEL { "GET" } else { method };
+        let payload = json!({ "method": method, "url": url, "headers": {}, "body": "" });
+        call_in(&client, window, cx, "request.replay", payload, move |this, outcome, window, cx| {
+            if this.probe_key.as_ref() != Some(&key) {
+                return;
+            }
+            this.probing = false;
+            if this.response_state(cx) != this.pristine {
+                cx.notify();
+                return;
+            }
+            let response = outcome.as_ref().ok().and_then(|v| HttpResponse::from_value(v, BodyEncoding::Base64));
+            match (outcome, response) {
+                (Err(error), _) => this.apply_standalone(
+                    format!("Couldn't reach the real server ({}). This mock answers on its own.", describe(&error))
+                        .into(),
+                    window,
+                    cx,
+                ),
+                (Ok(_), Some(response)) if matches!(response.status, 404 | 410) => this.apply_standalone(
+                    format!("The real server has nothing at this URL ({}). This mock answers on its own.", response.status)
+                        .into(),
+                    window,
+                    cx,
+                ),
+                (Ok(value), Some(response)) => {
+                    let bytes = value
+                        .get("body")
+                        .and_then(Value::as_str)
+                        .and_then(|body| STANDARD.decode(body.trim()).ok())
+                        .unwrap_or_default();
+                    this.apply_probe(&response, bytes, window, cx);
+                }
+                (Ok(_), None) => this.apply_standalone(
+                    "The real server's answer could not be read. This mock answers on its own.".into(),
+                    window,
+                    cx,
+                ),
+            }
+        });
+    }
+
+    /// Nothing real to start from: the response is empty and the mock is all of it.
+    fn apply_standalone(&mut self, note: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        self.standalone = true;
+        self.probed_headers.clear();
+        self.locked_content_type = CONTENT_TYPES[0].to_owned();
+        self.data = None;
+        self.data_view = None;
+        self.data_note = None;
+        self.status.update(cx, |s, cx| s.set_value("200", window, cx));
+        self.headers.update(cx, |table, cx| table.set_pairs(&[], window, cx));
+        self.body.set_value(String::new(), window, cx);
+        (self.mock_status, self.mock_body, self.mock_delay) = (true, true, true);
+        self.probe_note = Some(note);
+        self.sync_content_type_select(window, cx);
+        self.follow_content_type(cx);
+        self.pristine = self.response_state(cx);
+        self.changed(cx);
+    }
+
+    /// Fills the mock with the real response, every part of it left to the real server until it is switched on.
+    fn apply_probe(&mut self, response: &HttpResponse, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {
+        self.standalone = false;
+        let content_type = response.content_type().unwrap_or_default().to_owned();
+        let headers: Vec<(String, String)> = response
+            .headers
+            .iter()
+            .filter(|(name, _)| {
+                !name.eq_ignore_ascii_case("content-type") && !FRAMING_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h))
+            })
+            .cloned()
+            .collect();
+        self.locked_content_type = content_type.clone();
+        self.probed_headers = headers.clone();
+        self.headers.update(cx, |table, cx| table.set_pairs(&headers, window, cx));
+        self.status.update(cx, |s, cx| s.set_value(response.status.to_string(), window, cx));
+        self.delay.update(cx, |s, cx| s.set_value("0", window, cx));
+        (self.mock_status, self.mock_body, self.mock_delay) = (false, false, false);
+        self.data_note = None;
+        if media::classify(&content_type) == BodyClass::Text {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let text = if content_type.to_ascii_lowercase().contains("json") {
+                pretty_json(&text).unwrap_or(text)
+            } else {
+                text
+            };
+            self.data = None;
+            self.body.set_value(text, window, cx);
+        } else {
+            // Only the type is kept: the real server's body goes through as it is.
+            self.data = None;
+            self.body.set_value(String::new(), window, cx);
+        }
+        self.show_data(cx);
+        self.follow_content_type(cx);
+        let kind = media::essence(&content_type);
+        self.probe_note = Some(
+            format!(
+                "Started from the real response: {}{}. Nothing is mocked until you switch it on.",
+                response.status,
+                if kind.is_empty() { String::new() } else { format!(" {kind}") }
+            )
+            .into(),
+        );
+        self.pristine = self.response_state(cx);
+        self.changed(cx);
     }
 
     /// The `Content-Type` of the real server's response, kept as the mock was made from it. It is locked: the
@@ -411,7 +663,8 @@ impl MockEditor {
     /// is bytes and nothing says what they are.
     fn is_data(&self, cx: &gpui_kit::App) -> bool {
         let content_type = self.content_type(cx);
-        media::classify(&content_type) != BodyClass::Text || (content_type.is_empty() && self.data.is_some())
+        !self.standalone
+            && (media::classify(&content_type) != BodyClass::Text || (content_type.is_empty() && self.data.is_some()))
     }
 
     /// The body is highlighted for the `Content-Type` the mock answers with.
@@ -494,9 +747,14 @@ impl MockEditor {
         self.mock_delay = flag("responseDelayMocked", true);
         self.streaming.update(cx, |s, cx| s.set_selected_value(&streaming, window, cx));
         self.chunk_delay.update(cx, |s, cx| s.set_value(number("streamingChunkDelay", 100), window, cx));
+        self.standalone = flag("standalone", false);
+        self.probed_headers = header_pairs(entity.get("probedHeaders").unwrap_or(&Value::Null));
+        self.probe_note = None;
+        self.sync_content_type_select(window, cx);
 
         self.entity = entity;
         self.baseline = self.fields(cx);
+        self.pristine = self.response_state(cx);
     }
 
     /// The loaded entity with the editor's fields written over it, or what stops it from being saved.
@@ -524,16 +782,30 @@ impl MockEditor {
         entity.insert("useRegex".into(), json!(fields.use_regex));
         entity.insert("enabled".into(), json!(fields.enabled));
         entity.insert("responseStatus".into(), json!(status));
-        entity.insert("responseStatusMocked".into(), json!(fields.mock_status));
+        entity.insert("standalone".into(), json!(fields.standalone));
+        // With no real response behind it the mock is every part of the answer.
+        entity.insert("responseStatusMocked".into(), json!(fields.mock_status || fields.standalone));
         let mut response_headers = header_map(&fields.headers);
-        if !self.locked_content_type.is_empty() {
-            response_headers.insert("Content-Type".into(), json!(self.locked_content_type));
+        if !fields.content_type.is_empty() {
+            response_headers.insert("Content-Type".into(), json!(fields.content_type));
         }
         entity.insert("responseHeaders".into(), Value::Object(response_headers));
-        // Every header listed here is one the mock sets; a header left to the real server is simply not listed.
+        entity.insert("probedHeaders".into(), Value::Object(header_map(&self.probed_headers)));
+        // A header the mock sets is one that differs from what the real server sent, or that it did not send.
+        // The rest are left to the real server.
+        let unchanged = |name: &str, value: &str| {
+            self.probed_headers.iter().any(|(n, v)| n.eq_ignore_ascii_case(name) && v == value)
+        };
         entity.insert(
             "mockedResponseHeaders".into(),
-            Value::Array(fields.headers.iter().map(|(name, _)| json!(name)).collect()),
+            Value::Array(
+                fields
+                    .headers
+                    .iter()
+                    .filter(|(name, value)| fields.standalone || !unchanged(name, value))
+                    .map(|(name, _)| json!(name))
+                    .collect(),
+            ),
         );
         if fields.is_data {
             // Bytes are stored as they are. A mock that replaces the body needs some to replace it with.
@@ -549,9 +821,9 @@ impl MockEditor {
             entity.insert("responseBody".into(), json!(fields.body));
             entity.remove("responseBodyEncoding");
         }
-        entity.insert("responseBodyMocked".into(), json!(fields.mock_body));
+        entity.insert("responseBodyMocked".into(), json!(fields.mock_body || fields.standalone));
         entity.insert("responseDelay".into(), json!(delay));
-        entity.insert("responseDelayMocked".into(), json!(fields.mock_delay));
+        entity.insert("responseDelayMocked".into(), json!(fields.mock_delay || fields.standalone));
         entity.insert("streamingMode".into(), json!(fields.streaming));
         entity.insert("streamingChunkDelay".into(), json!(chunk_delay));
         Ok(entity)
@@ -688,11 +960,26 @@ impl MockEditor {
                                 this.use_regex = *checked;
                                 this.changed(cx);
                             })),
+                    )
+                    .child(
+                        Switch::new("mock-standalone")
+                            .checked(self.standalone)
+                            .label("No real endpoint: this mock is the whole response")
+                            .small()
+                            .on_change(cx.listener(|this, checked: &bool, window, cx| {
+                                this.set_standalone(*checked, window, cx);
+                            })),
                     ),
             )
             .child(div().px_3().text_sm().text_color(theme.muted_foreground).child(
                 "A request through the proxy with this method whose URL contains the pattern is answered by this mock.",
             ))
+            .children(
+                self.probing
+                    .then(|| "Fetching the real response…".into())
+                    .or_else(|| self.probe_note.clone())
+                    .map(|note: SharedString| div().px_3().pt_1().text_sm().text_color(theme.info).child(note)),
+            )
             .into_any_element()
     }
 
@@ -720,17 +1007,25 @@ impl MockEditor {
         let theme = cx.theme().clone();
         let is_data = self.is_data(cx);
         let content_type = media::essence(&self.content_type(cx));
-        let kind = Tag::secondary().small().child(if content_type.is_empty() {
-            "No Content-Type header".to_owned()
+        let unsupported: SharedString = format!(
+            "Response type not supported for mock {}",
+            if content_type.is_empty() { "unknown" } else { content_type.as_str() }
+        )
+        .into();
+        let kind: AnyElement = if self.standalone {
+            div().w_56().child(Select::new(&self.content_type_select).small().placeholder(content_type)).into_any_element()
         } else {
-            content_type
-        });
+            Tag::secondary()
+                .small()
+                .child(if content_type.is_empty() { "No Content-Type header".to_owned() } else { content_type })
+                .into_any_element()
+        };
         let toolbar = h_flex()
             .flex_none()
             .px_3()
             .py_2()
             .gap_3()
-            .children((!is_data).then(|| {
+            .children((!is_data && !self.standalone).then(|| {
                 Self::pass_through("mock-body", self.mock_body, "body", cx, |this, on| this.mock_body = on)
             }))
             .child(kind)
@@ -742,7 +1037,7 @@ impl MockEditor {
                     .text_ellipsis()
                     .text_sm()
                     .text_color(theme.warning)
-                    .children(self.data_note.clone().filter(|_| is_data)),
+                    .children(is_data.then(|| self.data_note.clone().unwrap_or(unsupported.clone()))),
             )
             .children((is_data && self.data_view.is_some()).then(|| {
                 Button::new("mock-body-save")
@@ -755,8 +1050,8 @@ impl MockEditor {
             (_, false) => Editor::new(self.body.state()).bordered(false).h_full().into_any_element(),
             (Some(view), true) => view.render(cx),
             (None, true) => page::empty(
-                "Data can't be mocked",
-                "The real server answers with an image or other data, so its response goes through as it is.",
+                unsupported,
+                "The real server's body goes through as it is. The status, the other headers and the delay can still be mocked.",
             ),
         };
         v_flex().size_full().child(toolbar).child(div().flex_1().min_h_0().child(content)).into_any_element()
@@ -769,18 +1064,23 @@ impl MockEditor {
         }
         let theme = cx.theme().clone();
         let headers = self.headers.read(cx).pairs(cx).len();
+        let standalone = self.standalone;
         let content = match self.section {
             Section::Body => self.render_body(cx),
             Section::Headers => v_flex()
                 .size_full()
                 .child(
-                    div().flex_none().px_3().py_2().text_sm().text_color(theme.muted_foreground).child(
-                        if self.locked_content_type.is_empty() {
+                    v_flex().flex_none().px_3().py_2().text_sm().text_color(theme.muted_foreground).child(
+                        if self.standalone {
+                            "Content-Type is the type chosen on the Body tab.".to_owned()
+                        } else if self.locked_content_type.is_empty() {
                             "Content-Type is locked: it is always the real server's.".to_owned()
                         } else {
                             format!("Content-Type is locked to the real server's: {}", self.locked_content_type)
                         },
-                    ),
+                    ).children((!self.standalone && !self.probed_headers.is_empty()).then(|| {
+                        "A header you change or add replaces the real server's. One left as it is passes through."
+                    })),
                 )
                 .child(div().flex_1().min_h_0().child(self.headers.clone()))
                 .into_any_element(),
@@ -789,8 +1089,12 @@ impl MockEditor {
                 .p_3()
                 .gap_4()
                 .child(v_flex().gap_2().child(page::section_label("Delay before answering (ms)", cx)).child(
-                    h_flex().gap_4().child(div().w_32().child(Input::new(&self.delay).small())).child(
-                        Self::pass_through("mock-delay", self.mock_delay, "delay", cx, |this, on| this.mock_delay = on),
+                    h_flex().gap_4().child(div().w_32().child(Input::new(&self.delay).small())).children(
+                        (!standalone).then(|| {
+                            Self::pass_through("mock-delay", self.mock_delay, "delay", cx, |this, on| {
+                                this.mock_delay = on
+                            })
+                        }),
                     ),
                 ))
                 .child(
@@ -818,8 +1122,10 @@ impl MockEditor {
                     .pt_2()
                     .child(div().text_sm().text_color(theme.muted_foreground).child("Status"))
                     .child(div().w_24().child(Input::new(&self.status).small()))
-                    .child(Self::pass_through("mock-status", self.mock_status, "status", cx, |this, on| {
-                        this.mock_status = on
+                    .children((!standalone).then(|| {
+                        Self::pass_through("mock-status", self.mock_status, "status", cx, |this, on| {
+                            this.mock_status = on
+                        })
                     })),
             )
             .child(
