@@ -5,7 +5,7 @@
 //! the engine's socket events to whichever views care. Everything that changes the workspace is an engine
 //! command; this model then re-reads.
 
-use bifurc_engine_client::{ClientError, EngineClient, Incoming};
+use bifurc_engine_client::{ClientError, EngineClient, Incoming, SidecarConfig, attach_or_start};
 use futures::StreamExt as _;
 use gpui_kit::{AppContext as _, Context, EventEmitter};
 use serde_json::{Value, json};
@@ -40,8 +40,8 @@ pub enum Load {
     Failed(String),
 }
 
-/// The forward proxy, as `server.status` reports it. (The reverse proxy that serves `.localhost` names is a
-/// separate listener on `settings.port`; the engine has no status command for it.)
+/// One of the engine's two proxy listeners, as `server.status` reports it: the forward proxy, or (asked with
+/// `target: "reverse"`) the reverse proxy that serves `.localhost` names on `settings.port`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProxyStatus {
     pub running: bool,
@@ -49,6 +49,17 @@ pub struct ProxyStatus {
     pub error: Option<String>,
     /// A start or stop is in flight.
     pub busy: bool,
+}
+
+impl ProxyStatus {
+    fn from_value(value: &Value) -> Self {
+        Self {
+            running: value.get("running").and_then(Value::as_bool).unwrap_or(false),
+            port: value.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0),
+            error: value.get("error").and_then(Value::as_str).map(str::to_owned),
+            busy: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +80,10 @@ pub enum ModelEvent {
     RunnerFinished(Value),
     /// The entity with this id was put back to its last synced version; an editor showing it must re-read it.
     EntityReverted(String),
+    /// `event.sync.status`: the workspace's remote sync started, finished or failed at something.
+    SyncStatus,
+    /// The engine was stopped and started again: anything that lived only in the old one is gone.
+    EngineRestarted,
     /// A short message for the user: a failed command, a lost connection.
     Notice(String),
 }
@@ -78,6 +93,9 @@ pub struct AppModel {
     config: ConfigSnapshot,
     git: GitStatus,
     proxy: ProxyStatus,
+    reverse_proxy: ProxyStatus,
+    /// The engine is being stopped and started again; its connection closing is expected.
+    restarting_engine: bool,
     load: Load,
     refreshing: bool,
     refresh_again: bool,
@@ -95,6 +113,8 @@ impl AppModel {
             config: ConfigSnapshot::default(),
             git: GitStatus::default(),
             proxy: ProxyStatus::default(),
+            reverse_proxy: ProxyStatus::default(),
+            restarting_engine: false,
             load: Load::Loading,
             refreshing: false,
             refresh_again: false,
@@ -124,6 +144,14 @@ impl AppModel {
 
     pub fn proxy(&self) -> &ProxyStatus {
         &self.proxy
+    }
+
+    pub fn reverse_proxy(&self) -> &ProxyStatus {
+        &self.reverse_proxy
+    }
+
+    pub fn is_restarting_engine(&self) -> bool {
+        self.restarting_engine
     }
 
     pub fn load(&self) -> &Load {
@@ -167,6 +195,8 @@ impl AppModel {
 
     fn on_incoming(&mut self, incoming: Incoming, cx: &mut Context<Self>) {
         match incoming {
+            // A restart closes the old connection on purpose; the new one is in place when it is done.
+            Incoming::Closed if self.restarting_engine => {}
             Incoming::Closed => {
                 self.connection_lost = true;
                 cx.emit(ModelEvent::Notice("The connection to the engine was lost.".to_owned()));
@@ -174,7 +204,10 @@ impl AppModel {
             }
             Incoming::Event(event) => match event.event.as_str() {
                 "event.entity.changed" | "event.sync.entityStatus" | "event.settings.changed" => self.refresh(cx),
-                "event.sync.status" => self.refresh_git(cx),
+                "event.sync.status" => {
+                    self.refresh_git(cx);
+                    cx.emit(ModelEvent::SyncStatus);
+                }
                 "event.server.error" => self.refresh_proxy(cx),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
@@ -250,15 +283,76 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "server.status", json!({}), |this, outcome, cx| {
             if let Ok(value) = outcome {
-                this.proxy = ProxyStatus {
-                    running: value.get("running").and_then(Value::as_bool).unwrap_or(false),
-                    port: value.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0),
-                    error: value.get("error").and_then(Value::as_str).map(str::to_owned),
-                    busy: false,
-                };
+                this.proxy = ProxyStatus::from_value(&value);
                 cx.notify();
             }
         });
+        call(&client, cx, "server.status", json!({ "target": "reverse" }), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.reverse_proxy = ProxyStatus::from_value(&value);
+                cx.notify();
+            }
+        });
+    }
+
+    /// Starts the reverse proxy if it is stopped, stops it if it is running.
+    pub fn toggle_reverse_proxy(&mut self, cx: &mut Context<Self>) {
+        if self.reverse_proxy.busy {
+            return;
+        }
+        self.reverse_proxy.busy = true;
+        cx.notify();
+        let action = if self.reverse_proxy.running { "server.stop" } else { "server.start" };
+        let client = self.engine.client.clone();
+        call(&client, cx, action, json!({ "target": "reverse" }), |this, outcome, cx| {
+            if let Err(error) = outcome {
+                cx.emit(ModelEvent::Notice(format!("Couldn't change the reverse proxy. {}", describe(&error))));
+            }
+            this.reverse_proxy.busy = false;
+            this.refresh_proxy(cx);
+        });
+    }
+
+    /// Stops the engine and starts a new one, then reconnects to it. Everything the old one held in memory
+    /// (open WebSocket connections, captured traffic) is gone; what is saved in the workspace is not.
+    pub fn restart_engine(&mut self, cx: &mut Context<Self>) {
+        if self.restarting_engine {
+            return;
+        }
+        self.restarting_engine = true;
+        cx.notify();
+        let old = self.engine.clone();
+        let restarting = cx.background_spawn(async move {
+            if !old.stop() {
+                return Err("The engine did not stop. Another program is using it.".to_owned());
+            }
+            attach_or_start(&SidecarConfig::default(), env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = restarting.await;
+            this.update(cx, |this, cx| {
+                this.restarting_engine = false;
+                match outcome {
+                    Ok((client, hello, sidecar)) => {
+                        let engine = EngineSession::new(client, hello, sidecar);
+                        cx.set_global(engine.clone());
+                        this.engine = engine;
+                        this.connection_lost = false;
+                        this.listen(cx);
+                        this.refresh(cx);
+                        cx.emit(ModelEvent::EngineRestarted);
+                    }
+                    Err(message) => {
+                        // The old connection is closed whatever happened, so nothing is live now.
+                        this.connection_lost = true;
+                        cx.emit(ModelEvent::Notice(format!("Couldn't restart the engine. {message}")));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Starts the proxy if it is stopped, stops it if it is running.

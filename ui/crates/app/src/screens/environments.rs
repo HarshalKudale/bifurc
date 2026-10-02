@@ -185,7 +185,7 @@ impl EnvironmentsScreen {
         }
     }
 
-    fn select(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected.as_deref() == Some(id.as_str()) {
             return;
         }

@@ -136,38 +136,63 @@ function proxyPortInForce(): number {
     return getPort() || loadConfig().forwardProxyPort;
 }
 
-export function registerServerCommands(registry: CommandRegistry): void {
-    registry.register("server.status", (params: ServerStatusParams) => ({
-        running: isRunning(),
-        port: getPort(),
-        error: getServerError(),
-        ...echoWorkspace(params.workspaceId),
-    }));
+/**
+ * The reverse proxy (the edge that serves the `.localhost` names) answers the same four commands when the
+ * caller names it with `target: "reverse"`. The edge lives in `reverseproxy/`, which this module may not
+ * import, so the composition hands in what it needs as this interface.
+ */
+export interface ReverseProxyControl {
+    isRunning(): boolean;
+    /** The port it is bound to, or the last one it was bound to. `0` when it never was. */
+    port(): number;
+    error(): string | null;
+    /** Binds `port`. A bind failure is reported by `error()`, not thrown. */
+    start(port: number): void;
+    stop(): void;
+}
 
-    registry.register("server.start", (_params: ServerStartParams) => {
-        /**
-         * **No `workspaceId` is read, and that is the change `plan/17` makes rather than a regression.**
-         * There is one proxy; the parameter used to pick between N and now has nothing to pick.
-         *
-         * `startServer()` re-binds — `proxy/server.ts`'s `start()` stops first — so calling this on a running
-         * proxy restarts it on the same port. That is the pre-P14 body's behaviour, kept deliberately: the
-         * alternative (report `{ ok: true }` and do nothing) would make the command's name untrue for the one
-         * caller that uses it to recover a proxy that failed to bind.
-         */
+const NO_REVERSE_PROXY: ReverseProxyControl = {
+    isRunning: () => false,
+    port: () => 0,
+    error: () => "There is no reverse proxy in this engine.",
+    start: () => {},
+    stop: () => {},
+};
+
+export function registerServerCommands(
+    registry: CommandRegistry,
+    reverse: ReverseProxyControl = NO_REVERSE_PROXY,
+): void {
+    const reversePortInForce = (): number => reverse.port() || loadConfig().port;
+
+    registry.register("server.status", (params: ServerStatusParams) =>
+        params.target === "reverse"
+            ? { running: reverse.isRunning(), port: reverse.port(), error: reverse.error(), ...echoWorkspace(params.workspaceId) }
+            : { running: isRunning(), port: getPort(), error: getServerError(), ...echoWorkspace(params.workspaceId) },
+    );
+
+    registry.register("server.start", (params: ServerStartParams) => {
+        if (params.target === "reverse") {
+            reverse.start(reversePortInForce());
+            return { ok: true };
+        }
         startServer(proxyPortInForce());
         return { ok: true };
     });
 
-    registry.register("server.stop", (_params: ServerStopParams) => {
-        stopServer();
+    registry.register("server.stop", (params: ServerStopParams) => {
+        if (params.target === "reverse") reverse.stop();
+        else stopServer();
         return { ok: true };
     });
 
-    registry.register("server.restart", (_params: ServerRestartParams) => {
-        // Stop then start, exactly as before — `restart` is not a distinct code path, which is the property
-        // the module header records for the original body. The port is read **before** the stop only because
-        // `stopServer()` retains it; reading it after would work for the same reason, but reading it first is
-        // what makes this identical in shape to the body it replaces.
+    registry.register("server.restart", (params: ServerRestartParams) => {
+        if (params.target === "reverse") {
+            const port = reversePortInForce();
+            reverse.stop();
+            reverse.start(port);
+            return { ok: true };
+        }
         const port = proxyPortInForce();
         stopServer();
         startServer(port);

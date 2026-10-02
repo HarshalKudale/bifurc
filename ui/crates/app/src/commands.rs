@@ -20,6 +20,7 @@ actions!(
     bifurc,
     [
         OpenCommandPalette,
+        OpenFinder,
         NewRestRequest,
         NewGraphQlRequest,
         NewGrpcRequest,
@@ -62,6 +63,8 @@ actions!(
         ShowRequests,
         ShowMocks,
         ShowEnvironments,
+        ShowWorkspaceConfig,
+        ShowAuditLog,
         ShowSettings,
         ReloadWorkspace,
         Quit,
@@ -75,9 +78,10 @@ impl Global for ShellHandle {}
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        // The later of two bindings for one action is the one shown beside it, so Ctrl+K comes second.
+        // The later of two bindings for one action is the one shown beside it, so the plain key comes second.
         KeyBinding::new("secondary-shift-p", OpenCommandPalette, None),
         KeyBinding::new("secondary-k", OpenCommandPalette, None),
+        KeyBinding::new("secondary-p", OpenFinder, None),
         KeyBinding::new("secondary-n", NewRestRequest, None),
         KeyBinding::new("secondary-t", NewRestRequest, None),
         KeyBinding::new("secondary-shift-n", NewWebSocketRequest, None),
@@ -137,6 +141,7 @@ fn new_folder<A: Action + Clone>(cx: &mut App, kind: RequestKind) {
 
 pub fn register_actions(cx: &mut App) {
     on_shell::<OpenCommandPalette>(cx, |shell, window, cx| shell.open_command_palette(window, cx));
+    on_shell::<OpenFinder>(cx, |shell, window, cx| shell.open_finder(window, cx));
     new_request::<NewRestRequest>(cx, RequestKind::Rest);
     new_request::<NewGraphQlRequest>(cx, RequestKind::GraphQl);
     new_request::<NewGrpcRequest>(cx, RequestKind::Grpc);
@@ -179,6 +184,8 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowRequests>(cx, Screen::Requests);
     show::<ShowMocks>(cx, Screen::Mocks);
     show::<ShowEnvironments>(cx, Screen::Environments);
+    show::<ShowWorkspaceConfig>(cx, Screen::WorkspaceConfig);
+    show::<ShowAuditLog>(cx, Screen::AuditLog);
     show::<ShowSettings>(cx, Screen::Settings);
     on_shell::<ReloadWorkspace>(cx, |shell, _, cx| shell.reload(cx));
     cx.on_action(|_: &Quit, cx: &mut App| {

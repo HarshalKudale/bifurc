@@ -27,6 +27,8 @@ pub enum Screen {
     Requests,
     Mocks,
     Environments,
+    WorkspaceConfig,
+    AuditLog,
     Settings,
 }
 
@@ -41,6 +43,8 @@ impl Screen {
             Screen::Requests => "Requests",
             Screen::Mocks => "Mocks",
             Screen::Environments => "Environments",
+            Screen::WorkspaceConfig => "Config",
+            Screen::AuditLog => "Audit log",
             Screen::Settings => "Settings",
         }
     }
@@ -55,6 +59,8 @@ impl Screen {
             Screen::Requests => IconName::Globe,
             Screen::Mocks => IconName::GalleryVerticalEnd,
             Screen::Environments => IconName::Asterisk,
+            Screen::WorkspaceConfig => IconName::Settings2,
+            Screen::AuditLog => IconName::FileText,
             Screen::Settings => IconName::Settings,
         }
     }
@@ -69,7 +75,7 @@ impl Screen {
             Screen::ProxyRules => &["rules/"],
             Screen::Environments => &["environments/"],
             Screen::HealthBar => &["healthbar/"],
-            Screen::Services | Screen::Capture | Screen::Settings => &[],
+            Screen::Services | Screen::Capture | Screen::Settings | Screen::WorkspaceConfig | Screen::AuditLog => &[],
         }
     }
 
@@ -81,7 +87,12 @@ impl Screen {
             Screen::Requests => config.requests.len(),
             Screen::Mocks => config.mocks.len(),
             Screen::Environments => config.selectable_environments().count(),
-            Screen::Services | Screen::HealthBar | Screen::Capture | Screen::Settings => 0,
+            Screen::Services
+            | Screen::HealthBar
+            | Screen::Capture
+            | Screen::Settings
+            | Screen::WorkspaceConfig
+            | Screen::AuditLog => 0,
         };
         (count > 0).then_some(count)
     }
@@ -92,7 +103,7 @@ const GROUPS: [(&str, &[Screen]); 4] = [
     ("Applications", &[Screen::Services, Screen::HealthBar]),
     ("Routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture]),
     ("API", &[Screen::Requests, Screen::Mocks]),
-    ("Workspace", &[Screen::Environments]),
+    ("Workspace", &[Screen::Environments, Screen::WorkspaceConfig, Screen::AuditLog]),
 ];
 
 impl Shell {

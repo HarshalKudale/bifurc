@@ -143,6 +143,33 @@ pub fn confirm_danger<V: 'static>(
     ok_text: &'static str,
     on_ok: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
 ) {
+    confirm_with(ButtonVariant::Danger, view, window, cx, title, consequence, ok_text, on_ok);
+}
+
+/// Asks before something that changes a lot but destroys nothing, such as connecting a remote.
+pub fn confirm<V: 'static>(
+    view: WeakEntity<V>,
+    window: &mut Window,
+    cx: &mut App,
+    title: impl Into<SharedString>,
+    consequence: impl Into<SharedString>,
+    ok_text: &'static str,
+    on_ok: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+) {
+    confirm_with(ButtonVariant::Primary, view, window, cx, title, consequence, ok_text, on_ok);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn confirm_with<V: 'static>(
+    variant: ButtonVariant,
+    view: WeakEntity<V>,
+    window: &mut Window,
+    cx: &mut App,
+    title: impl Into<SharedString>,
+    consequence: impl Into<SharedString>,
+    ok_text: &'static str,
+    on_ok: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+) {
     let (title, consequence) = (title.into(), consequence.into());
     let on_ok = Rc::new(on_ok);
     window.defer(cx, move |window, cx| {
@@ -153,7 +180,7 @@ pub fn confirm_danger<V: 'static>(
                 .description(consequence.clone())
                 .confirm()
                 .ok_text(ok_text)
-                .ok_variant(ButtonVariant::Danger)
+                .ok_variant(variant)
                 .on_ok(move |_, window, cx| {
                     view.update(cx, |view, cx| on_ok(view, window, cx)).ok();
                     true

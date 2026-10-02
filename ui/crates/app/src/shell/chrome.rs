@@ -1,6 +1,6 @@
 //! The window's fixed furniture: the title bar, the bar above the screen, and the footer.
 //!
-//! - Title bar: the app, search (the command palette) and the environment selector.
+//! - Title bar: the app, search (the finder), the command center and the environment selector.
 //! - Top bar: the left sidebar's trigger, where you are, and the right sidebar's trigger.
 //! - Footer: the workspace's git state with its publish action, the current screen's status, the proxy and
 //!   the engine connection.
@@ -24,7 +24,7 @@ use gpui_kit::{
 
 use super::{Screen, Shell};
 use crate::{
-    commands::OpenCommandPalette,
+    commands::{OpenCommandPalette, OpenFinder},
     model::{RequestKind, git::PublishAction},
     preferences::Preferences,
 };
@@ -48,30 +48,50 @@ impl Shell {
         let model = self.model.clone();
         let shell = cx.weak_entity();
         let shortcut = Kbd::binding_for_action(&OpenCommandPalette, None, window);
+        let finder_shortcut = Kbd::binding_for_action(&OpenFinder, None, window);
 
         TitleBar::new().child(
             h_flex()
                 .w_full()
                 .gap_2()
                 .child(div().flex_1().font_semibold().child("Bifurc"))
-                // Search sits in the middle of the bar and is the palette's visible entry point.
+                // Search sits in the middle of the bar and finds things to open; the button beside it opens
+                // the command center, which is only actions.
                 .child(
-                    div().occlude().child(
-                        Button::new("open-search")
-                            .outline()
-                            .small()
-                            .w_96()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .text_color(theme.muted_foreground)
-                                    .child(Icon::new(IconName::Search).small())
-                                    .child(div().flex_1().text_left().child("Search requests, mocks and commands…"))
-                                    .children(shortcut),
-                            )
-                            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenCommandPalette), cx)),
-                    ),
+                    h_flex()
+                        .occlude()
+                        .gap_1p5()
+                        .child(
+                            Button::new("open-search")
+                                .outline()
+                                .small()
+                                .w_96()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .gap_2()
+                                        .text_color(theme.muted_foreground)
+                                        .child(Icon::new(IconName::Search).small())
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_left()
+                                                .child("Search requests, mocks and environments…"),
+                                        )
+                                        .children(finder_shortcut),
+                                )
+                                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFinder), cx)),
+                        )
+                        .child(
+                            Button::new("open-commands")
+                                .outline()
+                                .small()
+                                .icon(IconName::SquareTerminal)
+                                .label("Commands")
+                                .tooltip("Make something new, go to a screen or change the view")
+                                .children(shortcut)
+                                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenCommandPalette), cx)),
+                        ),
                 )
                 .child(
                     h_flex().flex_1().justify_end().child(
@@ -228,7 +248,7 @@ impl Shell {
             Screen::Services => self.services.read(cx).status_line(),
             Screen::HealthBar => self.healthbar.read(cx).status_line(),
             Screen::Capture => self.capture.read(cx).status_line(cx),
-            Screen::Settings => String::new(),
+            Screen::Settings | Screen::WorkspaceConfig | Screen::AuditLog => String::new(),
         }
     }
 

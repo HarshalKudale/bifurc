@@ -31,7 +31,7 @@
  */
 
 import { getServerError, isRunning, reloadConfig, startServer } from "../proxy/server";
-import { isEdgeRunning, restartEdge } from "../reverseproxy/edge";
+import { getEdgeError, isEdgeRunning, restartEdge } from "../reverseproxy/edge";
 import type { AppConfig } from "../workspace/config";
 import type { AppSettings } from "../workspace/appSettings";
 
@@ -116,7 +116,8 @@ export type ListenerSettings = Pick<
  * **failed** is retried, since a new port is exactly how the user fixes that.
  */
 export function rebindChangedListeners(next: ListenerSettings, prev: ListenerSettings): void {
-  if (next.port !== prev.port) restartEdge(next.port);
+  // A stopped edge stays stopped; one that is down because its bind failed is retried on the new port.
+  if (next.port !== prev.port && (isEdgeRunning() || getEdgeError() !== null)) restartEdge(next.port);
 
   const tlsChanged = next.tlsEnabled !== prev.tlsEnabled
     || next.tlsCaCertPath !== prev.tlsCaCertPath

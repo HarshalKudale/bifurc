@@ -59,6 +59,7 @@ import { registerImportExportCommands } from "./importexport/commands";
 import { registerFileOpsCommands } from "./fileops/commands";
 import { registerCertCommands } from "./certificates/certCommands";
 import { registerServerCommands } from "./proxy/serverCommands";
+import { getEdgeError, getEdgePort, isEdgeRunning, restartEdge, stopEdge } from "./reverseproxy/edge";
 import { registerConfigCommands } from "./workspace/entities/configCommands";
 import { registerRestCommands } from "./rest/commands";
 import { registerMockCommands } from "./mocks/commands";
@@ -149,7 +150,13 @@ export function registerAllEngineCommands(registry: CommandRegistry): void {
   registerImportExportCommands(registry);
   registerFileOpsCommands(registry);
   registerCertCommands(registry);
-  registerServerCommands(registry);
+  registerServerCommands(registry, {
+    isRunning: isEdgeRunning,
+    port: getEdgePort,
+    error: getEdgeError,
+    start: restartEdge,
+    stop: stopEdge,
+  });
   registerConfigCommands(registry);
   registerRestCommands(registry);
   registerMockCommands(registry);
