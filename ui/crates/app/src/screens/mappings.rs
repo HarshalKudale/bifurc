@@ -4,7 +4,7 @@
 //! editing and deleting are engine commands addressed by id.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -25,7 +25,7 @@ use crate::{
         page,
     },
     engine::{call, failure, patch_entity},
-    model::config::MappingInfo,
+    model::{config::MappingInfo, git::FileState},
 };
 
 const DOMAIN_SUFFIX: &str = ".localhost";
@@ -149,8 +149,35 @@ impl MappingsScreen {
         );
     }
 
+    /// Commits the changed mapping files (and pushes, when the workspace has a remote).
+    fn sync_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| model.publish(paths, cx));
+    }
+
+    fn confirm_revert(&mut self, paths: Vec<String>, what: String, window: &mut Window, cx: &mut Context<Self>) {
+        confirm_danger(
+            cx.weak_entity(),
+            window,
+            cx,
+            format!("Revert {what}?"),
+            "Go back to the last synced version. Mappings that were never synced are removed.",
+            "Revert",
+            move |this, _, cx| this.model.update(cx, |model, cx| model.revert_paths(paths.clone(), cx)),
+        );
+    }
+
     fn render_row(&self, mapping: &MappingInfo, port: u16, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
+        let state = self.model.read(cx).git().entity_state(&mapping.id);
+        let path = self.model.read(cx).git().entity_path(&mapping.id).map(str::to_owned);
+        let busy = self.model.read(cx).is_publishing();
+        let state_label = match state {
+            Some(FileState::New) => "New",
+            Some(FileState::Modified) => "Modified",
+            Some(FileState::Deleted) => "Deleted",
+            Some(FileState::Clean) | None => "",
+        };
+        let changed = !state_label.is_empty();
         let model = self.model.clone();
         let toggle_id = mapping.id.clone();
         let this = cx.weak_entity();
@@ -205,10 +232,14 @@ impl MappingsScreen {
                     .text_color(theme.muted_foreground)
                     .child(mapping.label.clone().unwrap_or_default()),
             )
+            .child(div().w_24().flex_none().text_xs().text_color(theme.muted_foreground).child(state_label))
             .child(div().w_8().flex_none().child(
                 Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(
                     move |menu, _, _| {
                         let (edit_view, delete_view) = (this.clone(), this.clone());
+                        let (sync_view, revert_view) = (this.clone(), this.clone());
+                        let (sync_path, revert_path) = (path.clone(), path.clone());
+                        let revert_name = delete.domain.clone();
                         let (edit, delete, url) = (edit.clone(), delete.clone(), url.clone());
                         menu.item(PopupMenuItem::new("Edit…").on_click(move |_, window, cx| {
                             let mapping = edit.clone();
@@ -217,6 +248,22 @@ impl MappingsScreen {
                         .item(PopupMenuItem::new("Copy address").on_click(move |_, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
                         }))
+                        .separator()
+                        .item(PopupMenuItem::new("Sync").disabled(!changed || busy).on_click(move |_, _, cx| {
+                            if let Some(path) = sync_path.clone() {
+                                sync_view.update(cx, |this, cx| this.sync_paths(vec![path], cx)).ok();
+                            }
+                        }))
+                        .item(PopupMenuItem::new("Revert…").disabled(!changed || busy).on_click(
+                            move |_, window, cx| {
+                                if let Some(path) = revert_path.clone() {
+                                    let what = format!("“{revert_name}”");
+                                    revert_view
+                                        .update(cx, |this, cx| this.confirm_revert(vec![path], what, window, cx))
+                                        .ok();
+                                }
+                            },
+                        ))
                         .separator()
                         .item(PopupMenuItem::new("Delete…").on_click(
                             move |_, window, cx| {
@@ -250,6 +297,10 @@ impl Render for MappingsScreen {
             .cloned()
             .collect();
 
+        let model = self.model.read(cx);
+        let changed = model.git().rollup(&["mappings/"]).changed;
+        let busy = model.is_publishing();
+        let (sync_paths, revert_paths) = (changed.clone(), changed.clone());
         let header = page::header(
             "Mappings",
             "Route a .localhost name to a local server through the proxy.",
@@ -258,6 +309,30 @@ impl Render for MappingsScreen {
                 .child(div().w_56().child(
                     Input::new(&self.filter).small().prefix(Icon::new(IconName::Search).small()).cleanable(true),
                 ))
+                .child(
+                    Button::new("revert-mappings")
+                        .small()
+                        .label("Revert")
+                        .tooltip("Put every changed mapping back to its last synced version")
+                        .disabled(changed.is_empty() || busy)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let paths = revert_paths.clone();
+                            let what = match paths.len() {
+                                1 => "1 changed mapping".to_owned(),
+                                count => format!("{count} changed mappings"),
+                            };
+                            this.confirm_revert(paths, what, window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("sync-mappings")
+                        .small()
+                        .label("Sync")
+                        .tooltip("Commit the changed mappings (and push them, when there is a remote)")
+                        .loading(busy)
+                        .disabled(changed.is_empty() || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| this.sync_paths(sync_paths.clone(), cx))),
+                )
                 .child(
                     Button::new("new-mapping")
                         .small()
@@ -300,6 +375,7 @@ impl Render for MappingsScreen {
                         .child(div().size_4().flex_none())
                         .child(div().flex_1().child("Target"))
                         .child(div().w_48().flex_none().child("Label"))
+                        .child(div().w_24().flex_none().child("Status"))
                         .child(div().w_8().flex_none()),
                 )
                 .child(v_flex().id("mapping-rows").flex_1().min_h_0().overflow_y_scroll().children(rows))

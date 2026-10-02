@@ -150,6 +150,12 @@ describe("capture.* commands", () => {
       workspaceId: "ws1", via: "proxy", target: null, contentType: "text/plain", size: 3,
     }]);
 
+    emitLog({ ...entry("r", "ws1"), origin: "reverse", via: "mapping" });
+    const tagged = (registry.invoke("capture.list", { workspaceId: "ws1", summary: true }, ctx) as { entries: Record<string, unknown>[] }).entries;
+    expect(tagged.find((e) => e.id === "r")?.origin).toBe("reverse");
+    expect(tagged.find((e) => e.id === "a")?.origin).toBeUndefined();
+    registry.invoke("capture.remove", { workspaceId: "ws1", ids: ["r"] }, ctx);
+
     const full = registry.invoke("capture.get", { workspaceId: "ws1", id: "a" }, ctx) as { entry: RequestLogEntry };
     expect(full.entry.resBody).toBe("AAEC");
     expect(registry.invoke("capture.get", { workspaceId: "ws1", id: "nope" }, ctx)).toEqual({ entry: null });

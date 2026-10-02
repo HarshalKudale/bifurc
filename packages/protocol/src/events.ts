@@ -67,6 +67,7 @@ export const LogEntryEventSchema = z.object({
   durationMs: z.number().nullable(),
   workspaceId: z.string().optional(),
   via: z.string().optional(),
+  origin: z.enum(["forward", "reverse"]).optional(),
   target: z.string().nullable().optional(),
   contentType: z.string().optional(),
   size: z.number().optional(),

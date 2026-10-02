@@ -355,6 +355,35 @@ impl AppModel {
         });
     }
 
+    /// Puts each of `paths` back to its last synced version, one after the other. A file that was never synced
+    /// is removed. Reports the first failure once all of them have been tried.
+    pub fn revert_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        if self.publishing || paths.is_empty() {
+            return;
+        }
+        self.publishing = true;
+        cx.notify();
+        self.discard_next(paths, None, cx);
+    }
+
+    fn discard_next(&mut self, mut paths: Vec<String>, first_failure: Option<String>, cx: &mut Context<Self>) {
+        let Some(path) = paths.pop() else {
+            self.publishing = false;
+            if let Some(message) = first_failure {
+                cx.emit(ModelEvent::Notice(format!("Couldn't revert. {message}")));
+            }
+            self.refresh(cx);
+            cx.notify();
+            return;
+        };
+        let client = self.engine.client.clone();
+        let payload = json!({ "workspaceId": self.workspace_id(), "relPath": path });
+        call(&client, cx, "git.discard", payload, move |this, outcome, cx| {
+            let first_failure = first_failure.or_else(|| failure(&outcome));
+            this.discard_next(paths, first_failure, cx);
+        });
+    }
+
     pub fn set_active_workspace(&mut self, id: &str, cx: &mut Context<Self>) {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
