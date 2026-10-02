@@ -115,9 +115,23 @@ pub fn locate_node() -> PathBuf {
     PathBuf::from("node")
 }
 
+/// The native engine (`bifurc-engine`), when one is to be started instead of the Node engine: `BIFURC_ENGINE`
+/// if set, then the one an installed app ships beside its executable.
+pub fn locate_engine_binary() -> Option<PathBuf> {
+    if let Some(explicit) = env::var_os("BIFURC_ENGINE").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(explicit));
+    }
+    let exe = env::current_exe().ok()?;
+    let packaged = exe.parent()?.join(format!("bifurc-engine{}", env::consts::EXE_SUFFIX));
+    packaged.is_file().then_some(packaged)
+}
+
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     pub data_dir: PathBuf,
+    /// The native engine executable, from [`locate_engine_binary`]. When set it is started instead of `node`
+    /// and the engine's entry script.
+    pub engine_binary: Option<PathBuf>,
     /// The `node` executable, from [`locate_node`].
     pub node: PathBuf,
     /// `None` searches with [`locate_engine_entry`].
@@ -133,6 +147,7 @@ impl Default for SidecarConfig {
     fn default() -> Self {
         Self {
             data_dir: default_data_dir(),
+            engine_binary: locate_engine_binary(),
             node: locate_node(),
             engine_entry: None,
             tray: None,
@@ -190,23 +205,29 @@ pub fn reconnect(data_dir: &Path, old_pid: u32, client_version: &str) -> Result<
 }
 
 fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, Hello, Sidecar)> {
-    let entry = match &config.engine_entry {
-        Some(entry) => entry.clone(),
-        None => locate_engine_entry().ok_or_else(|| {
-            ClientError::Protocol(format!(
-                "could not find the engine (looked for {ENGINE_ENTRY_RELATIVE} above the executable and the working directory). \
-                 Build it with `npm run build:packages`, or set BIFURC_ENGINE_ENTRY to its hostCli.js."
-            ))
-        })?,
+    let mut command = match &config.engine_binary {
+        Some(binary) => Command::new(binary),
+        None => {
+            let entry = match &config.engine_entry {
+                Some(entry) => entry.clone(),
+                None => locate_engine_entry().ok_or_else(|| {
+                    ClientError::Protocol(format!(
+                        "could not find the engine (looked for {ENGINE_ENTRY_RELATIVE} above the executable and the working directory). \
+                         Build it with `npm run build:packages`, or set BIFURC_ENGINE_ENTRY to its hostCli.js."
+                    ))
+                })?,
+            };
+            let mut command = Command::new(&config.node);
+            command.arg(&entry);
+            command
+        }
     };
 
     fs::create_dir_all(&config.data_dir)?;
     let log_path = config.data_dir.join("engine.log");
     let log = fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
 
-    let mut command = Command::new(&config.node);
     command
-        .arg(&entry)
         .arg("--data-dir")
         .arg(&config.data_dir)
         .arg("--transport")
@@ -222,10 +243,13 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
     }
     detach(&mut command);
     let mut child = command.spawn().map_err(|e| {
-        ClientError::Protocol(format!(
-            "could not start `{}` for the engine: {e}. Install Node.js, or set BIFURC_NODE to the executable.",
-            config.node.display()
-        ))
+        match &config.engine_binary {
+            Some(binary) => ClientError::Protocol(format!("could not start the engine `{}`: {e}.", binary.display())),
+            None => ClientError::Protocol(format!(
+                "could not start `{}` for the engine: {e}. Install Node.js, or set BIFURC_NODE to the executable.",
+                config.node.display()
+            )),
+        }
     })?;
 
     let deadline = Instant::now() + START_TIMEOUT;
@@ -312,6 +336,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = SidecarConfig {
             data_dir: dir.path().to_path_buf(),
+            engine_binary: None,
             node: PathBuf::from("node"),
             engine_entry: Some(dir.path().join("missing").join("hostCli.js")),
             tray: None,
