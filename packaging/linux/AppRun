@@ -1,0 +1,52 @@
+#!/bin/sh
+# Bifurc's AppImage entry point.
+#
+# The engine outlives the window that started it, and an AppImage's files are only there while the process
+# it launched runs. So the app is not run from inside the image: the first run of a build copies it under
+# ~/.local/share/bifurc and everything runs from that copy, which also gives the `bifurc` command a path
+# that stays put. Later runs of the same build find the copy and start at once.
+#
+#   Bifurc.AppImage              the interface
+#   Bifurc.AppImage cli <args>   the bifurc command
+#   bifurc <args>                the same, through the link this script puts in ~/.local/bin
+set -e
+
+BUILD_ID="{{BUILD_ID}}"
+HERE="$(dirname "$(readlink -f "$0")")"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+APP_HOME="$DATA_HOME/bifurc/app"
+INSTALLED="$APP_HOME/$BUILD_ID"
+
+if [ ! -f "$INSTALLED/.complete" ]; then
+  mkdir -p "$APP_HOME"
+  rm -rf "$INSTALLED.partial"
+  cp -a "$HERE/usr/lib/bifurc" "$INSTALLED.partial"
+  touch "$INSTALLED.partial/.complete"
+  rm -rf "$INSTALLED"
+  mv "$INSTALLED.partial" "$INSTALLED"
+
+  # Earlier builds go, unless an engine is still running out of one.
+  if command -v pgrep >/dev/null 2>&1; then
+    for old in "$APP_HOME"/*; do
+      [ -d "$old" ] || continue
+      [ "$old" = "$INSTALLED" ] && continue
+      pgrep -f "$old/" >/dev/null 2>&1 || rm -rf "$old"
+    done
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  ln -sfn "$INSTALLED/bin/bifurc" "$HOME/.local/bin/bifurc"
+
+  # A launcher entry with the icon, pointing back at the image. Only when run as an AppImage.
+  if [ -n "$APPIMAGE" ]; then
+    mkdir -p "$DATA_HOME/applications" "$DATA_HOME/icons/hicolor/512x512/apps"
+    cp "$HERE/bifurc.png" "$DATA_HOME/icons/hicolor/512x512/apps/bifurc.png"
+    sed "s|^Exec=.*|Exec=\"$APPIMAGE\"|" "$HERE/bifurc.desktop" > "$DATA_HOME/applications/bifurc.desktop"
+  fi
+fi
+
+if [ "$1" = "cli" ]; then
+  shift
+  exec "$INSTALLED/bin/bifurc" "$@"
+fi
+exec "$INSTALLED/bifurc-ui" "$@"

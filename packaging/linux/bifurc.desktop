@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bifurc
+Comment=Local development panel - localhost domain proxy manager
+Exec={{EXEC}}
+Icon=bifurc
+Terminal=false
+Categories=Development;
+StartupWMClass=bifurc

@@ -65,6 +65,8 @@ export interface MockRule {
   responseBodyEncoding?: "utf8" | "base64";  // default "utf8"; "base64" for binary bodies
   responseDelay?: number;     // ms to wait before sending response (0 = no delay)
   responseDelayMocked?: boolean;
+  /** There is no real response to start from: the mock answers on its own, Content-Type included. */
+  standalone?: boolean;
   streamingMode?: "none" | "sse" | "chunked";  // default "none"
   streamingChunkDelay?: number;  // ms between chunks (default 100)
   streamingChunkSeparator?: string;  // delimiter to split body into chunks (default "\n\n")

@@ -30,6 +30,25 @@ fn main() {
     if let Err(problem) = build_tray_helper() {
         println!("cargo:warning=the tray helper was not built, so the engine will have no tray icon: {problem}");
     }
+    #[cfg(windows)]
+    if let Err(problem) = embed_icon() {
+        println!("cargo:warning=the app icon was not embedded, so the taskbar shows a blank one: {problem}");
+    }
+}
+
+/// Compiles the app icon into the executable as icon resource 1.
+///
+/// GPUI gives every window the icon it loads from resource 1 of its own module, and Explorer and the
+/// taskbar show an executable's first icon — with no resource there is nothing for either to show.
+#[cfg(windows)]
+fn embed_icon() -> Result<(), String> {
+    let icon = Path::new(&env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?).join("../../../build/icon.ico");
+    println!("cargo:rerun-if-changed={}", icon.display());
+    let mut resource = winresource::WindowsResource::new();
+    resource.set_icon_with_id(&icon.to_string_lossy(), "1");
+    resource.set("ProductName", "Bifurc");
+    resource.set("FileDescription", "Bifurc");
+    resource.compile().map_err(|error| error.to_string())
 }
 
 /// Builds `bifurc-tray` with a cargo of its own and copies it next to where `bifurc-ui` is about to land.
