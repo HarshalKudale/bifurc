@@ -79,6 +79,47 @@ describe("partial mock merging", () => {
         expect(merged.status).toBe(202);
         expect(merged.body.toString("utf8")).toBe('{"actual":true}');
     });
+
+    it("never overrides the server's Content-Type, even when the mock lists one as mocked", () => {
+        const merged = mergeMockWithUpstream(
+            makeMock({
+                responseHeaders: { "content-type": "text/plain", "x-custom": "mocked" },
+                mockedResponseHeaders: ["content-type", "x-custom"],
+            }),
+            { status: 200, headers: { "content-type": "application/json" }, body: Buffer.from("{}"), durationMs: 1 },
+            null,
+        );
+        expect(merged.headers["content-type"]).toBe("application/json");
+        expect(merged.headers["x-custom"]).toBe("mocked");
+    });
+
+    it("passes an image through untouched instead of mocking it", () => {
+        const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+        const merged = mergeMockWithUpstream(
+            makeMock({ responseStatus: 500, responseDelay: 300, responseBody: "mocked" }),
+            { status: 200, headers: { "content-type": "image/png", "content-length": "999" }, body: png, durationMs: 1 },
+            null,
+        );
+        expect(merged.status).toBe(200);
+        expect(merged.body.equals(png)).toBe(true);
+        expect(merged.headers["content-type"]).toBe("image/png");
+        expect(merged.headers["content-length"]).toBe(String(png.length));
+        expect(merged.delayMs).toBe(0);
+    });
+
+    it("does not answer a mock whose body is data on its own", () => {
+        const mock = makeMock({
+            responseHeaders: { "content-type": "image/png" },
+            responseBody: "iVBORw0K",
+            responseBodyEncoding: "base64",
+        });
+        expect(isFullyMocked(mock)).toBe(false);
+    });
+
+    it("answers on its own once only the locked Content-Type is left unmocked", () => {
+        const mock = makeMock({ responseHeaders: { "content-type": "application/json" }, mockedResponseHeaders: [] });
+        expect(isFullyMocked(mock)).toBe(true);
+    });
 });
 
 // ── matchMock ────────────────────────────────────────────────────────────

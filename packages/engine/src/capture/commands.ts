@@ -1,7 +1,9 @@
 import type {
-  CaptureClearParams, CaptureGetParams, CaptureListParams, CaptureRemoveParams, CaptureSetPausedParams,
+  CaptureClearParams, CaptureGetParams, CaptureListParams, CaptureRemoveParams, CaptureSetDisableCacheParams,
+  CaptureSetPausedParams,
 } from "@bifurc/protocol";
 import type { CommandRegistry } from "../kernel/registry";
+import { isCacheDisabled, setCacheDisabled } from "../utils/cachePolicy";
 import { toLogEntryEvent } from "../utils/logEntryWire";
 import { clearCapture, getCapture, isCapturePaused, listCapture, removeCapture, setCapturePaused } from "./store";
 
@@ -9,7 +11,15 @@ import { clearCapture, getCapture, isCapturePaused, listCapture, removeCapture, 
 export function registerCaptureCommands(registry: CommandRegistry): void {
   registry.register("capture.list", (p: CaptureListParams) => {
     const entries = listCapture(p.workspaceId);
-    return { entries: p.summary ? entries.map(toLogEntryEvent) : entries, paused: isCapturePaused(p.workspaceId) };
+    return {
+      entries: p.summary ? entries.map(toLogEntryEvent) : entries,
+      paused: isCapturePaused(p.workspaceId),
+      disableCache: isCacheDisabled(),
+    };
+  });
+  registry.register("capture.setDisableCache", (p: CaptureSetDisableCacheParams) => {
+    setCacheDisabled(p.disableCache);
+    return { disableCache: isCacheDisabled() };
   });
   registry.register("capture.setPaused", (p: CaptureSetPausedParams) => {
     setCapturePaused(p.workspaceId, p.paused);

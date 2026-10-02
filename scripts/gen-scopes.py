@@ -44,7 +44,7 @@ ASSIGN = {
         audit.export
         blob.put blob.release
         capture.shareJson
-        capture.clear capture.remove capture.setPaused
+        capture.clear capture.remove capture.setPaused capture.setDisableCache
         config.save settings.update
         entity.create entity.duplicate entity.update entity.delete entity.setEnabled entity.publish entity.restore
         env.setActive

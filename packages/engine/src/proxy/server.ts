@@ -4,6 +4,7 @@ import { isLoopbackHost } from "../utils/net";
 import { loadConfig, loadWorkspaceDispatchSlice, AppConfig, ProxyRule, type WorkspaceDispatchSlice } from "../workspace/config";
 import { readAllEntities } from "../workspace/workspaceFs";
 import { HOP_BY_HOP } from "../utils/http";
+import { stripCacheHeaders } from "../utils/cachePolicy";
 import { sendHtml } from "../utils/sendHtml";
 import { tcpTunnel, passthroughToUpstream, passthroughToUpstreamHttps } from "./proxyHandler";
 import { loadCA, unloadCA, isCALoaded, clearCertCache } from "../certificates/tlsCert";
@@ -403,6 +404,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       const key = line.slice(0, idx).trim().toLowerCase();
       if (!HOP_BY_HOP.has(key)) headers[key] = line.slice(idx + 1).trim();
     }
+    stripCacheHeaders(headers);
 
     const hostHeader = (headers["host"] ?? "").toLowerCase();
     const host = hostHeader.split(":")[0];
@@ -489,6 +491,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): ProxyServerIns
       const key = line.slice(0, idx).trim().toLowerCase();
       if (!HOP_BY_HOP.has(key)) headers[key] = line.slice(idx + 1).trim();
     }
+    stripCacheHeaders(headers);
 
     const reqPath = rawTarget || "/";
     const portSuffix = port === 443 ? "" : `:${port}`;

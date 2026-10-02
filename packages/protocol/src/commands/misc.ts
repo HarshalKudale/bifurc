@@ -208,6 +208,15 @@ export interface CaptureListResult {
   entries: Record<string, unknown>[];
   /** Whether the workspace's capture is paused — the engine is not recording. */
   paused: boolean;
+  /** Whether the proxies strip cache headers from the requests they forward. */
+  disableCache: boolean;
+}
+
+/** `capture.setDisableCache` — strip (or keep) the cache headers of forwarded requests. Held in memory only; on by default. */
+export const CaptureSetDisableCacheParams = z.object({ disableCache: z.boolean() }).strict();
+export type CaptureSetDisableCacheParams = z.infer<typeof CaptureSetDisableCacheParams>;
+export interface CaptureSetDisableCacheResult {
+  disableCache: boolean;
 }
 
 /** `capture.setPaused` — stop or resume the engine recording a workspace's traffic. Held in memory only. */
