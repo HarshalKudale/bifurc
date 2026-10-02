@@ -36,6 +36,7 @@ use crate::{
     model::{NodeRef, RequestKind, snippet::RequestParts},
     preferences::Preferences,
     screens::{
+        audit::AuditScreen,
         capture::{CaptureEvent, CaptureScreen},
         environments::EnvironmentsScreen,
         healthbar::HealthBarScreen,
@@ -45,6 +46,7 @@ use crate::{
         requests::RequestsScreen,
         services::ServicesScreen,
         settings::SettingsScreen,
+        workspace::WorkspaceScreen,
     },
 };
 
@@ -84,9 +86,12 @@ pub struct Shell {
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
     settings: Entity<SettingsScreen>,
+    workspace: Entity<WorkspaceScreen>,
+    audit: Entity<AuditScreen>,
     right: Entity<RightSidebar>,
     right_open: bool,
     palette: Entity<CommandState>,
+    finder: Entity<CommandState>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -102,8 +107,11 @@ impl Shell {
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
+        let workspace = cx.new(|cx| WorkspaceScreen::new(model.clone(), window, cx));
+        let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
         let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
+        let finder = cx.new(|cx| CommandState::new(window, cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&model, window, Self::on_model_event),
@@ -135,9 +143,12 @@ impl Shell {
             mappings,
             environments,
             settings,
+            workspace,
+            audit,
             right,
             right_open: false,
             palette,
+            finder,
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -161,6 +172,8 @@ impl Shell {
             | ModelEvent::Traffic(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)
+            | ModelEvent::SyncStatus
+            | ModelEvent::EngineRestarted
             | ModelEvent::EntityReverted(_) => {}
         }
     }
@@ -207,6 +220,8 @@ impl Shell {
             Screen::Mappings => Some(self.mappings.clone().into()),
             Screen::Environments => Some(self.environments.clone().into()),
             Screen::Settings => Some(self.settings.clone().into()),
+            Screen::WorkspaceConfig => Some(self.workspace.clone().into()),
+            Screen::AuditLog => Some(self.audit.clone().into()),
             Screen::Services => Some(self.services.clone().into()),
             Screen::HealthBar => Some(self.healthbar.clone().into()),
             Screen::ProxyRules => Some(self.proxy_rules.clone().into()),

@@ -525,3 +525,13 @@ export function isEdgeRunning(): boolean {
 export function getEdgePort(): number {
   return boundInstance?.getPort() ?? 0;
 }
+
+/** Stops the bound edge. A no-op when none is bound or it is already stopped. */
+export function stopEdge(): void {
+  boundInstance?.stop();
+}
+
+/** Why the bound edge is not listening, or `null` when it is listening or none is bound. */
+export function getEdgeError(): string | null {
+  return boundInstance?.getError() ?? null;
+}
