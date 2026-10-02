@@ -165,6 +165,7 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   "capture.list": "read",
   "capture.get": "read",
   "capture.setPaused": "write",
+  "capture.setDisableCache": "write",
   "capture.clear": "write",
   "capture.remove": "write",
   // The four saved-entity counterparts (`packages/protocol/src/commands/saved.ts`). `execute` for the

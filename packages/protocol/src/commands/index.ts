@@ -227,6 +227,7 @@ export const COMMANDS = {
   "capture.list": spec(MiscCmd.CaptureListParams, "capture.list"),
   "capture.get": spec(MiscCmd.CaptureGetParams, "capture.get"),
   "capture.setPaused": spec(MiscCmd.CaptureSetPausedParams, "capture.setPaused"),
+  "capture.setDisableCache": spec(MiscCmd.CaptureSetDisableCacheParams, "capture.setDisableCache"),
   "capture.clear": spec(MiscCmd.CaptureClearParams, "capture.clear"),
   "capture.remove": spec(MiscCmd.CaptureRemoveParams, "capture.remove"),
 

@@ -113,31 +113,37 @@ describe("mocks — fully mocked responses (end-to-end)", () => {
     expect(JSON.parse(res.body)).toEqual({ any: true });
   });
 
-  it("serves a base64-encoded body", async () => {
-    const payload = "BINARY-PAYLOAD-01";
-    const encoded = Buffer.from(payload, "utf-8").toString("base64");
+  it("passes a data response through instead of mocking it", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const imageUpstream = await startUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "image/png" });
+      res.end(png);
+    });
     ws = createWorkspace({
-      mappings: [mappingFixture({ id: "map-app", domain: "app.localhost", target: upstream.target })],
+      mappings: [mappingFixture({ id: "map-app", domain: "app.localhost", target: imageUpstream.target })],
       mocks: [
         mockFixture({
           id: "mock-bin",
           method: "GET",
-          urlPattern: "http://app.localhost/blob",
+          urlPattern: "http://app.localhost/logo.png",
           useRegex: false,
-          responseHeaders: { "content-type": "application/octet-stream" },
-          mockedResponseHeaders: ["content-type"],
-          responseBody: encoded,
-          responseBodyEncoding: "base64",
+          responseStatus: 500,
+          responseStatusMocked: false,
+          responseHeaders: { "content-type": "text/plain" },
+          mockedResponseHeaders: [],
+          responseBody: "not an image",
         }),
       ],
     });
     proxy = await startProxy();
 
-    const res = await edgeRequest(proxy.edgePort, { target: "/blob", host: "app.localhost" });
+    const res = await edgeRequest(proxy.edgePort, { target: "/logo.png", host: "app.localhost" });
 
     expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toBe("application/octet-stream");
-    expect(res.body).toBe(payload);
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(res.headers["content-length"]).toBe(String(png.length));
+    expect(res.body).toContain("PNG");
+    expect(res.body).not.toContain("not an image");
   });
 
   it("logs a mock-served response with via=mock", async () => {

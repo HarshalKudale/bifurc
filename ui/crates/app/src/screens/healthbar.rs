@@ -10,7 +10,7 @@ use std::{
 };
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Editor, EditorState},
@@ -88,6 +88,8 @@ impl HealthBarScreen {
                 }
                 // The screen is built before the workspace is known; the first snapshot is when it can load.
                 ModelEvent::ConfigChanged if !this.loaded => this.reload(window, cx),
+                // A revert puts the file back; what the screen shows must follow it.
+                ModelEvent::ConfigChanged => this.refresh_list(window, cx),
                 _ => {}
             }
         })];
@@ -151,6 +153,55 @@ impl HealthBarScreen {
             }
             cx.notify();
         });
+    }
+
+    /// Re-reads the saved list and keeps the screen as it is when nothing changed (no checks are started).
+    fn refresh_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        if model.workspace_id().is_empty() {
+            return;
+        }
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id() });
+        call_in(&client, window, cx, "healthbar.getServices", payload, |this, outcome, window, cx| {
+            let Ok(result) = outcome else { return };
+            let services: Vec<Map<String, Value>> = result
+                .as_array()
+                .map(|list| list.iter().filter_map(|service| service.as_object().cloned()).collect())
+                .unwrap_or_default();
+            if services == this.services {
+                return;
+            }
+            this.services = services;
+            let known: Vec<String> = this.services.iter().map(|s| text(s, "id")).collect();
+            this.results.retain(|id, _| known.contains(id));
+            if this.selected.as_ref().is_some_and(|id| !known.contains(id)) {
+                this.selected = None;
+            }
+            for id in known {
+                if !this.results.contains_key(&id) {
+                    this.check(&id, window, cx);
+                }
+            }
+            cx.notify();
+        });
+    }
+
+    /// Commits the health checks file (and pushes, when the workspace has a remote).
+    fn sync(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| model.publish(paths, cx));
+    }
+
+    fn confirm_revert(&mut self, paths: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
+        confirm_danger(
+            cx.weak_entity(),
+            window,
+            cx,
+            "Revert the health checks?",
+            "Go back to the last synced list. Checks that were never synced are removed.",
+            "Revert",
+            move |this, _, cx| this.model.update(cx, |model, cx| model.revert_paths(paths.clone(), cx)),
+        );
     }
 
     /// Stores the list. The engine's command takes the whole list, so that is what is sent.
@@ -480,11 +531,34 @@ impl HealthBarScreen {
 
 impl Render for HealthBarScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let model = self.model.read(cx);
+        let changed = model.git().rollup(&["healthbar/"]).changed;
+        let busy = model.is_publishing();
+        let (sync_paths, revert_paths) = (changed.clone(), changed.clone());
         let header = page::header(
             "Health bar",
             "URLs the engine checks on demand, or every 30 seconds when set to Auto. {{variables}} are resolved.",
             h_flex()
                 .gap_2()
+                .child(
+                    Button::new("health-revert")
+                        .small()
+                        .label("Revert")
+                        .tooltip("Put the health checks back to their last synced version")
+                        .disabled(changed.is_empty() || busy)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.confirm_revert(revert_paths.clone(), window, cx)
+                        })),
+                )
+                .child(
+                    Button::new("health-sync")
+                        .small()
+                        .label("Sync")
+                        .tooltip("Commit the health checks (and push them, when there is a remote)")
+                        .loading(busy)
+                        .disabled(changed.is_empty() || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| this.sync(sync_paths.clone(), cx))),
+                )
                 .child(
                     Button::new("health-check-all")
                         .small()

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, IndexPath, Sizable as _, WindowExt as _,
+    ActiveTheme as _, IndexPath, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
@@ -37,7 +37,7 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::{
         Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor,
-        binary::{BinaryBody, PickedFile, pick_file, save_to_file, suggested_file_name},
+        binary::{BinaryBody, save_to_file, suggested_file_name},
         page,
     },
     engine::{call_in, describe},
@@ -85,18 +85,6 @@ struct Fields {
     chunk_delay: String,
 }
 
-/// Why a file cannot be the body of a mock that answers with `expected`, if it cannot. The response type is
-/// the real server's; the mocked body has to be of that type for the caller to read it.
-fn file_mismatch(expected: &str, file_type: &str) -> Option<String> {
-    let (expected, file_type) = (media::essence(expected), media::essence(file_type));
-    // A type that says nothing about the bytes, on either side, accepts anything.
-    let unknown = |kind: &str| kind.is_empty() || kind == "application/octet-stream";
-    if unknown(&expected) || unknown(&file_type) || expected == file_type {
-        return None;
-    }
-    Some(format!("This mock answers with {expected}, as the real server does. Choose a file of that type."))
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     Body,
@@ -126,6 +114,8 @@ pub struct MockEditor {
     headers: Entity<KeyValueTable>,
     body: VarEditor,
     mock_body: bool,
+    /// See `content_type`.
+    locked_content_type: String,
     /// The body when it is an image or other data: its bytes in base64, as the engine stores them. Which of
     /// this and the text editor is the body follows the `Content-Type` the mock answers with.
     data: Option<Arc<str>>,
@@ -223,6 +213,7 @@ impl MockEditor {
             headers,
             body,
             mock_body: true,
+            locked_content_type: String::new(),
             data: None,
             data_view: None,
             data_note: None,
@@ -391,11 +382,18 @@ impl MockEditor {
             enabled: self.enabled,
             status: text(&self.status),
             mock_status: self.mock_status,
-            headers: self.headers.read(cx).pairs(cx),
+            headers: self
+                .headers
+                .read(cx)
+                .pairs(cx)
+                .into_iter()
+                .filter(|(name, _)| !name.trim().eq_ignore_ascii_case("content-type"))
+                .collect(),
             body: if self.is_data(cx) { String::new() } else { self.body.value(cx) },
             is_data: self.is_data(cx),
             data: self.data.clone().filter(|_| self.is_data(cx)),
-            mock_body: self.mock_body,
+            // Data (an image, a PDF) cannot be mocked: the real response goes through.
+            mock_body: self.mock_body && !self.is_data(cx),
             delay: text(&self.delay),
             mock_delay: self.mock_delay,
             streaming: self.streaming_value(cx).to_owned(),
@@ -403,16 +401,10 @@ impl MockEditor {
         }
     }
 
-    /// The `Content-Type` the mock answers with. It is the real server's when the mock was made from
-    /// captured traffic, and it decides what the body can be.
-    fn content_type(&self, cx: &gpui_kit::App) -> String {
-        self.headers
-            .read(cx)
-            .pairs(cx)
-            .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-            .map(|(_, value)| value)
-            .unwrap_or_default()
+    /// The `Content-Type` of the real server's response, kept as the mock was made from it. It is locked: the
+    /// header table does not show it, a mock never overrides it, and it decides whether the body can be mocked.
+    fn content_type(&self, _cx: &gpui_kit::App) -> String {
+        self.locked_content_type.clone()
     }
 
     /// The body is an image or other data rather than text: the response type says so, or the stored body
@@ -440,26 +432,6 @@ impl MockEditor {
             .as_deref()
             .and_then(|data| STANDARD.decode(data.trim()).ok())
             .map(|bytes| BinaryBody::new(bytes, content_type));
-    }
-
-    /// Asks for the file the mock answers with. A file of another type than the response's is refused:
-    /// the caller would be told one type and handed another.
-    fn choose_file(&mut self, cx: &mut Context<Self>) {
-        pick_file("Choose the file this mock answers with", cx, |this, outcome, cx| {
-            let expected = this.content_type(cx);
-            match outcome {
-                Ok(PickedFile { bytes, content_type, .. }) => match file_mismatch(&expected, content_type) {
-                    Some(problem) => this.data_note = Some(problem.into()),
-                    None => {
-                        this.data = Some(STANDARD.encode(&bytes).into());
-                        this.data_view = Some(BinaryBody::new(bytes, expected));
-                        this.data_note = None;
-                    }
-                },
-                Err(error) => this.data_note = Some(format!("Couldn't read the file. {error}").into()),
-            }
-            this.changed(cx);
-        });
     }
 
     fn save_data(&mut self, cx: &mut Context<Self>) {
@@ -493,7 +465,10 @@ impl MockEditor {
         self.enabled = flag("enabled", true);
         self.status.update(cx, |s, cx| s.set_value(number("responseStatus", 200), window, cx));
         self.mock_status = flag("responseStatusMocked", true);
-        let headers = header_pairs(entity.get("responseHeaders").unwrap_or(&Value::Null));
+        let (locked, headers): (Vec<_>, Vec<_>) = header_pairs(entity.get("responseHeaders").unwrap_or(&Value::Null))
+            .into_iter()
+            .partition(|(name, _)| name.eq_ignore_ascii_case("content-type"));
+        self.locked_content_type = locked.into_iter().next().map(|(_, value)| value).unwrap_or_default();
         self.headers.update(cx, |table, cx| table.set_pairs(&headers, window, cx));
         let stored_as_bytes = entity.get("responseBodyEncoding").and_then(Value::as_str) == Some("base64");
         let class = media::classify(&self.content_type(cx));
@@ -550,7 +525,11 @@ impl MockEditor {
         entity.insert("enabled".into(), json!(fields.enabled));
         entity.insert("responseStatus".into(), json!(status));
         entity.insert("responseStatusMocked".into(), json!(fields.mock_status));
-        entity.insert("responseHeaders".into(), Value::Object(header_map(&fields.headers)));
+        let mut response_headers = header_map(&fields.headers);
+        if !self.locked_content_type.is_empty() {
+            response_headers.insert("Content-Type".into(), json!(self.locked_content_type));
+        }
+        entity.insert("responseHeaders".into(), Value::Object(response_headers));
         // Every header listed here is one the mock sets; a header left to the real server is simply not listed.
         entity.insert(
             "mockedResponseHeaders".into(),
@@ -735,9 +714,8 @@ impl MockEditor {
             }))
     }
 
-    /// The body, as the response type allows it to be: text in an editor, or a file for an image or other
-    /// data. The type itself is the `Content-Type` header, which a mock made from captured traffic takes
-    /// from the real server.
+    /// The body, as the response type allows it to be: text in an editor, or for an image or other data a
+    /// preview of what the real server sent (data is never replaced). The type is the locked `Content-Type`.
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let is_data = self.is_data(cx);
@@ -752,7 +730,9 @@ impl MockEditor {
             .px_3()
             .py_2()
             .gap_3()
-            .child(Self::pass_through("mock-body", self.mock_body, "body", cx, |this, on| this.mock_body = on))
+            .children((!is_data).then(|| {
+                Self::pass_through("mock-body", self.mock_body, "body", cx, |this, on| this.mock_body = on)
+            }))
             .child(kind)
             .child(
                 div()
@@ -764,14 +744,6 @@ impl MockEditor {
                     .text_color(theme.warning)
                     .children(self.data_note.clone().filter(|_| is_data)),
             )
-            .children(is_data.then(|| {
-                Button::new("mock-body-choose")
-                    .outline()
-                    .small()
-                    .icon(IconName::File)
-                    .label(if self.data.is_some() { "Choose another file…" } else { "Choose file…" })
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_file(cx)))
-            }))
             .children((is_data && self.data_view.is_some()).then(|| {
                 Button::new("mock-body-save")
                     .ghost()
@@ -783,8 +755,8 @@ impl MockEditor {
             (_, false) => Editor::new(self.body.state()).bordered(false).h_full().into_any_element(),
             (Some(view), true) => view.render(cx),
             (None, true) => page::empty(
-                "No file chosen",
-                "This mock answers with an image or other data. Choose the file to answer with.",
+                "Data can't be mocked",
+                "The real server answers with an image or other data, so its response goes through as it is.",
             ),
         };
         v_flex().size_full().child(toolbar).child(div().flex_1().min_h_0().child(content)).into_any_element()
@@ -799,7 +771,19 @@ impl MockEditor {
         let headers = self.headers.read(cx).pairs(cx).len();
         let content = match self.section {
             Section::Body => self.render_body(cx),
-            Section::Headers => self.headers.clone().into_any_element(),
+            Section::Headers => v_flex()
+                .size_full()
+                .child(
+                    div().flex_none().px_3().py_2().text_sm().text_color(theme.muted_foreground).child(
+                        if self.locked_content_type.is_empty() {
+                            "Content-Type is locked: it is always the real server's.".to_owned()
+                        } else {
+                            format!("Content-Type is locked to the real server's: {}", self.locked_content_type)
+                        },
+                    ),
+                )
+                .child(div().flex_1().min_h_0().child(self.headers.clone()))
+                .into_any_element(),
             Section::Timing => v_flex()
                 .size_full()
                 .p_3()

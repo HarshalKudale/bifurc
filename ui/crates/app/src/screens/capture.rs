@@ -155,6 +155,8 @@ pub struct CaptureScreen {
     loaded: bool,
     /// Mirrors the engine: while capture is paused the engine records nothing, and the list stops following.
     paused: bool,
+    /// Mirrors the engine: cache headers are stripped from forwarded requests (on by default).
+    disable_cache: bool,
     filter: Entity<InputState>,
     selected: Option<String>,
     /// Exchanges ticked in the list, for saving several at once.
@@ -224,6 +226,7 @@ impl CaptureScreen {
             entries: Vec::new(),
             loaded: false,
             paused: false,
+            disable_cache: true,
             filter,
             selected: None,
             checked: HashSet::new(),
@@ -280,6 +283,7 @@ impl CaptureScreen {
                 Ok(result) => {
                     this.entries = traffic::parse_list(&result);
                     this.paused = result.get("paused").and_then(Value::as_bool).unwrap_or(false);
+                    this.disable_cache = result.get("disableCache").and_then(Value::as_bool).unwrap_or(true);
                     this.loaded = true;
                 }
                 Err(error) => this.report("Couldn't read captured traffic.", describe(&error), cx),
@@ -306,6 +310,27 @@ impl CaptureScreen {
                 None => {
                     if let Ok(result) = &outcome {
                         this.paused = result.get("paused").and_then(Value::as_bool).unwrap_or(!resume);
+                    }
+                }
+            }
+            cx.notify();
+        });
+    }
+
+    /// Asks the engine to strip (or keep) the cache headers of the requests it forwards.
+    fn set_disable_cache(&mut self, disable: bool, cx: &mut Context<Self>) {
+        self.disable_cache = disable;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "capture.setDisableCache", json!({ "disableCache": disable }), move |this, outcome, cx| {
+            match failure(&outcome) {
+                Some(message) => {
+                    this.disable_cache = !disable;
+                    this.report("Couldn't change the cache setting.", message, cx);
+                }
+                None => {
+                    if let Ok(result) = &outcome {
+                        this.disable_cache = result.get("disableCache").and_then(Value::as_bool).unwrap_or(disable);
                     }
                 }
             }
@@ -670,6 +695,14 @@ impl CaptureScreen {
                         this.show_local = *checked;
                         cx.notify();
                     })),
+            )
+            .child(
+                Checkbox::new("capture-disable-cache")
+                    .small()
+                    .label("Disable cache")
+                    .tooltip("Strips cache related headers from requests before sending them to the target")
+                    .checked(self.disable_cache)
+                    .on_change(cx.listener(|this, checked: &bool, _, cx| this.set_disable_cache(*checked, cx))),
             )
             .child(div().flex_1())
             .children((ticked > 0).then(|| {
