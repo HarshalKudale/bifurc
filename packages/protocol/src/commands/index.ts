@@ -118,6 +118,10 @@ export const COMMANDS = {
   // grpc.*
   "grpc.execute": spec(GrpcCmd.GrpcExecuteParams, "grpc:execute"),
   "grpc.reflect": spec(GrpcCmd.GrpcReflectParams, "grpc:reflect"),
+  "grpc.stream.open": spec(GrpcCmd.GrpcStreamOpenParams, "grpc.stream.open"),
+  "grpc.stream.send": spec(GrpcCmd.GrpcStreamSendParams, "grpc.stream.send"),
+  "grpc.stream.end": spec(GrpcCmd.GrpcStreamRefParams, "grpc.stream.end"),
+  "grpc.stream.cancel": spec(GrpcCmd.GrpcStreamRefParams, "grpc.stream.cancel"),
 
   // application.*
   "application.list": spec(ApplicationCmd.ApplicationListParams, "applications:list"),

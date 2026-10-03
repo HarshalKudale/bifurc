@@ -26,7 +26,7 @@ pub mod capability {
 }
 
 /// Every event that travels on the wire. A bus event is named without the `event.` prefix.
-pub const EVENT_NAMES: [&str; 14] = [
+pub const EVENT_NAMES: [&str; 16] = [
     "event.sync.status",
     "event.sync.entityStatus",
     "event.log.entry",
@@ -39,6 +39,8 @@ pub const EVENT_NAMES: [&str; 14] = [
     "event.runner.finished",
     "event.ws.status",
     "event.ws.message",
+    "event.grpc.stream.status",
+    "event.grpc.stream.message",
     "event.engine.stopping",
     "event.ui.activate",
 ];
