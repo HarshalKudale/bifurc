@@ -201,7 +201,148 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             ctx.request("workspace.setActive", json!({ "id": id }))?;
             Ok(ctx.print(&json!({ "ok": true, "activeWorkspaceId": id }), || format!("Active workspace: {id}")))
         }
+        "add" => {
+            let name = need(ctx.args.positional(2), "workspace name")?;
+            let mut payload = json!({ "name": name });
+            if let Some(account) = ctx.args.flag("account") {
+                payload["accountId"] = json!(account_id(ctx, account)?);
+            }
+            let created = ctx.request("workspace.add", payload)?;
+            let id = js_template(created.get("id"));
+            ctx.request("workspace.setActive", json!({ "id": id }))?;
+            Ok(ctx.print(&created, || {
+                let tracked = if created.get("gitTracked").is_some_and(truthy) {
+                    ""
+                } else {
+                    "\nGit is not installed: this workspace has no history, audit log or sync."
+                };
+                format!("Created workspace {id} ({name}){tracked}")
+            }))
+        }
+        "import" => {
+            let repo = need(ctx.args.positional(2), "repository (owner/name)")?;
+            let account = account_id(ctx, &need(ctx.args.flag("account"), "--account <login>")?)?;
+            let result = refused(ctx.request("workspace.import", json!({ "accountId": account, "repo": repo }))?)?;
+            Ok(ctx.print(&result, || {
+                format!(
+                    "Imported {repo} as workspace {} ({})",
+                    js_template(result.pointer("/workspace/id")),
+                    js_template(result.pointer("/workspace/name"))
+                )
+            }))
+        }
+        "publish" => {
+            let name = need(ctx.args.positional(2), "new repository name")?;
+            let account = account_id(ctx, &need(ctx.args.flag("account"), "--account <login>")?)?;
+            let workspace = workspace_id(ctx)?;
+            let payload = json!({
+                "workspaceId": workspace, "accountId": account, "repoName": name, "private": !ctx.args.has("public"),
+            });
+            let result = refused(ctx.request("sync.publish", payload)?)?;
+            Ok(ctx.print(&result, || format!("Published to {}", js_template(result.pointer("/repo/fullName")))))
+        }
         other => Err(CliError::msg(format!("unknown: workspaces {other}"))),
+    }
+}
+
+/// A command's `{ ok: false, error }` answer as an error.
+fn refused(result: Value) -> Result<Value> {
+    match result.get("ok").and_then(Value::as_bool) {
+        Some(false) => Err(CliError::msg(js_template(result.get("error")))),
+        _ => Ok(result),
+    }
+}
+
+/// The id of a signed-in account, named by its id or its login.
+fn account_id(ctx: &mut Context, wanted: &str) -> Result<String> {
+    let listed = ctx.request("account.list", json!({}))?;
+    listed
+        .get("accounts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|a| {
+            a.get("id").and_then(Value::as_str) == Some(wanted)
+                || a.get("login").and_then(Value::as_str).is_some_and(|login| login.eq_ignore_ascii_case(wanted))
+        })
+        .map(|a| js_template(a.get("id")))
+        .ok_or_else(|| CliError::msg(format!("no account \"{wanted}\" is signed in (see: bifurc account list)")))
+}
+
+/// `account list|login|logout|repos`: the GitHub accounts workspaces sync as.
+pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
+    ctx.engine()?;
+    match sub.unwrap_or("list") {
+        "list" => {
+            let listed = ctx.request("account.list", json!({}))?;
+            let rows: Vec<Value> = listed.get("accounts").and_then(Value::as_array).cloned().unwrap_or_default();
+            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["login", "host", "signedIn", "id"])))
+        }
+        "login" => {
+            let started = ctx.request("account.login.start", json!({}))?;
+            let login_id = js_template(started.get("loginId"));
+            if started.get("status").and_then(Value::as_str) != Some("pending") {
+                return Err(CliError::msg(js_template(started.get("error"))));
+            }
+            // The code goes to the terminal straight away: the command then waits for it to be used.
+            eprintln!(
+                "Open {} and enter the code {}",
+                js_template(started.get("verificationUri")),
+                js_template(started.get("userCode"))
+            );
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let status = ctx.request("account.login.status", json!({ "loginId": login_id }))?;
+                match status.get("status").and_then(Value::as_str) {
+                    Some("pending") => continue,
+                    Some("done") => {
+                        let login = js_template(status.pointer("/account/login"));
+                        return Ok(ctx.print(&status, || format!("Signed in as {login}")));
+                    }
+                    _ => return Err(CliError::msg(js_template(status.get("error")))),
+                }
+            }
+        }
+        "logout" => {
+            let id = account_id(ctx, &need(ctx.args.positional(2), "account login")?)?;
+            // Signing out takes the account's workspaces off this device, so what only this device has is
+            // named first.
+            let listed = ctx.request("account.list", json!({}))?;
+            let account = listed
+                .get("accounts")
+                .and_then(Value::as_array)
+                .and_then(|accounts| accounts.iter().find(|a| a.get("id").and_then(Value::as_str) == Some(&id)))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let unsynced: Vec<String> = account
+                .get("workspaces")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|ws| {
+                    ws.get("repo").is_none_or(Value::is_null)
+                        || ws.get("changes").and_then(Value::as_u64).unwrap_or(0) > 0
+                        || ws.get("unpushed").and_then(Value::as_bool).unwrap_or(false)
+                })
+                .map(|ws| js_template(ws.get("name")))
+                .collect();
+            if !unsynced.is_empty() && !ctx.args.has("force") {
+                return Err(CliError::msg(format!(
+                    "signing out removes this account's workspaces from this device, and these have changes that were never synced: {}. Sync them first, or pass --force to remove them anyway",
+                    unsynced.join(", ")
+                )));
+            }
+            let result = ctx.request("account.logout", json!({ "accountId": id }))?;
+            let removed = result.get("removedWorkspaces").and_then(Value::as_array).map_or(0, Vec::len);
+            Ok(ctx.print(&result, || format!("Signed out {id}; removed {removed} workspace(s) from this device")))
+        }
+        "repos" => {
+            let id = account_id(ctx, &need(ctx.args.positional(2), "account login")?)?;
+            let result = refused(ctx.request("account.repos", json!({ "accountId": id }))?)?;
+            let rows: Vec<Value> = result.get("repos").and_then(Value::as_array).cloned().unwrap_or_default();
+            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["fullName", "private", "workspaceId"])))
+        }
+        other => Err(CliError::msg(format!("unknown: account {other}"))),
     }
 }
 
@@ -965,7 +1106,7 @@ mod tests {
         let ctx = Context::new(&args, connector);
         let listing = commands(&ctx);
         assert_eq!(listing.lines().count(), command_names().len());
-        assert_eq!(listing.lines().next(), Some("application.checkPort"));
+        assert_eq!(listing.lines().next(), Some("account.list"));
 
         let args = parse_args(&["commands".to_string(), "--json".to_string()]).unwrap();
         let connector: Connector = Box::new(|| panic!("commands must not connect"));

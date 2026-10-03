@@ -4,14 +4,13 @@ use std::{path::Path, sync::Arc};
 
 use serde_json::{Value, json};
 
-use super::{auto_sync, get_sync_config, get_workspace_git_state, get_workspace_sync_status, register};
+use super::{auto_sync, get_workspace_sync_status, register};
 use crate::{
     kernel::{CommandContext, CommandRegistry},
     testing::scratch_data_root,
     workspace::{
         fs::{add_pending_deletion, write_entity, ws_dir},
         git_store::{check_git_installed, git, git_in, init_workspace_repo},
-        settings::load_settings,
     },
 };
 
@@ -164,156 +163,16 @@ async fn folder_publish_and_pending_deletions() {
 }
 
 #[tokio::test]
-async fn remote_round_trip_against_a_bare_repository() {
-    if !check_git_installed().await {
-        return;
-    }
-    let root = scratch_data_root();
-    let ws = root.ws_id;
-    let engine = Engine::new();
-    let scratch = tempfile::tempdir().unwrap();
-    let bare = scratch.path().join("remote.git");
-    std::fs::create_dir_all(&bare).unwrap();
-    run(&bare, &["init", "--bare"]).await;
-    let remote = bare.to_string_lossy().into_owned();
-
-    init_ws(ws).await;
-    write_entity(ws, "requests", "r1", &request("r1", "First"), None).unwrap();
-    engine.call("entity.publish", json!({ "workspaceId": ws, "paths": ["requests/r1.json"] })).await;
-    assert_eq!(get_workspace_git_state(ws).await["hasRemote"], false);
-
-    let connected =
-        engine.call("sync.setRemote", json!({ "workspaceId": ws, "remote": remote, "branch": "main" })).await;
-    assert_eq!(connected, json!({ "ok": true, "cloned": false }));
-    let config = get_sync_config(ws).unwrap();
-    assert_eq!(config, json!({ "remote": remote, "branch": "main", "autoSync": false }));
-    let state = engine.call("sync.getState", json!({ "workspaceId": ws })).await;
-    assert_eq!(state["status"], "idle");
-    assert!(state["lastPushedAt"].is_i64());
-    assert_eq!(state["lastPulledAt"], Value::Null);
-    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
-
-    let git_state = get_workspace_git_state(ws).await;
-    assert_eq!(git_state, json!({ "hasRemote": true, "branch": "main", "ahead": false, "behind": false }));
-    let entity_status = engine.call("sync.getEntityStatus", json!({ "workspaceId": ws })).await;
-    assert_eq!(entity_status["files"]["requests/r1.json"], "clean");
-    assert_eq!(entity_status["git"]["hasRemote"], true);
-    assert_eq!(entity_status["paths"]["entities"]["r1"], "requests/r1.json");
-
-    // A publish pushes by itself.
-    write_entity(ws, "requests", "r2", &request("r2", "Second"), None).unwrap();
-    engine.call("entity.publish", json!({ "workspaceId": ws, "paths": ["requests/r2.json"] })).await;
-    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
-
-    // A second clone pushes a change; pulling brings it in.
-    let other = scratch.path().join("other");
-    run(scratch.path(), &["clone", "--branch", "main", &remote, &other.to_string_lossy()]).await;
-    run(&other, &["config", "user.email", "o@example.com"]).await;
-    run(&other, &["config", "user.name", "Other"]).await;
-    std::fs::write(other.join("requests/r9.json"), serde_json::to_string_pretty(&request("r9", "Nine")).unwrap())
-        .unwrap();
-    run(&other, &["add", "-A"]).await;
-    run(&other, &["commit", "-m", "create request Nine"]).await;
-    run(&other, &["push", "origin", "HEAD:main"]).await;
-
-    let pulled = engine.call("sync.pull", json!({ "workspaceId": ws })).await;
-    assert_eq!(pulled, json!({ "ok": true, "updated": true, "updatedIds": ["r9"] }));
-    assert!(ws_dir(ws).join("requests/r9.json").exists());
-    let again = engine.call("sync.pull", json!({ "workspaceId": ws })).await;
-    assert_eq!(again, json!({ "ok": true, "updated": false }));
-
-    // A local commit is pushed by sync.push.
-    run(&ws_dir(ws), &["commit", "--allow-empty", "-m", "local only"]).await;
-    assert_eq!(get_workspace_git_state(ws).await["ahead"], true);
-    assert_eq!(engine.call("sync.push", json!({ "workspaceId": ws })).await, json!({ "ok": true }));
-    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
-    assert_eq!(get_workspace_git_state(ws).await["ahead"], false);
-
-    // Auto-sync is persisted and starts a poller; turning it off stops it.
-    assert_eq!(
-        engine.call("sync.setAutoSync", json!({ "workspaceId": ws, "enabled": true })).await,
-        json!({ "ok": true })
-    );
-    assert_eq!(get_sync_config(ws).unwrap()["autoSync"], true);
-    assert_eq!(auto_sync::poller_count(), 1);
-    engine.call("sync.setAutoSync", json!({ "workspaceId": ws, "enabled": false })).await;
-    assert_eq!(auto_sync::poller_count(), 0);
-
-    let gone = engine.call("sync.disconnect", json!({ "workspaceId": ws })).await;
-    assert_eq!(gone, json!({ "ok": true }));
-    assert!(get_sync_config(ws).is_none());
-    assert_eq!(get_workspace_git_state(ws).await["hasRemote"], false);
-    assert_eq!(engine.call("sync.push", json!({ "workspaceId": ws })).await["error"], "No remote configured");
-}
-
-#[tokio::test]
-async fn non_empty_remote_is_refused_for_a_non_empty_workspace_and_cloned_into_an_empty_one() {
-    if !check_git_installed().await {
-        return;
-    }
-    let root = scratch_data_root();
-    let ws = root.ws_id;
-    let engine = Engine::new();
-    let scratch = tempfile::tempdir().unwrap();
-    let bare = scratch.path().join("remote.git");
-    std::fs::create_dir_all(&bare).unwrap();
-    run(&bare, &["init", "--bare"]).await;
-    let seed = scratch.path().join("seed");
-    std::fs::create_dir_all(seed.join("requests")).unwrap();
-    run(&seed, &["init", "-b", "main"]).await;
-    run(&seed, &["config", "user.email", "s@example.com"]).await;
-    run(&seed, &["config", "user.name", "Seed"]).await;
-    std::fs::write(seed.join("workspace.json"), r#"{ "id": "remote-ws", "name": "Remote" }"#).unwrap();
-    std::fs::write(seed.join("requests/r1.json"), serde_json::to_string(&request("r1", "First")).unwrap()).unwrap();
-    run(&seed, &["add", "-A"]).await;
-    run(&seed, &["commit", "-m", "seed"]).await;
-    let remote = bare.to_string_lossy().into_owned();
-    run(&seed, &["push", &remote, "HEAD:main"]).await;
-
-    // Non-empty workspace: refused, and the state says why.
-    write_entity(ws, "requests", "mine", &request("mine", "Mine"), None).unwrap();
-    let refused = engine.call("sync.setRemote", json!({ "workspaceId": ws, "remote": remote, "branch": "main" })).await;
-    assert_eq!(refused["ok"], false);
-    assert!(refused["error"].as_str().unwrap().starts_with("Remote is not empty"));
-    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["error"], "Remote is not empty");
-    std::fs::remove_file(ws_dir(ws).join("requests/mine.json")).unwrap();
-
-    // Empty workspace: the remote is cloned in and its identity adopted.
-    let cloned = engine.call("sync.setRemote", json!({ "workspaceId": ws, "remote": remote, "branch": "main" })).await;
-    assert_eq!(cloned, json!({ "ok": true, "cloned": true, "adoptedId": "remote-ws" }));
-    assert!(ws_dir("remote-ws").join("requests/r1.json").exists());
-    let settings = load_settings();
-    assert!(settings.workspace("remote-ws").is_some());
-    assert_eq!(settings.active_workspace_id(), "remote-ws");
-    assert!(get_sync_config("remote-ws").is_some());
-}
-
-#[tokio::test]
-async fn unreachable_remote_reports_an_error_as_data() {
-    if !check_git_installed().await {
-        return;
-    }
-    let root = scratch_data_root();
-    let ws = root.ws_id;
-    let engine = Engine::new();
-    let missing = root.dir.path().join("does-not-exist.git").to_string_lossy().into_owned();
-    let result = engine.call("sync.setRemote", json!({ "workspaceId": ws, "remote": missing, "branch": "main" })).await;
-    assert_eq!(result["ok"], false);
-    assert!(result["error"].as_str().unwrap().starts_with("Cannot access remote"));
-    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["status"], "error");
-}
-
-#[tokio::test]
 async fn auto_sync_pollers_start_and_stop_without_leaking() {
     let root = scratch_data_root();
     let ws = root.ws_id;
     let before = auto_sync::poller_count();
 
-    // Off by default: nothing starts.
+    // A workspace with no remote has nothing to watch.
     auto_sync::start_auto_sync(ws);
     assert_eq!(auto_sync::poller_count(), before);
 
-    super::sync_state::save_sync_config(ws, Some(json!({ "remote": "nowhere", "branch": "main", "autoSync": true })));
+    super::sync_state::save_sync_config(ws, Some(json!({ "remote": "nowhere", "branch": "main" })));
     auto_sync::start_auto_sync(ws);
     auto_sync::start_auto_sync(ws);
     assert_eq!(auto_sync::poller_count(), before + 1);

@@ -159,19 +159,6 @@ pub fn confirm_danger<V: 'static>(
     confirm_with(ButtonVariant::Danger, view, window, cx, title, consequence, ok_text, on_ok);
 }
 
-/// Asks before something that changes a lot but destroys nothing, such as connecting a remote.
-pub fn confirm<V: 'static>(
-    view: WeakEntity<V>,
-    window: &mut Window,
-    cx: &mut App,
-    title: impl Into<SharedString>,
-    consequence: impl Into<SharedString>,
-    ok_text: &'static str,
-    on_ok: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
-) {
-    confirm_with(ButtonVariant::Primary, view, window, cx, title, consequence, ok_text, on_ok);
-}
-
 #[allow(clippy::too_many_arguments)]
 fn confirm_with<V: 'static>(
     variant: ButtonVariant,

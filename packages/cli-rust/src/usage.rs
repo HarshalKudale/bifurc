@@ -17,6 +17,17 @@ Engine
 Workspaces
   workspaces list
   workspaces use <id>
+  workspaces add <name> [--account <login>]      A new local workspace; with --account that account owns it
+  workspaces import <owner/repo> --account <login>   Bring a workspace from the account's own repository
+  workspaces publish <repo-name> --account <login> [--public]
+                                         Push the workspace to a new repository (private unless --public)
+
+Accounts (GitHub sign-in, per workspace; only needed to sync with a remote)
+  account login                          Shows a code to enter on GitHub, then waits
+  account list
+  account repos <login>                  Repositories the account owns
+  account logout <login> [--force]       Signs out and removes the account's workspaces from this device;
+                                         --force even when they hold changes that were never synced
 
 Environments (Global is always applied; the selected one overrides it; one extra env is auto-selected)
   env list

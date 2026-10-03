@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{EngineSession, call, describe, failure},
-    model::{ConfigSnapshot, git::GitStatus, vault::VaultInfo},
+    model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, vault::VaultInfo},
 };
 
 /// Wire names of the engine events the UI listens to.
@@ -20,7 +20,8 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 15] = [
+const EVENTS: [&str; 16] = [
+    "event.account.changed",
     "event.engine.stopping",
     "event.ui.activate",
     "event.entity.changed",
@@ -67,6 +68,34 @@ impl ProxyStatus {
     }
 }
 
+/// What the engine says about this machine and its accounts (`setup.getState`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SetupState {
+    /// The first answer has arrived.
+    pub known: bool,
+    /// Without git a workspace is plain files: no history, no audit log, no revert, no sync.
+    pub git_installed: bool,
+    /// This build can sign in to GitHub.
+    pub sign_in_available: bool,
+    pub accounts: Vec<AccountInfo>,
+}
+
+impl SetupState {
+    fn from_value(value: &Value) -> Self {
+        let flag = |key: &str| value.get(key).and_then(Value::as_bool).unwrap_or(false);
+        Self {
+            known: true,
+            git_installed: flag("gitInstalled"),
+            sign_in_available: flag("signInAvailable"),
+            accounts: value
+                .get("accounts")
+                .and_then(Value::as_array)
+                .map(|accounts| accounts.iter().filter_map(AccountInfo::from_value).collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ModelEvent {
     /// A new snapshot is in place.
@@ -91,6 +120,8 @@ pub enum ModelEvent {
     EntityReverted(String),
     /// `event.sync.status`: the workspace's remote sync started, finished or failed at something.
     SyncStatus,
+    /// `event.account.changed`: a sign-in finished or failed, or an account was signed out.
+    AccountChanged(Value),
     /// The engine was stopped and started again: anything that lived only in the old one is gone.
     EngineRestarted,
     /// A short message for the user: a failed command, a lost connection.
@@ -105,6 +136,7 @@ pub struct AppModel {
     vaults: Vec<VaultInfo>,
     proxy: ProxyStatus,
     reverse_proxy: ProxyStatus,
+    setup: SetupState,
     /// The engine is being stopped and started again; its connection closing is expected.
     restarting_engine: bool,
     load: Load,
@@ -126,6 +158,7 @@ impl AppModel {
             vaults: Vec::new(),
             proxy: ProxyStatus::default(),
             reverse_proxy: ProxyStatus::default(),
+            setup: SetupState::default(),
             restarting_engine: false,
             load: Load::Loading,
             refreshing: false,
@@ -135,7 +168,23 @@ impl AppModel {
         };
         model.listen(cx);
         model.refresh(cx);
+        model.refresh_setup(cx);
         model
+    }
+
+    pub fn setup(&self) -> &SetupState {
+        &self.setup
+    }
+
+    /// Re-reads whether git is installed and which accounts are signed in.
+    pub fn refresh_setup(&mut self, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "setup.getState", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.setup = SetupState::from_value(&value);
+                cx.notify();
+            }
+        });
     }
 
     pub fn engine(&self) -> &EngineSession {
@@ -243,6 +292,11 @@ impl AppModel {
                 "event.sync.status" => {
                     self.refresh_git(cx);
                     cx.emit(ModelEvent::SyncStatus);
+                }
+                "event.account.changed" => {
+                    self.refresh_setup(cx);
+                    self.refresh(cx);
+                    cx.emit(ModelEvent::AccountChanged(event.payload));
                 }
                 "event.server.error" => self.refresh_proxy(cx),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
@@ -412,6 +466,7 @@ impl AppModel {
                         this.connection_lost = false;
                         this.listen(cx);
                         this.refresh(cx);
+                        this.refresh_setup(cx);
                         cx.emit(ModelEvent::EngineRestarted);
                     }
                     Err(message) => {
@@ -555,18 +610,6 @@ impl AppModel {
         call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
             Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't switch workspace. {}", describe(&error)))),
-        });
-    }
-
-    /// Creates a workspace and switches to it.
-    pub fn add_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let client = self.engine.client.clone();
-        call(&client, cx, "workspace.add", json!({ "name": name }), |this, outcome, cx| match outcome {
-            Ok(created) => match created.get("id").and_then(Value::as_str) {
-                Some(id) => this.set_active_workspace(&id.to_owned(), cx),
-                None => this.refresh(cx),
-            },
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't create the workspace. {}", describe(&error)))),
         });
     }
 

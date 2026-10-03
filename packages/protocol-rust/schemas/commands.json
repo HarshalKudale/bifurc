@@ -426,6 +426,9 @@
    "properties": {
     "name": {
      "type": "string"
+    },
+    "accountId": {
+     "type": "string"
     }
    },
    "required": [
@@ -1440,38 +1443,6 @@
    ],
    "additionalProperties": false
   },
-  "sync.setRemote": {
-   "type": "object",
-   "properties": {
-    "workspaceId": {
-     "type": "string"
-    },
-    "remote": {
-     "type": "string"
-    },
-    "branch": {
-     "type": "string"
-    }
-   },
-   "required": [
-    "workspaceId",
-    "remote",
-    "branch"
-   ],
-   "additionalProperties": false
-  },
-  "sync.disconnect": {
-   "type": "object",
-   "properties": {
-    "workspaceId": {
-     "type": "string"
-    }
-   },
-   "required": [
-    "workspaceId"
-   ],
-   "additionalProperties": false
-  },
   "sync.push": {
    "type": "object",
    "properties": {
@@ -1505,22 +1476,6 @@
    },
    "required": [
     "workspaceId"
-   ],
-   "additionalProperties": false
-  },
-  "sync.setAutoSync": {
-   "type": "object",
-   "properties": {
-    "workspaceId": {
-     "type": "string"
-    },
-    "enabled": {
-     "type": "boolean"
-    }
-   },
-   "required": [
-    "workspaceId",
-    "enabled"
    ],
    "additionalProperties": false
   },
@@ -2887,6 +2842,111 @@
    "required": [
     "leaseId"
    ]
+  },
+  "setup.getState": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "account.login.start": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "account.login.status": {
+   "type": "object",
+   "properties": {
+    "loginId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "loginId"
+   ],
+   "additionalProperties": false
+  },
+  "account.login.cancel": {
+   "type": "object",
+   "properties": {
+    "loginId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "loginId"
+   ],
+   "additionalProperties": false
+  },
+  "account.list": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "account.logout": {
+   "type": "object",
+   "properties": {
+    "accountId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "accountId"
+   ],
+   "additionalProperties": false
+  },
+  "account.repos": {
+   "type": "object",
+   "properties": {
+    "accountId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "accountId"
+   ],
+   "additionalProperties": false
+  },
+  "workspace.import": {
+   "type": "object",
+   "properties": {
+    "accountId": {
+     "type": "string"
+    },
+    "repo": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "accountId",
+    "repo"
+   ],
+   "additionalProperties": false
+  },
+  "sync.publish": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "accountId": {
+     "type": "string"
+    },
+    "repoName": {
+     "type": "string"
+    },
+    "private": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "accountId",
+    "repoName"
+   ],
+   "additionalProperties": false
   }
  }
 }

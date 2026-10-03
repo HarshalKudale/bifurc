@@ -8,10 +8,7 @@ use std::path::PathBuf;
 use serde_json::{Map, Value, json};
 
 use super::paths::data_dir;
-use crate::utils::{
-    id::generate_id,
-    json::{read_json, write_json_pretty},
-};
+use crate::utils::json::{read_json, write_json_pretty};
 
 pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
@@ -70,7 +67,7 @@ impl AppSettings {
         self.0.get("activeWorkspaceId").and_then(Value::as_str).unwrap_or("").to_string()
     }
 
-    /// The workspace metas: `{id, name, activeEnvironmentId, syncConfig?, syncMeta?}`.
+    /// The workspace metas: `{id, name, activeEnvironmentId, accountId?, syncConfig?, syncMeta?}`.
     pub fn workspaces(&self) -> &[Value] {
         self.0.get("workspaces").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
     }
@@ -106,8 +103,9 @@ pub fn forward_proxy_port_from_env() -> Option<u16> {
     }
 }
 
+/// A new data directory holds no workspace: the first one is made by whoever sets the app up (new, or
+/// imported from a remote), so that its first commit is theirs.
 fn make_default_settings() -> Value {
-    let id = generate_id();
     json!({
         "port": DEFAULT_REVERSE_PROXY_PORT,
         "forwardProxyPort": DEFAULT_FORWARD_PROXY_PORT,
@@ -117,8 +115,8 @@ fn make_default_settings() -> Value {
         "tlsCaCertPath": null,
         "tlsCaKeyPath": null,
         "tlsTrustedCa": null,
-        "workspaces": [{ "id": id, "name": "Workspace 1", "activeEnvironmentId": null }],
-        "activeWorkspaceId": id,
+        "workspaces": [],
+        "activeWorkspaceId": "",
         "hasSeenWelcome": false,
         "zoomLevel": 0,
         "zoomLevelSetByUser": false,

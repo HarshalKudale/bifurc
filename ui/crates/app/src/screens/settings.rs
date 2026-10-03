@@ -19,6 +19,7 @@ use gpui_kit::component::{
     link::Link,
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     tag::Tag,
+    v_flex,
 };
 use gpui_kit::{
     App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
@@ -27,10 +28,13 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use crate::{
-    app_model::{AppModel, ProxyStatus},
-    components::binary::{PickedFile, pick_file},
-    engine::{call, describe, failure, upload_and_call},
-    model::trust,
+    app_model::{AppModel, ModelEvent, ProxyStatus},
+    components::{
+        binary::{PickedFile, pick_file},
+        dialogs::confirm_danger,
+    },
+    engine::{call, call_in, describe, failure, upload_and_call},
+    model::{config::AccountInfo, trust},
     preferences::Preferences,
     theme,
 };
@@ -64,18 +68,170 @@ fn certificate_bytes(artifact: &Value) -> Result<Vec<u8>, String> {
     STANDARD.decode(inline).map_err(|error| format!("The certificate could not be read. {error}"))
 }
 
+/// A workspace that syncs as an account, and what it holds that its repository does not.
+#[derive(Debug, Clone, PartialEq)]
+struct AccountWorkspace {
+    name: String,
+    /// `owner/name`; `None` while the workspace was never published.
+    repo: Option<String>,
+    /// Files that differ from the last sync.
+    changes: u64,
+    /// Commits the repository has not got.
+    unpushed: bool,
+}
+
+impl AccountWorkspace {
+    /// What would be lost with the workspace, if anything would.
+    fn unsynced(&self) -> Option<String> {
+        match (&self.repo, self.changes, self.unpushed) {
+            (None, _, _) => Some("never published".to_owned()),
+            (_, 0, false) => None,
+            (_, 0, true) => Some("unpushed commits".to_owned()),
+            (_, 1, _) => Some("1 unsynced change".to_owned()),
+            (_, changes, _) => Some(format!("{changes} unsynced changes")),
+        }
+    }
+}
+
+/// A signed-in account and the workspaces that use it, as `account.list` reports them.
+#[derive(Debug, Clone, PartialEq)]
+struct AccountRow {
+    info: AccountInfo,
+    workspaces: Vec<AccountWorkspace>,
+}
+
+fn accounts_from(value: &Value) -> Vec<AccountRow> {
+    let list = |value: &Value, key: &str| value.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
+    list(value, "accounts")
+        .iter()
+        .filter_map(|account| {
+            let workspaces = list(account, "workspaces")
+                .iter()
+                .map(|ws| AccountWorkspace {
+                    name: ws.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    repo: ws.get("repo").and_then(Value::as_str).filter(|repo| !repo.is_empty()).map(str::to_owned),
+                    changes: ws.get("changes").and_then(Value::as_u64).unwrap_or(0),
+                    unpushed: ws.get("unpushed").and_then(Value::as_bool).unwrap_or(false),
+                })
+                .collect();
+            Some(AccountRow { info: AccountInfo::from_value(account)?, workspaces })
+        })
+        .collect()
+}
+
+/// What signing the account out does, beyond what the question itself says.
+fn sign_out_consequence(account: &AccountRow) -> String {
+    if account.workspaces.is_empty() {
+        return "Bifurc forgets this account on this computer. No workspace uses it.".to_owned();
+    }
+    let names: Vec<String> = account.workspaces.iter().map(|ws| format!("“{}”", ws.name)).collect();
+    let lost: Vec<String> = account
+        .workspaces
+        .iter()
+        .filter_map(|ws| Some(format!("“{}” ({})", ws.name, ws.unsynced()?)))
+        .collect();
+    let removed = format!("Its workspaces are removed from this computer: {}.", names.join(", "));
+    if lost.is_empty() {
+        format!("{removed} They stay on GitHub and can be imported again.")
+    } else {
+        format!("{removed} What was never synced is lost with them: {}.", lost.join(", "))
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
 pub struct SettingsScreen {
     model: Entity<AppModel>,
     certificate: Certificate,
-    _subscription: Subscription,
+    accounts: Vec<AccountRow>,
+    /// The account being signed out.
+    signing_out: Option<String>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SettingsScreen {
     pub fn new(model: Entity<AppModel>, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.observe(&model, |_, _, cx| cx.notify());
-        let mut this = Self { model, certificate: Certificate::default(), _subscription: subscription };
+        let subscriptions = vec![
+            cx.observe(&model, |_, _, cx| cx.notify()),
+            cx.subscribe(&model, |this, _, event: &ModelEvent, cx| {
+                // What an account's workspaces hold unsynced changes with every sync.
+                if matches!(
+                    event,
+                    ModelEvent::AccountChanged(_)
+                        | ModelEvent::SyncStatus
+                        | ModelEvent::WorkspaceSwitched
+                        | ModelEvent::EngineRestarted
+                ) {
+                    this.refresh_accounts(cx);
+                }
+            }),
+        ];
+        let mut this = Self {
+            model,
+            certificate: Certificate::default(),
+            accounts: Vec::new(),
+            signing_out: None,
+            _subscriptions: subscriptions,
+        };
         this.refresh_certificate(cx);
+        this.refresh_accounts(cx);
         this
+    }
+
+    fn refresh_accounts(&mut self, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "account.list", json!({}), |this, outcome, cx| {
+            if let Ok(listed) = outcome {
+                this.accounts = accounts_from(&listed);
+                cx.notify();
+            }
+        });
+    }
+
+    /// Asks before signing out, with what the account's workspaces hold right now: signing out removes them.
+    fn ask_sign_out(&mut self, account_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "account.list", json!({}), move |this, outcome, window, cx| {
+            if let Ok(listed) = outcome {
+                this.accounts = accounts_from(&listed);
+                cx.notify();
+            }
+            let Some(account) = this.accounts.iter().find(|account| account.info.id == account_id) else { return };
+            let ok_text = if account.workspaces.is_empty() { "Sign out" } else { "Sign out and remove" };
+            let id = account_id.clone();
+            confirm_danger(
+                cx.weak_entity(),
+                window,
+                cx,
+                format!("Sign out @{}?", account.info.login),
+                sign_out_consequence(account),
+                ok_text,
+                move |this, _, cx| this.sign_out(id.clone(), cx),
+            );
+        });
+    }
+
+    fn sign_out(&mut self, account_id: String, cx: &mut Context<Self>) {
+        if self.signing_out.is_some() {
+            return;
+        }
+        self.signing_out = Some(account_id.clone());
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "account.logout", json!({ "accountId": account_id }), |this, outcome, cx| {
+            this.signing_out = None;
+            if let Some(message) = failure(&outcome) {
+                this.report(format!("Couldn't sign out. {message}"), cx);
+            }
+            this.model.update(cx, |model, cx| {
+                model.refresh_setup(cx);
+                model.refresh(cx);
+            });
+            this.refresh_accounts(cx);
+        });
     }
 
     fn refresh_certificate(&mut self, cx: &mut Context<Self>) {
@@ -545,6 +701,91 @@ impl SettingsScreen {
         ])
     }
 
+    /// The GitHub accounts signed in on this computer: one group each, with the workspaces that sync as it.
+    fn accounts_page(&self, cx: &mut Context<Self>) -> SettingPage {
+        let page = SettingPage::new("Accounts").icon(IconName::Github);
+        if self.accounts.is_empty() {
+            return page.groups(vec![
+                SettingGroup::new()
+                    .title("GitHub")
+                    .item(SettingItem::render(|_, _, cx| {
+                        div().text_color(cx.theme().muted_foreground).child("No account is signed in.")
+                    }))
+                    .footer(|_, _| {
+                        "An account is only needed to sync a workspace with GitHub. Sign in when you add a workspace, or when you publish one from its Config."
+                    }),
+            ]);
+        }
+        let groups = self.accounts.iter().enumerate().map(|(index, account)| {
+            let this = cx.weak_entity();
+            let (id, signed_in) = (account.info.id.clone(), account.info.signed_in);
+            let host = account.info.host.clone();
+            let busy = self.signing_out.as_deref() == Some(account.info.id.as_str());
+            let blocked = self.signing_out.is_some();
+            let count = account.workspaces.len();
+            let header = SettingItem::render(move |options, _, cx| {
+                let theme = cx.theme().clone();
+                let (this, id) = (this.clone(), id.clone());
+                let state = if signed_in { Tag::success().child("Signed in") } else { Tag::warning().child("Signed out") };
+                let detail = match count {
+                    0 => format!("{host} · no workspaces"),
+                    1 => format!("{host} · 1 workspace"),
+                    count => format!("{host} · {count} workspaces"),
+                };
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().text_color(theme.muted_foreground).child(detail))
+                    .child(state)
+                    .child(
+                        Button::new(("sign-out", index))
+                            .with_size(options.size())
+                            .label("Sign out")
+                            .loading(busy)
+                            .disabled(blocked)
+                            .on_click(move |_, window, cx| {
+                                this.update(cx, |this, cx| this.ask_sign_out(id.clone(), window, cx)).ok();
+                            }),
+                    )
+            })
+            .keywords(["github", "login", "logout", "sign out"]);
+            let workspaces = account.workspaces.iter().cloned().map(|workspace| {
+                SettingItem::render(move |_, _, cx| {
+                    let theme = cx.theme().clone();
+                    let state = match workspace.unsynced() {
+                        Some(unsynced) => Tag::warning().child(capitalized(&unsynced)),
+                        None => Tag::secondary().child("Synced"),
+                    };
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .child(div().overflow_hidden().text_ellipsis().child(workspace.name.clone()))
+                                .children(workspace.repo.clone().map(|repo| {
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .font_family(theme.mono_font_family.clone())
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .child(repo)
+                                })),
+                        )
+                        .child(state)
+                })
+            });
+            SettingGroup::new()
+                .title(format!("@{}", account.info.login))
+                .item(header)
+                .items(workspaces)
+                .footer(|_, _| "Signing out removes the account and its workspaces from this computer.")
+        });
+        page.groups(groups.collect::<Vec<_>>())
+    }
+
     fn about_page(&self, cx: &App) -> SettingPage {
         let engine = self.model.read(cx).engine().clone();
         let fact = |title: &'static str, value: String| {
@@ -590,10 +831,43 @@ impl SettingsScreen {
 
 impl Render for SettingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pages = vec![self.appearance_page(cx), self.servers_page(), self.https_page(cx), self.about_page(cx)];
+        let pages = vec![
+            self.appearance_page(cx),
+            self.accounts_page(cx),
+            self.servers_page(),
+            self.https_page(cx),
+            self.about_page(cx),
+        ];
         div()
             .size_full()
             .bg(cx.theme().background)
             .child(Settings::new("settings").with_group_variant(GroupBoxVariant::Outline).pages(pages))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signing_out_says_which_workspaces_go_and_what_is_lost_with_them() {
+        let accounts = accounts_from(&json!({ "accounts": [
+            { "id": "github.com:1", "login": "octo", "host": "github.com", "signedIn": true, "workspaces": [
+                { "id": "a", "name": "Synced", "repo": "octo/a", "changes": 0, "unpushed": false },
+                { "id": "b", "name": "Edited", "repo": "octo/b", "changes": 2, "unpushed": false },
+                { "id": "c", "name": "Local", "repo": null, "changes": 0, "unpushed": false },
+            ]},
+            { "id": "github.com:2", "login": "idle", "host": "github.com", "signedIn": true, "workspaces": [] },
+        ]}));
+        assert_eq!(accounts.len(), 2);
+        let unsynced: Vec<Option<String>> = accounts[0].workspaces.iter().map(AccountWorkspace::unsynced).collect();
+        assert_eq!(unsynced, [None, Some("2 unsynced changes".to_owned()), Some("never published".to_owned())]);
+        let warning = sign_out_consequence(&accounts[0]);
+        assert!(warning.contains("“Synced”, “Edited”, “Local”"), "{warning}");
+        assert!(warning.contains("“Edited” (2 unsynced changes), “Local” (never published)"), "{warning}");
+        assert!(sign_out_consequence(&accounts[1]).contains("No workspace uses it"));
+
+        let synced = AccountRow { workspaces: accounts[0].workspaces[..1].to_vec(), ..accounts[0].clone() };
+        assert!(sign_out_consequence(&synced).contains("can be imported again"));
     }
 }

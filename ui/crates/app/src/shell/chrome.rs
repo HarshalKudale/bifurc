@@ -253,9 +253,18 @@ impl Shell {
         }
     }
 
-    fn render_git_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_git_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let model = self.model.read(cx);
+        // Without git nothing is tracked, so there is nothing to publish and no state to report.
+        if model.setup().known && !model.setup().git_installed {
+            return h_flex()
+                .gap_2()
+                .text_color(theme.muted_foreground)
+                .child(Icon::new(IconName::TriangleAlert).small())
+                .child("Git is not installed. Changes are saved, not tracked.")
+                .into_any_element();
+        }
         let git = model.git();
         let rollup = git.rollup(self.screen.git_prefixes());
         let publishing = model.is_publishing();
@@ -299,6 +308,7 @@ impl Shell {
                         }),
                 )
             })
+            .into_any_element()
     }
 
     pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {

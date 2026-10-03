@@ -13,3 +13,4 @@ pub mod services;
 pub mod settings;
 pub mod vaults;
 pub mod workspace;
+pub mod workspace_setup;
