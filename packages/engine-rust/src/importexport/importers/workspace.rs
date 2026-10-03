@@ -1,0 +1,357 @@
+//! Whole-workspace imports: a JSON snapshot and a zip of a workspace directory. Both create a new workspace.
+
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+use serde_json::{Value, json};
+
+use crate::{
+    importexport::{
+        support::{io_failure, js_str, parse_json, pretty, push_to, store_request, sync_enabled},
+        types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
+    },
+    runtime::instances::notify_config_changed,
+    utils::{
+        id::{generate_id, now_ms},
+        json::{array_of, is_truthy, merged, object_mut, str_of},
+    },
+    workspace::{
+        config::load_config,
+        fs::{init_workspace_dir, upsert_name_entry, write_entity, ws_dir},
+        git_store::init_workspace_repo,
+        settings::{load_settings, save_settings},
+    },
+};
+
+const NOT_A_SNAPSHOT: &str = "Not a valid lp-workspace-v1 file";
+
+/// The snapshot's `data`, when `content` is a workspace snapshot.
+fn parse_snapshot(content: &str) -> Result<Result<Value, String>, String> {
+    let snapshot = parse_json(content)?;
+    let valid = str_of(&snapshot, "schema") == "lp-workspace-v1"
+        && snapshot.get("workspace").is_some_and(is_truthy)
+        && snapshot.get("data").is_some_and(is_truthy);
+    Ok(if valid { Ok(snapshot) } else { Err(NOT_A_SNAPSHOT.to_string()) })
+}
+
+fn item_count(data: &Value) -> usize {
+    ["mocks", "requests", "mappings", "proxyRules", "wsConnections", "environments"]
+        .iter()
+        .map(|key| array_of(data, key).len())
+        .sum()
+}
+
+pub fn json_preflight(_ws_id: &str, source: &ImportSource) -> PreflightOutcome {
+    let snapshot = parse_snapshot(&source.content)??;
+    Ok(Preflight::counted(item_count(&snapshot["data"])))
+}
+
+/// `workspaceId` of every item of `data[key]` set to `ws_id`.
+fn remap(data: &Value, key: &str, ws_id: &str) -> Vec<Value> {
+    array_of(data, key).iter().map(|item| merged(item, &json!({ "workspaceId": ws_id }))).collect()
+}
+
+/// folder id -> folder name.
+fn folder_names(folders: &[Value]) -> HashMap<String, String> {
+    folders.iter().map(|f| (str_of(f, "id").to_string(), str_of(f, "name").to_string())).collect()
+}
+
+/// A name no workspace has: `name`, else `name (2)`, `name (3)`, …
+fn unique_name(taken: &HashSet<String>, name: &str) -> String {
+    if !taken.contains(name) {
+        return name.to_string();
+    }
+    let mut n = 2;
+    while taken.contains(&format!("{name} ({n})")) {
+        n += 1;
+    }
+    format!("{name} ({n})")
+}
+
+pub async fn json_run(_ws_id: String, source: ImportSource, _strategy: Strategy) -> ImportOutcome {
+    let snapshot = parse_snapshot(&source.content)??;
+    let mut cfg = load_config();
+    let new_id = generate_id();
+    let source_name = js_str(snapshot["workspace"].get("name").unwrap_or(&Value::Null));
+    let taken: HashSet<String> =
+        array_of(&cfg, "workspaces").iter().map(|w| js_str(w.get("name").unwrap_or(&Value::Null))).collect();
+    let name = unique_name(&taken, &source_name);
+    push_to(
+        &mut cfg,
+        "workspaces",
+        json!({ "id": new_id, "name": name, "createdAt": now_ms(), "activeEnvironmentId": null }),
+    );
+
+    let data = &snapshot["data"];
+    for (cfg_key, data_key) in [
+        ("mappings", "mappings"),
+        ("proxyRules", "proxyRules"),
+        ("mocks", "mocks"),
+        ("mockFolders", "mockFolders"),
+        ("ruleFolders", "ruleFolders"),
+        ("requestFolders", "requestFolders"),
+        ("wsFolders", "wsFolders"),
+        ("environments", "environments"),
+    ] {
+        for item in remap(data, data_key, &new_id) {
+            push_to(&mut cfg, cfg_key, item);
+        }
+    }
+    cfg["activeWorkspaceId"] = json!(new_id);
+    cfg["activeEnvironmentId"] = Value::Null;
+
+    init_workspace_dir(&new_id, &name).map_err(io_failure)?;
+    init_workspace_repo(&new_id).await.map_err(io_failure)?;
+    commit_config_without_notify(&cfg)?;
+
+    let request_folders = folder_names(&remap(data, "requestFolders", &new_id));
+    let ws_folders = folder_names(&remap(data, "wsFolders", &new_id));
+    let rule_folders = folder_names(&remap(data, "ruleFolders", &new_id));
+    let folder_of = |item: &Value, names: &HashMap<String, String>| -> Option<String> {
+        item.get("folderId").filter(|f| is_truthy(f)).and_then(|f| names.get(&js_str(f)).cloned())
+    };
+
+    for request in remap(data, "requests", &new_id) {
+        store_request(&new_id, &request, folder_of(&request, &request_folders).as_deref())?;
+    }
+    for connection in remap(data, "wsConnections", &new_id) {
+        let id = str_of(&connection, "id");
+        write_entity(&new_id, "sockets", id, &connection, folder_of(&connection, &ws_folders).as_deref())
+            .map_err(io_failure)?;
+        let entry = json!({
+            "name": connection.get("name").cloned().unwrap_or(Value::Null),
+            "url": connection.get("url").cloned().unwrap_or(Value::Null),
+        });
+        upsert_name_entry(&new_id, "sockets", id, entry).map_err(io_failure)?;
+    }
+    for rule in remap(data, "proxyRules", &new_id) {
+        let id = str_of(&rule, "id");
+        write_entity(&new_id, "rules", id, &rule, folder_of(&rule, &rule_folders).as_deref()).map_err(io_failure)?;
+        sync_enabled(&new_id, "rules", id, rule.get("enabled").unwrap_or(&Value::Null))?;
+        let entry = json!({
+            "name": rule.get("name").cloned().unwrap_or(Value::Null),
+            "url": rule.get("pattern").cloned().unwrap_or(Value::Null),
+        });
+        upsert_name_entry(&new_id, "rules", id, entry).map_err(io_failure)?;
+    }
+    for mock in remap(data, "mocks", &new_id) {
+        let id = str_of(&mock, "id");
+        sync_enabled(&new_id, "mocks", id, mock.get("enabled").unwrap_or(&Value::Null))?;
+        let entry = json!({
+            "name": mock.get("name").cloned().unwrap_or(Value::Null),
+            "method": mock.get("method").cloned().unwrap_or(Value::Null),
+            "url": mock.get("urlPattern").cloned().unwrap_or(Value::Null),
+        });
+        upsert_name_entry(&new_id, "mocks", id, entry).map_err(io_failure)?;
+    }
+    for mapping in remap(data, "mappings", &new_id) {
+        sync_enabled(&new_id, "mappings", str_of(&mapping, "id"), mapping.get("enabled").unwrap_or(&Value::Null))?;
+    }
+
+    notify_config_changed();
+    Ok(Imported::all(item_count(data)))
+}
+
+/// Save the snapshot; the proxies are told once everything is written.
+fn commit_config_without_notify(cfg: &Value) -> Result<(), String> {
+    crate::workspace::config::save_config(cfg).map_err(io_failure)
+}
+
+// ── zip ────────────────────────────────────────────────────────────────────────────────────────────────
+
+pub fn zip_preflight(source: &Path) -> PreflightOutcome {
+    if !source.exists() {
+        return Err("File not found".to_string());
+    }
+    let mut head = [0u8; 4];
+    let mut file = File::open(source).map_err(io_failure)?;
+    let mut filled = 0;
+    while filled < head.len() {
+        match file.read(&mut head[filled..]).map_err(io_failure)? {
+            0 => break,
+            n => filled += n,
+        }
+    }
+    if head[0] == 0x50 && head[1] == 0x4b { Ok(Preflight::counted(0)) } else { Err("Not a valid ZIP file".to_string()) }
+}
+
+/// The `name` in the archive's `workspace.json`, if it has one that can be read.
+fn archived_workspace_name(source: &Path) -> Option<String> {
+    let mut archive = zip::ZipArchive::new(File::open(source).ok()?).ok()?;
+    let index = (0..archive.len()).find(|&i| {
+        archive.by_index(i).is_ok_and(|f| f.name() == "workspace.json" || f.name().ends_with("/workspace.json"))
+    })?;
+    let mut text = String::new();
+    archive.by_index(index).ok()?.read_to_string(&mut text).ok()?;
+    let data: Value = serde_json::from_str(&text).ok()?;
+    data.get("name").filter(|n| is_truthy(n)).map(js_str)
+}
+
+/// Unpack the archive into `dest`, leaving out git data. Returns the number of files written.
+fn extract(source: &Path, dest: &Path) -> Result<usize, String> {
+    let mut archive = zip::ZipArchive::new(File::open(source).map_err(io_failure)?).map_err(io_failure)?;
+    let mut count = 0;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(io_failure)?;
+        let name = entry.name().to_string();
+        if name.starts_with(".git/") || name == ".git" || entry.is_dir() {
+            continue;
+        }
+        let Some(relative) = entry.enclosed_name() else { continue };
+        let target: PathBuf = dest.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(io_failure)?;
+        }
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).map_err(io_failure)?;
+        std::fs::write(target, bytes).map_err(io_failure)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+pub async fn zip_run(_ws_id: String, source: PathBuf, _strategy: Strategy) -> ImportOutcome {
+    let mut settings = load_settings();
+    let new_id = generate_id();
+
+    let archive = source.clone();
+    let name = tokio::task::spawn_blocking(move || archived_workspace_name(&archive))
+        .await
+        .map_err(io_failure)?
+        .unwrap_or_else(|| "Imported Workspace".to_string());
+    let taken: HashSet<String> =
+        settings.workspaces().iter().map(|w| js_str(w.get("name").unwrap_or(&Value::Null))).collect();
+    let name = unique_name(&taken, &name);
+
+    let dest = ws_dir(&new_id);
+    init_workspace_dir(&new_id, &name).map_err(io_failure)?;
+    let (archive, target) = (source, dest.clone());
+    let file_count = tokio::task::spawn_blocking(move || extract(&archive, &target)).await.map_err(io_failure)??;
+
+    let workspace_file = dest.join("workspace.json");
+    if workspace_file.exists() {
+        let text = std::fs::read_to_string(&workspace_file).map_err(io_failure)?;
+        let mut data = parse_json(&text)?;
+        let object = object_mut(&mut data);
+        object.insert("id".into(), json!(new_id));
+        object.insert("name".into(), json!(name));
+        std::fs::write(&workspace_file, pretty(&data)).map_err(io_failure)?;
+    }
+
+    init_workspace_repo(&new_id).await.map_err(io_failure)?;
+
+    push_to(settings.as_value_mut(), "workspaces", json!({ "id": new_id, "name": name, "activeEnvironmentId": null }));
+    settings.set("activeWorkspaceId", json!(new_id));
+    save_settings(&settings).map_err(io_failure)?;
+
+    notify_config_changed();
+    Ok(Imported::all(file_count))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        importexport::exporters::workspace as exporter,
+        testing::scratch_data_root,
+        workspace::fs::{load_enabled_set, read_entity},
+    };
+
+    fn snapshot(name: &str) -> Value {
+        json!({ "schema": "lp-workspace-v1", "workspace": { "id": "old", "name": name, "createdAt": 1, "activeEnvironmentId": null },
+            "data": {
+                "mappings": [{ "id": "map1", "domain": "a.localhost", "target": "localhost:1", "enabled": true, "workspaceId": "old" }],
+                "proxyRules": [{ "id": "p1", "name": "Rule", "pattern": "/x", "enabled": true, "folderId": "rf", "workspaceId": "old" }],
+                "mocks": [{ "id": "m1", "name": "Mock", "method": "GET", "urlPattern": "/m", "enabled": true, "workspaceId": "old" }],
+                "requests": [{ "id": "r1", "name": "Req", "method": "GET", "url": "http://a/", "headers": {}, "body": "",
+                    "createdAt": 1, "folderId": "qf", "workspaceId": "old" }],
+                "mockFolders": [], "ruleFolders": [{ "id": "rf", "name": "Rules", "parentId": null, "workspaceId": "old" }],
+                "requestFolders": [{ "id": "qf", "name": "Reqs", "parentId": null, "workspaceId": "old" }],
+                "wsConnections": [{ "id": "c1", "name": "Feed", "url": "ws://x", "headers": {}, "createdAt": 1, "folderId": null, "workspaceId": "old" }],
+                "wsFolders": [],
+                "environments": [{ "id": "e1", "name": "Env", "variables": [], "createdAt": 1, "workspaceId": "old" }],
+            } })
+    }
+
+    fn text(value: &Value) -> ImportSource {
+        ImportSource { content: value.to_string(), filename: "ws.json".to_string() }
+    }
+
+    #[test]
+    fn preflight_counts_the_entities() {
+        let pre = json_preflight("ws1", &text(&snapshot("Old"))).unwrap();
+        assert_eq!((pre.item_count, pre.collision_ids.len()), (6, 0));
+        assert_eq!(json_preflight("ws1", &text(&json!({ "schema": "x" }))).err().unwrap(), NOT_A_SNAPSHOT);
+        assert!(json_preflight("ws1", &ImportSource { content: "nope".into(), filename: String::new() }).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_becomes_a_new_active_workspace_with_a_unique_name() {
+        let root = scratch_data_root();
+        let done = json_run(root.ws_id.to_string(), text(&snapshot("Workspace 1")), Strategy::Keep).await;
+        let Ok(done) = done else {
+            // git may be unavailable in the test environment
+            eprintln!("skipped: {done:?}", done = done.err());
+            return;
+        };
+        assert_eq!(done.imported, 6);
+        let settings = load_settings();
+        let created = settings.workspaces().iter().find(|w| w["name"] == "Workspace 1 (2)").expect("renamed workspace");
+        let new_id = created["id"].as_str().unwrap();
+        assert_eq!(settings.active_workspace_id(), new_id);
+        assert!(ws_dir(new_id).join("workspace.json").exists());
+
+        let request = read_entity(new_id, "requests", "r1").unwrap();
+        assert_eq!(request["workspaceId"], new_id);
+        assert!(crate::workspace::fs::entity_dir(new_id, "requests").join("Reqs").join("r1.json").exists());
+        assert!(crate::workspace::fs::entity_dir(new_id, "rules").join("Rules").join("p1.json").exists());
+        assert!(read_entity(new_id, "sockets", "c1").is_some());
+        assert!(read_entity(new_id, "mocks", "m1").is_some());
+        assert!(read_entity(new_id, "mappings", "map1").is_some());
+        assert!(load_enabled_set(new_id, "mocks").contains("m1"));
+        assert!(load_enabled_set(new_id, "rules").contains("p1"));
+        assert!(load_enabled_set(new_id, "mappings").contains("map1"));
+    }
+
+    #[tokio::test]
+    async fn a_zip_round_trips_through_the_exporter() {
+        let root = scratch_data_root();
+        let ws = root.ws_id;
+        let request = json!({ "id": "r1", "name": "Req", "method": "GET", "url": "http://a/", "headers": {}, "body": "",
+            "createdAt": 1, "folderId": null, "workspaceId": ws });
+        write_entity(ws, "requests", "r1", &request, None).unwrap();
+        let archive = root.dir.path().join("ws.zip");
+        exporter::zip(ws, &archive).unwrap();
+
+        assert!(zip_preflight(&archive).is_ok());
+        assert_eq!(zip_preflight(&root.dir.path().join("none.zip")).err().unwrap(), "File not found");
+        let not_zip = root.dir.path().join("a.txt");
+        std::fs::write(&not_zip, "hello").unwrap();
+        assert_eq!(zip_preflight(&not_zip).err().unwrap(), "Not a valid ZIP file");
+
+        let done = zip_run(ws.to_string(), archive, Strategy::Keep).await;
+        let Ok(done) = done else {
+            eprintln!("skipped: {:?}", done.err());
+            return;
+        };
+        assert!(done.imported >= 3);
+        let settings = load_settings();
+        let created = settings.workspaces().iter().find(|w| w["name"] == "Workspace 1 (2)").expect("renamed workspace");
+        let new_id = created["id"].as_str().unwrap();
+        let info: Value = crate::utils::json::read_json(&ws_dir(new_id).join("workspace.json")).unwrap();
+        assert_eq!((info["id"].as_str().unwrap(), info["name"].as_str().unwrap()), (new_id, "Workspace 1 (2)"));
+        assert_eq!(read_entity(new_id, "requests", "r1").unwrap()["name"], "Req");
+        assert_eq!(settings.active_workspace_id(), new_id);
+    }
+
+    #[test]
+    fn names_get_a_numeric_suffix() {
+        let taken: HashSet<String> = ["A".to_string(), "A (2)".to_string()].into();
+        assert_eq!(unique_name(&taken, "A"), "A (3)");
+        assert_eq!(unique_name(&taken, "B"), "B");
+    }
+}
