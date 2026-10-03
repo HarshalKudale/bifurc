@@ -18,23 +18,23 @@ pub struct RequestLogEntry {
     pub method: String,
     pub url: String,
     pub host: String,
-    pub status: Option<u16>,
-    /// `rfc6761` | `mapping` | `proxy` | `rule` | `mock` | `error`
-    pub via: String,
-    pub target: Option<String>,
-    pub duration_ms: Option<i64>,
     pub req_headers: Headers,
     /// base64
     pub req_body: String,
-    pub res_headers: Headers,
-    /// base64, at most the first 512 KiB of the body
-    pub res_body: String,
-    pub res_status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     /// `forward` | `reverse`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    pub status: Option<u16>,
+    /// `rfc6761` | `mapping` | `proxy` | `rule` | `mock` | `error`
+    pub via: String,
+    pub target: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub res_headers: Headers,
+    /// base64, at most the first 512 KiB of the body
+    pub res_body: String,
+    pub res_status: Option<u16>,
 }
 
 /// How much of a response body a log entry keeps.

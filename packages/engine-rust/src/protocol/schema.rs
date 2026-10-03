@@ -186,10 +186,15 @@ fn check_object(schema: &Map<String, Value>, fields: &Map<String, Value>, path: 
     }
 
     let mut out = Map::new();
+    // A zod parse hands back the declared keys in the schema's order, whatever order the caller sent them in.
+    for (key, property) in properties.into_iter().flatten() {
+        if let Some(value) = fields.get(key) {
+            out.insert(key.clone(), check(property, value, &join(path, key))?);
+        }
+    }
     for (key, value) in fields {
         let child = join(path, key);
-        if let Some(property) = properties.and_then(|p| p.get(key)) {
-            out.insert(key.clone(), check(property, value, &child)?);
+        if properties.is_some_and(|p| p.contains_key(key)) {
             continue;
         }
         match additional {
@@ -220,6 +225,15 @@ mod tests {
     fn strict_objects_reject_unknown_keys() {
         assert!(validate("config.get", &json!({})).is_ok());
         assert!(validate("config.get", &json!({ "extra": 1 })).is_err());
+    }
+
+    #[test]
+    fn declared_keys_come_back_in_schema_order() {
+        let report = json!({ "folderId": "f", "totalRequests": 1, "completedAt": 3, "startedAt": 2, "folderName": "n" });
+        let out = validate("runner.saveReport", &json!({ "report": report, "workspaceId": "w" })).unwrap();
+        let keys = |value: &Value| value.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        assert_eq!(keys(&out), ["workspaceId", "report"]);
+        assert_eq!(keys(&out["report"]), ["folderId", "folderName", "startedAt", "completedAt", "totalRequests"]);
     }
 
     #[test]
