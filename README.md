@@ -19,6 +19,13 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 - use a browser companion extension for DevTools-driven capture and mock creation
 - version workspace data with git and sync it between collaborators
 
+## Engine, CLI and desktop UI
+
+The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`) and the desktop UI (`ui/`) are Rust.
+`npm run dev:ui` builds the engine and the CLI and runs the UI against them; `npm run package:desktop` packages all three
+with no Node runtime. The TypeScript engine and CLI (`packages/engine`, `packages/cli`) are **deprecated and scheduled for
+decommissioning**; they remain only until the Electron shell and the parity harness (`scripts/engine-parity.mjs`) retire.
+
 ## Repository structure
 
 ```text

@@ -42,7 +42,7 @@ VIAddVersionKey "LegalCopyright" "${PUBLISHER}"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-; A running engine holds node.exe and the tray helper open, and the interface holds itself. Stopping the
+; A running engine holds bifurc-engine.exe and the tray helper open, and the interface holds itself. Stopping the
 ; engine closes the interfaces attached to it; `--no-start` keeps the command from starting one to stop.
 !macro StopBifurc
   ${If} ${FileExists} "$INSTDIR\bin\bifurc.exe"
@@ -56,7 +56,7 @@ Section "Install"
   !insertmacro StopBifurc
 
   SetOutPath "$INSTDIR"
-  ; What an earlier version left in these folders is not part of this one.
+  ; What an earlier version left in these folders is not part of this one (`runtime` held the Node engine's Node).
   RMDir /r "$INSTDIR\resources"
   RMDir /r "$INSTDIR\runtime"
   File /r "${STAGE}\*.*"
@@ -65,7 +65,7 @@ Section "Install"
   CreateShortcut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\bifurc-ui.exe"
   CreateShortcut "$DESKTOP\${APP}.lnk" "$INSTDIR\bifurc-ui.exe"
 
-  ; `bin` holds the `bifurc` command and nothing else, so the bundled node.exe stays off PATH.
+  ; `bin` holds the `bifurc` command and nothing else, so the engine and the CLI it runs stay off PATH.
   nsExec::Exec '"$INSTDIR\bin\bifurc.exe" --register-path'
   Pop $0
 
@@ -96,6 +96,7 @@ Section "Uninstall"
   Delete "$DESKTOP\${APP}.lnk"
   Delete "$INSTDIR\bifurc-ui.exe"
   Delete "$INSTDIR\bifurc-tray.exe"
+  Delete "$INSTDIR\bifurc-engine.exe"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR\bin"

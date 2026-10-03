@@ -1,5 +1,6 @@
 /**
- * Packages the desktop app — the Rust UI, the engine, the CLI and the Node they run on — as one install.
+ * Packages the desktop app — the Rust UI, the Rust engine and the Rust CLI — as one install. No Node is shipped:
+ * the TypeScript engine and CLI (`packages/engine`, `packages/cli`) are scheduled for decommissioning.
  *
  * ```
  * node scripts/package-desktop.mjs                       # this platform's packages
@@ -13,22 +14,17 @@
  *
  * ```
  * bifurc-ui[.exe]      the interface
+ * bifurc-engine[.exe]  the engine (Rust)
  * bifurc-tray.exe      the engine's tray icon (Windows)
- * bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH
- * runtime/node[.exe]   the Node the engine and the CLI run on
- * resources/node_modules/@bifurc/{engine,cli,protocol} and what they depend on
+ * bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
+ * resources/bifurc-cli[.exe]   the CLI (Rust, `packages/cli-rust`)
  * ```
  *
  * `ui/crates/engine-client/src/sidecar.rs` and `ui/crates/cli/src/main.rs` look for exactly these paths
- * beside their own executable, and the engine finds the tray helper above the Node it runs on, so the folder
- * works from wherever it is put and no installer has to write a configuration.
- *
- * The engine is copied as built, with its real dependency closure, rather than bundled into one file: its
- * modules hold state at module level (`packages/engine/tsup.config.ts` says why it is not bundled), and the
- * CLI resolves the engine through `node_modules`.
+ * beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
+ * wherever it is put and no installer has to write a configuration.
  */
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,8 +44,6 @@ const option = (name) => {
 };
 const targets = (option("target") ?? (isWindows ? "nsis,msix" : "appimage")).split(",").filter(Boolean);
 const skipBuild = argv.includes("--skip-build");
-/** The Node that is shipped. By default the version running this build — the one the engine was just built and tested on. */
-const nodeVersion = (option("node-version") ?? process.versions.node).replace(/^v/, "");
 const nodeArch = process.arch === "arm64" ? "arm64" : "x64";
 
 function fail(message) {
@@ -87,23 +81,24 @@ function template(file, values) {
 // ---------------------------------------------------------------------------------------------------------
 
 function build() {
-  // `npm` is a .cmd on Windows, which only a shell can start.
-  run("npm", ["run", "build:packages"], { shell: isWindows });
-  // Building the app builds the tray helper beside it (`ui/crates/app/build.rs`).
+  // The engine and the CLI: the repository's own cargo workspace.
+  run("cargo", ["build", "--release", "-p", "bifurc-engine", "-p", "bifurc-cli"]);
+  // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
+  // `bifurc` launcher that goes on PATH.
   run("cargo", ["build", "--release", "-p", "bifurc-ui", "-p", "bifurc-cli"], { cwd: path.join(repo, "ui") });
 }
 
-function cargoOutput(name) {
-  const targetDir = process.env.CARGO_TARGET_DIR
-    ? path.resolve(repo, "ui", process.env.CARGO_TARGET_DIR)
-    : path.join(repo, "ui", "target");
+/** A release build from `workspace` (the repository root, or `ui`). */
+function cargoOutput(name, workspace = "ui") {
+  const base = workspace === "root" ? repo : path.join(repo, "ui");
+  const targetDir = process.env.CARGO_TARGET_DIR ? path.resolve(base, process.env.CARGO_TARGET_DIR) : path.join(base, "target");
   const file = path.join(targetDir, "release", name);
   if (!fs.existsSync(file)) fail(`${file} is missing — build first (drop --skip-build)`);
   return file;
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// The bundled Node
+// Downloads
 // ---------------------------------------------------------------------------------------------------------
 
 async function download(url) {
@@ -111,121 +106,6 @@ async function download(url) {
   const response = await fetch(url);
   if (!response.ok) fail(`${url} answered ${response.status}`);
   return Buffer.from(await response.arrayBuffer());
-}
-
-/** The official `node` binary for this platform, checked against the release's published checksums. */
-async function fetchNode() {
-  const explicit = option("node");
-  if (explicit !== undefined) return path.resolve(explicit);
-
-  const platform = isWindows ? "win" : "linux";
-  const dir = path.join(cacheDir, `node-v${nodeVersion}-${platform}-${nodeArch}`);
-  const binary = path.join(dir, `node${exe}`);
-  if (fs.existsSync(binary)) return binary;
-
-  const base = `https://nodejs.org/dist/v${nodeVersion}`;
-  const asset = isWindows ? `win-${nodeArch}/node.exe` : `node-v${nodeVersion}-linux-${nodeArch}.tar.xz`;
-  const sums = (await download(`${base}/SHASUMS256.txt`)).toString("utf8");
-  const expected = sums.split("\n").map((line) => line.trim().split(/\s+/)).find(([, name]) => name === asset)?.[0];
-  if (expected === undefined) fail(`Node ${nodeVersion} publishes no ${asset}`);
-  const bytes = await download(`${base}/${asset}`);
-  const actual = createHash("sha256").update(bytes).digest("hex");
-  if (actual !== expected) fail(`${asset} has sha256 ${actual}, the release says ${expected}`);
-
-  fs.mkdirSync(dir, { recursive: true });
-  if (isWindows) {
-    fs.writeFileSync(binary, bytes);
-  } else {
-    const archive = path.join(dir, "node.tar.xz");
-    fs.writeFileSync(archive, bytes);
-    const inside = `node-v${nodeVersion}-linux-${nodeArch}/bin/node`;
-    run("tar", ["-xJf", archive, "-C", dir, "--strip-components=2", inside]);
-    fs.rmSync(archive);
-    fs.chmodSync(binary, 0o755);
-  }
-  return binary;
-}
-
-// ---------------------------------------------------------------------------------------------------------
-// The engine, the CLI and what they depend on
-// ---------------------------------------------------------------------------------------------------------
-
-/** Workspace packages by the real directory they live in. */
-function workspacePackages() {
-  const found = new Map();
-  for (const entry of fs.readdirSync(path.join(repo, "packages"), { withFileTypes: true })) {
-    const manifest = path.join(repo, "packages", entry.name, "package.json");
-    if (entry.isDirectory() && fs.existsSync(manifest)) {
-      found.set(fs.realpathSync(path.dirname(manifest)), JSON.parse(fs.readFileSync(manifest, "utf8")).name);
-    }
-  }
-  return found;
-}
-
-/** Node's own lookup: the nearest `node_modules/<name>` at or above `from`. */
-function resolvePackage(name, from) {
-  for (let dir = from; ; dir = path.dirname(dir)) {
-    const candidate = path.join(dir, "node_modules", name);
-    if (fs.existsSync(path.join(candidate, "package.json"))) return fs.realpathSync(candidate);
-    if (path.dirname(dir) === dir) return null;
-  }
-}
-
-const DECLARATIONS = /\.d\.[cm]?ts$/;
-
-/**
- * Copies the production dependency closure of `@bifurc/cli` (which includes the engine) into `nodeModules`,
- * keeping every package where Node will look for it: hoisted ones at the top, nested ones nested.
- */
-function stageJavaScript(nodeModules) {
-  const workspaces = workspacePackages();
-  const rootModules = fs.realpathSync(path.join(repo, "node_modules")) + path.sep;
-
-  const destinationOf = (dir) => {
-    if (dir.startsWith(rootModules)) return path.join(nodeModules, dir.slice(rootModules.length));
-    for (const [workspaceDir, name] of workspaces) {
-      if (dir === workspaceDir) return path.join(nodeModules, name);
-      if (dir.startsWith(workspaceDir + path.sep)) return path.join(nodeModules, name, dir.slice(workspaceDir.length + 1));
-    }
-    return fail(`${dir} is outside the repository's node_modules`);
-  };
-
-  const closure = new Map();
-  const visit = (dir) => {
-    if (closure.has(dir)) return;
-    closure.set(dir, destinationOf(dir));
-    const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-    for (const name of Object.keys(manifest.dependencies ?? {})) {
-      visit(resolvePackage(name, dir) ?? fail(`${manifest.name} depends on ${name}, which is not installed`));
-    }
-    for (const name of Object.keys(manifest.optionalDependencies ?? {})) {
-      const optional = resolvePackage(name, dir);
-      if (optional !== null) visit(optional);
-    }
-  };
-  const cli = [...workspaces].find(([, name]) => name === "@bifurc/cli")?.[0] ?? fail("packages/cli is missing");
-  visit(cli);
-
-  for (const [from, to] of closure) {
-    const workspace = workspaces.has(from);
-    if (workspace && !fs.existsSync(path.join(from, "dist"))) fail(`${from} is not built — run npm run build:packages`);
-    fs.cpSync(from, to, {
-      recursive: true,
-      filter: (source) => {
-        const relative = path.relative(from, source);
-        if (relative === "") return true;
-        const top = relative.split(path.sep)[0];
-        // A nested dependency is copied by its own visit, if production code reaches it at all.
-        if (top === "node_modules") return false;
-        if (workspace && top !== "dist" && relative !== "package.json") return false;
-        if (source.endsWith(".map") || DECLARATIONS.test(source)) return false;
-        // The engine is emitted as both cjs and esm, and everything here loads it as cjs.
-        if (workspace && source.endsWith(".mjs") && fs.existsSync(`${source.slice(0, -4)}.js`)) return false;
-        return true;
-      },
-    });
-  }
-  console.log(`staged ${closure.size} packages into ${path.relative(repo, nodeModules)}`);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -237,25 +117,25 @@ async function stage() {
   emptyDir(dir);
   copyFile(cargoOutput(`bifurc-ui${exe}`), path.join(dir, `bifurc-ui${exe}`));
   if (isWindows) copyFile(cargoOutput("bifurc-tray.exe"), path.join(dir, "bifurc-tray.exe"));
+  // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the Rust ones.
   copyFile(cargoOutput(`bifurc${exe}`), path.join(dir, "bin", `bifurc${exe}`));
-  copyFile(await fetchNode(), path.join(dir, "runtime", `node${exe}`));
+  copyFile(cargoOutput(`bifurc${exe}`, "root"), path.join(dir, "resources", `bifurc-cli${exe}`));
+  copyFile(cargoOutput(`bifurc-engine${exe}`, "root"), path.join(dir, `bifurc-engine${exe}`));
   copyFile(path.join(repo, "build", "icon.png"), path.join(dir, "resources", "icon.png"));
   copyFile(path.join(repo, "LICENSE"), path.join(dir, "LICENSE"));
-  stageJavaScript(path.join(dir, "resources", "node_modules"));
   if (!isWindows) {
-    for (const file of ["bifurc-ui", "bin/bifurc", "runtime/node"]) fs.chmodSync(path.join(dir, file), 0o755);
+    for (const file of ["bifurc-ui", "bifurc-engine", "bin/bifurc", "resources/bifurc-cli"]) fs.chmodSync(path.join(dir, file), 0o755);
   }
   smokeTest(dir);
   return dir;
 }
 
-/** The staged CLI must start on the staged Node and reach the staged engine's modules, before anything wraps it. */
+/** The staged `bifurc` must reach the staged CLI, and the staged engine must run, before anything wraps them. */
 function smokeTest(dir) {
   const result = spawnSync(path.join(dir, "bin", `bifurc${exe}`), ["commands", "--json"], { encoding: "utf8" });
   if (result.status !== 0) fail(`the staged CLI does not run:\n${result.stderr || result.error?.message}`);
-  const entry = path.join(dir, "resources", "node_modules", "@bifurc", "engine", "dist", "runtime", "hostCli.js");
-  const engine = spawnSync(path.join(dir, "runtime", `node${exe}`), [entry, "--help"], { encoding: "utf8" });
-  if (engine.status !== 0) fail(`the staged engine does not load:\n${engine.stderr || engine.error?.message}`);
+  const engine = spawnSync(path.join(dir, `bifurc-engine${exe}`), ["--help"], { encoding: "utf8" });
+  if (engine.status !== 0) fail(`the staged engine does not run:\n${engine.stderr || engine.error?.message}`);
   console.log("staged CLI and engine start");
 }
 

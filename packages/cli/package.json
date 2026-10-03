@@ -2,7 +2,7 @@
   "name": "@bifurc/cli",
   "version": "0.1.0",
   "private": true,
-  "description": "The Bifurc command line: a client of a standalone Bifurc engine over its socket (a named pipe on Windows).",
+  "description": "DEPRECATED, scheduled for decommissioning: replaced by packages/cli-rust. The Bifurc command line: a client of a standalone Bifurc engine over its socket (a named pipe on Windows).",
   "main": "./dist/index.js",
   "bin": {
     "bifurc": "./dist/index.js"

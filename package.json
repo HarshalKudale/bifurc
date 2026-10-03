@@ -11,7 +11,9 @@
     "name": "Harshal Kudale"
   },
   "scripts": {
-    "build:packages": "npm run build --workspace @bifurc/protocol && npm run build --workspace @bifurc/engine && npm run build --workspace @bifurc/client && npm run build --workspace @bifurc/web-client && npm run build --workspace @bifurc/cli",
+    "build:rust": "cargo build -p bifurc-engine -p bifurc-cli",
+    "dev:ui": "npm run build:rust && cargo run --manifest-path ui/Cargo.toml -p bifurc-ui",
+    "build:packages":"npm run build --workspace @bifurc/protocol && npm run build --workspace @bifurc/engine && npm run build --workspace @bifurc/client && npm run build --workspace @bifurc/web-client && npm run build --workspace @bifurc/cli",
     "prepare": "npm run build:packages",
     "clean:main": "node scripts/clean-main-dist.mjs",
     "build:main": "npm run clean:main && npm run build:packages && tsc && tsc-alias && npm run build:preload",
