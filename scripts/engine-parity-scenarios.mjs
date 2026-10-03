@@ -177,6 +177,9 @@ export const scenarios = [
   },
   {
     name: "folders",
+    // After the folder is deleted the Node engine's last pushed status still lists the deleted request as new, though its
+    // own sync.getEntityStatus (the last step) agrees with Rust that it is gone. The query is compared; the stale push is not.
+    ignoreEvents: ["event.sync.entityStatus"],
     async run(t) {
       const a = await t.call("folder.add", { kind: "request", name: "A", parentId: null });
       const b = await t.call("folder.add", { kind: "request", name: "B", parentId: null });
@@ -194,6 +197,7 @@ export const scenarios = [
         await t.call("folder.rename", { kind, id: folder?.id ?? "x", name: `G ${kind}` });
       }
       await t.call("config.get");
+      await t.call("sync.getEntityStatus", { workspaceId: t.ws });
     },
   },
   {
@@ -246,7 +250,9 @@ export const scenarios = [
       await t.call("entity.create", { kind: "environments", entity: { name: "Dev", variables: [{ id: "1", key: "base", value: t.upstream }, { id: "2", key: "token", value: "t0" }] } });
       const send = async (label, payload) => {
         const result = await t.raw("request.send", payload);
-        t.note(label, result.ok ? { ...result.data, body: unb64(result.data.body) } : result.error);
+        // A script parser's wording for a syntax error (V8 or QuickJS) is its own; that one was reported is what counts.
+        const data = result.ok && typeof result.data.postScriptError === "string" && JSON.stringify(payload.scripts).includes("nope(") ? { ...result.data, postScriptError: "<syntax error>" } : result.data;
+        t.note(label, result.ok ? { ...data, body: unb64(data.body) } : result.error);
       };
       await send("send inline", { workspaceId: t.ws, request: { method: "GET", url: "{{base}}/echo?t={{token}}", headers: { "x-token": "{{token}}" }, body: "" }, scripts: {} });
       await send("send inline scripts", {
@@ -289,8 +295,262 @@ export const scenarios = [
         response: { status: 200, headers: { "content-type": "application/json" }, body: '{"a":[1,2]}', responseTime: 12 },
         envVars: { a: "1" },
       });
-      await t.call("script.execute", { script: "syntax error here", context: "test", response: { status: 200, headers: {}, body: "" }, envVars: {} });
+      const syntax = await t.raw("script.execute", { script: "syntax error here", context: "test", response: { status: 200, headers: {}, body: "" }, envVars: {} });
+      t.note("script.execute syntax error", { ...syntax.data, testResults: (syntax.data?.testResults ?? []).map((r) => ({ ...r, error: r.error ? "<syntax error>" : r.error })) });
       await t.call("script.execute", { script: "1", context: "pre", envVars: {} });
+    },
+  },
+  {
+    name: "forward-proxy",
+    ignoreEvents: ["event.log.entry"],
+    async run(t) {
+      const viaProxy = async (label, opts) => {
+        const res = await t.http({ port: t.ports.proxy, ...opts });
+        t.note(label, res.body === undefined ? res : { ...res, headers: { ...res.headers, "content-length": undefined } });
+      };
+      await t.call("server.status", {});
+      await t.call("proxy.status", {});
+      await t.call("server.start", {});
+      await t.sleep(300);
+      await t.call("server.status", { workspaceId: t.ws });
+      await t.call("proxy.status", {});
+
+      await viaProxy("passthrough", { method: "GET", requestPath: `${t.upstream}/echo?p=1`, headers: { host: "127.0.0.1:18090", "x-in": "1" } });
+      await viaProxy("passthrough post", { method: "POST", requestPath: `${t.upstream}/echo`, headers: { host: "127.0.0.1:18090", "content-type": "application/json" }, body: '{"z":1}' });
+      await viaProxy("upstream status", { method: "GET", requestPath: `${t.upstream}/status?code=418`, headers: { host: "127.0.0.1:18090" } });
+      await viaProxy("closed upstream", { method: "GET", requestPath: "http://127.0.0.1:9/nothing", headers: { host: "127.0.0.1:9" } });
+
+      const exact = await t.call("entity.create", { kind: "mocks", entity: mock({ urlPattern: "http://api.test/users", standalone: true, responseStatus: 203, responseBody: '{"mocked":true}', responseHeaders: { "content-type": "application/json", "x-mock": "1" } }) });
+      await t.call("entity.create", { kind: "mocks", entity: mock({ name: "Regex", urlPattern: "^http://api\\.test/items/\\d+$", useRegex: true, method: "GET", responseStatus: 202, responseBody: "item" }) });
+      await t.call("entity.create", { kind: "mocks", entity: mock({ name: "Post only", method: "POST", urlPattern: "http://api.test/users", responseStatus: 201, responseBody: "created" }) });
+      t.note("mocks", (await t.raw("entity.list", { workspaceId: t.ws, kind: "mocks" })).data);
+      await t.call("entity.setEnabled", { workspaceId: t.ws, kind: "mocks", id: exact?.id ?? "x", enabled: true });
+      // A mock that is not standalone overlays the real upstream's response; only what it declares is replaced.
+      await t.call("entity.create", { kind: "mocks", entity: mock({ name: "Overlay", urlPattern: `${t.upstream}/echo?overlay=1`, responseStatus: 200, responseHeaders: { "x-overlay": "yes" }, mockedResponseHeaders: ["x-overlay"], responseBody: "" }) });
+      await viaProxy("mock overlay", { method: "GET", requestPath: `${t.upstream}/echo?overlay=1`, headers: { host: "127.0.0.1:18090" } });
+      await viaProxy("mock exact", { method: "GET", requestPath: "http://api.test/users", headers: { host: "api.test" } });
+      await viaProxy("mock regex", { method: "GET", requestPath: "http://api.test/items/42", headers: { host: "api.test" } });
+      await viaProxy("mock method", { method: "POST", requestPath: "http://api.test/users", headers: { host: "api.test" }, body: "x" });
+      await viaProxy("mock miss", { method: "DELETE", requestPath: "http://api.test/users", headers: { host: "api.test" } });
+
+      const rule = await t.call("entity.create", {
+        kind: "proxyRules",
+        entity: { name: "To upstream", pattern: "^http://rewrite\\.test/", useRegex: true, targetType: "external", targetMappingId: "", targetExternal: "127.0.0.1:18090", requestScript: "", responseScript: "" },
+      });
+      await t.call("entity.setEnabled", { workspaceId: t.ws, kind: "rules", id: rule?.id ?? "x", enabled: true });
+      await viaProxy("rule", { method: "GET", requestPath: "http://rewrite.test/echo?r=1", headers: { host: "rewrite.test" } });
+      await t.call("entity.create", {
+        kind: "proxyRules",
+        entity: {
+          name: "Scripted", pattern: "^http://script\\.test/", useRegex: true, targetType: "external", targetMappingId: "", targetExternal: "127.0.0.1:18090",
+          requestScript: "lp.request.headers.set('x-injected', 'yes');", responseScript: "lp.response.headers.set('x-after', '1');",
+        },
+      });
+      await viaProxy("rule scripts", { method: "GET", requestPath: "http://script.test/echo", headers: { host: "script.test" } });
+      await t.call("entity.create", {
+        kind: "proxyRules",
+        entity: { name: "No target", pattern: "^http://broken\\.test/", useRegex: true, targetType: "external", targetMappingId: "", targetExternal: "", requestScript: "", responseScript: "" },
+      });
+      await viaProxy("rule without target", { method: "GET", requestPath: "http://broken.test/", headers: { host: "broken.test" } });
+
+      const captured = await t.call("capture.list", { workspaceId: t.ws });
+      t.note("capture count", Array.isArray(captured) ? captured.length : captured);
+      await t.call("capture.setPaused", { workspaceId: t.ws, paused: true });
+      await viaProxy("while paused", { method: "GET", requestPath: `${t.upstream}/echo?paused=1`, headers: { host: "127.0.0.1:18090" } });
+      await t.call("capture.setPaused", { workspaceId: t.ws, paused: false });
+      const listed = await t.call("capture.list", { workspaceId: t.ws });
+      const first = listed?.entries?.[0];
+      await t.call("capture.get", { workspaceId: t.ws, id: first?.id ?? "missing" });
+      await t.call("capture.get", { workspaceId: t.ws, id: "missing" });
+      await t.call("capture.setDisableCache", { disableCache: false });
+      await viaProxy("cache headers kept", { method: "GET", requestPath: `${t.upstream}/echo?cache=1`, headers: { host: "127.0.0.1:18090", "cache-control": "max-age=0", "if-none-match": "x" } });
+      await t.call("capture.setDisableCache", { disableCache: true });
+      await viaProxy("cache headers stripped", { method: "GET", requestPath: `${t.upstream}/echo?cache=2`, headers: { host: "127.0.0.1:18090", "cache-control": "max-age=0", "if-none-match": "x" } });
+      await t.call("capture.remove", { workspaceId: t.ws, ids: [first?.id ?? "missing"] });
+      await t.call("capture.clear", { workspaceId: t.ws });
+      await t.call("capture.list", { workspaceId: t.ws });
+
+      await t.call("server.restart", {});
+      await t.sleep(300);
+      await t.call("server.status", {});
+      await viaProxy("after restart", { method: "GET", requestPath: `${t.upstream}/echo?again=1`, headers: { host: "127.0.0.1:18090" } });
+      await t.call("server.stop", {});
+      await t.sleep(200);
+      await t.call("server.status", {});
+      await viaProxy("stopped", { method: "GET", requestPath: `${t.upstream}/echo`, headers: { host: "127.0.0.1:18090" } });
+    },
+  },
+  {
+    name: "edge-reverse-proxy",
+    ignoreEvents: ["event.log.entry"],
+    async run(t) {
+      const viaEdge = async (label, opts) => {
+        const res = await t.http({ port: t.ports.edge, ...opts });
+        t.note(label, res.body === undefined ? res : { ...res, headers: { ...res.headers, "content-length": undefined } });
+      };
+      await t.call("server.status", { target: "reverse" });
+      await t.call("server.start", { target: "reverse" });
+      await t.sleep(300);
+      await t.call("server.status", { target: "reverse", workspaceId: t.ws });
+      await viaEdge("home", { method: "GET", requestPath: "/", headers: {} });
+      await viaEdge("unmapped", { method: "GET", requestPath: "/echo", headers: { host: "nothing.example" } });
+      await t.call("entity.create", { kind: "mappings", entity: { domain: "app.localhost", target: "127.0.0.1:18090", label: "App" } });
+      await viaEdge("mapped", { method: "GET", requestPath: "/echo?e=1", headers: { host: "app.localhost" } });
+      await viaEdge("mapped post", { method: "POST", requestPath: "/echo", headers: { host: "app.localhost", "content-type": "text/plain" }, body: "hello" });
+      await viaEdge("rfc6761 unmapped", { method: "GET", requestPath: "/", headers: { host: "other.localhost" } });
+      const down = await t.call("entity.create", { kind: "mappings", entity: { domain: "down.localhost", target: "127.0.0.1:9" } });
+      await viaEdge("target down", { method: "GET", requestPath: "/", headers: { host: "down.localhost" } });
+      await t.call("entity.setEnabled", { workspaceId: t.ws, kind: "mappings", id: down?.id ?? "x", enabled: false });
+      await viaEdge("disabled mapping", { method: "GET", requestPath: "/", headers: { host: "down.localhost" } });
+      await t.call("server.restart", { target: "reverse" });
+      await t.sleep(300);
+      await viaEdge("after restart", { method: "GET", requestPath: "/echo", headers: { host: "app.localhost" } });
+      await t.call("server.stop", { target: "reverse" });
+      await t.sleep(200);
+      await t.call("server.status", { target: "reverse" });
+    },
+  },
+  {
+    name: "import-export",
+    async run(t) {
+      const put = async (filename, text, mimeType = "text/plain") => {
+        const staged = await t.raw("blob.put", { workspaceId: t.ws, filename, mimeType, size: Buffer.byteLength(text), data: b64(text) });
+        return staged.data?.blobId ?? "missing";
+      };
+      const exported = async (label, payload) => {
+        const result = await t.raw("export.create", { workspaceId: t.ws, ...payload });
+        if (!result.ok || result.data?.ok === false) return t.note(label, result);
+        const read = await t.raw("blob.read", { workspaceId: t.ws, blobId: result.data.blobId ?? result.data.artifactId ?? "x" });
+        // The content is compared decoded; its base64 and digest would only restate it with the generated ids in.
+        const { inline, sha256, ...rest } = result.data;
+        t.note(label, { ...rest, content: read.ok ? unb64(read.data.data) : read.error });
+      };
+      // A parser's own wording for malformed JSON is not part of the contract; that it is refused, and how, is.
+      const refused = async (label, action, payload) => {
+        const result = await t.raw(action, payload);
+        t.note(label, { ...result.data, error: String(result.data?.error ?? result.error?.message).replace(/^(\w*Error):.*$/s, "$1") });
+      };
+      const environmentVars = [{ id: "1", key: "host", value: "dev.test" }, { id: "2", key: "token", value: "abc", secret: true }];
+
+      await t.call("export.formats", {});
+      const folder = await t.call("folder.add", { kind: "request", name: "API", parentId: null });
+      await t.call("entity.create", { kind: "requests", entity: request({ name: "List", folderId: folder?.id, url: "http://api.test/items?limit=5", headers: { accept: "application/json" } }) });
+      await t.call("entity.create", { kind: "requests", entity: request({ name: "Create", method: "POST", folderId: folder?.id, url: "http://api.test/items", headers: { "content-type": "application/json" }, body: '{"name":"x"}' }) });
+      await t.call("entity.create", { kind: "requests", entity: request({ name: "Top", url: "http://api.test/top" }) });
+      await t.call("entity.create", { kind: "mocks", entity: mock({ name: "Users", responseBody: '{"users":[1]}' }) });
+      await t.call("entity.create", { kind: "mocks", entity: mock({ name: "Gone", urlPattern: "http://api.test/gone", responseStatus: 410, responseBody: "" }) });
+      await t.call("entity.create", { kind: "environments", entity: { name: "Dev", variables: environmentVars } });
+
+      for (const [kind, format] of [
+        ["requests", "requests-postman"], ["requests", "requests-openapi"], ["requests", "requests-curl"], ["requests", "requests-har"], ["requests", "requests-insomnia"],
+        ["mocks", "mocks-postman"], ["mocks", "mocks-json"], ["environments", "environments-postman"], ["environments", "environments-env"], ["environments", "environments-json"],
+        ["workspace", "workspace-json"], ["requests", "nope"],
+      ]) {
+        await exported(`export ${format}`, { kind, format });
+      }
+      await exported("export named", { kind: "mocks", format: "mocks-json", filename: "mine.json" });
+
+      const postman = JSON.stringify({
+        info: { name: "Imported", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+        item: [
+          { name: "Folder", item: [{ name: "Inner", request: { method: "POST", url: { raw: "http://imp.test/a?b=1" }, header: [{ key: "X-A", value: "1" }], body: { mode: "raw", raw: '{"a":1}' } } }] },
+          { name: "Root", request: { method: "GET", url: "http://imp.test/root" } },
+        ],
+      });
+      const importPair = async (label, kind, format, filename, text) => {
+        const blobId = await put(filename, text);
+        await t.call("import.preflight", { workspaceId: t.ws, kind, format, blobId });
+        await t.call("import.commit", { workspaceId: t.ws, kind, format, blobId, collisionStrategy: "skip" });
+        await t.call("import.commit", { workspaceId: t.ws, kind, format, blobId, collisionStrategy: "rename" });
+        await t.call("import.commit", { workspaceId: t.ws, kind, format, blobId, collisionStrategy: "overwrite" });
+        t.note(`${label} requests`, (await t.raw("entity.list", { workspaceId: t.ws, kind })).data);
+      };
+      await importPair("postman", "requests", "requests-postman", "c.postman_collection.json", postman);
+      await importPair("curl", "requests", "requests-curl", "c.sh", `curl -X POST http://cu.test/x -H 'A: b' -d 'k=v'\ncurl http://cu.test/y`);
+      await importPair("har", "requests", "requests-har", "c.har", JSON.stringify({ log: { version: "1.2", entries: [{ request: { method: "GET", url: "http://har.test/a?q=1", headers: [{ name: "X-H", value: "1" }], queryString: [{ name: "q", value: "1" }] }, response: { status: 200 } }] } }));
+      await importPair("openapi", "requests", "requests-openapi", "o.json", JSON.stringify({ openapi: "3.0.0", info: { title: "Pets", version: "1" }, servers: [{ url: "http://pets.test" }], paths: { "/pets": { get: { summary: "List pets" }, post: { summary: "Add pet" } } } }));
+      await importPair("insomnia", "requests", "requests-insomnia", "i.json", JSON.stringify({ _type: "export", __export_format: 4, resources: [{ _id: "req_1", _type: "request", parentId: "wrk_1", name: "Ins", method: "GET", url: "http://ins.test/", headers: [] }, { _id: "wrk_1", _type: "workspace", name: "W" }] }));
+      await importPair("mocks-json", "mocks", "mocks-json", "m.json", JSON.stringify([mock({ name: "Imported mock", urlPattern: "http://imp.test/m" })]));
+      await importPair("environments-env", "environments", "environments-env", "dev.env", "HOST=imp.test\nTOKEN=zzz\n");
+
+      await refused("preflight malformed", "import.preflight", { workspaceId: t.ws, kind: "requests", format: "requests-postman", blobId: await put("bad.json", "{ not json") });
+      await refused("commit malformed", "import.commit", { workspaceId: t.ws, kind: "requests", format: "requests-postman", blobId: await put("bad.json", "{ not json") });
+      await t.call("import.commit", { workspaceId: t.ws, kind: "requests", format: "requests-postman", blobId: "missing" });
+      await t.call("import.preflight", { workspaceId: t.ws, kind: "requests", format: "nope", blobId: "x" });
+      await t.call("export.create", { workspaceId: t.ws, kind: "requests", format: "nope" });
+    },
+  },
+  {
+    name: "tls-certificates",
+    skipDisk: true,
+    async run(t) {
+      const shape = (label, value) => t.note(label, value);
+      await t.call("tls.certStatus", {});
+      await t.call("tls.exportCert", {});
+      await t.call("tls.removeCert", {});
+      const generated = await t.raw("tls.generate", {});
+      shape("generate", generated.ok ? { keys: Object.keys(generated.data ?? {}).sort(), ok: generated.data?.ok } : generated.error);
+      const status = await t.raw("tls.certStatus", {});
+      shape("status after generate", status.ok ? { ...status.data, fingerprint: status.data?.fingerprint ? "<fp>" : status.data?.fingerprint } : status.error);
+      const exported = await t.raw("tls.exportCert", {});
+      shape("export", exported.ok ? { keys: Object.keys(exported.data ?? {}).sort() } : exported.error);
+      const readBlob = async (result) => {
+        const id = result.data?.blobId ?? result.data?.artifactId;
+        if (!id) return undefined;
+        return unb64((await t.raw("blob.read", { workspaceId: t.ws, blobId: id })).data?.data);
+      };
+      const pem = await readBlob(exported);
+      shape("pem header", pem?.split("\n")[0]);
+      await t.call("tls.install", {});
+      const bad = await t.raw("blob.put", { workspaceId: t.ws, filename: "bad.pem", mimeType: "text/plain", size: 3, data: b64("bad") });
+      await t.call("tls.importCert", { blobId: bad.data?.blobId ?? "x", workspaceId: t.ws });
+      await t.call("tls.importKey", { blobId: bad.data?.blobId ?? "x", workspaceId: t.ws });
+      await t.call("tls.importCert", { blobId: "missing", workspaceId: t.ws });
+      await t.call("tls.removeCert", {});
+      await t.call("tls.certStatus", {});
+    },
+  },
+  {
+    name: "runner",
+    ignoreEvents: ["event.log.entry"],
+    async run(t) {
+      const folder = await t.call("folder.add", { kind: "request", name: "Suite", parentId: null });
+      const empty = await t.call("folder.add", { kind: "request", name: "Empty", parentId: null });
+      await t.call("entity.create", { kind: "environments", entity: { name: "Dev", variables: [{ id: "1", key: "base", value: t.upstream }] } });
+      const make = async (name, extra) => (await t.call("entity.create", { kind: "requests", entity: request({ name, folderId: folder?.id, url: "{{base}}/echo", ...extra }) }));
+      const a = await make("First", { testScript: "lp.test('200', () => lp.expect(lp.response.status).to.equal(200));", postScript: "lp.environment.set('seen', 'a')" });
+      const b = await make("Second", { method: "POST", body: '{"n":2}', headers: { "content-type": "application/json" }, testScript: "lp.test('echoes', () => lp.expect(lp.response.json().method).to.equal('POST')); lp.test('fails', () => lp.expect(1).to.equal(2));" });
+      await make("Third", { url: "{{base}}/status?code=500", testScript: "lp.test('ok', () => lp.expect(lp.response.status).to.equal(200));" });
+      await make("Broken", { url: "http://127.0.0.1:9/closed" });
+
+      await t.call("runner.status", { workspaceId: t.ws, folderId: folder?.id ?? "x" });
+      await t.call("runner.loadConfig", { workspaceId: t.ws, folderId: folder?.id ?? "x" });
+      await t.call("runner.saveConfig", { workspaceId: t.ws, folderId: folder?.id ?? "x", config: { requestOrder: [b?.id ?? "b", a?.id ?? "a"], iterations: 1, delayMs: 0 } });
+      await t.call("runner.loadConfig", { workspaceId: t.ws, folderId: folder?.id ?? "x" });
+      await t.call("runner.listFolderIds", { workspaceId: t.ws });
+      await t.call("runner.start", { workspaceId: t.ws, folderId: folder?.id ?? "x" });
+      let status;
+      for (let i = 0; i < 100; i += 1) {
+        status = (await t.raw("runner.status", { workspaceId: t.ws, folderId: folder?.id ?? "x" })).data;
+        if (status && (status.finished || status.done || status.running === false)) break;
+        await t.sleep(100);
+      }
+      t.note("final status", status);
+      await t.call("runner.cancel", { workspaceId: t.ws, folderId: folder?.id ?? "x" });
+      await t.call("runner.cancel", { workspaceId: t.ws, folderId: "missing" });
+      await t.call("runner.start", { workspaceId: t.ws, folderId: empty?.id ?? "x" });
+      await t.call("runner.start", { workspaceId: t.ws, folderId: "missing" });
+
+      const report = { folderId: folder?.id ?? "x", folderName: "Suite", startedAt: 1700000000000, totalTests: 3, passedTests: 2, failedTests: 1, completedAt: 1700000003500, totalRequests: 2, results: [{ requestId: "r1", requestName: "First", method: "GET", url: "http://x/", status: 200, responseTime: 12, tests: [{ name: "200", passed: true }], testLogs: [] }, { requestId: "r2", requestName: "Second", method: "POST", url: "http://x/2", status: null, responseTime: 0, error: "boom <b>", tests: [], testLogs: [] }] };
+      await t.call("runner.saveReport", { workspaceId: t.ws, report });
+      await t.call("runner.getHistory", { workspaceId: t.ws, folderId: folder?.id ?? "x" });
+      await t.call("runner.listFolderIds", { workspaceId: t.ws });
+      for (const format of ["json", "html"]) {
+        const result = await t.raw("runner.exportReport", { workspaceId: t.ws, report, format });
+        const read = result.ok ? await t.raw("blob.read", { workspaceId: t.ws, blobId: result.data?.blobId ?? "x" }) : undefined;
+        const { inline, sha256, ...rest } = result.data ?? {};
+        t.note(`export ${format}`, result.ok ? { ...rest, content: read?.ok ? unb64(read.data.data) : unb64(inline) } : result.error);
+      }
     },
   },
 ];
