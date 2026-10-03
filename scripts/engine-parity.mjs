@@ -192,7 +192,7 @@ function makeNormalizer(engine) {
   const ids = new Map();
   const dataDirs = [engine.dataDir, engine.dataDir.replace(/\\/g, "/"), engine.dataDir.replace(/\//g, "\\")];
   const volatileNumberKey = /(At|Ms|^ts|^timestamp|^pid|^seq|^size|^latency|^responseTime|^elapsed|^startTime|^endTime)$/;
-  const volatileStringKey = /^(sessionId|commitHash|hash|sha|date|blobId|runId|startedAtIso|lastSyncedCommit)$/;
+  const volatileStringKey = /^(sessionId|commit|commitHash|hash|sha|date|blobId|runId|startedAtIso|lastSyncedCommit)$/;
   const idPattern = /\bm[0-9a-z]{7}[0-9a-z]{4,5}\b/g;
   const text = (value) => {
     let out = value;
@@ -202,6 +202,8 @@ function makeNormalizer(engine) {
       if (!ids.has(id)) ids.set(id, `<id:${ids.size + 1}>`);
       return ids.get(id);
     });
+    out = out.replace(/^index [0-9a-f]{7,40}\.\.[0-9a-f]{7,40}/gm, "index <blob>..<blob>");
+    out = out.replace(/(\\?"createdAt\\?": )\d+/g, "$1<n>");
     out = out.split(String(engine.ports.edge)).join("<edgePort>");
     out = out.split(String(engine.ports.proxy)).join("<proxyPort>");
     out = out.split(String(engine.ports.companion)).join("<companionPort>");
