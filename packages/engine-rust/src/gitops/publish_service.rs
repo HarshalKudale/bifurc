@@ -254,7 +254,7 @@ async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
         None => message,
     };
     with_index_lock_retry(ws_id, &["commit", "-m", full_message.as_str()]).await?;
-    let commit = git(ws_id, &["rev-parse", "--short", "HEAD"]).await?.trim().to_string();
+    let commit = git(ws_id, &["rev-parse", "HEAD"]).await?.trim().to_string();
 
     if let Some(config) = get_sync_config(ws_id).filter(|c| truthy(c, "remote")) {
         git(ws_id, &["push", "origin", &format!("HEAD:{}", str_of(&config, "branch"))]).await?;
