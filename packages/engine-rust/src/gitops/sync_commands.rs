@@ -98,10 +98,8 @@ pub fn register(registry: &mut CommandRegistry) {
         let ws_id = str_of(&params, "workspaceId");
         let (files, git) = (get_workspace_sync_status(ws_id).await, get_workspace_git_state(ws_id).await);
         let maps = load_entity_path_maps();
-        let to_object = |map: std::collections::HashMap<String, String>| {
-            let mut sorted: Vec<_> = map.into_iter().collect();
-            sorted.sort();
-            Value::Object(sorted.into_iter().map(|(k, v)| (k, Value::String(v))).collect::<Map<String, Value>>())
+        let to_object = |map: indexmap::IndexMap<String, String>| {
+            Value::Object(map.into_iter().map(|(k, v)| (k, Value::String(v))).collect::<Map<String, Value>>())
         };
         Ok(json!({
             "files": files,

@@ -235,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn pre_script_error_keeps_partial_state() {
         let out = pre("lp.request.url = 'u'; lp.environment.set('Z','1'); throw new Error('boom');").await;
-        assert_eq!(out["error"], "boom");
+        assert_eq!(out["error"], "Error: boom");
         assert_eq!(out["request"]["url"], "u");
         assert_eq!(out["envVars"]["Z"], "1");
     }
@@ -244,7 +244,7 @@ mod tests {
     async fn thrown_error_vs_string_vs_syntax() {
         assert_eq!(pre("throw 'plain'").await["error"], "plain");
         assert_eq!(pre("throw 42").await["error"], "42");
-        assert_eq!(pre("throw new TypeError('tt')").await["error"], "tt");
+        assert_eq!(pre("throw new TypeError('tt')").await["error"], "TypeError: tt");
         let syn = pre("var = ;").await;
         assert!(syn["error"].as_str().is_some_and(|s| !s.is_empty()));
         assert_eq!(syn["request"]["url"], "http://a/b");
@@ -351,11 +351,11 @@ mod tests {
     #[tokio::test]
     async fn test_script_uncaught_errors() {
         let out = test("throw new Error('top')").await;
-        assert_eq!(tests_of(&out), vec![("Script execution".to_string(), false, Some("top".to_string()))]);
+        assert_eq!(tests_of(&out), vec![("Script execution".to_string(), false, Some("Error: top".to_string()))]);
         assert_eq!(out["testResults"][0]["durationMs"], 0);
         let out = test("lp.test('one', function(){}); throw new Error('late')").await;
         assert_eq!(tests_of(&out).len(), 1);
-        assert_eq!(out["testLogs"], json!(["[ERROR] Uncaught: late"]));
+        assert_eq!(out["testLogs"], json!(["[ERROR] Uncaught: Error: late"]));
     }
 
     #[tokio::test]
@@ -376,7 +376,7 @@ mod tests {
             "hi",
         )
         .await;
-        assert_eq!(r.error.as_deref(), Some("late"));
+        assert_eq!(r.error.as_deref(), Some("Error: late"));
         assert_eq!(r.headers["b"], "3");
         assert_eq!(r.body, "new");
         // The other side is not defined.
