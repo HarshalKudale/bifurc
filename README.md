@@ -27,7 +27,7 @@ The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the
 ```bash
 cargo build -p bifurc-engine -p bifurc-cli                  # the engine and the CLI
 cargo run --manifest-path ui/Cargo.toml -p bifurc-ui        # the UI, which starts the engine it finds in target/
-node scripts/package-desktop.mjs                            # installer / Store package / AppImage (Node built-ins only)
+cargo xtask package                                         # installer / Store package / AppImage
 ```
 
 ## Repository structure
