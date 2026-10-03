@@ -42,7 +42,7 @@ jobs:
       - id: meta
         shell: bash
         run: |
-          version="$(node -p "require('./package.json').version")"
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)"
 
           if [ "${{ github.event_name }}" = "push" ]; then
             tag="${GITHUB_REF_NAME}"
@@ -71,9 +71,6 @@ jobs:
   build-windows:
     needs: prepare
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: .
     steps:
       - uses: actions/checkout@v4
 
@@ -81,35 +78,31 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install dependencies
-        run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Windows installers
-        run: npm run package -- --win --publish never
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ui
 
-      # Before the artifact is uploaded, not after a user finds it. A bundle whose engine
-      # cannot be resolved starts to a blank window and no error — the same silent class as
-      # the tray-icon regression (see plan/12). `npm run package` builds `dist/` from source,
-      # so this inspects what the installer will actually contain.
-      - name: Assert the packaged app resolves the engine
-        run: node scripts/assert-packaged.mjs release/win-unpacked
+      # NSIS and the Windows SDK (makeappx, makepri) are on the runner image.
+      - name: Build the installer and the Store package
+        run: node scripts/package-desktop.mjs --target nsis,msix
 
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
           path: |
-            release/*.exe
-            release/*.appx
+            release/desktop/*.exe
+            release/desktop/*.msix
           if-no-files-found: error
 
   build-linux:
     needs: prepare
     if: ${{ github.event_name == 'push' || inputs.include_linux == true }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -117,18 +110,27 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install dependencies
-        run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Linux AppImage
-        run: npm run package -- --linux AppImage --publish never
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ui
+
+      - name: Install GPUI's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
+
+      - name: Build the AppImage
+        run: node scripts/package-desktop.mjs --target appimage
 
       - name: Upload Linux release assets
         uses: actions/upload-artifact@v4
         with:
           name: linux-release
-          path: |
-            release/*.AppImage
+          path: release/desktop/*.AppImage
           if-no-files-found: error
 
   publish-release:
@@ -159,5 +161,5 @@ jobs:
           generate_release_notes: true
           files: |
             release-assets/*.exe
-            release-assets/*.appx
+            release-assets/*.msix
             release-assets/*.AppImage

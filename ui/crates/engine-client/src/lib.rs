@@ -13,6 +13,6 @@ mod sidecar;
 pub use connection::{CLIENT_NAME, EngineClient, EngineEvent, Hello, Incoming, PROTOCOL_VERSION};
 pub use error::{ClientError, EngineError, Result};
 pub use sidecar::{
-    RuntimeInfo, Sidecar, SidecarConfig, attach_or_start, default_data_dir, locate_engine_binary, locate_engine_entry,
+    RuntimeInfo, Sidecar, SidecarConfig, attach_or_start, default_data_dir, locate_engine_binary,
     read_runtime_info, reconnect,
 };

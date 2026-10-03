@@ -1,7 +1,7 @@
 name: Package desktop app (Rust UI)
 
 # The Rust UI + engine + CLI packages: a Windows installer, a Store package and a Linux AppImage.
-# Run by hand for now; `release.yml` still publishes the Electron build.
+# Run by hand; `release.yml` runs the same packaging and publishes it.
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +35,7 @@ jobs:
       # No `npm ci`: the engine and the CLI are Rust, and the packaging script uses only Node's built-ins.
       # NSIS and the Windows SDK (makeappx, makepri) are on the runner image.
       - name: Build the installer and the Store package
-        run: npm run package:desktop -- --target nsis,msix
+        run: node scripts/package-desktop.mjs --target nsis,msix
 
       - uses: actions/upload-artifact@v4
         with:
@@ -70,7 +70,7 @@ jobs:
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
 
       - name: Build the AppImage
-        run: npm run package:desktop -- --target appimage
+        run: node scripts/package-desktop.mjs --target appimage
 
       - uses: actions/upload-artifact@v4
         with:
