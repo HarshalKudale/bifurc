@@ -42,6 +42,8 @@ rustls-pemfile = "2"
 rcgen = { version = "0.14", features = ["x509-parser"] }
 x509-parser = "0.18"
 time = "0.3"
+# RSA key generation and PKCS#1 / PKCS#8 conversion for the interception CA (ring cannot generate RSA keys).
+rsa = { version = "0.9", features = ["pem", "sha2"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 flate2 = "1"
 brotli = "8"
