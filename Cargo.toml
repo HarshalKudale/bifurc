@@ -1,7 +1,7 @@
 # The Rust engine and CLI. The desktop UI is its own workspace in `ui/`.
 [workspace]
 resolver = "2"
-members = ["packages/protocol-rust", "packages/engine-rust", "packages/cli-rust"]
+members = ["packages/protocol-rust", "packages/engine-rust", "packages/cli-rust", "xtask"]
 exclude = ["ui"]
 
 [workspace.package]
