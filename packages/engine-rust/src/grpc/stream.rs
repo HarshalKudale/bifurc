@@ -76,6 +76,7 @@ struct Log {
 impl Log {
     fn message(&mut self, direction: &str, message: &DynamicMessage) {
         self.seq += 1;
+        let data = crate::vault::redact_text(&self.ws_id, call::to_json(message));
         bus().emit(
             "grpc.stream.message",
             json!({
@@ -85,7 +86,7 @@ impl Log {
                     "id": format!("{}-{}", self.stream_id, self.seq),
                     "ts": now_ms(),
                     "direction": direction,
-                    "data": call::to_json(message),
+                    "data": data,
                 },
             }),
         );

@@ -7,8 +7,10 @@ use crate::{
     args::ParsedArgs,
     error::{CliError, Result},
     format::{describe_grpc, describe_reflection, describe_send, describe_status, js_string, js_template, json, table, truthy},
+    prompt,
     protocol::{command_names, is_known_command},
     session::Engine,
+    unlock,
 };
 
 /// Opens the engine session when a command first needs it.
@@ -124,8 +126,58 @@ pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 .collect();
             Ok(ctx.print(&listed, || table(&rows, &["name", "state", "secretNames"])))
         }
+        "create" => {
+            let name = need(ctx.args.positional(2), "vault name")?;
+            let workspace = workspace_id(ctx)?;
+            let passphrase = new_passphrase(ctx.args, &name)?;
+            let created = ctx.request(
+                "vault.create",
+                json!({ "workspaceId": workspace, "name": name, "passphrase": passphrase }),
+            )?;
+            Ok(ctx.print(&created, || format!("Created vault {name}. It is unsealed until the engine restarts.")))
+        }
+        // The value is typed hidden (or piped with --value-stdin) and goes straight to the engine.
+        "set" => {
+            let (vault, secret) = (need(ctx.args.positional(2), "vault name")?, need(ctx.args.positional(3), "secret name")?);
+            let workspace = workspace_id(ctx)?;
+            let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+            let id = unlock::find_vault(&listed, &vault)?;
+            let passphrase = unlock::passphrase(ctx.args, &vault, 0)?;
+            ctx.request("vault.unseal", json!({ "workspaceId": workspace, "id": id, "passphrase": passphrase }))?;
+            let value = if ctx.args.has("value-stdin") {
+                prompt::stdin_line()?
+            } else {
+                prompt::secret(&format!("Value of {secret}: "))?
+            };
+            let saved = ctx.request(
+                "vault.setSecret",
+                json!({ "workspaceId": workspace, "id": id, "name": secret, "value": value }),
+            )?;
+            Ok(ctx.print(&saved, || format!("Saved {{{{{vault}.{secret}}}}}")))
+        }
+        "unset" => {
+            let (vault, secret) = (need(ctx.args.positional(2), "vault name")?, need(ctx.args.positional(3), "secret name")?);
+            let workspace = workspace_id(ctx)?;
+            let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+            let id = unlock::find_vault(&listed, &vault)?;
+            let removed =
+                ctx.request("vault.deleteSecret", json!({ "workspaceId": workspace, "id": id, "name": secret }))?;
+            Ok(ctx.print(&removed, || format!("Removed {secret} from {vault}")))
+        }
         other => Err(CliError::msg(format!("unknown: vault {other}"))),
     }
+}
+
+/// The passphrase for a new vault: from the environment or stdin, or typed twice.
+fn new_passphrase(args: &ParsedArgs, vault: &str) -> Result<String> {
+    if args.has("passphrase-stdin") || std::env::var_os("BIFURC_VAULT_PASSPHRASE").is_some() {
+        return unlock::passphrase(args, vault, 0);
+    }
+    let first = prompt::secret(&format!("New passphrase for {vault} (at least 8 characters): "))?;
+    if first != prompt::secret("Repeat the passphrase: ")? {
+        return Err(CliError::msg("the passphrases differ"));
+    }
+    Ok(first)
 }
 
 /// `workspaces list|use`.
