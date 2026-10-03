@@ -1,26 +1,39 @@
 //! Where every entity and folder of the active workspace is in its repository, by id.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use super::{
     config::load_config,
     fs::{entity_rel_path, flat_entity_rel_path, sanitize_dir_name},
-    kinds::CRUD_KINDS,
+    kinds::crud_kind,
 };
 use crate::utils::json::{array_of, opt_str, str_of};
+
+/// The order kinds are listed in: clients receive these maps, and their key order is part of the result.
+const KIND_ORDER: [&str; 9] = [
+    "soapRequests",
+    "graphqlRequests",
+    "grpcRequests",
+    "mappings",
+    "rules",
+    "mocks",
+    "requests",
+    "sockets",
+    "environments",
+];
 
 #[derive(Debug, Default)]
 pub struct EntityPathMaps {
     /// entity id -> `kind/[folder/]id.json`
-    pub entities: HashMap<String, String>,
+    pub entities: IndexMap<String, String>,
     /// folder id -> `kind/folder/`
-    pub folders: HashMap<String, String>,
+    pub folders: IndexMap<String, String>,
 }
 
 pub fn load_entity_path_maps() -> EntityPathMaps {
     let cfg = load_config();
     let mut maps = EntityPathMaps::default();
-    for kind in &CRUD_KINDS {
+    for kind in KIND_ORDER.iter().filter_map(|name| crud_kind(name)) {
         let folder_list = kind.folder_config_key.map(|key| array_of(&cfg, key)).unwrap_or(&[]);
         for folder in folder_list {
             maps.folders.insert(
