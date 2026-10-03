@@ -13,15 +13,38 @@ use super::{kind::RequestKind, tree::FolderRow};
 pub struct WorkspaceInfo {
     pub id: String,
     pub name: String,
-    /// The git remote this workspace syncs with, if one is set.
+    /// The account this workspace commits and syncs as, if it has one.
+    pub account: Option<AccountInfo>,
+    /// The remote repository this workspace syncs with, once it is published or was imported.
     pub sync: Option<SyncConfig>,
+}
+
+/// A git account signed in on this device. The engine keeps its token; the UI never sees one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountInfo {
+    pub id: String,
+    pub login: String,
+    pub host: String,
+    /// `false` once it was signed out while workspaces still use it.
+    pub signed_in: bool,
+}
+
+impl AccountInfo {
+    pub fn from_value(value: &Value) -> Option<Self> {
+        Some(Self {
+            id: non_empty(value, "id")?,
+            login: text(value, "login").unwrap_or_default(),
+            host: text(value, "host").unwrap_or_default(),
+            signed_in: value.get("signedIn").and_then(Value::as_bool).unwrap_or(false),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncConfig {
     pub remote: String,
-    pub branch: String,
-    pub auto_sync: bool,
+    /// `owner/name` on the host, when the engine knows it.
+    pub repo: Option<String>,
 }
 
 /// What the mocks tree shows for a mock rule. The whole rule is loaded by id when its tab opens.
@@ -143,11 +166,11 @@ impl ConfigSnapshot {
                 let sync = w.get("syncConfig").filter(|s| s.is_object()).and_then(|s| {
                     Some(SyncConfig {
                         remote: non_empty(s, "remote")?,
-                        branch: text(s, "branch").unwrap_or_default(),
-                        auto_sync: s.get("autoSync").and_then(Value::as_bool).unwrap_or(false),
+                        repo: non_empty(s, "repo"),
                     })
                 });
-                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, sync })
+                let account = w.get("account").and_then(AccountInfo::from_value);
+                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync })
             })
             .collect();
 

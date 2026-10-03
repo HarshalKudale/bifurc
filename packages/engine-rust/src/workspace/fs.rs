@@ -74,6 +74,23 @@ fn entity_file(ws_id: &str, kind: &str, id: &str, folder_name: Option<&str>) -> 
     }
 }
 
+/// The file at a workspace's root that says the directory (and the repository it is pushed to) is a workspace.
+pub const WORKSPACE_FILE: &str = "workspace.json";
+/// What `kind` in `workspace.json` holds.
+pub const WORKSPACE_KIND: &str = "bifurc-workspace";
+pub const WORKSPACE_VERSION: u64 = 1;
+
+/// The id and name a `workspace.json` gives, when it is a workspace's. A file from before `kind` was written
+/// is known by the fields every one of them has.
+pub fn workspace_identity(info: &Value) -> Option<(String, String)> {
+    let marked = match info.get("kind") {
+        Some(kind) => kind.as_str() == Some(WORKSPACE_KIND),
+        None => info.get("createdAt").is_some_and(Value::is_number) && info.get("name").is_some_and(Value::is_string),
+    };
+    let id = info.get("id").and_then(Value::as_str).filter(|id| !id.is_empty())?;
+    marked.then(|| (id.to_string(), info.get("name").and_then(Value::as_str).unwrap_or_default().to_string()))
+}
+
 /// Create a workspace's directories, `workspace.json` and `.gitignore`. Safe to repeat.
 pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     let root = ws_dir(ws_id);
@@ -97,7 +114,10 @@ pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     if !ws_file.exists() {
         write_json_pretty(
             &ws_file,
-            &json!({ "id": ws_id, "name": name, "createdAt": now_ms(), "activeEnvironmentId": null }),
+            &json!({
+                "kind": WORKSPACE_KIND, "version": WORKSPACE_VERSION,
+                "id": ws_id, "name": name, "createdAt": now_ms(), "activeEnvironmentId": null,
+            }),
         )?;
     }
     let gitignore = root.join(".gitignore");
@@ -365,6 +385,10 @@ pub fn write_enabled_set(ws_id: &str, kind: &str, ids: &IndexSet<String>) -> std
 
 /// Create `enabled.json` from the entity files: everything not explicitly `enabled: false` is on.
 pub fn bootstrap_enabled_set(ws_id: &str, kind: &str) -> IndexSet<String> {
+    // No workspace (nothing is active before the first one is made): nothing is on, and nothing is written.
+    if ws_id.is_empty() {
+        return IndexSet::new();
+    }
     let enabled: IndexSet<String> = read_all_entities(ws_id, kind)
         .iter()
         .filter(|entity| entity.get("enabled") != Some(&Value::Bool(false)))

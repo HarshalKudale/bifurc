@@ -104,7 +104,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
             "Workspace",
             vec![
                 ("New environment…", IconName::Plus, Box::new(NewEnvironment)),
-                ("New workspace…", IconName::Plus, Box::new(NewWorkspace)),
+                ("Add workspace…", IconName::Plus, Box::new(NewWorkspace)),
                 ("Rename this workspace…", IconName::File, Box::new(RenameWorkspace)),
                 ("Publish this screen's changes", IconName::Github, Box::new(PublishChanges)),
                 ("Reload workspace", IconName::RefreshCw, Box::new(ReloadWorkspace)),

@@ -11,7 +11,7 @@ mod palette;
 mod right_sidebar;
 
 use gpui_kit::component::{
-    ActiveTheme as _, WindowExt as _,
+    ActiveTheme as _, StyledExt as _, TitleBar, WindowExt as _,
     command::CommandState,
     h_flex,
     input::InputState,
@@ -21,13 +21,14 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyView, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    px,
 };
 
 pub use self::nav::Screen;
 use self::right_sidebar::RightSidebar;
 use crate::{
-    app_model::{AppModel, ModelEvent},
+    app_model::{AppModel, Load, ModelEvent},
     commands::ShellHandle,
     components::{
         EntityAction,
@@ -48,6 +49,7 @@ use crate::{
         settings::SettingsScreen,
         vaults::VaultsScreen,
         workspace::WorkspaceScreen,
+        workspace_setup::{DIALOG_WIDTH, Purpose, WorkspaceSetup, open_setup_dialog},
     },
 };
 
@@ -90,6 +92,8 @@ pub struct Shell {
     settings: Entity<SettingsScreen>,
     workspace: Entity<WorkspaceScreen>,
     audit: Entity<AuditScreen>,
+    /// What the window shows while there is no workspace: how to get the first one.
+    setup: Entity<WorkspaceSetup>,
     right: Entity<RightSidebar>,
     right_open: bool,
     palette: Entity<CommandState>,
@@ -112,6 +116,7 @@ impl Shell {
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
         let workspace = cx.new(|cx| WorkspaceScreen::new(model.clone(), window, cx));
         let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
+        let setup = cx.new(|cx| WorkspaceSetup::new(model.clone(), Purpose::First, window, cx));
         let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
         let finder = cx.new(|cx| CommandState::new(window, cx));
@@ -149,6 +154,7 @@ impl Shell {
             settings,
             workspace,
             audit,
+            setup,
             right,
             right_open: false,
             palette,
@@ -179,6 +185,7 @@ impl Shell {
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)
             | ModelEvent::SyncStatus
+            | ModelEvent::AccountChanged(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::EntityReverted(_) => {}
         }
@@ -386,16 +393,43 @@ impl Shell {
         }
     }
 
+    /// The engine has answered, and it holds no workspace: nothing else in the window has anything to show.
+    fn needs_first_workspace(&self, cx: &gpui_kit::App) -> bool {
+        let model = self.model.read(cx);
+        *model.load() == Load::Ready && model.config().workspaces.is_empty()
+    }
+
+    /// The first run: the window is only the way to a first workspace.
+    fn render_first_run(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        v_flex()
+            .size_full()
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            .child(TitleBar::new().child("Bifurc"))
+            .child(
+                div().id("first-run").flex_1().min_h_0().overflow_y_scroll().child(
+                    v_flex().w_full().items_center().py_12().px_4().child(
+                        v_flex()
+                            .w_full()
+                            .max_w(gpui_kit::rems(DIALOG_WIDTH))
+                            .gap_6()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(div().text_xl().font_semibold().child("Set up your first workspace"))
+                                    .child(div().text_color(theme.muted_foreground).child(
+                                        "A workspace holds your requests, mocks, mappings and environments.",
+                                    )),
+                            )
+                            .child(self.setup.clone()),
+                    ),
+                ),
+            )
+    }
+
     pub(super) fn prompt_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        prompt(
-            cx.weak_entity(),
-            window,
-            cx,
-            "New workspace",
-            "Create",
-            vec![PromptField::new("Name", "Workspace name")],
-            |this, values, _, cx| this.model.update(cx, |model, cx| model.add_workspace(&values[0], cx)),
-        );
+        open_setup_dialog(self.model.clone(), Purpose::Add, window, cx);
     }
 
     pub(super) fn prompt_rename_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -436,6 +470,9 @@ impl Focusable for Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        if self.needs_first_workspace(cx) {
+            return self.render_first_run(cx).into_any_element();
+        }
         let screen = match self.screen_view() {
             Some(view) => view.into_any_element(),
             None => crate::components::page::empty(
@@ -470,5 +507,6 @@ impl Render for Shell {
                 ),
             )
             .child(self.render_footer(cx))
+            .into_any_element()
     }
 }
