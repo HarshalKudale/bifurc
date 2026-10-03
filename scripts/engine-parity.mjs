@@ -204,6 +204,7 @@ function makeNormalizer(engine) {
     });
     out = out.replace(/^index [0-9a-f]{7,40}\.\.[0-9a-f]{7,40}/gm, "index <blob>..<blob>");
     out = out.replace(/(\\?"createdAt\\?": )\d+/g, "$1<n>");
+    out = out.replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z/g, "<iso>");
     out = out.split(String(engine.ports.edge)).join("<edgePort>");
     out = out.split(String(engine.ports.proxy)).join("<proxyPort>");
     out = out.split(String(engine.ports.companion)).join("<companionPort>");
@@ -289,7 +290,8 @@ function startUpstream() {
         return;
       }
       const headers = {};
-      for (const [k, v] of Object.entries(req.headers)) {
+      // Sorted: the order a client's headers arrive in is the client's, not something an engine decides.
+      for (const [k, v] of Object.entries(req.headers).sort(([a], [b]) => a.localeCompare(b))) {
         if (!["host", "connection", "accept-encoding", "user-agent", "accept"].includes(k)) headers[k] = v;
       }
       res.writeHead(200, { "content-type": "application/json", "x-upstream": "yes" });
@@ -300,9 +302,11 @@ function startUpstream() {
 }
 
 /** An HTTP request made by the harness itself, e.g. through an engine's proxy. */
-export function httpRequest({ port, method = "GET", requestPath, headers = {}, body }) {
+export function httpRequest({ port, method = "GET", requestPath, headers = {}, body, chunked = false }) {
   return new Promise((resolve) => {
-    const req = http.request({ host: "127.0.0.1", port, method, path: requestPath, headers, agent: false }, (res) => {
+    // Fixed length by default, as curl and browsers send a known body; `chunked` sends it with transfer-encoding.
+    const framed = body !== undefined && !chunked ? { "content-length": String(Buffer.byteLength(body)), ...headers } : headers;
+    const req = http.request({ host: "127.0.0.1", port, method, path: requestPath, headers: framed, agent: false }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
@@ -353,7 +357,14 @@ async function runScenario(engine, scenario) {
   }
   await sleep(scenario.settleMs ?? 400);
   // Event order across independent emitters is timing; compare what was emitted, not when.
+  // Status events are debounced snapshots of one state: how many were emitted on the way is timing, the last is not.
+  const SNAPSHOTS = ["event.sync.entityStatus", "event.sync.status"];
+  const lastSnapshot = new Map();
+  engine.client.events.forEach((e, i) => {
+    if (SNAPSHOTS.includes(e.event)) lastSnapshot.set(`${e.event}:${e.payload?.wsId ?? e.payload?.workspaceId ?? ""}`, i);
+  });
   const events = engine.client.events
+    .filter((e, i) => !SNAPSHOTS.includes(e.event) || lastSnapshot.get(`${e.event}:${e.payload?.wsId ?? e.payload?.workspaceId ?? ""}`) === i)
     .filter((e) => !(scenario.ignoreEvents ?? []).includes(e.event))
     .map((e) => JSON.stringify(normalize({ event: e.event, payload: e.payload })))
     .sort();
