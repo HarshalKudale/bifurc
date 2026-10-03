@@ -35,7 +35,7 @@ fn number_text(value: Option<&Value>) -> String {
     }
 }
 
-fn save_report(params: &Value) -> std::io::Result<()> {
+pub(crate) fn save_report(params: &Value) -> std::io::Result<()> {
     let report = &params["report"];
     let run_dir = runs_dir(str_of(params, "workspaceId"))
         .join(str_of(report, "folderId"))
@@ -301,5 +301,13 @@ mod tests {
         assert_eq!(status["report"]["totalRequests"], 2);
         assert_eq!(status["report"]["passedTests"], 2);
         assert_eq!(finished.lock().len(), 1);
+        let row = &status["results"][0];
+        assert!(row["scripts"]["test"].as_str().unwrap().contains("lp.test('ok'"));
+        assert_eq!(row["tests"][0]["name"], "ok");
+        assert!(row["responseHeaders"].is_object());
+        assert!(row["responseBody"].is_string());
+        assert!(row["requestHeaders"].is_object() || row["requestHeaders"].is_array());
+        let saved = call("runner.getHistory", json!({ "workspaceId": WS, "folderId": "f1" })).await.unwrap();
+        assert_eq!(saved[0]["summary"], json!({ "total": 2, "passed": 2, "failed": 0 }));
     }
 }

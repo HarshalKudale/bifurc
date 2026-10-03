@@ -18,6 +18,7 @@ use crate::{
     utils::{
         id::now_ms,
         json::{array_of, str_of},
+        replay::decode_base64_lenient,
     },
 };
 
@@ -49,14 +50,35 @@ pub fn cancel_run(ws_id: &str, folder_id: &str) -> Value {
     }
 }
 
-/// A request to run: `{ id, name, method, url }`.
+/// How much of a response body a result row keeps.
+const BODY_LIMIT: usize = 16 * 1024;
+
+fn truncated(body: &Value) -> Value {
+    match body.as_str() {
+        Some(text) if text.len() > BODY_LIMIT => {
+            let mut end = BODY_LIMIT;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            json!(format!("{}
+... truncated, {} bytes in all", &text[..end], text.len()))
+        }
+        _ => body.clone(),
+    }
+}
+
+/// A request to run: `{ id, name, method, url, scripts }`.
 fn request_ref(entity: &Value) -> Value {
     let text = |key: &str, default: &str| match entity.get(key) {
         None | Some(Value::Null) => default.to_string(),
         Some(Value::String(text)) => text.clone(),
         Some(other) => other.to_string(),
     };
-    json!({ "id": text("id", ""), "name": text("name", ""), "method": text("method", "GET"), "url": text("url", "") })
+    let script = |key: &str| entity.get(key).and_then(Value::as_str).unwrap_or_default();
+    json!({
+        "id": text("id", ""), "name": text("name", ""), "method": text("method", "GET"), "url": text("url", ""),
+        "scripts": { "pre": script("preScript"), "post": script("postScript"), "test": script("testScript") },
+    })
 }
 
 async fn load_runner_config(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Option<Value> {
@@ -110,6 +132,11 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
                 "responseTime": sent["durationMs"],
                 "tests": sent.get("tests").filter(|v| v.is_array()).cloned().unwrap_or_else(|| json!([])),
                 "testLogs": sent.get("testLogs").filter(|v| v.is_array()).cloned().unwrap_or_else(|| json!([])),
+                "scripts": request["scripts"],
+                "requestHeaders": sent["request"]["headers"],
+                "requestBody": truncated(&sent["request"]["body"]),
+                "responseHeaders": sent["headers"],
+                "responseBody": truncated(&json!(String::from_utf8_lossy(&decode_base64_lenient(str_of(&sent, "body"))))),
             });
             for key in ["preScriptError", "postScriptError"] {
                 if let Some(error) = sent.get(key) {
@@ -128,6 +155,7 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
             "error": error.message,
             "tests": [],
             "testLogs": [],
+            "scripts": request["scripts"],
         }),
     }
 }
@@ -234,6 +262,7 @@ pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Re
                     snapshot["completedAt"] = report["completedAt"].clone();
                     snapshot["report"] = report.clone();
                 }
+                let _ = super::save_report(&json!({ "workspaceId": ws_id, "report": report }));
                 bus().emit("runner.finished", json!({ "workspaceId": ws_id, "folderId": folder_id, "report": report }));
             }
             Err(error) => {
