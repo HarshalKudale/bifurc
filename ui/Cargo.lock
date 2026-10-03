@@ -604,12 +604,21 @@ dependencies = [
 name = "bifurc-engine-client"
 version = "0.3.3"
 dependencies = [
+ "bifurc-protocol",
  "futures",
  "interprocess",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "bifurc-protocol"
+version = "0.3.3"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

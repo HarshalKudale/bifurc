@@ -7,7 +7,7 @@ use crate::{
     args::ParsedArgs,
     error::{CliError, Result},
     format::{describe_grpc, describe_reflection, describe_send, describe_status, js_string, js_template, json, table, truthy},
-    protocol::{COMMAND_NAMES, is_known_command},
+    protocol::{command_names, is_known_command},
     session::Engine,
 };
 
@@ -402,8 +402,8 @@ pub fn call(ctx: &mut Context) -> Result<String> {
 
 /// `commands`: every engine command, sorted.
 pub fn commands(ctx: &Context) -> String {
-    let names: Vec<Value> = COMMAND_NAMES.iter().map(|n| json!(n)).collect();
-    ctx.print(&Value::Array(names), || COMMAND_NAMES.join("\n"))
+    let names = command_names();
+    ctx.print(&Value::Array(names.iter().map(|n| json!(n)).collect()), || names.join("\n"))
 }
 
 /// `status`: the engine, the proxy and the active workspace.
@@ -891,13 +891,13 @@ mod tests {
         let connector: Connector = Box::new(|| panic!("commands must not connect"));
         let ctx = Context::new(&args, connector);
         let listing = commands(&ctx);
-        assert_eq!(listing.lines().count(), COMMAND_NAMES.len());
+        assert_eq!(listing.lines().count(), command_names().len());
         assert_eq!(listing.lines().next(), Some("application.checkPort"));
 
         let args = parse_args(&["commands".to_string(), "--json".to_string()]).unwrap();
         let connector: Connector = Box::new(|| panic!("commands must not connect"));
         let parsed: Value = serde_json::from_str(&commands(&Context::new(&args, connector))).unwrap();
-        assert_eq!(parsed.as_array().unwrap().len(), COMMAND_NAMES.len());
+        assert_eq!(parsed.as_array().unwrap().len(), command_names().len());
     }
 
     #[test]
