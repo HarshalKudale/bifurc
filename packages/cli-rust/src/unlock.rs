@@ -28,7 +28,7 @@ const PASSPHRASE_ENV: &str = "BIFURC_VAULT_PASSPHRASE";
 const PROMPT_ATTEMPTS: usize = 3;
 
 /// The id of the vault named `name` (any case) in a `vault.list` answer.
-fn find_vault(list: &Value, name: &str) -> Result<String> {
+pub fn find_vault(list: &Value, name: &str) -> Result<String> {
     let vaults = list.as_array().map(Vec::as_slice).unwrap_or_default();
     match vaults.iter().find(|v| v["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(name))) {
         Some(vault) => Ok(vault["id"].as_str().unwrap_or_default().to_string()),
@@ -57,7 +57,7 @@ fn exit_code(status: ExitStatus) -> i32 {
 }
 
 /// The passphrase from the environment, stdin or the terminal. `attempt` is 0 for the first ask.
-fn passphrase(args: &ParsedArgs, vault: &str, attempt: usize) -> Result<String> {
+pub fn passphrase(args: &ParsedArgs, vault: &str, attempt: usize) -> Result<String> {
     if attempt == 0 {
         if let Some(from_env) = std::env::var(PASSPHRASE_ENV).ok().filter(|p| !p.is_empty()) {
             return Ok(from_env);
@@ -80,7 +80,9 @@ fn checkout(session: &mut Session<Stream>, args: &ParsedArgs, workspace: &str, i
     loop {
         let pass = passphrase(args, name, attempt)?;
         match session.call("vault.checkout", json!({ "workspaceId": workspace, "id": id, "passphrase": pass })) {
-            Err(CliError::Engine { code, .. }) if code == "FORBIDDEN" && attempt + 1 < PROMPT_ATTEMPTS => {
+            Err(CliError::Engine { code, message })
+                if code == "FORBIDDEN" && !message.starts_with("Too many") && attempt + 1 < PROMPT_ATTEMPTS =>
+            {
                 attempt += 1;
             }
             other => return other,

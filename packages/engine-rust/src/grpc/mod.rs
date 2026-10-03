@@ -144,7 +144,9 @@ pub fn register(registry: &mut CommandRegistry) {
             None => params.get("request").cloned().unwrap_or(Value::Null),
         };
         let payload = resolve_saved(ws_id, &stored);
-        ctx.registry.invoke("grpc.execute", payload, ctx.clone()).await
+        let mut result = ctx.registry.invoke("grpc.execute", payload, ctx.clone()).await?;
+        crate::vault::redact_value(ws_id, &mut result);
+        Ok(result)
     });
 
     stream::register(registry);

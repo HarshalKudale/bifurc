@@ -474,3 +474,46 @@ async fn an_intercepted_https_request_is_routed_like_any_other() {
     let entry = logs.find(url).await;
     assert_eq!((entry["via"].as_str(), entry["host"].as_str()), (Some("mock"), Some("secure.test")));
 }
+
+#[tokio::test]
+async fn a_rule_script_can_inject_a_secret_that_the_log_shows_unresolved() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let mut vaults = crate::kernel::CommandRegistry::new();
+    crate::vault::register(&mut vaults);
+    let vaults = Arc::new(vaults);
+    let call = |action: &'static str, payload: Value| {
+        let (vaults, ctx) = (vaults.clone(), CommandContext::internal(vaults.clone()));
+        async move { vaults.invoke(action, payload, ctx).await.unwrap() }
+    };
+    let created = call("vault.create", json!({ "workspaceId": "ws1", "name": "keys", "passphrase": "correct horse battery" })).await;
+    let id = created["id"].as_str().unwrap().to_string();
+    call("vault.setSecret", json!({ "workspaceId": "ws1", "id": id, "name": "TOKEN", "value": "s3cret-token-value" })).await;
+
+    let (target, seen) = canned_upstream(http_ok("content-type: text/plain\r\n", "echo: s3cret-token-value")).await;
+    put(
+        "rules",
+        json!({
+            "id": "r2", "workspaceId": "ws1", "name": "r", "pattern": "^http://inject\\.test/", "useRegex": true,
+            "targetType": "external", "targetExternal": format!("127.0.0.1:{target}"),
+            "requestScript": "lp.request.headers['authorization'] = 'Bearer {{keys.TOKEN}}';",
+            "responseScript": "", "createdAt": 0,
+        }),
+    );
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+
+    let url = "http://inject.test/x";
+    // The client asks for a reference of its own; only the rule's author may.
+    let request = format!("GET {url} HTTP/1.1\r\nHost: inject.test\r\nx-evil: {{{{keys.TOKEN}}}}\r\n\r\n");
+    through(proxy_port, &request).await;
+    let sent = seen.lock()[0].to_lowercase();
+    assert!(sent.contains("authorization: bearer s3cret-token-value"), "{sent}");
+    assert!(sent.contains("x-evil: {{keys.token}}"), "a client's reference is not resolved: {sent}");
+
+    let entry = logs.find(url).await;
+    assert_eq!(entry["reqHeaders"]["authorization"], "Bearer {{keys.TOKEN}}");
+    assert!(!entry.to_string().contains("s3cret-token-value"), "no value in the log: {entry}");
+    assert!(entry["resBody"].as_str().is_some_and(|b| !b.is_empty()));
+    proxy.stop();
+}

@@ -132,9 +132,109 @@ pub fn resolve_reference(ws_id: &str, vault_name: &str, secret_name: &str) -> Op
     vault.read_secret(&key, secret_name)
 }
 
-/// Secrets shorter than this are not masked: a four letter password would blank out every response that
-/// happens to contain it.
-const MIN_REDACTED_LEN: usize = 6;
+/// `{{vault.secret}}` references in `text`, as written, without repeats. `{{random.*}}` is not one.
+pub fn references_in(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else { break };
+        let inner = &after[..end];
+        if let Some((vault, secret)) = inner.split_once('.') {
+            let word = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if word(vault) && word(secret) && !vault.eq_ignore_ascii_case("random") {
+                let reference = format!("{{{{{inner}}}}}");
+                if !found.contains(&reference) {
+                    found.push(reference);
+                }
+            }
+        }
+        rest = &after[end + 2..];
+    }
+    found
+}
+
+/// Replaces the vault references of `text` that are in `allowed` with their values. A reference the author of
+/// a template did not write (one that arrived in a client's request, say) is left as it is, so nothing that
+/// passes through the engine can ask it for a secret.
+pub fn resolve_allowed(ws_id: &str, text: &str, allowed: &[String]) -> String {
+    let mut out = text.to_string();
+    for reference in references_in(text).into_iter().filter(|r| allowed.contains(r)) {
+        let inner = &reference[2..reference.len() - 2];
+        let Some((vault, secret)) = inner.split_once('.') else { continue };
+        if let Some(value) = resolve_reference(ws_id, vault, secret) {
+            out = out.replace(&reference, &value);
+        }
+    }
+    out
+}
+
+/// [`resolve_allowed`] over every string of a JSON value.
+pub fn resolve_value_allowed(ws_id: &str, value: &mut serde_json::Value, allowed: &[String]) {
+    use serde_json::Value;
+    match value {
+        Value::String(text) if text.contains("{{") => *text = resolve_allowed(ws_id, text, allowed),
+        Value::Array(items) => items.iter_mut().for_each(|item| resolve_value_allowed(ws_id, item, allowed)),
+        Value::Object(map) => map.values_mut().for_each(|item| resolve_value_allowed(ws_id, item, allowed)),
+        _ => {}
+    }
+}
+
+/// Masks, in place, whatever of a workspace's ready vaults' secrets `value` holds. A no-op when none is ready.
+pub fn redact_value(ws_id: &str, value: &mut serde_json::Value) {
+    if let Some(redactor) = Redactor::for_workspace(ws_id) {
+        redactor.value(value);
+    }
+}
+
+/// [`redact_value`] for one string.
+pub fn redact_text(ws_id: &str, text: String) -> String {
+    match Redactor::for_workspace(ws_id) {
+        Some(redactor) => redactor.text(&text),
+        None => text,
+    }
+}
+
+/// How many wrong passphrases in a row a vault takes before it makes the next attempt wait.
+const FREE_ATTEMPTS: u32 = 3;
+const MAX_WAIT_SECS: u64 = 60;
+
+#[derive(Default)]
+struct Failures {
+    count: u32,
+    last: Option<std::time::Instant>,
+}
+
+static FAILURES: LazyLock<Mutex<HashMap<(String, String), Failures>>> = LazyLock::new(Mutex::default);
+
+/// Seconds a caller must still wait before trying a passphrase on this vault; 0 when it may try now. After
+/// three wrong ones the wait doubles with each, up to a minute, and a right one resets it. The derivation is
+/// slow already; this makes guessing at a running engine slower still.
+pub fn attempt_wait_secs(ws_id: &str, vault_id: &str) -> u64 {
+    let failures = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(entry) = failures.get(&(ws_id.to_string(), vault_id.to_string())) else { return 0 };
+    if entry.count < FREE_ATTEMPTS {
+        return 0;
+    }
+    let wait = (1u64 << (entry.count - FREE_ATTEMPTS).min(6)).min(MAX_WAIT_SECS);
+    let waited = entry.last.map(|t| t.elapsed().as_secs()).unwrap_or(wait);
+    wait.saturating_sub(waited)
+}
+
+pub fn attempt_failed(ws_id: &str, vault_id: &str) {
+    let mut failures = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    let entry = failures.entry((ws_id.to_string(), vault_id.to_string())).or_default();
+    entry.count += 1;
+    entry.last = Some(std::time::Instant::now());
+}
+
+pub fn attempt_succeeded(ws_id: &str, vault_id: &str) {
+    FAILURES.lock().unwrap_or_else(|p| p.into_inner()).remove(&(ws_id.to_string(), vault_id.to_string()));
+}
+
+/// Secrets shorter than this are refused (`vault.setSecret`): masking a short value would blank out every
+/// response that happens to contain it, so it could not be kept out of logs.
+pub const MIN_SECRET_LEN: usize = 6;
 
 /// Replaces the values of a workspace's ready vaults with the `{{vault.secret}}` that names them, in
 /// anything that is about to leave the engine for a client or a file.
@@ -146,6 +246,10 @@ pub struct Redactor {
 impl Redactor {
     /// `None` when no vault of the workspace is ready, which is the usual case and costs nothing.
     pub fn for_workspace(ws_id: &str) -> Option<Self> {
+        // Nothing is ready: answer from memory, without reading a file.
+        if !state().keys.keys().any(|(ws, _)| ws == ws_id) {
+            return None;
+        }
         let ready: Vec<(store::VaultFile, Key)> = store::list(ws_id)
             .into_iter()
             .filter_map(|vault| key_of(ws_id, &vault.id).map(|key| (vault, key)))
@@ -153,8 +257,11 @@ impl Redactor {
         let mut secrets = Vec::new();
         for (vault, key) in &ready {
             for (name, value) in vault.read_all(key) {
-                if value.len() >= MIN_REDACTED_LEN {
-                    secrets.push((value, format!("{{{{{}.{}}}}}", vault.name, name)));
+                if value.len() >= MIN_SECRET_LEN {
+                    let reference = format!("{{{{{}.{}}}}}", vault.name, name);
+                    for variant in encodings(&value) {
+                        secrets.push((variant, reference.clone()));
+                    }
                 }
             }
         }
@@ -165,6 +272,7 @@ impl Redactor {
         Some(Self { secrets })
     }
 
+    /// Masks the references' values and the forms they take in transit.
     pub fn text(&self, text: &str) -> String {
         let mut out = text.to_string();
         for (value, reference) in &self.secrets {
@@ -204,9 +312,54 @@ impl Redactor {
     }
 }
 
+/// The value as it appears in a log: itself, base64, percent-encoded and JSON-escaped.
+fn encodings(value: &str) -> Vec<Zeroizing<String>> {
+    use base64::{Engine as _, engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD}};
+    let mut forms = vec![
+        value.to_string(),
+        STANDARD.encode(value),
+        URL_SAFE_NO_PAD.encode(value),
+        percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string(),
+        serde_json::to_string(value).map(|s| s[1..s.len() - 1].to_string()).unwrap_or_default(),
+    ];
+    forms.retain(|form| form.len() >= MIN_SECRET_LEN);
+    forms.sort();
+    forms.dedup();
+    forms.into_iter().map(Zeroizing::new).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn references_are_found_once_and_random_is_not_one() {
+        let found = references_in("a {{v.A}} b {{v.A}} {{random.int}} {{plain}} {{w.B_2}} {{bad name.x}}");
+        assert_eq!(found, vec!["{{v.A}}".to_string(), "{{w.B_2}}".to_string()]);
+    }
+
+    #[test]
+    fn wrong_passphrases_slow_down_after_the_free_attempts_and_a_right_one_resets() {
+        let (ws, vault) = ("ws-throttle", "v-throttle");
+        for _ in 0..FREE_ATTEMPTS {
+            assert_eq!(attempt_wait_secs(ws, vault), 0);
+            attempt_failed(ws, vault);
+        }
+        assert!(attempt_wait_secs(ws, vault) >= 1);
+        attempt_succeeded(ws, vault);
+        assert_eq!(attempt_wait_secs(ws, vault), 0);
+    }
+
+    #[test]
+    fn redaction_also_masks_encoded_forms() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let value = "p@ss word/123";
+        let mut secrets: Vec<_> = encodings(value).into_iter().map(|v| (v, "{{v.P}}".to_string())).collect();
+        secrets.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        let redactor = Redactor { secrets };
+        let text = format!("a={} b={} c={}", value, STANDARD.encode(value), percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC));
+        assert_eq!(redactor.text(&text), "a={{v.P}} b={{v.P}} c={{v.P}}");
+    }
 
     #[test]
     fn redaction_masks_longest_secrets_first_and_skips_short_ones() {

@@ -88,6 +88,47 @@ pub async fn proxy_to_upstream<W: AsyncWrite + Unpin>(
     forward_streaming(out, method, &http_url(target, path), target, headers, body, log_id).await
 }
 
+/// A request after a rule's request script, ready to send.
+pub(super) struct ScriptedRequest {
+    /// What goes on the wire: the vault references the script's author wrote are replaced with their values.
+    pub headers: Headers,
+    pub body: Vec<u8>,
+    /// The headers as the script left them, secrets unresolved, for the log.
+    pub shown_headers: Headers,
+}
+
+/// Runs the rule's request script (a failing one leaves the request as it was). A rule can inject a secret by
+/// writing `{{vault.secret}}` into a header or the body; only references that appear in the script itself are
+/// resolved, so a client cannot get a secret out of the proxy by sending a reference of its own. The script
+/// runs before any value is put in, so it never sees one.
+pub(super) async fn run_request_script(rule: &Value, ws_id: &str, headers: &Headers, body: &[u8]) -> ScriptedRequest {
+    let (mut shown_headers, mut shown_body) = (headers.clone(), body.to_vec());
+    if let Some(script) = script_of(rule, "requestScript") {
+        let result = execute_request_script(script, headers, &String::from_utf8_lossy(body)).await;
+        if result.error.is_none() {
+            shown_headers = result.headers;
+            shown_body = result.body.into_bytes();
+        }
+    }
+    let allowed = crate::vault::references_in(str_of(rule, "requestScript"));
+    // What the client sent and the script left alone stays as written; only what the script set is resolved.
+    let wire_headers: Headers = shown_headers
+        .iter()
+        .map(|(name, value)| {
+            let from_client = headers.get(name) == Some(value);
+            let wire = if from_client { value.clone() } else { crate::vault::resolve_allowed(ws_id, value, &allowed) };
+            (name.clone(), wire)
+        })
+        .collect();
+    let wire_body = match std::str::from_utf8(&shown_body) {
+        Ok(text) if shown_body != body && text.contains("{{") => {
+            crate::vault::resolve_allowed(ws_id, text, &allowed).into_bytes()
+        }
+        _ => shown_body,
+    };
+    ScriptedRequest { headers: wire_headers, body: wire_body, shown_headers }
+}
+
 fn script_of<'a>(rule: &'a Value, key: &str) -> Option<&'a str> {
     let script = str_of(rule, key);
     (!script.trim().is_empty()).then_some(script)
@@ -104,18 +145,18 @@ pub async fn proxy_with_scripts<W: AsyncWrite + Unpin>(
     req_headers: &Headers,
     req_body: &[u8],
     rule: &Value,
+    ws_id: &str,
 ) -> Option<Outcome> {
-    let mut headers = req_headers.clone();
-    let mut body = req_body.to_vec();
-    if let Some(script) = script_of(rule, "requestScript") {
-        let result = execute_request_script(script, &headers, &String::from_utf8_lossy(req_body)).await;
-        if result.error.is_none() {
-            headers = result.headers;
-            body = result.body.into_bytes();
-        }
-    }
+    let scripted = run_request_script(rule, ws_id, req_headers, req_body).await;
+    let (headers, body) = (scripted.headers, scripted.body);
+    // The log shows the request as the script made it, with secrets as written, only if that differs.
+    let shown = (scripted.shown_headers != *req_headers).then_some(scripted.shown_headers);
     let Some(response_script) = script_of(rule, "responseScript") else {
-        return proxy_to_upstream(out, method, target, path, &headers, &body, None).await;
+        let mut outcome = proxy_to_upstream(out, method, target, path, &headers, &body, None).await;
+        if let Some(outcome) = outcome.as_mut() {
+            outcome.req_headers = shown;
+        }
+        return outcome;
     };
 
     let t0 = Instant::now();
@@ -173,6 +214,7 @@ pub async fn proxy_with_scripts<W: AsyncWrite + Unpin>(
         duration_ms: elapsed(),
         res_headers: final_headers,
         res_body: log_body(&final_body),
+        req_headers: shown,
     })
 }
 
