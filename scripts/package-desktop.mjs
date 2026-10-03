@@ -35,7 +35,8 @@ const outDir = path.join(repo, "release", "desktop");
 const cacheDir = path.join(outDir, "cache");
 const isWindows = process.platform === "win32";
 const exe = isWindows ? ".exe" : "";
-const version = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf8")).version;
+const version = /\[workspace\.package\][^[]*?\nversion\s*=\s*"([^"]+)"/.exec(fs.readFileSync(path.join(repo, "Cargo.toml"), "utf8"))?.[1];
+if (!version) throw new Error("package-desktop: no [workspace.package] version in Cargo.toml");
 
 const argv = process.argv.slice(2);
 const option = (name) => {
