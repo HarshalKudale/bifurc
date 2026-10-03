@@ -7,6 +7,7 @@ use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
 
 use super::{
+    accounts::public_accounts,
     fs::{
         EntityStub, auto_sync_fs_directories, bootstrap_names_index, get_pending_deletions, load_enabled_set,
         read_all_entities, read_entity, read_entity_stubs, read_names_index, write_entity, write_flat_entity,
@@ -115,6 +116,11 @@ pub fn load_config() -> Value {
     let settings = load_settings();
     let ws_id = settings.active_workspace_id();
     let ws_id = ws_id.as_str();
+
+    // Before the first workspace exists there is nothing to read, and nothing may be written.
+    if settings.workspace(ws_id).is_none() {
+        return settings_snapshot(&settings, "");
+    }
 
     let mock_enabled = load_enabled_set(ws_id, "mocks");
     let mapping_enabled = load_enabled_set(ws_id, "mappings");
@@ -282,32 +288,8 @@ pub fn load_config() -> Value {
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 
-    let workspaces: Vec<Value> = settings
-        .workspaces()
-        .iter()
-        .map(|w| {
-            json!({
-                "id": w.get("id").cloned().unwrap_or(Value::Null),
-                "name": w.get("name").cloned().unwrap_or(Value::Null),
-                "createdAt": 0,
-                "activeEnvironmentId": w.get("activeEnvironmentId").cloned().unwrap_or(Value::Null),
-                "syncConfig": w.get("syncConfig").cloned().unwrap_or(Value::Null),
-                "syncMeta": w.get("syncMeta").cloned().unwrap_or(Value::Null),
-            })
-        })
-        .collect();
-
-    let raw = settings.as_value();
-    json!({
-        "port": raw.get("port").cloned().unwrap_or(Value::Null),
-        "forwardProxyPort": raw.get("forwardProxyPort").filter(|v| !v.is_null()).cloned().unwrap_or(json!(DEFAULT_FORWARD_PROXY_PORT)),
-        "companionPort": raw.get("companionPort").filter(|v| !v.is_null()).cloned().unwrap_or(json!(DEFAULT_COMPANION_PORT)),
-        "minimizeToTray": raw.get("minimizeToTray").cloned().unwrap_or(Value::Null),
-        "tlsEnabled": settings.tls_enabled(),
-        "tlsCaCertPath": settings.tls_ca_cert_path(),
-        "tlsCaKeyPath": settings.tls_ca_key_path(),
-        "workspaces": workspaces,
-        "activeWorkspaceId": ws_id,
+    let mut snapshot = settings_snapshot(&settings, ws_id);
+    let entities = json!({
         "activeEnvironmentId": active_env,
         "mappings": all_mappings,
         "proxyRules": proxy_rules,
@@ -328,6 +310,46 @@ pub fn load_config() -> Value {
         "soapRequests": soap_requests,
         "savedWsdls": [],
         "soapRequestFolders": folders(ws_id, "soapRequests"),
+    });
+    if let (Some(snapshot), Value::Object(entities)) = (snapshot.as_object_mut(), entities) {
+        snapshot.extend(entities);
+    }
+    snapshot
+}
+
+/// The part of the snapshot that comes from `app.json`: the settings and the workspace list, with the
+/// account each workspace syncs as. With no workspace in front the entity lists are simply absent.
+fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str) -> Value {
+    let accounts = public_accounts();
+    let workspaces: Vec<Value> = settings
+        .workspaces()
+        .iter()
+        .map(|w| {
+            let account = accounts.iter().find(|a| str_of(a, "id") == str_of(w, "accountId")).cloned();
+            json!({
+                "id": w.get("id").cloned().unwrap_or(Value::Null),
+                "name": w.get("name").cloned().unwrap_or(Value::Null),
+                "createdAt": 0,
+                "activeEnvironmentId": w.get("activeEnvironmentId").cloned().unwrap_or(Value::Null),
+                "account": account,
+                "syncConfig": w.get("syncConfig").cloned().unwrap_or(Value::Null),
+                "syncMeta": w.get("syncMeta").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+
+    let raw = settings.as_value();
+    json!({
+        "port": raw.get("port").cloned().unwrap_or(Value::Null),
+        "forwardProxyPort": raw.get("forwardProxyPort").filter(|v| !v.is_null()).cloned().unwrap_or(json!(DEFAULT_FORWARD_PROXY_PORT)),
+        "companionPort": raw.get("companionPort").filter(|v| !v.is_null()).cloned().unwrap_or(json!(DEFAULT_COMPANION_PORT)),
+        "minimizeToTray": raw.get("minimizeToTray").cloned().unwrap_or(Value::Null),
+        "tlsEnabled": settings.tls_enabled(),
+        "tlsCaCertPath": settings.tls_ca_cert_path(),
+        "tlsCaKeyPath": settings.tls_ca_key_path(),
+        "workspaces": workspaces,
+        "activeWorkspaceId": active_ws_id,
+        "activeEnvironmentId": null,
     })
 }
 
@@ -368,11 +390,8 @@ pub fn save_config(cfg: &Value) -> std::io::Result<()> {
                     "activeEnvironmentId".into(),
                     ws.get("activeEnvironmentId").cloned().unwrap_or(Value::Null),
                 );
-                for key in ["syncConfig", "syncMeta"] {
-                    if let Some(value) = ws.get(key).filter(|v| !v.is_null()) {
-                        meta.insert(key.into(), value.clone());
-                    }
-                }
+                // A workspace's account and remote are assigned by sign-in, import and publish, never by a
+                // snapshot a client sends.
                 settings.workspaces_mut().push(Value::Object(meta));
             }
         }

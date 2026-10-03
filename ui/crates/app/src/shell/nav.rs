@@ -184,7 +184,7 @@ impl Shell {
                     }
                 };
                 menu.separator()
-                    .item(PopupMenuItem::new("New workspace…").on_click(on(&shell, Shell::prompt_new_workspace)))
+                    .item(PopupMenuItem::new("Add workspace…").on_click(on(&shell, Shell::prompt_new_workspace)))
                     .item(PopupMenuItem::new("Rename workspace…").on_click(on(&shell, Shell::prompt_rename_workspace)))
                     .item(
                         PopupMenuItem::new("Delete workspace…")

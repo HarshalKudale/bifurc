@@ -63,12 +63,6 @@ pub fn set_state(ws_id: &str, patch: impl FnOnce(&mut SyncState)) {
     patch(guard.get_or_insert_with(HashMap::new).entry(ws_id.to_string()).or_default());
 }
 
-pub fn clear_state(ws_id: &str) {
-    if let Some(states) = STATES.lock().as_mut() {
-        states.remove(ws_id);
-    }
-}
-
 /// Publish the workspace's current state as a `sync.status` event.
 pub fn emit(ws_id: &str) {
     let mut payload = Map::new();
@@ -94,7 +88,7 @@ fn workspace_field(ws_id: &str, key: &str) -> Option<Value> {
     load_settings().workspace(ws_id)?.get(key).filter(|v| !v.is_null()).cloned()
 }
 
-/// The workspace's `{ remote, branch, autoSync }`, if a remote is configured.
+/// The workspace's `{ remote, branch, repo, owner }`, if a remote is configured.
 pub fn get_sync_config(ws_id: &str) -> Option<Value> {
     workspace_field(ws_id, "syncConfig")
 }
@@ -145,7 +139,7 @@ mod tests {
     fn config_and_meta_persist_in_app_json() {
         let root = scratch_data_root();
         assert!(get_sync_config(root.ws_id).is_none());
-        save_sync_config(root.ws_id, Some(json!({ "remote": "r", "branch": "main", "autoSync": false })));
+        save_sync_config(root.ws_id, Some(json!({ "remote": "r", "branch": "main" })));
         save_sync_meta(root.ws_id, Some(sync_meta_value(Some(5), None, None)));
         assert_eq!(get_sync_config(root.ws_id).unwrap()["branch"], "main");
         let state = get_sync_state(root.ws_id);

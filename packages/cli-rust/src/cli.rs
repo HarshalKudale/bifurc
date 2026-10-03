@@ -99,6 +99,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
         "engine" => engine_command(args, &ctx, data_dir),
         "status" => commands::status(&mut ctx),
         "workspaces" | "workspace" => commands::workspaces(&mut ctx, sub),
+        "account" | "accounts" => commands::account(&mut ctx, sub),
         "env" | "environments" | "environment" => commands::env(&mut ctx, sub),
         "mappings" | "mapping" => commands::mappings(&mut ctx, sub),
         "services" => commands::services(&mut ctx, sub),
@@ -324,7 +325,7 @@ mod tests {
         let dir = empty_dir();
         let outcome = go(&["commands", "--no-start", "--data-dir", dir.path().to_str().unwrap()]);
         assert_eq!(outcome.code, 0);
-        assert!(outcome.stdout.starts_with("application.checkPort\n"));
+        assert!(outcome.stdout.starts_with("account.list\n"));
         assert!(outcome.stdout.contains("\nworkspace.setActive\n"));
     }
 
