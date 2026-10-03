@@ -11,7 +11,7 @@
 //! is made. The request's name is edited in the window's breadcrumb, which shows this session's name field.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     combobox::{Combobox, ComboboxEvent, ComboboxState},
@@ -289,6 +289,8 @@ pub struct ProtocolSession {
     stream_id: String,
     /// A live call is open (or opening) for this request.
     live: bool,
+    /// The engine has the call open, so it can be fed, ended and cancelled. Until then only the wait is on.
+    connected: bool,
     sending: bool,
     saving: bool,
     /// Set when Send was asked for with unsaved edits: the save that follows sends when it lands.
@@ -331,6 +333,9 @@ impl ProtocolSession {
                 ModelEvent::GrpcStatus(payload) if this.is_my_stream(payload) => {
                     if payload.get("status").and_then(Value::as_str) == Some("closed") {
                         this.live = false;
+                        this.connected = false;
+                    } else if this.live {
+                        this.connected = true;
                     }
                     this.exchange.update(cx, |exchange, cx| exchange.live_status(payload, cx));
                     cx.notify();
@@ -420,6 +425,7 @@ impl ProtocolSession {
             grpc,
             stream_id: format!("grpc-{}", cx.entity_id().as_u64()),
             live: false,
+            connected: false,
             sending: false,
             saving: false,
             send_after_save: false,
@@ -622,6 +628,7 @@ impl ProtocolSession {
         self.sending = true;
         // Live from the start, so that an end that arrives before the answer to this command is not undone by it.
         self.live = true;
+        self.connected = false;
         self.exchange.update(cx, |exchange, cx| exchange.begin_live(cx));
         self.changed(cx);
         let client = self.model.read(cx).client().clone();
@@ -629,12 +636,17 @@ impl ProtocolSession {
         call_in(&client, window, cx, "grpc.stream.open", payload, move |this, outcome, _, cx| {
             this.sending = false;
             let failure = match outcome {
-                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => None,
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
+                    // A call that has already ended by the time this answer arrives stays ended.
+                    this.connected = this.live;
+                    None
+                }
                 Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or("The call failed.").to_owned()),
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
                 this.live = false;
+                this.connected = false;
                 this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
             }
             this.changed(cx);
@@ -658,17 +670,29 @@ impl ProtocolSession {
     }
 
     fn cancel_call(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.connected {
+            self.request_cancel(window, cx);
+        }
+    }
+
+    fn request_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id });
         self.live_command("grpc.stream.cancel", payload, window, cx);
     }
 
     fn end_streaming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
         let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id });
         self.live_command("grpc.stream.end", payload, window, cx);
     }
 
     /// Sends what is in the message editor to the open call.
     fn send_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
         let data = self.text_of("requestBody", cx).unwrap_or_default();
         let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id, "data": data });
         self.live_command("grpc.stream.send", payload, window, cx);
@@ -953,8 +977,9 @@ impl ProtocolSession {
 
     /// Writes an edit that is still waiting, now: the tab is about to close.
     pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The tab is closing: ask the engine to drop the call whether or not it has finished connecting.
         if self.live {
-            self.cancel_call(window, cx);
+            self.request_cancel(window, cx);
         }
         if self.saved_id.is_some() {
             self.autosave.cancel();
@@ -1260,6 +1285,7 @@ impl Render for ProtocolSession {
                         .primary()
                         .h(VarEditor::row_height(cx))
                         .label(self.send_label(cx))
+                        .disabled(self.live && !self.connected)
                         .loading(self.sending)
                         .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
                 ),
@@ -1295,6 +1321,7 @@ impl Render for ProtocolSession {
                                 .primary()
                                 .small()
                                 .label("Send message")
+                                .disabled(!self.connected)
                                 .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx))),
                         )
                         .child(
@@ -1302,6 +1329,7 @@ impl Render for ProtocolSession {
                                 .outline()
                                 .small()
                                 .label("End streaming")
+                                .disabled(!self.connected)
                                 .on_click(cx.listener(|this, _, window, cx| this.end_streaming(window, cx))),
                         ),
                 )
