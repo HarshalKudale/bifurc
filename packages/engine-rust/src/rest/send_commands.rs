@@ -84,3 +84,85 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(out)
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use super::*;
+    use crate::{
+        kernel::CommandContext, protocol::ErrorCode, rest::test_server, testing::scratch_data_root,
+        workspace::fs::write_entity,
+    };
+
+    async fn call(action: &str, payload: Value) -> crate::protocol::Result<Value> {
+        let mut registry = CommandRegistry::new();
+        crate::rest::register(&mut registry);
+        let registry = Arc::new(registry);
+        let ctx = CommandContext::internal(registry.clone());
+        registry.invoke(action, payload, ctx).await
+    }
+
+    #[tokio::test]
+    async fn an_inline_request_runs_its_scripts_around_the_send() {
+        let _root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        let result = call(
+            "request.send",
+            json!({
+                "workspaceId": "ws1",
+                "request": { "method": "POST", "url": format!("{base}/p"), "headers": { "X-A": "1" }, "body": "hi" },
+                "scripts": {
+                    "pre": "lp.request.headers.set('X-B', '2');",
+                    "test": "lp.test('status', () => { lp.expect(lp.response.status).to.equal(200); });",
+                },
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["request"]["headers"]["X-B"], "2");
+        assert_eq!(result["tests"][0]["name"], "status");
+        assert_eq!(result["tests"][0]["passed"], true);
+        assert!(result.get("preScriptError").is_none());
+        let body = crate::utils::replay::decode_base64_lenient(result["body"].as_str().unwrap());
+        let echoed: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(echoed["method"], "POST");
+        assert_eq!(echoed["headers"]["x-b"], "2");
+        assert_eq!(echoed["body"], "hi");
+    }
+
+    #[tokio::test]
+    async fn a_saved_request_uses_its_own_scripts_and_a_script_error_is_a_value() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        write_entity(
+            root.ws_id,
+            "requests",
+            "r1",
+            &json!({
+                "id": "r1", "name": "r", "method": "GET", "url": format!("{base}/x"), "headers": {}, "body": "",
+                "preScript": "throw new Error('nope');",
+            }),
+            None,
+        )
+        .unwrap();
+        let result = call("request.send", json!({ "workspaceId": "ws1", "id": "r1" })).await.unwrap();
+        assert_eq!(result["status"], 200);
+        assert!(result["preScriptError"].as_str().unwrap().contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_saved_request_is_not_found_and_a_failed_send_fails() {
+        let _root = scratch_data_root();
+        let missing = call("request.send", json!({ "workspaceId": "ws1", "id": "zzz" })).await.unwrap_err();
+        assert_eq!(missing.code, ErrorCode::NotFound);
+        let failed = call(
+            "request.send",
+            json!({ "workspaceId": "ws1", "request": { "method": "GET", "url": "nope", "headers": {}, "body": "" },
+                    "scripts": {} }),
+        )
+        .await;
+        assert!(failed.is_err());
+    }
+}
