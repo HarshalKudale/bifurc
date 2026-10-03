@@ -74,10 +74,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -88,7 +84,7 @@ jobs:
 
       # NSIS and the Windows SDK (makeappx, makepri) are on the runner image.
       - name: Build the installer and the Store package
-        run: node scripts/package-desktop.mjs --target nsis,msix
+        run: cargo xtask package --target nsis,msix
 
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v4
@@ -106,10 +102,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
@@ -124,7 +116,7 @@ jobs:
           sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
 
       - name: Build the AppImage
-        run: node scripts/package-desktop.mjs --target appimage
+        run: cargo xtask package --target appimage
 
       - name: Upload Linux release assets
         uses: actions/upload-artifact@v4
