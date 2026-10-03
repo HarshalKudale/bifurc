@@ -18,14 +18,18 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Subscription, Window, div,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Map, Value, json};
 
-use super::audit::{now_ms, relative_time};
+use super::{
+    audit::{now_ms, relative_time},
+    workspace_setup::{Purpose, open_setup_dialog},
+};
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{
         binary::{pick_file, save_to_file},
-        dialogs::{confirm, confirm_danger},
+        dialogs::confirm_danger,
     },
     engine::{call, describe, failure, fetch_artifact, upload_and_call},
 };
@@ -60,6 +64,8 @@ struct SyncInfo {
     last_pushed: Option<i64>,
     last_pulled: Option<i64>,
     progress: Option<String>,
+    /// The login of the account that owns the workspace: its repository's owner once it has one.
+    owner: Option<String>,
 }
 
 impl SyncInfo {
@@ -72,6 +78,7 @@ impl SyncInfo {
             last_pushed: time("lastPushedAt"),
             last_pulled: time("lastPulledAt"),
             progress: text("progressMessage"),
+            owner: value.pointer("/owner/login").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
         }
     }
 
@@ -104,13 +111,11 @@ fn formats_from(value: &Value) -> Vec<(String, Vec<Format>)> {
 pub struct WorkspaceScreen {
     model: Entity<AppModel>,
     name: Entity<InputState>,
-    remote: Entity<InputState>,
-    branch: Entity<InputState>,
     /// The workspace the inputs were filled for, and the name they were filled with.
     shown: (String, String),
+    /// The account and remote the sync state was read for; a publish or a sign-in changes them.
+    link: (Option<String>, Option<String>),
     sync: SyncInfo,
-    /// A connect or disconnect is in flight.
-    connecting: bool,
     formats: Vec<(String, Vec<Format>)>,
     export: (String, String),
     import: (String, String),
@@ -123,12 +128,10 @@ pub struct WorkspaceScreen {
 impl WorkspaceScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
-        let remote = cx.new(|cx| InputState::new(window, cx).placeholder("https://github.com/you/workspace.git"));
-        let branch = cx.new(|cx| InputState::new(window, cx).placeholder("main").default_value("main"));
         let subscriptions = vec![
             cx.observe_in(&model, window, |this, _, window, cx| this.follow_workspace(window, cx)),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
-                ModelEvent::SyncStatus => this.refresh_sync(cx),
+                ModelEvent::SyncStatus | ModelEvent::AccountChanged(_) => this.refresh_sync(cx),
                 ModelEvent::EngineRestarted => {
                     this.load_formats(cx);
                     this.refresh_sync(cx);
@@ -145,11 +148,9 @@ impl WorkspaceScreen {
         let mut this = Self {
             model,
             name,
-            remote,
-            branch,
             shown: (String::new(), String::new()),
+            link: (None, None),
             sync: SyncInfo::default(),
-            connecting: false,
             formats: Vec::new(),
             export: ("workspace".to_owned(), String::new()),
             import: ("workspace".to_owned(), String::new()),
@@ -171,14 +172,20 @@ impl WorkspaceScreen {
     fn follow_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(workspace) = self.model.read(cx).config().active_workspace().cloned() else { return };
         let current = (workspace.id.clone(), workspace.name.clone());
+        let link = (
+            workspace.account.as_ref().map(|a| format!("{}:{}", a.id, a.signed_in)),
+            workspace.sync.as_ref().map(|s| s.remote.clone()),
+        );
+        if self.link != link {
+            self.link = link;
+            self.refresh_sync(cx);
+        }
         if self.shown == current {
             return;
         }
         let switched = self.shown.0 != current.0;
         self.name.update(cx, |input, cx| input.set_value(workspace.name.clone(), window, cx));
         if switched {
-            self.remote.update(cx, |input, cx| input.set_value("", window, cx));
-            self.branch.update(cx, |input, cx| input.set_value("main", window, cx));
             self.sync = SyncInfo::default();
         }
         self.shown = current;
@@ -245,81 +252,6 @@ impl WorkspaceScreen {
         self.model.update(cx, |model, cx| model.rename_workspace(&id, &name, cx));
     }
 
-    fn ask_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let remote = self.remote.read(cx).value().trim().to_owned();
-        if remote.is_empty() {
-            return self.report("Enter the remote repository's URL first.".to_owned(), cx);
-        }
-        let has_data = {
-            let config = self.model.read(cx).config();
-            !(config.requests.is_empty()
-                && config.mocks.is_empty()
-                && config.mappings.is_empty()
-                && config.proxy_rule_count == 0
-                && config.selectable_environments().next().is_none())
-        };
-        let consequence = if has_data {
-            "Your local data will be pushed to the remote. The remote must be empty."
-        } else {
-            "The remote repository will be cloned into this workspace."
-        };
-        confirm(cx.weak_entity(), window, cx, "Connect to this remote?", consequence, "Connect", |this, _, cx| {
-            this.connect(cx)
-        });
-    }
-
-    fn connect(&mut self, cx: &mut Context<Self>) {
-        if self.connecting {
-            return;
-        }
-        let remote = self.remote.read(cx).value().trim().to_owned();
-        let branch = match self.branch.read(cx).value().trim() {
-            "" => "main".to_owned(),
-            branch => branch.to_owned(),
-        };
-        self.connecting = true;
-        cx.notify();
-        let model = self.model.read(cx);
-        let client = model.client().clone();
-        let payload = json!({ "workspaceId": model.workspace_id(), "remote": remote, "branch": branch });
-        let current = model.workspace_id().to_owned();
-        call(&client, cx, "sync.setRemote", payload, move |this, outcome, cx| {
-            this.connecting = false;
-            match failure(&outcome) {
-                Some(message) => this.report(format!("Couldn't connect. {message}"), cx),
-                None => {
-                    // Cloning a remote that already holds a workspace adopts that workspace's identity.
-                    let adopted = outcome
-                        .ok()
-                        .and_then(|result| result.get("adoptedId").and_then(Value::as_str).map(str::to_owned))
-                        .filter(|id| *id != current);
-                    match adopted {
-                        Some(id) => this.model.update(cx, |model, cx| model.set_active_workspace(&id, cx)),
-                        None => this.model.update(cx, |model, cx| model.refresh(cx)),
-                    }
-                }
-            }
-            this.refresh_sync(cx);
-            cx.notify();
-        });
-    }
-
-    fn ask_disconnect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        confirm_danger(
-            cx.weak_entity(),
-            window,
-            cx,
-            "Disconnect from the remote?",
-            "Your data on this computer is kept. It just stops syncing.",
-            "Disconnect",
-            |this, _, cx| this.disconnect(cx),
-        );
-    }
-
-    fn disconnect(&mut self, cx: &mut Context<Self>) {
-        self.run_sync("sync.disconnect", "Couldn't disconnect.", cx);
-    }
-
     /// A sync command that takes only the workspace. Progress arrives as `event.sync.status`.
     fn run_sync(&mut self, action: &'static str, what: &'static str, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
@@ -331,18 +263,6 @@ impl WorkspaceScreen {
             }
             this.model.update(cx, |model, cx| model.refresh(cx));
             this.refresh_sync(cx);
-        });
-    }
-
-    fn set_auto_sync(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        let model = self.model.read(cx);
-        let client = model.client().clone();
-        let payload = json!({ "workspaceId": model.workspace_id(), "enabled": enabled });
-        call(&client, cx, "sync.setAutoSync", payload, |this, outcome, cx| {
-            if let Some(message) = failure(&outcome) {
-                this.report(format!("Couldn't change auto sync. {message}"), cx);
-            }
-            this.model.update(cx, |model, cx| model.refresh(cx));
         });
     }
 
@@ -464,63 +384,142 @@ impl WorkspaceScreen {
         ])
     }
 
+    /// A value shown, not edited: who the workspace syncs as, where to, who owns it.
+    fn fact(title: &'static str, value: String, mono: bool, description: Option<&'static str>) -> SettingItem {
+        let item = SettingItem::new(
+            title,
+            SettingField::render(move |_, _, cx| {
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .when(mono, |this| this.font_family(cx.theme().mono_font_family.clone()))
+                    .child(value.clone())
+            }),
+        );
+        match description {
+            Some(description) => item.description(description),
+            None => item,
+        }
+    }
+
     fn sync_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.weak_entity();
         let sync = self.sync.clone();
-        let connecting = self.connecting;
-        let (remote_input, branch_input) = (self.remote.clone(), self.branch.clone());
         let model = self.model.clone();
-        let auto_read = self.model.clone();
-        let auto_write = this.clone();
-
-        let connected = self.model.read(cx).config().active_workspace().and_then(|w| w.sync.clone());
-        let mut groups = Vec::new();
-
-        let Some(config) = connected else {
-            groups.push(
-                SettingGroup::new()
-                    .title("Remote")
-                    .item(SettingItem::render(move |options, _, cx| {
-                        let theme = cx.theme().clone();
-                        let connect = this.clone();
-                        v_flex()
-                            .w_full()
-                            .gap_2()
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(div().text_sm().text_color(theme.muted_foreground).child("Repository URL"))
-                                    .child(Input::new(&remote_input)),
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(div().text_sm().text_color(theme.muted_foreground).child("Branch"))
-                                    .child(Input::new(&branch_input)),
-                            )
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(div().text_sm().text_color(theme.muted_foreground).child("Not connected"))
-                                    .child(
-                                        Button::new("connect-remote")
-                                            .with_size(options.size())
-                                            .primary()
-                                            .label("Connect")
-                                            .loading(connecting)
-                                            .disabled(connecting)
-                                            .on_click(move |_, window, cx| {
-                                                connect.update(cx, |this, cx| this.ask_connect(window, cx)).ok();
-                                            }),
-                                    ),
-                            )
-                    }))
-                    .footer(|_, _| "A git repository the workspace's files are pushed to and pulled from."),
-            );
-            return SettingPage::new("Git sync").icon(IconName::Github).groups(groups);
+        let setup = self.model.read(cx).setup().clone();
+        let page = SettingPage::new("Git sync").icon(IconName::Github);
+        let Some(workspace) = self.model.read(cx).config().active_workspace().cloned() else {
+            return page.groups(Vec::new());
         };
+
+        if setup.known && !setup.git_installed {
+            return page.groups(vec![
+                SettingGroup::new()
+                    .title("Git")
+                    .item(SettingItem::render(|_, _, cx| {
+                        div().text_color(cx.theme().muted_foreground).child(
+                            "Git is not installed, so this workspace is plain files on this computer: no history, no \
+                             audit log, no way to revert a change, and no sync. Install Git and restart Bifurc.",
+                        )
+                    }))
+                    .footer(|_, _| "Nothing is lost: once Git is there, the workspace becomes a repository."),
+            ]);
+        }
+
+        let account_label = match &workspace.account {
+            Some(account) if account.signed_in => format!("@{}", account.login),
+            Some(account) => format!("@{} (signed out)", account.login),
+            None => "None".to_owned(),
+        };
+        let signed_out = workspace.account.clone().filter(|account| !account.signed_in);
+        let mut account_group = SettingGroup::new().title("Account").item(Self::fact(
+            "GitHub account",
+            account_label,
+            false,
+            Some(if workspace.account.is_some() {
+                "The account this workspace commits and syncs as. It belongs to this workspace only."
+            } else {
+                "Commits are made as this computer. An account is chosen when the workspace is published."
+            }),
+        ));
+        if let Some(owner) = sync.owner.clone() {
+            account_group = account_group.item(Self::fact(
+                "Owner",
+                format!("@{owner}"),
+                false,
+                Some("The account that owns the workspace's repository. Only the owner can import it or sync it."),
+            ));
+        }
+        if let Some(account) = signed_out {
+            let model = model.clone();
+            account_group = account_group.item(SettingItem::render(move |options, _, cx| {
+                let (model, account) = (model.clone(), account.clone());
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Sync is paused until @{} signs in again.", account.login)),
+                    )
+                    .child(Button::new("sign-in-again").with_size(options.size()).primary().label("Sign in…").on_click(
+                        move |_, window, cx| {
+                            let purpose = Purpose::SignIn { account_id: account.id.clone() };
+                            open_setup_dialog(model.clone(), purpose, window, cx);
+                        },
+                    ))
+            }));
+        }
+
+        let Some(config) = workspace.sync.clone() else {
+            let publish_model = model.clone();
+            let (id, name) = (workspace.id.clone(), workspace.name.clone());
+            let remote_group = SettingGroup::new()
+                .title("Remote")
+                .item(SettingItem::render(move |options, _, cx| {
+                    let (model, id, name) = (publish_model.clone(), id.clone(), name.clone());
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Not published. The workspace is on this computer only."),
+                        )
+                        .child(
+                            Button::new("publish-workspace")
+                                .with_size(options.size())
+                                .primary()
+                                .icon(IconName::Github)
+                                .label("Publish to GitHub…")
+                                .on_click(move |_, window, cx| {
+                                    let purpose =
+                                        Purpose::Publish { workspace_id: id.clone(), workspace_name: name.clone() };
+                                    open_setup_dialog(model.clone(), purpose, window, cx);
+                                }),
+                        )
+                }))
+                .footer(|_, _| {
+                    "Publishing creates a new repository on your account and pushes this workspace to it. \
+                     Once set, the repository can't be changed."
+                });
+            return page.groups(vec![account_group, remote_group]);
+        };
+
+        let remote_group = SettingGroup::new()
+            .title("Remote")
+            .item(Self::fact(
+                "Repository",
+                config.repo.clone().unwrap_or_else(|| config.remote.clone()),
+                true,
+                Some("Set once, when the workspace was published or imported. It can't be changed."),
+            ))
+            .footer(|_, _| {
+                "What the repository gets from elsewhere is pulled every few seconds, and your unsynced changes stay \
+                 on top of it. Nothing of yours is pushed until you sync it."
+            });
 
         let status_label = match sync.status.as_str() {
             "pushing" => "Pushing…",
@@ -530,125 +529,54 @@ impl WorkspaceScreen {
             _ => "Synced",
         };
         let working = sync.is_working();
-        let (pull, push, disconnect) = (this.clone(), this.clone(), this.clone());
-        groups.push(
-            SettingGroup::new()
-                .title("Remote")
-                .item(
-                    SettingItem::new(
-                        "Repository",
-                        SettingField::render({
-                            let remote = config.remote.clone();
-                            move |_, _, cx| {
-                                div()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .child(remote.clone())
-                            }
-                        }),
-                    )
-                    .description("It can't be changed while connected."),
-                )
-                .item(SettingItem::new(
-                    "Branch",
-                    SettingField::render({
-                        let branch = config.branch.clone();
-                        move |_, _, cx| div().text_color(cx.theme().muted_foreground).child(branch.clone())
-                    }),
-                ))
-                .item(
-                    SettingItem::new(
-                        "Auto sync",
-                        SettingField::switch(
-                            move |cx: &App| {
-                                auto_read
-                                    .read(cx)
-                                    .config()
-                                    .active_workspace()
-                                    .and_then(|w| w.sync.as_ref())
-                                    .is_some_and(|s| s.auto_sync)
-                            },
-                            move |value: bool, cx: &mut App| {
-                                auto_write.update(cx, |this, cx| this.set_auto_sync(value, cx)).ok();
-                            },
-                        ),
-                    )
-                    .description("Push after changes and pull every 30 seconds."),
-                ),
-        );
-        let _ = model;
-        groups.push(
-            SettingGroup::new()
-                .title("Status")
-                .item(SettingItem::render(move |options, _, cx| {
-                    let theme = cx.theme().clone();
-                    let (pull, push) = (pull.clone(), push.clone());
-                    let now = now_ms();
-                    let when = |ts: Option<i64>| ts.map_or_else(|| "never".to_owned(), |ts| relative_time(now, ts));
-                    let state = match sync.status.as_str() {
-                        "error" => Tag::danger().child(status_label),
-                        _ if working => {
-                            Tag::warning().child(sync.progress.clone().unwrap_or_else(|| status_label.to_owned()))
-                        }
-                        _ => Tag::success().child(status_label),
-                    };
-                    v_flex()
+        let (pull, push) = (this.clone(), this.clone());
+        let status_group = SettingGroup::new().title("Status").item(SettingItem::render(move |options, _, cx| {
+            let theme = cx.theme().clone();
+            let (pull, push) = (pull.clone(), push.clone());
+            let now = now_ms();
+            let when = |ts: Option<i64>| ts.map_or_else(|| "never".to_owned(), |ts| relative_time(now, ts));
+            let state = match sync.status.as_str() {
+                "error" => Tag::danger().child(status_label),
+                _ if working => Tag::warning().child(sync.progress.clone().unwrap_or_else(|| status_label.to_owned())),
+                _ => Tag::success().child(status_label),
+            };
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    h_flex()
                         .w_full()
                         .gap_2()
+                        .child(div().flex_1().child(state))
                         .child(
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .child(div().flex_1().child(state))
-                                .child(
-                                    Button::new("pull-remote")
-                                        .with_size(options.size())
-                                        .icon(IconName::ArrowDown)
-                                        .label("Pull")
-                                        .disabled(working)
-                                        .on_click(move |_, _, cx| {
-                                            pull.update(cx, |this, cx| {
-                                                this.run_sync("sync.pull", "Couldn't pull.", cx)
-                                            })
-                                            .ok();
-                                        }),
-                                )
-                                .child(
-                                    Button::new("push-remote")
-                                        .with_size(options.size())
-                                        .icon(IconName::ArrowUp)
-                                        .label("Push")
-                                        .disabled(working)
-                                        .on_click(move |_, _, cx| {
-                                            push.update(cx, |this, cx| {
-                                                this.run_sync("sync.push", "Couldn't push.", cx)
-                                            })
-                                            .ok();
-                                        }),
-                                ),
+                            Button::new("pull-remote")
+                                .with_size(options.size())
+                                .icon(IconName::ArrowDown)
+                                .label("Pull")
+                                .disabled(working)
+                                .on_click(move |_, _, cx| {
+                                    pull.update(cx, |this, cx| this.run_sync("sync.pull", "Couldn't pull.", cx)).ok();
+                                }),
                         )
-                        .child(div().text_xs().text_color(theme.muted_foreground).child(format!(
-                            "Last pushed {} · last pulled {}",
-                            when(sync.last_pushed),
-                            when(sync.last_pulled)
-                        )))
-                        .children(sync.error.clone().map(|error| div().text_xs().text_color(theme.danger).child(error)))
-                }))
-                .item(SettingItem::render(move |options, _, _| {
-                    let disconnect = disconnect.clone();
-                    h_flex().w_full().justify_end().child(
-                        Button::new("disconnect-remote")
-                            .with_size(options.size())
-                            .outline()
-                            .label("Disconnect")
-                            .loading(connecting)
-                            .on_click(move |_, window, cx| {
-                                disconnect.update(cx, |this, cx| this.ask_disconnect(window, cx)).ok();
-                            }),
-                    )
-                })),
-        );
-        SettingPage::new("Git sync").icon(IconName::Github).groups(groups)
+                        .child(
+                            Button::new("push-remote")
+                                .with_size(options.size())
+                                .icon(IconName::ArrowUp)
+                                .label("Push")
+                                .disabled(working)
+                                .on_click(move |_, _, cx| {
+                                    push.update(cx, |this, cx| this.run_sync("sync.push", "Couldn't push.", cx)).ok();
+                                }),
+                        ),
+                )
+                .child(div().text_xs().text_color(theme.muted_foreground).child(format!(
+                    "Last pushed {} · last pulled {}",
+                    when(sync.last_pushed),
+                    when(sync.last_pulled)
+                )))
+                .children(sync.error.clone().map(|error| div().text_xs().text_color(theme.danger).child(error)))
+        }));
+        page.groups(vec![account_group, remote_group, status_group])
     }
 
     /// A dropdown of kinds, and one of the formats the chosen kind has.

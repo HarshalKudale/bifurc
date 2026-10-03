@@ -1,4 +1,40 @@
 {
+ "account.list": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "account.login.cancel": {
+  "valid": {
+   "loginId": "l1"
+  },
+  "invalid": {}
+ },
+ "account.login.start": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "account.login.status": {
+  "valid": {
+   "loginId": "l1"
+  },
+  "invalid": {}
+ },
+ "account.logout": {
+  "valid": {
+   "accountId": "github.com:1"
+  },
+  "invalid": {}
+ },
+ "account.repos": {
+  "valid": {
+   "accountId": "github.com:1"
+  },
+  "invalid": {}
+ },
  "application.checkPort": {
   "valid": {
    "port": 3000
@@ -866,6 +902,12 @@
    "port": 70000
   }
  },
+ "setup.getState": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "soap.execute": {
   "valid": {
    "endpointUrl": "http://x",
@@ -904,12 +946,6 @@
    }
   }
  },
- "sync.disconnect": {
-  "valid": {
-   "workspaceId": "ws1"
-  },
-  "invalid": {}
- },
  "sync.getEntityStatus": {
   "valid": {
    "workspaceId": "ws1"
@@ -922,6 +958,17 @@
   },
   "invalid": {}
  },
+ "sync.publish": {
+  "valid": {
+   "workspaceId": "ws1",
+   "accountId": "github.com:1",
+   "repoName": "workspace"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "accountId": "github.com:1"
+  }
+ },
  "sync.pull": {
   "valid": {
    "workspaceId": "ws1"
@@ -933,27 +980,6 @@
    "workspaceId": "ws1"
   },
   "invalid": {}
- },
- "sync.setAutoSync": {
-  "valid": {
-   "workspaceId": "ws1",
-   "enabled": true
-  },
-  "invalid": {
-   "workspaceId": "ws1",
-   "enabled": "yes"
-  }
- },
- "sync.setRemote": {
-  "valid": {
-   "workspaceId": "ws1",
-   "remote": "r",
-   "branch": "main"
-  },
-  "invalid": {
-   "workspaceId": "ws1",
-   "remote": "r"
-  }
  },
  "tls.certStatus": {
   "valid": {},
@@ -1086,6 +1112,15 @@
    "id": "w1"
   },
   "invalid": {}
+ },
+ "workspace.import": {
+  "valid": {
+   "accountId": "github.com:1",
+   "repo": "octo/workspace"
+  },
+  "invalid": {
+   "accountId": "github.com:1"
+  }
  },
  "workspace.rename": {
   "valid": {
