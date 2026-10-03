@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     args::ParsedArgs,
     error::{CliError, Result},
-    format::{describe_send, describe_status, js_string, js_template, json, table, truthy},
+    format::{describe_grpc, describe_reflection, describe_send, describe_status, js_string, js_template, json, table, truthy},
     protocol::{COMMAND_NAMES, is_known_command},
     session::Engine,
 };
@@ -319,6 +319,71 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(ctx.print(&response, || describe_send(&response)))
         }
         other => Err(CliError::msg(format!("unknown: requests {other}"))),
+    }
+}
+
+/// `grpc list|reflect|call|send`.
+pub fn grpc(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
+    ctx.engine()?;
+    let args = ctx.args;
+    // A result that says `ok: false` fails the command, unless the caller asked for the JSON.
+    let checked = |ctx: &Context, response: Value| -> Result<Value> {
+        match response.get("ok").and_then(Value::as_bool) {
+            Some(false) if !ctx.json => Err(CliError::msg(
+                response.get("error").and_then(Value::as_str).unwrap_or("the gRPC call failed").to_string(),
+            )),
+            _ => Ok(response),
+        }
+    };
+    match sub.unwrap_or("list") {
+        "list" => {
+            let rows = list_entities(ctx, "grpcRequests")?;
+            Ok(ctx.print(&Value::Array(rows.clone()), || {
+                table(&rows, &["id", "name", "serverAddress", "serviceName", "methodName"])
+            }))
+        }
+        "reflect" => {
+            let address = need(args.positional(2).or(args.flag("server")), "server address")?;
+            let response = ctx.request("grpc.reflect", json!({ "serverAddress": address }))?;
+            let response = checked(ctx, response)?;
+            Ok(ctx.print(&response, || describe_reflection(&response)))
+        }
+        "call" => {
+            let address = need(args.positional(2).or(args.flag("server")), "server address")?;
+            // `package.Service/Method` is one word; `package.Service Method` is two.
+            let (service, method) = match (args.positional(3), args.positional(4)) {
+                (Some(path), None) => match path.trim_start_matches('/').rsplit_once('/') {
+                    Some((service, method)) => (service.to_string(), method.to_string()),
+                    None => return Err(CliError::msg("the method is \"package.Service/Method\"")),
+                },
+                (Some(service), Some(method)) => (service.to_string(), method.to_string()),
+                _ => return Err(CliError::msg("missing method (package.Service/Method)")),
+            };
+            let proto = args.flag("proto").filter(|p| !p.is_empty());
+            let mut payload = json!({
+                "serverAddress": address,
+                "serviceName": service,
+                "methodName": method,
+                "requestBody": body_from(args)?,
+                "metadata": headers_from(args)?,
+                "protoFileId": proto,
+                "useReflection": proto.is_none(),
+            });
+            if proto.is_some() {
+                payload["workspaceId"] = json!(workspace_id(ctx)?);
+            }
+            let response = ctx.request("grpc.execute", payload)?;
+            let response = checked(ctx, response)?;
+            Ok(ctx.print(&response, || describe_grpc(&response)))
+        }
+        "send" => {
+            let workspace = workspace_id(ctx)?;
+            let id = need(args.positional(2), "gRPC request id")?;
+            let response = ctx.request("grpc.send", json!({ "workspaceId": workspace, "id": id }))?;
+            let response = checked(ctx, response)?;
+            Ok(ctx.print(&response, || describe_grpc(&response)))
+        }
+        other => Err(CliError::msg(format!("unknown: grpc {other}"))),
     }
 }
 
@@ -735,6 +800,50 @@ mod tests {
         let argv = ["requests", "frob"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap_err(), CliError::msg("unknown: requests frob"));
+    }
+
+    #[test]
+    fn grpc_call_sends_an_execute_by_reflection() {
+        let argv = ["grpc", "call", "localhost:50051", "pkg.Svc/Do", "-d", "{\"a\":1}", "-H", "x-k: v"];
+        let reply = json!({"ok": true, "status": 0, "durationMs": 3, "metadata": {"m": "1"}, "responses": ["{}"]});
+        let (out, calls) = run(&argv, vec![("grpc.execute", Ok(reply))], |c| grpc(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\nm: 1\n\n{}");
+        assert_eq!(
+            calls[0],
+            (
+                "grpc.execute".to_string(),
+                json!({"serverAddress": "localhost:50051", "serviceName": "pkg.Svc", "methodName": "Do",
+                       "requestBody": "{\"a\":1}", "metadata": {"x-k": "v"}, "protoFileId": null, "useReflection": true})
+            )
+        );
+    }
+
+    #[test]
+    fn grpc_call_failure_is_an_error_unless_json() {
+        let argv = ["grpc", "call", "h:1", "S", "M"];
+        let reply = json!({"ok": false, "error": "UNAVAILABLE: down", "status": 14});
+        let (out, _) = run(&argv, vec![("grpc.execute", Ok(reply.clone()))], |c| grpc(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::msg("UNAVAILABLE: down"));
+        let argv = ["grpc", "call", "h:1", "S", "M", "--json"];
+        let (out, _) = run(&argv, vec![("grpc.execute", Ok(reply))], |c| grpc(c, sub(&argv)));
+        assert!(out.unwrap().contains("UNAVAILABLE"));
+    }
+
+    #[test]
+    fn grpc_reflect_lists_methods_with_their_kind() {
+        let argv = ["grpc", "reflect", "h:1"];
+        let reply = json!({"ok": true, "services": [{"name": "p.S", "methods": [
+            {"name": "A", "inputType": "p.I", "outputType": "p.O", "clientStreaming": false, "serverStreaming": true}]}]});
+        let (out, _) = run(&argv, vec![("grpc.reflect", Ok(reply))], |c| grpc(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "p.S\n  A(p.I) -> p.O  [server streaming]");
+    }
+
+    #[test]
+    fn grpc_send_goes_by_id() {
+        let argv = ["grpc", "send", "g1"];
+        let answers = vec![("config.get", Ok(config())), ("grpc.send", Ok(json!({"ok": true, "status": 0})))];
+        let (_, calls) = run(&argv, answers, |c| grpc(c, sub(&argv)));
+        assert_eq!(calls[1], ("grpc.send".to_string(), json!({"workspaceId": "w1", "id": "g1"})));
     }
 
     #[test]

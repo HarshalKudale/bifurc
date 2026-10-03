@@ -97,6 +97,50 @@ pub fn describe_send(result: &Value) -> String {
     lines.join("\n")
 }
 
+/// A gRPC result as printed by `grpc call` and `grpc send`: the status line, the metadata, then each response.
+pub fn describe_grpc(result: &Value) -> String {
+    let status = result.get("status").and_then(Value::as_i64).unwrap_or(0);
+    let message = result.get("statusMessage").and_then(Value::as_str).unwrap_or_default();
+    let mut lines = vec![format!(
+        "gRPC {}{}  ({} ms)",
+        if status == 0 { "OK".to_string() } else { format!("status {status}") },
+        if status == 0 || message.is_empty() { String::new() } else { format!(" {message}") },
+        js_template(result.get("durationMs"))
+    )];
+    if let Some(metadata) = result.get("metadata").and_then(Value::as_object) {
+        lines.extend(metadata.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
+    }
+    for response in result.get("responses").and_then(Value::as_array).into_iter().flatten() {
+        lines.push(String::new());
+        lines.push(js_string(response));
+    }
+    lines.join("\n")
+}
+
+/// The services and methods a server reflects, as `grpc reflect` prints them.
+pub fn describe_reflection(result: &Value) -> String {
+    let mut lines = Vec::new();
+    for service in result.get("services").and_then(Value::as_array).into_iter().flatten() {
+        lines.push(js_string(service.get("name").unwrap_or(&Value::Null)));
+        for method in service.get("methods").and_then(Value::as_array).into_iter().flatten() {
+            let streams = |key: &str| method.get(key).and_then(Value::as_bool).unwrap_or(false);
+            let kind = match (streams("clientStreaming"), streams("serverStreaming")) {
+                (false, false) => "unary",
+                (false, true) => "server streaming",
+                (true, false) => "client streaming",
+                (true, true) => "bidirectional streaming",
+            };
+            lines.push(format!(
+                "  {}({}) -> {}  [{kind}]",
+                js_string(method.get("name").unwrap_or(&Value::Null)),
+                js_string(method.get("inputType").unwrap_or(&Value::Null)),
+                js_string(method.get("outputType").unwrap_or(&Value::Null)),
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 /// The four lines of `bifurc status`.
 pub fn describe_status(engine: &RuntimeInfo, server: &Value, active_workspace: &Value) -> String {
     let proxy = if server.get("running").is_some_and(truthy) {
