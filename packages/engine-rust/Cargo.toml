@@ -15,6 +15,7 @@ name = "bifurc-engine"
 path = "src/main.rs"
 
 [dependencies]
+bifurc-protocol = { path = "../protocol-rust" }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
