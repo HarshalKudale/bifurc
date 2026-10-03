@@ -107,6 +107,27 @@ fn created_id(response: &Value) -> String {
     id.map(js_string).unwrap_or_else(|| "?".to_string())
 }
 
+/// `vault list`: the vaults of the workspace and their secrets' names. Values never come to the CLI here.
+pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
+    match sub.unwrap_or("list") {
+        "list" => {
+            let workspace = workspace_id(ctx)?;
+            let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+            let rows: Vec<Value> = listed
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|v| {
+                    let names = v["secrets"].as_array().into_iter().flatten().filter_map(Value::as_str);
+                    with_field(v, "secretNames", json!(names.collect::<Vec<_>>().join(", ")))
+                })
+                .collect();
+            Ok(ctx.print(&listed, || table(&rows, &["name", "state", "secretNames"])))
+        }
+        other => Err(CliError::msg(format!("unknown: vault {other}"))),
+    }
+}
+
 /// `workspaces list|use`.
 pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     ctx.engine()?;
