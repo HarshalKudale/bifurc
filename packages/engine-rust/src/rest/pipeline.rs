@@ -13,6 +13,7 @@ use crate::{
     env::{apply_variable_changes, load_merged_environment, resolve_headers, resolve_vars},
     protocol::Result,
     scripting::execute_ipc_script,
+    vault::Redactor,
     utils::{
         json::{array_of, merged, opt_str, str_of},
         replay::decode_base64_lenient,
@@ -198,6 +199,20 @@ where
     }
     if let Some(error) = post_script_error {
         out["postScriptError"] = json!(error);
+    }
+    // What goes back to a client (and into history and reports) names a secret, never shows it.
+    if let Some(redactor) = Redactor::for_workspace(ws_id) {
+        let mut body = out["response"]["body"].take();
+        redactor.base64_body(&mut body);
+        out["response"]["body"] = body;
+        for part in ["request", "tests", "testLogs", "preScriptError", "postScriptError"] {
+            if let Some(value) = out.get_mut(part) {
+                redactor.value(value);
+            }
+        }
+        if let Some(headers) = out["response"].get_mut("headers") {
+            redactor.value(headers);
+        }
     }
     Ok(out)
 }

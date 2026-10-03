@@ -46,6 +46,7 @@ use crate::{
         requests::RequestsScreen,
         services::ServicesScreen,
         settings::SettingsScreen,
+        vaults::VaultsScreen,
         workspace::WorkspaceScreen,
     },
 };
@@ -85,6 +86,7 @@ pub struct Shell {
     capture: Entity<CaptureScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
+    vaults: Entity<VaultsScreen>,
     settings: Entity<SettingsScreen>,
     workspace: Entity<WorkspaceScreen>,
     audit: Entity<AuditScreen>,
@@ -106,6 +108,7 @@ impl Shell {
         let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
+        let vaults = cx.new(|cx| VaultsScreen::new(model.clone(), cx));
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
         let workspace = cx.new(|cx| WorkspaceScreen::new(model.clone(), window, cx));
         let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
@@ -142,6 +145,7 @@ impl Shell {
             capture,
             mappings,
             environments,
+            vaults,
             settings,
             workspace,
             audit,
@@ -199,6 +203,7 @@ impl Shell {
             Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            Screen::Vaults => self.vaults.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             _ => {}
         }
     }
@@ -221,6 +226,7 @@ impl Shell {
             Screen::Mocks => Some(self.mocks.clone().into()),
             Screen::Mappings => Some(self.mappings.clone().into()),
             Screen::Environments => Some(self.environments.clone().into()),
+            Screen::Vaults => Some(self.vaults.clone().into()),
             Screen::Settings => Some(self.settings.clone().into()),
             Screen::WorkspaceConfig => Some(self.workspace.clone().into()),
             Screen::AuditLog => Some(self.audit.clone().into()),

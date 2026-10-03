@@ -28,6 +28,7 @@ pub mod services;
 pub mod soap;
 pub mod transport;
 pub mod utils;
+pub mod vault;
 pub mod websocket;
 pub mod workspace;
 

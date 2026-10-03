@@ -2694,6 +2694,199 @@
      "additionalProperties": false
     }
    ]
+  },
+  "vault.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ]
+  },
+  "vault.create": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "passphrase": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "passphrase"
+   ]
+  },
+  "vault.rename": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "name"
+   ]
+  },
+  "vault.delete": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ]
+  },
+  "vault.unseal": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "passphrase": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "passphrase"
+   ]
+  },
+  "vault.seal": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ]
+  },
+  "vault.changePassphrase": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "passphrase": {
+     "type": "string"
+    },
+    "newPassphrase": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "passphrase",
+    "newPassphrase"
+   ]
+  },
+  "vault.setSecret": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "name",
+    "value"
+   ]
+  },
+  "vault.deleteSecret": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "name"
+   ]
+  },
+  "vault.checkout": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "passphrase": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "passphrase"
+   ]
+  },
+  "vault.release": {
+   "type": "object",
+   "properties": {
+    "leaseId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "leaseId"
+   ]
   }
  }
 }

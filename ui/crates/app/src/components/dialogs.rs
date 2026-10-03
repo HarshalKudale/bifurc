@@ -24,11 +24,13 @@ pub struct PromptField {
     pub placeholder: &'static str,
     /// An optional field may be left empty; the others must be filled before the dialog confirms.
     pub optional: bool,
+    /// Typed text is hidden (a passphrase, a secret's value).
+    pub secret: bool,
 }
 
 impl PromptField {
     pub fn new(label: &'static str, placeholder: &'static str) -> Self {
-        Self { label, initial: String::new(), placeholder, optional: false }
+        Self { label, initial: String::new(), placeholder, optional: false, secret: false }
     }
 
     pub fn initial(mut self, initial: impl Into<String>) -> Self {
@@ -38,6 +40,11 @@ impl PromptField {
 
     pub fn optional(mut self) -> Self {
         self.optional = true;
+        self
+    }
+
+    pub fn secret(mut self) -> Self {
+        self.secret = true;
         self
     }
 }
@@ -54,13 +61,15 @@ pub fn prompt<V: 'static>(
     submit: impl Fn(&mut V, Vec<String>, &mut Window, &mut Context<V>) + 'static,
 ) {
     let title = title.into();
-    let inputs: Rc<Vec<(&'static str, bool, Entity<InputState>)>> = Rc::new(
+    let inputs: Rc<Vec<(&'static str, bool, bool, Entity<InputState>)>> = Rc::new(
         fields
             .into_iter()
             .map(|field| {
-                let input = cx
-                    .new(|cx| InputState::new(window, cx).placeholder(field.placeholder).default_value(field.initial));
-                (field.label, field.optional, input)
+                let secret = field.secret;
+                let input = cx.new(|cx| {
+                    InputState::new(window, cx).placeholder(field.placeholder).default_value(field.initial).masked(secret)
+                });
+                (field.label, field.optional, field.secret, input)
             })
             .collect(),
     );
@@ -72,8 +81,8 @@ pub fn prompt<V: 'static>(
         let inputs = inputs.clone();
         Rc::new(move |window: &mut Window, cx: &mut App| {
             let values: Vec<String> =
-                inputs.iter().map(|(_, _, input)| input.read(cx).value().trim().to_owned()).collect();
-            let missing = inputs.iter().zip(&values).any(|((_, optional, _), value)| !optional && value.is_empty());
+                inputs.iter().map(|(_, _, _, input)| input.read(cx).value().trim().to_owned()).collect();
+            let missing = inputs.iter().zip(&values).any(|((_, optional, _, _), value)| !optional && value.is_empty());
             if missing {
                 window.push_notification(
                     Notification::warning("Fill in the required fields.").title("Can't continue yet"),
@@ -88,7 +97,7 @@ pub fn prompt<V: 'static>(
 
     // Deferred so a dialog opened by a command chosen from the palette opens after the palette closes.
     window.defer(cx, move |window, cx| {
-        let first = inputs.first().map(|(_, _, input)| input.clone());
+        let first = inputs.first().map(|(_, _, _, input)| input.clone());
         window.open_dialog(cx, {
             let inputs = inputs.clone();
             let confirm_now = confirm_now.clone();
@@ -97,10 +106,14 @@ pub fn prompt<V: 'static>(
                 dialog
                     .title(title.clone())
                     .w_96()
-                    .child(inputs.iter().fold(Form::new(), |form, (label, _, input)| {
+                    .child(inputs.iter().fold(Form::new(), |form, (label, _, secret, input)| {
                         // The kit's medium input leaves less room than a line of text needs; a little less
                         // vertical padding keeps descenders from being clipped.
-                        form.child(Field::new().label(*label).child(Input::new(input).py_1p5()))
+                        form.child(Field::new().label(*label).child(if *secret {
+                            Input::new(input).py_1p5().mask_toggle()
+                        } else {
+                            Input::new(input).py_1p5()
+                        }))
                     }))
                     // Enter in a field confirms through the dialog; the footer gives the same two choices to
                     // the pointer. A plain dialog draws no buttons of its own.
