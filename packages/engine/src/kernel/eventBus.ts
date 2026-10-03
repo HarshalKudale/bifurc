@@ -25,6 +25,8 @@ import type {
   RunnerFinishedEvent,
   RunnerProgressEvent,
   UiActivateEvent,
+  GrpcStreamMessageEvent,
+  GrpcStreamStatusEvent,
   WsMessageEvent,
   WsStatusEvent,
 } from "@bifurc/protocol";
@@ -74,6 +76,8 @@ export interface EngineEvents {
    */
   "ws.status": WsStatusEvent;
   "ws.message": WsMessageEvent;
+  "grpc.stream.status": GrpcStreamStatusEvent;
+  "grpc.stream.message": GrpcStreamMessageEvent;
   /** The engine is stopping on purpose; `restart` says whether a successor follows. Sent before the endpoint closes. */
   "engine.stopping": EngineStoppingEvent;
   /** The engine's tray was asked to open the interface while one is connected: that one comes forward. */
@@ -107,6 +111,8 @@ export const ENGINE_EVENT_NAMES: readonly (keyof EngineEvents)[] = [
   "runner.finished",
   "ws.status",
   "ws.message",
+  "grpc.stream.status",
+  "grpc.stream.message",
   "engine.stopping",
   "ui.activate",
 ];

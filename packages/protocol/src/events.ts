@@ -222,6 +222,34 @@ export type EngineStoppingEvent = z.infer<typeof EngineStoppingEventSchema>;
 export const UiActivateEventSchema = z.object({});
 export type UiActivateEvent = z.infer<typeof UiActivateEventSchema>;
 
+/** `event.grpc.stream.message` — one message of a live gRPC call, in either direction. */
+export const GrpcStreamMessageEventSchema = z.object({
+  workspaceId: z.string(),
+  streamId: z.string(),
+  message: z.object({
+    id: z.string(),
+    ts: z.number(),
+    direction: z.enum(["sent", "received"]),
+    data: z.string(),
+  }),
+});
+export type GrpcStreamMessageEvent = z.infer<typeof GrpcStreamMessageEventSchema>;
+
+/**
+ * `event.grpc.stream.status` — a live gRPC call started or finished. `open` carries the response headers once
+ * they arrive; `closed` carries the gRPC status the call ended with.
+ */
+export const GrpcStreamStatusEventSchema = z.object({
+  workspaceId: z.string(),
+  streamId: z.string(),
+  status: z.enum(["open", "closed"]),
+  grpcStatus: z.number().optional(),
+  statusMessage: z.string().optional(),
+  error: z.string().nullable(),
+  metadata: z.record(z.string(), z.string()).optional(),
+});
+export type GrpcStreamStatusEvent = z.infer<typeof GrpcStreamStatusEventSchema>;
+
 export const EVENT_NAMES = [
   "event.sync.status",
   "event.sync.entityStatus",
@@ -238,6 +266,8 @@ export const EVENT_NAMES = [
   // a connection the engine owns and nobody can render.
   "event.ws.status",
   "event.ws.message",
+  "event.grpc.stream.status",
+  "event.grpc.stream.message",
   // The engine's own lifetime, and its tray asking a connected interface to come forward.
   "event.engine.stopping",
   "event.ui.activate",
