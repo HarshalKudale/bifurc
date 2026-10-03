@@ -1,2 +1,5 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+"dev:engine" = "run --package bifurc-engine -- --transport socket"
+"dev:cli" = "run --quiet --package bifurc-cli --"
+"dev:ui" = "run --manifest-path ui/Cargo.toml --package bifurc-ui"
