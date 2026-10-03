@@ -176,6 +176,7 @@ name = "bifurc-cli"
 version = "0.3.3"
 dependencies = [
  "base64 0.22.1",
+ "bifurc-protocol",
  "libc",
  "serde_json",
  "tempfile",
@@ -187,6 +188,7 @@ name = "bifurc-engine"
 version = "0.3.3"
 dependencies = [
  "base64 0.22.1",
+ "bifurc-protocol",
  "brotli",
  "bytes",
  "flate2",
@@ -229,6 +231,14 @@ dependencies = [
  "windows-sys 0.59.0",
  "x509-parser",
  "zip",
+]
+
+[[package]]
+name = "bifurc-protocol"
+version = "0.3.3"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

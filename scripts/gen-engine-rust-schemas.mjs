@@ -1,7 +1,7 @@
 /**
  * Write the Rust engine's command schemas from `@bifurc/protocol`'s zod schemas.
  *
- * The Rust engine validates every inbound payload against `packages/engine-rust/schemas/commands.json`
+ * The Rust engine validates every inbound payload against `packages/protocol-rust/schemas/commands.json`
  * (`src/protocol/schema.rs`), the way the Node engine's `CommandRegistry` runs the zod schema. Generating the
  * file keeps one definition of the protocol while both engines exist.
  *
@@ -35,6 +35,6 @@ for (const [name, spec] of Object.entries(protocol.COMMANDS)) {
   commands[name] = strip(z.toJSONSchema(spec.params, { io: "input", unrepresentable: "throw" }));
 }
 
-const out = join(root, "packages/engine-rust/schemas/commands.json");
+const out = join(root, "packages/protocol-rust/schemas/commands.json");
 writeFileSync(out, `${JSON.stringify({ protocolVersion: protocol.PROTOCOL_VERSION, commands }, null, 1)}\n`);
 console.log(`${Object.keys(commands).length} command schemas -> ${out}`);

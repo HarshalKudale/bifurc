@@ -1,7 +1,7 @@
 //! Payload validation against the protocol's command schemas.
 //!
-//! `schemas/commands.json` is generated from `@bifurc/protocol`'s zod schemas
-//! (`scripts/gen-engine-rust-schemas.mjs`). This validator covers the JSON Schema subset that generator
+//! `schemas/commands.json` holds one JSON Schema per command; it is currently generated from
+//! `@bifurc/protocol`'s zod schemas (`scripts/gen-engine-rust-schemas.mjs`). This validator covers the JSON Schema subset that generator
 //! emits and reproduces what a zod `parse` hands the handler: a strict object rejects unknown keys, a plain
 //! object drops them, and a union yields the first member that accepts the value.
 
@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::OnceLock};
 
 use serde_json::{Map, Value};
 
-const SCHEMAS_JSON: &str = include_str!("../../schemas/commands.json");
+const SCHEMAS_JSON: &str = include_str!("../schemas/commands.json");
 
 fn schemas() -> &'static HashMap<String, Value> {
     static SCHEMAS: OnceLock<HashMap<String, Value>> = OnceLock::new();
@@ -34,6 +34,14 @@ pub fn command_names() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = schemas().keys().map(String::as_str).collect();
     names.sort_unstable();
     names
+}
+
+/// One valid and one invalid payload per command (`schemas/fixtures.json`), keyed by command name.
+pub fn fixtures() -> &'static Map<String, Value> {
+    static FIXTURES: OnceLock<Map<String, Value>> = OnceLock::new();
+    FIXTURES.get_or_init(|| {
+        serde_json::from_str(include_str!("../schemas/fixtures.json")).expect("schemas/fixtures.json is a JSON object")
+    })
 }
 
 /// Validate `payload` for `action`, returning the payload as the handler should see it.
@@ -260,5 +268,21 @@ mod tests {
         assert!(command_names().len() > 100);
         assert!(is_known_command("engine.shutdown"));
         assert!(!is_known_command("hello"));
+    }
+
+    #[test]
+    fn every_command_has_a_fixture_and_the_fixtures_hold() {
+        let fixtures = fixtures();
+        assert_eq!(fixtures.keys().map(String::as_str).collect::<Vec<_>>(), command_names());
+        for (name, pair) in fixtures {
+            assert!(validate(name, &pair["valid"]).is_ok(), "{name}: the valid fixture is refused");
+            assert!(validate(name, &pair["invalid"]).is_err(), "{name}: the invalid fixture is accepted");
+        }
+    }
+
+    #[test]
+    fn unknown_commands_have_no_schema() {
+        assert!(!is_known_command("config.nope"));
+        assert!(validate("config.nope", &json!({})).is_err());
     }
 }

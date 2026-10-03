@@ -15,6 +15,7 @@ name = "bifurc"
 path = "src/main.rs"
 
 [dependencies]
+bifurc-protocol = { path = "../protocol-rust" }
 base64 = "0.22"
 serde_json = { version = "1", features = ["preserve_order"] }
 
