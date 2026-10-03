@@ -99,7 +99,7 @@ pub struct CommitMutation<'a> {
     pub changed_fields: &'a [String],
 }
 
-/// Stage one path and commit it with an audit message. Returns the commit's short hash, or `""` when there
+/// Stage one path and commit it with an audit message. Returns the commit's hash, or `""` when there
 /// was nothing to commit.
 pub async fn commit_mutation(opts: CommitMutation<'_>) -> Result<String, GitError> {
     let actor = opts.actor.map(str::to_string).unwrap_or_else(device_name);
@@ -119,7 +119,7 @@ pub async fn commit_mutation(opts: CommitMutation<'_>) -> Result<String, GitErro
         return Ok(String::new());
     }
     git(ws, &["commit", "-m", &message]).await?;
-    Ok(git(ws, &["rev-parse", "--short", "HEAD"]).await?.trim().to_string())
+    Ok(git(ws, &["rev-parse", "HEAD"]).await?.trim().to_string())
 }
 
 #[derive(Debug, Clone, Default)]

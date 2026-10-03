@@ -19,14 +19,24 @@
     return out;
   }
 
+  // Node runs a script in its own realm, where an error the script creates is not an instance of the host's
+  // Error and is therefore reported as String(e) ("Error: boom"). Only errors the host raises — assertions
+  // and syntax errors — are reported by their message alone.
+  var hostErrors = new WeakSet();
+  var isHostError = hostErrors.has.bind(hostErrors);
+  var markHostError = hostErrors.add.bind(hostErrors);
+
   function fmt(e) {
-    return e instanceof ErrorCtor ? e.message : StringCtor(e);
+    if (e instanceof ErrorCtor && (isHostError(e) || e.name === "SyntaxError")) return e.message;
+    return StringCtor(e);
   }
 
   function buildExpect() {
     return function expect(actual) {
       function assertionError(msg) {
-        return new ErrorCtor(msg);
+        var error = new ErrorCtor(msg);
+        markHostError(error);
+        return error;
       }
 
       var buildChain = function (negated) {
