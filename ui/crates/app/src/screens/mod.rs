@@ -11,4 +11,5 @@ pub mod proxy_rules;
 pub mod requests;
 pub mod services;
 pub mod settings;
+pub mod vaults;
 pub mod workspace;

@@ -991,6 +991,90 @@
    "extra": true
   }
  },
+ "vault.changePassphrase": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "passphrase": "x",
+   "newPassphrase": "x"
+  },
+  "invalid": {}
+ },
+ "vault.checkout": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "passphrase": "x"
+  },
+  "invalid": {}
+ },
+ "vault.create": {
+  "valid": {
+   "workspaceId": "x",
+   "name": "x",
+   "passphrase": "x"
+  },
+  "invalid": {}
+ },
+ "vault.delete": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
+ "vault.deleteSecret": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "name": "x"
+  },
+  "invalid": {}
+ },
+ "vault.list": {
+  "valid": {
+   "workspaceId": "x"
+  },
+  "invalid": {}
+ },
+ "vault.release": {
+  "valid": {
+   "leaseId": "x"
+  },
+  "invalid": {}
+ },
+ "vault.rename": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "name": "x"
+  },
+  "invalid": {}
+ },
+ "vault.seal": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
+ "vault.setSecret": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "name": "x",
+   "value": "x"
+  },
+  "invalid": {}
+ },
+ "vault.unseal": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "passphrase": "x"
+  },
+  "invalid": {}
+ },
  "workspace.add": {
   "valid": {
    "name": "WS"

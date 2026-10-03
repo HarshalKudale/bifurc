@@ -27,6 +27,7 @@ pub enum Screen {
     Requests,
     Mocks,
     Environments,
+    Vaults,
     WorkspaceConfig,
     AuditLog,
     Settings,
@@ -43,6 +44,7 @@ impl Screen {
             Screen::Requests => "Requests",
             Screen::Mocks => "Mocks",
             Screen::Environments => "Environments",
+            Screen::Vaults => "Vaults",
             Screen::WorkspaceConfig => "Config",
             Screen::AuditLog => "Audit log",
             Screen::Settings => "Settings",
@@ -59,6 +61,7 @@ impl Screen {
             Screen::Requests => IconName::Globe,
             Screen::Mocks => IconName::GalleryVerticalEnd,
             Screen::Environments => IconName::Asterisk,
+            Screen::Vaults => IconName::EyeOff,
             Screen::WorkspaceConfig => IconName::Settings2,
             Screen::AuditLog => IconName::FileText,
             Screen::Settings => IconName::Settings,
@@ -74,6 +77,7 @@ impl Screen {
             Screen::Mappings => &["mappings/"],
             Screen::ProxyRules => &["rules/"],
             Screen::Environments => &["environments/"],
+            Screen::Vaults => &["vaults/"],
             Screen::HealthBar => &["healthbar/"],
             Screen::Services | Screen::Capture | Screen::Settings | Screen::WorkspaceConfig | Screen::AuditLog => &[],
         }
@@ -89,6 +93,7 @@ impl Screen {
             Screen::Environments => config.selectable_environments().count(),
             Screen::Services
             | Screen::HealthBar
+            | Screen::Vaults
             | Screen::Capture
             | Screen::Settings
             | Screen::WorkspaceConfig
@@ -103,7 +108,7 @@ const GROUPS: [(&str, &[Screen]); 4] = [
     ("Applications", &[Screen::Services, Screen::HealthBar]),
     ("Routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture]),
     ("API", &[Screen::Requests, Screen::Mocks]),
-    ("Workspace", &[Screen::Environments, Screen::WorkspaceConfig, Screen::AuditLog]),
+    ("Workspace", &[Screen::Environments, Screen::Vaults, Screen::WorkspaceConfig, Screen::AuditLog]),
 ];
 
 impl Shell {
@@ -112,7 +117,11 @@ impl Shell {
             .icon(screen.icon())
             .active(self.screen == screen)
             .on_click(cx.listener(move |this, _, window, cx| this.show_screen(screen, window, cx)));
-        match screen.count(config) {
+        let count = match screen {
+            Screen::Vaults => Some(self.model.read(cx).vaults().len()).filter(|n| *n > 0),
+            _ => screen.count(config),
+        };
+        match count {
             Some(count) => item
                 .suffix(move |_, cx| div().text_xs().text_color(cx.theme().muted_foreground).child(count.to_string())),
             None => item,

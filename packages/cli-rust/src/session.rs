@@ -113,6 +113,12 @@ impl<S: Read + Write> Session<S> {
         }
     }
 
+    /// The next frame the engine sends on its own (an event), waiting for it; `None` when the engine closed the
+    /// connection. Use it on a session that makes no more calls: reads and writes on one pipe handle block each other.
+    pub fn read_frame(&mut self) -> Result<Option<Value>> {
+        read_frame(&mut self.stream)
+    }
+
     /// The `hello` handshake.
     pub fn hello(&mut self, client_version: &str) -> Result<Value> {
         self.call(
@@ -123,9 +129,9 @@ impl<S: Read + Write> Session<S> {
 }
 
 #[cfg(windows)]
-type Stream = std::fs::File;
+pub type Stream = std::fs::File;
 #[cfg(unix)]
-type Stream = std::os::unix::net::UnixStream;
+pub type Stream =std::os::unix::net::UnixStream;
 
 /// `ERROR_PIPE_BUSY`: the pipe server has no free instance for this client right now.
 #[cfg(windows)]
@@ -154,6 +160,13 @@ fn open_stream(address: &str) -> std::io::Result<Stream> {
 pub struct EngineConnection {
     info: RuntimeInfo,
     session: Session<Stream>,
+}
+
+impl EngineConnection {
+    /// The bare session, for a command that keeps the connection open after its calls.
+    pub fn into_session(self) -> Session<Stream> {
+        self.session
+    }
 }
 
 impl Engine for EngineConnection {

@@ -54,12 +54,16 @@ pub fn merge_env_vars(global: Option<&Value>, active: Option<&Value>) -> Option<
     Some(json!({ "id": "merged", "name": "merged", "variables": variables, "createdAt": 0, "workspaceId": "" }))
 }
 
-/// The merged environment of a workspace, read from disk.
+/// The merged environment of a workspace, read from disk. It names its workspace, which lets
+/// [`resolve_vars`] also resolve `{{vault.secret}}`; an environment without one (the proxies') never does.
 pub fn load_merged_environment(ws_id: &str) -> Option<Value> {
     let environments = read_all_entities(ws_id, "environments");
     let find = |id: &str| environments.iter().find(|e| str_of(e, "id") == id);
     let active_id = effective_environment_id(&environments, load_settings().stored_environment_id(ws_id).as_deref());
-    merge_env_vars(find(GLOBAL_ENV_ID), active_id.as_deref().and_then(find))
+    let mut merged = merge_env_vars(find(GLOBAL_ENV_ID), active_id.as_deref().and_then(find))
+        .unwrap_or_else(|| json!({ "id": "merged", "name": "merged", "variables": [], "createdAt": 0 }));
+    merged["workspaceId"] = json!(ws_id);
+    Some(merged)
 }
 
 /// Persist what a script did to its variables: `set` is written into the selected environment (the global one
@@ -114,22 +118,30 @@ pub fn env_value<'a>(env: &'a Value, key: &str) -> Option<&'a str> {
     array_of(env, "variables").iter().find(|v| str_of(v, "key") == key).and_then(|v| v.get("value")?.as_str())
 }
 
-/// Replace `{{name}}` with the environment's value (unknown names are left as written), then expand the
-/// `{{random.*}}` generators.
+/// Replace `{{name}}` with the environment's value and `{{vault.secret}}` with the vault's (unknown names, and
+/// vaults that are sealed, are left as written), then expand the `{{random.*}}` generators.
 pub fn resolve_vars(text: &str, env: Option<&Value>) -> String {
     if text.is_empty() {
         return String::new();
     }
     let Some(env) = env else { return resolve_randomizers(text) };
-    let pattern = Regex::new(r"\{\{(\w+)\}\}").expect("a valid pattern");
+    let ws_id = str_of(env, "workspaceId");
+    let pattern = Regex::new(r"\{\{(\w+)(?:\.(\w+))?\}\}").expect("a valid pattern");
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for found in pattern.find_iter(text) {
         out.push_str(&text[last..found.start()]);
         let key = found.group(1).map(|range| &text[range]).unwrap_or("");
-        match env_value(env, key) {
-            Some(value) => out.push_str(value),
-            None => out.push_str(&text[found.range()]),
+        let secret = found.group(2).map(|range| &text[range]);
+        match secret {
+            Some(secret) => match crate::vault::resolve_reference(ws_id, key, secret) {
+                Some(value) => out.push_str(&value),
+                None => out.push_str(&text[found.range()]),
+            },
+            None => match env_value(env, key) {
+                Some(value) => out.push_str(value),
+                None => out.push_str(&text[found.range()]),
+            },
         }
         last = found.end();
     }
@@ -148,7 +160,11 @@ pub fn resolve_headers(headers: &Value, env: Option<&Value>) -> Value {
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("env.resolveText", |params, _| {
-        let env = load_merged_environment(str_of(&params, "workspaceId"));
+        // A client asks what text resolves to; secrets never go back to one, so vault references stay as written.
+        let mut env = load_merged_environment(str_of(&params, "workspaceId"));
+        if let Some(env) = env.as_mut() {
+            env["workspaceId"] = json!("");
+        }
         Ok(json!({ "text": resolve_vars(str_of(&params, "text"), env.as_ref()) }))
     });
     registry.register_sync("env.getMerged", |params, _| {

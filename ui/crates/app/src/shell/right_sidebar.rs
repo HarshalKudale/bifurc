@@ -31,6 +31,7 @@ use crate::{
     model::{
         git::{FileState, HistoryEntry, date_time_utc, parse_history},
         snippet::{SnippetKind, snippet},
+        vault::VaultState,
     },
 };
 
@@ -39,9 +40,10 @@ enum Panel {
     History,
     Snippet,
     Variables,
+    Vault,
 }
 
-const PANELS: [Panel; 3] = [Panel::History, Panel::Snippet, Panel::Variables];
+const PANELS: [Panel; 4] = [Panel::History, Panel::Snippet, Panel::Variables, Panel::Vault];
 
 impl Panel {
     fn label(self) -> &'static str {
@@ -49,6 +51,7 @@ impl Panel {
             Panel::History => "History",
             Panel::Snippet => "Snippet",
             Panel::Variables => "Variables",
+            Panel::Vault => "Vault",
         }
     }
 }
@@ -334,6 +337,52 @@ impl RightSidebar {
     }
 }
 
+impl RightSidebar {
+    /// The secrets `{{vault.NAME}}` can name: every vault's secret names, never values. A sealed vault's
+    /// names are shown too, marked, because they resolve once it is unsealed.
+    fn render_vault(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let vaults = self.model.read(cx).vaults().to_vec();
+        if vaults.is_empty() {
+            return page::empty("No vaults", "Create a vault on the Vaults screen to keep secrets out of your files.");
+        }
+        v_flex()
+            .id("vault-secrets")
+            .size_full()
+            .overflow_y_scroll()
+            .p_3()
+            .gap_6()
+            .children(vaults.into_iter().map(|vault| {
+                let sealed = vault.state == VaultState::Sealed;
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(div().flex_1().min_w_0().child(page::section_label(vault.name.clone(), cx)))
+                            .child(Tag::secondary().small().child(vault.state.label())),
+                    )
+                    .children(vault.secrets.is_empty().then(|| {
+                        div().text_sm().text_color(theme.muted_foreground).child("This vault has no secrets.")
+                    }))
+                    .children(vault.secrets.iter().map(|secret| {
+                        let reference = vault.reference(secret);
+                        let copy = reference.clone();
+                        div()
+                            .id(gpui_kit::ElementId::Name(format!("vault-ref-{}-{secret}", vault.id).into()))
+                            .text_sm()
+                            .font_family(theme.mono_font_family.clone())
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .when(sealed, |this| this.text_color(theme.muted_foreground))
+                            .child(reference)
+                            .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))
+                    }))
+            }))
+            .into_any_element()
+    }
+}
+
 impl Render for RightSidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -342,6 +391,7 @@ impl Render for RightSidebar {
             Panel::History => self.render_history(cx),
             Panel::Snippet => self.render_snippet(cx),
             Panel::Variables => self.render_variables(cx),
+            Panel::Vault => self.render_vault(cx),
         };
         v_flex()
             .size_full()
