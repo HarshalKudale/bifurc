@@ -6,9 +6,11 @@
 //! The body is shown in a read-only code editor highlighted for its content type, either re-indented
 //! ("Pretty") or exactly as received ("Raw").
 
+use std::collections::HashSet;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Sizable as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -20,7 +22,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use serde_json::Value;
 
@@ -33,6 +35,7 @@ use crate::{
     model::{
         http::{BodyEncoding, HttpResponse, pretty_json, status_text},
         media::{self, BodyClass},
+        traffic::clock_utc,
     },
 };
 
@@ -56,8 +59,59 @@ enum Phase {
     Sending,
     Failed(String),
     Http(HttpResponse),
-    /// A result that is not HTTP-shaped (gRPC, SOAP), shown as the JSON the engine returned.
+    /// A result that is not HTTP-shaped (SOAP), shown as the JSON the engine returned.
     Raw,
+    Grpc(GrpcReply),
+    /// A gRPC call that is open, or was: its messages as they came, in order.
+    GrpcLive(LiveCall),
+}
+
+struct LiveEntry {
+    id: String,
+    sent: bool,
+    ts: u64,
+    data: String,
+}
+
+struct LiveCall {
+    entries: Vec<LiveEntry>,
+    running: bool,
+    code: i64,
+    message: String,
+    metadata: Vec<(String, String)>,
+}
+
+/// What a gRPC call came back with, apart from the messages (those are in the body editor).
+struct GrpcReply {
+    code: i64,
+    message: String,
+    duration_ms: u64,
+    metadata: Vec<(String, String)>,
+    messages: usize,
+}
+
+/// The canonical name of a gRPC status code, as tools print it.
+pub fn grpc_status_name(code: i64) -> &'static str {
+    match code {
+        0 => "OK",
+        1 => "CANCELLED",
+        2 => "UNKNOWN",
+        3 => "INVALID_ARGUMENT",
+        4 => "DEADLINE_EXCEEDED",
+        5 => "NOT_FOUND",
+        6 => "ALREADY_EXISTS",
+        7 => "PERMISSION_DENIED",
+        8 => "RESOURCE_EXHAUSTED",
+        9 => "FAILED_PRECONDITION",
+        10 => "ABORTED",
+        11 => "OUT_OF_RANGE",
+        12 => "UNIMPLEMENTED",
+        13 => "INTERNAL",
+        14 => "UNAVAILABLE",
+        15 => "DATA_LOSS",
+        16 => "UNAUTHENTICATED",
+        _ => "UNKNOWN",
+    }
 }
 
 pub struct Exchange {
@@ -73,6 +127,10 @@ pub struct Exchange {
     binary: Option<BinaryBody>,
     /// What saving the body to a file came to, shown beside the button until the next response.
     saved_note: Option<SharedString>,
+    live_scroll: ScrollHandle,
+    follow_tail: bool,
+    /// The live messages that are open, by id.
+    live_open: HashSet<String>,
 }
 
 impl Exchange {
@@ -92,6 +150,9 @@ impl Exchange {
             pretty_text: None,
             binary: None,
             saved_note: None,
+            live_scroll: ScrollHandle::new(),
+            follow_tail: false,
+            live_open: HashSet::new(),
         }
     }
 
@@ -158,6 +219,84 @@ impl Exchange {
         self.show_body(window, cx);
         cx.notify();
         status
+    }
+
+    /// A live gRPC call starts: the panel shows its messages as they arrive.
+    pub fn begin_live(&mut self, cx: &mut Context<Self>) {
+        self.binary = None;
+        self.section = Section::Body;
+        self.live_open.clear();
+        self.phase = Phase::GrpcLive(LiveCall {
+            entries: Vec::new(),
+            running: true,
+            code: 0,
+            message: String::new(),
+            metadata: Vec::new(),
+        });
+        cx.notify();
+    }
+
+    pub fn live_message(&mut self, payload: &Value, cx: &mut Context<Self>) {
+        let Phase::GrpcLive(live) = &mut self.phase else { return };
+        let message = &payload["message"];
+        live.entries.push(LiveEntry {
+            id: message.get("id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            sent: message.get("direction").and_then(Value::as_str) == Some("sent"),
+            ts: message.get("ts").and_then(Value::as_u64).unwrap_or(0),
+            data: message.get("data").and_then(Value::as_str).unwrap_or_default().to_owned(),
+        });
+        self.follow_tail = true;
+        cx.notify();
+    }
+
+    pub fn live_status(&mut self, payload: &Value, cx: &mut Context<Self>) {
+        let Phase::GrpcLive(live) = &mut self.phase else { return };
+        if let Some(metadata) = payload.get("metadata").and_then(Value::as_object) {
+            live.metadata = metadata
+                .iter()
+                .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_owned()))
+                .collect();
+        }
+        if payload.get("status").and_then(Value::as_str) == Some("closed") {
+            live.running = false;
+            live.code = payload.get("grpcStatus").and_then(Value::as_i64).unwrap_or(0);
+            live.message = payload.get("statusMessage").and_then(Value::as_str).unwrap_or_default().to_owned();
+        }
+        cx.notify();
+    }
+
+    /// Takes a `grpc.execute` / `grpc.send` result: the messages go in the body as one JSON document (an array
+    /// when the call streamed several), the status and metadata beside it.
+    pub fn finish_grpc(&mut self, result: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.binary = None;
+        self.saved_note = None;
+        let responses: Vec<&str> =
+            result.get("responses").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+        let text = match responses.as_slice() {
+            [] => String::new(),
+            [one] => (*one).to_owned(),
+            many => format!("[\n{}\n]", many.join(",\n")),
+        };
+        let metadata = result
+            .get("metadata")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_owned()))
+            .collect();
+        self.phase = Phase::Grpc(GrpcReply {
+            code: result.get("status").and_then(Value::as_i64).unwrap_or(0),
+            message: result.get("statusMessage").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            duration_ms: result.get("durationMs").and_then(Value::as_u64).unwrap_or(0),
+            metadata,
+            messages: responses.len(),
+        });
+        self.raw_text = text;
+        self.pretty_text = None;
+        self.section = Section::Body;
+        self.body.update(cx, |state, cx| state.set_highlighter(Syntax::Json.language(), cx));
+        self.show_body(window, cx);
+        cx.notify();
     }
 
     fn show_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -371,6 +510,228 @@ impl Exchange {
     }
 }
 
+impl Exchange {
+    /// One message of a live call: a line that opens to the whole message.
+    fn render_live_row(&self, entry: &LiveEntry, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let open = self.live_open.contains(&entry.id);
+        let compact = serde_json::from_str::<Value>(&entry.data)
+            .ok()
+            .and_then(|value| serde_json::to_string(&value).ok())
+            .unwrap_or_else(|| entry.data.split_whitespace().collect::<Vec<_>>().join(" "));
+        let chevron = Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
+            .small()
+            .text_color(theme.muted_foreground);
+        let direction = Icon::new(if entry.sent { IconName::ArrowRight } else { IconName::ArrowLeft })
+            .small()
+            .text_color(theme.muted_foreground);
+        let id = entry.id.clone();
+        let row = h_flex()
+            .id(gpui_kit::ElementId::Name(format!("live-row-{}", entry.id).into()))
+            .w_full()
+            .gap_3()
+            .px_3()
+            .py_2()
+            .items_center()
+            .text_sm()
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.muted))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.live_open.remove(&id) {
+                    this.live_open.insert(id.clone());
+                }
+                cx.notify();
+            }))
+            .child(div().size_4().flex_none().child(chevron))
+            .child(div().size_4().flex_none().child(direction))
+            .child(div().w_20().flex_none().child(if entry.sent {
+                Tag::secondary().small().outline().child("Sent")
+            } else {
+                Tag::secondary().small().child("Received")
+            }))
+            .child(div().w_20().flex_none().text_xs().text_color(theme.muted_foreground).child(clock_utc(entry.ts)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_color(theme.muted_foreground)
+                    .child(compact),
+            );
+        let mut block = v_flex().w_full().border_b_1().border_color(theme.border).child(row);
+        if open {
+            block = block.child(
+                div().px_4().pb_3().child(
+                    div()
+                        .w_full()
+                        .p_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.muted)
+                        .text_xs()
+                        .font_family(theme.mono_font_family.clone())
+                        .child(entry.data.clone()),
+                ),
+            );
+        }
+        block.into_any_element()
+    }
+
+    fn render_live(&mut self, live: &LiveCall, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        if self.follow_tail {
+            self.follow_tail = false;
+            self.live_scroll.scroll_to_bottom();
+        }
+        let received = live.entries.iter().filter(|e| !e.sent).count();
+        let sent = live.entries.len() - received;
+        let ok = live.code == 0;
+        let selected = if self.section == Section::Headers { 1 } else { 0 };
+        let tag = if live.running {
+            Tag::warning().child("Open")
+        } else if ok {
+            Tag::success().child("OK")
+        } else {
+            Tag::danger().child(grpc_status_name(live.code))
+        };
+        let content = match self.section {
+            Section::Headers if live.metadata.is_empty() => {
+                page::empty("No metadata", "The server has sent no headers or trailers yet.")
+            }
+            Section::Headers => v_flex()
+                .id("grpc-live-metadata")
+                .overflow_y_scroll()
+                .size_full()
+                .p_3()
+                .gap_2()
+                .children(live.metadata.iter().map(|(name, value)| {
+                    h_flex()
+                        .gap_3()
+                        .items_start()
+                        .text_sm()
+                        .child(div().w_48().flex_none().text_color(theme.muted_foreground).child(name.clone()))
+                        .child(div().flex_1().min_w_0().child(value.clone()))
+                }))
+                .into_any_element(),
+            _ if live.entries.is_empty() => {
+                page::empty(if live.running { "Waiting for messages" } else { "No messages" }, "Messages appear here as they are sent and received.")
+            }
+            _ => v_flex()
+                .id("grpc-live-log")
+                .track_scroll(&self.live_scroll)
+                .overflow_y_scroll()
+                .size_full()
+                .children(live.entries.iter().map(|entry| self.render_live_row(entry, cx)))
+                .into_any_element(),
+        };
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_3()
+                    .pt_2()
+                    .gap_3()
+                    .child(tag)
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{received} received · {sent} sent")))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child("times in UTC")),
+            )
+            .when(!live.running && !ok && !live.message.is_empty(), |this| {
+                this.child(div().px_3().pt_2().child(
+                    Alert::error("grpc-live-status", SharedString::from(live.message.clone())).title("The call failed"),
+                ))
+            })
+            .child(
+                div().flex_none().px_3().child(
+                    TabBar::new("grpc-live-sections")
+                        .underline()
+                        .small()
+                        .selected_index(selected)
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                            this.section = if *ix == 1 { Section::Headers } else { Section::Body };
+                            cx.notify();
+                        }))
+                        .child(Tab::new().label("Messages"))
+                        .child(Tab::new().label(format!("Metadata ({})", live.metadata.len()))),
+                ),
+            )
+            .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+
+    fn render_grpc(&self, reply: &GrpcReply, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let ok = reply.code == 0;
+        let selected = if self.section == Section::Headers { 1 } else { 0 };
+        let content = match self.section {
+            Section::Headers if reply.metadata.is_empty() => {
+                page::empty("No metadata", "The server sent no headers or trailers with this response.")
+            }
+            Section::Headers => v_flex()
+                .id("grpc-metadata")
+                .overflow_y_scroll()
+                .size_full()
+                .p_3()
+                .gap_2()
+                .children(reply.metadata.iter().map(|(name, value)| {
+                    h_flex()
+                        .gap_3()
+                        .items_start()
+                        .text_sm()
+                        .child(div().w_48().flex_none().text_color(theme.muted_foreground).child(name.clone()))
+                        .child(div().flex_1().min_w_0().child(value.clone()))
+                }))
+                .into_any_element(),
+            _ if reply.messages == 0 => page::empty(
+                if ok { "No messages" } else { "No response" },
+                if ok { "The call finished without a message." } else { "The call failed before a message arrived." },
+            ),
+            _ => self.render_body(cx),
+        };
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_3()
+                    .pt_2()
+                    .gap_3()
+                    .child(if ok { Tag::success() } else { Tag::danger() }.child(grpc_status_name(reply.code)))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{} ms", reply.duration_ms)))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(match reply.messages {
+                        1 => "1 message".to_owned(),
+                        n => format!("{n} messages"),
+                    })),
+            )
+            .when(!ok && !reply.message.is_empty(), |this| {
+                this.child(div().px_3().pt_2().child(
+                    Alert::error("grpc-status", SharedString::from(reply.message.clone())).title("The call failed"),
+                ))
+            })
+            .child(
+                div().flex_none().px_3().child(
+                    TabBar::new("grpc-sections")
+                        .underline()
+                        .small()
+                        .selected_index(selected)
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                            this.section = if *ix == 1 { Section::Headers } else { Section::Body };
+                            cx.notify();
+                        }))
+                        .child(Tab::new().label("Body"))
+                        .child(Tab::new().label(format!("Metadata ({})", reply.metadata.len()))),
+                ),
+            )
+            .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+}
+
 impl Render for Exchange {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.phase {
@@ -391,6 +752,18 @@ impl Render for Exchange {
                 element
             }
             Phase::Raw => self.render_body(cx),
+            Phase::GrpcLive(_) => {
+                let Phase::GrpcLive(live) = std::mem::replace(&mut self.phase, Phase::Idle) else { unreachable!() };
+                let element = self.render_live(&live, cx);
+                self.phase = Phase::GrpcLive(live);
+                element
+            }
+            Phase::Grpc(_) => {
+                let Phase::Grpc(reply) = std::mem::replace(&mut self.phase, Phase::Idle) else { unreachable!() };
+                let element = self.render_grpc(&reply, cx);
+                self.phase = Phase::Grpc(reply);
+                element
+            }
         };
         div().size_full().bg(cx.theme().background).child(body)
     }

@@ -23,11 +23,6 @@ use crate::{
 };
 
 const RUNTIME_FILE: &str = "runtime.json";
-const ENGINE_ENTRY_RELATIVE: &str = "packages/engine/dist/runtime/hostCli.js";
-/// Where an installed app keeps the engine and the Node it runs on, relative to the app's executable
-/// (`scripts/package-desktop.mjs` lays this out).
-const PACKAGED_ENGINE_ENTRY: &str = "resources/node_modules/@bifurc/engine/dist/runtime/hostCli.js";
-const PACKAGED_NODE_DIR: &str = "runtime";
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const RESTART_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -73,55 +68,39 @@ pub fn read_runtime_info(data_dir: &Path) -> Option<RuntimeInfo> {
     serde_json::from_str(&text).ok()
 }
 
-/// Where the engine's entry script is, searched in the order a developer and then a package would need.
-pub fn locate_engine_entry() -> Option<PathBuf> {
-    if let Some(explicit) = env::var_os("BIFURC_ENGINE_ENTRY").filter(|v| !v.is_empty()) {
+/// The native engine (`bifurc-engine`), which is the engine the UI starts: `BIFURC_ENGINE` if set, then the one
+/// an installed app ships beside its executable, then the newest build in a `target/{release,debug}` above the
+/// executable or the working directory (a checkout).
+pub fn locate_engine_binary() -> Option<PathBuf> {
+    if let Some(explicit) = env::var_os("BIFURC_ENGINE").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(explicit));
     }
-    let mut starts: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = env::current_exe()
-        && let Some(dir) = exe.parent()
+    let name = format!("bifurc-engine{}", env::consts::EXE_SUFFIX);
+    let exe = env::current_exe().ok();
+    if let Some(packaged) = exe.as_deref().and_then(Path::parent).map(|dir| dir.join(&name))
+        && packaged.is_file()
     {
-        let packaged = dir.join(PACKAGED_ENGINE_ENTRY);
-        if packaged.is_file() {
-            return Some(packaged);
-        }
-        starts.push(dir.to_path_buf());
+        return Some(packaged);
     }
-    if let Ok(cwd) = env::current_dir() {
-        starts.push(cwd);
-    }
-    starts
-        .iter()
-        .flat_map(|start| start.ancestors())
-        .map(|dir| dir.join(ENGINE_ENTRY_RELATIVE))
-        .find(|candidate| candidate.is_file())
-}
-
-/// The `node` to run the engine with: `BIFURC_NODE` if set, then the one an installed app ships beside its
-/// executable, otherwise whatever `node` resolves to on `PATH`.
-pub fn locate_node() -> PathBuf {
-    if let Some(explicit) = env::var_os("BIFURC_NODE").filter(|v| !v.is_empty()) {
-        return PathBuf::from(explicit);
-    }
-    if let Ok(exe) = env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let packaged = dir.join(PACKAGED_NODE_DIR).join(format!("node{}", env::consts::EXE_SUFFIX));
-        if packaged.is_file() {
-            return packaged;
+    let starts: Vec<PathBuf> = exe.iter().filter_map(|e| e.parent()).map(Path::to_path_buf).chain(env::current_dir().ok()).collect();
+    for dir in starts.iter().flat_map(|start| start.ancestors()) {
+        let newest = ["release", "debug"]
+            .iter()
+            .map(|profile| dir.join("target").join(profile).join(&name))
+            .filter_map(|candidate| Some((fs::metadata(&candidate).ok()?.modified().ok()?, candidate)))
+            .max_by_key(|(modified, _)| *modified);
+        if let Some((_, candidate)) = newest {
+            return Some(candidate);
         }
     }
-    PathBuf::from("node")
+    None
 }
 
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     pub data_dir: PathBuf,
-    /// The `node` executable, from [`locate_node`].
-    pub node: PathBuf,
-    /// `None` searches with [`locate_engine_entry`].
-    pub engine_entry: Option<PathBuf>,
+    /// The engine executable, from [`locate_engine_binary`].
+    pub engine_binary: Option<PathBuf>,
     /// The engine's tray helper (`bifurc-tray`), handed to an engine this process starts. `None` leaves the
     /// engine to find one itself.
     pub tray: Option<PathBuf>,
@@ -133,8 +112,7 @@ impl Default for SidecarConfig {
     fn default() -> Self {
         Self {
             data_dir: default_data_dir(),
-            node: locate_node(),
-            engine_entry: None,
+            engine_binary: locate_engine_binary(),
             tray: None,
             ui: None,
         }
@@ -190,23 +168,19 @@ pub fn reconnect(data_dir: &Path, old_pid: u32, client_version: &str) -> Result<
 }
 
 fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, Hello, Sidecar)> {
-    let entry = match &config.engine_entry {
-        Some(entry) => entry.clone(),
-        None => locate_engine_entry().ok_or_else(|| {
-            ClientError::Protocol(format!(
-                "could not find the engine (looked for {ENGINE_ENTRY_RELATIVE} above the executable and the working directory). \
-                 Build it with `npm run build:packages`, or set BIFURC_ENGINE_ENTRY to its hostCli.js."
-            ))
-        })?,
+    let Some(binary) = &config.engine_binary else {
+        return Err(ClientError::Protocol(
+            "could not find the engine: no bifurc-engine beside the executable or in a target/ above it.              Build it with `cargo build -p bifurc-engine` at the repository root, or set BIFURC_ENGINE to its path."
+                .into(),
+        ));
     };
+    let mut command = Command::new(binary);
 
     fs::create_dir_all(&config.data_dir)?;
     let log_path = config.data_dir.join("engine.log");
     let log = fs::OpenOptions::new().create(true).append(true).open(&log_path)?;
 
-    let mut command = Command::new(&config.node);
     command
-        .arg(&entry)
         .arg("--data-dir")
         .arg(&config.data_dir)
         .arg("--transport")
@@ -221,12 +195,9 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
         command.arg("--ui").arg(ui);
     }
     detach(&mut command);
-    let mut child = command.spawn().map_err(|e| {
-        ClientError::Protocol(format!(
-            "could not start `{}` for the engine: {e}. Install Node.js, or set BIFURC_NODE to the executable.",
-            config.node.display()
-        ))
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| ClientError::Protocol(format!("could not start the engine `{}`: {e}.", binary.display())))?;
 
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
@@ -307,19 +278,12 @@ mod tests {
         assert!(read_runtime_info(dir.path()).is_none());
     }
 
+
     #[test]
     fn an_engine_that_cannot_be_found_says_how_to_point_at_one() {
         let dir = tempfile::tempdir().unwrap();
-        let config = SidecarConfig {
-            data_dir: dir.path().to_path_buf(),
-            node: PathBuf::from("node"),
-            engine_entry: Some(dir.path().join("missing").join("hostCli.js")),
-            tray: None,
-            ui: None,
-        };
-        // `node` may not exist on the machine running the tests; either way the failure names the cause.
-        let err = start(&config, "test").err().expect("no engine at that path");
-        let text = err.to_string();
-        assert!(text.contains("engine") && text.contains("exited") || text.contains("BIFURC_NODE"), "{text}");
+        let config = SidecarConfig { data_dir: dir.path().to_path_buf(), engine_binary: None, tray: None, ui: None };
+        let text = start(&config, "test").err().expect("no engine to start").to_string();
+        assert!(text.contains("BIFURC_ENGINE"), "{text}");
     }
 }

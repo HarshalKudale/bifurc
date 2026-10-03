@@ -1,0 +1,1078 @@
+{
+ "application.checkPort": {
+  "valid": {
+   "port": 3000
+  },
+  "invalid": {
+   "port": "3000"
+  }
+ },
+ "application.delete": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "a1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "application.getAllStates": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "application.getLogs": {
+  "valid": {
+   "appId": "a1"
+  },
+  "invalid": {}
+ },
+ "application.getState": {
+  "valid": {
+   "appId": "a1"
+  },
+  "invalid": {}
+ },
+ "application.killPort": {
+  "valid": {
+   "port": 3000
+  },
+  "invalid": {
+   "port": "3000"
+  }
+ },
+ "application.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "application.save": {
+  "valid": {
+   "application": {
+    "name": "a"
+   }
+  },
+  "invalid": {}
+ },
+ "application.start": {
+  "valid": {
+   "workspaceId": "ws1",
+   "appId": "a1",
+   "mode": "run"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "appId": "a1",
+   "mode": "bogus"
+  }
+ },
+ "application.stop": {
+  "valid": {
+   "appId": "a1"
+  },
+  "invalid": {}
+ },
+ "audit.diff": {
+  "valid": {
+   "commitHash": "c1",
+   "entity": "mock",
+   "entityId": "m1",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "commitHash": "c1"
+  }
+ },
+ "audit.export": {
+  "valid": {
+   "format": "json",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "format": "xml"
+  }
+ },
+ "audit.list": {
+  "valid": {},
+  "invalid": {
+   "limit": "10"
+  }
+ },
+ "blob.put": {
+  "valid": {
+   "filename": "export.json",
+   "mimeType": "application/json",
+   "size": 2,
+   "data": "e30=",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "mimeType": "application/json",
+   "size": 2,
+   "data": "e30="
+  }
+ },
+ "blob.read": {
+  "valid": {
+   "blobId": "b1",
+   "offset": 0,
+   "length": 1024,
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "blobId": "b1",
+   "offset": -1,
+   "workspaceId": "ws1"
+  }
+ },
+ "blob.release": {
+  "valid": {
+   "blobId": "b1",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "blob.stat": {
+  "valid": {
+   "blobId": "b1",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "capture.buildMock": {
+  "valid": {
+   "entry": {
+    "id": "log-1",
+    "method": "GET",
+    "url": "http://x"
+   }
+  },
+  "invalid": {
+   "entryId": "log-1"
+  }
+ },
+ "capture.buildRequest": {
+  "valid": {
+   "entry": {
+    "id": "log-1",
+    "method": "GET",
+    "url": "http://x"
+   }
+  },
+  "invalid": {
+   "entryId": "log-1"
+  }
+ },
+ "capture.clear": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "capture.get": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "log-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "capture.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "capture.remove": {
+  "valid": {
+   "workspaceId": "ws1",
+   "ids": [
+    "log-1"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "ids": []
+  }
+ },
+ "capture.setDisableCache": {
+  "valid": {
+   "disableCache": true
+  },
+  "invalid": {}
+ },
+ "capture.setPaused": {
+  "valid": {
+   "workspaceId": "ws1",
+   "paused": true
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "capture.shareJson": {
+  "valid": {
+   "entries": [],
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "config.get": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "config.save": {
+  "valid": {
+   "config": {
+    "port": 80
+   }
+  },
+  "invalid": {}
+ },
+ "engine.shutdown": {
+  "valid": {},
+  "invalid": {
+   "now": true
+  }
+ },
+ "entity.create": {
+  "valid": {
+   "kind": "mocks",
+   "entity": {
+    "name": "x"
+   }
+  },
+  "invalid": {
+   "kind": "not-a-kind",
+   "entity": {}
+  }
+ },
+ "entity.delete": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks"
+  }
+ },
+ "entity.duplicate": {
+  "valid": {
+   "workspaceId": "ws1",
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks",
+   "id": "m1"
+  }
+ },
+ "entity.list": {
+  "valid": {
+   "workspaceId": "ws1",
+   "kind": "mocks"
+  },
+  "invalid": {
+   "kind": "mocks"
+  }
+ },
+ "entity.load": {
+  "valid": {
+   "workspaceId": "ws1",
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks",
+   "id": "m1"
+  }
+ },
+ "entity.publish": {
+  "valid": {
+   "workspaceId": "ws1",
+   "paths": [
+    "a"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "entity.restore": {
+  "valid": {
+   "workspaceId": "ws1",
+   "relPath": "a/b"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "entity.setEnabled": {
+  "valid": {
+   "workspaceId": "ws1",
+   "kind": "mocks",
+   "id": "m1",
+   "enabled": true
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "kind": "not-a-kind",
+   "id": "m1",
+   "enabled": true
+  }
+ },
+ "entity.update": {
+  "valid": {
+   "kind": "mocks",
+   "entity": {
+    "id": "m1"
+   }
+  },
+  "invalid": {
+   "kind": "mocks"
+  }
+ },
+ "env.getMerged": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "env.resolveText": {
+  "valid": {
+   "workspaceId": "ws1",
+   "text": "{{host}}/health"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "value": "{{host}}/health"
+  }
+ },
+ "env.setActive": {
+  "valid": {
+   "id": null
+  },
+  "invalid": {}
+ },
+ "export.create": {
+  "valid": {
+   "kind": "mocks",
+   "format": "json",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "kind": "mocks",
+   "format": "json"
+  }
+ },
+ "export.formats": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "folder.add": {
+  "valid": {
+   "kind": "mock",
+   "name": "F",
+   "parentId": null
+  },
+  "invalid": {
+   "kind": "not-a-kind",
+   "name": "F",
+   "parentId": null
+  }
+ },
+ "folder.delete": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1"
+  },
+  "invalid": {
+   "kind": "mock"
+  }
+ },
+ "folder.move": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1",
+   "parentId": null
+  },
+  "invalid": {
+   "kind": "mock",
+   "id": "f1"
+  }
+ },
+ "folder.publish": {
+  "valid": {
+   "workspaceId": "ws1",
+   "kind": "mock",
+   "folderName": null
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "kind": "mock"
+  }
+ },
+ "folder.rename": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1",
+   "name": "F2"
+  },
+  "invalid": {
+   "kind": "mock",
+   "id": "f1"
+  }
+ },
+ "git.diff": {
+  "valid": {
+   "workspaceId": "ws1",
+   "relPath": "a/b"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "git.discard": {
+  "valid": {
+   "workspaceId": "ws1",
+   "relPath": "a/b"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "git.history": {
+  "valid": {
+   "workspaceId": "ws1",
+   "relPath": "a/b"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "git.sync": {
+  "valid": {
+   "workspaceId": "ws1",
+   "paths": [
+    "a"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "graphql.execute": {
+  "valid": {
+   "url": "http://x",
+   "headers": {},
+   "query": "{}",
+   "variables": "{}",
+   "operationName": ""
+  },
+  "invalid": {
+   "url": "http://x"
+  }
+ },
+ "graphql.introspect": {
+  "valid": {
+   "url": "http://x",
+   "headers": {}
+  },
+  "invalid": {
+   "url": "http://x"
+  }
+ },
+ "graphql.send": {
+  "valid": {
+   "workspaceId": "ws1",
+   "request": {
+    "endpointUrl": "http://example.test/graphql",
+    "headers": {},
+    "query": "query { __typename }",
+    "variables": "",
+    "operationName": ""
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "id": "gql-1",
+   "request": {
+    "endpointUrl": "http://example.test/graphql",
+    "headers": {},
+    "query": "query { __typename }",
+    "variables": "",
+    "operationName": ""
+   }
+  }
+ },
+ "grpc.execute": {
+  "valid": {
+   "serverAddress": "a",
+   "serviceName": "s",
+   "methodName": "m",
+   "requestBody": "{}",
+   "metadata": {},
+   "protoFileId": null,
+   "useReflection": false
+  },
+  "invalid": {
+   "serverAddress": "a"
+  }
+ },
+ "grpc.reflect": {
+  "valid": {
+   "serverAddress": "a"
+  },
+  "invalid": {}
+ },
+ "grpc.send": {
+  "valid": {
+   "workspaceId": "ws1",
+   "request": {
+    "serverAddress": "127.0.0.1:50051",
+    "serviceName": "Greeter",
+    "methodName": "SayHello",
+    "requestBody": "{}",
+    "metadata": {},
+    "protoFileId": null,
+    "useReflection": false
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "id": "grpc-1",
+   "request": {
+    "serverAddress": "127.0.0.1:50051",
+    "serviceName": "Greeter",
+    "methodName": "SayHello",
+    "requestBody": "{}",
+    "metadata": {},
+    "protoFileId": null,
+    "useReflection": false
+   }
+  }
+ },
+ "grpc.stream.cancel": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "grpc.stream.end": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "grpc.stream.open": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "id": "grpc-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "grpc.stream.send": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "data": "{}"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "data": 1
+  }
+ },
+ "healthbar.checkUrl": {
+  "valid": {
+   "url": "http://x"
+  },
+  "invalid": {}
+ },
+ "healthbar.getServices": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "healthbar.saveServices": {
+  "valid": {
+   "workspaceId": "ws1",
+   "services": []
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "history.diff": {
+  "valid": {
+   "commitHash": "c1",
+   "filePath": "a/b",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "commitHash": "c1"
+  }
+ },
+ "history.list": {
+  "valid": {
+   "filePath": "a/b"
+  },
+  "invalid": {}
+ },
+ "import.commit": {
+  "valid": {
+   "kind": "mocks",
+   "format": "json",
+   "workspaceId": "ws1",
+   "blobId": "blob_test"
+  },
+  "invalid": {
+   "kind": "mocks",
+   "workspaceId": "ws1",
+   "blobId": "blob_test"
+  }
+ },
+ "import.preflight": {
+  "valid": {
+   "kind": "mocks",
+   "format": "json",
+   "workspaceId": "ws1",
+   "blobId": "blob_test"
+  },
+  "invalid": {
+   "format": "json",
+   "workspaceId": "ws1",
+   "blobId": "blob_test"
+  }
+ },
+ "proxy.status": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 42
+  }
+ },
+ "request.parseCurl": {
+  "valid": {
+   "curl": "curl http://x"
+  },
+  "invalid": {
+   "curlCommand": "curl http://x"
+  }
+ },
+ "request.replay": {
+  "valid": {
+   "method": "GET",
+   "url": "http://x",
+   "headers": {},
+   "body": ""
+  },
+  "invalid": {
+   "method": "GET",
+   "url": "http://x"
+  }
+ },
+ "request.send": {
+  "valid": {
+   "workspaceId": "ws1",
+   "request": {
+    "method": "GET",
+    "url": "http://example.test/",
+    "headers": {},
+    "body": ""
+   },
+   "scripts": {}
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "id": "req-1",
+   "scripts": {}
+  }
+ },
+ "runner.cancel": {
+  "valid": {
+   "workspaceId": "ws1",
+   "folderId": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "runner.exportReport": {
+  "valid": {
+   "report": {
+    "folderId": "f1",
+    "startedAt": 1
+   },
+   "format": "html",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "report": {
+    "folderId": "f1",
+    "startedAt": 1
+   },
+   "format": "pdf"
+  }
+ },
+ "runner.getHistory": {
+  "valid": {
+   "workspaceId": "ws1",
+   "folderId": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "runner.listFolderIds": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "runner.loadConfig": {
+  "valid": {
+   "workspaceId": "ws1",
+   "folderId": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "runner.saveConfig": {
+  "valid": {
+   "workspaceId": "ws1",
+   "folderId": "f1",
+   "config": {
+    "requestOrder": [],
+    "delayMs": 0
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "folderId": "f1",
+   "config": 42
+  }
+ },
+ "runner.saveReport": {
+  "valid": {
+   "workspaceId": "ws1",
+   "report": {
+    "folderId": "f1",
+    "startedAt": 1
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "report": {}
+  }
+ },
+ "runner.start": {
+  "valid": {
+   "workspaceId": "ws1",
+   "folderId": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "runner.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "folderId": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "script.execute": {
+  "valid": {
+   "script": "1+1",
+   "context": "pre",
+   "envVars": {}
+  },
+  "invalid": {
+   "script": "1+1",
+   "context": "bogus",
+   "envVars": {}
+  }
+ },
+ "server.restart": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 42
+  }
+ },
+ "server.start": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 42
+  }
+ },
+ "server.status": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 42
+  }
+ },
+ "server.stop": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 42
+  }
+ },
+ "services.discover": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "settings.update": {
+  "valid": {
+   "forwardProxyPort": 8081,
+   "minimizeToTray": true
+  },
+  "invalid": {
+   "port": 70000
+  }
+ },
+ "soap.execute": {
+  "valid": {
+   "endpointUrl": "http://x",
+   "soapAction": "a",
+   "headers": {},
+   "body": "<xml/>"
+  },
+  "invalid": {
+   "endpointUrl": "http://x"
+  }
+ },
+ "soap.fetchWsdl": {
+  "valid": {
+   "url": "http://x"
+  },
+  "invalid": {}
+ },
+ "soap.send": {
+  "valid": {
+   "workspaceId": "ws1",
+   "request": {
+    "endpointUrl": "http://example.test/ws",
+    "soapAction": "urn:Ping",
+    "headers": {},
+    "body": "<ping/>"
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "id": "soap-1",
+   "request": {
+    "endpointUrl": "http://example.test/ws",
+    "soapAction": "urn:Ping",
+    "headers": {},
+    "body": "<ping/>"
+   }
+  }
+ },
+ "sync.disconnect": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sync.getEntityStatus": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sync.getState": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sync.pull": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sync.push": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sync.setAutoSync": {
+  "valid": {
+   "workspaceId": "ws1",
+   "enabled": true
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "enabled": "yes"
+  }
+ },
+ "sync.setRemote": {
+  "valid": {
+   "workspaceId": "ws1",
+   "remote": "r",
+   "branch": "main"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "remote": "r"
+  }
+ },
+ "tls.certStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "tls.exportCert": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "tls.generate": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "tls.importCert": {
+  "valid": {
+   "blobId": "blob_test"
+  },
+  "invalid": {}
+ },
+ "tls.importKey": {
+  "valid": {
+   "blobId": "blob_test"
+  },
+  "invalid": {}
+ },
+ "tls.removeCert": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "workspace.add": {
+  "valid": {
+   "name": "WS"
+  },
+  "invalid": {}
+ },
+ "workspace.delete": {
+  "valid": {
+   "id": "w1"
+  },
+  "invalid": {}
+ },
+ "workspace.rename": {
+  "valid": {
+   "id": "w1",
+   "name": "New"
+  },
+  "invalid": {
+   "id": "w1"
+  }
+ },
+ "workspace.setActive": {
+  "valid": {
+   "id": "w1"
+  },
+  "invalid": {}
+ },
+ "ws.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "ws.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1",
+   "url": "wss://example.test/socket"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1",
+   "url": 5
+  }
+ },
+ "ws.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "ws.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "ws.send": {
+  "valid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1",
+   "data": "ping"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1",
+   "data": 1
+  }
+ },
+ "ws.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "socketId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ }
+}
