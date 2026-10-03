@@ -11,15 +11,18 @@
 //! is made. The request's name is edited in the window's breadcrumb, which shows this session's name field.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
+    combobox::{Combobox, ComboboxEvent, ComboboxState},
     h_flex,
+    searchable_list::SearchableListItem,
     input::{Editor, InputEvent, InputState},
     notification::Notification,
     tab::{Tab, TabBar},
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Subscription, Window, div,
@@ -123,6 +126,136 @@ fn defaults_of(kind: RequestKind) -> Map<String, Value> {
     value.as_object().cloned().unwrap_or_default()
 }
 
+/// A method of a service the server reported.
+#[derive(Clone)]
+struct MethodInfo {
+    name: String,
+    client_streaming: bool,
+    server_streaming: bool,
+}
+
+impl MethodInfo {
+    /// The value of the request's `streamingType` field.
+    fn streaming_type(&self) -> &'static str {
+        match (self.client_streaming, self.server_streaming) {
+            (false, false) => "unary",
+            (false, true) => "server",
+            (true, false) => "client",
+            (true, true) => "bidi",
+        }
+    }
+
+    fn kind_label(&self) -> &'static str {
+        match self.streaming_type() {
+            "unary" => "Unary",
+            "server" => "Server streaming",
+            "client" => "Client streaming",
+            _ => "Bidirectional streaming",
+        }
+    }
+}
+
+/// How a method moves messages, drawn as arrows: one arrow in each direction for a single message, two for
+/// a stream. Right is what the client sends, left is what the server answers.
+fn kind_arrows(client_streaming: bool, server_streaming: bool, color: gpui_kit::Hsla) -> gpui_kit::AnyElement {
+    let group = |icon: IconName, count: usize| {
+        h_flex().gap_0p5().children((0..count).map(move |_| Icon::new(icon.clone()).small().text_color(color)))
+    };
+    h_flex()
+        .flex_none()
+        .gap_2()
+        .items_center()
+        .child(group(IconName::ArrowRight, if client_streaming { 2 } else { 1 }))
+        .child(group(IconName::ArrowLeft, if server_streaming { 2 } else { 1 }))
+        .into_any_element()
+}
+
+/// A method in the method list: its name and arrows for how it streams.
+#[derive(Clone)]
+struct MethodItem {
+    name: String,
+    client_streaming: bool,
+    server_streaming: bool,
+}
+
+impl SearchableListItem for MethodItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.name.clone().into()
+    }
+
+    fn value(&self) -> &String {
+        &self.name
+    }
+
+    fn display_title(&self) -> Option<gpui_kit::AnyElement> {
+        None
+    }
+
+    fn render(&self, _: &mut Window, cx: &mut gpui_kit::App) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        h_flex()
+            .w_full()
+            .gap_3()
+            .justify_between()
+            .child(div().min_w_0().child(self.name.clone()))
+            .child(kind_arrows(self.client_streaming, self.server_streaming, muted))
+    }
+}
+
+#[derive(Clone)]
+struct ServiceInfo {
+    name: String,
+    methods: Vec<MethodInfo>,
+}
+
+enum Reflection {
+    /// There is no address to ask.
+    Idle,
+    Loading,
+    Ready,
+    /// The server could not be asked, or does not answer reflection. The names are typed instead.
+    Failed(String),
+}
+
+/// What a gRPC request knows about the server it points at: the services and methods the server reports
+/// through reflection, offered in two searchable lists.
+struct GrpcPicker {
+    services: Vec<ServiceInfo>,
+    state: Reflection,
+    /// The address the schema is, or is being, read for.
+    address: String,
+    /// Which read is current; the answer to an older one is dropped.
+    generation: u64,
+    wait: Autosave,
+    service_box: Entity<ComboboxState<Vec<String>>>,
+    method_box: Entity<ComboboxState<Vec<MethodItem>>>,
+}
+
+fn parse_services(result: &Value) -> Vec<ServiceInfo> {
+    result
+        .get("services")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|service| ServiceInfo {
+            name: service.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            methods: service
+                .get("methods")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(|method| MethodInfo {
+                    name: method.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    client_streaming: method.get("clientStreaming").and_then(Value::as_bool).unwrap_or(false),
+                    server_streaming: method.get("serverStreaming").and_then(Value::as_bool).unwrap_or(false),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 enum Control {
     Text(VarEditor),
     Pairs(Entity<KeyValueTable>),
@@ -150,6 +283,12 @@ pub struct ProtocolSession {
     section: usize,
     baseline: (String, Vec<FieldValue>),
     exchange: Entity<Exchange>,
+    /// Only a gRPC request has one.
+    grpc: Option<GrpcPicker>,
+    /// What the engine knows this tab's live call as.
+    stream_id: String,
+    /// A live call is open (or opening) for this request.
+    live: bool,
     sending: bool,
     saving: bool,
     /// Set when Send was asked for with unsaved edits: the save that follows sends when it lands.
@@ -182,10 +321,21 @@ impl ProtocolSession {
                 InputEvent::Focus => {}
             })];
         subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
-            if let ModelEvent::EntityReverted(id) = event
-                && this.saved_id.as_deref() == Some(id.as_str())
-            {
-                this.reload(window, cx);
+            match event {
+                ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
+                    this.reload(window, cx);
+                }
+                ModelEvent::GrpcMessage(payload) if this.is_my_stream(payload) => {
+                    this.exchange.update(cx, |exchange, cx| exchange.live_message(payload, cx));
+                }
+                ModelEvent::GrpcStatus(payload) if this.is_my_stream(payload) => {
+                    if payload.get("status").and_then(Value::as_str) == Some("closed") {
+                        this.live = false;
+                    }
+                    this.exchange.update(cx, |exchange, cx| exchange.live_status(payload, cx));
+                    cx.notify();
+                }
+                _ => {}
             }
         }));
         let controls: Vec<Control> = fields_of(kind)
@@ -221,6 +371,38 @@ impl ProtocolSession {
             })
             .collect();
 
+        let grpc = (kind == RequestKind::Grpc).then(|| {
+            let service_box = cx.new(|cx| ComboboxState::new(Vec::<String>::new(), vec![], window, cx).searchable(true));
+            let method_box = cx.new(|cx| ComboboxState::new(Vec::<MethodItem>::new(), vec![], window, cx).searchable(true));
+            subscriptions.push(cx.subscribe_in(
+                &service_box,
+                window,
+                |this, _, event: &ComboboxEvent<Vec<String>>, window, cx| {
+                    if let ComboboxEvent::Change(values) = event {
+                        this.choose_service(values.first().cloned().unwrap_or_default(), window, cx);
+                    }
+                },
+            ));
+            subscriptions.push(cx.subscribe_in(
+                &method_box,
+                window,
+                |this, _, event: &ComboboxEvent<Vec<MethodItem>>, window, cx| {
+                    if let ComboboxEvent::Change(values) = event {
+                        this.choose_method(values.first().cloned().unwrap_or_default(), window, cx);
+                    }
+                },
+            ));
+            GrpcPicker {
+                services: Vec::new(),
+                state: Reflection::Idle,
+                address: String::new(),
+                generation: 0,
+                wait: Autosave::new(window),
+                service_box,
+                method_box,
+            }
+        });
+
         let mut this = Self {
             model,
             kind,
@@ -235,6 +417,9 @@ impl ProtocolSession {
             section: 0,
             baseline: (String::new(), Vec::new()),
             exchange,
+            grpc,
+            stream_id: format!("grpc-{}", cx.entity_id().as_u64()),
+            live: false,
             sending: false,
             saving: false,
             send_after_save: false,
@@ -391,6 +576,345 @@ impl ProtocolSession {
             .then(|| format!("Not saved. Enter the {}.", self.target_label()).into())
     }
 
+    /// What the main button does for this request.
+    fn send_label(&self, cx: &gpui_kit::App) -> &'static str {
+        match (self.kind, self.live) {
+            (RequestKind::Grpc, true) => "Cancel",
+            (RequestKind::Grpc, false) if self.streaming_kind(cx) != "unary" => "Invoke",
+            _ => "Send",
+        }
+    }
+
+    fn is_my_stream(&self, payload: &Value) -> bool {
+        payload.get("workspaceId").and_then(Value::as_str) == Some(self.workspace_id.as_str())
+            && payload.get("streamId").and_then(Value::as_str) == Some(self.stream_id.as_str())
+    }
+
+    /// How the selected method streams: from the schema when it is known, else as the request last recorded.
+    fn streaming_kind(&self, cx: &gpui_kit::App) -> &'static str {
+        let service = self.text_of("serviceName", cx).unwrap_or_default();
+        let method = self.text_of("methodName", cx).unwrap_or_default();
+        if let Some(info) = self.method_info(service.trim(), method.trim()) {
+            return info.streaming_type();
+        }
+        match self.entity.get("streamingType").and_then(Value::as_str) {
+            Some("server") => "server",
+            Some("client") => "client",
+            Some("bidi") => "bidi",
+            _ => "unary",
+        }
+    }
+
+    /// Starts the call as a live one: its messages arrive as events until it ends.
+    fn invoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sending || self.live || self.load != LoadState::Ready {
+            return;
+        }
+        if self.saving {
+            self.send_after_save = true;
+            return;
+        }
+        let Some(id) = self.saved_id.clone().filter(|_| !self.is_dirty(cx)) else {
+            self.send_after_save = true;
+            self.save(SaveMode::Explicit, window, cx);
+            return;
+        };
+        self.sending = true;
+        // Live from the start, so that an end that arrives before the answer to this command is not undone by it.
+        self.live = true;
+        self.exchange.update(cx, |exchange, cx| exchange.begin_live(cx));
+        self.changed(cx);
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id, "id": id });
+        call_in(&client, window, cx, "grpc.stream.open", payload, move |this, outcome, _, cx| {
+            this.sending = false;
+            let failure = match outcome {
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => None,
+                Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or("The call failed.").to_owned()),
+                Err(error) => Some(describe(&error)),
+            };
+            if let Some(message) = failure {
+                this.live = false;
+                this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
+            }
+            this.changed(cx);
+        });
+    }
+
+    fn live_command(&mut self, action: &'static str, payload: Value, window: &mut Window, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, action, payload, move |_, outcome, window, cx| {
+            let failure = match outcome {
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
+                    result.get("error").and_then(Value::as_str).map(str::to_owned)
+                }
+                Ok(_) => None,
+                Err(error) => Some(describe(&error)),
+            };
+            if let Some(message) = failure {
+                window.push_notification(Notification::error(message).title("The call did not take that"), cx);
+            }
+        });
+    }
+
+    fn cancel_call(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id });
+        self.live_command("grpc.stream.cancel", payload, window, cx);
+    }
+
+    fn end_streaming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id });
+        self.live_command("grpc.stream.end", payload, window, cx);
+    }
+
+    /// Sends what is in the message editor to the open call.
+    fn send_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let data = self.text_of("requestBody", cx).unwrap_or_default();
+        let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id, "data": data });
+        self.live_command("grpc.stream.send", payload, window, cx);
+    }
+
+    /// A new server address is read for its schema once typing pauses.
+    fn address_changed(&mut self, cx: &mut Context<Self>) {
+        let address = self.text_of("serverAddress", cx).unwrap_or_default().trim().to_owned();
+        let Some(picker) = self.grpc.as_mut() else { return };
+        if picker.address == address {
+            return;
+        }
+        picker.address = address.clone();
+        picker.generation += 1;
+        picker.services.clear();
+        if address.is_empty() {
+            picker.state = Reflection::Idle;
+            picker.wait.cancel();
+        } else {
+            picker.state = Reflection::Loading;
+            picker.wait.schedule(cx, |this, window, cx| this.reflect_now(window, cx));
+        }
+        cx.notify();
+    }
+
+    /// Asks the server what it serves.
+    fn reflect_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(picker) = self.grpc.as_mut() else { return };
+        if picker.address.is_empty() {
+            return;
+        }
+        picker.generation += 1;
+        picker.state = Reflection::Loading;
+        let generation = picker.generation;
+        let payload = json!({ "serverAddress": picker.address, "workspaceId": self.workspace_id });
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "grpc.reflect", payload, move |this, outcome, window, cx| {
+            let Some(picker) = this.grpc.as_mut() else { return };
+            if picker.generation != generation {
+                return;
+            }
+            let failure = match outcome {
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
+                    picker.services = parse_services(&result);
+                    picker.state = Reflection::Ready;
+                    None
+                }
+                Ok(result) => Some(
+                    result.get("error").and_then(Value::as_str).unwrap_or("The server did not answer.").to_owned(),
+                ),
+                Err(error) => Some(describe(&error)),
+            };
+            if let Some(message) = failure {
+                picker.services.clear();
+                picker.state = Reflection::Failed(message);
+            }
+            this.sync_picker(window, cx);
+            cx.notify();
+        });
+    }
+
+    /// Puts the lists' items and selections in line with the schema and the typed names.
+    fn sync_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let service_name = self.text_of("serviceName", cx).unwrap_or_default().trim().to_owned();
+        let method_name = self.text_of("methodName", cx).unwrap_or_default().trim().to_owned();
+        let Some(picker) = self.grpc.as_ref() else { return };
+        let services: Vec<String> = picker.services.iter().map(|service| service.name.clone()).collect();
+        let methods: Vec<MethodItem> = picker
+            .services
+            .iter()
+            .find(|service| service.name == service_name)
+            .map(|service| {
+                service
+                    .methods
+                    .iter()
+                    .map(|method| MethodItem {
+                        name: method.name.clone(),
+                        client_streaming: method.client_streaming,
+                        server_streaming: method.server_streaming,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (service_box, method_box) = (picker.service_box.clone(), picker.method_box.clone());
+        service_box.update(cx, |list, cx| {
+            list.set_items(services, window, cx);
+            list.set_selected_values(&[service_name], window, cx);
+        });
+        method_box.update(cx, |list, cx| {
+            list.set_items(methods, window, cx);
+            list.set_selected_values(&[method_name], window, cx);
+        });
+    }
+
+    fn set_text(&self, key: &str, value: String, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Control::Text(editor)) = self.control(key) {
+            editor.set_value(value, window, cx);
+        }
+    }
+
+    fn choose_service(&mut self, service: String, window: &mut Window, cx: &mut Context<Self>) {
+        if service.is_empty() {
+            return;
+        }
+        let current = self.text_of("methodName", cx).unwrap_or_default().trim().to_owned();
+        let methods: Vec<String> = self
+            .grpc
+            .as_ref()
+            .and_then(|picker| picker.services.iter().find(|s| s.name == service))
+            .map(|s| s.methods.iter().map(|m| m.name.clone()).collect())
+            .unwrap_or_default();
+        // The method stays when the new service has it; a service with one method has no choice to make.
+        let method = match methods.as_slice() {
+            _ if methods.contains(&current) => current,
+            [only] => only.clone(),
+            _ => String::new(),
+        };
+        self.set_text("serviceName", service, window, cx);
+        self.set_text("methodName", method.clone(), window, cx);
+        self.note_streaming_type(&method);
+        self.sync_picker(window, cx);
+    }
+
+    fn choose_method(&mut self, method: String, window: &mut Window, cx: &mut Context<Self>) {
+        if method.is_empty() {
+            return;
+        }
+        self.set_text("methodName", method.clone(), window, cx);
+        self.note_streaming_type(&method);
+        cx.notify();
+    }
+
+    /// The saved request records how its method streams.
+    fn note_streaming_type(&mut self, method: &str) {
+        let service = self.entity_text("serviceName");
+        if let Some(info) = self.method_info(&service, method) {
+            self.entity.insert("streamingType".into(), json!(info.streaming_type()));
+        }
+    }
+
+    fn entity_text(&self, key: &str) -> String {
+        self.entity.get(key).and_then(Value::as_str).unwrap_or_default().to_owned()
+    }
+
+    fn method_info(&self, service: &str, method: &str) -> Option<MethodInfo> {
+        let picker = self.grpc.as_ref()?;
+        picker.services.iter().find(|s| s.name == service)?.methods.iter().find(|m| m.name == method).cloned()
+    }
+
+    /// The service and method controls: two searchable lists once the schema is known, the typed names
+    /// when the server cannot be asked.
+    fn grpc_row(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let Some(picker) = &self.grpc else { return div().into_any_element() };
+        let specs = fields_of(self.kind);
+        let line = |key: &str| {
+            specs
+                .iter()
+                .position(|spec| spec.key == key)
+                .and_then(|ix| match &self.controls[ix] {
+                    Control::Text(editor) => Some(editor.line_field(cx).into_any_element()),
+                    Control::Pairs(_) => None,
+                })
+                .unwrap_or_else(|| div().into_any_element())
+        };
+        let typed = matches!(picker.state, Reflection::Failed(_));
+        let ready = matches!(picker.state, Reflection::Ready);
+        let (service_control, method_control) = if typed {
+            (line("serviceName"), line("methodName"))
+        } else {
+            let service_text = self.text_of("serviceName", cx).unwrap_or_default();
+            let service_hint = match picker.state {
+                Reflection::Loading => "Reading the server's schema…",
+                _ if !ready => "Enter the server address first",
+                _ => "Select a service",
+            };
+            (
+                Combobox::new(&picker.service_box)
+                    .placeholder(service_hint)
+                    .search_placeholder("Search services")
+                    .disabled(!ready || self.live)
+                    .w_full()
+                    .into_any_element(),
+                Combobox::new(&picker.method_box)
+                    .placeholder(if service_text.trim().is_empty() { "Select a service first" } else { "Select a method" })
+                    .search_placeholder("Search methods")
+                    .disabled(!ready || self.live || service_text.trim().is_empty())
+                    .w_full()
+                    .into_any_element(),
+            )
+        };
+        let muted = theme.muted_foreground;
+        let note: Option<gpui_kit::AnyElement> = match &picker.state {
+            Reflection::Failed(message) => Some(
+                div()
+                    .text_xs()
+                    .text_color(theme.warning)
+                    .child(format!("{message} Type the service and method instead."))
+                    .into_any_element(),
+            ),
+            Reflection::Ready => {
+                let service = self.text_of("serviceName", cx).unwrap_or_default();
+                let method = self.text_of("methodName", cx).unwrap_or_default();
+                match self.method_info(service.trim(), method.trim()) {
+                    Some(info) => Some(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(kind_arrows(info.client_streaming, info.server_streaming, muted))
+                            .child(info.kind_label())
+                            .into_any_element(),
+                    ),
+                    None if service.trim().is_empty() => {
+                        let count = picker.services.len();
+                        Some(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(format!("{count} service{} on this server.", if count == 1 { "" } else { "s" }))
+                                .into_any_element(),
+                        )
+                    }
+                    None => None,
+                }
+            }
+            _ => None,
+        };
+        v_flex()
+            .flex_none()
+            .gap_1()
+            .px_3()
+            .pb_2()
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_start()
+                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label("Service", cx)).child(service_control))
+                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label("Method", cx)).child(method_control)),
+            )
+            .children(note)
+            .into_any_element()
+    }
+
     /// The first field is the target; a request without one cannot be written.
     fn target_is_empty(values: &(String, Vec<FieldValue>)) -> bool {
         matches!(values.1.first(), Some(FieldValue::Text(text)) if text.is_empty())
@@ -402,6 +926,7 @@ impl ProtocolSession {
 
     /// A saved request is written a moment after each change; a draft waits for Save.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.address_changed(cx);
         cx.emit(SessionEvent::Changed);
         cx.notify();
         if self.saved_id.is_some() && self.load == LoadState::Ready {
@@ -428,6 +953,9 @@ impl ProtocolSession {
 
     /// Writes an edit that is still waiting, now: the tab is about to close.
     pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.live {
+            self.cancel_call(window, cx);
+        }
         if self.saved_id.is_some() {
             self.autosave.cancel();
             self.save(SaveMode::Auto, window, cx);
@@ -477,6 +1005,7 @@ impl ProtocolSession {
             }
         }
         self.changed(cx);
+        self.sync_picker(window, cx);
     }
 
     fn values(&self, cx: &gpui_kit::App) -> (String, Vec<FieldValue>) {
@@ -516,6 +1045,8 @@ impl ProtocolSession {
         self.fill_controls(&entity, window, cx);
         self.entity = entity;
         self.baseline = self.values(cx);
+        self.address_changed(cx);
+        self.sync_picker(window, cx);
     }
 
     /// The loaded entity with the editor's fields written over it.
@@ -622,6 +1153,16 @@ impl ProtocolSession {
     /// Sends the stored request. Unsaved edits are saved first, because the engine sends what it has stored.
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(action) = self.kind.send_command() else { return };
+        if self.kind == RequestKind::Grpc {
+            if self.live {
+                self.cancel_call(window, cx);
+                return;
+            }
+            if self.streaming_kind(cx) != "unary" {
+                self.invoke(window, cx);
+                return;
+            }
+        }
         if self.sending || self.load != LoadState::Ready {
             return;
         }
@@ -643,6 +1184,17 @@ impl ProtocolSession {
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.sending = false;
             match outcome {
+                // A gRPC call that never got an answer (no connection, a bad message) has no status to show.
+                Ok(result) if this.kind == RequestKind::Grpc => {
+                    let unanswered = result.get("ok").and_then(Value::as_bool) == Some(false) && result.get("status").is_none();
+                    if unanswered {
+                        let message =
+                            result.get("error").and_then(Value::as_str).unwrap_or("The call failed.").to_owned();
+                        this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
+                    } else {
+                        this.exchange.update(cx, |exchange, cx| exchange.finish_grpc(&result, window, cx));
+                    }
+                }
                 Ok(result) => {
                     this.exchange.update(cx, |exchange, cx| exchange.finish(&result, BodyEncoding::Text, window, cx));
                 }
@@ -707,16 +1259,53 @@ impl Render for ProtocolSession {
                     Button::new("send-request")
                         .primary()
                         .h(VarEditor::row_height(cx))
-                        .label("Send")
+                        .label(self.send_label(cx))
                         .loading(self.sending)
                         .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
                 ),
             )
-            .child(h_flex().flex_none().gap_3().px_3().pb_2().items_start().children(extra_lines.into_iter().map(
-                |ix| {
-                    v_flex().flex_1().min_w_0().gap_1().child(page::section_label(specs[ix].label, cx)).child(line(ix))
-                },
-            )))
+            .child(if self.grpc.is_some() {
+                self.grpc_row(cx)
+            } else {
+                h_flex()
+                    .flex_none()
+                    .gap_3()
+                    .px_3()
+                    .pb_2()
+                    .items_start()
+                    .children(extra_lines.into_iter().map(|ix| {
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(page::section_label(specs[ix].label, cx))
+                            .child(line(ix))
+                    }))
+                    .into_any_element()
+            })
+            .when(self.live && matches!(self.streaming_kind(cx), "client" | "bidi"), |this| {
+                this.child(
+                    h_flex()
+                        .flex_none()
+                        .gap_2()
+                        .px_3()
+                        .pb_2()
+                        .child(
+                            Button::new("grpc-send-message")
+                                .primary()
+                                .small()
+                                .label("Send message")
+                                .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx))),
+                        )
+                        .child(
+                            Button::new("grpc-end-streaming")
+                                .outline()
+                                .small()
+                                .label("End streaming")
+                                .on_click(cx.listener(|this, _, window, cx| this.end_streaming(window, cx))),
+                        ),
+                )
+            })
             .child(
                 div().flex_none().px_3().child(
                     TabBar::new("protocol-sections")
