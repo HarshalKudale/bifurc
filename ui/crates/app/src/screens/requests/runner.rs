@@ -5,7 +5,7 @@
 //! tab was open. The order is the folder's saved runner configuration (`requestOrder`), written back with
 //! `runner.saveConfig` when a request is moved. This view keeps what it was told and draws it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
@@ -47,6 +47,34 @@ struct RowResult {
     passed: usize,
     /// The names of the tests that failed, each with its reason.
     failed: Vec<String>,
+    /// Every test that ran: its name, whether it passed, and why not.
+    tests: Vec<(String, bool, Option<String>)>,
+    /// The pre-request, post-response and test scripts the request has.
+    scripts: Vec<(&'static str, String)>,
+    /// What the scripts logged.
+    logs: Vec<String>,
+    method: String,
+    url: String,
+    request_headers: Vec<(String, String)>,
+    request_body: String,
+    response_headers: Vec<(String, String)>,
+    response_body: String,
+}
+
+fn text_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(|item| item.as_str().map(str::to_owned).unwrap_or_else(|| item.to_string())).collect())
+        .unwrap_or_default()
+}
+
+fn header_list(value: Option<&Value>) -> Vec<(String, String)> {
+    value
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter().map(|(k, v)| (k.clone(), v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string()))).collect()
+        })
+        .unwrap_or_default()
 }
 
 impl RowResult {
@@ -64,7 +92,33 @@ impl RowResult {
                 }
             })
             .collect::<Vec<_>>();
+        let own = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let scripts = [("Pre-request script", "pre"), ("Post-response script", "post"), ("Test script", "test")]
+            .into_iter()
+            .filter_map(|(label, key)| {
+                let source = value.pointer(&format!("/scripts/{key}")).and_then(Value::as_str)?;
+                (!source.trim().is_empty()).then(|| (label, source.to_owned()))
+            })
+            .collect();
         Self {
+            tests: tests
+                .iter()
+                .map(|test| {
+                    (
+                        test.get("name").and_then(Value::as_str).unwrap_or("Unnamed test").to_owned(),
+                        test.get("passed").and_then(Value::as_bool) == Some(true),
+                        test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_owned),
+                    )
+                })
+                .collect(),
+            scripts,
+            logs: text_list(value.get("testLogs")),
+            method: own("method"),
+            url: own("url"),
+            request_headers: header_list(value.get("requestHeaders")),
+            request_body: own("requestBody"),
+            response_headers: header_list(value.get("responseHeaders")),
+            response_body: own("responseBody"),
             status: value.get("status").and_then(Value::as_u64).and_then(|s| u16::try_from(s).ok()),
             duration_ms: value.get("responseTime").and_then(Value::as_f64).map_or(0, |ms| ms.max(0.) as u64),
             errors: [
@@ -100,6 +154,8 @@ pub struct FolderRunner {
     completed: usize,
     /// Results of the run in progress or the last one, by request id.
     results: HashMap<String, RowResult>,
+    /// The rows opened to show their details.
+    expanded: HashSet<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -138,6 +194,7 @@ impl FolderRunner {
             total: 0,
             completed: 0,
             results: HashMap::new(),
+            expanded: HashSet::new(),
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -258,6 +315,7 @@ impl FolderRunner {
             return;
         }
         self.results.clear();
+        self.expanded.clear();
         self.completed = 0;
         self.total = self.rows(cx).len();
         self.set_running(true, cx);
@@ -316,7 +374,7 @@ impl FolderRunner {
         };
         line.push_str(&format!(" · {failed} failed"));
         if tests > 0 {
-            line.push_str(&format!(" · {} of {tests} tests passed", tests - tests_failed));
+            line.push_str(&format!(" · {}/{tests} tests passed", tests - tests_failed));
         }
         line
     }
@@ -342,7 +400,7 @@ impl FolderRunner {
             .text_xs()
             .text_color(theme.muted_foreground)
             .children((tests > 0).then(|| {
-                let text = format!("{} of {tests} tests", result.passed);
+                let text = format!("{}/{tests} tests", result.passed);
                 if result.failed.is_empty() {
                     Tag::success().small().child(text)
                 } else {
@@ -365,9 +423,11 @@ impl FolderRunner {
         let id = request.id.clone();
         let node = NodeRef::Request { kind: RequestKind::Rest, id: id.clone() };
         let name = if request.name.is_empty() { request.target.clone() } else { request.name.clone() };
+        let open = self.expanded.contains(&id);
         let problems: Vec<String> = self
             .results
             .get(&id)
+            .filter(|_| !open)
             .map(|result| result.errors.iter().chain(result.failed.iter()).cloned().collect())
             .unwrap_or_default();
         v_flex()
@@ -380,6 +440,24 @@ impl FolderRunner {
             .child(
                 h_flex()
                     .gap_2()
+                    .child(match self.results.get(&id) {
+                        Some(_) => Button::new("toggle-details")
+                            .icon(if open { IconName::ChevronDown } else { IconName::ChevronRight })
+                            .ghost()
+                            .xsmall()
+                            .tooltip(if open { "Hide details" } else { "Show scripts, tests and the response" })
+                            .on_click({
+                                let id = id.clone();
+                                cx.listener(move |this, _, _, cx| {
+                                    if !this.expanded.remove(&id) {
+                                        this.expanded.insert(id.clone());
+                                    }
+                                    cx.notify();
+                                })
+                            })
+                            .into_any_element(),
+                        None => div().size_6().flex_none().into_any_element(),
+                    })
                     .child(div().w_6().flex_none().text_xs().text_color(theme.muted_foreground).child((ix + 1).to_string()))
                     .child(
                         h_flex()
@@ -444,7 +522,87 @@ impl FolderRunner {
                     .into_iter()
                     .map(|problem| div().pl_8().text_xs().text_color(theme.danger).child(problem)),
             )
+            .children(self.results.get(&id).filter(|_| open).map(|result| self.render_details(result, cx)))
             .into_any_element()
+    }
+
+    fn block(&self, text: String, tint: Option<gpui_kit::Hsla>, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        div()
+            .w_full()
+            .max_h_64()
+            .overflow_hidden()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(tint.map_or(theme.muted, |color| color.opacity(0.12)))
+            .text_xs()
+            .font_family(theme.mono_font_family.clone())
+            .child(text)
+            .into_any_element()
+    }
+
+    fn section(&self, title: String, body: gpui_kit::AnyElement, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(title))
+            .child(body)
+            .into_any_element()
+    }
+
+    /// What one request did: its tests, what went wrong, the scripts that ran, and what was sent and received.
+    fn render_details(&self, result: &RowResult, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let pairs = |headers: &[(String, String)]| {
+            headers.iter().map(|(key, value)| format!("{key}: {value}")).collect::<Vec<_>>().join("\n")
+        };
+        let joined = |parts: [String; 3]| {
+            parts.into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n\n")
+        };
+        let mut sections: Vec<gpui_kit::AnyElement> = Vec::new();
+        if !result.errors.is_empty() {
+            sections.push(self.section("Errors".into(), self.block(result.errors.join("\n"), Some(theme.danger), cx), cx));
+        }
+        if result.tests.is_empty() {
+            let none = div().text_sm().text_color(theme.muted_foreground).child("No tests ran.");
+            sections.push(self.section("Tests".into(), none.into_any_element(), cx));
+        } else {
+            let passed = result.tests.iter().filter(|(_, ok, _)| *ok).count();
+            let list = v_flex().gap_1().children(result.tests.iter().map(|(name, ok, error)| {
+                let (mark, color) = if *ok { ("\u{2713}", theme.success) } else { ("\u{2717}", theme.danger) };
+                v_flex()
+                    .child(h_flex().gap_2().text_sm().child(div().text_color(color).child(mark)).child(name.clone()))
+                    .children(error.as_ref().map(|error| {
+                        div()
+                            .pl_5()
+                            .text_xs()
+                            .text_color(theme.danger)
+                            .font_family(theme.mono_font_family.clone())
+                            .child(error.clone())
+                    }))
+            }));
+            let title = format!("Tests, {passed}/{} passed", result.tests.len());
+            sections.push(self.section(title, list.into_any_element(), cx));
+        }
+        for (label, source) in &result.scripts {
+            sections.push(self.section((*label).into(), self.block(source.clone(), None, cx), cx));
+        }
+        if !result.logs.is_empty() {
+            sections.push(self.section("Console".into(), self.block(result.logs.join("\n"), None, cx), cx));
+        }
+        let request = joined([
+            format!("{} {}", result.method, result.url),
+            pairs(&result.request_headers),
+            result.request_body.clone(),
+        ]);
+        sections.push(self.section("Request".into(), self.block(request, None, cx), cx));
+        if result.status.is_some() {
+            let response = joined([pairs(&result.response_headers), result.response_body.clone(), String::new()]);
+            sections.push(self.section("Response".into(), self.block(response, None, cx), cx));
+        }
+        v_flex().w_full().gap_3().pl_8().pt_1().pb_2().children(sections).into_any_element()
     }
 }
 
@@ -479,5 +637,31 @@ impl Render for FolderRunner {
         };
         page::screen(page::header(self.title(cx), self.summary(rows.len()), action, cx), body, cx)
             .text_color(theme.foreground)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_result_keeps_its_tests_scripts_and_what_was_exchanged() {
+        let result = RowResult::from_value(&json!({
+            "status": 200, "responseTime": 12, "method": "GET", "url": "http://a/b",
+            "tests": [{ "name": "ok", "passed": true }, { "name": "bad", "passed": false, "error": "expected 1" }],
+            "testLogs": ["hello"],
+            "scripts": { "pre": "", "post": "lp.environment.set('a', 1)", "test": "lp.test('ok', () => {})" },
+            "requestHeaders": { "a": "1" }, "responseHeaders": { "b": "2" }, "responseBody": "{}",
+            "postScriptError": "boom",
+        }));
+        assert_eq!((result.passed, result.failed.len(), result.tests.len()), (1, 1, 2));
+        assert_eq!(result.tests[1], ("bad".to_owned(), false, Some("expected 1".to_owned())));
+        let labels: Vec<&str> = result.scripts.iter().map(|(label, _)| *label).collect();
+        assert_eq!(labels, vec!["Post-response script", "Test script"]);
+        assert_eq!(result.logs, vec!["hello"]);
+        assert_eq!(result.request_headers, vec![("a".to_owned(), "1".to_owned())]);
+        assert_eq!(result.response_body, "{}");
+        assert_eq!(result.errors, vec!["Post-response script: boom"]);
+        assert!(result.is_failure());
     }
 }
