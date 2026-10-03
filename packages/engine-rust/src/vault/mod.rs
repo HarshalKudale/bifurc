@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use serde_json::{Value, json};
 
-pub use state::{Redactor, resolve_reference, session_ended};
+pub use state::{Redactor, redact_text, redact_value, references_in, resolve_allowed, resolve_reference, resolve_value_allowed, session_ended};
 use store::VaultFile;
 
 use crate::{
@@ -70,6 +70,30 @@ fn ready_key(ws_id: &str, vault: &VaultFile) -> Result<crypto::Key> {
             json!({ "reason": "vault_sealed", "vaultId": vault.id }),
         )
     })
+}
+
+/// The key `passphrase` gives, if it is right. Wrong ones are counted: after a few the vault asks to wait.
+fn verify(ws_id: &str, vault: &VaultFile, passphrase: &str) -> Result<crypto::Key> {
+    let wait = state::attempt_wait_secs(ws_id, &vault.id);
+    if wait > 0 {
+        return Err(EngineError::with_details(
+            ErrorCode::Forbidden,
+            format!("Too many wrong passphrases. Try again in {wait} s."),
+            json!({ "reason": "throttled", "retryAfterSecs": wait }),
+        ));
+    }
+    match vault.unlock(passphrase) {
+        Ok(key) => {
+            state::attempt_succeeded(ws_id, &vault.id);
+            Ok(key)
+        }
+        Err(error) => {
+            if error.code == ErrorCode::Forbidden {
+                state::attempt_failed(ws_id, &vault.id);
+            }
+            Err(error)
+        }
+    }
 }
 
 fn check_name_free(ws_id: &str, name: &str, except_id: Option<&str>) -> Result<()> {
@@ -154,7 +178,7 @@ pub fn register(registry: &mut CommandRegistry) {
         blocking(move || {
             let vault = store::get(&ws_id, &id)?;
             if state::key_of(&ws_id, &id).is_none() {
-                state::set_key(&ws_id, &id, vault.unlock(&passphrase)?);
+                state::set_key(&ws_id, &id, verify(&ws_id, &vault, &passphrase)?);
             }
             Ok(summary(&ws_id, &vault))
         })
@@ -179,7 +203,7 @@ pub fn register(registry: &mut CommandRegistry) {
         blocking(move || {
             store::check_passphrase(&new)?;
             let mut vault = store::get(&ws_id, &id)?;
-            let old_key = vault.unlock(&old)?;
+            let old_key = verify(&ws_id, &vault, &old)?;
             let new_key = vault.rekey(&old_key, &new)?;
             store::save(&ws_id, &vault)?;
             state::set_key(&ws_id, &id, new_key);
@@ -194,6 +218,12 @@ pub fn register(registry: &mut CommandRegistry) {
         let value = str_of(&params, "value").to_string();
         blocking(move || {
             store::check_secret_name(&name)?;
+            if value.chars().count() < state::MIN_SECRET_LEN {
+                return Err(EngineError::bad_request(format!(
+                    "A secret must be at least {} characters, so that it can be kept out of logs.",
+                    state::MIN_SECRET_LEN
+                )));
+            }
             let mut vault = store::get(&ws_id, &id)?;
             let key = ready_key(&ws_id, &vault)?;
             vault.set_secret(&key, &name, &value)?;
@@ -229,7 +259,7 @@ pub fn register(registry: &mut CommandRegistry) {
         blocking(move || {
             let vault = store::get(&ws_id, &id)?;
             // Opening always proves the passphrase, even when the engine already holds the key (it is ready).
-            let key = vault.unlock(&passphrase)?;
+            let key = verify(&ws_id, &vault, &passphrase)?;
             if state::key_of(&ws_id, &id).is_none() {
                 state::set_key(&ws_id, &id, key.clone());
             }

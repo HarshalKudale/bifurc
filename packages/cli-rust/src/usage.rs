@@ -29,8 +29,11 @@ Mappings (<sub>.localhost → target)
   mappings remove <id>
   mappings enable|disable <id>
 
-Vaults (encrypted secrets; used as {{vault.SECRET}} in requests; created and filled in the desktop app)
+Vaults (encrypted secrets, used as {{vault.SECRET}}; also managed in the desktop app)
   vault list                             Vaults and their secret names (never values)
+  vault create <name>                    Asks for a new passphrase (twice)
+  vault set <vault> <SECRET>             Asks for the passphrase, then the value (hidden; or --value-stdin)
+  vault unset <vault> <SECRET>           Remove a secret
   unlock <vault> -- <command…>           Ask for the vault's passphrase, run the command with the secrets as
                                          environment variables, and close the vault when the command ends
                                          e.g. bifurc unlock api_keys -- npm run dev
