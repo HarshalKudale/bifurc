@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 5] = ["json", "help", "no-start", "no-tray", "passphrase-stdin"];
+const BOOLEAN_FLAGS: [&str; 6] = ["json", "help", "no-start", "no-tray", "passphrase-stdin", "value-stdin"];
 
 /// Single-letter aliases; any other letter stands for itself.
 fn alias(letter: char) -> String {

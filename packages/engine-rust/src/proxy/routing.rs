@@ -68,15 +68,26 @@ pub fn error_entry(base: &RequestLogEntry, status: u16, duration_ms: i64) -> Req
 }
 
 pub fn log_outcome(base: &RequestLogEntry, via: &str, target: Option<String>, outcome: Outcome) {
-    emit_log(&finished_entry(
-        base,
-        outcome.status,
-        via,
-        target,
-        outcome.duration_ms,
-        outcome.res_headers,
-        outcome.res_body,
-    ));
+    let mut entry =
+        finished_entry(base, outcome.status, via, target, outcome.duration_ms, outcome.res_headers, outcome.res_body);
+    if let Some(shown) = outcome.req_headers {
+        entry.req_headers = shown;
+    }
+    mask_secrets(&mut entry);
+    emit_log(&entry);
+}
+
+/// What a log entry holds never includes a vault secret's value, whatever the server echoed back.
+fn mask_secrets(entry: &mut RequestLogEntry) {
+    let Some(redactor) = crate::vault::Redactor::for_workspace(entry.workspace_id.as_deref().unwrap_or("")) else {
+        return;
+    };
+    for value in entry.req_headers.values_mut().chain(entry.res_headers.values_mut()) {
+        *value = redactor.text(value);
+    }
+    let mut res_body = serde_json::Value::String(std::mem::take(&mut entry.res_body));
+    redactor.base64_body(&mut res_body);
+    entry.res_body = res_body.as_str().unwrap_or_default().to_string();
 }
 
 const RULE_WITHOUT_TARGET: &str = "<h1>502 Bad Gateway</h1><p>Proxy rule matched but the target is not configured.</p>";
@@ -119,7 +130,16 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
         }
         let upstream: Result<BufferedProxyResponse, String> = match (rule.rule, &rule_target) {
             (Some(matched_rule), Some(target)) => {
-                fetch_upstream_response(ex.method, target, ex.req_path, ex.headers, ex.body, Some(matched_rule)).await
+                fetch_upstream_response(
+                    ex.method,
+                    target,
+                    ex.req_path,
+                    ex.headers,
+                    ex.body,
+                    Some(matched_rule),
+                    str_of(ex.cfg, "activeWorkspaceId"),
+                )
+                .await
             }
             _ => {
                 replay_request(ex.method, ex.url, ex.headers, ex.req_body_b64).await.map(|res| BufferedProxyResponse {
@@ -169,7 +189,17 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
     let has_scripts = !str_of(matched_rule, "requestScript").trim().is_empty()
         || !str_of(matched_rule, "responseScript").trim().is_empty();
     let outcome = if has_scripts {
-        proxy_with_scripts(out, ex.method, &target, ex.req_path, ex.headers, ex.body, matched_rule).await
+        proxy_with_scripts(
+            out,
+            ex.method,
+            &target,
+            ex.req_path,
+            ex.headers,
+            ex.body,
+            matched_rule,
+            str_of(ex.cfg, "activeWorkspaceId"),
+        )
+        .await
     } else {
         proxy_to_upstream(out, ex.method, &target, ex.req_path, ex.headers, ex.body, Some(&ex.base.id)).await
     };

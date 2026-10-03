@@ -108,6 +108,8 @@ impl Entry {
     /// Append a message to the log, trim it to the ceiling and return the `ws.message` event.
     fn push(&mut self, direction: &str, data: String) -> Event {
         self.seq += 1;
+        // The log is what clients and files see; a secret that came back in a message is shown as its reference.
+        let data = crate::vault::redact_text(&self.workspace_id, data);
         let message = json!({
             "id": format!("{}-{}", self.socket_id, self.seq),
             "ts": now_ms(),
@@ -277,7 +279,16 @@ pub fn send_socket_message(workspace_id: &str, socket_id: &str, data: &str) -> O
         return Err("Not connected".to_string());
     }
 
-    let resolved = resolve_vars(data, load_merged_environment(workspace_id).as_ref());
+    // What is sent has the secrets in; what is logged has them as written (`push` also masks any value).
+    let env = load_merged_environment(workspace_id);
+    let resolved = resolve_vars(data, env.as_ref());
+    let shown = {
+        let mut display = env.clone();
+        if let Some(display) = display.as_mut() {
+            display["workspaceId"] = json!("");
+        }
+        resolve_vars(data, display.as_ref())
+    };
     let event = {
         let mut sockets = SOCKETS.lock();
         if !open(&sockets) {
@@ -288,7 +299,7 @@ pub fn send_socket_message(workspace_id: &str, socket_id: &str, data: &str) -> O
         if tx.send(Command::Send(resolved.clone())).is_err() {
             return Err("Send failed".to_string());
         }
-        entry.push("sent", resolved)
+        entry.push("sent", shown)
     };
     emit(vec![event]);
     Ok(())

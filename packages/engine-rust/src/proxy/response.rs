@@ -15,7 +15,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use crate::{
     kernel::telemetry::{Headers, MAX_LOGGED_BODY_BYTES, emit_log_chunk},
     mocks::UpstreamResponse,
-    scripting::{execute_request_script, execute_response_script},
+    scripting::execute_response_script,
     utils::{
         decompress::{decompress_body, strip_content_encoding},
         http::is_hop_by_hop,
@@ -35,12 +35,15 @@ pub struct Outcome {
     pub duration_ms: i64,
     pub res_headers: Headers,
     pub res_body: String,
+    /// The request headers as the rule's script left them, secrets still written as `{{vault.secret}}`, when
+    /// they differ from what the client sent. This is what the log shows.
+    pub req_headers: Option<Headers>,
 }
 
 impl Outcome {
     /// The outcome of an exchange that failed before an answer.
     pub fn bad_gateway(duration_ms: i64) -> Self {
-        Self { status: 502, duration_ms, res_headers: Headers::new(), res_body: String::new() }
+        Self { status: 502, duration_ms, res_headers: Headers::new(), res_body: String::new(), req_headers: None }
     }
 }
 
@@ -235,6 +238,7 @@ pub async fn handle_proxy_response<W: AsyncWrite + Unpin>(
         duration_ms: elapsed_ms(t0),
         res_headers: logged_headers,
         res_body: log_body(&decompressed),
+        req_headers: None,
     })
 }
 
@@ -319,16 +323,13 @@ pub async fn fetch_upstream_response(
     req_headers: &Headers,
     req_body: &[u8],
     rule: Option<&Value>,
+    ws_id: &str,
 ) -> Result<BufferedProxyResponse, String> {
-    let mut headers = req_headers.clone();
-    let mut body = req_body.to_vec();
+    let (mut headers, mut body) = (req_headers.clone(), req_body.to_vec());
     if has_script(rule, "requestScript") {
-        let script = str_of(rule.unwrap_or(&Value::Null), "requestScript");
-        let result = execute_request_script(script, &headers, &String::from_utf8_lossy(req_body)).await;
-        if result.error.is_none() {
-            headers = result.headers;
-            body = result.body.into_bytes();
-        }
+        let scripted =
+            super::handler::run_request_script(rule.unwrap_or(&Value::Null), ws_id, req_headers, req_body).await;
+        (headers, body) = (scripted.headers, scripted.body);
     }
 
     let t0 = Instant::now();
