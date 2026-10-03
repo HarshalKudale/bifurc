@@ -115,15 +115,33 @@ pub fn locate_node() -> PathBuf {
     PathBuf::from("node")
 }
 
-/// The native engine (`bifurc-engine`), when one is to be started instead of the Node engine: `BIFURC_ENGINE`
-/// if set, then the one an installed app ships beside its executable.
+/// The native engine (`bifurc-engine`), which is the engine the UI starts: `BIFURC_ENGINE` if set, then the one
+/// an installed app ships beside its executable, then the newest build in a `target/{release,debug}` above the
+/// executable or the working directory (a checkout). The Node engine is only a fallback while it is being
+/// decommissioned.
 pub fn locate_engine_binary() -> Option<PathBuf> {
     if let Some(explicit) = env::var_os("BIFURC_ENGINE").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(explicit));
     }
-    let exe = env::current_exe().ok()?;
-    let packaged = exe.parent()?.join(format!("bifurc-engine{}", env::consts::EXE_SUFFIX));
-    packaged.is_file().then_some(packaged)
+    let name = format!("bifurc-engine{}", env::consts::EXE_SUFFIX);
+    let exe = env::current_exe().ok();
+    if let Some(packaged) = exe.as_deref().and_then(Path::parent).map(|dir| dir.join(&name))
+        && packaged.is_file()
+    {
+        return Some(packaged);
+    }
+    let starts: Vec<PathBuf> = exe.iter().filter_map(|e| e.parent()).map(Path::to_path_buf).chain(env::current_dir().ok()).collect();
+    for dir in starts.iter().flat_map(|start| start.ancestors()) {
+        let newest = ["release", "debug"]
+            .iter()
+            .map(|profile| dir.join("target").join(profile).join(&name))
+            .filter_map(|candidate| Some((fs::metadata(&candidate).ok()?.modified().ok()?, candidate)))
+            .max_by_key(|(modified, _)| *modified);
+        if let Some((_, candidate)) = newest {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -212,11 +230,16 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
                 Some(entry) => entry.clone(),
                 None => locate_engine_entry().ok_or_else(|| {
                     ClientError::Protocol(format!(
-                        "could not find the engine (looked for {ENGINE_ENTRY_RELATIVE} above the executable and the working directory). \
-                         Build it with `npm run build:packages`, or set BIFURC_ENGINE_ENTRY to its hostCli.js."
+                        "could not find the engine: no bifurc-engine beside the executable or in a target/ above it, and no {ENGINE_ENTRY_RELATIVE} \
+                         for the deprecated Node engine. Build it with `cargo build -p bifurc-engine` at the repository root, or set BIFURC_ENGINE to its path."
                     ))
                 })?,
             };
+            // Not an error: the Node engine still works, but it is scheduled for decommissioning.
+            eprintln!(
+                "bifurc: starting the Node engine, which is scheduled for decommissioning. \
+                 Build bifurc-engine (`cargo build -p bifurc-engine`) to use the Rust engine."
+            );
             let mut command = Command::new(&config.node);
             command.arg(&entry);
             command
