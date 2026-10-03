@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::{kernel::CommandRegistry, runtime::instances::Listener};
 
 pub(crate) use handler::proxy_to_upstream;
-pub(crate) use response::{BufferedProxyResponse, Outcome, fetch_upstream_response, log_body, send_html};
+pub(crate) use response::{fetch_upstream_response, log_body, send_html};
 pub(crate) use routing::{error_entry, finished_entry, log_outcome};
 
 pub fn register(registry: &mut CommandRegistry) {
