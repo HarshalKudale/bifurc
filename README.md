@@ -21,10 +21,14 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 
 ## Engine, CLI and desktop UI
 
-The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`) and the desktop UI (`ui/`) are Rust.
-`npm run dev:ui` builds the engine and the CLI and runs the UI against them; `npm run package:desktop` packages all three
-with no Node runtime. The TypeScript engine and CLI (`packages/engine`, `packages/cli`) are **deprecated and scheduled for
-decommissioning**; they remain only until the Electron shell and the parity harness (`scripts/engine-parity.mjs`) retire.
+The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the shared wire types
+(`packages/protocol-rust`) and the desktop UI (`ui/`) are all Rust. There is no Node runtime.
+
+```bash
+cargo build -p bifurc-engine -p bifurc-cli                  # the engine and the CLI
+cargo run --manifest-path ui/Cargo.toml -p bifurc-ui        # the UI, which starts the engine it finds in target/
+node scripts/package-desktop.mjs                            # installer / Store package / AppImage (Node built-ins only)
+```
 
 ## Repository structure
 
@@ -48,10 +52,8 @@ The documentation source now lives in the **website repository only** and is ren
 
 ```bash
 git clone https://github.com/HarshalKudale/bifurc.git
-cd bifurc
-npm install
-cd bifurc
-npm run dev
+cargo build -p bifurc-engine -p bifurc-cli
+cargo run --manifest-path ui/Cargo.toml -p bifurc-ui
 ```
 
 ## Browser extension
@@ -65,15 +67,9 @@ Load the `bifurc-extension/` folder unpacked in Chrome or Edge to:
 ## Testing
 
 ```bash
-npm test                  # unit + integration (Vitest)
-npm run test:unit         # fast loop
-npm run test:integration  # real proxy/mapping/rule/mock routing over real sockets
-npm run test:coverage     # with coverage + thresholds
-npm run test:e2e          # Playwright against the real Electron app
+cargo test --workspace                                  # protocol, engine, CLI
+cargo test --workspace --manifest-path ui/Cargo.toml    # UI
 ```
-
-See [TESTING.md](TESTING.md) for the testing guide, the coverage report, and the list of known
-gaps.
 
 ## Licensing
 
