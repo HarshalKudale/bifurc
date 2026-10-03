@@ -7,7 +7,7 @@ pub const PROTOCOL_VERSION: &str = "1.0.0";
 pub const CLIENT_NAME: &str = "cli";
 
 /// Every engine command, sorted.
-pub const COMMAND_NAMES: [&str; 111] = [
+pub const COMMAND_NAMES: [&str; 115] = [
     "application.checkPort",
     "application.delete",
     "application.getAllStates",
@@ -66,6 +66,10 @@ pub const COMMAND_NAMES: [&str; 111] = [
     "grpc.execute",
     "grpc.reflect",
     "grpc.send",
+    "grpc.stream.cancel",
+    "grpc.stream.end",
+    "grpc.stream.open",
+    "grpc.stream.send",
     "healthbar.checkUrl",
     "healthbar.getServices",
     "healthbar.saveServices",

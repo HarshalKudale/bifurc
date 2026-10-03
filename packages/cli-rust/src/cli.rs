@@ -98,6 +98,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
         "mappings" | "mapping" => commands::mappings(&mut ctx, sub),
         "services" => commands::services(&mut ctx, sub),
         "requests" | "request" => commands::requests(&mut ctx, sub),
+        "grpc" => commands::grpc(&mut ctx, sub),
         "call" => commands::call(&mut ctx),
         "commands" => Ok(commands::commands(&ctx)),
         other => Err(CliError::msg(format!("unknown command \"{other}\"\n\n{USAGE}"))),
