@@ -39,7 +39,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "the port from the Node engine is in progress; run with --ignored to list what is missing"]
     fn every_protocol_command_is_registered() {
         let mut registry = CommandRegistry::new();
         register_all_engine_commands(&mut registry);

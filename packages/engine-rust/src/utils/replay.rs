@@ -104,6 +104,23 @@ fn root_message(err: &dyn std::error::Error) -> String {
     message
 }
 
+/// Node's wording for a refused connection or an unknown host, the innermost message of the chain otherwise.
+fn connect_message(err: &reqwest::Error, host: &str, port: u16) -> String {
+    let mut source = std::error::Error::source(err);
+    while let Some(inner) = source {
+        if let Some(io) = inner.downcast_ref::<std::io::Error>()
+            && io.kind() == std::io::ErrorKind::ConnectionRefused
+        {
+            return format!("connect ECONNREFUSED {host}:{port}");
+        }
+        if inner.to_string().contains("dns error") {
+            return format!("getaddrinfo ENOTFOUND {host}");
+        }
+        source = inner.source();
+    }
+    root_message(err)
+}
+
 /// A header value's bytes as text, one char per byte (Node decodes header values as latin1).
 fn latin1(value: &HeaderValue) -> String {
     value.as_bytes().iter().map(|&b| b as char).collect()
@@ -167,7 +184,7 @@ pub async fn replay_request(
         request = request.body(body);
     }
 
-    let response = request.send().await.map_err(|err| root_message(&err))?;
+    let response = request.send().await.map_err(|err| connect_message(&err, host, port))?;
     let status = response.status().as_u16();
     let mut headers = response_headers(response.headers());
     let raw = response.bytes().await.map_err(|err| root_message(&err))?;
