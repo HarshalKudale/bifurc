@@ -223,6 +223,11 @@ export const NON_IDEMPOTENT_COMMANDS: ReadonlySet<string> = new Set([
   "ws.disconnect",
   "ws.send",
   "ws.clearMessages",
+  // A live gRPC call: a retried open is a second call, a retried send is a second message.
+  "grpc.stream.open",
+  "grpc.stream.send",
+  "grpc.stream.end",
+  "grpc.stream.cancel",
 ]);
 
 /** The frozen command list, so the partition can be asserted against it. */

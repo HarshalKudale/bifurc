@@ -91,6 +91,13 @@ export const COMMAND_FIXTURES: Record<CommandAction, { valid: unknown; invalid: 
     invalid: { serverAddress: "a" },
   },
   "grpc.reflect": { valid: { serverAddress: "a" }, invalid: {} },
+  "grpc.stream.open": { valid: { workspaceId: "ws1", streamId: "tab-1", id: "grpc-1" }, invalid: { workspaceId: "ws1" } },
+  "grpc.stream.send": {
+    valid: { workspaceId: "ws1", streamId: "tab-1", data: "{}" },
+    invalid: { workspaceId: "ws1", streamId: "tab-1", data: 1 },
+  },
+  "grpc.stream.end": { valid: { workspaceId: "ws1", streamId: "tab-1" }, invalid: { workspaceId: "ws1" } },
+  "grpc.stream.cancel": { valid: { workspaceId: "ws1", streamId: "tab-1" }, invalid: { workspaceId: "ws1" } },
 
   "application.list": { valid: { workspaceId: "ws1" }, invalid: {} },
   "application.save": { valid: { application: { name: "a" } }, invalid: {} },
