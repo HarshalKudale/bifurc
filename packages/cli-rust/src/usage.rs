@@ -39,6 +39,13 @@ Requests
   requests send <id>                     Send a saved request by id (engine resolves and runs its scripts)
   requests send --url <url> [--method] [-H \"k: v\"]... [--body …]   Send an unsaved request
 
+gRPC
+  grpc list                              Saved gRPC requests
+  grpc reflect <address>                 Services and methods the server reports through reflection
+  grpc call <address> <pkg.Service/Method> [-d <json> | --body-file <f>] [-H \"k: v\"]... [--proto <protoFileId>]
+                                         Call a method. A client-streaming method takes a JSON array of messages
+  grpc send <id>                         Send a saved gRPC request by id
+
 Anything else
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
   commands                               List every engine command
