@@ -145,13 +145,14 @@ fn mock_body_is_text(mock: &Value) -> bool {
     if content_type.is_empty() { !is_base64(mock) } else { is_text_content_type(&content_type) }
 }
 
-fn streams(mock: &Value) -> bool {
+/// Whether the mock answers in pieces over time.
+pub fn is_streaming_mock(mock: &Value) -> bool {
     opt_str(mock, "streamingMode").is_some_and(|mode| !mode.is_empty() && mode != "none")
 }
 
 /// Whether the mock is the whole response (nothing is fetched from the real server).
 pub fn is_fully_mocked(mock: &Value) -> bool {
-    if streams(mock) {
+    if is_streaming_mock(mock) {
         return true;
     }
     // Nothing real to merge with (the endpoint does not exist yet): the mock is the whole response.
@@ -277,7 +278,7 @@ pub async fn serve_mock<W: AsyncWrite + Unpin>(out: &mut W, mock: &Value, env: O
     if delay > 0 {
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
-    if streams(mock) {
+    if is_streaming_mock(mock) {
         return serve_streaming_mock(out, mock, env).await;
     }
     let resolved = resolve_mock_only_response(mock, env);
