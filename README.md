@@ -25,10 +25,15 @@ The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the
 (`packages/protocol-rust`) and the desktop UI (`ui/`) are all Rust. There is no Node runtime.
 
 ```bash
-cargo build -p bifurc-engine -p bifurc-cli                  # the engine and the CLI
-cargo run --manifest-path ui/Cargo.toml -p bifurc-ui        # the UI, which starts the engine it finds in target/
-cargo xtask package                                         # installer / Store package / AppImage
+cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
+cargo dev:ui         # the UI; attaches to a running engine, or starts one from target/ if none is
+cargo dev:cli <cmd>  # the `bifurc` CLI, e.g. `cargo dev:cli status`
+cargo xtask package  # installer / Store package / AppImage
 ```
+
+All three find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.
+On Windows a running engine locks `target\debug/bifurc-engine.exe`, so stop it before rebuilding it.
+
 
 ## Repository structure
 
@@ -52,8 +57,8 @@ The documentation source now lives in the **website repository only** and is ren
 
 ```bash
 git clone https://github.com/HarshalKudale/bifurc.git
-cargo build -p bifurc-engine -p bifurc-cli
-cargo run --manifest-path ui/Cargo.toml -p bifurc-ui
+cargo dev:engine   # then, in another terminal:
+cargo dev:ui
 ```
 
 ## Browser extension
