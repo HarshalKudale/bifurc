@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 
 use super::request_body::resolve_request_body;
 use crate::{
-    env::{load_merged_environment, resolve_headers, resolve_vars},
+    env::{apply_variable_changes, load_merged_environment, resolve_headers, resolve_vars},
     protocol::Result,
     scripting::execute_ipc_script,
     utils::{
@@ -44,7 +44,7 @@ fn env_to_map(env: Option<&Value>) -> Value {
 
 /// The effective environment after a pre-script ran: its variables as it left them. The base is kept as it
 /// is when there is none, or when the script left no variables at all.
-fn environment_after_pre_script(base: Option<Value>, env_vars: &Value) -> Option<Value> {
+fn environment_after_script(base: Option<Value>, env_vars: &Value) -> Option<Value> {
     let base = base?;
     let vars = match env_vars.as_object() {
         Some(vars) if !vars.is_empty() => vars,
@@ -53,6 +53,23 @@ fn environment_after_pre_script(base: Option<Value>, env_vars: &Value) -> Option
     let variables: Vec<Value> =
         vars.iter().map(|(key, value)| json!({ "id": key, "key": key, "value": value })).collect();
     Some(merged(&base, &json!({ "variables": variables })))
+}
+
+fn collect_logs(output: &Value, into: &mut Vec<Value>) {
+    into.extend(output.get("logs").and_then(Value::as_array).cloned().unwrap_or_default());
+}
+
+/// Write the variables a script set or removed (against the environment the run started with) to disk.
+fn persist_script_variables(ws_id: &str, before: &Value, after: &Value) {
+    let (Some(before), Some(after)) = (before.as_object(), after.as_object()) else { return };
+    let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+    let set: Vec<(String, String)> = after
+        .iter()
+        .filter(|(key, value)| before.get(*key) != Some(*value))
+        .map(|(key, value)| (key.clone(), text(value)))
+        .collect();
+    let removed: Vec<String> = before.keys().filter(|key| !after.contains_key(*key)).cloned().collect();
+    apply_variable_changes(ws_id, &set, &removed);
 }
 
 fn body_text(response: &Value) -> String {
@@ -81,7 +98,9 @@ where
         "headers": resolve_headers(request.get("headers").unwrap_or(&Value::Null), env.as_ref()),
     });
     resolved = merged(&resolved, &resolve_request_body(request, env.as_ref()));
+    let original_vars = env_to_map(env.as_ref());
     let mut effective_env = env;
+    let mut script_logs: Vec<Value> = Vec::new();
 
     let mut pre_script_error: Option<String> = None;
     if let Some(script) = has_script(&scripts.pre) {
@@ -98,10 +117,11 @@ where
         }))
         .await;
         pre_script_error = opt_str(&pre, "error").map(str::to_string);
+        collect_logs(&pre, &mut script_logs);
         if let Some(changed) = pre.get("request").filter(|v| v.is_object()) {
             resolved = merged(&resolved, changed);
         }
-        effective_env = environment_after_pre_script(effective_env, pre.get("envVars").unwrap_or(&Value::Null));
+        effective_env = environment_after_script(effective_env, pre.get("envVars").unwrap_or(&Value::Null));
     }
 
     let send_start = Instant::now();
@@ -109,17 +129,31 @@ where
     let duration_ms = send_start.elapsed().as_millis() as u64;
 
     let response_body = body_text(&response);
+    let sent = json!({
+        "method": resolved["method"],
+        "url": resolved["url"],
+        "headers": resolved["headers"],
+        "body": resolved["body"],
+    });
 
     let mut post_script_error: Option<String> = None;
     if let Some(script) = has_script(&scripts.post) {
         let post = execute_ipc_script(json!({
             "script": script,
             "context": "post",
-            "response": { "status": response["status"], "headers": response["headers"], "body": response_body },
+            "request": sent,
+            "response": {
+                "status": response["status"],
+                "headers": response["headers"],
+                "body": response_body,
+                "responseTime": duration_ms,
+            },
             "envVars": env_to_map(effective_env.as_ref()),
         }))
         .await;
         post_script_error = opt_str(&post, "error").map(str::to_string);
+        collect_logs(&post, &mut script_logs);
+        effective_env = environment_after_script(effective_env, post.get("envVars").unwrap_or(&Value::Null));
     }
 
     let mut tests = Value::Array(Vec::new());
@@ -128,6 +162,7 @@ where
         let test = execute_ipc_script(json!({
             "script": script,
             "context": "test",
+            "request": sent,
             "response": {
                 "status": response["status"],
                 "headers": response["headers"],
@@ -143,7 +178,13 @@ where
         if let Some(logs) = test.get("testLogs").filter(|v| v.is_array()) {
             test_logs = logs.clone();
         }
+        effective_env = environment_after_script(effective_env, test.get("envVars").unwrap_or(&Value::Null));
     }
+    if let Value::Array(logs) = &mut test_logs {
+        script_logs.append(logs);
+        *logs = script_logs;
+    }
+    persist_script_variables(ws_id, &original_vars, &env_to_map(effective_env.as_ref()));
 
     let mut out = json!({
         "request": resolved,
@@ -168,9 +209,9 @@ mod tests {
     #[test]
     fn an_empty_script_environment_keeps_the_base() {
         let base = json!({ "id": "merged", "variables": [{ "id": "a", "key": "a", "value": "1" }] });
-        assert_eq!(environment_after_pre_script(Some(base.clone()), &json!({})), Some(base.clone()));
-        assert_eq!(environment_after_pre_script(None, &json!({ "x": "1" })), None);
-        let out = environment_after_pre_script(Some(base), &json!({ "x": "2" })).unwrap();
+        assert_eq!(environment_after_script(Some(base.clone()), &json!({})), Some(base.clone()));
+        assert_eq!(environment_after_script(None, &json!({ "x": "1" })), None);
+        let out = environment_after_script(Some(base), &json!({ "x": "2" })).unwrap();
         assert_eq!(out["variables"], json!([{ "id": "x", "key": "x", "value": "2" }]));
         assert_eq!(out["id"], "merged");
     }
