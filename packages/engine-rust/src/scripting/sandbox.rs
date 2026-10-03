@@ -164,8 +164,8 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
 
     let input = match (context, request, response) {
         ("pre", Some(req), _) => json!({ "mode": "pre", "request": req, "envVars": env_vars }),
-        ("post", _, Some(res)) => json!({ "mode": "post", "response": res, "envVars": env_vars }),
-        ("test", _, Some(res)) => json!({ "mode": "test", "response": res, "envVars": env_vars }),
+        ("post", req, Some(res)) => json!({ "mode": "post", "request": req, "response": res, "envVars": env_vars }),
+        ("test", req, Some(res)) => json!({ "mode": "test", "request": req, "response": res, "envVars": env_vars }),
         _ => {
             return json!({ "envVars": env_vars, "error": "Invalid script context or missing request/response" });
         }
@@ -343,9 +343,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn console_only_in_test_context() {
-        let out = pre("lp.environment.set('c', typeof console)").await;
-        assert_eq!(out["envVars"]["c"], "undefined");
+    async fn console_and_bare_test_helpers_exist_in_every_context() {
+        let out = pre("console.log('a', 1); lp.environment.set('c', typeof console + typeof test + typeof expect)").await;
+        assert_eq!(out["envVars"]["c"], "objectfunctionfunction");
+        assert_eq!(out["logs"], json!(["a 1"]));
+        let out = test("test('bare', () => { expect(lp.response.status).to.equal(200); expect(1).to.be.ok; });").await;
+        assert_eq!(tests_of(&out), vec![("bare".to_string(), true, None)]);
+    }
+
+    #[tokio::test]
+    async fn post_and_test_scripts_see_the_request_and_set_variables() {
+        let both = |context: &str, script: &str| {
+            execute_ipc_script(json!({
+                "script": script, "context": context, "request": req(), "response": res(), "envVars": {}
+            }))
+        };
+        let out = both(
+            "post",
+            "lp.environment.set('m', lp.request.method); lp.environment.set('u', lp.request.url);             lp.environment.set('t', lp.response.responseTime); lp.environment.set('ct', lp.response.headers.get('Content-Type'));             lp.environment.set('txt', lp.response.text().length); lp.environment.set('has', lp.response.headers.has('CONTENT-TYPE'));",
+        )
+        .await;
+        assert_eq!(
+            out["envVars"],
+            json!({ "m": "GET", "u": "http://a/b", "t": "12", "ct": "application/json", "txt": "20", "has": "true" })
+        );
+        let out = both("test", "lp.environment.set('fromTest', 1); lp.test('r', () => expect(lp.request.headers.get('a')).to.equal('1'));").await;
+        assert_eq!(out["envVars"], json!({ "fromTest": "1" }));
+        assert_eq!(tests_of(&out), vec![("r".to_string(), true, None)]);
+        let out = pre("lp.request.headers.set('a', '9'); lp.environment.set('h', lp.request.headers.get('A'));").await;
+        assert_eq!(out["request"]["headers"], json!({ "B": "2", "a": "9" }));
+        assert_eq!(out["envVars"]["h"], "9");
     }
 
     #[tokio::test]
