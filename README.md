@@ -32,7 +32,7 @@ cargo xtask package  # installer / Store package / AppImage
 ```
 
 All three find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.
-On Windows a running engine locks `target\debug/bifurc-engine.exe`, so stop it before rebuilding it.
+On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it before rebuilding it.
 
 
 ## Repository structure
