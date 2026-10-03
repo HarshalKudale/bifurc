@@ -169,6 +169,8 @@ impl Shell {
             ModelEvent::Notice(text) => window.push_notification(Notification::warning(text.clone()), cx),
             ModelEvent::SocketStatus(_)
             | ModelEvent::SocketMessage(_)
+            | ModelEvent::GrpcStatus(_)
+            | ModelEvent::GrpcMessage(_)
             | ModelEvent::Traffic(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)

@@ -20,7 +20,7 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 12] = [
+const EVENTS: [&str; 14] = [
     "event.engine.stopping",
     "event.ui.activate",
     "event.entity.changed",
@@ -30,6 +30,8 @@ const EVENTS: [&str; 12] = [
     "event.server.error",
     "event.ws.status",
     "event.ws.message",
+    "event.grpc.stream.status",
+    "event.grpc.stream.message",
     "event.log.entry",
     "event.runner.progress",
     "event.runner.finished",
@@ -74,6 +76,10 @@ pub enum ModelEvent {
     SocketStatus(Value),
     /// `event.ws.message`, as the engine sent it.
     SocketMessage(Value),
+    /// `event.grpc.stream.status`: a live gRPC call opened or ended.
+    GrpcStatus(Value),
+    /// `event.grpc.stream.message`: one message of a live gRPC call.
+    GrpcMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
     /// `event.runner.progress`: one request of a folder run has finished.
@@ -229,6 +235,8 @@ impl AppModel {
                 "event.server.error" => self.refresh_proxy(cx),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
+                "event.grpc.stream.status" => cx.emit(ModelEvent::GrpcStatus(event.payload)),
+                "event.grpc.stream.message" => cx.emit(ModelEvent::GrpcMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
                 "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
                 "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
