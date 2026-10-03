@@ -28,8 +28,8 @@ use crate::{
 };
 
 /// The protocol version this client speaks. The engine accepts any 1.x.
-pub const PROTOCOL_VERSION: &str = "1.0.0";
-/// Registered in the engine's `ClientNameSchema`.
+pub use bifurc_protocol::PROTOCOL_VERSION;
+/// A client name the protocol registers (`bifurc_protocol::CLIENT_NAMES`).
 pub const CLIENT_NAME: &str = "desktop-ui";
 
 type Pending = oneshot::Sender<Result<Value>>;

@@ -5,16 +5,19 @@
 //! tab was open. The order is the folder's saved runner configuration (`requestOrder`), written back with
 //! `runner.saveConfig` when a request is moved. This view keeps what it was told and draws it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    progress::Progress,
     spinner::Spinner,
+    tab::{Tab, TabBar},
     tag::Tag,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
@@ -47,6 +50,74 @@ struct RowResult {
     passed: usize,
     /// The names of the tests that failed, each with its reason.
     failed: Vec<String>,
+    /// Every test that ran: its name, whether it passed, and why not.
+    tests: Vec<(String, bool, Option<String>)>,
+    /// The pre-request, post-response and test scripts the request has, `None` for one it has not.
+    pre: Option<String>,
+    post: Option<String>,
+    test_script: Option<String>,
+    /// Why the pre-request or post-response script failed.
+    pre_error: Option<String>,
+    post_error: Option<String>,
+    /// What the scripts logged.
+    logs: Vec<String>,
+    response_headers: Vec<(String, String)>,
+    response_body: String,
+}
+
+fn text_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(|item| item.as_str().map(str::to_owned).unwrap_or_else(|| item.to_string())).collect())
+        .unwrap_or_default()
+}
+
+fn header_list(value: Option<&Value>) -> Vec<(String, String)> {
+    value
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter().map(|(k, v)| (k.clone(), v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string()))).collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The source of the `test('name', …)` call in `script` that defines the test called `name`.
+fn test_source(script: &str, name: &str) -> Option<String> {
+    let (start, open) = ['\'', '"', '`'].iter().find_map(|quote| {
+        let at = script.find(&format!("test({quote}{name}{quote}"))?;
+        let head = script[..at].trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.').len();
+        Some((head, at + "test".len()))
+    })?;
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (offset, c) in script[open..].char_indices() {
+        if let Some(q) = quote {
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, c) if c == q => quote = None,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let mut end = open + offset + 1;
+                    if script[end..].starts_with(';') {
+                        end += 1;
+                    }
+                    return Some(script[start..end].to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 impl RowResult {
@@ -64,7 +135,30 @@ impl RowResult {
                 }
             })
             .collect::<Vec<_>>();
+        let own = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let script = |key: &str| {
+            let source = value.pointer(&format!("/scripts/{key}")).and_then(Value::as_str)?;
+            (!source.trim().is_empty()).then(|| source.to_owned())
+        };
         Self {
+            pre: script("pre"),
+            post: script("post"),
+            test_script: script("test"),
+            pre_error: text("preScriptError"),
+            post_error: text("postScriptError"),
+            tests: tests
+                .iter()
+                .map(|test| {
+                    (
+                        test.get("name").and_then(Value::as_str).unwrap_or("Unnamed test").to_owned(),
+                        test.get("passed").and_then(Value::as_bool) == Some(true),
+                        test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_owned),
+                    )
+                })
+                .collect(),
+            logs: text_list(value.get("testLogs")),
+            response_headers: header_list(value.get("responseHeaders")),
+            response_body: own("responseBody"),
             status: value.get("status").and_then(Value::as_u64).and_then(|s| u16::try_from(s).ok()),
             duration_ms: value.get("responseTime").and_then(Value::as_f64).map_or(0, |ms| ms.max(0.) as u64),
             errors: [
@@ -100,6 +194,11 @@ pub struct FolderRunner {
     completed: usize,
     /// Results of the run in progress or the last one, by request id.
     results: HashMap<String, RowResult>,
+    /// The rows opened to show their details.
+    expanded: HashSet<String>,
+    /// Which tab of an opened row is showing, and which of its tests is chosen, by request id.
+    tabs: HashMap<String, usize>,
+    picked: HashMap<String, usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -138,6 +237,9 @@ impl FolderRunner {
             total: 0,
             completed: 0,
             results: HashMap::new(),
+            expanded: HashSet::new(),
+            tabs: HashMap::new(),
+            picked: HashMap::new(),
             _subscriptions: subscriptions,
         };
         this.load(cx);
@@ -258,6 +360,7 @@ impl FolderRunner {
             return;
         }
         self.results.clear();
+        self.expanded.clear();
         self.completed = 0;
         self.total = self.rows(cx).len();
         self.set_running(true, cx);
@@ -316,7 +419,7 @@ impl FolderRunner {
         };
         line.push_str(&format!(" · {failed} failed"));
         if tests > 0 {
-            line.push_str(&format!(" · {} of {tests} tests passed", tests - tests_failed));
+            line.push_str(&format!(" · {}/{tests} tests passed", tests - tests_failed));
         }
         line
     }
@@ -342,7 +445,7 @@ impl FolderRunner {
             .text_xs()
             .text_color(theme.muted_foreground)
             .children((tests > 0).then(|| {
-                let text = format!("{} of {tests} tests", result.passed);
+                let text = format!("{}/{tests} tests", result.passed);
                 if result.failed.is_empty() {
                     Tag::success().small().child(text)
                 } else {
@@ -365,9 +468,11 @@ impl FolderRunner {
         let id = request.id.clone();
         let node = NodeRef::Request { kind: RequestKind::Rest, id: id.clone() };
         let name = if request.name.is_empty() { request.target.clone() } else { request.name.clone() };
+        let open = self.expanded.contains(&id);
         let problems: Vec<String> = self
             .results
             .get(&id)
+            .filter(|_| !open)
             .map(|result| result.errors.iter().chain(result.failed.iter()).cloned().collect())
             .unwrap_or_default();
         v_flex()
@@ -380,6 +485,24 @@ impl FolderRunner {
             .child(
                 h_flex()
                     .gap_2()
+                    .child(match self.results.get(&id) {
+                        Some(_) => Button::new("toggle-details")
+                            .icon(if open { IconName::ChevronDown } else { IconName::ChevronRight })
+                            .ghost()
+                            .xsmall()
+                            .tooltip(if open { "Hide details" } else { "Show scripts, tests and the response" })
+                            .on_click({
+                                let id = id.clone();
+                                cx.listener(move |this, _, _, cx| {
+                                    if !this.expanded.remove(&id) {
+                                        this.expanded.insert(id.clone());
+                                    }
+                                    cx.notify();
+                                })
+                            })
+                            .into_any_element(),
+                        None => div().size_6().flex_none().into_any_element(),
+                    })
                     .child(div().w_6().flex_none().text_xs().text_color(theme.muted_foreground).child((ix + 1).to_string()))
                     .child(
                         h_flex()
@@ -444,6 +567,274 @@ impl FolderRunner {
                     .into_iter()
                     .map(|problem| div().pl_8().text_xs().text_color(theme.danger).child(problem)),
             )
+            .children(self.results.get(&id).filter(|_| open).map(|result| self.render_details(&id, result, cx)))
+            .into_any_element()
+    }
+
+    fn block(&self, id: String, text: String, tint: Option<gpui_kit::Hsla>, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        div()
+            .id(SharedString::from(id))
+            .w_full()
+            .max_h_64()
+            .overflow_y_scroll()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(tint.map_or(theme.muted, |color| color.opacity(0.12)))
+            .text_xs()
+            .font_family(theme.mono_font_family.clone())
+            .child(text)
+            .into_any_element()
+    }
+
+    fn label(&self, text: &str, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        div().text_xs().text_color(cx.theme().muted_foreground).child(text.to_owned()).into_any_element()
+    }
+
+    /// One of the request's scripts: whether it ran or failed, and its code.
+    fn render_script(
+        &self,
+        id: &str,
+        which: &str,
+        source: Option<&String>,
+        error: Option<&String>,
+        cx: &Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let Some(source) = source else {
+            return div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child("This request has no script here, so nothing ran.")
+                .into_any_element();
+        };
+        let outcome = match error {
+            Some(_) => Tag::danger().small().child("Failed"),
+            None => Tag::success().small().child("Ran"),
+        };
+        let tint = Some(if error.is_some() { theme.danger } else { theme.success });
+        v_flex()
+            .gap_2()
+            .child(h_flex().gap_2().child(outcome))
+            .children(error.map(|error| {
+                div().text_sm().text_color(theme.danger).font_family(theme.mono_font_family.clone()).child(error.clone())
+            }))
+            .child(self.block(format!("script-{which}-{id}"), source.clone(), tint, cx))
+            .into_any_element()
+    }
+
+    /// The tests: the list on the left, and on the right the code of the one chosen, green or red by how it went.
+    fn render_tests(&self, id: &str, result: &RowResult, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        if result.tests.is_empty() {
+            return div().text_sm().text_color(theme.muted_foreground).child("No tests ran.").into_any_element();
+        }
+        let picked = self.picked.get(id).copied().filter(|ix| *ix < result.tests.len()).unwrap_or(0);
+        let list = v_flex().w_64().flex_none().gap_1().children(result.tests.iter().enumerate().map(|(ix, (name, ok, _))| {
+            let (mark, color) = if *ok { ("\u{2713}", theme.success) } else { ("\u{2717}", theme.danger) };
+            let key = id.to_owned();
+            h_flex()
+                .id(SharedString::from(format!("pick-{id}-{ix}")))
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .when(ix == picked, |row| row.bg(theme.muted))
+                .hover(|row| row.bg(theme.muted))
+                .child(div().flex_none().text_color(color).child(mark))
+                .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(name.clone()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.picked.insert(key.clone(), ix);
+                    cx.notify();
+                }))
+        }));
+        let (name, ok, error) = &result.tests[picked];
+        let code = result
+            .test_script
+            .as_deref()
+            .map(|script| test_source(script, name).unwrap_or_else(|| script.to_owned()))
+            .unwrap_or_else(|| "The test script is not available.".to_owned());
+        let detail = v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(if *ok { Tag::success().small().child("Passed") } else { Tag::danger().small().child("Failed") })
+                    .child(div().text_sm().child(name.clone())),
+            )
+            .children(error.as_ref().map(|error| {
+                div().text_sm().text_color(theme.danger).font_family(theme.mono_font_family.clone()).child(error.clone())
+            }))
+            .child(self.block(
+                format!("test-code-{id}"),
+                code,
+                Some(if *ok { theme.success } else { theme.danger }),
+                cx,
+            ))
+            .children((!result.logs.is_empty()).then(|| {
+                v_flex()
+                    .gap_1()
+                    .child(self.label("Console", cx))
+                    .child(self.block(format!("test-logs-{id}"), result.logs.join("\n"), None, cx))
+            }));
+        h_flex().w_full().gap_4().items_start().child(list).child(detail).into_any_element()
+    }
+
+    /// The response: status and time, then its headers and body.
+    fn render_response(&self, id: &str, result: &RowResult, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let Some(status) = result.status else {
+            let reason = if result.errors.is_empty() { "No response came back.".to_owned() } else { result.errors.join("\n") };
+            return self.block(format!("response-error-{id}"), reason, Some(theme.danger), cx);
+        };
+        let tag = if status < 400 { Tag::success() } else { Tag::danger() };
+        let headers =
+            result.response_headers.iter().map(|(key, value)| format!("{key}: {value}")).collect::<Vec<_>>().join("\n");
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(tag.small().child(status.to_string()))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{} ms", result.duration_ms))),
+            )
+            .child(self.label("Headers", cx))
+            .child(self.block(format!("response-headers-{id}"), headers, None, cx))
+            .child(self.label("Body", cx))
+            .child(self.block(format!("response-body-{id}"), result.response_body.clone(), None, cx))
+            .into_any_element()
+    }
+
+    /// An opened row: Response, Pre script, Post script and Tests.
+    fn render_details(&self, id: &str, result: &RowResult, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let tab = self.tabs.get(id).copied().unwrap_or(0);
+        let key = id.to_owned();
+        let content = match tab {
+            0 => self.render_response(id, result, cx),
+            1 => self.render_script(id, "pre", result.pre.as_ref(), result.pre_error.as_ref(), cx),
+            2 => self.render_script(id, "post", result.post.as_ref(), result.post_error.as_ref(), cx),
+            _ => self.render_tests(id, result, cx),
+        };
+        v_flex()
+            .w_full()
+            .gap_3()
+            .pl_8()
+            .pt_1()
+            .pb_2()
+            .child(
+                TabBar::new(SharedString::from(format!("run-tabs-{id}")))
+                    .underline()
+                    .small()
+                    .selected_index(tab)
+                    .on_click(cx.listener(move |this, ix: &usize, _, cx| {
+                        this.tabs.insert(key.clone(), *ix);
+                        cx.notify();
+                    }))
+                    .child(Tab::new().label("Response"))
+                    .child(Tab::new().label("Pre script"))
+                    .child(Tab::new().label("Post script"))
+                    .child(Tab::new().label(format!(
+                        "Tests {}/{}",
+                        result.tests.iter().filter(|(_, ok, _)| *ok).count(),
+                        result.tests.len()
+                    ))),
+            )
+            .child(content)
+            .into_any_element()
+    }
+
+    /// One figure of the run, large, with an optional bar under it.
+    fn stat_card(
+        &self,
+        id: &'static str,
+        title: &str,
+        value: String,
+        color: gpui_kit::Hsla,
+        note: String,
+        bar: Option<f32>,
+        cx: &Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_1()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.background)
+            .child(div().text_xs().text_color(theme.muted_foreground).child(title.to_uppercase()))
+            .child(div().text_3xl().font_semibold().text_color(color).child(value))
+            .child(div().text_xs().text_color(theme.muted_foreground).child(note))
+            .children(bar.map(|percent| Progress::new(id).value(percent).color(color)))
+            .into_any_element()
+    }
+
+    /// The run at a glance: requests sent, requests that failed, tests passed and how long it all took.
+    fn render_stats(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let failed = self.results.values().filter(|result| result.is_failure()).count();
+        let tests: usize = self.results.values().map(|result| result.tests.len()).sum();
+        let passed: usize = self.results.values().map(|result| result.passed).sum();
+        let elapsed: u64 = self.results.values().map(|result| result.duration_ms).sum();
+        let percent = |part: usize, whole: usize| if whole == 0 { 0. } else { part as f32 * 100. / whole as f32 };
+        let state = if self.running {
+            "running"
+        } else if self.completed < self.total {
+            "stopped early"
+        } else {
+            "done"
+        };
+        h_flex()
+            .flex_none()
+            .w_full()
+            .gap_3()
+            .p_4()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(self.stat_card(
+                "stat-sent",
+                "Requests sent",
+                format!("{}/{}", self.completed, self.total),
+                theme.foreground,
+                state.to_owned(),
+                Some(percent(self.completed, self.total)),
+                cx,
+            ))
+            .child(self.stat_card(
+                "stat-failed",
+                "Failed requests",
+                failed.to_string(),
+                if failed > 0 { theme.danger } else { theme.success },
+                format!("of {} sent", self.completed),
+                Some(percent(failed, self.completed)),
+                cx,
+            ))
+            .child(self.stat_card(
+                "stat-tests",
+                "Tests passed",
+                format!("{passed}/{tests}"),
+                if tests == passed { theme.success } else { theme.danger },
+                if tests == 0 { "no tests ran".to_owned() } else { format!("{} failed", tests - passed) },
+                Some(percent(passed, tests)),
+                cx,
+            ))
+            .child(self.stat_card(
+                "stat-time",
+                "Response time",
+                format!("{elapsed} ms"),
+                theme.foreground,
+                "all responses together".to_owned(),
+                None,
+                cx,
+            ))
             .into_any_element()
     }
 }
@@ -470,14 +861,56 @@ impl Render for FolderRunner {
         let body = if rows.is_empty() {
             page::empty("Nothing to run", "This folder has no requests in it. Folders inside it are run on their own.")
         } else {
-            v_flex()
+            let rows = v_flex()
                 .id("run-rows")
-                .size_full()
+                .flex_1()
+                .min_h_0()
                 .overflow_y_scroll()
-                .children(rows.iter().enumerate().map(|(ix, request)| self.render_row(ix, last, request, cx)))
+                .children(rows.iter().enumerate().map(|(ix, request)| self.render_row(ix, last, request, cx)));
+            let started = self.running || !self.results.is_empty();
+            v_flex()
+                .size_full()
+                .children(started.then(|| self.render_stats(cx)))
+                .child(rows)
                 .into_any_element()
         };
         page::screen(page::header(self.title(cx), self.summary(rows.len()), action, cx), body, cx)
             .text_color(theme.foreground)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_result_keeps_its_tests_scripts_and_what_was_exchanged() {
+        let result = RowResult::from_value(&json!({
+            "status": 200, "responseTime": 12, 
+            "tests": [{ "name": "ok", "passed": true }, { "name": "bad", "passed": false, "error": "expected 1" }],
+            "testLogs": ["hello"],
+            "scripts": { "pre": "", "post": "lp.environment.set('a', 1)", "test": "lp.test('ok', () => {})" },
+            "responseHeaders": { "b": "2" }, "responseBody": "{}",
+            "postScriptError": "boom",
+        }));
+        assert_eq!((result.passed, result.failed.len(), result.tests.len()), (1, 1, 2));
+        assert_eq!(result.tests[1], ("bad".to_owned(), false, Some("expected 1".to_owned())));
+        assert_eq!((result.pre.is_some(), result.post.is_some(), result.test_script.is_some()), (false, true, true));
+        assert_eq!(result.post_error.as_deref(), Some("boom"));
+        assert_eq!(result.logs, vec!["hello"]);
+        assert_eq!(result.response_body, "{}");
+        assert_eq!(result.errors, vec!["Post-response script: boom"]);
+        assert!(result.is_failure());
+    }
+
+    #[test]
+    fn a_test_is_found_in_its_script_by_name() {
+        let script = "const x = 1;\nlp.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});\ntest(\"second\", () => {});";
+        assert_eq!(
+            test_source(script, "a (b)").as_deref(),
+            Some("lp.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});")
+        );
+        assert_eq!(test_source(script, "second").as_deref(), Some("test(\"second\", () => {});"));
+        assert_eq!(test_source(script, "missing"), None);
     }
 }
