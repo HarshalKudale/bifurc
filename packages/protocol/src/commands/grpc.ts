@@ -24,6 +24,7 @@ export const GrpcExecuteParams = z.object({
   metadata: HeaderMap,
   protoFileId: z.string().nullable(),
   useReflection: z.boolean(),
+  workspaceId: z.string().optional(),
 }).strict();
 export type GrpcExecuteParams = z.infer<typeof GrpcExecuteParams>;
 export interface GrpcExecuteResult {
@@ -38,6 +39,8 @@ export interface GrpcExecuteResult {
 
 export const GrpcReflectParams = z.object({
   serverAddress: z.string(),
+  protoFileId: z.string().nullable().optional(),
+  workspaceId: z.string().optional(),
 }).strict();
 export type GrpcReflectParams = z.infer<typeof GrpcReflectParams>;
 export interface GrpcMethodInfo {
@@ -54,5 +57,40 @@ export interface GrpcServiceInfo {
 export interface GrpcReflectResult {
   ok: boolean;
   services?: GrpcServiceInfo[];
+  error?: string;
+}
+
+/**
+ * Live gRPC calls. `grpc.send` runs a call to its end and answers once; these keep one open, the way the
+ * socket commands keep a WebSocket open: the caller names the stream (`streamId`), the messages and the end
+ * of the call arrive as `event.grpc.stream.message` / `event.grpc.stream.status`.
+ *
+ * `open` starts a saved request. A method that takes one message sends the request's body when it starts; a
+ * method that streams from the client starts with nothing sent, and `send` / `end` supply the rest.
+ */
+export const GrpcStreamOpenParams = z.object({
+  workspaceId: z.string(),
+  streamId: z.string(),
+  id: z.string(),
+}).strict();
+export type GrpcStreamOpenParams = z.infer<typeof GrpcStreamOpenParams>;
+
+export const GrpcStreamSendParams = z.object({
+  workspaceId: z.string(),
+  streamId: z.string(),
+  data: z.string(),
+}).strict();
+export type GrpcStreamSendParams = z.infer<typeof GrpcStreamSendParams>;
+
+export const GrpcStreamRefParams = z.object({
+  workspaceId: z.string(),
+  streamId: z.string(),
+}).strict();
+export type GrpcStreamRefParams = z.infer<typeof GrpcStreamRefParams>;
+
+export interface GrpcStreamOpenResult {
+  ok: boolean;
+  /** How the method streams: `unary`, `server`, `client` or `bidi`. */
+  kind?: "unary" | "server" | "client" | "bidi";
   error?: string;
 }

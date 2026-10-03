@@ -211,6 +211,12 @@ export const SCOPE_BY_COMMAND: Readonly<Record<CommandAction, Scope>> = {
   //   `ws.clearMessages` is `write`: it mutates engine state (the retained log) and reaches no upstream, so it
   //   is neither of the two classes above. Note it is deliberately *not* `read` — a `read`-scoped session that
   //   could erase the log a `status` call reports would make `ws.status` unreliable for everyone else.
+  // A live gRPC call reaches a server the engine does not control, like `ws.*`: every verb that starts, feeds
+  // or ends one is `execute`.
+  "grpc.stream.open": "execute",
+  "grpc.stream.send": "execute",
+  "grpc.stream.end": "execute",
+  "grpc.stream.cancel": "execute",
   "ws.connect": "execute",
   "ws.disconnect": "execute",
   "ws.send": "execute",

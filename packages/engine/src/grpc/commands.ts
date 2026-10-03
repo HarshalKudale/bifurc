@@ -90,6 +90,11 @@ export function registerGrpcCommands(registry: CommandRegistry): void {
         return { ok: false, error: "gRPC runtime not yet configured. Install @grpc/grpc-js to enable server reflection." };
     });
 
+    // Live calls are Rust-engine only, like the two stubs above.
+    for (const action of ["grpc.stream.open", "grpc.stream.send", "grpc.stream.end", "grpc.stream.cancel"] as const) {
+        registry.register(action, async () => ({ ok: false, error: "Live gRPC calls need the Rust engine." }));
+    }
+
     registry.register("grpc.send", async (params: GrpcSendParams, ctx: CommandContext) => {
         const stored = "id" in params
             ? requireStoredGrpcRequest(params.workspaceId, params.id)

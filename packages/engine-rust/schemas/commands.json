@@ -719,6 +719,9 @@
     },
     "useReflection": {
      "type": "boolean"
+    },
+    "workspaceId": {
+     "type": "string"
     }
    },
    "required": [
@@ -737,10 +740,91 @@
    "properties": {
     "serverAddress": {
      "type": "string"
+    },
+    "protoFileId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "workspaceId": {
+     "type": "string"
     }
    },
    "required": [
     "serverAddress"
+   ],
+   "additionalProperties": false
+  },
+  "grpc.stream.open": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "grpc.stream.send": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    },
+    "data": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId",
+    "data"
+   ],
+   "additionalProperties": false
+  },
+  "grpc.stream.end": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "grpc.stream.cancel": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
    ],
    "additionalProperties": false
   },

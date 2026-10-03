@@ -52,6 +52,16 @@ serde_yaml_ng = "0.10"
 # The sandbox for request scripts, tests and proxy rule scripts.
 rquickjs = "0.14"
 
+# gRPC: a dynamic client (no generated code) over tonic, messages as prost-reflect dynamic messages, .proto files compiled by protox.
+tonic = { version = "0.14", default-features = false, features = ["transport", "tls-ring", "tls-native-roots"] }
+prost = "0.14"
+tonic-prost = "0.14"
+prost-types = "0.14"
+prost-reflect = { version = "0.16", features = ["serde"] }
+protox = "0.9"
+http = "1"
+bytes = "1"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
@@ -62,5 +72,8 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
+tower-service = "0.3"
+# The test server routes by service name.
+tonic = { version = "0.14", default-features = false, features = ["transport", "router"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
