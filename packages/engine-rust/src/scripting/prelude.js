@@ -255,7 +255,73 @@
   var tests = [];
   var logs = [];
 
-  var envProxy = {
+  function findKey(obj, key) {
+    if (key in obj) return key;
+    var lower = StringCtor(key).toLowerCase();
+    var k = keys(obj);
+    for (var i = 0; i < k.length; i++) if (k[i].toLowerCase() === lower) return k[i];
+    return undefined;
+  }
+
+  // Header accessors, case-insensitive like HTTP itself. `store` is read live so a mutation shows up.
+  function headerApi(getStore, writable) {
+    var api = {
+      get: function (key) {
+        var store = getStore();
+        var found = findKey(store, key);
+        return found === undefined ? undefined : store[found];
+      },
+      has: function (key) {
+        return findKey(getStore(), key) !== undefined;
+      },
+      toObject: function () {
+        return copy(getStore());
+      },
+    };
+    if (writable) {
+      api.set = function (key, value) {
+        var store = getStore();
+        var found = findKey(store, key);
+        if (found !== undefined && found !== key) delete store[found];
+        store[key] = StringCtor(value);
+      };
+      api.unset = function (key) {
+        var store = getStore();
+        var found = findKey(store, key);
+        if (found !== undefined) delete store[found];
+      };
+    }
+    return api;
+  }
+
+  function responseApi(res) {
+    return {
+      get status() {
+        return res.status;
+      },
+      get body() {
+        return res.body;
+      },
+      get responseTime() {
+        return res.responseTime == null ? 0 : res.responseTime;
+      },
+      headers: headerApi(function () {
+        return res.headers;
+      }, false),
+      json: function () {
+        try {
+          return parse(res.body);
+        } catch (e) {
+          return null;
+        }
+      },
+      text: function () {
+        return res.body;
+      },
+    };
+  }
+
+  var envApi = {
     get: function (key) {
       return vars[key];
     },
@@ -265,7 +331,16 @@
     unset: function (key) {
       delete vars[key];
     },
+    has: function (key) {
+      return key in vars;
+    },
+    toObject: function () {
+      return copy(vars);
+    },
   };
+
+  var consoleApi = buildConsoleMock(logs);
+  var expectApi = buildExpect();
 
   if (mode === "proxyRequest" || mode === "proxyResponse") {
     var mutableHeaders = copy(input.headers);
@@ -289,156 +364,91 @@
       if (err !== undefined) out.error = err;
       return out;
     };
-  } else if (mode === "pre") {
-    var req = copy(input.request);
-    req.headers = copy(input.request.headers);
-    globalThis.lp = {
-      request: {
-        get url() {
-          return req.url;
-        },
-        set url(v) {
-          req.url = v;
-        },
-        get method() {
-          return req.method;
-        },
-        set method(v) {
-          req.method = v;
-        },
-        get body() {
-          return req.body;
-        },
-        set body(v) {
-          req.body = v;
-        },
-        headers: {
-          get: function (key) {
-            return req.headers[key];
-          },
-          set: function (key, value) {
-            req.headers[key] = value;
-          },
-          unset: function (key) {
-            delete req.headers[key];
-          },
-          toObject: function () {
-            return copy(req.headers);
-          },
-        },
-      },
-      environment: envProxy,
-    };
-    result = function (err) {
-      var out = { request: req, envVars: vars };
-      if (err !== undefined) out.error = err;
-      return out;
-    };
-  } else if (mode === "post") {
-    var res = copy(input.response);
-    res.headers = copy(input.response.headers);
-    globalThis.lp = {
-      response: {
-        get status() {
-          return res.status;
-        },
-        get body() {
-          return res.body;
-        },
-        headers: {
-          get: function (key) {
-            return res.headers[key];
-          },
-          toObject: function () {
-            return copy(res.headers);
-          },
-        },
-        json: function () {
-          try {
-            return parse(res.body);
-          } catch (e) {
-            return null;
-          }
-        },
-      },
-      environment: envProxy,
-    };
-    result = function (err) {
-      var out = { response: res, envVars: vars };
-      if (err !== undefined) out.error = err;
-      return out;
-    };
   } else {
-    var tres = copy(input.response);
-    tres.headers = copy(input.response.headers);
-    var lpResponse = {
-      get status() {
-        return tres.status;
+    var req = copy(input.request || {});
+    req.headers = copy((input.request && input.request.headers) || {});
+    var res = input.response ? copy(input.response) : null;
+    if (res) res.headers = copy(input.response.headers || {});
+    var writable = mode === "pre";
+
+    var requestApi = {
+      get url() {
+        return req.url;
+      },
+      get method() {
+        return req.method;
       },
       get body() {
-        return tres.body;
+        return req.body;
       },
-      get responseTime() {
-        return tres.responseTime == null ? 0 : tres.responseTime;
-      },
-      headers: {
-        get: function (key) {
-          var v = tres.headers[key.toLowerCase()];
-          return v == null ? tres.headers[key] : v;
-        },
-        toObject: function () {
-          return copy(tres.headers);
-        },
-        has: function (key) {
-          return key.toLowerCase() in tres.headers || key in tres.headers;
-        },
-      },
-      json: function () {
-        try {
-          return parse(tres.body);
-        } catch (e) {
-          return null;
-        }
-      },
-      text: function () {
-        return tres.body;
-      },
+      headers: headerApi(function () {
+        return req.headers;
+      }, writable),
     };
-    var envReadOnly = {
-      get: function (key) {
-        return vars[key];
-      },
-      has: function (key) {
-        return key in vars;
-      },
-      toObject: function () {
-        return copy(vars);
-      },
-    };
-    globalThis.lp = {
-      test: function (name, fn) {
-        var start = now();
-        try {
-          fn();
-          tests.push({ name: name, passed: true, durationMs: now() - start });
-        } catch (e) {
-          tests.push({ name: name, passed: false, error: fmt(e), durationMs: now() - start });
-        }
-      },
-      expect: buildExpect(),
-      response: lpResponse,
-      environment: envReadOnly,
-    };
-    globalThis.console = buildConsoleMock(logs);
-    result = function (err) {
-      if (err !== undefined) {
-        if (tests.length === 0) {
-          tests.push({ name: "Script execution", passed: false, error: err, durationMs: 0 });
-        } else {
-          logs.push("[ERROR] Uncaught: " + err);
-        }
+    if (writable) {
+      defineProperty(requestApi, "url", {
+        get: function () {
+          return req.url;
+        },
+        set: function (v) {
+          req.url = v;
+        },
+        enumerable: true,
+      });
+      defineProperty(requestApi, "method", {
+        get: function () {
+          return req.method;
+        },
+        set: function (v) {
+          req.method = v;
+        },
+        enumerable: true,
+      });
+      defineProperty(requestApi, "body", {
+        get: function () {
+          return req.body;
+        },
+        set: function (v) {
+          req.body = v;
+        },
+        enumerable: true,
+      });
+    }
+
+    var lp = { request: requestApi, environment: envApi };
+    if (res) lp.response = responseApi(res);
+    lp.test = function (name, fn) {
+      var start = now();
+      try {
+        fn();
+        tests.push({ name: name, passed: true, durationMs: now() - start });
+      } catch (e) {
+        tests.push({ name: name, passed: false, error: fmt(e), durationMs: now() - start });
       }
-      return { envVars: vars, testResults: tests, testLogs: logs };
+    };
+    lp.expect = expectApi;
+    lp.console = consoleApi;
+    globalThis.lp = lp;
+    globalThis.console = consoleApi;
+    globalThis.test = lp.test;
+    globalThis.expect = expectApi;
+
+    result = function (err) {
+      if (mode === "test") {
+        if (err !== undefined) {
+          if (tests.length === 0) {
+            tests.push({ name: "Script execution", passed: false, error: err, durationMs: 0 });
+          } else {
+            logs.push("[ERROR] Uncaught: " + err);
+          }
+        }
+        return { envVars: vars, testResults: tests, testLogs: logs };
+      }
+      var out = { envVars: vars, logs: logs };
+      if (mode === "pre") out.request = req;
+      else out.response = res;
+      if (err !== undefined) out.error = err;
+      return out;
     };
   }
 

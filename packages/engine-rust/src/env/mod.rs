@@ -16,7 +16,7 @@ use crate::{
     },
     workspace::{
         config::{GLOBAL_ENV_ID, load_config, save_config},
-        fs::read_all_entities,
+        fs::{read_all_entities, write_flat_entity},
         settings::load_settings,
     },
 };
@@ -60,6 +60,53 @@ pub fn load_merged_environment(ws_id: &str) -> Option<Value> {
     let find = |id: &str| environments.iter().find(|e| str_of(e, "id") == id);
     let active_id = effective_environment_id(&environments, load_settings().stored_environment_id(ws_id).as_deref());
     merge_env_vars(find(GLOBAL_ENV_ID), active_id.as_deref().and_then(find))
+}
+
+/// Persist what a script did to its variables: `set` is written into the selected environment (the global one
+/// when none is selected), `removed` keys are deleted from both. Returns whether anything was written.
+pub fn apply_variable_changes(ws_id: &str, set: &[(String, String)], removed: &[String]) -> bool {
+    if set.is_empty() && removed.is_empty() {
+        return false;
+    }
+    let environments = read_all_entities(ws_id, "environments");
+    let active_id = effective_environment_id(&environments, load_settings().stored_environment_id(ws_id).as_deref())
+        .unwrap_or_else(|| GLOBAL_ENV_ID.to_string());
+    let mut wrote = false;
+    for env in environments {
+        let id = str_of(&env, "id").to_string();
+        let is_target = id == active_id;
+        if !is_target && !(id == GLOBAL_ENV_ID && !removed.is_empty()) {
+            continue;
+        }
+        let mut env = env;
+        let mut variables: Vec<Value> = array_of(&env, "variables").to_vec();
+        let before = variables.len();
+        variables.retain(|v| !removed.iter().any(|key| key == str_of(v, "key")));
+        let mut changed = variables.len() != before;
+        if is_target {
+            for (key, value) in set {
+                match variables.iter_mut().find(|v| str_of(v, "key") == key) {
+                    Some(existing) if str_of(existing, "value") == value => {}
+                    Some(existing) => {
+                        existing["value"] = json!(value);
+                        changed = true;
+                    }
+                    None => {
+                        variables.push(json!({ "id": key, "key": key, "value": value }));
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            env["variables"] = Value::Array(variables);
+            wrote |= write_flat_entity(ws_id, "environments", &id, &env).is_ok();
+        }
+    }
+    if wrote {
+        notify_config_changed();
+    }
+    wrote
 }
 
 /// The value of `key` in an environment.

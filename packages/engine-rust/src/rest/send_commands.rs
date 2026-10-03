@@ -165,4 +165,55 @@ mod tests {
         .await;
         assert!(failed.is_err());
     }
+
+    #[tokio::test]
+    async fn scripts_share_variables_through_the_run_and_persist_them() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        crate::workspace::fs::write_flat_entity(
+            root.ws_id,
+            "environments",
+            "__global__",
+            &json!({ "id": "__global__", "name": "Global", "createdAt": 0, "workspaceId": root.ws_id,
+                     "variables": [{ "id": "k", "key": "k", "value": "old" }, { "id": "d", "key": "d", "value": "drop" }] }),
+        )
+        .unwrap();
+        let result = call(
+            "request.send",
+            json!({
+                "workspaceId": "ws1",
+                "request": { "method": "POST", "url": format!("{base}/p"), "headers": {}, "body": "{\"n\":1}" },
+                "scripts": {
+                    "pre": "lp.environment.set('stamp', 'S1'); lp.request.headers.set('X-Stamp', lp.environment.get('stamp')); lp.environment.unset('d'); console.log('pre', lp.request.method);",
+                    "post": "const j = lp.response.json(); lp.environment.set('echoed', j.method + ':' + j.body); lp.environment.set('k', lp.response.status); console.log('post', lp.response.headers.get('content-type'));",
+                    "test": "test('status 200', () => expect(lp.response.status).to.equal(200));                             test('post var visible', () => expect(lp.environment.get('echoed')).to.equal('POST:{\"n\":1}'));                             test('time + headers', () => { expect(lp.response.responseTime).to.be.a('number'); expect(lp.response.headers.has('content-type')).to.be.true; expect(lp.request.headers.get('x-stamp')).to.equal('S1'); });                             test('json body', () => expect(lp.response.json()).to.have.property('headers'));                             test('expected failure', () => expect(lp.response.status).to.equal(500));",
+                },
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(result.get("preScriptError").is_none() && result.get("postScriptError").is_none(), "{result}");
+        let outcomes: Vec<(&str, bool)> = result["tests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap(), t["passed"].as_bool().unwrap()))
+            .collect();
+        assert_eq!(
+            outcomes,
+            [("status 200", true), ("post var visible", true), ("time + headers", true), ("json body", true), ("expected failure", false)]
+        );
+        assert_eq!(result["testLogs"], json!(["pre POST", "post application/json"]));
+        let env = crate::workspace::fs::read_all_entities(root.ws_id, "environments");
+        let vars: Vec<(String, String)> = env[0]["variables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| (v["key"].as_str().unwrap().into(), v["value"].as_str().unwrap().into()))
+            .collect();
+        assert_eq!(
+            vars,
+            [("k".into(), "200".into()), ("stamp".into(), "S1".into()), ("echoed".into(), "POST:{\"n\":1}".into())]
+        );
+    }
 }
