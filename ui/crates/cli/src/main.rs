@@ -1,10 +1,9 @@
 //! The `bifurc` command of an installed Bifurc.
 //!
-//! The CLI itself is JavaScript (`packages/cli`) and an installed app ships its own Node rather than asking
-//! for one on `PATH`. A command on `PATH` has to be an executable, though — a Store package can only alias
-//! one, and a script would put the bundled `node` on `PATH` beside it — so this is that executable: it finds
-//! the Node and the CLI the package laid out beside it, runs one on the other with the same arguments and
-//! streams, and exits with its code. It decides nothing about the engine.
+//! The CLI is the Rust one (`packages/cli-rust`), shipped beside the engine it starts. A command on `PATH` has
+//! to be an executable with a stable name — a Store package can only alias one — and this is that executable:
+//! it finds the CLI the package laid out, runs it with the same arguments and streams, tells it where the
+//! packaged engine is, and exits with its code. It decides nothing about the engine.
 //!
 //! An installer also uses it to put its own folder on the user's `PATH` (`--register-path`) and to take it
 //! off again (`--unregister-path`), because that folder is the one thing this executable always knows.
@@ -15,8 +14,9 @@ use std::{
     process::{Command, ExitCode},
 };
 
-const PACKAGED_CLI: &str = "resources/node_modules/@bifurc/cli/dist/index.js";
-const CHECKOUT_CLI: &str = "packages/cli/dist/index.js";
+/// The Rust CLI inside an install, relative to the folder above `bin/`; the engine is at that folder's top.
+const PACKAGED_CLI: &str = "resources/bifurc-cli";
+const PACKAGED_ENGINE: &str = "bifurc-engine";
 
 fn main() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).collect();
@@ -35,46 +35,56 @@ fn main() -> ExitCode {
         }
     }
 
-    let Some((node, cli)) = locate(&bin_dir) else {
+    let Some((cli, engine)) = locate(&bin_dir, &exe) else {
         eprintln!(
-            "bifurc: could not find the CLI ({PACKAGED_CLI} beside this command, or {CHECKOUT_CLI} above it). \
-             Reinstall Bifurc, or build it with `npm run build:packages`."
+            "bifurc: could not find the CLI ({PACKAGED_CLI} beside this command, or a bifurc build in a target/ above it). \
+             Reinstall Bifurc, or build it with `cargo build -p bifurc-cli` at the repository root."
         );
         return ExitCode::FAILURE;
     };
 
-    let mut command = Command::new(&node);
-    command.arg(&cli).args(&args);
-    run(command, &node)
+    let mut command = Command::new(&cli);
+    command.args(&args);
+    if let Some(engine) = engine.filter(|_| env::var_os("BIFURC_ENGINE").is_none_or(|v| v.is_empty())) {
+        command.env("BIFURC_ENGINE", engine);
+    }
+    run(command, &cli)
 }
 
-/// The Node to run and the CLI's entry script: the installed layout first (this executable is in `bin/`,
-/// under the folder that holds `runtime/` and `resources/`), then a checkout, for a launcher run from
-/// `ui/target`.
-fn locate(bin_dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let node_name = format!("node{}", env::consts::EXE_SUFFIX);
+/// The CLI to run and, for an install, the engine it should start: the installed layout first (this executable
+/// is in `bin/`, under the folder that holds `resources/`), then the newest `bifurc` build in a `target/` above
+/// a checkout's launcher. That build finds its own engine; the launcher itself is skipped.
+fn locate(bin_dir: &Path, this: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    let suffix = env::consts::EXE_SUFFIX;
     if let Some(root) = bin_dir.parent() {
-        let cli = root.join(PACKAGED_CLI);
-        let node = root.join("runtime").join(&node_name);
-        if cli.is_file() && node.is_file() {
-            return Some((node, cli));
+        let cli = root.join(format!("{PACKAGED_CLI}{suffix}"));
+        if cli.is_file() {
+            return Some((cli, Some(root.join(format!("{PACKAGED_ENGINE}{suffix}")))));
         }
     }
-    let node = env::var_os("BIFURC_NODE").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| "node".into());
-    bin_dir.ancestors().map(|dir| dir.join(CHECKOUT_CLI)).find(|cli| cli.is_file()).map(|cli| (node, cli))
+    let this = this.canonicalize().ok();
+    bin_dir
+        .ancestors()
+        // Only the repository root: `ui/target` holds launchers of this very kind, not the CLI.
+        .filter(|dir| dir.join("packages").join("cli-rust").is_dir())
+        .flat_map(|dir| ["release", "debug"].map(|profile| dir.join("target").join(profile).join(format!("bifurc{suffix}"))))
+        .filter(|candidate| candidate.is_file() && candidate.canonicalize().ok() != this)
+        .filter_map(|candidate| Some((std::fs::metadata(&candidate).ok()?.modified().ok()?, candidate)))
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, cli)| (cli, None))
 }
 
 /// Replaces this process with the CLI, so signals and the exit status are the CLI's own.
 #[cfg(unix)]
-fn run(mut command: Command, node: &Path) -> ExitCode {
+fn run(mut command: Command, program: &Path) -> ExitCode {
     use std::os::unix::process::CommandExt;
     let error = command.exec();
-    eprintln!("bifurc: could not start {}: {error}", node.display());
+    eprintln!("bifurc: could not start {}: {error}", program.display());
     ExitCode::FAILURE
 }
 
 #[cfg(not(unix))]
-fn run(mut command: Command, node: &Path) -> ExitCode {
+fn run(mut command: Command, program: &Path) -> ExitCode {
     // Ctrl+C reaches every process on the console. The CLI decides what it means; this process only has to
     // still be there to pass the exit code on.
     #[cfg(windows)]
@@ -84,7 +94,7 @@ fn run(mut command: Command, node: &Path) -> ExitCode {
     match command.status() {
         Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
         Err(error) => {
-            eprintln!("bifurc: could not start {}: {error}", node.display());
+            eprintln!("bifurc: could not start {}: {error}", program.display());
             ExitCode::FAILURE
         }
     }

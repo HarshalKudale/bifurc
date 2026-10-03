@@ -123,3 +123,6 @@ CLAUDE.md
 # ===== Generated screenshots =====
 screenshots/
 screenshot.png
+
+# ===== Rust engine and CLI =====
+/target

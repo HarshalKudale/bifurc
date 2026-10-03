@@ -19,6 +19,22 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 - use a browser companion extension for DevTools-driven capture and mock creation
 - version workspace data with git and sync it between collaborators
 
+## Engine, CLI and desktop UI
+
+The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the shared wire types
+(`packages/protocol-rust`) and the desktop UI (`ui/`) are all Rust. There is no Node runtime.
+
+```bash
+cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
+cargo dev:ui         # the UI; attaches to a running engine, or starts one from target/ if none is
+cargo dev:cli <cmd>  # the `bifurc` CLI, e.g. `cargo dev:cli status`
+cargo xtask package  # installer / Store package / AppImage
+```
+
+All three find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.
+On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it before rebuilding it.
+
+
 ## Repository structure
 
 ```text
@@ -41,10 +57,8 @@ The documentation source now lives in the **website repository only** and is ren
 
 ```bash
 git clone https://github.com/HarshalKudale/bifurc.git
-cd bifurc
-npm install
-cd bifurc
-npm run dev
+cargo dev:engine   # then, in another terminal:
+cargo dev:ui
 ```
 
 ## Browser extension
@@ -58,15 +72,9 @@ Load the `bifurc-extension/` folder unpacked in Chrome or Edge to:
 ## Testing
 
 ```bash
-npm test                  # unit + integration (Vitest)
-npm run test:unit         # fast loop
-npm run test:integration  # real proxy/mapping/rule/mock routing over real sockets
-npm run test:coverage     # with coverage + thresholds
-npm run test:e2e          # Playwright against the real Electron app
+cargo test --workspace                                  # protocol, engine, CLI
+cargo test --workspace --manifest-path ui/Cargo.toml    # UI
 ```
-
-See [TESTING.md](TESTING.md) for the testing guide, the coverage report, and the list of known
-gaps.
 
 ## Licensing
 
