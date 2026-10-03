@@ -63,6 +63,7 @@ actions!(
         ShowRequests,
         ShowMocks,
         ShowEnvironments,
+        ShowVaults,
         ShowWorkspaceConfig,
         ShowAuditLog,
         ShowSettings,
@@ -100,6 +101,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-6", ShowRequests, None),
         KeyBinding::new("secondary-7", ShowMocks, None),
         KeyBinding::new("secondary-8", ShowEnvironments, None),
+        KeyBinding::new("secondary-9", ShowVaults, None),
         KeyBinding::new("secondary-,", ShowSettings, None),
         KeyBinding::new("f5", ReloadWorkspace, None),
         KeyBinding::new("secondary-q", Quit, None),
@@ -184,6 +186,7 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowRequests>(cx, Screen::Requests);
     show::<ShowMocks>(cx, Screen::Mocks);
     show::<ShowEnvironments>(cx, Screen::Environments);
+    show::<ShowVaults>(cx, Screen::Vaults);
     show::<ShowWorkspaceConfig>(cx, Screen::WorkspaceConfig);
     show::<ShowAuditLog>(cx, Screen::AuditLog);
     show::<ShowSettings>(cx, Screen::Settings);

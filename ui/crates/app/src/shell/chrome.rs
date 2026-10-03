@@ -245,6 +245,7 @@ impl Shell {
             Screen::Mappings => plural(config.mappings.len(), "mapping"),
             Screen::ProxyRules => plural(config.proxy_rule_count, "rule"),
             Screen::Environments => plural(config.selectable_environments().count(), "environment"),
+            Screen::Vaults => plural(self.model.read(cx).vaults().len(), "vault"),
             Screen::Services => self.services.read(cx).status_line(),
             Screen::HealthBar => self.healthbar.read(cx).status_line(),
             Screen::Capture => self.capture.read(cx).status_line(cx),

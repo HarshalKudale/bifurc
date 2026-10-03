@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{EngineSession, call, describe, failure},
-    model::{ConfigSnapshot, git::GitStatus},
+    model::{ConfigSnapshot, git::GitStatus, vault::VaultInfo},
 };
 
 /// Wire names of the engine events the UI listens to.
@@ -20,11 +20,12 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 14] = [
+const EVENTS: [&str; 15] = [
     "event.engine.stopping",
     "event.ui.activate",
     "event.entity.changed",
     "event.sync.entityStatus",
+    "event.vault.changed",
     "event.sync.status",
     "event.settings.changed",
     "event.server.error",
@@ -100,6 +101,8 @@ pub struct AppModel {
     engine: EngineSession,
     config: ConfigSnapshot,
     git: GitStatus,
+    /// The workspace's vaults: names and states, never values.
+    vaults: Vec<VaultInfo>,
     proxy: ProxyStatus,
     reverse_proxy: ProxyStatus,
     /// The engine is being stopped and started again; its connection closing is expected.
@@ -120,6 +123,7 @@ impl AppModel {
             engine,
             config: ConfigSnapshot::default(),
             git: GitStatus::default(),
+            vaults: Vec::new(),
             proxy: ProxyStatus::default(),
             reverse_proxy: ProxyStatus::default(),
             restarting_engine: false,
@@ -148,6 +152,10 @@ impl AppModel {
 
     pub fn git(&self) -> &GitStatus {
         &self.git
+    }
+
+    pub fn vaults(&self) -> &[VaultInfo] {
+        &self.vaults
     }
 
     pub fn proxy(&self) -> &ProxyStatus {
@@ -228,6 +236,10 @@ impl AppModel {
                     }
                 }
                 "event.entity.changed" | "event.sync.entityStatus" | "event.settings.changed" => self.refresh(cx),
+                "event.vault.changed" => {
+                    self.refresh_vaults(cx);
+                    self.refresh_git(cx);
+                }
                 "event.sync.status" => {
                     self.refresh_git(cx);
                     cx.emit(ModelEvent::SyncStatus);
@@ -269,6 +281,7 @@ impl AppModel {
                     cx.emit(ModelEvent::WorkspaceSwitched);
                 }
                 self.refresh_git(cx);
+                self.refresh_vaults(cx);
                 self.refresh_proxy(cx);
             }
             Err(message) => {
@@ -283,6 +296,27 @@ impl AppModel {
         if std::mem::take(&mut self.refresh_again) {
             self.refresh(cx);
         }
+    }
+
+    /// Re-reads the workspace's vaults. A failure keeps the list there is.
+    pub fn refresh_vaults(&mut self, cx: &mut Context<Self>) {
+        if self.workspace_id().is_empty() {
+            return;
+        }
+        let client = self.engine.client.clone();
+        let workspace_id = self.workspace_id().to_owned();
+        let payload = json!({ "workspaceId": workspace_id });
+        call(&client, cx, "vault.list", payload, move |this, outcome, cx| {
+            if let Ok(value) = outcome
+                && this.workspace_id() == workspace_id
+            {
+                let vaults = VaultInfo::list_from_value(&value);
+                if vaults != this.vaults {
+                    this.vaults = vaults;
+                    cx.notify();
+                }
+            }
+        });
     }
 
     /// Re-reads which files differ from the last commit. A failure keeps the previous status: the footer

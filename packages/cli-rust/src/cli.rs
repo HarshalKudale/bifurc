@@ -15,8 +15,9 @@ use crate::{
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
     error::{CliError, Result},
     locate::locate_engine,
-    session::{Engine, connect},
+    session::{Engine, EngineConnection, connect},
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
+    unlock,
     usage::USAGE,
 };
 
@@ -33,10 +34,14 @@ pub fn data_dir_of(args: &ParsedArgs, env_value: Option<OsString>) -> PathBuf {
 
 /// The engine for `data_dir`, started in the background first if none is running.
 fn connect_or_start(data_dir: &Path) -> Result<Box<dyn Engine>> {
+    Ok(Box::new(connect_or_start_session(data_dir)?))
+}
+
+fn connect_or_start_session(data_dir: &Path) -> Result<EngineConnection> {
     if find_running_engine(data_dir).is_none() {
         start_engine(&locate_engine()?, data_dir, "socket", true, START_TIMEOUT)?;
     }
-    Ok(Box::new(connect(data_dir, VERSION)?))
+    connect(data_dir, VERSION)
 }
 
 fn connect_existing(data_dir: &Path) -> Result<Box<dyn Engine>> {
@@ -99,10 +104,19 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
         "services" => commands::services(&mut ctx, sub),
         "requests" | "request" => commands::requests(&mut ctx, sub),
         "grpc" => commands::grpc(&mut ctx, sub),
+        "vault" | "vaults" => commands::vaults(&mut ctx, sub),
         "call" => commands::call(&mut ctx),
         "commands" => Ok(commands::commands(&ctx)),
         other => Err(CliError::msg(format!("unknown command \"{other}\"\n\n{USAGE}"))),
     }
+}
+
+/// `unlock`: the exit code of the command it ran with the vault open.
+fn unlock_command(args: &ParsedArgs, command: &[String], data_dir: &Path) -> Result<i32> {
+    unlock::check(args, command)?;
+    let connection =
+        if args.has("no-start") { connect(data_dir, VERSION)? } else { connect_or_start_session(data_dir)? };
+    unlock::run(args, command, connection)
 }
 
 /// Run one command line and return the process exit code. Output goes to `stdout`, errors to `stderr`.
@@ -117,6 +131,21 @@ pub fn run_with_env(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> i32 {
+    // `bifurc unlock <vault> -- <command…>`: what follows `--` is the command to run, not arguments of ours.
+    if let Some(split) = argv.iter().position(|a| a == "--") {
+        if let Ok(head) = parse_args(&argv[..split]) {
+            if matches!(head.positional(0), Some("unlock" | "unlock-vault")) && !head.has("help") {
+                let data_dir = data_dir_of(&head, env_data_dir);
+                return match unlock_command(&head, &argv[split + 1..], &data_dir) {
+                    Ok(code) => code,
+                    Err(err) => {
+                        let _ = writeln!(stderr, "{}", err.line());
+                        1
+                    }
+                };
+            }
+        }
+    }
     let args = match parse_args(argv) {
         Ok(args) => args,
         Err(message) => {
@@ -125,6 +154,11 @@ pub fn run_with_env(
         }
     };
     let group = args.positional(0);
+    if matches!(group, Some("unlock" | "unlock-vault")) && !args.has("help") {
+        let missing = CliError::msg("missing the command to run, e.g.: bifurc unlock <vault> -- npm run dev");
+        let _ = writeln!(stderr, "{}", missing.line());
+        return 1;
+    }
     if group.is_none() || args.has("help") || group == Some("help") {
         let _ = writeln!(stdout, "{USAGE}");
         return 0;
