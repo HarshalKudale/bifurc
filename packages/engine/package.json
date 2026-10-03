@@ -2,7 +2,7 @@
   "name": "@bifurc/engine",
   "version": "0.3.3",
   "private": true,
-  "description": "Bifurc's headless engine: the localhost proxy, mocks, workspace store and sync. Pure Node — no Electron, no renderer. P2 of the decoupling plan.",
+  "description": "DEPRECATED, scheduled for decommissioning: replaced by packages/engine-rust. Bifurc's headless engine: the localhost proxy, mocks, workspace store and sync. Pure Node — no Electron, no renderer. P2 of the decoupling plan.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
