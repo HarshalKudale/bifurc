@@ -332,6 +332,7 @@ impl WorkspaceHost {
         if let Some(desktop) = &desktop {
             desktop.start();
         }
+        crate::analytics::start(opts.transport.kind().as_str());
 
         Ok(Self { opts, log, forward_proxy, edge, edge_url, rpc, rpc_address, companion_port, served, sweeper })
     }
@@ -349,6 +350,7 @@ impl WorkspaceHost {
         crate::applications::stop_all();
         crate::gitops::stop_all_auto_sync();
         crate::capture::flush_capture();
+        crate::analytics::stop().await;
         self.sweeper.abort();
         bind_forward_proxy(None);
         bind_edge(None);
