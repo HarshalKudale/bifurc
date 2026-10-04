@@ -10,6 +10,7 @@ use super::{
     login::{cancel_login, login_status, start_login},
     remote::{import_workspace, publish_workspace, remove_workspaces, workspace_for_repo},
     status_tracker::get_workspace_sync_status,
+    sync_all::{sync_workspace, track_untracked_workspaces},
     sync_state::get_sync_config,
 };
 use crate::{
@@ -42,8 +43,15 @@ async fn workspace_summary(ws_id: &str) -> Value {
 
 pub fn register(registry: &mut CommandRegistry) {
     // What a first run has to deal with: is git here, can the user sign in, is there a workspace yet.
+    // Asking is also how a git that was installed since is noticed: the workspaces that were plain files
+    // become repositories then, with everything in them waiting to be synced.
     registry.register("setup.getState", |_, _| async move {
         let version = git_version().await;
+        if version.is_some() {
+            for ws_id in track_untracked_workspaces().await {
+                emit_entity_status(&ws_id);
+            }
+        }
         Ok(json!({
             "gitInstalled": version.is_some(),
             "gitVersion": version,
@@ -134,15 +142,29 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(result)
     });
 
+    // With `syncAll`, what the workspace holds that was never synced goes to the new repository too, an
+    // entity to a commit; without it only what was already committed is pushed.
     registry.register("sync.publish", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId");
-        let result = publish_workspace(
+        let mut result = publish_workspace(
             ws_id,
             str_of(&params, "accountId"),
             str_of(&params, "repoName"),
             bool_of(&params, "private", true),
         )
         .await;
+        if succeeded(&result) && bool_of(&params, "syncAll", false) {
+            let synced = sync_workspace(ws_id).await;
+            if !succeeded(&synced) {
+                result["ok"] = json!(false);
+                result["error"] = json!(format!(
+                    "{} was created, but not everything was synced: {}",
+                    result.pointer("/repo/fullName").and_then(Value::as_str).unwrap_or("The repository"),
+                    str_of(&synced, "error")
+                ));
+            }
+            result["sync"] = synced;
+        }
         // The remote may be assigned even when the first push failed, so clients re-read either way.
         start_auto_sync(ws_id);
         notify_config_changed();

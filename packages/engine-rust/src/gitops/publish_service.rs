@@ -216,7 +216,6 @@ pub async fn publish_entities(opts: PublishOptions) -> Value {
 
 async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
     let ws_id = opts.ws_id.as_str();
-    let actor = commit_identity(ws_id).actor;
 
     // The commit goes on top of what the remote has now, so the push that follows is never behind it. A
     // remote that cannot be reached is met again at the push.
@@ -227,6 +226,19 @@ async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
             notify_config_changed();
         }
     }
+
+    let result = commit_paths(opts).await?;
+    if let Some(config) = remote.filter(|_| result.get("commit").is_some_and(Value::is_string)) {
+        git_net(ws_id, &["push", "origin", &format!("HEAD:{}", str_of(&config, "branch"))]).await?;
+    }
+    Ok(result)
+}
+
+/// Stage `opts.paths` and commit them, without reaching the remote: the part of a publish that a sync of the
+/// whole workspace repeats for each entity. The caller holds the workspace's lock.
+pub(super) async fn commit_paths(opts: &PublishOptions) -> Result<Value, GitError> {
+    let ws_id = opts.ws_id.as_str();
+    let actor = commit_identity(ws_id).actor;
 
     // The status before staging says which files are new, modified or deleted. Not `-z`, so keys are unquoted.
     let pre_raw = git(ws_id, &["status", "--porcelain", "-uall"]).await.unwrap_or_default();
@@ -269,10 +281,6 @@ async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
     };
     with_index_lock_retry(ws_id, &["commit", "-m", full_message.as_str()]).await?;
     let commit = git(ws_id, &["rev-parse", "HEAD"]).await?.trim().to_string();
-
-    if let Some(config) = remote {
-        git_net(ws_id, &["push", "origin", &format!("HEAD:{}", str_of(&config, "branch"))]).await?;
-    }
 
     Ok(json!({ "ok": true, "commit": if commit.is_empty() { Value::Null } else { json!(commit) } }))
 }

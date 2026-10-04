@@ -36,7 +36,7 @@ use crate::{
         },
         git_store::{
             CommitMutation, GitError, RemoteAuth, apply_commit_identity, check_git_installed, commit_mutation, git,
-            git_in, git_net_in, is_repo, remote_origin,
+            git_in, git_net_in, init_workspace_repo, remote_origin,
         },
         settings::{load_settings, save_settings},
     },
@@ -343,9 +343,11 @@ async fn publish(ws_id: &str, account_id: &str, repo_name: &str, private: bool) 
     if get_sync_config(ws_id).is_some() {
         return Err("This workspace already has a remote repository. It cannot be changed.".to_string());
     }
-    if !check_git_installed().await || !is_repo(ws_id) {
-        return Err("This workspace is not tracked by git, so it cannot be published.".to_string());
+    if !check_git_installed().await {
+        return Err("Git is not installed, so this workspace cannot be published. Install Git first.".to_string());
     }
+    // One that was made while git was missing becomes a repository now.
+    init_workspace_repo(ws_id).await.map_err(|e| format!("Couldn't make this workspace a git repository: {e}"))?;
     let bound = str_of(&workspace, "accountId");
     if !bound.is_empty() && bound != account_id {
         return Err(

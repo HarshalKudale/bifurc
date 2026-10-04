@@ -1005,6 +1005,12 @@
    "accountId": "github.com:1"
   }
  },
+ "sync.all": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
  "sync.pull": {
   "valid": {
    "workspaceId": "ws1"
