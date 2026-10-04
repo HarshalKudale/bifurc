@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       include_linux:
-        description: "Build and upload the Linux AppImage"
+        description: "Build and upload the Linux packages"
         required: false
         default: true
         type: boolean
@@ -73,88 +73,18 @@ jobs:
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
 
-  build-windows:
+  # Everything is built by the packaging workflow: one `cargo xtask package` per platform.
+  package:
     needs: prepare
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            ui
-
-      # NSIS and the Windows SDK (makeappx, makepri) are on the runner image.
-      - name: Build the installer and the Store package
-        run: cargo xtask package --target nsis,msix
-        env:
-          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
-          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
-          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
-
-      - name: Upload the installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: bifurc-windows-installer
-          path: release/desktop/*-setup.exe
-          if-no-files-found: error
-
-      - name: Upload the Store package
-        uses: actions/upload-artifact@v4
-        with:
-          name: bifurc-windows-msix
-          path: release/desktop/*.msix
-          if-no-files-found: error
-
-  build-linux:
-    needs: prepare
-    if: ${{ github.event_name == 'push' || inputs.include_linux == true }}
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            ui
-
-      - name: Install GPUI's build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
-            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
-
-      - name: Build the AppImage
-        run: cargo xtask package --target appimage
-        env:
-          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
-          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
-          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
-
-      - name: Upload the AppImage
-        uses: actions/upload-artifact@v4
-        with:
-          name: bifurc-linux-appimage
-          path: release/desktop/*.AppImage
-          if-no-files-found: error
+    uses: ./.github/workflows/package-desktop.yml
+    with:
+      include_linux: ${{ github.event_name == 'push' || inputs.include_linux == true }}
+      release_tag: ${{ needs.prepare.outputs.tag }}
 
   publish-release:
     needs:
       - prepare
-      - build-windows
-      - build-linux
-    if: >-
-      ${{
-        always() &&
-        needs.build-windows.result == 'success' &&
-        (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')
-      }}
+      - package
     runs-on: ubuntu-latest
     steps:
       - name: Download packaged assets
@@ -162,6 +92,16 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      # The store manifests are folders; a release holds files. They go up as one archive, and the Scoop
+      # manifest also on its own, so `scoop install <its url>` works straight from the release.
+      - name: Bundle the store manifests
+        working-directory: release-assets
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          zip -r "Bifurc-${VERSION}-store-manifests.zip" manifests
+          cp manifests/scoop/bifurc.json bifurc.json
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -173,4 +113,9 @@ jobs:
           files: |
             release-assets/*.exe
             release-assets/*.msix
+            release-assets/*.zip
+            release-assets/*.nupkg
+            release-assets/bifurc.json
             release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.tar.gz

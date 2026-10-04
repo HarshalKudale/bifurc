@@ -1,0 +1,22 @@
+# Bifurc's engine runs as the user and its reverse proxy listens on port 80 unless another port is chosen.
+# The capability lets it bind ports below 1024 without being root.
+_allow_low_ports() {
+  if command -v setcap >/dev/null 2>&1; then
+    setcap cap_net_bind_service=+ep /usr/lib/bifurc/bifurc-engine || true
+  else
+    echo "Install libcap and reinstall bifurc-bin to let the reverse proxy listen on port 80,"
+    echo "or choose a port from 1024 up in Bifurc's settings."
+  fi
+}
+
+post_install() {
+  _allow_low_ports
+}
+
+post_upgrade() {
+  _allow_low_ports
+}
+
+pre_remove() {
+  pkill -TERM -f '^/usr/lib/bifurc/bifurc-engine' || true
+}
