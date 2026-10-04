@@ -1,0 +1,21 @@
+# The Rust engine and CLI. The desktop UI is its own workspace in `ui/`.
+[workspace]
+resolver = "2"
+members = ["packages/protocol-rust", "packages/engine-rust", "packages/cli-rust", "xtask"]
+exclude = ["ui"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+license = "SEE LICENSE IN LICENSE"
+authors = ["Harshal Kudale"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+# Argon2 is the one slow thing a vault does; unoptimised it takes seconds per key in debug builds and tests.
+[profile.dev.package.argon2]
+opt-level = 3

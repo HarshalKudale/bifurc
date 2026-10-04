@@ -1,0 +1,107 @@
+name: Package desktop app (Rust UI)
+
+# The Rust UI + engine + CLI, packaged. One `cargo xtask package` per platform makes everything that platform
+# has: on Windows the installer, the Store package, a portable zip, and the winget, Scoop and Chocolatey
+# manifests; on Linux the AppImage, the .deb, a tarball, and the AUR package's source.
+# Run by hand, or called by `release.yml`, which publishes what this builds.
+on:
+  workflow_dispatch:
+    inputs:
+      include_linux:
+        description: "Build the Linux packages"
+        required: false
+        default: true
+        type: boolean
+      release_tag:
+        description: "The release the store manifests download from (default: v<version>)"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      include_linux:
+        required: false
+        default: true
+        type: boolean
+      release_tag:
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ui
+
+      # NSIS, the Windows SDK (makeappx, makepri) and Chocolatey are on the runner image.
+      - name: Package
+        shell: bash
+        # What was typed into the form reaches the script as data, never as part of it.
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
+        run: cargo xtask package ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bifurc-windows
+          path: |
+            release/desktop/*-setup.exe
+            release/desktop/*.msix
+            release/desktop/*.zip
+            release/desktop/*.nupkg
+            release/desktop/manifests/
+          if-no-files-found: error
+
+  linux:
+    if: ${{ inputs.include_linux }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ui
+
+      # dpkg-dev reads the .deb's dependencies from the executables; it comes with build-essential.
+      - name: Install GPUI's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 dpkg-dev
+
+      - name: Package
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
+        run: cargo xtask package ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+
+      # `.SRCINFO` is a hidden file, and it is one of the three the AUR package is.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bifurc-linux
+          path: |
+            release/desktop/*.AppImage
+            release/desktop/*.deb
+            release/desktop/*.tar.gz
+            release/desktop/manifests/
+          include-hidden-files: true
+          if-no-files-found: error

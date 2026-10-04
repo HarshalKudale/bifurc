@@ -1,0 +1,11 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Build tasks for the repository: `cargo xtask package`."
+publish = false
+
+[dependencies]
+sha2 = "0.10"
