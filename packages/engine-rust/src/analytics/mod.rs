@@ -8,6 +8,10 @@
 //! - one `command used` per (command, client, outcome) with a count, every [`TALLIES_EVERY`] flushes, so a
 //!   client that polls does not become an event per call.
 //!
+//! Nothing is sent before the terms of service and the privacy policy were accepted on this data directory:
+//! accepting them is what allows analytics, so they begin with the acceptance ([`resume`]) and are on from
+//! then until the user turns them off.
+//!
 //! Off when the build has no project key and when `BIFURC_TELEMETRY=0` or `DO_NOT_TRACK=1` is set. With
 //! `"telemetryEnabled": false` in `app.json` one event is still sent, once per data directory: `app installed`,
 //! so that an install is known of; nothing the user does is. The key comes from `BIFURC_POSTHOG_KEY` when the engine runs,
@@ -67,6 +71,8 @@ struct Queued {
 struct State {
     /// `None` while analytics are off.
     target: Option<Target>,
+    /// The transport of the engine that is running, from [`start`] until [`stop`].
+    transport: Option<String>,
     tallies: HashMap<Tally, u64>,
     queue: Vec<Queued>,
     flusher: Option<tokio::task::JoinHandle<()>>,
@@ -106,6 +112,17 @@ fn switched_off() -> bool {
 
 fn opted_out() -> bool {
     env_opted_out() || switched_off()
+}
+
+/// Whether what `settings` holds allows analytics: the terms and the policy, both accepted.
+fn allowed_by(terms_accepted: bool, privacy_accepted: bool) -> bool {
+    terms_accepted && privacy_accepted
+}
+
+/// The user accepted the terms of service and the privacy policy on this data directory.
+fn accepted() -> bool {
+    let settings = load_settings();
+    allowed_by(settings.terms_accepted(), settings.privacy_accepted())
 }
 
 fn analytics_path() -> std::path::PathBuf {
@@ -177,10 +194,30 @@ async fn send(target: &Target, batch: Vec<Value>) -> Result<(), String> {
     if response.status().is_success() { Ok(()) } else { Err(format!("{} answered {}", target.host, response.status())) }
 }
 
-/// Turn analytics on for this engine, if the build has a project key and the user has not opted out.
+/// Turn analytics on for this engine, if the build has a project key, the terms and the policy were accepted
+/// and the user has not opted out. Before they are accepted nothing is sent; [`resume`] begins then.
 pub fn start(transport: &str) {
+    STATE.lock().transport = Some(transport.to_string());
+    begin();
+}
+
+/// The terms or the policy were just accepted: begin, if that was what analytics were waiting for.
+pub fn resume() {
+    begin();
+}
+
+fn begin() {
+    let transport = {
+        let state = STATE.lock();
+        // No engine is running, or analytics already are.
+        if state.target.is_some() || state.flusher.is_some() {
+            return;
+        }
+        let Some(transport) = state.transport.clone() else { return };
+        transport
+    };
     let Some(key) = project_key() else { return };
-    if env_opted_out() {
+    if env_opted_out() || !accepted() {
         return;
     }
     let target = Target { key, host: host(), install_id: install_id() };
@@ -309,6 +346,7 @@ pub async fn stop() {
     let _ = tokio::time::timeout(SHUTDOWN_FLUSH, flush(true)).await;
     let mut state = STATE.lock();
     state.target = None;
+    state.transport = None;
     state.tallies.clear();
     state.queue.clear();
 }
@@ -326,6 +364,14 @@ mod tests {
         assert!(env_opts_out(None, Some("1")));
         assert!(!env_opts_out(None, Some("0")));
         assert!(!env_opts_out(None, Some("")));
+    }
+
+    #[test]
+    fn nothing_is_allowed_until_the_terms_and_the_policy_are_both_accepted() {
+        assert!(!allowed_by(false, false));
+        assert!(!allowed_by(true, false));
+        assert!(!allowed_by(false, true));
+        assert!(allowed_by(true, true));
     }
 
     #[test]
