@@ -48,6 +48,11 @@ pub struct Carry {
     pub body: String,
 }
 
+/// The folder the engine put a saved entity in. The engine decides it: an entity saved with none goes into Default.
+pub fn engine_folder(entity: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    entity.get("folderId").and_then(serde_json::Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned)
+}
+
 /// What a session tells the shell, which owns the tabs.
 #[derive(Debug, Clone)]
 pub enum SessionEvent {

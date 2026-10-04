@@ -62,7 +62,8 @@ impl FolderPicker {
     }
 }
 
-const NO_FOLDER: &str = "No folder";
+/// What a draft with no folder shows: the engine puts it in Default when it is created.
+const NO_FOLDER: &str = "Default";
 
 /// What the footer needs to know about the open entity.
 #[derive(Debug, Clone, Default)]
@@ -157,8 +158,9 @@ fn folder_button<V: 'static>(picker: FolderPicker, on: &OnAction<V>, cx: &mut Co
                     view.update(cx, |this, cx| on(this, action, window, cx)).ok();
                 })
             };
-            let menu = menu.item(item(NO_FOLDER.into(), None));
-            let menu = if picker.choices.is_empty() { menu } else { menu.separator() };
+            // Default is always offered. Before the folder exists, choosing it asks the engine for it with no folder.
+            let has_default = picker.choices.iter().any(|(_, path)| path == NO_FOLDER);
+            let menu = if has_default { menu } else { menu.item(item(NO_FOLDER.into(), None)) };
             picker.choices.iter().fold(menu, |menu, (id, path)| menu.item(item(path.clone().into(), Some(id.clone()))))
         })
 }
