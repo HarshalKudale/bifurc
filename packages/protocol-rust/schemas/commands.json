@@ -2967,7 +2967,7 @@
     "name"
    ]
   },
-  "vault.checkout": {
+  "vault.secrets": {
    "type": "object",
    "properties": {
     "workspaceId": {
@@ -2975,26 +2975,11 @@
     },
     "id": {
      "type": "string"
-    },
-    "passphrase": {
-     "type": "string"
     }
    },
    "required": [
     "workspaceId",
-    "id",
-    "passphrase"
-   ]
-  },
-  "vault.release": {
-   "type": "object",
-   "properties": {
-    "leaseId": {
-     "type": "string"
-    }
-   },
-   "required": [
-    "leaseId"
+    "id"
    ]
   },
   "setup.getState": {

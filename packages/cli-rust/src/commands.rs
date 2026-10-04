@@ -6,11 +6,9 @@ use serde_json::{Map, Value, json};
 use crate::{
     args::ParsedArgs,
     error::{CliError, Result},
-    format::{describe_grpc, describe_reflection, describe_send, describe_status, js_string, js_template, json, table, truthy},
-    prompt,
+    format::{describe_status, js_string, js_template, json, table, truthy},
     protocol::{command_names, is_known_command},
     session::Engine,
-    unlock,
 };
 
 /// Opens the engine session when a command first needs it.
@@ -44,17 +42,59 @@ impl<'a> Context<'a> {
         if self.json { json(value) } else { human() }
     }
 
-    fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
+    pub(crate) fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
         self.engine()?.request(command, payload)
+    }
+
+    /// Refuse an option the command does not take, and more arguments than its `operands`. The command is the
+    /// group and its verb.
+    pub(crate) fn accept(&self, flags: &[&str], operands: usize) -> Result<()> {
+        self.accept_after(2, flags, operands)
+    }
+
+    /// [`Context::accept`] for a command that is one word (`status`, `call`).
+    pub(crate) fn accept_top(&self, flags: &[&str], operands: usize) -> Result<()> {
+        self.accept_after(1, flags, operands)
+    }
+
+    fn accept_after(&self, words: usize, flags: &[&str], operands: usize) -> Result<()> {
+        let positionals = &self.args.positionals;
+        let command = positionals[..words.min(positionals.len())].join(" ");
+        let help = positionals.first().map(String::as_str).unwrap_or_default();
+        let known = |name: &&str| GLOBAL_FLAGS.contains(name) || flags.contains(name);
+        if let Some(unknown) = self.args.names().into_iter().find(|name| !known(name)) {
+            return Err(CliError::msg(format!(
+                "unknown option --{unknown} for \"{command}\" (see: bifurc {help} --help)"
+            )));
+        }
+        if let Some(extra) = positionals.get(words + operands) {
+            return Err(CliError::msg(format!(
+                "unexpected argument \"{extra}\" for \"{command}\" (see: bifurc {help} --help)"
+            )));
+        }
+        Ok(())
     }
 }
 
+/// The options every command takes.
+const GLOBAL_FLAGS: [&str; 5] = ["data-dir", "workspace", "no-start", "json", "help"];
+
 /// An argument that must be present and non-empty.
-fn need(value: Option<&str>, what: &str) -> Result<String> {
+pub(crate) fn need(value: Option<&str>, what: &str) -> Result<String> {
     match value {
         Some(v) if !v.is_empty() => Ok(v.to_string()),
         _ => Err(CliError::msg(format!("missing {what}"))),
     }
+}
+
+/// The error of a verb the group does not have. Deleting and syncing one item are the desktop app's.
+pub(crate) fn unknown_verb(group: &str, verb: &str) -> CliError {
+    let hint = match verb {
+        "remove" | "delete" | "rm" | "unset" | "logout" => "; deleting is done in the desktop app",
+        "publish" | "import" | "revert" | "push" | "pull" => "; that is done in the desktop app",
+        _ => "",
+    };
+    CliError::msg(format!("unknown: {group} {verb}{hint} (see: bifurc {group} --help)"))
 }
 
 fn entities(response: &Value) -> Vec<Value> {
@@ -62,14 +102,14 @@ fn entities(response: &Value) -> Vec<Value> {
 }
 
 /// `{...row, key: value}`: the row's own keys in order, `key` replaced in place or added last.
-fn with_field(row: &Value, key: &str, value: Value) -> Value {
+pub(crate) fn with_field(row: &Value, key: &str, value: Value) -> Value {
     let mut map: Map<String, Value> = row.as_object().cloned().unwrap_or_default();
     map.insert(key.to_string(), value);
     Value::Object(map)
 }
 
 /// The workspace a command acts on: `--workspace`, else the engine's active one.
-fn workspace_id(ctx: &mut Context) -> Result<String> {
+pub(crate) fn workspace_id(ctx: &mut Context) -> Result<String> {
     if let Some(explicit) = ctx.args.flag("workspace") {
         return Ok(explicit.to_string());
     }
@@ -77,131 +117,156 @@ fn workspace_id(ctx: &mut Context) -> Result<String> {
     Ok(js_template(config.get("activeWorkspaceId")))
 }
 
-fn list_entities(ctx: &mut Context, kind: &str) -> Result<Vec<Value>> {
-    let workspace = workspace_id(ctx)?;
+/// The entities of `kind` in `workspace`, as their files hold them.
+pub(crate) fn list_entities(ctx: &mut Context, workspace: &str, kind: &str) -> Result<Vec<Value>> {
     let response = ctx.request("entity.list", json!({ "workspaceId": workspace, "kind": kind }))?;
     Ok(entities(&response))
 }
 
-/// `-H "name: value"` flags as a header map.
-fn headers_from(args: &ParsedArgs) -> Result<Value> {
-    let mut headers = Map::new();
-    for header in args.flags("header") {
-        match header.find(':') {
-            Some(i) if i > 0 => {
-                headers.insert(header[..i].trim().to_string(), Value::String(header[i + 1..].trim().to_string()));
-            }
-            _ => return Err(CliError::msg(format!("header \"{header}\" must be \"name: value\""))),
-        }
+/// The one row `wanted` names: by its id, else by one of `name_keys` whatever the case. `what` is the row's
+/// singular name and `group` the command group that lists them.
+pub(crate) fn find_one<'v>(
+    rows: &'v [Value],
+    wanted: &str,
+    name_keys: &[&str],
+    what: &str,
+    group: &str,
+) -> Result<&'v Value> {
+    if let Some(hit) = rows.iter().find(|row| row.get("id").and_then(Value::as_str) == Some(wanted)) {
+        return Ok(hit);
     }
-    Ok(Value::Object(headers))
-}
-
-fn body_from(args: &ParsedArgs) -> Result<String> {
-    match args.flag("body-file") {
-        Some(file) => std::fs::read_to_string(file).map_err(|e| CliError::msg(format!("cannot read {file}: {e}"))),
-        None => Ok(args.flag("body").unwrap_or_default().to_string()),
-    }
-}
-
-fn created_id(response: &Value) -> String {
-    let id = response.get("id").filter(|v| !v.is_null()).or_else(|| response.pointer("/entity/id"));
-    id.map(js_string).unwrap_or_else(|| "?".to_string())
-}
-
-/// `vault list`: the vaults of the workspace and their secrets' names. Values never come to the CLI here.
-pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    match sub.unwrap_or("list") {
-        "list" => {
-            let workspace = workspace_id(ctx)?;
-            let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
-            let rows: Vec<Value> = listed
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|v| {
-                    let names = v["secrets"].as_array().into_iter().flatten().filter_map(Value::as_str);
-                    with_field(v, "secretNames", json!(names.collect::<Vec<_>>().join(", ")))
-                })
-                .collect();
-            Ok(ctx.print(&listed, || table(&rows, &["name", "state", "secretNames"])))
+    let lower = wanted.to_lowercase();
+    let named: Vec<&Value> = rows
+        .iter()
+        .filter(|row| {
+            name_keys.iter().any(|key| row.get(*key).and_then(Value::as_str).is_some_and(|n| n.to_lowercase() == lower))
+        })
+        .collect();
+    match named.as_slice() {
+        [one] => Ok(one),
+        [] => Err(CliError::msg(format!("no {what} \"{wanted}\" (see: bifurc {group} list)"))),
+        many => {
+            let ids: Vec<String> = many.iter().map(|row| js_template(row.get("id"))).collect();
+            Err(CliError::msg(format!("{} {what}s are named \"{wanted}\"; use the id: {}", many.len(), ids.join(", "))))
         }
-        "create" => {
-            let name = need(ctx.args.positional(2), "vault name")?;
-            let workspace = workspace_id(ctx)?;
-            let passphrase = new_passphrase(ctx.args, &name)?;
-            let created = ctx.request(
-                "vault.create",
-                json!({ "workspaceId": workspace, "name": name, "passphrase": passphrase }),
-            )?;
-            Ok(ctx.print(&created, || format!("Created vault {name}. It is unsealed until the engine restarts.")))
-        }
-        // The value is typed hidden (or piped with --value-stdin) and goes straight to the engine.
-        "set" => {
-            let (vault, secret) = (need(ctx.args.positional(2), "vault name")?, need(ctx.args.positional(3), "secret name")?);
-            let workspace = workspace_id(ctx)?;
-            let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
-            let id = unlock::find_vault(&listed, &vault)?;
-            let passphrase = unlock::passphrase(ctx.args, &vault, 0)?;
-            ctx.request("vault.unseal", json!({ "workspaceId": workspace, "id": id, "passphrase": passphrase }))?;
-            let value = if ctx.args.has("value-stdin") {
-                prompt::stdin_line()?
-            } else {
-                prompt::secret(&format!("Value of {secret}: "))?
-            };
-            let saved = ctx.request(
-                "vault.setSecret",
-                json!({ "workspaceId": workspace, "id": id, "name": secret, "value": value }),
-            )?;
-            Ok(ctx.print(&saved, || format!("Saved {{{{{vault}.{secret}}}}}")))
-        }
-        "unset" => {
-            let (vault, secret) = (need(ctx.args.positional(2), "vault name")?, need(ctx.args.positional(3), "secret name")?);
-            let workspace = workspace_id(ctx)?;
-            let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
-            let id = unlock::find_vault(&listed, &vault)?;
-            let removed =
-                ctx.request("vault.deleteSecret", json!({ "workspaceId": workspace, "id": id, "name": secret }))?;
-            Ok(ctx.print(&removed, || format!("Removed {secret} from {vault}")))
-        }
-        other => Err(CliError::msg(format!("unknown: vault {other}"))),
     }
 }
 
-/// The passphrase for a new vault: from the environment or stdin, or typed twice.
-fn new_passphrase(args: &ParsedArgs, vault: &str) -> Result<String> {
-    if args.has("passphrase-stdin") || std::env::var_os("BIFURC_VAULT_PASSPHRASE").is_some() {
-        return unlock::passphrase(args, vault, 0);
-    }
-    let first = prompt::secret(&format!("New passphrase for {vault} (at least 8 characters): "))?;
-    if first != prompt::secret("Repeat the passphrase: ")? {
-        return Err(CliError::msg("the passphrases differ"));
-    }
-    Ok(first)
+/// `-H "name: value"` flags in order. An empty value (`-H "name:"`) is kept: on an update it removes the header.
+pub(crate) fn header_flags(args: &ParsedArgs) -> Result<Vec<(String, String)>> {
+    args.flags("header")
+        .iter()
+        .map(|header| match header.find(':') {
+            Some(i) if i > 0 => Ok((header[..i].trim().to_string(), header[i + 1..].trim().to_string())),
+            _ => Err(CliError::msg(format!("header \"{header}\" must be \"name: value\""))),
+        })
+        .collect()
 }
 
-/// `workspaces list|use`.
+/// Put the `-H` flags into `headers`: a header replaces the one of the same name whatever its case, and an empty
+/// value removes it. Returns the names touched.
+pub(crate) fn merge_headers(headers: &mut Map<String, Value>, flags: &[(String, String)]) {
+    for (name, value) in flags {
+        headers.retain(|existing, _| !existing.eq_ignore_ascii_case(name));
+        if !value.is_empty() {
+            headers.insert(name.clone(), json!(value));
+        }
+    }
+}
+
+/// `--body-file <f>` or `--body <text>`, when either is given.
+pub(crate) fn body_from(args: &ParsedArgs) -> Result<Option<String>> {
+    text_from(args, "body", "body-file")
+}
+
+/// The text of `--<flag>`, or of the file `--<file_flag>` names, when either is given. The file wins.
+pub(crate) fn text_from(args: &ParsedArgs, flag: &str, file_flag: &str) -> Result<Option<String>> {
+    match args.flag(file_flag) {
+        Some(file) => {
+            std::fs::read_to_string(file).map(Some).map_err(|e| CliError::msg(format!("cannot read {file}: {e}")))
+        }
+        None => Ok(args.flag(flag).map(str::to_string)),
+    }
+}
+
+/// `--<on>` or `--<off>` as a choice, when either is given.
+pub(crate) fn switch(args: &ParsedArgs, on: &str, off: &str) -> Result<Option<bool>> {
+    match (args.has(on), args.has(off)) {
+        (true, true) => Err(CliError::msg(format!("--{on} and --{off} cannot both be given"))),
+        (true, false) => Ok(Some(true)),
+        (false, true) => Ok(Some(false)),
+        (false, false) => Ok(None),
+    }
+}
+
+/// The entity an `entity.create` answered with.
+pub(crate) fn created(response: &Value) -> Value {
+    response.get("entity").filter(|entity| entity.is_object()).cloned().unwrap_or_else(|| response.clone())
+}
+
+pub(crate) fn id_of(entity: &Value) -> String {
+    entity.get("id").filter(|v| !v.is_null()).map(js_string).unwrap_or_else(|| "?".to_string())
+}
+
+/// A command's `{ ok: false, error }` answer as an error.
+pub(crate) fn refused(result: Value) -> Result<Value> {
+    match result.get("ok").and_then(Value::as_bool) {
+        Some(false) => Err(CliError::msg(js_template(result.get("error")))),
+        _ => Ok(result),
+    }
+}
+
+/// The workspaces of the engine, each with whether it is the active one, and the active one's id.
+fn workspace_rows(ctx: &mut Context) -> Result<(Vec<Value>, Value)> {
+    let config = ctx.request("config.get", json!({}))?;
+    let active = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
+    let rows = config
+        .get("workspaces")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|w| with_field(w, "active", json!(if w.get("id") == Some(&active) { "*" } else { "" })))
+        .collect();
+    Ok((rows, active))
+}
+
+/// `workspaces list|show|create|update|use|sync`.
 pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    ctx.engine()?;
     match sub.unwrap_or("list") {
         "list" => {
-            let config = ctx.request("config.get", json!({}))?;
-            let active = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
-            let rows: Vec<Value> = config
-                .get("workspaces")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .map(|w| with_field(w, "active", json!(if w.get("id") == Some(&active) { "*" } else { "" })))
-                .collect();
+            ctx.accept(&[], 0)?;
+            let (rows, _) = workspace_rows(ctx)?;
             Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["active", "id", "name"])))
         }
-        "use" => {
-            let id = need(ctx.args.positional(2), "workspace id")?;
-            ctx.request("workspace.setActive", json!({ "id": id }))?;
-            Ok(ctx.print(&json!({ "ok": true, "activeWorkspaceId": id }), || format!("Active workspace: {id}")))
+        "show" => {
+            ctx.accept(&[], 1)?;
+            let (rows, active) = workspace_rows(ctx)?;
+            let wanted = ctx.args.positional(2).map(str::to_string).unwrap_or_else(|| js_template(Some(&active)));
+            let workspace = find_one(&rows, &wanted, &["name"], "workspace", "workspaces")?;
+            Ok(ctx.print(workspace, || json(workspace)))
         }
-        "add" => {
+        "use" => {
+            ctx.accept(&[], 1)?;
+            let wanted = need(ctx.args.positional(2), "workspace id or name")?;
+            let (rows, _) = workspace_rows(ctx)?;
+            let workspace = find_one(&rows, &wanted, &["name"], "workspace", "workspaces")?;
+            let (id, name) = (id_of(workspace), js_template(workspace.get("name")));
+            ctx.request("workspace.setActive", json!({ "id": id }))?;
+            Ok(ctx.print(&json!({ "ok": true, "activeWorkspaceId": id }), || format!("Active workspace: {name} ({id})")))
+        }
+        "update" => {
+            ctx.accept(&["name"], 1)?;
+            let wanted = need(ctx.args.positional(2), "workspace id or name")?;
+            let name = need(ctx.args.flag("name").map(str::trim), "--name <new name>")?;
+            let (rows, _) = workspace_rows(ctx)?;
+            let workspace = find_one(&rows, &wanted, &["name"], "workspace", "workspaces")?;
+            let id = id_of(workspace);
+            ctx.request("workspace.rename", json!({ "id": id, "name": name }))?;
+            let renamed = with_field(workspace, "name", json!(name));
+            Ok(ctx.print(&renamed, || format!("Updated workspace {id} ({name})")))
+        }
+        "create" | "add" => {
+            ctx.accept(&["account"], 1)?;
             let name = need(ctx.args.positional(2), "workspace name")?;
             let mut payload = json!({ "name": name });
             if let Some(account) = ctx.args.flag("account") {
@@ -219,30 +284,8 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 format!("Created workspace {id} ({name}){tracked}")
             }))
         }
-        "import" => {
-            let repo = need(ctx.args.positional(2), "repository (owner/name)")?;
-            let account = account_id(ctx, &need(ctx.args.flag("account"), "--account <login>")?)?;
-            let result = refused(ctx.request("workspace.import", json!({ "accountId": account, "repo": repo }))?)?;
-            Ok(ctx.print(&result, || {
-                format!(
-                    "Imported {repo} as workspace {} ({})",
-                    js_template(result.pointer("/workspace/id")),
-                    js_template(result.pointer("/workspace/name"))
-                )
-            }))
-        }
-        "publish" => {
-            let name = need(ctx.args.positional(2), "new repository name")?;
-            let account = account_id(ctx, &need(ctx.args.flag("account"), "--account <login>")?)?;
-            let workspace = workspace_id(ctx)?;
-            let payload = json!({
-                "workspaceId": workspace, "accountId": account, "repoName": name, "private": !ctx.args.has("public"),
-                "syncAll": ctx.args.has("all"),
-            });
-            let result = refused(ctx.request("sync.publish", payload)?)?;
-            Ok(ctx.print(&result, || format!("Published to {}", js_template(result.pointer("/repo/fullName")))))
-        }
         "sync" => {
+            ctx.accept(&[], 0)?;
             let workspace = workspace_id(ctx)?;
             let result = refused(ctx.request("sync.all", json!({ "workspaceId": workspace }))?)?;
             Ok(ctx.print(&result, || {
@@ -263,15 +306,7 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 line
             }))
         }
-        other => Err(CliError::msg(format!("unknown: workspaces {other}"))),
-    }
-}
-
-/// A command's `{ ok: false, error }` answer as an error.
-fn refused(result: Value) -> Result<Value> {
-    match result.get("ok").and_then(Value::as_bool) {
-        Some(false) => Err(CliError::msg(js_template(result.get("error")))),
-        _ => Ok(result),
+        other => Err(unknown_verb("workspaces", other)),
     }
 }
 
@@ -291,16 +326,17 @@ fn account_id(ctx: &mut Context, wanted: &str) -> Result<String> {
         .ok_or_else(|| CliError::msg(format!("no account \"{wanted}\" is signed in (see: bifurc account list)")))
 }
 
-/// `account list|login|logout|repos`: the GitHub accounts workspaces sync as.
+/// `account list|login|repos`: the GitHub accounts workspaces sync as.
 pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    ctx.engine()?;
     match sub.unwrap_or("list") {
         "list" => {
+            ctx.accept(&[], 0)?;
             let listed = ctx.request("account.list", json!({}))?;
             let rows: Vec<Value> = listed.get("accounts").and_then(Value::as_array).cloned().unwrap_or_default();
             Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["login", "host", "signedIn", "id"])))
         }
         "login" => {
+            ctx.accept(&[], 0)?;
             let started = ctx.request("account.login.start", json!({}))?;
             let login_id = js_template(started.get("loginId"));
             if started.get("status").and_then(Value::as_str) != Some("pending") {
@@ -325,53 +361,25 @@ pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 }
             }
         }
-        "logout" => {
-            let id = account_id(ctx, &need(ctx.args.positional(2), "account login")?)?;
-            // Signing out takes the account's workspaces off this device, so what only this device has is
-            // named first.
-            let listed = ctx.request("account.list", json!({}))?;
-            let account = listed
-                .get("accounts")
-                .and_then(Value::as_array)
-                .and_then(|accounts| accounts.iter().find(|a| a.get("id").and_then(Value::as_str) == Some(&id)))
-                .cloned()
-                .unwrap_or(Value::Null);
-            let unsynced: Vec<String> = account
-                .get("workspaces")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter(|ws| {
-                    ws.get("repo").is_none_or(Value::is_null)
-                        || ws.get("changes").and_then(Value::as_u64).unwrap_or(0) > 0
-                        || ws.get("unpushed").and_then(Value::as_bool).unwrap_or(false)
-                })
-                .map(|ws| js_template(ws.get("name")))
-                .collect();
-            if !unsynced.is_empty() && !ctx.args.has("force") {
-                return Err(CliError::msg(format!(
-                    "signing out removes this account's workspaces from this device, and these have changes that were never synced: {}. Sync them first, or pass --force to remove them anyway",
-                    unsynced.join(", ")
-                )));
-            }
-            let result = ctx.request("account.logout", json!({ "accountId": id }))?;
-            let removed = result.get("removedWorkspaces").and_then(Value::as_array).map_or(0, Vec::len);
-            Ok(ctx.print(&result, || format!("Signed out {id}; removed {removed} workspace(s) from this device")))
-        }
         "repos" => {
+            ctx.accept(&[], 1)?;
             let id = account_id(ctx, &need(ctx.args.positional(2), "account login")?)?;
             let result = refused(ctx.request("account.repos", json!({ "accountId": id }))?)?;
             let rows: Vec<Value> = result.get("repos").and_then(Value::as_array).cloned().unwrap_or_default();
             Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["fullName", "private", "workspaceId"])))
         }
-        other => Err(CliError::msg(format!("unknown: account {other}"))),
+        other => Err(unknown_verb("account", other)),
     }
 }
 
 /// `env list|show|use` for the active workspace. `Global` is always applied underneath; the selected one
 /// overrides it. The selection is the engine's, so it is shared with the desktop UI.
 pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    ctx.engine()?;
+    match sub.unwrap_or("list") {
+        "list" | "show" => ctx.accept(&[], 0)?,
+        "use" => ctx.accept(&[], 1)?,
+        other => return Err(unknown_verb("env", other)),
+    }
     let config = ctx.request("config.get", json!({}))?;
     let active_workspace = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
     let active_environment = config.get("activeEnvironmentId").cloned().unwrap_or(Value::Null);
@@ -429,202 +437,24 @@ pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 format!("Active environment: {name} ({id_text})")
             }))
         }
-        other => Err(CliError::msg(format!("unknown: env {other}"))),
-    }
-}
-
-/// `mappings list|add|remove|enable|disable`.
-pub fn mappings(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    ctx.engine()?;
-    let args = ctx.args;
-    match sub.unwrap_or("list") {
-        "list" => {
-            let rows = list_entities(ctx, "mappings")?;
-            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["id", "domain", "target", "label"])))
-        }
-        "add" => {
-            let name = need(args.positional(2), "domain, e.g. api or api.localhost")?.to_lowercase();
-            let domain = if name.ends_with(".localhost") { name } else { format!("{name}.localhost") };
-            let target = need(args.positional(3), "target, e.g. 127.0.0.1:3000 or http://host:port")?;
-            let workspace = workspace_id(ctx)?;
-            let response = ctx.request(
-                "entity.create",
-                json!({
-                    "kind": "mappings",
-                    "workspaceId": workspace,
-                    "entity": {
-                        "domain": domain,
-                        "target": target,
-                        "label": args.flag("label").unwrap_or_default(),
-                        "enabled": true,
-                    },
-                }),
-            )?;
-            Ok(ctx.print(&response, || format!("Mapped http://{domain} → {target}  (id {})", created_id(&response))))
-        }
-        "remove" => {
-            let id = need(args.positional(2), "mapping id")?;
-            ctx.request("entity.delete", json!({ "kind": "mappings", "id": id }))?;
-            Ok(ctx.print(&json!({ "ok": true }), || format!("Removed mapping {id}")))
-        }
-        sub @ ("enable" | "disable") => {
-            let id = need(args.positional(2), "mapping id")?;
-            let workspace = workspace_id(ctx)?;
-            let response = ctx.request(
-                "entity.setEnabled",
-                json!({ "workspaceId": workspace, "kind": "mappings", "id": id, "enabled": sub == "enable" }),
-            )?;
-            Ok(ctx
-                .print(&response, || format!("{} mapping {id}", if sub == "enable" { "Enabled" } else { "Disabled" })))
-        }
-        other => Err(CliError::msg(format!("unknown: mappings {other}"))),
+        other => Err(unknown_verb("env", other)),
     }
 }
 
 /// `services list`.
 pub fn services(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     if let Some(other) = sub.filter(|s| *s != "list") {
-        return Err(CliError::msg(format!("unknown: services {other}")));
+        return Err(unknown_verb("services", other));
     }
+    ctx.accept(&[], 0)?;
     let response = ctx.request("services.discover", json!({}))?;
     let rows = response.as_array().cloned().unwrap_or_default();
     Ok(ctx.print(&response, || table(&rows, &["port", "pid", "processName", "address"])))
 }
 
-/// `requests list|show|add|send`.
-pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    ctx.engine()?;
-    let args = ctx.args;
-    match sub.unwrap_or("list") {
-        "list" => {
-            let rows = list_entities(ctx, "requests")?;
-            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["id", "method", "name", "url"])))
-        }
-        "show" => {
-            let id = need(args.positional(2), "request id")?;
-            let workspace = workspace_id(ctx)?;
-            let response =
-                ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": "requests", "id": id }))?;
-            match response.get("entity").filter(|e| !e.is_null()) {
-                Some(entity) if response.get("ok").is_some_and(truthy) => Ok(ctx.print(entity, || json(entity))),
-                _ => Err(CliError::msg(format!("no request {id}"))),
-            }
-        }
-        "add" => {
-            let url = need(args.flag("url").or(args.positional(2)), "--url")?;
-            let method = args.flag("method").unwrap_or("GET").to_uppercase();
-            let workspace = workspace_id(ctx)?;
-            let response = ctx.request(
-                "entity.create",
-                json!({
-                    "kind": "requests",
-                    "workspaceId": workspace,
-                    "entity": {
-                        "name": args.flag("name").map(str::to_string).unwrap_or_else(|| format!("{method} {url}")),
-                        "method": method,
-                        "url": url,
-                        "headers": headers_from(args)?,
-                        "body": body_from(args)?,
-                        "protocol": "rest",
-                    },
-                }),
-            )?;
-            Ok(ctx.print(&response, || format!("Saved request {}", created_id(&response))))
-        }
-        "send" => {
-            let workspace = workspace_id(ctx)?;
-            // A saved request goes by id — the engine loads it, resolves it and runs its scripts. A request
-            // that is not saved goes as a full payload.
-            let payload = match args.flag("url") {
-                None => json!({
-                    "workspaceId": workspace,
-                    "id": need(args.positional(2), "request id, or --url for an unsaved request")?,
-                }),
-                Some(url) => json!({
-                    "workspaceId": workspace,
-                    "request": {
-                        "method": args.flag("method").unwrap_or("GET").to_uppercase(),
-                        "url": url,
-                        "headers": headers_from(args)?,
-                        "body": body_from(args)?,
-                    },
-                    "scripts": {},
-                }),
-            };
-            let response = ctx.request("request.send", payload)?;
-            Ok(ctx.print(&response, || describe_send(&response)))
-        }
-        other => Err(CliError::msg(format!("unknown: requests {other}"))),
-    }
-}
-
-/// `grpc list|reflect|call|send`.
-pub fn grpc(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
-    ctx.engine()?;
-    let args = ctx.args;
-    // A result that says `ok: false` fails the command, unless the caller asked for the JSON.
-    let checked = |ctx: &Context, response: Value| -> Result<Value> {
-        match response.get("ok").and_then(Value::as_bool) {
-            Some(false) if !ctx.json => Err(CliError::msg(
-                response.get("error").and_then(Value::as_str).unwrap_or("the gRPC call failed").to_string(),
-            )),
-            _ => Ok(response),
-        }
-    };
-    match sub.unwrap_or("list") {
-        "list" => {
-            let rows = list_entities(ctx, "grpcRequests")?;
-            Ok(ctx.print(&Value::Array(rows.clone()), || {
-                table(&rows, &["id", "name", "serverAddress", "serviceName", "methodName"])
-            }))
-        }
-        "reflect" => {
-            let address = need(args.positional(2).or(args.flag("server")), "server address")?;
-            let response = ctx.request("grpc.reflect", json!({ "serverAddress": address }))?;
-            let response = checked(ctx, response)?;
-            Ok(ctx.print(&response, || describe_reflection(&response)))
-        }
-        "call" => {
-            let address = need(args.positional(2).or(args.flag("server")), "server address")?;
-            // `package.Service/Method` is one word; `package.Service Method` is two.
-            let (service, method) = match (args.positional(3), args.positional(4)) {
-                (Some(path), None) => match path.trim_start_matches('/').rsplit_once('/') {
-                    Some((service, method)) => (service.to_string(), method.to_string()),
-                    None => return Err(CliError::msg("the method is \"package.Service/Method\"")),
-                },
-                (Some(service), Some(method)) => (service.to_string(), method.to_string()),
-                _ => return Err(CliError::msg("missing method (package.Service/Method)")),
-            };
-            let proto = args.flag("proto").filter(|p| !p.is_empty());
-            let mut payload = json!({
-                "serverAddress": address,
-                "serviceName": service,
-                "methodName": method,
-                "requestBody": body_from(args)?,
-                "metadata": headers_from(args)?,
-                "protoFileId": proto,
-                "useReflection": proto.is_none(),
-            });
-            if proto.is_some() {
-                payload["workspaceId"] = json!(workspace_id(ctx)?);
-            }
-            let response = ctx.request("grpc.execute", payload)?;
-            let response = checked(ctx, response)?;
-            Ok(ctx.print(&response, || describe_grpc(&response)))
-        }
-        "send" => {
-            let workspace = workspace_id(ctx)?;
-            let id = need(args.positional(2), "gRPC request id")?;
-            let response = ctx.request("grpc.send", json!({ "workspaceId": workspace, "id": id }))?;
-            let response = checked(ctx, response)?;
-            Ok(ctx.print(&response, || describe_grpc(&response)))
-        }
-        other => Err(CliError::msg(format!("unknown: grpc {other}"))),
-    }
-}
-
 /// `call <command> [json]`: any protocol command with a JSON payload.
 pub fn call(ctx: &mut Context) -> Result<String> {
+    ctx.accept_top(&["payload"], 2)?;
     let command = need(ctx.args.positional(1), "command name (see: bifurc commands)")?;
     if !is_known_command(&command) {
         return Err(CliError::msg(format!("unknown command \"{command}\" (see: bifurc commands)")));
@@ -644,7 +474,7 @@ pub fn commands(ctx: &Context) -> String {
 
 /// `status`: the engine, the proxy and the active workspace.
 pub fn status(ctx: &mut Context) -> Result<String> {
-    ctx.engine()?;
+    ctx.accept_top(&[], 0)?;
     let server = ctx.request("server.status", json!({}))?;
     let config = ctx.request("config.get", json!({}))?;
     let active_id = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
@@ -662,46 +492,10 @@ pub fn status(ctx: &mut Context) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{args::parse_args, discovery::RuntimeInfo};
-    use std::{cell::RefCell, rc::Rc};
-
-    type Calls = Rc<RefCell<Vec<(String, Value)>>>;
-
-    /// An engine that answers each command from a table and records what it was asked.
-    struct Fake {
-        info: RuntimeInfo,
-        answers: Vec<(&'static str, Result<Value>)>,
-        calls: Calls,
-    }
-
-    impl Engine for Fake {
-        fn info(&self) -> &RuntimeInfo {
-            &self.info
-        }
-
-        fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
-            self.calls.borrow_mut().push((command.to_string(), payload));
-            match self.answers.iter().find(|(name, _)| *name == command) {
-                Some((_, answer)) => answer.clone(),
-                None => Err(CliError::Engine { code: "UNKNOWN_COMMAND".into(), message: command.into() }),
-            }
-        }
-    }
-
-    fn info() -> RuntimeInfo {
-        RuntimeInfo::from_json(json!({
-            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.4.0"
-        }))
-        .unwrap()
-    }
-
-    fn config() -> Value {
-        json!({
-            "activeWorkspaceId": "w1",
-            "activeEnvironmentId": "e2",
-            "workspaces": [{"id": "w1", "name": "Default"}, {"id": "w2", "name": "Other"}],
-        })
-    }
+    use crate::{
+        args::parse_args,
+        testing::{config, run, sub},
+    };
 
     fn envs() -> Value {
         json!({"entities": [
@@ -709,31 +503,6 @@ mod tests {
             {"id": "e1", "name": "Dev", "variables": []},
             {"id": "e2", "name": "Prod", "variables": [{"k": "a"}, {"k": "b"}]},
         ]})
-    }
-
-    /// Run `f` for the arguments, with an engine that gives `answers`; returns the result and the calls made.
-    fn run(
-        argv: &[&str],
-        answers: Vec<(&'static str, Result<Value>)>,
-        f: impl FnOnce(&mut Context) -> Result<String>,
-    ) -> (Result<String>, Vec<(String, Value)>) {
-        let args = parse_args(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>()).unwrap();
-        let calls: Calls = Rc::default();
-        let recorded = Rc::clone(&calls);
-        let mut answers = Some(answers);
-        let connector: Connector = Box::new(move || {
-            let fake =
-                Fake { info: info(), answers: answers.take().expect("opened once"), calls: Rc::clone(&recorded) };
-            Ok(Box::new(fake) as Box<dyn Engine>)
-        });
-        let mut ctx = Context::new(&args, connector);
-        let result = f(&mut ctx);
-        let calls = calls.borrow().clone();
-        (result, calls)
-    }
-
-    fn sub<'a>(argv: &'a [&'a str]) -> Option<&'a str> {
-        argv.get(1).copied()
     }
 
     #[test]
@@ -754,21 +523,165 @@ mod tests {
     }
 
     #[test]
-    fn workspaces_use_sets_the_active_workspace() {
-        let argv = ["workspaces", "use", "w2"];
-        let (out, calls) = run(&argv, vec![("workspace.setActive", Ok(json!({})))], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Active workspace: w2");
-        assert_eq!(calls, vec![("workspace.setActive".to_string(), json!({"id": "w2"}))]);
+    fn workspaces_use_sets_the_active_workspace_named_by_id_or_name() {
+        for wanted in ["w2", "other"] {
+            let argv = ["workspaces", "use", wanted];
+            let answers = vec![("config.get", Ok(config())), ("workspace.setActive", Ok(json!({})))];
+            let (out, calls) = run(&argv, answers, |c| workspaces(c, sub(&argv)));
+            assert_eq!(out.unwrap(), "Active workspace: Other (w2)");
+            assert_eq!(calls[1], ("workspace.setActive".to_string(), json!({"id": "w2"})));
+        }
+        let argv = ["workspaces", "use", "nope"];
+        let (out, calls) = run(&argv, vec![("config.get", Ok(config()))], |c| workspaces(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::msg("no workspace \"nope\" (see: bifurc workspaces list)"));
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn workspaces_show_prints_the_named_or_the_active_one() {
+        let argv = ["workspaces", "show"];
+        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| workspaces(c, sub(&argv)));
+        let shown: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!(shown, json!({"id": "w1", "name": "Default", "active": "*"}));
+        let argv = ["workspaces", "show", "Other"];
+        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| workspaces(c, sub(&argv)));
+        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["id"], "w2");
+    }
+
+    #[test]
+    fn workspaces_update_renames() {
+        let argv = ["workspaces", "update", "w2", "--name", " Staging "];
+        let answers = vec![("config.get", Ok(config())), ("workspace.rename", Ok(json!({"ok": true})))];
+        let (out, calls) = run(&argv, answers, |c| workspaces(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "Updated workspace w2 (Staging)");
+        assert_eq!(calls[1], ("workspace.rename".to_string(), json!({"id": "w2", "name": "Staging"})));
+
+        let argv = ["workspaces", "update", "w2"];
+        let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::msg("missing --name <new name>"));
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn workspaces_create_makes_it_active_and_add_still_works() {
+        for verb in ["create", "add"] {
+            let argv = ["workspaces", verb, "Mine"];
+            let answers = vec![
+                ("workspace.add", Ok(json!({"id": "w9", "gitTracked": true}))),
+                ("workspace.setActive", Ok(json!({}))),
+            ];
+            let (out, calls) = run(&argv, answers, |c| workspaces(c, sub(&argv)));
+            assert_eq!(out.unwrap(), "Created workspace w9 (Mine)");
+            assert_eq!(calls[0], ("workspace.add".to_string(), json!({"name": "Mine"})));
+            assert_eq!(calls[1], ("workspace.setActive".to_string(), json!({"id": "w9"})));
+        }
+    }
+
+    #[test]
+    fn workspaces_sync_reports_what_was_synced_and_what_waits() {
+        let argv = ["workspaces", "sync"];
+        let synced = json!({"ok": true, "synced": 3, "pushed": true, "pendingDeletions": 1});
+        let answers = vec![("config.get", Ok(config())), ("sync.all", Ok(synced))];
+        let (out, calls) = run(&argv, answers, |c| workspaces(c, sub(&argv)));
+        assert_eq!(
+            out.unwrap(),
+            "Synced 3 change(s), each in a commit of its own, and pushed them\n\
+             1 deletion(s) still wait to be confirmed or reverted"
+        );
+        assert_eq!(calls[1], ("sync.all".to_string(), json!({"workspaceId": "w1"})));
+
+        let answers = vec![("config.get", Ok(config())), ("sync.all", Ok(json!({"ok": false, "error": "no git"})))];
+        let (out, _) = run(&argv, answers, |c| workspaces(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::msg("no git"));
     }
 
     #[test]
     fn workspaces_use_needs_an_id_and_unknown_subcommands_fail() {
         let argv = ["workspaces", "use"];
         let (out, _) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing workspace id"));
+        assert_eq!(out.unwrap_err(), CliError::msg("missing workspace id or name"));
         let argv = ["workspaces", "frob"];
-        let (out, _) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: workspaces frob"));
+        let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::msg("unknown: workspaces frob (see: bifurc workspaces --help)")
+        );
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn what_the_desktop_app_does_is_said_so() {
+        for (group, verb, hint) in [
+            ("workspaces", "publish", "that is done in the desktop app"),
+            ("workspaces", "import", "that is done in the desktop app"),
+            ("account", "logout", "deleting is done in the desktop app"),
+        ] {
+            let argv = [group, verb, "x"];
+            let (out, calls) = run(&argv, vec![], |c| match group {
+                "workspaces" => workspaces(c, sub(&argv)),
+                _ => account(c, sub(&argv)),
+            });
+            assert_eq!(
+                out.unwrap_err(),
+                CliError::msg(format!("unknown: {group} {verb}; {hint} (see: bifurc {group} --help)"))
+            );
+            assert!(calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_option_or_argument_a_command_does_not_take_is_refused_before_the_engine_is_asked() {
+        let argv = ["workspaces", "list", "--nmae", "x"];
+        let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::msg("unknown option --nmae for \"workspaces list\" (see: bifurc workspaces --help)")
+        );
+        assert!(calls.is_empty());
+
+        let argv = ["workspaces", "use", "w1", "w2"];
+        let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::msg("unexpected argument \"w2\" for \"workspaces use\" (see: bifurc workspaces --help)")
+        );
+        assert!(calls.is_empty());
+
+        let argv = ["status", "now"];
+        let (out, _) = run(&argv, vec![], |c| status(c));
+        assert_eq!(out.unwrap_err(), CliError::msg("unexpected argument \"now\" for \"status\" (see: bifurc status --help)"));
+    }
+
+    #[test]
+    fn find_one_takes_an_id_then_a_unique_name() {
+        let rows = vec![
+            json!({"id": "a", "name": "Ping"}),
+            json!({"id": "b", "name": "ping"}),
+            json!({"id": "c", "name": "Pong"}),
+            json!({"id": "Pong", "name": "Id wins"}),
+        ];
+        let find = |wanted: &str| find_one(&rows, wanted, &["name"], "request", "requests");
+        assert_eq!(find("a").unwrap()["name"], "Ping");
+        assert_eq!(find("Pong").unwrap()["name"], "Id wins");
+        assert_eq!(find("pong").unwrap()["id"], "c");
+        assert_eq!(find("PING").unwrap_err(), CliError::msg("2 requests are named \"PING\"; use the id: a, b"));
+        assert_eq!(find("zip").unwrap_err(), CliError::msg("no request \"zip\" (see: bifurc requests list)"));
+    }
+
+    #[test]
+    fn headers_merge_by_name_whatever_the_case_and_an_empty_value_removes() {
+        let args = parse_args(&["-H", "accept: b", "-H", "X-Gone:", "-H", "New: 1"].map(String::from)).unwrap();
+        let mut headers = json!({"Accept": "a", "x-gone": "1", "Keep": "k"}).as_object().cloned().unwrap();
+        merge_headers(&mut headers, &header_flags(&args).unwrap());
+        assert_eq!(Value::Object(headers), json!({"Keep": "k", "accept": "b", "New": "1"}));
+
+        for bad in ["nocolon", ":v"] {
+            let args = parse_args(&["-H", bad].map(String::from)).unwrap();
+            assert_eq!(
+                header_flags(&args).unwrap_err(),
+                CliError::msg(format!("header \"{bad}\" must be \"name: value\""))
+            );
+        }
     }
 
     #[test]
@@ -849,73 +762,6 @@ mod tests {
     }
 
     #[test]
-    fn mappings_list_is_a_table_of_the_active_workspaces_mappings() {
-        let argv = ["mappings"];
-        let listing =
-            json!({"entities": [{"id": "m1", "domain": "api.localhost", "target": "127.0.0.1:3000", "label": "API"}]});
-        let answers = vec![("config.get", Ok(config())), ("entity.list", Ok(listing))];
-        let (out, calls) = run(&argv, answers, |c| mappings(c, None));
-        assert_eq!(out.unwrap(), "ID  DOMAIN         TARGET          LABEL\nm1  api.localhost  127.0.0.1:3000  API");
-        assert_eq!(calls[1].1, json!({"workspaceId": "w1", "kind": "mappings"}));
-    }
-
-    #[test]
-    fn mappings_add_appends_localhost_and_lowercases() {
-        let argv = ["mappings", "add", "API", "127.0.0.1:3000", "--label", "My API"];
-        let answers = vec![("config.get", Ok(config())), ("entity.create", Ok(json!({"id": "m9"})))];
-        let (out, calls) = run(&argv, answers, |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Mapped http://api.localhost → 127.0.0.1:3000  (id m9)");
-        assert_eq!(
-            calls[1].1,
-            json!({"kind": "mappings", "workspaceId": "w1",
-                   "entity": {"domain": "api.localhost", "target": "127.0.0.1:3000", "label": "My API", "enabled": true}})
-        );
-    }
-
-    #[test]
-    fn mappings_add_keeps_a_full_domain_and_reads_a_nested_id() {
-        let argv = ["mappings", "add", "Api.LOCALHOST", "t", "-w", "w2"];
-        let answers = vec![("entity.create", Ok(json!({"entity": {"id": "n1"}})))];
-        let (out, calls) = run(&argv, answers, |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Mapped http://api.localhost → t  (id n1)");
-        assert_eq!(calls[0].1["workspaceId"], "w2");
-        assert_eq!(calls[0].1["entity"]["label"], "");
-    }
-
-    #[test]
-    fn mappings_add_needs_domain_and_target() {
-        let argv = ["mappings", "add"];
-        let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing domain, e.g. api or api.localhost"));
-        let argv = ["mappings", "add", "api"];
-        let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing target, e.g. 127.0.0.1:3000 or http://host:port"));
-    }
-
-    #[test]
-    fn mappings_remove_enable_and_disable() {
-        let argv = ["mappings", "remove", "m1"];
-        let (out, calls) = run(&argv, vec![("entity.delete", Ok(json!({})))], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Removed mapping m1");
-        assert_eq!(calls[0].1, json!({"kind": "mappings", "id": "m1"}));
-
-        for (verb, word, enabled) in [("enable", "Enabled", true), ("disable", "Disabled", false)] {
-            let argv = ["mappings", verb, "m1"];
-            let answers = vec![("config.get", Ok(config())), ("entity.setEnabled", Ok(json!({"ok": true})))];
-            let (out, calls) = run(&argv, answers, |c| mappings(c, sub(&argv)));
-            assert_eq!(out.unwrap(), format!("{word} mapping m1"));
-            assert_eq!(calls[1].1, json!({"workspaceId": "w1", "kind": "mappings", "id": "m1", "enabled": enabled}));
-        }
-
-        let argv = ["mappings", "remove"];
-        let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing mapping id"));
-        let argv = ["mappings", "frob"];
-        let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: mappings frob"));
-    }
-
-    #[test]
     fn services_list_is_a_table_and_rejects_other_subcommands() {
         let argv = ["services"];
         let found = json!([{"port": 3000, "pid": 12, "processName": "node", "address": "127.0.0.1"}]);
@@ -923,163 +769,8 @@ mod tests {
         assert_eq!(out.unwrap(), "PORT  PID  PROCESSNAME  ADDRESS\n3000  12   node         127.0.0.1");
         let argv = ["services", "kill"];
         let (out, calls) = run(&argv, vec![], |c| services(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: services kill"));
+        assert_eq!(out.unwrap_err(), CliError::msg("unknown: services kill (see: bifurc services --help)"));
         assert!(calls.is_empty());
-    }
-
-    #[test]
-    fn requests_list_is_a_table() {
-        let argv = ["requests"];
-        let listing = json!({"entities": [{"id": "r1", "method": "GET", "name": "Ping", "url": "http://x"}]});
-        let answers = vec![("config.get", Ok(config())), ("entity.list", Ok(listing))];
-        let (out, calls) = run(&argv, answers, |c| requests(c, None));
-        assert_eq!(out.unwrap(), "ID  METHOD  NAME  URL\nr1  GET     Ping  http://x");
-        assert_eq!(calls[1].1, json!({"workspaceId": "w1", "kind": "requests"}));
-    }
-
-    #[test]
-    fn requests_show_prints_the_entity_or_fails() {
-        let argv = ["requests", "show", "r1"];
-        let loaded = json!({"ok": true, "entity": {"id": "r1"}});
-        let answers = vec![("config.get", Ok(config())), ("entity.load", Ok(loaded))];
-        let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "{\n  \"id\": \"r1\"\n}");
-        assert_eq!(calls[1].1, json!({"workspaceId": "w1", "kind": "requests", "id": "r1"}));
-
-        let answers = vec![("config.get", Ok(config())), ("entity.load", Ok(json!({"ok": false})))];
-        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no request r1"));
-
-        let argv = ["requests", "show"];
-        let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing request id"));
-    }
-
-    #[test]
-    fn requests_add_builds_the_entity_from_flags() {
-        let argv =
-            ["requests", "add", "--url", "http://x/a", "-X", "post", "-H", "Accept: a/b", "-H", "X-N:1", "-d", "{}"];
-        let answers = vec![("config.get", Ok(config())), ("entity.create", Ok(json!({"id": "r7"})))];
-        let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Saved request r7");
-        assert_eq!(
-            calls[1].1,
-            json!({"kind": "requests", "workspaceId": "w1", "entity": {
-                "name": "POST http://x/a", "method": "POST", "url": "http://x/a",
-                "headers": {"Accept": "a/b", "X-N": "1"}, "body": "{}", "protocol": "rest"}})
-        );
-    }
-
-    #[test]
-    fn requests_add_takes_the_url_positionally_and_a_name_and_a_body_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("body.txt");
-        std::fs::write(&file, "from file").unwrap();
-        let file = file.to_string_lossy().into_owned();
-        let argv = ["requests", "add", "http://y", "--name", "Mine", "--body-file", &file, "--body", "ignored"];
-        let answers = vec![("config.get", Ok(config())), ("entity.create", Ok(json!({"entity": {"id": "r8"}})))];
-        let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Saved request r8");
-        assert_eq!(calls[1].1["entity"]["name"], "Mine");
-        assert_eq!(calls[1].1["entity"]["url"], "http://y");
-        assert_eq!(calls[1].1["entity"]["body"], "from file");
-        assert_eq!(calls[1].1["entity"]["method"], "GET");
-    }
-
-    #[test]
-    fn requests_add_rejects_a_missing_url_and_a_bad_header_and_a_missing_file() {
-        let argv = ["requests", "add"];
-        let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing --url"));
-
-        let argv = ["requests", "add", "--url", "u", "-H", "nocolon"];
-        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("header \"nocolon\" must be \"name: value\""));
-
-        let argv = ["requests", "add", "--url", "u", "-H", ":v"];
-        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("header \":v\" must be \"name: value\""));
-
-        let argv = ["requests", "add", "--url", "u", "--body-file", "/definitely/not/here"];
-        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| requests(c, sub(&argv)));
-        assert!(out.unwrap_err().to_string().starts_with("cannot read /definitely/not/here"));
-    }
-
-    #[test]
-    fn requests_send_by_id_sends_only_the_id() {
-        let argv = ["requests", "send", "r1"];
-        let sent = json!({"status": 200, "durationMs": 3, "headers": {"a": "b"}, "body": "b2s="});
-        let answers = vec![("config.get", Ok(config())), ("request.send", Ok(sent))];
-        let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "HTTP 200  (3 ms)\na: b\n\nok");
-        assert_eq!(calls[1], ("request.send".to_string(), json!({"workspaceId": "w1", "id": "r1"})));
-    }
-
-    #[test]
-    fn requests_send_inline_sends_the_whole_request() {
-        let argv = ["requests", "send", "--url", "http://x", "-X", "put", "-H", "a: 1", "-d", "hi", "-w", "w3"];
-        let sent = json!({"status": 201, "durationMs": 1, "headers": {}, "body": ""});
-        let (out, calls) = run(&argv, vec![("request.send", Ok(sent))], |c| requests(c, sub(&argv)));
-        assert!(out.unwrap().starts_with("HTTP 201"));
-        assert_eq!(
-            calls[0].1,
-            json!({"workspaceId": "w3", "scripts": {},
-                   "request": {"method": "PUT", "url": "http://x", "headers": {"a": "1"}, "body": "hi"}})
-        );
-    }
-
-    #[test]
-    fn requests_send_without_id_or_url_fails() {
-        let argv = ["requests", "send"];
-        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing request id, or --url for an unsaved request"));
-        let argv = ["requests", "frob"];
-        let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: requests frob"));
-    }
-
-    #[test]
-    fn grpc_call_sends_an_execute_by_reflection() {
-        let argv = ["grpc", "call", "localhost:50051", "pkg.Svc/Do", "-d", "{\"a\":1}", "-H", "x-k: v"];
-        let reply = json!({"ok": true, "status": 0, "durationMs": 3, "metadata": {"m": "1"}, "responses": ["{}"]});
-        let (out, calls) = run(&argv, vec![("grpc.execute", Ok(reply))], |c| grpc(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\nm: 1\n\n{}");
-        assert_eq!(
-            calls[0],
-            (
-                "grpc.execute".to_string(),
-                json!({"serverAddress": "localhost:50051", "serviceName": "pkg.Svc", "methodName": "Do",
-                       "requestBody": "{\"a\":1}", "metadata": {"x-k": "v"}, "protoFileId": null, "useReflection": true})
-            )
-        );
-    }
-
-    #[test]
-    fn grpc_call_failure_is_an_error_unless_json() {
-        let argv = ["grpc", "call", "h:1", "S", "M"];
-        let reply = json!({"ok": false, "error": "UNAVAILABLE: down", "status": 14});
-        let (out, _) = run(&argv, vec![("grpc.execute", Ok(reply.clone()))], |c| grpc(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("UNAVAILABLE: down"));
-        let argv = ["grpc", "call", "h:1", "S", "M", "--json"];
-        let (out, _) = run(&argv, vec![("grpc.execute", Ok(reply))], |c| grpc(c, sub(&argv)));
-        assert!(out.unwrap().contains("UNAVAILABLE"));
-    }
-
-    #[test]
-    fn grpc_reflect_lists_methods_with_their_kind() {
-        let argv = ["grpc", "reflect", "h:1"];
-        let reply = json!({"ok": true, "services": [{"name": "p.S", "methods": [
-            {"name": "A", "inputType": "p.I", "outputType": "p.O", "clientStreaming": false, "serverStreaming": true}]}]});
-        let (out, _) = run(&argv, vec![("grpc.reflect", Ok(reply))], |c| grpc(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "p.S\n  A(p.I) -> p.O  [server streaming]");
-    }
-
-    #[test]
-    fn grpc_send_goes_by_id() {
-        let argv = ["grpc", "send", "g1"];
-        let answers = vec![("config.get", Ok(config())), ("grpc.send", Ok(json!({"ok": true, "status": 0})))];
-        let (_, calls) = run(&argv, answers, |c| grpc(c, sub(&argv)));
-        assert_eq!(calls[1], ("grpc.send".to_string(), json!({"workspaceId": "w1", "id": "g1"})));
     }
 
     #[test]
