@@ -41,7 +41,7 @@ pub const FLAT_ENTITY_KINDS: [&str; 2] = ["mappings", "environments"];
 const SKIP_FILES: [&str; 4] = ["index.json", "enabled.json", "names.json", "pending-deletions.json"];
 
 /// Directories in a kind's directory that are not folders.
-const SKIP_DIRS: [&str; 3] = ["drafts", "capture", ".runs"];
+pub const SKIP_DIRS: [&str; 3] = ["drafts", "capture", ".runs"];
 
 /// `<dataDir>/data`: the parent of every workspace directory.
 pub fn data_root() -> PathBuf {
@@ -274,6 +274,8 @@ pub fn read_entity(ws_id: &str, kind: &str, id: &str) -> Option<Value> {
 pub struct EntityStub {
     pub id: String,
     pub folder_id: Option<String>,
+    /// The pending-deletion record of an entity that was deleted here and whose deletion is not synced yet.
+    pub deleted: Option<Value>,
 }
 
 /// The ids and folders of a kind's entities, plus those deleted locally but not yet published.
@@ -288,13 +290,17 @@ pub fn read_entity_stubs(ws_id: &str, kind: &str) -> Vec<EntityStub> {
     };
     let mut stubs: Vec<EntityStub> = entity_files(ws_id, kind)
         .into_iter()
-        .map(|(id, _, folder_dir)| EntityStub { id, folder_id: folder_dir.as_deref().and_then(folder_id_of) })
+        .map(|(id, _, folder_dir)| EntityStub {
+            id,
+            folder_id: folder_dir.as_deref().and_then(folder_id_of),
+            deleted: None,
+        })
         .collect();
     for pending in get_pending_deletions(ws_id, kind) {
         let id = str_of(&pending, "id").to_string();
         if !stubs.iter().any(|stub| stub.id == id) {
             let folder_id = pending.get("folderId").and_then(Value::as_str).map(str::to_string);
-            stubs.push(EntityStub { id, folder_id });
+            stubs.push(EntityStub { id, folder_id, deleted: Some(pending) });
         }
     }
     stubs
@@ -449,7 +455,8 @@ fn write_pending_deletions(ws_id: &str, data: &Map<String, Value>) -> std::io::R
 }
 
 /// Remember an entity deleted locally until the deletion is published:
-/// `{id, folderId, name, method?, url?, urlSuffix?}`.
+/// `{id, folderId, path, name, method?, url?, urlSuffix?}`. A kind's deleted folders are kept the same way,
+/// under `pending_folders_key(kind)`, as the folder objects `index.json` held.
 pub fn add_pending_deletion(ws_id: &str, kind: &str, entry: Value) -> std::io::Result<()> {
     let mut data = read_pending_deletions(ws_id);
     let list = data.entry(kind.to_string()).or_insert_with(|| json!([]));
@@ -473,6 +480,11 @@ pub fn remove_pending_deletion(ws_id: &str, kind: &str, id: &str) -> std::io::Re
 
 pub fn get_pending_deletions(ws_id: &str, kind: &str) -> Vec<Value> {
     read_pending_deletions(ws_id).get(kind).and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+/// The key a kind's deleted folders are kept under in `pending-deletions.json`.
+pub fn pending_folders_key(kind: &str) -> String {
+    format!("{kind}.folders")
 }
 
 pub fn clear_pending_deletions(ws_id: &str, kind: &str) -> std::io::Result<()> {

@@ -4,6 +4,7 @@
 
 mod account_commands;
 mod auto_sync;
+mod delete_commands;
 mod git_lock;
 mod git_ops;
 mod git_state;
@@ -23,6 +24,7 @@ mod remote_tests;
 mod tests;
 
 pub use auto_sync::{start_auto_sync, stop_all_auto_sync};
+pub use delete_commands::reconcile_deletions;
 pub use git_state::get_workspace_git_state;
 pub use status_tracker::get_workspace_sync_status;
 pub use sync_state::get_sync_config;
@@ -30,5 +32,6 @@ pub use sync_state::get_sync_config;
 /// Register the sync, git, account and remote-workspace commands.
 pub fn register(registry: &mut crate::kernel::CommandRegistry) {
     sync_commands::register(registry);
+    delete_commands::register(registry);
     account_commands::register(registry);
 }

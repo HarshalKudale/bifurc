@@ -96,6 +96,15 @@ impl SetupState {
     }
 }
 
+/// Something that was deleted here and is still listed: its deletion waits to be confirmed or reverted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Deleted {
+    /// `kind` as `entity.delete` takes it: `requests`, `mocks`, `mappings`, ...
+    Entity { kind: &'static str, id: String },
+    /// `kind` as `folder.delete` takes it: `request`, `mock`, ...
+    Folder { kind: &'static str, id: String },
+}
+
 #[derive(Debug, Clone)]
 pub enum ModelEvent {
     /// A new snapshot is in place.
@@ -570,6 +579,44 @@ impl AppModel {
             match failure(&outcome) {
                 Some(message) => cx.emit(ModelEvent::Notice(format!("Couldn't revert. {message}"))),
                 None => cx.emit(ModelEvent::EntityReverted(id)),
+            }
+            this.refresh(cx);
+            cx.notify();
+        });
+    }
+
+    /// Syncs a deletion: commits it (and pushes, when the workspace has a remote), after which what was
+    /// deleted is gone for good.
+    pub fn confirm_delete(&mut self, target: Deleted, cx: &mut Context<Self>) {
+        self.resolve_delete(target, false, cx);
+    }
+
+    /// Brings back what was deleted, as it was when it was last synced.
+    pub fn revert_delete(&mut self, target: Deleted, cx: &mut Context<Self>) {
+        self.resolve_delete(target, true, cx);
+    }
+
+    fn resolve_delete(&mut self, target: Deleted, revert: bool, cx: &mut Context<Self>) {
+        if self.publishing {
+            return;
+        }
+        self.publishing = true;
+        cx.notify();
+        let (action, kind, id) = match (&target, revert) {
+            (Deleted::Entity { kind, id }, true) => ("entity.revertDelete", *kind, id.clone()),
+            (Deleted::Entity { kind, id }, false) => ("entity.confirmDelete", *kind, id.clone()),
+            (Deleted::Folder { kind, id }, true) => ("folder.revertDelete", *kind, id.clone()),
+            (Deleted::Folder { kind, id }, false) => ("folder.confirmDelete", *kind, id.clone()),
+        };
+        let client = self.engine.client.clone();
+        let payload = json!({ "workspaceId": self.workspace_id(), "kind": kind, "id": id });
+        call(&client, cx, action, payload, move |this, outcome, cx| {
+            this.publishing = false;
+            let what = if revert { "revert" } else { "confirm" };
+            match failure(&outcome) {
+                Some(message) => cx.emit(ModelEvent::Notice(format!("Couldn't {what} the delete. {message}"))),
+                None if revert => cx.emit(ModelEvent::EntityReverted(id)),
+                None => {}
             }
             this.refresh(cx);
             cx.notify();

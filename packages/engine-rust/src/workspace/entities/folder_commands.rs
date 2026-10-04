@@ -10,14 +10,20 @@ use serde_json::{Value, json};
 use crate::{
     kernel::{CommandRegistry, bus},
     protocol::{EngineError, Result},
-    runtime::notice,
+    runtime::{entity_status::emit_entity_status, instances::notify_config_changed, notice},
     utils::{
         id::{generate_id, now_ms},
-        json::{array_mut, array_of, opt_str, str_of},
+        json::{array_mut, array_of, opt_str, str_of, truthy},
     },
     workspace::{
         config::{load_config, save_config},
-        fs::{delete_entity_dir, read_index, sanitize_dir_name, write_index, ws_dir},
+        deletions::{folder_subtree, remove_entity},
+        fs::{
+            add_pending_deletion, delete_entity_dir, pending_folders_key, read_index, sanitize_dir_name, write_index,
+            ws_dir,
+        },
+        kinds::crud_kind,
+        status_cache::invalidate_cache,
     },
 };
 
@@ -136,6 +142,10 @@ pub fn register(registry: &mut CommandRegistry) {
                     entry["name"] = json!(name);
                 }
                 write_index(&ws_id, conf.fs_kind, &index)?;
+                // The entities' files moved with the directory.
+                notify_config_changed();
+                invalidate_cache(&ws_id);
+                emit_entity_status(&ws_id);
             }
         }
         Ok(json!({ "ok": true }))
@@ -159,46 +169,88 @@ pub fn register(registry: &mut CommandRegistry) {
                 entry["parentId"] = parent_id;
             }
             write_index(&ws_id, conf.fs_kind, &index)?;
+            emit_entity_status(&ws_id);
         }
         save_config(&cfg)?;
         Ok(json!({ "ok": true }))
     });
 
-    registry.register_sync("folder.delete", |params, _| {
+    // Deletes the folder, the folders under it and every entity in them, each entity by the one rule of
+    // `workspace::deletions`. A folder that held something git knows stays listed as deleted with it.
+    registry.register("folder.delete", |params, _| async move {
         let kind = str_of(&params, "kind");
         let conf = folder_config(kind)?;
         let id = str_of(&params, "id");
-        let mut cfg = load_config();
+        let cfg = load_config();
 
-        let folder = array_of(&cfg, conf.config_key).iter().find(|f| str_of(f, "id") == id).cloned();
+        let all_folders = array_of(&cfg, conf.config_key);
+        let Some(folder) = all_folders.iter().find(|f| str_of(f, "id") == id).cloned() else {
+            return Ok(json!({ "ok": true, "pending": false }));
+        };
+        // Already deleted, and waiting to be confirmed or reverted.
+        if truthy(&folder, "deleted") {
+            return Ok(json!({ "ok": true, "pending": true }));
+        }
+        let ws_id = folder_workspace(&folder, &cfg);
+        let crud = crud_kind(conf.fs_kind)
+            .ok_or_else(|| EngineError::engine(format!("Unknown folder kind \"{kind}\".")))?;
 
-        let affected: Vec<String> = array_of(&cfg, conf.entity_config_key)
-            .iter()
-            .filter(|e| opt_str(e, "folderId") == Some(id))
-            .map(|e| str_of(e, "id").to_string())
-            .collect();
-        array_mut(&mut cfg, conf.entity_config_key).retain(|e| opt_str(e, "folderId") != Some(id));
-        array_mut(&mut cfg, conf.config_key).retain(|f| str_of(f, "id") != id);
-        save_config(&cfg)?;
+        let live: Vec<Value> = all_folders.iter().filter(|f| !truthy(f, "deleted")).cloned().collect();
+        let subtree = folder_subtree(&live, id);
+        let in_subtree = |folder_id: &str| subtree.iter().any(|f| f == folder_id);
 
-        if let Some(folder) = folder {
-            let ws_id = folder_workspace(&folder, &cfg);
-            delete_entity_dir(&ws_id, conf.fs_kind, str_of(&folder, "name"))?;
+        // The folders that keep something waiting: the one an entity was in, and every folder above it.
+        let mut waiting: Vec<String> = Vec::new();
+        let keep = |folder_id: &str, waiting: &mut Vec<String>| {
+            let mut at = Some(folder_id.to_string());
+            while let Some(current) = at.take().filter(|f| in_subtree(f) && !waiting.contains(f)) {
+                at = live.iter().find(|f| str_of(f, "id") == current).and_then(|f| opt_str(f, "parentId")).map(str::to_string);
+                waiting.push(current);
+            }
+        };
+
+        let mut affected: Vec<String> = Vec::new();
+        for entity in array_of(&cfg, conf.entity_config_key) {
+            let Some(folder_id) = opt_str(entity, "folderId").filter(|f| in_subtree(f)) else { continue };
+            if truthy(entity, "deleted") || remove_entity(&ws_id, crud, entity).await? {
+                keep(folder_id, &mut waiting);
+            }
+            affected.push(str_of(entity, "id").to_string());
+        }
+
+        for folder in live.iter().filter(|f| in_subtree(str_of(f, "id"))) {
+            let folder_id = str_of(folder, "id");
+            let dir_name = sanitize_dir_name(str_of(folder, "name"));
+            // Two folders of one name share a directory; it goes with the last of them.
+            let shared = live.iter().any(|other| {
+                !in_subtree(str_of(other, "id")) && sanitize_dir_name(str_of(other, "name")) == dir_name
+            });
+            if !shared {
+                delete_entity_dir(&ws_id, conf.fs_kind, &dir_name)?;
+            }
 
             // A request folder owns its run history, keyed by folder id rather than by name.
             if kind == "request" {
-                let runs = ws_dir(&ws_id).join("requests").join(".runs").join(id);
+                let runs = ws_dir(&ws_id).join("requests").join(".runs").join(folder_id);
                 if runs.exists() {
                     std::fs::remove_dir_all(runs)?;
                 }
             }
 
-            let mut index = read_index(&ws_id, conf.fs_kind);
-            index.folders.retain(|f| str_of(f, "id") != id);
-            index.order.retain(|entry| !affected.iter().any(|gone| entry.as_str() == Some(gone.as_str())));
-            write_index(&ws_id, conf.fs_kind, &index)?;
+            if waiting.iter().any(|w| w == folder_id) {
+                add_pending_deletion(&ws_id, &pending_folders_key(conf.fs_kind), folder.clone())?;
+            }
         }
-        Ok(json!({ "ok": true }))
+
+        let mut index = read_index(&ws_id, conf.fs_kind);
+        index.folders.retain(|f| !in_subtree(str_of(f, "id")));
+        index.order.retain(|entry| !affected.iter().any(|gone| entry.as_str() == Some(gone.as_str())));
+        write_index(&ws_id, conf.fs_kind, &index)?;
+
+        notify_config_changed();
+        invalidate_cache(&ws_id);
+        emit_entity_status(&ws_id);
+        Ok(json!({ "ok": true, "pending": !waiting.is_empty() }))
     });
 }
 
@@ -279,13 +331,19 @@ mod tests {
 
         let runs = requests.join(".runs").join(outer["id"].as_str().unwrap());
         std::fs::create_dir_all(&runs).unwrap();
-        call(&ctx, "folder.delete", json!({ "kind": "request", "id": outer["id"] })).await.unwrap();
+        // Nothing here was ever synced, so the folder, the folder under it and the request are simply gone.
+        let deleted = call(&ctx, "folder.delete", json!({ "kind": "request", "id": outer["id"] })).await.unwrap();
+        assert_eq!(deleted, json!({ "ok": true, "pending": false }));
         assert!(!requests.join("Renamed").exists());
+        assert!(!requests.join("Inner1").exists(), "a folder goes with the folder it is in");
         assert!(!runs.exists());
         assert!(read_all_entities(WS, "requests").is_empty());
+        assert!(crate::workspace::fs::read_names_index(WS, "requests").get(&id).is_none());
         let index = read_index(WS, "requests");
-        assert_eq!(index.folders.len(), 1);
+        assert!(index.folders.is_empty());
         assert_eq!(index.order, vec![json!("keep")]);
+        let cfg = load_config();
+        assert!(array_of(&cfg, "requests").is_empty() && array_of(&cfg, "requestFolders").is_empty());
     }
 
     #[tokio::test]

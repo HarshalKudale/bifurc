@@ -99,6 +99,64 @@
     "id"
    ]
   },
+  "entity.confirmDelete": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string",
+     "enum": [
+      "mappings",
+      "proxyRules",
+      "mocks",
+      "requests",
+      "wsConnections",
+      "graphqlRequests",
+      "grpcRequests",
+      "soapRequests",
+      "environments"
+     ]
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ]
+  },
+  "entity.revertDelete": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string",
+     "enum": [
+      "mappings",
+      "proxyRules",
+      "mocks",
+      "requests",
+      "wsConnections",
+      "graphqlRequests",
+      "grpcRequests",
+      "soapRequests",
+      "environments"
+     ]
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ]
+  },
   "entity.load": {
    "type": "object",
    "properties": {
@@ -319,6 +377,60 @@
   "folder.delete": {
    "type": "object",
    "properties": {
+    "kind": {
+     "type": "string",
+     "enum": [
+      "mock",
+      "request",
+      "ws",
+      "rule",
+      "graphqlRequest",
+      "grpcRequest",
+      "soapRequest"
+     ]
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ]
+  },
+  "folder.confirmDelete": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string",
+     "enum": [
+      "mock",
+      "request",
+      "ws",
+      "rule",
+      "graphqlRequest",
+      "grpcRequest",
+      "soapRequest"
+     ]
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ]
+  },
+  "folder.revertDelete": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
     "kind": {
      "type": "string",
      "enum": [

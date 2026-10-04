@@ -6,10 +6,13 @@ use serde_json::{Value, json};
 
 use super::{auto_sync, get_workspace_sync_status, register};
 use crate::{
-    kernel::{CommandContext, CommandRegistry},
+    kernel::{CommandContext, CommandRegistry, bus},
     testing::scratch_data_root,
     workspace::{
-        fs::{add_pending_deletion, write_entity, ws_dir},
+        fs::{
+            add_pending_deletion, get_pending_deletions, pending_folders_key, read_index, read_names_index,
+            write_entity, write_index, ws_dir,
+        },
         git_store::{check_git_installed, git, git_in, init_workspace_repo},
     },
 };
@@ -22,6 +25,14 @@ impl Engine {
     fn new() -> Engine {
         let mut registry = CommandRegistry::new();
         register(&mut registry);
+        Engine { registry: Arc::new(registry) }
+    }
+
+    /// With the entity and folder commands too.
+    fn full() -> Engine {
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        crate::workspace::entities::register(&mut registry);
         Engine { registry: Arc::new(registry) }
     }
 
@@ -160,6 +171,173 @@ async fn folder_publish_and_pending_deletions() {
     // An entity that never reached git but has a pending deletion is `deleted`.
     add_pending_deletion(ws, "mocks", json!({ "id": "gone", "folderId": null, "name": "Gone" })).unwrap();
     assert_eq!(get_workspace_sync_status(ws).await["mocks/gone.json"], "deleted");
+}
+
+/// The requests of the snapshot, by name.
+fn listed(key: &str) -> Vec<(String, bool)> {
+    let cfg = crate::workspace::config::load_config();
+    let mut out: Vec<(String, bool)> = cfg[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["name"].as_str().unwrap_or("").to_string(), e["deleted"] == true))
+        .collect();
+    out.sort();
+    out
+}
+
+/// A folder `Outer` holding a synced request and a local one, and a folder `Child` under it holding a local
+/// one. Returns the folder ids and the request ids.
+async fn folder_with_synced_and_local_requests(engine: &Engine, ws: &str) -> ([String; 2], [String; 3]) {
+    let folder = |name: &str, parent: Value| json!({ "kind": "request", "name": name, "parentId": parent });
+    let outer = engine.call("folder.add", folder("Outer", Value::Null)).await["id"].as_str().unwrap().to_string();
+    let child = engine.call("folder.add", folder("Child", json!(outer))).await["id"].as_str().unwrap().to_string();
+    let mut ids = Vec::new();
+    for (name, folder_id) in [("Synced", &outer), ("Local", &outer), ("In child", &child)] {
+        let entity = json!({ "name": name, "method": "GET", "url": "http://a", "folderId": folder_id });
+        let created = engine.call("entity.create", json!({ "kind": "requests", "entity": entity })).await;
+        ids.push(created["id"].as_str().unwrap().to_string());
+    }
+    let path = format!("requests/Outer/{}.json", ids[0]);
+    let published = engine.call("entity.publish", json!({ "workspaceId": ws, "paths": [path] })).await;
+    assert_eq!(published["ok"], true);
+    ([outer, child], [ids[0].clone(), ids[1].clone(), ids[2].clone()])
+}
+
+#[tokio::test]
+async fn a_synced_entity_stays_listed_as_deleted_until_the_delete_is_confirmed_or_reverted() {
+    if !check_git_installed().await {
+        return;
+    }
+    let root = scratch_data_root();
+    let ws = root.ws_id;
+    let engine = Engine::full();
+    init_ws(ws).await;
+    let (_, [synced, local, _]) = folder_with_synced_and_local_requests(&engine, ws).await;
+    let path = format!("requests/Outer/{synced}.json");
+
+    // Never synced: gone at once.
+    let gone = engine.call("entity.delete", json!({ "kind": "requests", "id": local })).await;
+    assert_eq!(gone, json!({ "ok": true, "pending": false }));
+    assert_eq!(listed("requests"), [("In child".to_string(), false), ("Synced".to_string(), false)]);
+
+    // Synced: the file goes, the entity stays listed as deleted, at the path git knows it by.
+    let kept = engine.call("entity.delete", json!({ "kind": "requests", "id": synced })).await;
+    assert_eq!(kept, json!({ "ok": true, "pending": true }));
+    assert!(!ws_dir(ws).join(&path).exists());
+    assert_eq!(listed("requests"), [("In child".to_string(), false), ("Synced".to_string(), true)]);
+    let status = engine.call("sync.getEntityStatus", json!({ "workspaceId": ws })).await;
+    assert_eq!(status["files"][&path], "deleted");
+    assert_eq!(status["paths"]["entities"][&synced], path.as_str());
+    let load = json!({ "workspaceId": ws, "kind": "requests", "id": synced });
+    assert_eq!(engine.call("entity.load", load.clone()).await, json!({ "ok": false, "deleted": true }));
+    let ctx = CommandContext::internal(engine.registry.clone());
+    let update = json!({ "kind": "requests", "entity": { "id": synced, "name": "x", "method": "GET", "url": "u" } });
+    assert!(engine.registry.invoke("entity.update", update, ctx).await.is_err(), "a deleted entity is not written");
+
+    // Revert: it is back as it was.
+    let reverted = engine.call("entity.revertDelete", json!({ "kind": "requests", "id": synced })).await;
+    assert_eq!(reverted, json!({ "ok": true }));
+    assert_eq!(engine.call("entity.load", load).await["entity"]["name"], "Synced");
+    assert_eq!(listed("requests"), [("In child".to_string(), false), ("Synced".to_string(), false)]);
+    assert_eq!(get_workspace_sync_status(ws).await[&path], "clean");
+
+    // Confirm: the deletion is committed and nothing of it is left.
+    engine.call("entity.delete", json!({ "kind": "requests", "id": synced })).await;
+    let confirmed = engine.call("entity.confirmDelete", json!({ "kind": "requests", "id": synced })).await;
+    assert_eq!(confirmed["ok"], true);
+    assert!(confirmed["commit"].is_string());
+    let subject = run(&ws_dir(ws), &["log", "-1", "--format=%s"]).await;
+    assert_eq!(subject.trim(), "delete request Synced");
+    assert_eq!(listed("requests"), [("In child".to_string(), false)]);
+    assert!(!get_workspace_sync_status(ws).await.contains_key(&path));
+    assert!(read_names_index(ws, "requests").get(&synced).is_none());
+    assert!(get_pending_deletions(ws, "requests").is_empty());
+}
+
+#[tokio::test]
+async fn a_deleted_folder_stays_with_what_was_synced_in_it_and_says_so() {
+    if !check_git_installed().await {
+        return;
+    }
+    let root = scratch_data_root();
+    let ws = root.ws_id;
+    let engine = Engine::full();
+    init_ws(ws).await;
+    let ([outer, child], [synced, _, _]) = folder_with_synced_and_local_requests(&engine, ws).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = events.clone();
+    let listener = bus().on_any(move |name, _| sink.lock().unwrap().push(name.to_string()));
+    let deleted = engine.call("folder.delete", json!({ "kind": "request", "id": outer })).await;
+    assert_eq!(deleted, json!({ "ok": true, "pending": true }));
+    for _ in 0..50 {
+        if events.lock().unwrap().iter().any(|name| name == "sync.entityStatus") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    bus().off(listener);
+    assert!(events.lock().unwrap().iter().any(|name| name == "sync.entityStatus"), "clients are told to re-read");
+
+    // The local requests and the folder that held only a local one are gone; the synced one waits in its folder.
+    assert!(!ws_dir(ws).join("requests/Outer").exists() && !ws_dir(ws).join("requests/Child").exists());
+    assert_eq!(listed("requests"), [("Synced".to_string(), true)]);
+    assert_eq!(listed("requestFolders"), [("Outer".to_string(), true)]);
+    assert_eq!(read_names_index(ws, "requests").len(), 1);
+    let again = engine.call("folder.delete", json!({ "kind": "request", "id": outer })).await;
+    assert_eq!(again, json!({ "ok": true, "pending": true }));
+
+    // Revert: the folder is the same folder again, with the synced request in it.
+    let reverted = engine.call("folder.revertDelete", json!({ "kind": "request", "id": outer })).await;
+    assert_eq!(reverted, json!({ "ok": true }));
+    let cfg = crate::workspace::config::load_config();
+    assert_eq!(listed("requestFolders"), [("Outer".to_string(), false)]);
+    assert_eq!(cfg["requestFolders"][0]["id"], outer.as_str());
+    assert_eq!(cfg["requests"][0]["folderId"], outer.as_str());
+    assert_eq!(listed("requests"), [("Synced".to_string(), false)]);
+    assert!(get_pending_deletions(ws, &pending_folders_key("requests")).is_empty());
+    assert!(!cfg["requestFolders"].as_array().unwrap().iter().any(|f| f["id"] == child.as_str()));
+
+    // Confirm: one commit, and neither the folder nor the request is left.
+    engine.call("folder.delete", json!({ "kind": "request", "id": outer })).await;
+    let confirmed = engine.call("folder.confirmDelete", json!({ "kind": "request", "id": outer })).await;
+    assert_eq!(confirmed["ok"], true);
+    assert_eq!(run(&ws_dir(ws), &["log", "-1", "--format=%s"]).await.trim(), "delete folder Outer");
+    assert!(listed("requests").is_empty() && listed("requestFolders").is_empty());
+    assert!(get_pending_deletions(ws, "requests").is_empty());
+    assert!(get_pending_deletions(ws, &pending_folders_key("requests")).is_empty());
+    assert!(!get_workspace_sync_status(ws).await.contains_key(&format!("requests/Outer/{synced}.json")));
+}
+
+#[tokio::test]
+async fn a_synced_file_that_went_missing_without_a_record_is_listed_as_deleted() {
+    if !check_git_installed().await {
+        return;
+    }
+    let root = scratch_data_root();
+    let ws = root.ws_id;
+    let engine = Engine::full();
+    init_ws(ws).await;
+    let ([outer, _], [synced, _, _]) = folder_with_synced_and_local_requests(&engine, ws).await;
+
+    // What an engine that kept no record left behind: the directory, its folder and the names are gone.
+    std::fs::remove_dir_all(ws_dir(ws).join("requests/Outer")).unwrap();
+    let mut index = read_index(ws, "requests");
+    index.folders.retain(|f| f["id"] != outer.as_str());
+    write_index(ws, "requests", &index).unwrap();
+    std::fs::remove_file(ws_dir(ws).join("requests/names.json")).unwrap();
+
+    let status = engine.call("sync.getEntityStatus", json!({ "workspaceId": ws })).await;
+    assert_eq!(status["files"][format!("requests/Outer/{synced}.json")], "deleted");
+    assert!(listed("requests").contains(&("Synced".to_string(), true)));
+    assert!(listed("requestFolders").contains(&("Outer".to_string(), true)));
+
+    let reverted = engine.call("entity.revertDelete", json!({ "kind": "requests", "id": synced })).await;
+    assert_eq!(reverted, json!({ "ok": true }));
+    assert!(listed("requests").contains(&("Synced".to_string(), false)));
+    assert!(listed("requestFolders").contains(&("Outer".to_string(), false)));
 }
 
 #[tokio::test]
