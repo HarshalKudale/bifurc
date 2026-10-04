@@ -8,8 +8,9 @@ use super::{
     status_tracker::{get_workspace_sync_status, invalidate_cache},
 };
 use crate::{
-    utils::json::{str_of, truthy},
+    utils::json::{opt_str, str_of, truthy},
     workspace::{
+        deletions::{forget_deleted, pending_entity, prune_pending_folders, record_path, restore_folder_chain},
         fs::{
             ALL_ENTITY_KINDS, FLAT_ENTITY_KINDS, find_entity_rel_path, get_pending_deletions, read_entity,
             remove_name_entry, remove_pending_deletion, upsert_name_entry, ws_dir,
@@ -88,6 +89,16 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
     let base = parts.last().copied().unwrap_or("").to_string();
     let entity_id = base.strip_suffix(".json").map(str::to_string);
 
+    // A deleted entity comes back into its folder, so a deleted folder is a folder again first: the
+    // directory the checkout makes must be that folder's, not a new one's.
+    if let Some(record) = entity_id.as_deref().and_then(|id| pending_entity(ws_id, &kind, id)) {
+        if let Some(folder_id) = opt_str(&record, "folderId") {
+            if let Err(e) = restore_folder_chain(ws_id, &kind, folder_id) {
+                return json!({ "ok": false, "error": e.to_string() });
+            }
+        }
+    }
+
     let mut checkout_succeeded =
         with_index_lock_retry(ws_id, &["checkout", "HEAD", "--", normalized.as_str()]).await.is_ok();
 
@@ -153,13 +164,17 @@ pub async fn sync_changes(ws_id: &str, paths: &[String], message: Option<String>
     let result =
         publish_entities(PublishOptions { ws_id: ws_id.to_string(), paths: normalized.clone(), message }).await;
     if result.get("ok") == Some(&Value::Bool(true)) {
-        for path in &normalized {
-            let base = path.rsplit('/').next().unwrap_or("");
-            if let Some(id) = base.strip_suffix(".json") {
-                for kind in ALL_ENTITY_KINDS {
-                    let _ = remove_pending_deletion(ws_id, kind, id);
+        // A deletion that was just committed is final: by its file, or by a folder it was under.
+        let published = |path: &str| {
+            normalized.iter().any(|p| p == path || (p.ends_with('/') && path.starts_with(p.as_str())))
+        };
+        for kind in ALL_ENTITY_KINDS {
+            for record in get_pending_deletions(ws_id, kind) {
+                if published(&record_path(kind, &record)) {
+                    let _ = forget_deleted(ws_id, kind, str_of(&record, "id"));
                 }
             }
+            let _ = prune_pending_folders(ws_id, kind);
         }
     }
     invalidate_cache(ws_id);

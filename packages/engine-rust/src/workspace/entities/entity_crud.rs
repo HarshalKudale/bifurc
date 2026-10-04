@@ -15,16 +15,15 @@ use crate::{
     runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
     utils::{
         id::{generate_id, now_ms},
-        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, str_of},
+        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, str_of, truthy},
     },
     workspace::{
         config::{load_config, save_config},
+        deletions::{pending_entity, remove_entity},
         fs::{
-            add_pending_deletion, delete_entity_file, delete_flat_entity_file, find_entity_rel_path,
-            flat_entity_rel_path, read_all_entities, remove_name_entry, sync_enabled_set, upsert_name_entry,
-            write_entity, write_flat_entity,
+            delete_entity_file, find_entity_file, read_all_entities, sync_enabled_set, upsert_name_entry, write_entity,
+            write_flat_entity,
         },
-        git_store::git,
         kinds::{CrudKind, crud_kind, is_simple_kind},
         settings::{load_settings, save_settings},
         status_cache::invalidate_cache,
@@ -56,6 +55,7 @@ fn siblings_of(cfg: &Value, kind: &CrudKind, ws_id: &str, id: &str) -> Vec<Value
     array_of(cfg, kind.config_key)
         .iter()
         .filter(|e| str_of(e, "id") != id && opt_str(e, "workspaceId").unwrap_or(ws_id) == ws_id)
+        .filter(|e| !truthy(e, "deleted"))
         .cloned()
         .collect()
 }
@@ -67,13 +67,6 @@ fn write_entity_file(cfg: &Value, kind: &CrudKind, ws_id: &str, id: &str, entity
         write_entity(ws_id, kind.kind, id, entity, folder_name_of(cfg, kind, entity).as_deref())?;
     }
     Ok(())
-}
-
-async fn is_git_tracked(ws_id: &str, rel_path: &str) -> bool {
-    match git(ws_id, &["ls-files", "--error-unmatch", "--", rel_path]).await {
-        Ok(out) => !out.trim().is_empty(),
-        Err(_) => false,
-    }
 }
 
 /// A lone environment is selected implicitly. Adding a second one would end that, so the implicit selection is
@@ -168,6 +161,10 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     let mut cfg = load_config();
     let ws_id = workspace_of(entity, &cfg);
     let id = opt_str(entity, "id").ok_or_else(|| EngineError::bad_request("entity.id is required"))?.to_string();
+    // Writing it would bring its file back while it is still listed as deleted.
+    if pending_entity(&ws_id, kind.kind, &id).is_some() && find_entity_file(&ws_id, kind.kind, &id).is_none() {
+        return Err(EngineError::conflict("It is deleted. Revert the delete to change it."));
+    }
     if let Some(validate) = kind.validate {
         validate(entity, &siblings_of(&cfg, kind, &ws_id, &id))?;
     }
@@ -200,8 +197,12 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
     let ws_id = str_of(&cfg, "activeWorkspaceId").to_string();
 
     let Some(entity) = array_of(&cfg, kind.config_key).iter().find(|e| str_of(e, "id") == id).cloned() else {
-        return Ok(json!({ "ok": true }));
+        return Ok(json!({ "ok": true, "pending": false }));
     };
+    // Already deleted, and waiting to be confirmed or reverted.
+    if truthy(&entity, "deleted") {
+        return Ok(json!({ "ok": true, "pending": true }));
+    }
     array_mut(&mut cfg, kind.config_key).retain(|e| str_of(e, "id") != id);
 
     if kind.kind == "mappings" {
@@ -218,42 +219,12 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
 
     save_config(&cfg)?;
 
-    if kind.is_flat {
-        delete_flat_entity_file(&ws_id, kind.kind, id)?;
-    } else {
-        delete_entity_file(&ws_id, kind.kind, id)?;
-    }
-
-    // The file is already gone, so a foldered entity is no longer found by `find_entity_rel_path` and counts as
-    // untracked; only a flat kind's fixed path still resolves.
-    let rel_path = if kind.is_flat {
-        Some(flat_entity_rel_path(kind.kind, id))
-    } else {
-        find_entity_rel_path(&ws_id, kind.kind, id)
-    };
-    let tracked = match &rel_path {
-        Some(path) => is_git_tracked(&ws_id, path).await,
-        None => false,
-    };
-
-    if let Some(name_entry) = kind.name_entry {
-        if tracked {
-            let folder_id = entity.get("folderId").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
-            let pending = merged(&json!({ "id": id, "folderId": folder_id }), &name_entry(&entity));
-            add_pending_deletion(&ws_id, kind.kind, pending)?;
-        } else if !kind.is_flat {
-            remove_name_entry(&ws_id, kind.kind, id)?;
-        }
-    }
-
-    if kind.has_enabled_state {
-        sync_enabled_set(&ws_id, kind.kind, id, false)?;
-    }
+    let pending = remove_entity(&ws_id, kind, &entity).await?;
 
     notify_config_changed();
     invalidate_cache(&ws_id);
     emit_entity_status(&ws_id);
-    Ok(json!({ "ok": true }))
+    Ok(json!({ "ok": true, "pending": pending }))
 }
 
 fn create_simple_entity(kind: &str, entity: &Value, workspace_id: Option<&str>) -> Result<Value> {
@@ -399,7 +370,7 @@ mod tests {
 
         assert_eq!(
             call(&ctx, "entity.delete", json!({ "kind": "requests", "id": id })).await.unwrap(),
-            json!({ "ok": true })
+            json!({ "ok": true, "pending": false })
         );
         assert!(!entity_dir(WS, "requests").join("Auth").join(format!("{id}.json")).exists());
         assert!(read_names_index(WS, "requests").get(&id).is_none());
@@ -485,6 +456,15 @@ mod tests {
         assert_eq!(pending[0]["name"], "App");
         assert_eq!(pending[0]["url"], "app.localhost");
         assert_eq!(pending[0]["folderId"], Value::Null);
+        assert_eq!(pending[0]["path"], rel_path.as_str());
+
+        // It stays listed, marked as deleted, and no later write brings its file back or trips over it.
+        let listed = load_config()["mappings"].as_array().unwrap().clone();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["deleted"], true);
+        call(&ctx, "entity.create", json!({ "kind": "mappings", "entity": good })).await.unwrap();
+        assert!(!entity_dir(WS, "mappings").join(format!("{id}.json")).exists());
+        assert_eq!(load_config()["mappings"].as_array().unwrap().len(), 2);
     }
 
     #[tokio::test]

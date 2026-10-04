@@ -46,7 +46,7 @@ fn entity_kind_from_path(rel_path: &str) -> String {
     rel_path.split(['/', '\\']).next().filter(|k| !k.is_empty()).unwrap_or("entity").to_string()
 }
 
-fn singular_kind(kind: &str) -> String {
+pub(super) fn singular_kind(kind: &str) -> String {
     match kind {
         "requests" => "request",
         "mocks" => "mock",

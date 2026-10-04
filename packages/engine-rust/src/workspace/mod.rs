@@ -4,6 +4,7 @@
 pub mod accounts;
 pub mod blob;
 pub mod config;
+pub mod deletions;
 pub mod dispatch;
 pub mod entities;
 pub mod entity_paths;

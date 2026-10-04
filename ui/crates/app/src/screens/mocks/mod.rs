@@ -21,6 +21,7 @@ use gpui_kit::component::{
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy,
     SharedString, Styled as _, Subscription, WeakEntity, Window, div, px, rems,
@@ -29,16 +30,18 @@ use serde_json::{Map, json};
 
 use self::editor::{MockEditor, MockEvent};
 use crate::{
-    app_model::{AppModel, Load, ModelEvent},
+    app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
         EntityAction, EntityBar, FolderPicker, StripTab, TabAction, TabStrip,
-        dialogs::{PromptField, confirm_danger, prompt},
+        dialogs::{
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
+        },
         entity_bar, page, tab_strip,
     },
     engine::{call, call_in, failure, patch_entity},
     model::{
         git::FileState,
-        tree::{ItemRow, TreeKey, TreeNode, build_tree, folder_path},
+        tree::{FolderRow, ItemRow, TreeKey, TreeNode, build_tree, folder_path},
     },
     panels::host::{HostPanel, PartView},
     preferences::Preferences,
@@ -165,7 +168,12 @@ impl MocksScreen {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter.read(cx).value().to_string();
         let config = self.model.read(cx).config();
-        let folders = config.mock_folder_rows();
+        // Deleted folders stay in the tree, so a deleted mock shows inside its deleted folder.
+        let folders: Vec<FolderRow> = config
+            .mock_folders
+            .iter()
+            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
+            .collect();
         let items: Vec<ItemRow> = config
             .mocks
             .iter()
@@ -217,6 +225,13 @@ impl MocksScreen {
     }
 
     pub fn open_mock(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // A deleted mock has nothing to open: it is brought back or deleted for good.
+        let key = TreeKey::Item(id.to_owned());
+        if is_deleted(self.model.read(cx), &key) {
+            let name = self.name_of(&key, cx);
+            resolve_deleted(self.model.clone(), deleted_target(&key), name, window, cx);
+            return;
+        }
         let key = TabKey::Saved(id.to_owned());
         if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
             self.set_active(Some(ix), cx);
@@ -431,7 +446,8 @@ impl MocksScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                TabKey::Saved(id) => model.config().mock(id).is_none(),
+                // Deleted and still listed counts as gone: there is no file an edit could be written to.
+                TabKey::Saved(id) => model.config().mock(id).is_none_or(|m| m.deleted),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.editor.clone())
@@ -529,8 +545,8 @@ impl MocksScreen {
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
         let (what, consequence) = match &key {
-            TreeKey::Folder(_) => ("folder", "The folder and every mock in it will be deleted."),
-            TreeKey::Item(_) => ("mock", "Requests it answered will reach the real server again."),
+            TreeKey::Folder(_) => ("folder", FOLDER_DELETE_CONSEQUENCE),
+            TreeKey::Item(id) => ("mock", delete_consequence(self.model.read(cx).git().entity_state(id))),
         };
         confirm_danger(
             cx.weak_entity(),
@@ -558,6 +574,7 @@ impl MocksScreen {
         let this = cx.weak_entity();
         let (row_view, menu_view, new_view) = (this.clone(), this.clone(), this.clone());
         let model = self.model.clone();
+        let menu_model = self.model.clone();
         let config = self.model.read(cx).config();
         let has_mocks = !config.mocks.is_empty() || !config.mock_folders.is_empty();
         let filtering = !self.filter.read(cx).value().trim().is_empty();
@@ -568,7 +585,7 @@ impl MocksScreen {
             page::empty("No matches", "No mock matches the filter.")
         } else {
             tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &row_view, cx))
-                .context_menu(move |_, entry, menu, _, _| context_menu(entry, menu, &menu_view))
+                .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_view, &menu_model, cx))
                 .into_any_element()
         };
         v_flex()
@@ -649,8 +666,43 @@ fn new_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>, folder: Option<Stri
     )
 }
 
-fn context_menu(entry: &TreeEntry, menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
+/// How the model names a deleted mock or folder.
+fn deleted_target(key: &TreeKey) -> Deleted {
+    match key {
+        TreeKey::Folder(id) => Deleted::Folder { kind: "mock", id: id.clone() },
+        TreeKey::Item(id) => Deleted::Entity { kind: "mocks", id: id.clone() },
+    }
+}
+
+/// Whether the mock or folder is deleted here, with the deletion not confirmed or reverted yet.
+fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
+    let config = model.config();
+    match key {
+        TreeKey::Folder(id) => config.mock_folders.iter().any(|f| f.id == *id && f.deleted),
+        TreeKey::Item(id) => config.mock(id).is_some_and(|m| m.deleted),
+    }
+}
+
+fn context_menu(
+    entry: &TreeEntry,
+    menu: PopupMenu,
+    view: &WeakEntity<MocksScreen>,
+    model: &Entity<AppModel>,
+    cx: &App,
+) -> PopupMenu {
     let Some(key) = TreeKey::parse(entry.item().id.as_str()) else { return menu };
+    // What is deleted can only be brought back or deleted for good.
+    if is_deleted(model.read(cx), &key) {
+        let (revert_model, confirm_model) = (model.clone(), model.clone());
+        let (revert, confirm) = (deleted_target(&key), deleted_target(&key));
+        return menu
+            .item(PopupMenuItem::new("Revert delete").on_click(move |_, _, cx| {
+                revert_model.update(cx, |model, cx| model.revert_delete(revert.clone(), cx));
+            }))
+            .item(PopupMenuItem::new("Confirm delete").on_click(move |_, _, cx| {
+                confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
+            }));
+    }
     let (rename, delete) = (key.clone(), key.clone());
     let menu = match &key {
         TreeKey::Item(id) => {
@@ -697,6 +749,7 @@ fn render_row(
     let theme = cx.theme().clone();
     let key = TreeKey::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
+    let deleted = key.as_ref().is_some_and(|key| is_deleted(model.read(cx), key));
     let mut pending = false;
     let mut toggle: Option<gpui_kit::AnyElement> = None;
     let lead: gpui_kit::AnyElement = match &key {
@@ -713,7 +766,8 @@ fn render_row(
             let method = mock.map(|m| if m.method == "*" { "ANY".to_owned() } else { m.method.clone() });
             let enabled = mock.is_some_and(|m| m.enabled);
             let (toggle_model, toggle_id) = (model.clone(), id.clone());
-            toggle = Some(
+            // A deleted mock has no switch: it answers nothing until it is reverted.
+            toggle = (!mock.is_some_and(|m| m.deleted)).then(|| {
                 Switch::new(gpui_kit::ElementId::Name(format!("mock-enabled-{id}").into()))
                     .checked(enabled)
                     .small()
@@ -723,8 +777,8 @@ fn render_row(
                         let checked = *checked;
                         toggle_model.update(cx, |m, cx| m.set_enabled("mocks", &toggle_id, checked, cx));
                     })
-                    .into_any_element(),
-            );
+                    .into_any_element()
+            });
             div()
                 .w_12()
                 .flex_none()
@@ -751,7 +805,16 @@ fn render_row(
                 .gap_2()
                 .items_center()
                 .child(lead)
-                .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(label))
+                // Deleted, and waiting to be confirmed or reverted: still listed, struck through.
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
+                        .child(label),
+                )
                 .children(pending.then(|| div().flex_none().text_xs().text_color(theme.warning).child("●")))
                 .children(toggle.map(|toggle| div().flex_none().pr_2().child(toggle))),
         )

@@ -86,10 +86,10 @@ impl Screen {
     /// How many of this screen's things the workspace holds, for the badge beside its name.
     fn count(self, config: &ConfigSnapshot) -> Option<usize> {
         let count = match self {
-            Screen::Mappings => config.mappings.len(),
+            Screen::Mappings => config.mappings.iter().filter(|m| !m.deleted).count(),
             Screen::ProxyRules => config.proxy_rule_count,
-            Screen::Requests => config.requests.len(),
-            Screen::Mocks => config.mocks.len(),
+            Screen::Requests => config.requests.iter().filter(|r| !r.deleted).count(),
+            Screen::Mocks => config.mocks.iter().filter(|m| !m.deleted).count(),
             Screen::Environments => config.selectable_environments().count(),
             Screen::Services
             | Screen::HealthBar
