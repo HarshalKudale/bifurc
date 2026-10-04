@@ -1,11 +1,13 @@
 //! The first run: what the window shows until the app is set up and has a workspace.
 //!
-//! It is a short walk in a fixed order. The privacy policy comes first and nothing else is reachable until it
-//! is accepted; then what the app does, how it looks, HTTPS, the two proxies' ports, and last the first
-//! workspace. Everything after the policy can be left as it is and changed later in Settings.
+//! It is a short walk in a fixed order. The terms of service come first and the privacy policy second, and
+//! nothing else is reachable until both are accepted; then what the app does, how it looks, HTTPS, the two
+//! proxies' ports, and last the first workspace. Everything after the policy can be left as it is and changed
+//! later in Settings.
 //!
-//! Nothing here is this view's to keep. That the policy was accepted and that the walk was finished are the
-//! engine's (`setup.acceptPrivacy`, `setup.complete`), as are the ports, the certificate and the workspace;
+//! Nothing here is this view's to keep. That the terms and the policy were accepted and that the walk was
+//! finished are the engine's (`setup.acceptTerms`, `setup.acceptPrivacy`, `setup.complete`), as are the ports,
+//! the certificate and the workspace;
 //! only the theme and text size are this client's own, kept in [`Preferences`].
 
 use gpui_kit::component::{
@@ -47,6 +49,7 @@ const HTTP_PORT: u16 = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
+    Terms,
     Privacy,
     Overview,
     Preferences,
@@ -56,11 +59,19 @@ enum Stage {
 }
 
 impl Stage {
-    const ALL: [Stage; 6] =
-        [Stage::Privacy, Stage::Overview, Stage::Preferences, Stage::Https, Stage::Proxies, Stage::Workspace];
+    const ALL: [Stage; 7] = [
+        Stage::Terms,
+        Stage::Privacy,
+        Stage::Overview,
+        Stage::Preferences,
+        Stage::Https,
+        Stage::Proxies,
+        Stage::Workspace,
+    ];
 
     fn label(self) -> &'static str {
         match self {
+            Stage::Terms => "Terms",
             Stage::Privacy => "Privacy",
             Stage::Overview => "Overview",
             Stage::Preferences => "Preferences",
@@ -76,13 +87,14 @@ impl Stage {
     }
 }
 
-/// Where the walk starts. One that was left half way picks up after the policy, which is not asked twice;
-/// one that was finished is only here because the last workspace is gone.
+/// Where the walk starts. One that was left half way picks up after the terms and the policy, neither of
+/// which is asked twice; one that was finished is only here because the last workspace is gone.
 fn first_stage(setup: &SetupState) -> Stage {
-    match (setup.privacy_accepted, setup.onboarded) {
-        (false, _) => Stage::Privacy,
-        (true, false) => Stage::Overview,
-        (true, true) => Stage::Workspace,
+    match (setup.terms_accepted, setup.privacy_accepted, setup.onboarded) {
+        (false, _, _) => Stage::Terms,
+        (true, false, _) => Stage::Privacy,
+        (true, true, false) => Stage::Overview,
+        (true, true, true) => Stage::Workspace,
     }
 }
 
@@ -111,6 +123,8 @@ pub struct Onboarding {
     workspace: Entity<WorkspaceSetup>,
     /// `None` until the engine has said how far this data directory already is.
     stage: Option<Stage>,
+    /// The terms' checkbox is ticked.
+    terms_accepted: bool,
     /// The policy's checkbox is ticked.
     accepted: bool,
     /// The acceptance or the completion is on its way to the engine.
@@ -145,6 +159,7 @@ impl Onboarding {
             certificate,
             workspace,
             stage: None,
+            terms_accepted: false,
             accepted: false,
             busy: false,
             error: None,
@@ -175,6 +190,7 @@ impl Onboarding {
         let settings = model.config().settings.clone();
         if self.stage.is_none() && setup.known {
             self.stage = Some(first_stage(&setup));
+            self.terms_accepted = setup.terms_accepted;
             self.accepted = setup.privacy_accepted;
         }
         if !self.ports_filled && ready {
@@ -211,6 +227,7 @@ impl Onboarding {
             return;
         }
         match self.stage {
+            Some(Stage::Terms) => self.accept_terms(window, cx),
             Some(Stage::Privacy) => self.accept_privacy(window, cx),
             Some(Stage::Overview) => self.go_to(Stage::Preferences, window, cx),
             Some(Stage::Preferences) => self.go_to(Stage::Https, window, cx),
@@ -223,6 +240,32 @@ impl Onboarding {
             }
             Some(Stage::Workspace) | None => {}
         }
+    }
+
+    fn accept_terms(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.terms_accepted {
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "setup.acceptTerms", json!({}), |this, outcome, window, cx| {
+            this.busy = false;
+            match failure(&outcome) {
+                Some(message) => {
+                    this.error = Some(format!("Couldn't record that you accepted. {message}"));
+                    cx.notify();
+                }
+                None => {
+                    // What comes next is where the walk would start with the terms accepted.
+                    let mut setup = this.model.read(cx).setup().clone();
+                    setup.terms_accepted = true;
+                    this.model.update(cx, |model, cx| model.refresh_setup(cx));
+                    this.go_to(first_stage(&setup), window, cx);
+                }
+            }
+        });
     }
 
     fn accept_privacy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -241,8 +284,10 @@ impl Onboarding {
                     cx.notify();
                 }
                 None => {
+                    let mut setup = this.model.read(cx).setup().clone();
+                    setup.privacy_accepted = true;
                     this.model.update(cx, |model, cx| model.refresh_setup(cx));
-                    this.go_to(Stage::Overview, window, cx);
+                    this.go_to(first_stage(&setup), window, cx);
                 }
             }
         });
@@ -332,6 +377,36 @@ impl Onboarding {
     fn group(cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         v_flex().w_full().p_4().gap_4().rounded(theme.radius).border_1().border_color(theme.border)
+    }
+
+    fn render_terms(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let url = self.model.read(cx).setup().terms_of_service_url.clone();
+        let shown = url.trim_start_matches("https://").to_owned();
+        v_flex()
+            .gap_4()
+            .child(
+                "The terms of service are the agreement between you and Bifurc: what you may use the app for, \
+                 what it comes with and without, and who is responsible for what. Read them before you go on.",
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("The full terms:")
+                    .child(Link::new("terms-of-service").href(url).child(shown)),
+            )
+            .child(
+                Checkbox::new("accept-terms")
+                    .label("I have read and accept the terms of service")
+                    .checked(self.terms_accepted)
+                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                        this.terms_accepted = *checked;
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
     }
 
     fn render_privacy(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -682,11 +757,12 @@ impl Onboarding {
 
     fn render_actions(&self, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
         let label = match stage {
-            Stage::Privacy => "Accept and continue",
+            Stage::Terms | Stage::Privacy => "Accept and continue",
             Stage::Proxies if self.has_workspace(cx) => "Finish",
             _ => "Continue",
         };
         let blocked = match stage {
+            Stage::Terms => !self.terms_accepted,
             Stage::Privacy => !self.accepted,
             Stage::Proxies => {
                 let (reverse, forward) = self.typed_ports(cx);
@@ -721,6 +797,7 @@ impl Onboarding {
     fn render_stage(&self, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let (title, description) = match stage {
+            Stage::Terms => ("Terms of service", "Accept the terms to use Bifurc."),
             Stage::Privacy => ("Privacy policy", "Accept the policy to use Bifurc."),
             Stage::Overview => ("What Bifurc does", "One place for the calls your work makes and receives."),
             Stage::Preferences => {
@@ -741,6 +818,7 @@ impl Onboarding {
             .child(div().text_xl().font_semibold().child(title))
             .child(div().text_color(theme.muted_foreground).child(description));
         let body = match stage {
+            Stage::Terms => self.render_terms(cx),
             Stage::Privacy => self.render_privacy(cx),
             Stage::Overview => self.render_overview(cx),
             Stage::Preferences => self.render_preferences(cx),
@@ -813,15 +891,18 @@ impl Render for Onboarding {
 mod tests {
     use super::*;
 
-    fn setup(privacy_accepted: bool, onboarded: bool) -> SetupState {
-        SetupState { known: true, privacy_accepted, onboarded, ..SetupState::default() }
+    fn setup(terms_accepted: bool, privacy_accepted: bool, onboarded: bool) -> SetupState {
+        SetupState { known: true, terms_accepted, privacy_accepted, onboarded, ..SetupState::default() }
     }
 
     #[test]
-    fn the_walk_starts_at_the_policy_until_it_is_accepted() {
-        assert_eq!(first_stage(&setup(false, false)), Stage::Privacy);
-        assert_eq!(first_stage(&setup(true, false)), Stage::Overview);
-        assert_eq!(first_stage(&setup(true, true)), Stage::Workspace);
+    fn the_walk_starts_at_the_terms_then_the_policy_until_both_are_accepted() {
+        assert_eq!(first_stage(&setup(false, false, false)), Stage::Terms);
+        assert_eq!(first_stage(&setup(false, true, true)), Stage::Terms);
+        assert_eq!(first_stage(&setup(true, false, false)), Stage::Privacy);
+        assert_eq!(first_stage(&setup(true, true, false)), Stage::Overview);
+        assert_eq!(first_stage(&setup(true, true, true)), Stage::Workspace);
+        assert_eq!(Stage::Privacy.previous(), Some(Stage::Terms));
     }
 
     #[test]

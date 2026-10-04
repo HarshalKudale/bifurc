@@ -3003,6 +3003,12 @@
    "required": [],
    "additionalProperties": false
   },
+  "setup.acceptTerms": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
   "setup.acceptPrivacy": {
    "type": "object",
    "properties": {},

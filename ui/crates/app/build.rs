@@ -68,14 +68,26 @@ fn build_tray_helper() -> Result<(), String> {
     let helper_target = profile_dir.join("tray-helper");
     let target = var("TARGET")?;
 
-    let status = Command::new(var("CARGO")?)
+    // What this cargo set for the app's own compilation is not the helper's, apart from the flags that keep
+    // the build machine's paths out of a packaged binary (`cargo xtask package`).
+    let remaps: Vec<String> = env::var("CARGO_ENCODED_RUSTFLAGS")
+        .unwrap_or_default()
+        .split('\x1f')
+        .filter(|flag| flag.starts_with("--remap-path-prefix="))
+        .map(str::to_owned)
+        .collect();
+    let mut cargo = Command::new(var("CARGO")?);
+    cargo
         .args(["build", "--release", "--target", &target, "--manifest-path"])
         .arg(tray.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(&helper_target)
-        // What this cargo set for the app's own compilation is not the helper's.
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_TARGET_DIR");
+    if !remaps.is_empty() {
+        cargo.env("CARGO_ENCODED_RUSTFLAGS", remaps.join("\x1f"));
+    }
+    let status = cargo
         .status()
         .map_err(|error| format!("could not run cargo: {error}"))?;
     if !status.success() {

@@ -278,14 +278,20 @@ async fn a_first_run_is_onboarded_only_after_the_privacy_policy_is_accepted() {
     let setup = engine.call("setup.getState", json!({})).await;
     assert_eq!((setup["privacyAccepted"].as_bool(), setup["onboarded"].as_bool()), (Some(false), Some(false)));
     assert!(setup["privacyPolicyUrl"].as_str().is_some_and(|url| url.starts_with("https://")));
+    assert_eq!(setup["termsAccepted"], false);
+    assert!(setup["termsOfServiceUrl"].as_str().is_some_and(|url| url.starts_with("https://")));
 
     assert_eq!(engine.call("setup.complete", json!({})).await["ok"], false);
     assert_eq!(engine.call("setup.getState", json!({})).await["onboarded"], false);
 
+    // Each of the two has to be accepted: one without the other does not finish the setup.
+    assert_eq!(engine.call("setup.acceptTerms", json!({})).await["ok"], true);
+    assert_eq!(engine.call("setup.complete", json!({})).await["ok"], false);
     assert_eq!(engine.call("setup.acceptPrivacy", json!({})).await["ok"], true);
     assert_eq!(engine.call("setup.complete", json!({})).await["ok"], true);
     let setup = engine.call("setup.getState", json!({})).await;
     assert_eq!((setup["privacyAccepted"].as_bool(), setup["onboarded"].as_bool()), (Some(true), Some(true)));
+    assert_eq!(setup["termsAccepted"], true);
 
     assert_eq!(engine.call("config.get", json!({})).await["telemetryEnabled"], true);
     engine.call("settings.update", json!({ "telemetryEnabled": false })).await;

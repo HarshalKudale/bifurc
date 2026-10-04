@@ -13,6 +13,8 @@ use crate::utils::json::{read_json, write_json_pretty};
 pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
+/// Where the terms of service a first run asks the user to accept are published.
+pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.harshalkudale.com/tos";
 /// Where the privacy policy a first run asks the user to accept is published.
 pub const PRIVACY_POLICY_URL: &str = "https://bifurc.harshalkudale.com/privacy";
 
@@ -68,6 +70,11 @@ impl AppSettings {
     /// `false` only when the user turned anonymous usage analytics off.
     pub fn telemetry_enabled(&self) -> bool {
         self.0.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true)
+    }
+
+    /// The terms of service were accepted on this data directory.
+    pub fn terms_accepted(&self) -> bool {
+        self.0.get("termsAcceptedAt").is_some_and(|at| !at.is_null())
     }
 
     /// The privacy policy was accepted on this data directory.
@@ -135,6 +142,7 @@ fn make_default_settings() -> Value {
         "workspaces": [],
         "activeWorkspaceId": "",
         "hasSeenWelcome": false,
+        "termsAcceptedAt": null,
         "privacyAcceptedAt": null,
         "zoomLevel": 0,
         "zoomLevelSetByUser": false,
