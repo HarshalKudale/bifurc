@@ -29,9 +29,10 @@ use crate::{
     },
     workspace::{
         accounts::{Account, find_account, workspace_account},
+        config::GLOBAL_ENV_ID,
         fs::{
-            WORKSPACE_FILE, WORKSPACE_KIND, WORKSPACE_VERSION, data_root, init_workspace_dir, workspace_identity,
-            ws_dir,
+            GLOBAL_ENV_PATH, WORKSPACE_FILE, WORKSPACE_KIND, WORKSPACE_VERSION, data_root, ensure_global_environment,
+            init_workspace_dir, workspace_identity, ws_dir,
         },
         git_store::{
             CommitMutation, GitError, RemoteAuth, apply_commit_identity, check_git_installed, commit_mutation, git,
@@ -221,6 +222,35 @@ async fn mark_as_workspace(ws_id: &str, name: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Commit the Global environment the engine made by itself when it never was, so the first push carries
+/// what every device would otherwise make again. One the user has put variables in is theirs to sync.
+async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
+    let tracked = git(ws_id, &["ls-files", "--", GLOBAL_ENV_PATH]).await.map_err(|e| e.to_string())?;
+    if !tracked.trim().is_empty() {
+        return Ok(());
+    }
+    ensure_global_environment(ws_id).map_err(|e| e.to_string())?;
+    let global = read_json(&ws_dir(ws_id).join(GLOBAL_ENV_PATH));
+    let untouched =
+        global.as_ref().and_then(|env| env.get("variables")).and_then(Value::as_array).is_none_or(Vec::is_empty);
+    if !untouched {
+        return Ok(());
+    }
+    commit_mutation(CommitMutation {
+        action: "create",
+        entity: "environment",
+        entity_id: GLOBAL_ENV_ID,
+        entity_name: "Global",
+        workspace_id: ws_id,
+        rel_path: GLOBAL_ENV_PATH,
+        actor: None,
+        changed_fields: &[],
+    })
+    .await
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
 /// Bring a workspace that lives in one of the account's repositories to this device, as a new workspace.
 /// Returns `{ ok: true, workspace }` or `{ ok: false, error }`.
 pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
@@ -343,6 +373,7 @@ async fn publish(ws_id: &str, account_id: &str, repo_name: &str, private: bool) 
     apply_commit_identity(ws_id).await.map_err(|e| e.to_string())?;
     // What is pushed says it is a workspace, so the repository can be told from any other on import.
     mark_as_workspace(ws_id, &name).await?;
+    commit_default_global_environment(ws_id).await?;
 
     let _ = git(ws_id, &["remote", "remove", "origin"]).await;
     git(ws_id, &["remote", "add", "origin", &repo.clone_url]).await.map_err(|e| e.to_string())?;
