@@ -41,7 +41,7 @@ async fn a_vault_resolves_in_text_but_its_values_never_reach_a_client() {
 
     let created = engine.call("vault.create", json!({ "workspaceId": ws, "name": "api_keys", "passphrase": PASS })).await;
     let id = created["id"].as_str().unwrap().to_string();
-    assert_eq!(created["state"], "ready");
+    assert_eq!(created["state"], "unsealed");
     engine
         .call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "STRIPE", "value": "sk_live_123456" }))
         .await;
@@ -78,7 +78,7 @@ async fn unsealing_needs_the_passphrase_and_names_are_checked() {
     let wrong = engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": "not the one" })).await;
     assert_eq!(wrong.unwrap_err().code, ErrorCode::Forbidden);
     let unsealed = engine.call("vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": PASS })).await;
-    assert_eq!(unsealed["state"], "ready");
+    assert_eq!(unsealed["state"], "unsealed");
 
     for (action, payload) in [
         ("vault.create", json!({ "workspaceId": ws, "name": "has space", "passphrase": PASS })),
@@ -92,7 +92,7 @@ async fn unsealing_needs_the_passphrase_and_names_are_checked() {
 }
 
 #[tokio::test]
-async fn only_the_cli_checks_a_vault_out_and_the_lease_ends_with_its_session() {
+async fn only_the_cli_reads_the_secrets_and_only_of_an_unsealed_vault() {
     let root = scratch_data_root();
     let (ws, engine) = (root.ws_id, Engine::new());
     let created = engine.call("vault.create", json!({ "workspaceId": ws, "name": "keys", "passphrase": PASS })).await;
@@ -100,25 +100,27 @@ async fn only_the_cli_checks_a_vault_out_and_the_lease_ends_with_its_session() {
     engine.call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "TOKEN", "value": "t0ken-value" })).await;
     engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
 
-    let checkout = |passphrase: &str| json!({ "workspaceId": ws, "id": id, "passphrase": passphrase });
-    let ui = engine.try_as(session("ui", "desktop-ui"), "vault.checkout", checkout(PASS)).await;
+    let secrets = json!({ "workspaceId": ws, "id": id });
+    let sealed = engine.try_as(session("cli1", "cli"), "vault.secrets", secrets.clone()).await.unwrap_err();
+    assert_eq!(sealed.code, ErrorCode::Forbidden);
+    assert_eq!(sealed.details.unwrap()["reason"], "vault_sealed");
+
+    engine.call("vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": PASS })).await;
+    let ui = engine.try_as(session("ui", "desktop-ui"), "vault.secrets", secrets.clone()).await;
     assert_eq!(ui.unwrap_err().code, ErrorCode::Forbidden);
-    let wrong = engine.try_as(session("cli1", "cli"), "vault.checkout", checkout("not the passphrase")).await;
-    assert_eq!(wrong.unwrap_err().code, ErrorCode::Forbidden);
-    assert!(engine.call("vault.list", json!({ "workspaceId": ws })).await[0]["openedBy"] == 0);
 
-    let out = engine.try_as(session("cli1", "cli"), "vault.checkout", checkout(PASS)).await.unwrap();
-    assert_eq!(out["secrets"], json!({ "TOKEN": "t0ken-value" }));
+    // Once unsealed it is read without a passphrase, by any CLI session, until it is sealed again.
+    for cli in ["cli1", "cli2"] {
+        let out = engine.try_as(session(cli, "cli"), "vault.secrets", secrets.clone()).await.unwrap();
+        assert_eq!(out["secrets"], json!({ "TOKEN": "t0ken-value" }));
+        assert_eq!(out["name"], "keys");
+    }
     let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
-    assert_eq!(listed[0]["state"], "open");
+    assert_eq!(listed[0]["state"], "unsealed");
+    assert!(listed[0].get("openedBy").is_none());
 
-    session_ended("cli1");
-    let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
-    assert_eq!(listed[0]["state"], "ready");
-
-    let out = engine.try_as(session("cli2", "cli"), "vault.checkout", checkout(PASS)).await.unwrap();
-    engine.call("vault.release", json!({ "leaseId": out["leaseId"] })).await;
-    assert_eq!(engine.call("vault.list", json!({ "workspaceId": ws })).await[0]["state"], "ready");
+    engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
+    assert!(engine.try_as(session("cli1", "cli"), "vault.secrets", secrets).await.is_err());
 }
 
 #[tokio::test]
