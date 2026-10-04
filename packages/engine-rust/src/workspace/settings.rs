@@ -87,6 +87,13 @@ impl AppSettings {
         self.0.get("hasSeenWelcome").and_then(Value::as_bool).unwrap_or(false)
     }
 
+    /// The two proxies may be started without being asked: the first run's servers step was passed, so their
+    /// ports are ones the user chose or left as they are. An install that finished the first run before that
+    /// step was recorded counts too.
+    pub fn servers_confirmed(&self) -> bool {
+        self.onboarded() || self.0.get("serversConfirmedAt").is_some_and(|at| !at.is_null())
+    }
+
     pub fn active_workspace_id(&self) -> String {
         self.0.get("activeWorkspaceId").and_then(Value::as_str).unwrap_or("").to_string()
     }
@@ -144,6 +151,7 @@ fn make_default_settings() -> Value {
         "hasSeenWelcome": false,
         "termsAcceptedAt": null,
         "privacyAcceptedAt": null,
+        "serversConfirmedAt": null,
         "zoomLevel": 0,
         "zoomLevelSetByUser": false,
         "themeId": null,

@@ -100,6 +100,29 @@ pub struct WorkspaceHost {
     sweeper: tokio::task::JoinHandle<()>,
 }
 
+/// The name the command line gives in its handshake.
+const CLI_CLIENT: &str = "cli";
+
+/// What the command line may ask before the first-run setup is finished: whether it is, and for the engine
+/// to stop (an installer or an uninstaller stops the engine whatever state the setup is in).
+const BEFORE_SETUP: [&str; 2] = ["setup.getState", "engine.shutdown"];
+
+/// `details.reason` of the refusal, which is how a client tells it from any other `FORBIDDEN`.
+pub const SETUP_REQUIRED: &str = "setupRequired";
+
+/// Why `action` from `client` is refused, if it is: the first-run setup is not finished and the client is the
+/// command line. `onboarded` is only asked when the answer depends on it.
+fn setup_refusal(client: Option<&str>, action: &str, onboarded: impl FnOnce() -> bool) -> Option<EngineError> {
+    if client != Some(CLI_CLIENT) || BEFORE_SETUP.contains(&action) || onboarded() {
+        return None;
+    }
+    Some(EngineError::with_details(
+        crate::protocol::ErrorCode::Forbidden,
+        "Bifurc has not been set up yet. Finish the first-run setup in the Bifurc app, then run this command again.",
+        json!({ "reason": SETUP_REQUIRED }),
+    ))
+}
+
 fn workspace_dir_exists(ws_id: &str) -> bool {
     !ws_id.is_empty() && ws_dir(ws_id).is_dir()
 }
@@ -181,7 +204,13 @@ impl WorkspaceHost {
 
         let forward_proxy = crate::proxy::create_proxy_server();
         let forward_port = settings.forward_proxy_port();
-        forward_proxy.start(forward_port);
+        // A data directory whose first run has not reached its servers step starts neither proxy: the ports
+        // are still the defaults, and 80 is one a user may not be allowed to bind. `setup.startServers` starts
+        // them, and from then on every run does.
+        let start_listeners = settings.servers_confirmed();
+        if start_listeners {
+            forward_proxy.start(forward_port);
+        }
         bind_forward_proxy(Some(forward_proxy.clone()));
 
         let served: Arc<RwLock<Vec<ServedWorkspace>>> = Arc::new(RwLock::new(Vec::new()));
@@ -203,7 +232,9 @@ impl WorkspaceHost {
         }));
         let edge_url = format!("http://{EDGE_BIND_HOST}:{edge_port}");
         bind_edge(Some(edge.clone()));
-        edge.start(edge_port);
+        if start_listeners {
+            edge.start(edge_port);
+        }
 
         let active = settings.active_workspace_id();
         *served.write() = settings
@@ -216,13 +247,21 @@ impl WorkspaceHost {
             })
             .collect();
 
+        if !start_listeners {
+            notice(
+                "the reverse and forward proxies are not started: the first-run setup has not confirmed their \
+                 ports yet (`setup.startServers` does, and starts them)",
+            );
+        }
         match edge.error() {
             Some(err) => {
                 notice(&format!("edge on {edge_url} FAILED to bind: {err} — no *.localhost mapping will resolve"))
             }
+            None if !start_listeners => {}
             None => notice(&format!("edge: {edge_url} — reverse proxy and home page for the active workspace")),
         }
         match forward_proxy.error() {
+            None if !start_listeners => {}
             Some(err) => {
                 let advice = match next_free_port_above(u32::from(forward_port) + 1).await {
                     Some(free) => format!("Port {free} is free: set it in Settings → Ports, or free {forward_port}."),
@@ -252,7 +291,7 @@ impl WorkspaceHost {
             _ => None,
         };
 
-        let (started, ended) = (desktop.clone(), desktop.clone());
+        let (started, ended, setup) = (desktop.clone(), desktop.clone(), desktop.clone());
         let session = SessionOptions {
             registry: registry.clone(),
             log: log.clone(),
@@ -277,6 +316,15 @@ impl WorkspaceHost {
                 if let Some(desktop) = &ended {
                     desktop.on_session_end(identity);
                 }
+            })),
+            // The command line is for a Bifurc that has been set up, and the setup is the interface's to walk
+            // the user through: until it is done, a command from the CLI is refused and the interface opened.
+            refuse_command: Some(Arc::new(move |identity, action| {
+                let refusal = setup_refusal(identity.client_name.as_deref(), action, || load_settings().onboarded())?;
+                if let Some(desktop) = &setup {
+                    desktop.open_interface();
+                }
+                Some(refusal)
             })),
             peer: None,
         };
@@ -438,6 +486,34 @@ pub async fn run_workspace_host(opts: HostOptions) -> Result<i32> {
         _ = terminated() => {
             host.stop().await;
             Ok(143)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_command_line_is_refused_until_the_first_run_setup_is_finished() {
+        let refused = setup_refusal(Some("cli"), "config.get", || false).expect("refused");
+        assert_eq!(refused.code.as_str(), "FORBIDDEN");
+        assert_eq!(refused.details, Some(json!({ "reason": SETUP_REQUIRED })));
+        assert!(setup_refusal(Some("cli"), "request.send", || false).is_some());
+        assert!(setup_refusal(Some("cli"), "config.get", || true).is_none());
+    }
+
+    #[test]
+    fn the_command_line_may_always_ask_about_the_setup_and_stop_the_engine() {
+        for action in BEFORE_SETUP {
+            assert!(setup_refusal(Some("cli"), action, || false).is_none(), "{action}");
+        }
+    }
+
+    #[test]
+    fn an_interface_is_never_refused_and_the_setup_is_not_even_read_for_it() {
+        for client in [Some("desktop-ui"), Some("bifurc-extension"), None] {
+            assert!(setup_refusal(client, "config.get", || panic!("not asked")).is_none(), "{client:?}");
         }
     }
 }

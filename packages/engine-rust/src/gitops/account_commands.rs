@@ -16,7 +16,10 @@ use super::{
 use crate::{
     kernel::{CommandRegistry, bus},
     protocol::EngineError,
-    runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
+    runtime::{
+        entity_status::emit_entity_status,
+        instances::{notify_config_changed, start_listeners},
+    },
     utils::{
         id::now_ms,
         json::{bool_of, str_of},
@@ -68,6 +71,7 @@ pub fn register(registry: &mut CommandRegistry) {
             "privacyPolicyUrl": PRIVACY_POLICY_URL,
             "privacyAccepted": settings.privacy_accepted(),
             "onboarded": settings.onboarded(),
+            "serversConfirmed": settings.servers_confirmed(),
         }))
     });
 
@@ -107,11 +111,42 @@ pub fn register(registry: &mut CommandRegistry) {
             return Ok(json!({ "ok": false, "error": "The privacy policy has not been accepted yet." }));
         }
         if !settings.onboarded() {
+            // A walk that never passed the servers step ends with the proxies started all the same.
+            let servers_confirmed = settings.servers_confirmed();
             settings.set("hasSeenWelcome", json!(true));
             save_settings(&settings)?;
             bus().emit("settings.changed", json!({}));
+            if !servers_confirmed {
+                start_listeners(&settings);
+            }
         }
         Ok(json!({ "ok": true }))
+    });
+
+    // The first run's servers step: the ports are the user's choice now (`port`, `forwardProxyPort`, each
+    // optional), so the two proxies start, and every later run of the engine starts them by itself. The
+    // answer says how each fared, so a port that could not be bound can be changed there and then.
+    registry.register_sync("setup.startServers", |params, _| {
+        let prev = load_settings();
+        let mut settings = prev.clone();
+        for key in ["port", "forwardProxyPort"] {
+            if let Some(port) = params.get(key).filter(|port| !port.is_null()) {
+                settings.set(key, port.clone());
+            }
+        }
+        if settings.port() == settings.forward_proxy_port() {
+            return Ok(json!({ "ok": false, "error": "The two proxies need different ports." }));
+        }
+        if !settings.servers_confirmed() {
+            settings.set("serversConfirmedAt", json!(now_ms()));
+        }
+        if settings != prev {
+            save_settings(&settings)?;
+            notify_config_changed();
+            bus().emit("settings.changed", json!({}));
+        }
+        let started = start_listeners(&settings);
+        Ok(json!({ "ok": true, "forward": started["forward"], "reverse": started["reverse"] }))
     });
 
     registry.register("account.login.start", |_, _| async move {

@@ -1,0 +1,28 @@
+# Maintainer: {{PUBLISHER}} <{{MAINTAINER_EMAIL}}>
+pkgname=bifurc-bin
+pkgver={{VERSION}}
+pkgrel=1
+pkgdesc="{{SUMMARY}}"
+arch=('{{ARCH}}')
+url="{{HOMEPAGE}}"
+license=('LicenseRef-Bifurc')
+depends=('alsa-lib' 'fontconfig' 'gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'wayland' 'zstd')
+optdepends=('git: workspace history and sync'
+            'libcap: lets the reverse proxy listen on port 80'
+            'xdg-desktop-portal: file dialogs')
+provides=('bifurc')
+conflicts=('bifurc')
+options=('!strip')
+install=bifurc.install
+source=("{{URL}}")
+sha256sums=('{{SHA256}}')
+
+package() {
+  install -d "$pkgdir/usr/lib/bifurc" "$pkgdir/usr/bin"
+  cp -a "$srcdir/bifurc-$pkgver/." "$pkgdir/usr/lib/bifurc/"
+  rm "$pkgdir/usr/lib/bifurc/bifurc.desktop"
+  install -Dm644 "$srcdir/bifurc-$pkgver/bifurc.desktop" "$pkgdir/usr/share/applications/bifurc.desktop"
+  install -Dm644 "$srcdir/bifurc-$pkgver/resources/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/bifurc.png"
+  install -Dm644 "$srcdir/bifurc-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  ln -s /usr/lib/bifurc/bin/bifurc "$pkgdir/usr/bin/bifurc"
+}

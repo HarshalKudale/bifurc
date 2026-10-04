@@ -34,6 +34,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("setup.acceptTerms", Scope::Write),
     ("setup.acceptPrivacy", Scope::Write),
     ("setup.complete", Scope::Write),
+    ("setup.startServers", Scope::Admin),
     ("account.list", Scope::Read),
     ("account.repos", Scope::Read),
     ("account.login.start", Scope::Admin),

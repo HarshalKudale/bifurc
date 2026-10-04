@@ -1,0 +1,16 @@
+#!/bin/sh
+# Bifurc's engine runs as the user and its reverse proxy listens on port 80 unless another port is chosen.
+# The capability lets it bind ports below 1024 without being root; without it the port has to be 1024 or up.
+set -e
+
+if [ "$1" = "configure" ]; then
+  if command -v setcap >/dev/null 2>&1; then
+    setcap cap_net_bind_service=+ep /usr/lib/bifurc/bifurc-engine || true
+  fi
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q /usr/share/applications || true
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+  fi
+fi
