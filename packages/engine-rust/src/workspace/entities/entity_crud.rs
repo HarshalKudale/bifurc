@@ -21,10 +21,10 @@ use crate::{
         config::{load_config, save_config},
         deletions::{pending_entity, remove_entity},
         fs::{
-            delete_entity_file, find_entity_file, read_all_entities, sync_enabled_set, upsert_name_entry, write_entity,
-            write_flat_entity,
+            delete_entity_file, find_entity_file, read_all_entities, resolve_folder, sync_enabled_set,
+            upsert_name_entry, write_entity, write_flat_entity,
         },
-        kinds::{CrudKind, crud_kind, is_simple_kind},
+        kinds::{CrudKind, crud_kind, is_simple_kind, requires_folder},
         settings::{load_settings, save_settings},
         status_cache::invalidate_cache,
     },
@@ -58,6 +58,17 @@ fn siblings_of(cfg: &Value, kind: &CrudKind, ws_id: &str, id: &str) -> Vec<Value
         .filter(|e| !truthy(e, "deleted"))
         .cloned()
         .collect()
+}
+
+/// Settle the folder of an entity of a kind that keeps all of them in folders: the one it names, else the Default
+/// folder, which is made when it is missing. `folderId` of the entity is rewritten to match.
+fn place_in_folder(kind: &CrudKind, ws_id: &str, entity: &mut Value) -> Result<()> {
+    if !requires_folder(kind) {
+        return Ok(());
+    }
+    let (folder_id, _) = resolve_folder(ws_id, kind.kind, opt_str(entity, "folderId"))?;
+    object_mut(entity).insert("folderId".into(), json!(folder_id));
+    Ok(())
 }
 
 fn write_entity_file(cfg: &Value, kind: &CrudKind, ws_id: &str, id: &str, entity: &Value) -> Result<()> {
@@ -95,11 +106,13 @@ fn create_entity_core(
     workspace_id: Option<&str>,
     may_resolve_conflicts: bool,
 ) -> Result<Value> {
-    let mut cfg = load_config();
-    let ws_id = workspace_id.map(str::to_string).unwrap_or_else(|| workspace_of(entity, &cfg));
+    let ws_id = workspace_id.map(str::to_string).unwrap_or_else(|| workspace_of(entity, &load_config()));
 
     let mut new_entity = merged(entity, &json!({ "id": generate_id(), "createdAt": now_ms(), "workspaceId": ws_id }));
     let id = str_of(&new_entity, "id").to_string();
+    // After the folder is settled, so the snapshot lists a Default folder this call has just made.
+    place_in_folder(kind, &ws_id, &mut new_entity)?;
+    let mut cfg = load_config();
     if let Some(validate) = kind.validate {
         validate(&new_entity, &siblings_of(&cfg, kind, &ws_id, &id))?;
     }
@@ -158,15 +171,17 @@ fn create_entity_core(
 }
 
 fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
-    let mut cfg = load_config();
-    let ws_id = workspace_of(entity, &cfg);
+    let ws_id = workspace_of(entity, &load_config());
     let id = opt_str(entity, "id").ok_or_else(|| EngineError::bad_request("entity.id is required"))?.to_string();
     // Writing it would bring its file back while it is still listed as deleted.
     if pending_entity(&ws_id, kind.kind, &id).is_some() && find_entity_file(&ws_id, kind.kind, &id).is_none() {
         return Err(EngineError::conflict("It is deleted. Revert the delete to change it."));
     }
+    let mut entity = entity.clone();
+    place_in_folder(kind, &ws_id, &mut entity)?;
+    let mut cfg = load_config();
     if let Some(validate) = kind.validate {
-        validate(entity, &siblings_of(&cfg, kind, &ws_id, &id))?;
+        validate(&entity, &siblings_of(&cfg, kind, &ws_id, &id))?;
     }
 
     let list = array_mut(&mut cfg, kind.config_key);
@@ -175,11 +190,11 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
 
     save_config(&cfg)?;
-    write_entity_file(&cfg, kind, &ws_id, &id, entity)?;
+    write_entity_file(&cfg, kind, &ws_id, &id, &entity)?;
 
     if let Some(name_entry) = kind.name_entry {
         if !kind.is_flat {
-            upsert_name_entry(&ws_id, kind.kind, &id, name_entry(entity))?;
+            upsert_name_entry(&ws_id, kind.kind, &id, name_entry(&entity))?;
         }
     }
 
@@ -307,7 +322,7 @@ mod tests {
         protocol::ErrorCode,
         testing::scratch_data_root,
         workspace::{
-            fs::{entity_dir, read_enabled_set, read_names_index, ws_dir},
+            fs::{entity_dir, read_enabled_set, read_index, read_names_index, ws_dir},
             git_store::{CommitMutation, check_git_installed, commit_mutation, init_workspace_repo},
         },
     };
@@ -376,6 +391,72 @@ mod tests {
         assert!(read_names_index(WS, "requests").get(&id).is_none());
         let gone = call(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "requests", "id": id })).await.unwrap();
         assert_eq!(gone, json!({ "ok": false }));
+    }
+
+    #[tokio::test]
+    async fn nothing_is_saved_outside_a_folder() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let default_id = |kind: &str| -> Value {
+            let folders = crate::workspace::fs::read_index(WS, kind).folders;
+            let found: Vec<_> = folders.iter().filter(|f| f["name"] == "Default").collect();
+            assert_eq!(found.len(), 1, "one Default folder per kind");
+            found[0]["id"].clone()
+        };
+
+        // No folder, an empty one and one that does not exist all land in Default, which is made on the way.
+        let request = |folder: Value| json!({ "name": "R", "method": "GET", "url": "http://a", "folderId": folder });
+        let loose = call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(Value::Null) })).await.unwrap();
+        let empty = call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(json!("")) })).await.unwrap();
+        let dangling =
+            call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(json!("gone")) })).await.unwrap();
+        for created in [&loose, &empty, &dangling] {
+            assert_eq!(created["entity"]["folderId"], default_id("requests"));
+            let id = created["id"].as_str().unwrap();
+            assert!(entity_dir(WS, "requests").join("Default").join(format!("{id}.json")).exists());
+            assert!(!entity_dir(WS, "requests").join(format!("{id}.json")).exists());
+        }
+
+        let mock = call(&ctx, "entity.create", json!({ "kind": "mocks", "entity": mock("/a") })).await.unwrap();
+        assert_eq!(mock["entity"]["folderId"], default_id("mocks"));
+        let id = mock["id"].as_str().unwrap();
+        assert!(entity_dir(WS, "mocks").join("Default").join(format!("{id}.json")).exists());
+        let listed = load_config();
+        assert_eq!(listed["mocks"][0]["folderId"], default_id("mocks"));
+
+        // A folder of the caller's own is kept, and moving out of it goes to Default, never to the top level.
+        let own = call(&ctx, "folder.add", json!({ "kind": "request", "name": "Auth", "parentId": null })).await.unwrap();
+        let kept =
+            call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(own["id"].clone()) })).await.unwrap();
+        assert_eq!(kept["entity"]["folderId"], own["id"]);
+        let mut moved = kept["entity"].clone();
+        moved["folderId"] = Value::Null;
+        call(&ctx, "entity.update", json!({ "kind": "requests", "entity": moved })).await.unwrap();
+        let kept_id = kept["id"].as_str().unwrap();
+        assert!(entity_dir(WS, "requests").join("Default").join(format!("{kept_id}.json")).exists());
+        assert!(!entity_dir(WS, "requests").join("Auth").join(format!("{kept_id}.json")).exists());
+        let reloaded =
+            call(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "requests", "id": kept_id })).await.unwrap();
+        assert_eq!(reloaded["entity"]["folderId"], default_id("requests"));
+
+        // A duplicate is saved beside its original.
+        let copy = call(&ctx, "entity.duplicate", json!({ "workspaceId": WS, "kind": "requests", "id": kept_id }))
+            .await
+            .unwrap();
+        assert_eq!(copy["entity"]["folderId"], default_id("requests"));
+
+        // Only Auth and Default exist: the Default folder is made once and reused.
+        assert_eq!(read_index(WS, "requests").folders.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn rules_and_flat_kinds_are_not_put_in_a_folder() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let rule = json!({ "name": "R", "pattern": "api", "useRegex": false, "targetType": "mapping" });
+        let created = call(&ctx, "entity.create", json!({ "kind": "proxyRules", "entity": rule })).await.unwrap();
+        assert!(created["entity"].get("folderId").is_none_or(Value::is_null));
+        assert!(read_index(WS, "rules").folders.is_empty());
     }
 
     #[tokio::test]

@@ -29,7 +29,7 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, exchange::Exchange};
+use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
@@ -1152,9 +1152,13 @@ impl ProtocolSession {
                     match &saved {
                         Some(saved) => {
                             this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                            let placed = engine_folder(saved);
                             this.entity = saved.clone();
                             this.baseline = values;
-                            this.saved_folder = folder.clone();
+                            if this.folder_id == folder {
+                                this.folder_id = placed.clone();
+                            }
+                            this.saved_folder = placed;
                             if let Some(id) = this.saved_id.clone() {
                                 cx.emit(SessionEvent::Saved { id });
                             }
