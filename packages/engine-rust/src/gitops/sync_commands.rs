@@ -4,22 +4,26 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    auto_sync::{start_auto_sync, stop_auto_sync, update_last_known_head},
+    auto_sync::{pull_and_announce, update_last_known_head},
+    delete_commands::reconcile_deletions,
     git_ops::{discard_changes, get_file_diff, get_file_history, sync_changes},
     git_state::get_workspace_git_state,
-    status_tracker::{get_workspace_sync_status, invalidate_cache},
-    sync_manager::{disconnect, get_remote_head, set_auto_sync, set_remote, sync_pull, sync_push},
+    remote::workspace_owner,
+    status_tracker::get_workspace_sync_status,
+    sync_all::sync_workspace,
+    sync_manager::{get_remote_head, sync_push},
     sync_state::get_sync_state,
 };
 use crate::{
     kernel::CommandRegistry,
     runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
-    utils::json::{array_of, bool_of, opt_str, str_of},
+    utils::json::{array_of, opt_str, str_of},
     workspace::{
+        accounts::workspace_account,
         config::load_config,
         entity_paths::load_entity_path_maps,
         fs::sanitize_dir_name,
-        git_store::{get_commit_changed_files, get_entity_at_commit},
+        git_store::{get_commit_changed_files, get_entity_at_commit, is_repo},
     },
 };
 
@@ -33,7 +37,7 @@ fn string_list(params: &Value, key: &str) -> Vec<String> {
 
 /// After a publish: tell clients the entity statuses changed, and remember the remote tip so auto-sync does
 /// not pull the push this engine just made. Reading the tip is bookkeeping; its failure is not reported.
-async fn after_publish(ws_id: &str) {
+pub(super) async fn after_publish(ws_id: &str) {
     emit_entity_status(ws_id);
     if let Some(sha) = get_remote_head(ws_id).await {
         update_last_known_head(ws_id, &sha);
@@ -55,48 +59,44 @@ async fn before_and_after(commit: &str, ws_id: &str, rel_path: &str) -> Value {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
-    registry.register("sync.setRemote", |params, _| async move {
-        let result =
-            set_remote(str_of(&params, "workspaceId"), str_of(&params, "remote"), str_of(&params, "branch")).await;
-        if result.get("ok") == Some(&Value::Bool(true)) {
-            notify_config_changed();
-        }
-        Ok(result)
-    });
-
-    registry
-        .register("sync.disconnect", |params, _| async move { Ok(disconnect(str_of(&params, "workspaceId")).await) });
-
     registry.register("sync.push", |params, _| async move { Ok(sync_push(str_of(&params, "workspaceId")).await) });
 
     registry.register("sync.pull", |params, _| async move {
+        Ok(pull_and_announce(str_of(&params, "workspaceId")).await)
+    });
+
+    // Everything in the workspace that was never synced, an entity to a commit, then one push. A workspace
+    // that was plain files becomes a repository first. Progress arrives as `sync.status`.
+    registry.register("sync.all", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId");
-        let result = sync_pull(ws_id).await;
-        if result.get("ok") == Some(&Value::Bool(true)) && result.get("updated") == Some(&Value::Bool(true)) {
+        let result = sync_workspace(ws_id).await;
+        if result.get("initialized") == Some(&Value::Bool(true)) {
             notify_config_changed();
-            invalidate_cache(ws_id);
-            emit_entity_status(ws_id);
         }
+        after_publish(ws_id).await;
         Ok(result)
     });
 
-    registry.register_sync("sync.getState", |params, _| Ok(get_sync_state(str_of(&params, "workspaceId"))));
-
-    registry.register("sync.setAutoSync", |params, _| async move {
+    // How a sync is going, plus who the workspace syncs as, who owns it and where its remote is.
+    registry.register_sync("sync.getState", |params, _| {
         let ws_id = str_of(&params, "workspaceId");
-        let enabled = bool_of(&params, "enabled", false);
-        let result = set_auto_sync(ws_id, enabled);
-        if enabled {
-            start_auto_sync(ws_id);
-        } else {
-            stop_auto_sync(ws_id);
-        }
-        Ok(result)
+        let mut state = get_sync_state(ws_id);
+        state["account"] = workspace_account(ws_id).map_or(Value::Null, |account| account.public());
+        state["owner"] = workspace_owner(ws_id);
+        state["gitTracked"] = json!(is_repo(ws_id));
+        Ok(state)
     });
 
     registry.register("sync.getEntityStatus", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId");
-        let (files, git) = (get_workspace_sync_status(ws_id).await, get_workspace_git_state(ws_id).await);
+        let (mut files, git) = (get_workspace_sync_status(ws_id).await, get_workspace_git_state(ws_id).await);
+        // A file that went missing behind the engine's back becomes a deletion to confirm or revert; the
+        // event tells clients to read the workspace again.
+        if reconcile_deletions(ws_id, &files).await {
+            files = get_workspace_sync_status(ws_id).await;
+            notify_config_changed();
+            emit_entity_status(ws_id);
+        }
         let maps = load_entity_path_maps();
         let to_object = |map: indexmap::IndexMap<String, String>| {
             Value::Object(map.into_iter().map(|(k, v)| (k, Value::String(v))).collect::<Map<String, Value>>())

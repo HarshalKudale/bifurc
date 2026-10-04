@@ -165,7 +165,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         };
         let target = str_of(mapping, "target");
         let upstream: Result<UpstreamResponse, String> =
-            crate::proxy::fetch_upstream_response(method, target, req_path, &headers, body, None).await;
+            crate::proxy::fetch_upstream_response(method, target, req_path, &headers, body, None, "").await;
         match upstream {
             Ok(upstream) => {
                 let merged = merge_mock_with_upstream(mock, &upstream, env.as_ref());

@@ -77,6 +77,15 @@ impl VarEditor {
         })
     }
 
+    /// A multi-line box for text that is pasted rather than written, such as a command: long lines wrap
+    /// and there are no line numbers.
+    pub fn pasted(syntax: Syntax, placeholder: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> Self {
+        let placeholder = placeholder.into();
+        Self::build(window, cx, |state| {
+            state.language(syntax.language()).line_number(false).folding(false).soft_wrap(true).placeholder(placeholder)
+        })
+    }
+
     /// A one-row field, such as a URL: Enter submits instead of adding a line.
     pub fn line(placeholder: impl Into<SharedString>, window: &mut Window, cx: &mut App) -> Self {
         let placeholder = placeholder.into();

@@ -39,11 +39,17 @@ On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it b
 
 ```text
 Bifurc/
-├── bifurc/            # Electron desktop application
-├── bifurc-extension/  # Browser companion extension
+├── packages/
+│   ├── protocol-rust/  # Wire types and command schemas shared by the engine and its clients
+│   ├── engine-rust/    # The engine: proxies, mocks, requests, workspaces, git
+│   └── cli-rust/       # The `bifurc` CLI
+├── ui/                 # Desktop UI (GPUI), tray helper and the installed `bifurc` launcher
+├── xtask/              # `cargo xtask package`
+├── packaging/          # Installer, Store package and AppImage templates
+└── build/              # Icons
 ```
 
-The published site itself is maintained in the separate `bifurc-website` repository.
+The browser companion extension (`bifurc-extension`) and the published site (`bifurc-website`) are separate repositories.
 
 ## Documentation
 
@@ -63,7 +69,7 @@ cargo dev:ui
 
 ## Browser extension
 
-Load the `bifurc-extension/` folder unpacked in Chrome or Edge to:
+Load the `bifurc-extension` repository's folder unpacked in Chrome or Edge to:
 
 - toggle browser proxy routing
 - review traffic inside a Bifurc DevTools tab

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
 
-use super::paths::data_dir;
+use super::{config::GLOBAL_ENV_ID, paths::data_dir};
 use crate::utils::{
     id::now_ms,
     json::{read_json, str_of, write_json_pretty},
@@ -41,7 +41,7 @@ pub const FLAT_ENTITY_KINDS: [&str; 2] = ["mappings", "environments"];
 const SKIP_FILES: [&str; 4] = ["index.json", "enabled.json", "names.json", "pending-deletions.json"];
 
 /// Directories in a kind's directory that are not folders.
-const SKIP_DIRS: [&str; 3] = ["drafts", "capture", ".runs"];
+pub const SKIP_DIRS: [&str; 3] = ["drafts", "capture", ".runs"];
 
 /// `<dataDir>/data`: the parent of every workspace directory.
 pub fn data_root() -> PathBuf {
@@ -74,6 +74,23 @@ fn entity_file(ws_id: &str, kind: &str, id: &str, folder_name: Option<&str>) -> 
     }
 }
 
+/// The file at a workspace's root that says the directory (and the repository it is pushed to) is a workspace.
+pub const WORKSPACE_FILE: &str = "workspace.json";
+/// What `kind` in `workspace.json` holds.
+pub const WORKSPACE_KIND: &str = "bifurc-workspace";
+pub const WORKSPACE_VERSION: u64 = 1;
+
+/// The id and name a `workspace.json` gives, when it is a workspace's. A file from before `kind` was written
+/// is known by the fields every one of them has.
+pub fn workspace_identity(info: &Value) -> Option<(String, String)> {
+    let marked = match info.get("kind") {
+        Some(kind) => kind.as_str() == Some(WORKSPACE_KIND),
+        None => info.get("createdAt").is_some_and(Value::is_number) && info.get("name").is_some_and(Value::is_string),
+    };
+    let id = info.get("id").and_then(Value::as_str).filter(|id| !id.is_empty())?;
+    marked.then(|| (id.to_string(), info.get("name").and_then(Value::as_str).unwrap_or_default().to_string()))
+}
+
 /// Create a workspace's directories, `workspace.json` and `.gitignore`. Safe to repeat.
 pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     let root = ws_dir(ws_id);
@@ -97,14 +114,37 @@ pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     if !ws_file.exists() {
         write_json_pretty(
             &ws_file,
-            &json!({ "id": ws_id, "name": name, "createdAt": now_ms(), "activeEnvironmentId": null }),
+            &json!({
+                "kind": WORKSPACE_KIND, "version": WORKSPACE_VERSION,
+                "id": ws_id, "name": name, "createdAt": now_ms(), "activeEnvironmentId": null,
+            }),
         )?;
     }
     let gitignore = root.join(".gitignore");
     if !gitignore.exists() {
         std::fs::write(gitignore, "capture/\n*.tmp\n")?;
     }
+    ensure_global_environment(ws_id)?;
     Ok(())
+}
+
+/// Workspace-relative path of the environment every workspace has.
+pub const GLOBAL_ENV_PATH: &str = "environments/__global__.json";
+
+/// The Global environment as a new workspace gets it. The same on every device, so two of them that each
+/// had to make it agree on the file.
+pub fn default_global_environment(ws_id: &str) -> Value {
+    json!({ "id": GLOBAL_ENV_ID, "name": "Global", "variables": [], "createdAt": 0, "workspaceId": ws_id })
+}
+
+/// Write the Global environment when the workspace has none. Returns it when it was written.
+pub fn ensure_global_environment(ws_id: &str) -> std::io::Result<Option<Value>> {
+    if ws_dir(ws_id).join(GLOBAL_ENV_PATH).exists() {
+        return Ok(None);
+    }
+    let global = default_global_environment(ws_id);
+    write_flat_entity(ws_id, "environments", GLOBAL_ENV_ID, &global)?;
+    Ok(Some(global))
 }
 
 /// The sub-directories of a kind that are folders.
@@ -234,6 +274,8 @@ pub fn read_entity(ws_id: &str, kind: &str, id: &str) -> Option<Value> {
 pub struct EntityStub {
     pub id: String,
     pub folder_id: Option<String>,
+    /// The pending-deletion record of an entity that was deleted here and whose deletion is not synced yet.
+    pub deleted: Option<Value>,
 }
 
 /// The ids and folders of a kind's entities, plus those deleted locally but not yet published.
@@ -248,13 +290,17 @@ pub fn read_entity_stubs(ws_id: &str, kind: &str) -> Vec<EntityStub> {
     };
     let mut stubs: Vec<EntityStub> = entity_files(ws_id, kind)
         .into_iter()
-        .map(|(id, _, folder_dir)| EntityStub { id, folder_id: folder_dir.as_deref().and_then(folder_id_of) })
+        .map(|(id, _, folder_dir)| EntityStub {
+            id,
+            folder_id: folder_dir.as_deref().and_then(folder_id_of),
+            deleted: None,
+        })
         .collect();
     for pending in get_pending_deletions(ws_id, kind) {
         let id = str_of(&pending, "id").to_string();
         if !stubs.iter().any(|stub| stub.id == id) {
             let folder_id = pending.get("folderId").and_then(Value::as_str).map(str::to_string);
-            stubs.push(EntityStub { id, folder_id });
+            stubs.push(EntityStub { id, folder_id, deleted: Some(pending) });
         }
     }
     stubs
@@ -365,6 +411,10 @@ pub fn write_enabled_set(ws_id: &str, kind: &str, ids: &IndexSet<String>) -> std
 
 /// Create `enabled.json` from the entity files: everything not explicitly `enabled: false` is on.
 pub fn bootstrap_enabled_set(ws_id: &str, kind: &str) -> IndexSet<String> {
+    // No workspace (nothing is active before the first one is made): nothing is on, and nothing is written.
+    if ws_id.is_empty() {
+        return IndexSet::new();
+    }
     let enabled: IndexSet<String> = read_all_entities(ws_id, kind)
         .iter()
         .filter(|entity| entity.get("enabled") != Some(&Value::Bool(false)))
@@ -405,7 +455,8 @@ fn write_pending_deletions(ws_id: &str, data: &Map<String, Value>) -> std::io::R
 }
 
 /// Remember an entity deleted locally until the deletion is published:
-/// `{id, folderId, name, method?, url?, urlSuffix?}`.
+/// `{id, folderId, path, name, method?, url?, urlSuffix?}`. A kind's deleted folders are kept the same way,
+/// under `pending_folders_key(kind)`, as the folder objects `index.json` held.
 pub fn add_pending_deletion(ws_id: &str, kind: &str, entry: Value) -> std::io::Result<()> {
     let mut data = read_pending_deletions(ws_id);
     let list = data.entry(kind.to_string()).or_insert_with(|| json!([]));
@@ -429,6 +480,11 @@ pub fn remove_pending_deletion(ws_id: &str, kind: &str, id: &str) -> std::io::Re
 
 pub fn get_pending_deletions(ws_id: &str, kind: &str) -> Vec<Value> {
     read_pending_deletions(ws_id).get(kind).and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+/// The key a kind's deleted folders are kept under in `pending-deletions.json`.
+pub fn pending_folders_key(kind: &str) -> String {
+    format!("{kind}.folders")
 }
 
 pub fn clear_pending_deletions(ws_id: &str, kind: &str) -> std::io::Result<()> {

@@ -6,7 +6,10 @@ use std::path::Path;
 use regress::Regex;
 use serde_json::{Value, json};
 
-use super::fs::ws_dir;
+use super::{
+    accounts::commit_identity,
+    fs::{GLOBAL_ENV_PATH, ws_dir},
+};
 use crate::utils::process::hidden_command;
 
 /// Variables that would make git open an editor or a pager, which a background engine can never answer.
@@ -34,14 +37,73 @@ pub fn device_name() -> String {
     if name.is_empty() { "unknown".to_string() } else { name }
 }
 
+/// The token a network operation presents to one host, in place of whatever credentials the machine has.
+#[derive(Clone)]
+pub struct RemoteAuth {
+    /// `https://github.com`: the header is sent to this origin only.
+    pub origin: String,
+    pub token: String,
+}
+
+/// The `scheme://host[:port]` of an http(s) remote; `None` for a path or an ssh remote, which take no token.
+pub fn remote_origin(remote: &str) -> Option<String> {
+    let url = url::Url::parse(remote).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    })
+}
+
 /// Run `git <args>` in `dir`; stdout on success, stderr (or stdout) as the error otherwise.
 pub async fn git_in(dir: &Path, args: &[&str]) -> Result<String, GitError> {
-    let mut command = hidden_command("git");
-    command.args(args).current_dir(dir).env("GIT_OPTIONAL_LOCKS", "0").stdin(std::process::Stdio::null());
-    for name in STRIPPED_GIT_VARS {
-        command.env_remove(name);
+    run_git(dir, args, None, false).await
+}
+
+/// `git_in` for an operation that talks to a remote. It never waits for a typed password. With `auth`, the
+/// token is the only credential offered (the machine's credential helpers are left out), and it travels in
+/// the environment, never on the command line.
+pub async fn git_net_in(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>) -> Result<String, GitError> {
+    run_git(dir, args, auth, true).await
+}
+
+/// Where git was found when it is not on the engine's `PATH`.
+static LOCATED_GIT: parking_lot::Mutex<Option<std::path::PathBuf>> = parking_lot::Mutex::new(None);
+
+/// A git installed after the engine started is not on the `PATH` the engine was given, and the engine
+/// outlives the windows that could restart it. So the places an installer puts it are looked at too.
+fn locate_git() -> Option<std::path::PathBuf> {
+    if !cfg!(windows) {
+        return None;
     }
-    let output = command.output().await.map_err(|e| GitError(format!("could not run git: {e}")))?;
+    let under = |var: &str, rest: &str| std::env::var_os(var).map(|base| Path::new(&base).join(rest));
+    [
+        under("ProgramFiles", "Git\\cmd\\git.exe"),
+        under("ProgramW6432", "Git\\cmd\\git.exe"),
+        under("ProgramFiles(x86)", "Git\\cmd\\git.exe"),
+        under("LOCALAPPDATA", "Programs\\Git\\cmd\\git.exe"),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|path| path.is_file())
+}
+
+async fn run_git(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>, network: bool) -> Result<String, GitError> {
+    let located = LOCATED_GIT.lock().clone();
+    let output = match git_command(located.as_deref(), dir, args, auth, network).output().await {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && located.is_none() => match locate_git() {
+            Some(found) => {
+                *LOCATED_GIT.lock() = Some(found.clone());
+                git_command(Some(&found), dir, args, auth, network).output().await
+            }
+            None => Err(e),
+        },
+        other => other,
+    }
+    .map_err(|e| GitError(format!("could not run git: {e}")))?;
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
@@ -49,39 +111,89 @@ pub async fn git_in(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     Err(GitError(if stderr.is_empty() { String::from_utf8_lossy(&output.stdout).trim().to_string() } else { stderr }))
 }
 
+fn git_command(
+    program: Option<&Path>,
+    dir: &Path,
+    args: &[&str],
+    auth: Option<&RemoteAuth>,
+    network: bool,
+) -> tokio::process::Command {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let mut command = hidden_command(program.unwrap_or(Path::new("git")));
+    command.args(args).current_dir(dir).env("GIT_OPTIONAL_LOCKS", "0").stdin(std::process::Stdio::null());
+    for name in STRIPPED_GIT_VARS {
+        command.env_remove(name);
+    }
+    if network {
+        command.env("GIT_TERMINAL_PROMPT", "0").env_remove("GIT_ASKPASS").env_remove("SSH_ASKPASS");
+    }
+    if let Some(auth) = auth {
+        let basic = STANDARD.encode(format!("x-access-token:{}", auth.token));
+        command
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "credential.helper")
+            .env("GIT_CONFIG_VALUE_0", "")
+            .env("GIT_CONFIG_KEY_1", format!("http.{}/.extraheader", auth.origin))
+            .env("GIT_CONFIG_VALUE_1", format!("Authorization: Basic {basic}"));
+    }
+    command
+}
+
 /// Run `git <args>` in a workspace's repository.
 pub async fn git(ws_id: &str, args: &[&str]) -> Result<String, GitError> {
     git_in(&ws_dir(ws_id), args).await
 }
 
+/// The installed git's version (`2.45.1`), or `None` when git cannot be run.
+pub async fn git_version() -> Option<String> {
+    let out = git_in(&std::env::current_dir().unwrap_or_default(), &["--version"]).await.ok()?;
+    Some(out.trim().strip_prefix("git version ").unwrap_or(out.trim()).to_string())
+}
+
 pub async fn check_git_installed() -> bool {
-    git_in(&std::env::current_dir().unwrap_or_default(), &["--version"]).await.is_ok()
+    git_version().await.is_some()
 }
 
 pub fn is_repo(ws_id: &str) -> bool {
     ws_dir(ws_id).join(".git").exists()
 }
 
-/// Make the workspace directory a repository (first commit: `.gitignore` and `workspace.json`), and make
-/// sure it has a committer identity.
+/// Make the workspace's commits be by its account, or by this device when it has none.
+pub async fn apply_commit_identity(ws_id: &str) -> Result<(), GitError> {
+    let identity = commit_identity(ws_id);
+    git(ws_id, &["config", "--local", "user.email", &identity.email]).await?;
+    git(ws_id, &["config", "--local", "user.name", &identity.name]).await?;
+    Ok(())
+}
+
+/// Make the workspace directory a repository, and make sure it commits as the right identity. The first
+/// commit creates the workspace (`.gitignore` and `workspace.json`).
 pub async fn init_workspace_repo(ws_id: &str) -> Result<(), GitError> {
     let dir = ws_dir(ws_id);
-    let name = device_name();
-    let email = format!("{name}@bifurc");
-    if !dir.join(".git").exists() {
-        git_in(&dir, &["init"]).await?;
-        git_in(&dir, &["config", "--local", "user.email", &email]).await?;
-        git_in(&dir, &["config", "--local", "user.name", &name]).await?;
-        if dir.join(".gitignore").exists() {
-            git_in(&dir, &["add", ".gitignore"]).await?;
-            if dir.join("workspace.json").exists() {
-                git_in(&dir, &["add", "workspace.json"]).await?;
-            }
-            git_in(&dir, &["commit", "-m", "chore: init workspace repo"]).await?;
+    if dir.join(".git").exists() {
+        let _ = apply_commit_identity(ws_id).await;
+        return Ok(());
+    }
+    git_in(&dir, &["init"]).await?;
+    // The same branch name on every device, whatever this machine's git defaults to.
+    git_in(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]).await?;
+    apply_commit_identity(ws_id).await?;
+    if dir.join(".gitignore").exists() {
+        git_in(&dir, &["add", ".gitignore"]).await?;
+        if dir.join("workspace.json").exists() {
+            git_in(&dir, &["add", "workspace.json"]).await?;
         }
-    } else {
-        let _ = git_in(&dir, &["config", "--local", "user.email", &email]).await;
-        let _ = git_in(&dir, &["config", "--local", "user.name", &name]).await;
+        if dir.join(GLOBAL_ENV_PATH).exists() {
+            git_in(&dir, &["add", GLOBAL_ENV_PATH]).await?;
+        }
+        let identity = commit_identity(ws_id);
+        let name = crate::utils::json::read_json(&dir.join("workspace.json"))
+            .and_then(|info| info.get("name").and_then(Value::as_str).map(str::to_string))
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| ws_id.to_string());
+        let message =
+            format!("create workspace {name}\n\nentity-id: {ws_id}\nworkspace-id: {ws_id}\nactor: {}", identity.actor);
+        git_in(&dir, &["commit", "-m", &message]).await?;
     }
     Ok(())
 }
@@ -102,7 +214,7 @@ pub struct CommitMutation<'a> {
 /// Stage one path and commit it with an audit message. Returns the commit's hash, or `""` when there
 /// was nothing to commit.
 pub async fn commit_mutation(opts: CommitMutation<'_>) -> Result<String, GitError> {
-    let actor = opts.actor.map(str::to_string).unwrap_or_else(device_name);
+    let actor = opts.actor.map(str::to_string).unwrap_or_else(|| commit_identity(opts.workspace_id).actor);
     let fields =
         if opts.changed_fields.is_empty() { String::new() } else { format!(" [{}]", opts.changed_fields.join(",")) };
     let message = format!(

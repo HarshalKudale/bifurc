@@ -5,6 +5,7 @@
 //! read-modify-write of a workspace file cannot interleave with another's between awaits. Work that would
 //! block that thread for long (a user script) runs on the blocking pool.
 
+pub mod analytics;
 pub mod applications;
 pub mod capture;
 pub mod certificates;
@@ -28,6 +29,7 @@ pub mod services;
 pub mod soap;
 pub mod transport;
 pub mod utils;
+pub mod vault;
 pub mod websocket;
 pub mod workspace;
 
