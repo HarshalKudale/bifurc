@@ -8,7 +8,7 @@ use super::{
     git_state::get_workspace_git_state,
     github,
     login::{cancel_login, login_status, start_login},
-    remote::{import_workspace, publish_workspace, remove_workspaces, workspace_for_repo},
+    remote::{flag_if_rejected, import_workspace, publish_workspace, remove_workspaces, workspace_for_repo},
     status_tracker::get_workspace_sync_status,
     sync_all::{sync_workspace, track_untracked_workspaces},
     sync_state::get_sync_config,
@@ -178,7 +178,7 @@ pub fn register(registry: &mut CommandRegistry) {
                     .collect();
                 Ok(json!({ "ok": true, "repos": repos }))
             }
-            Err(message) => Ok(json!({ "ok": false, "error": message })),
+            Err(message) => Ok(json!({ "ok": false, "error": flag_if_rejected(id, message) })),
         }
     });
 

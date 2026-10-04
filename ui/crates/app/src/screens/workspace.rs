@@ -539,13 +539,16 @@ impl WorkspaceScreen {
                  on top of it. Nothing of yours is pushed until you sync it."
             });
 
+        let git = self.model.read(cx).git();
+        let not_synced = git.files.values().filter(|s| !matches!(s, FileState::Clean)).count();
+        let synced = git.files.len() - not_synced;
         let status_label = match sync.status.as_str() {
             "pushing" => "Pushing…",
             "syncing" => "Syncing…",
             "pulling" => "Pulling…",
             "cloning" => "Cloning…",
             "error" => "Error",
-            _ => "Synced",
+            _ => "Idle",
         };
         let working = sync.is_working();
         let (pull, push) = (this.clone(), this.clone());
@@ -557,8 +560,10 @@ impl WorkspaceScreen {
             let state = match sync.status.as_str() {
                 "error" => Tag::danger().child(status_label),
                 _ if working => Tag::warning().child(sync.progress.clone().unwrap_or_else(|| status_label.to_owned())),
-                _ => Tag::success().child(status_label),
+                _ => Tag::secondary().child(status_label),
             };
+            let counts = if not_synced == 0 { Tag::success() } else { Tag::warning() }
+                .child(format!("Synced entities {synced} · Not synced entities {not_synced}"));
             v_flex()
                 .w_full()
                 .gap_2()
@@ -566,7 +571,7 @@ impl WorkspaceScreen {
                     h_flex()
                         .w_full()
                         .gap_2()
-                        .child(div().flex_1().child(state))
+                        .child(div().flex_1().child(h_flex().gap_2().child(state).child(counts)))
                         .child(
                             Button::new("pull-remote")
                                 .with_size(options.size())
