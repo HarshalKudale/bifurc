@@ -11,17 +11,17 @@ use serde_json::{Value, json};
 
 use crate::{
     importexport::{
-        support::{io_failure, js_str, parse_json, pretty, push_to, store_request, sync_enabled},
+        support::{default_folder, io_failure, js_str, parse_json, pretty, push_to, store_request, sync_enabled},
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
     },
     runtime::instances::notify_config_changed,
     utils::{
         id::{generate_id, now_ms},
-        json::{array_of, is_truthy, merged, object_mut, str_of},
+        json::{array_mut, array_of, is_truthy, merged, object_mut, str_of},
     },
     workspace::{
         config::load_config,
-        fs::{init_workspace_dir, upsert_name_entry, write_entity, ws_dir},
+        fs::{ensure_default_folder, init_workspace_dir, upsert_name_entry, write_entity, ws_dir},
         git_store::init_workspace_repo,
         settings::{load_settings, save_settings},
     },
@@ -106,6 +106,17 @@ pub async fn json_run(_ws_id: String, source: ImportSource, _strategy: Strategy)
 
     init_workspace_dir(&new_id, &name).map_err(io_failure)?;
     init_workspace_repo(&new_id).await.map_err(io_failure)?;
+
+    // A snapshot from before every mock had a folder: the ones in none go into the Default folder.
+    let known: HashSet<String> =
+        array_of(&cfg, "mockFolders").iter().map(|f| str_of(f, "id").to_string()).collect();
+    let is_loose = |mock: &Value| str_of(mock, "workspaceId") == new_id && !known.contains(str_of(mock, "folderId"));
+    if array_of(&cfg, "mocks").iter().any(is_loose) {
+        let (default_id, _) = default_folder(&mut cfg, "mockFolders", "mocks", &new_id)?;
+        for mock in array_mut(&mut cfg, "mocks").iter_mut().filter(|m| is_loose(m)) {
+            object_mut(mock).insert("folderId".into(), json!(default_id));
+        }
+    }
     commit_config_without_notify(&cfg)?;
 
     let request_folders = folder_names(&remap(data, "requestFolders", &new_id));
@@ -118,15 +129,20 @@ pub async fn json_run(_ws_id: String, source: ImportSource, _strategy: Strategy)
     for request in remap(data, "requests", &new_id) {
         store_request(&new_id, &request, folder_of(&request, &request_folders).as_deref())?;
     }
-    for connection in remap(data, "wsConnections", &new_id) {
-        let id = str_of(&connection, "id");
-        write_entity(&new_id, "sockets", id, &connection, folder_of(&connection, &ws_folders).as_deref())
-            .map_err(io_failure)?;
+    for mut connection in remap(data, "wsConnections", &new_id) {
+        let id = str_of(&connection, "id").to_string();
+        let mut folder = folder_of(&connection, &ws_folders);
+        if folder.is_none() {
+            let (folder_id, name) = ensure_default_folder(&new_id, "sockets").map_err(io_failure)?;
+            object_mut(&mut connection).insert("folderId".into(), json!(folder_id));
+            folder = Some(name);
+        }
+        write_entity(&new_id, "sockets", &id, &connection, folder.as_deref()).map_err(io_failure)?;
         let entry = json!({
             "name": connection.get("name").cloned().unwrap_or(Value::Null),
             "url": connection.get("url").cloned().unwrap_or(Value::Null),
         });
-        upsert_name_entry(&new_id, "sockets", id, entry).map_err(io_failure)?;
+        upsert_name_entry(&new_id, "sockets", &id, entry).map_err(io_failure)?;
     }
     for rule in remap(data, "proxyRules", &new_id) {
         let id = str_of(&rule, "id");
