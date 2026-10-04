@@ -38,10 +38,14 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bifurc-desktop-windows
-          path: |
-            release/desktop/*.exe
-            release/desktop/*.msix
+          name: bifurc-windows-installer
+          path: release/desktop/*-setup.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bifurc-windows-msix
+          path: release/desktop/*.msix
           if-no-files-found: error
 
   linux:
@@ -73,6 +77,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bifurc-desktop-linux
+          name: bifurc-linux-appimage
           path: release/desktop/*.AppImage
           if-no-files-found: error
