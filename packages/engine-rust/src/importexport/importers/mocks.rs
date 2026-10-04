@@ -8,8 +8,8 @@ use crate::{
     importexport::{
         formats::postman::parse_postman_mocks,
         support::{
-            commit_config, folder_name, io_failure, js_str, new_folder, parse_json, present, push_to, sync_enabled,
-            thrown, upsert_by_id, workspace_ids,
+            FolderSpec, ImportRoot, add_import_folders, commit_config, folder_name, io_failure, js_str, parse_json,
+            present, push_to, sync_enabled, thrown, upsert_by_id, workspace_ids,
         },
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
     },
@@ -63,13 +63,20 @@ pub async fn json_run(ws_id: String, source: ImportSource, strategy: Strategy) -
     let mut cfg = load_config();
     let existing = workspace_ids(&cfg, "mocks", &ws_id);
 
+    let skips = |mock: &Value| existing.contains(str_of(mock, "id")) && strategy == Strategy::Keep;
+    let mut root = ImportRoot::new("mockFolders", "mocks");
     let mut folder_ids: HashMap<String, String> = HashMap::new();
-    for folder in &folders {
-        let new_id = if strategy == Strategy::New { generate_id() } else { str_of(folder, "id").to_string() };
-        folder_ids.insert(str_of(folder, "id").to_string(), new_id.clone());
-        if !array_of(&cfg, "mockFolders").iter().any(|f| str_of(f, "id") == new_id) {
-            push_to(&mut cfg, "mockFolders", merged(folder, &json!({ "id": new_id, "workspaceId": ws_id })));
-        }
+    if mocks.iter().any(|mock| !skips(mock)) {
+        let (root_id, _) = root.get(&mut cfg, &ws_id)?;
+        let specs: Vec<FolderSpec> = folders
+            .iter()
+            .map(|f| FolderSpec {
+                key: str_of(f, "id").to_string(),
+                name: str_of(f, "name").to_string(),
+                parent: opt_str(f, "parentId").filter(|p| !p.is_empty()).map(str::to_string),
+            })
+            .collect();
+        folder_ids = add_import_folders(&mut cfg, "mockFolders", "mocks", &ws_id, &root_id, &specs)?;
     }
 
     let (mut imported, mut skipped) = (0, 0);
@@ -79,11 +86,13 @@ pub async fn json_run(ws_id: String, source: ImportSource, strategy: Strategy) -
             skipped += 1;
             continue;
         }
-        let folder_id = opt_str(mock, "folderId").filter(|f| !f.is_empty()).and_then(|f| folder_ids.get(f)).cloned();
-        let folder = folder_name(&cfg, "mockFolders", folder_id.as_deref());
+        let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+        let in_folder = opt_str(mock, "folderId").filter(|f| !f.is_empty()).and_then(|f| folder_ids.get(f)).cloned();
+        let folder_id = in_folder.unwrap_or(root_id);
+        let folder = folder_name(&cfg, "mockFolders", Some(&folder_id)).unwrap_or(root_name);
         let new_mock = merged(mock, &json!({ "id": new_id, "folderId": folder_id, "workspaceId": ws_id }));
         upsert_by_id(&mut cfg, "mocks", new_mock.clone());
-        store_mock(&ws_id, &new_mock, folder.as_deref())?;
+        store_mock(&ws_id, &new_mock, Some(&folder))?;
         imported += 1;
     }
 
@@ -102,18 +111,22 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
     let (folders, mocks) = parse_postman_mocks(&source.content)?;
     let mut cfg = load_config();
 
-    let mut folder_ids: HashMap<String, String> = HashMap::new();
-    for folder in &folders {
-        let id = generate_id();
-        let parent = folder.parent.as_ref().and_then(|p| folder_ids.get(p)).cloned();
-        push_to(&mut cfg, "mockFolders", new_folder(&id, &folder.name, parent.as_deref(), json!(now_ms()), &ws_id));
-        folder_ids.insert(folder.name.clone(), id);
+    if mocks.is_empty() {
+        return Ok(Imported::all(0));
     }
+    let mut root = ImportRoot::new("mockFolders", "mocks");
+    let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+    let specs: Vec<FolderSpec> = folders
+        .iter()
+        .map(|f| FolderSpec { key: f.name.clone(), name: f.name.clone(), parent: f.parent.clone() })
+        .collect();
+    let folder_ids = add_import_folders(&mut cfg, "mockFolders", "mocks", &ws_id, &root_id, &specs)?;
 
     let mut imported = 0;
     for parsed in &mocks {
-        let folder_id = parsed.folder.as_ref().and_then(|f| folder_ids.get(f)).cloned();
-        let folder = folder_name(&cfg, "mockFolders", folder_id.as_deref());
+        let folder_id =
+            parsed.folder.as_ref().and_then(|f| folder_ids.get(f)).cloned().unwrap_or_else(|| root_id.clone());
+        let folder = folder_name(&cfg, "mockFolders", Some(&folder_id)).unwrap_or_else(|| root_name.clone());
         let mock = json!({
             "id": generate_id(),
             "name": parsed.name,
@@ -131,7 +144,7 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
             "workspaceId": ws_id,
         });
         push_to(&mut cfg, "mocks", mock.clone());
-        store_mock(&ws_id, &mock, folder.as_deref())?;
+        store_mock(&ws_id, &mock, Some(&folder))?;
         imported += 1;
     }
 
@@ -160,6 +173,7 @@ pub async fn wiremock_run(ws_id: String, source: ImportSource, strategy: Strateg
     let mut cfg = load_config();
     let existing = workspace_ids(&cfg, "mocks", &ws_id);
 
+    let mut root = ImportRoot::new("mockFolders", "mocks");
     let (mut imported, mut skipped) = (0, 0);
     for stub in &stubs {
         let source_id = present(stub, "id").map(js_str).unwrap_or_else(generate_id);
@@ -202,12 +216,13 @@ pub async fn wiremock_run(ws_id: String, source: ImportSource, strategy: Strateg
             mock.insert("responseDelay".into(), delay.clone());
         }
         mock.insert("createdAt".into(), json!(now_ms()));
-        mock.insert("folderId".into(), Value::Null);
+        let (folder_id, folder) = root.get(&mut cfg, &ws_id)?;
+        mock.insert("folderId".into(), json!(folder_id));
         mock.insert("workspaceId".into(), json!(ws_id));
         let mock = Value::Object(mock);
 
         upsert_by_id(&mut cfg, "mocks", mock.clone());
-        store_mock(&ws_id, &mock, None)?;
+        store_mock(&ws_id, &mock, Some(&folder))?;
         imported += 1;
     }
 
@@ -225,6 +240,14 @@ mod tests {
 
     fn source(content: &str) -> ImportSource {
         ImportSource { content: content.to_string(), filename: "mocks.json".to_string() }
+    }
+
+    /// The directory of the one folder an import run made.
+    fn import_dir(ws: &str) -> std::path::PathBuf {
+        let index = crate::workspace::fs::read_index(ws, "mocks");
+        let made: Vec<_> = index.folders.iter().filter_map(|f| f["name"].as_str()).filter(|n| n.starts_with("import-")).collect();
+        assert!(!made.is_empty());
+        entity_dir(ws, "mocks").join(made[0])
     }
 
     fn mock_file(id: &str, name: &str, folder: Option<&str>) -> Value {
@@ -249,8 +272,14 @@ mod tests {
         let stored = read_all_entities(&ws, "mocks");
         let one = stored.iter().find(|m| m["id"] == "m1").unwrap();
         assert_eq!(one["workspaceId"], ws.as_str());
+        let index = crate::workspace::fs::read_index(&ws, "mocks");
+        let group = index.folders.iter().find(|f| f["name"] == "Group").unwrap();
+        let top = index.folders.iter().find(|f| f["id"] == group["parentId"]).unwrap();
+        assert!(top["name"].as_str().unwrap().starts_with("import-"), "a folder of the file sits in the import folder");
         assert!(entity_dir(&ws, "mocks").join("Group").join("m1.json").exists());
         assert!(load_enabled_set(&ws, "mocks").contains("m1"));
+        assert!(import_dir(&ws).join("m2.json").exists(), "a mock without a folder goes in the import folder");
+        assert!(!entity_dir(&ws, "mocks").join("m2.json").exists());
         assert_eq!(read_names_index(&ws, "mocks")["m2"], json!({ "name": "Two", "method": "GET", "url": "/x" }));
 
         let pre = json_preflight(&ws, &source(&file)).unwrap();
@@ -321,6 +350,8 @@ mod tests {
         assert_eq!(w1["useRegex"], true);
         assert_eq!(w1["responseDelay"], 30);
         assert_eq!(w1["responseStatus"], 201);
+        assert!(import_dir(&ws).join("w1.json").exists());
+        assert!(!entity_dir(&ws, "mocks").join("w1.json").exists());
         let named = stored.iter().find(|m| m["name"] == "Named").unwrap();
         assert_eq!(named["method"], "POST");
         assert_eq!(named["urlPattern"], "/p");
