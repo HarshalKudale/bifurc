@@ -78,6 +78,12 @@ pub struct SetupState {
     /// This build can sign in to GitHub.
     pub sign_in_available: bool,
     pub accounts: Vec<AccountInfo>,
+    /// Where the privacy policy is published.
+    pub privacy_policy_url: String,
+    /// The privacy policy was accepted on this data directory.
+    pub privacy_accepted: bool,
+    /// The first-run setup was walked through to its end.
+    pub onboarded: bool,
 }
 
 impl SetupState {
@@ -87,6 +93,9 @@ impl SetupState {
             known: true,
             git_installed: flag("gitInstalled"),
             sign_in_available: flag("signInAvailable"),
+            privacy_policy_url: value.get("privacyPolicyUrl").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            privacy_accepted: flag("privacyAccepted"),
+            onboarded: flag("onboarded"),
             accounts: value
                 .get("accounts")
                 .and_then(Value::as_array)

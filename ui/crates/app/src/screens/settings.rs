@@ -29,44 +29,15 @@ use serde_json::{Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent, ProxyStatus},
-    components::{
-        binary::{PickedFile, pick_file},
-        dialogs::confirm_danger,
-    },
-    engine::{call, call_in, describe, failure, upload_and_call},
-    model::{config::AccountInfo, trust},
+    components::{certificate::Certificate, dialogs::confirm_danger},
+    engine::{call, call_in, failure},
+    model::config::AccountInfo,
     preferences::Preferences,
     theme,
 };
 
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc/releases";
-
-/// The engine's root certificate, as `tls.certStatus` reports it.
-#[derive(Debug, Clone, Default, PartialEq)]
-struct Certificate {
-    generated: bool,
-    fingerprint: Option<String>,
-    /// A generate or remove is in flight.
-    busy: bool,
-    /// The user's own certificate and key are being uploaded.
-    importing: bool,
-    /// The certificate is being added to this computer's trust store.
-    installing: bool,
-    /// How the last install went: whether it worked, and what to say about it.
-    note: Option<(bool, String)>,
-}
-
-/// The certificate's bytes from a `tls.exportCert` artifact: it is a PEM of a kilobyte or so, so the engine
-/// always sends it inline as base64.
-fn certificate_bytes(artifact: &Value) -> Result<Vec<u8>, String> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    if artifact.get("ok").and_then(Value::as_bool) == Some(false) {
-        return Err(artifact.get("error").and_then(Value::as_str).unwrap_or("There is no certificate.").to_owned());
-    }
-    let inline = artifact.get("inline").and_then(Value::as_str).ok_or("The engine sent no certificate.")?;
-    STANDARD.decode(inline).map_err(|error| format!("The certificate could not be read. {error}"))
-}
 
 /// A workspace that syncs as an account, and what it holds that its repository does not.
 #[derive(Debug, Clone, PartialEq)]
@@ -145,7 +116,7 @@ fn capitalized(text: &str) -> String {
 
 pub struct SettingsScreen {
     model: Entity<AppModel>,
-    certificate: Certificate,
+    certificate: Entity<Certificate>,
     accounts: Vec<AccountRow>,
     /// The account being signed out.
     signing_out: Option<String>,
@@ -154,7 +125,7 @@ pub struct SettingsScreen {
 
 impl SettingsScreen {
     pub fn new(model: Entity<AppModel>, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe(&model, |this, _, event: &ModelEvent, cx| {
                 // What an account's workspaces hold unsynced changes with every sync.
@@ -169,14 +140,10 @@ impl SettingsScreen {
                 }
             }),
         ];
-        let mut this = Self {
-            model,
-            certificate: Certificate::default(),
-            accounts: Vec::new(),
-            signing_out: None,
-            _subscriptions: subscriptions,
-        };
-        this.refresh_certificate(cx);
+        let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
+        subscriptions.push(cx.observe(&certificate, |_, _, cx| cx.notify()));
+        let mut this =
+            Self { model, certificate, accounts: Vec::new(), signing_out: None, _subscriptions: subscriptions };
         this.refresh_accounts(cx);
         this
     }
@@ -234,148 +201,8 @@ impl SettingsScreen {
         });
     }
 
-    fn refresh_certificate(&mut self, cx: &mut Context<Self>) {
-        let client = self.model.read(cx).client().clone();
-        call(&client, cx, "tls.certStatus", json!({}), |this, outcome, cx| {
-            if let Ok(status) = outcome {
-                this.certificate = Certificate {
-                    generated: status.get("generated").and_then(Value::as_bool).unwrap_or(false),
-                    fingerprint: status.get("fingerprint").and_then(Value::as_str).map(str::to_owned),
-                    busy: false,
-                    importing: this.certificate.importing,
-                    installing: this.certificate.installing,
-                    note: this.certificate.note.clone(),
-                };
-                cx.notify();
-            }
-        });
-    }
-
     fn report(&mut self, message: String, cx: &mut Context<Self>) {
         self.model.update(cx, |model, cx| model.notice(message, cx));
-    }
-
-    /// The forward proxy reads the certificate when it starts, so a running one is started again to use a
-    /// new certificate.
-    fn reload_proxy(&mut self, cx: &mut Context<Self>) {
-        if self.model.read(cx).proxy().running {
-            self.model.update(cx, |model, cx| model.restart_proxy(cx));
-        }
-    }
-
-    /// Asks for the user's own certificate and then its private key, and hands both to the engine.
-    fn import_certificate(&mut self, cx: &mut Context<Self>) {
-        if self.certificate.busy || self.certificate.importing {
-            return;
-        }
-        pick_file("Choose the CA certificate (.pem or .crt)", cx, |this, certificate, cx| {
-            let certificate = match certificate {
-                Ok(certificate) => certificate,
-                Err(error) => return this.report(format!("Couldn't read the certificate. {error}"), cx),
-            };
-            pick_file("Now choose its private key (.pem or .key)", cx, move |this, key, cx| match key {
-                Ok(key) => this.upload_certificate(certificate, key, cx),
-                Err(error) => this.report(format!("Couldn't read the private key. {error}"), cx),
-            });
-        });
-    }
-
-    fn upload_certificate(&mut self, certificate: PickedFile, key: PickedFile, cx: &mut Context<Self>) {
-        self.certificate.importing = true;
-        self.certificate.note = None;
-        cx.notify();
-        let client = self.model.read(cx).client().clone();
-        let key_client = client.clone();
-        upload_and_call(
-            &client,
-            cx,
-            None,
-            &certificate.name,
-            &certificate.bytes,
-            "tls.importCert",
-            Default::default(),
-            move |this, outcome, cx| {
-                if let Err(message) = outcome {
-                    return this.finish_import(Some(format!("Couldn't import the certificate. {message}")), cx);
-                }
-                upload_and_call(
-                    &key_client,
-                    cx,
-                    None,
-                    &key.name,
-                    &key.bytes,
-                    "tls.importKey",
-                    Default::default(),
-                    |this, outcome, cx| {
-                        let failed = outcome.err().map(|message| format!("Couldn't import the private key. {message}"));
-                        this.finish_import(failed, cx)
-                    },
-                );
-            },
-        );
-    }
-
-    fn finish_import(&mut self, failed: Option<String>, cx: &mut Context<Self>) {
-        self.certificate.importing = false;
-        match failed {
-            Some(message) => self.report(message, cx),
-            None => self.reload_proxy(cx),
-        }
-        self.refresh_certificate(cx);
-    }
-
-    /// Reads the certificate from the engine and puts it in this computer's trust store.
-    fn install_certificate(&mut self, cx: &mut Context<Self>) {
-        if self.certificate.installing {
-            return;
-        }
-        self.certificate.installing = true;
-        self.certificate.note = None;
-        cx.notify();
-        let client = self.model.read(cx).client().clone();
-        call(&client, cx, "tls.exportCert", json!({}), |this, outcome, cx| {
-            let pem = match outcome {
-                Ok(artifact) => certificate_bytes(&artifact),
-                Err(error) => Err(describe(&error)),
-            };
-            let pem = match pem {
-                Ok(pem) => pem,
-                Err(message) => return this.finish_install(Err(message), cx),
-            };
-            let installing = cx.background_spawn(async move { trust::install(&pem) });
-            cx.spawn(async move |this, cx| {
-                let outcome = installing.await;
-                this.update(cx, |this, cx| this.finish_install(outcome, cx)).ok();
-            })
-            .detach();
-        });
-    }
-
-    fn finish_install(&mut self, outcome: Result<String, String>, cx: &mut Context<Self>) {
-        self.certificate.installing = false;
-        self.certificate.note = Some(match outcome {
-            Ok(message) => (true, message),
-            Err(message) => (false, message),
-        });
-        cx.notify();
-    }
-
-    fn run_certificate_command(&mut self, action: &'static str, what: &'static str, cx: &mut Context<Self>) {
-        if self.certificate.busy {
-            return;
-        }
-        self.certificate.busy = true;
-        cx.notify();
-        let client = self.model.read(cx).client().clone();
-        call(&client, cx, action, json!({}), move |this, outcome, cx| {
-            if let Some(message) = failure(&outcome) {
-                this.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
-            }
-            this.certificate.busy = false;
-            this.certificate.note = None;
-            this.reload_proxy(cx);
-            this.refresh_certificate(cx);
-        });
     }
 
     fn appearance_page(&self, cx: &App) -> SettingPage {
@@ -563,13 +390,11 @@ impl SettingsScreen {
         ])
     }
 
-    fn https_page(&self, cx: &mut Context<Self>) -> SettingPage {
+    fn https_page(&self) -> SettingPage {
         let tls_read = self.model.clone();
         let tls_write = self.model.clone();
-        let certificate = self.certificate.clone();
-        let this = cx.weak_entity();
-        let install_this = this.clone();
-        let install_certificate = certificate.clone();
+        let control = self.certificate.clone();
+        let install_control = control.clone();
         SettingPage::new("HTTPS").icon(IconName::Globe).groups(vec![
             SettingGroup::new().title("Interception").item(
                 SettingItem::new(
@@ -589,8 +414,9 @@ impl SettingsScreen {
                 .item(
                     SettingItem::render(move |options, _, cx| {
                         let theme = cx.theme().clone();
-                        let (generate, import, remove) = (this.clone(), this.clone(), this.clone());
-                        let working = certificate.busy || certificate.importing;
+                        let (generate, import, remove) = (control.clone(), control.clone(), control.clone());
+                        let certificate = control.read(cx);
+                        let working = certificate.working();
                         h_flex()
                             .w_full()
                             .gap_2()
@@ -616,17 +442,7 @@ impl SettingsScreen {
                                     .label(if certificate.generated { "Regenerate" } else { "Generate" })
                                     .loading(certificate.busy)
                                     .disabled(working)
-                                    .on_click(move |_, _, cx| {
-                                        generate
-                                            .update(cx, |this, cx| {
-                                                this.run_certificate_command(
-                                                    "tls.generate",
-                                                    "Couldn't generate the certificate.",
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }),
+                                    .on_click(move |_, _, cx| generate.update(cx, |certificate, cx| certificate.generate(cx))),
                             )
                             .child(
                                 Button::new("import-certificate")
@@ -635,26 +451,14 @@ impl SettingsScreen {
                                     .loading(certificate.importing)
                                     .disabled(working)
                                     .tooltip("Use your own certificate and private key instead")
-                                    .on_click(move |_, _, cx| {
-                                        import.update(cx, |this, cx| this.import_certificate(cx)).ok();
-                                    }),
+                                    .on_click(move |_, _, cx| import.update(cx, |certificate, cx| certificate.import(cx))),
                             )
                             .child(
                                 Button::new("remove-certificate")
                                     .with_size(options.size())
                                     .label("Remove")
                                     .disabled(!certificate.generated || working)
-                                    .on_click(move |_, _, cx| {
-                                        remove
-                                            .update(cx, |this, cx| {
-                                                this.run_certificate_command(
-                                                    "tls.removeCert",
-                                                    "Couldn't remove the certificate.",
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }),
+                                    .on_click(move |_, _, cx| remove.update(cx, |certificate, cx| certificate.remove(cx))),
                             )
                     })
                     .keywords(["ca", "root", "fingerprint", "import", "own", "generate"]),
@@ -662,8 +466,8 @@ impl SettingsScreen {
                 .item(
                     SettingItem::render(move |options, _, cx| {
                         let theme = cx.theme().clone();
-                        let install = install_this.clone();
-                        let certificate = install_certificate.clone();
+                        let install = install_control.clone();
+                        let certificate = install_control.read(cx);
                         let note = certificate.note.clone().map(|(ok, text)| {
                             div()
                                 .text_xs()
@@ -688,9 +492,7 @@ impl SettingsScreen {
                                     .loading(certificate.installing)
                                     .disabled(!certificate.generated || certificate.installing)
                                     .tooltip("Add the certificate to this computer's trusted roots")
-                                    .on_click(move |_, _, cx| {
-                                        install.update(cx, |this, cx| this.install_certificate(cx)).ok();
-                                    }),
+                                    .on_click(move |_, _, cx| install.update(cx, |certificate, cx| certificate.install(cx))),
                             )
                     })
                     .keywords(["trust", "install", "keychain", "store"]),
@@ -788,7 +590,9 @@ impl SettingsScreen {
 
     fn about_page(&self, cx: &App) -> SettingPage {
         let engine = self.model.read(cx).engine().clone();
-        let fact = |title: &'static str, value: String| {
+        let (telemetry_read, telemetry_write) = (self.model.clone(), self.model.clone());
+        let policy_url = self.model.read(cx).setup().privacy_policy_url.clone();
+        let fact =|title: &'static str, value: String| {
             SettingItem::new(
                 title,
                 SettingField::render(move |_, _, cx| {
@@ -804,6 +608,37 @@ impl SettingsScreen {
                 fact("Protocol", engine.hello.protocol_version.to_string()),
                 fact("Engine process", format!("pid {} · {origin}", engine.info.pid)),
             ]),
+            SettingGroup::new()
+                .title("Privacy")
+                .item(
+                    SettingItem::new(
+                        "Anonymous usage analytics",
+                        SettingField::switch(
+                            move |cx: &App| telemetry_read.read(cx).config().settings.telemetry_enabled,
+                            move |value: bool, cx: &mut App| {
+                                telemetry_write.update(cx, |model, cx| {
+                                    model.update_settings(json!({ "telemetryEnabled": value }), cx)
+                                })
+                            },
+                        ),
+                    )
+                    .description(
+                        "What kind of thing you do, never its content. Off, only that Bifurc was installed on this device is reported, once.",
+                    )
+                    .keywords(["telemetry", "tracking", "posthog"]),
+                )
+                .item(
+                    SettingItem::new(
+                        "Privacy policy",
+                        SettingField::render(move |_, _, _| {
+                            Link::new("privacy-link")
+                                .href(policy_url.clone())
+                                .child(policy_url.trim_start_matches("https://").to_owned())
+                        }),
+                    )
+                    .layout(Axis::Horizontal),
+                )
+                .footer(|_, _| "Turning analytics back on applies when the engine next starts."),
             SettingGroup::new()
                 .title("Updates")
                 .item(
@@ -835,7 +670,7 @@ impl Render for SettingsScreen {
             self.appearance_page(cx),
             self.accounts_page(cx),
             self.servers_page(),
-            self.https_page(cx),
+            self.https_page(),
             self.about_page(cx),
         ];
         div()

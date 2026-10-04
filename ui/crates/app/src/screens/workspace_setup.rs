@@ -28,6 +28,7 @@ use gpui_kit::{
     rems,
 };
 use serde_json::{Value, json};
+use std::rc::Rc;
 
 use crate::{
     app_model::{AppModel, ModelEvent},
@@ -136,6 +137,8 @@ pub struct WorkspaceSetup {
     /// The create, import or publish command is in flight.
     busy: bool,
     error: Option<String>,
+    /// What "Back" does, where the view is one step of a longer setup.
+    on_back: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -192,8 +195,15 @@ impl WorkspaceSetup {
             sync_all: true,
             busy: false,
             error: None,
+            on_back: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Puts a "Back" button beside the main action, for when the view is one step of a longer setup.
+    pub fn on_back(mut self, on_back: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_back = Some(Rc::new(on_back));
+        self
     }
 
     fn accounts(&self, cx: &Context<Self>) -> Vec<AccountInfo> {
@@ -739,6 +749,16 @@ impl WorkspaceSetup {
             .w_full()
             .gap_2()
             .justify_end()
+            .when_some(self.on_back.clone(), |this, on_back| {
+                this.child(
+                    Button::new("setup-back")
+                        .outline()
+                        .label("Back")
+                        .disabled(self.busy)
+                        .on_click(move |_, window, cx| on_back(window, cx)),
+                )
+                .child(div().flex_1())
+            })
             .when(in_dialog, |this| {
                 this.child(
                     Button::new("setup-cancel")
