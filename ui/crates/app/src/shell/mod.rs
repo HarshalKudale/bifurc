@@ -306,6 +306,18 @@ impl Shell {
         self.mocks.update(cx, |mocks, cx| mocks.new_mock(None, window, cx));
     }
 
+    /// Opens a tab that asks for a cURL command and becomes the request it describes.
+    pub fn import_curl_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Requests, window, cx);
+        self.requests.update(cx, |requests, cx| requests.import_curl(window, cx));
+    }
+
+    /// Opens a tab that asks for a cURL command and becomes a mock of the call it makes.
+    pub fn import_curl_mock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Mocks, window, cx);
+        self.mocks.update(cx, |mocks, cx| mocks.import_curl(None, window, cx));
+    }
+
     pub fn prompt_new_mock_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_screen(Screen::Mocks, window, cx);
         self.mocks.update(cx, |mocks, cx| mocks.prompt_new_folder(None, window, cx));
@@ -372,6 +384,9 @@ impl Shell {
     pub fn run_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.screen == Screen::Requests {
             self.requests.update(cx, |screen, cx| screen.run_active(window, cx));
+        } else if self.screen == Screen::Mocks {
+            // A mock has no verb of its own; a tab waiting for a cURL command does.
+            self.mocks.update(cx, |screen, cx| screen.submit_curl(cx));
         }
     }
 

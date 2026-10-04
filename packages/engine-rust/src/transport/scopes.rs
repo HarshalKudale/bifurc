@@ -112,6 +112,8 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("script.execute", Scope::Execute),
     ("request.replay", Scope::Execute),
     ("request.parseCurl", Scope::Read),
+    ("curl.buildRequest", Scope::Read),
+    ("curl.buildMock", Scope::Read),
     ("healthbar.getServices", Scope::Read),
     ("healthbar.saveServices", Scope::Write),
     ("healthbar.checkUrl", Scope::Read),
