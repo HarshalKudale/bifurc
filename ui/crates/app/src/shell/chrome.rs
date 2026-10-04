@@ -240,9 +240,9 @@ impl Shell {
     fn screen_status(&self, cx: &Context<Self>) -> String {
         let config = self.model.read(cx).config();
         match self.screen {
-            Screen::Requests => plural(config.requests.len(), "request"),
-            Screen::Mocks => plural(config.mocks.len(), "mock"),
-            Screen::Mappings => plural(config.mappings.len(), "mapping"),
+            Screen::Requests => plural(config.requests.iter().filter(|r| !r.deleted).count(), "request"),
+            Screen::Mocks => plural(config.mocks.iter().filter(|m| !m.deleted).count(), "mock"),
+            Screen::Mappings => plural(config.mappings.iter().filter(|m| !m.deleted).count(), "mapping"),
             Screen::ProxyRules => plural(config.proxy_rule_count, "rule"),
             Screen::Environments => plural(config.selectable_environments().count(), "environment"),
             Screen::Vaults => plural(self.model.read(cx).vaults().len(), "vault"),

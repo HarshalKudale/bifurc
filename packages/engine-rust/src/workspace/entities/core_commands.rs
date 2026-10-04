@@ -9,6 +9,7 @@ use crate::{
     utils::json::{array_of, merged, str_of, truthy},
     workspace::{
         config::{load_config, load_entity, save_config},
+        deletions::pending_entity,
         fs::{read_enabled_set, sync_enabled_set},
     },
 };
@@ -61,7 +62,13 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("entity.load", |params, _| {
         let engine_kind = to_engine_kind(str_of(&params, "kind"));
         let (ws_id, id) = (str_of(&params, "workspaceId"), str_of(&params, "id"));
-        let Some(entity) = load_entity(ws_id, engine_kind, id) else { return Ok(json!({ "ok": false })) };
+        let Some(entity) = load_entity(ws_id, engine_kind, id) else {
+            // Deleted here and not confirmed yet: there is nothing to read until the delete is reverted.
+            if pending_entity(ws_id, engine_kind, id).is_some() {
+                return Ok(json!({ "ok": false, "deleted": true }));
+            }
+            return Ok(json!({ "ok": false }));
+        };
         if ENABLED_STATE_KINDS.contains(&engine_kind) {
             let enabled = read_enabled_set(ws_id, engine_kind).is_some_and(|set| set.contains(id));
             return Ok(json!({ "ok": true, "entity": merged(&entity, &json!({ "enabled": enabled })) }));

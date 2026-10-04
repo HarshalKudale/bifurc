@@ -280,6 +280,15 @@
    "now": true
   }
  },
+ "entity.confirmDelete": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks"
+  }
+ },
  "entity.create": {
   "valid": {
    "kind": "mocks",
@@ -350,6 +359,15 @@
   },
   "invalid": {
    "workspaceId": "ws1"
+  }
+ },
+ "entity.revertDelete": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks"
   }
  },
  "entity.setEnabled": {
@@ -428,6 +446,15 @@
    "parentId": null
   }
  },
+ "folder.confirmDelete": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1"
+  },
+  "invalid": {
+   "kind": "mock"
+  }
+ },
  "folder.delete": {
   "valid": {
    "kind": "mock",
@@ -468,6 +495,15 @@
   "invalid": {
    "kind": "mock",
    "id": "f1"
+  }
+ },
+ "folder.revertDelete": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1"
+  },
+  "invalid": {
+   "kind": "mock"
   }
  },
  "git.diff": {

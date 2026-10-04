@@ -56,6 +56,16 @@ pub struct MockStub {
     pub url_pattern: String,
     pub enabled: bool,
     pub folder_id: Option<String>,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
+}
+
+/// A proxy rule that is deleted here, with the deletion waiting to be confirmed or reverted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeletedRule {
+    pub id: String,
+    pub name: String,
+    pub pattern: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +73,8 @@ pub struct PlainFolder {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
 }
 
 /// The engine-wide settings a client may change with `settings.update`.
@@ -87,6 +99,8 @@ pub struct EnvironmentInfo {
     pub id: String,
     pub name: String,
     pub variables: Vec<EnvVariable>,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
 }
 
 impl EnvironmentInfo {
@@ -105,6 +119,8 @@ pub struct MappingInfo {
     pub target: String,
     pub label: Option<String>,
     pub enabled: bool,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
 }
 
 /// What the explorer shows for a saved request: enough to list and find it, not the request itself.
@@ -119,6 +135,8 @@ pub struct RequestStub {
     pub method: Option<String>,
     /// The URL, address or endpoint this request points at.
     pub target: String,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,6 +145,8 @@ pub struct FolderInfo {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -141,6 +161,8 @@ pub struct ConfigSnapshot {
     pub mocks: Vec<MockStub>,
     pub mock_folders: Vec<PlainFolder>,
     pub proxy_rule_count: usize,
+    /// The proxy rules that are deleted here and still listed. The live ones are read with `entity.list`.
+    pub deleted_rules: Vec<DeletedRule>,
     pub settings: EngineSettings,
 }
 
@@ -150,6 +172,11 @@ fn text(value: &Value, key: &str) -> Option<String> {
 
 fn non_empty(value: &Value, key: &str) -> Option<String> {
     text(value, key).filter(|s| !s.is_empty())
+}
+
+/// The engine marks what was deleted here and is still listed, waiting to be confirmed or reverted.
+fn is_deleted(value: &Value) -> bool {
+    value.get("deleted").and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn array<'a>(config: &'a Value, key: &str) -> &'a [Value] {
@@ -192,7 +219,7 @@ impl ConfigSnapshot {
                             .collect()
                     })
                     .unwrap_or_default();
-                Some(EnvironmentInfo { id: text(e, "id")?, name: text(e, "name")?, variables })
+                Some(EnvironmentInfo { id: text(e, "id")?, name: text(e, "name")?, variables, deleted: is_deleted(e) })
             })
             .collect();
 
@@ -205,6 +232,7 @@ impl ConfigSnapshot {
                     target: text(m, "target").unwrap_or_default(),
                     label: non_empty(m, "label"),
                     enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+                    deleted: is_deleted(m),
                 })
             })
             .collect();
@@ -221,11 +249,13 @@ impl ConfigSnapshot {
                     folder_id: non_empty(stub, "folderId"),
                     method: (kind == RequestKind::Rest).then(|| text(stub, "method")).flatten(),
                     target: stub_target(kind, stub),
+                    deleted: is_deleted(stub),
                 });
             }
             for folder in array(config, kind.folders_key()) {
                 let (Some(id), Some(name)) = (text(folder, "id"), text(folder, "name")) else { continue };
-                folders.push(FolderInfo { kind, id, name, parent_id: non_empty(folder, "parentId") });
+                let parent_id = non_empty(folder, "parentId");
+                folders.push(FolderInfo { kind, id, name, parent_id, deleted: is_deleted(folder) });
             }
         }
 
@@ -242,13 +272,19 @@ impl ConfigSnapshot {
                     url_pattern: text(m, "urlPattern").unwrap_or_default(),
                     enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
                     folder_id: non_empty(m, "folderId"),
+                    deleted: is_deleted(m),
                 })
             })
             .collect();
         let mock_folders = array(config, "mockFolders")
             .iter()
             .filter_map(|f| {
-                Some(PlainFolder { id: text(f, "id")?, name: text(f, "name")?, parent_id: non_empty(f, "parentId") })
+                Some(PlainFolder {
+                    id: text(f, "id")?,
+                    name: text(f, "name")?,
+                    parent_id: non_empty(f, "parentId"),
+                    deleted: is_deleted(f),
+                })
             })
             .collect();
 
@@ -262,7 +298,18 @@ impl ConfigSnapshot {
             folders,
             mocks,
             mock_folders,
-            proxy_rule_count: array(config, "proxyRules").len(),
+            proxy_rule_count: array(config, "proxyRules").iter().filter(|r| !is_deleted(r)).count(),
+            deleted_rules: array(config, "proxyRules")
+                .iter()
+                .filter(|r| is_deleted(r))
+                .filter_map(|r| {
+                    Some(DeletedRule {
+                        id: text(r, "id")?,
+                        name: text(r, "name").unwrap_or_default(),
+                        pattern: text(r, "pattern").unwrap_or_default(),
+                    })
+                })
+                .collect(),
             settings: EngineSettings {
                 proxy_port: port("port"),
                 forward_proxy_port: port("forwardProxyPort"),
@@ -284,7 +331,7 @@ impl ConfigSnapshot {
 
     /// The environments a user chooses between: everything except the implicit global layer.
     pub fn selectable_environments(&self) -> impl Iterator<Item = &EnvironmentInfo> {
-        self.environments.iter().filter(|e| !e.is_global())
+        self.environments.iter().filter(|e| !e.is_global() && !e.deleted)
     }
 
     pub fn request(&self, kind: RequestKind, id: &str) -> Option<&RequestStub> {
@@ -304,11 +351,12 @@ impl ConfigSnapshot {
         self.folders.iter().find(|f| f.kind == kind && f.id == id)
     }
 
-    /// The folders requests of `kind` are kept in. Each request type has its own.
+    /// The folders requests of `kind` are kept in. Each request type has its own. A deleted folder is not
+    /// one something can be kept in.
     pub fn request_folder_rows(&self, kind: RequestKind) -> Vec<FolderRow<'_>> {
         self.folders
             .iter()
-            .filter(|f| f.kind == kind)
+            .filter(|f| f.kind == kind && !f.deleted)
             .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
             .collect()
     }
@@ -316,6 +364,7 @@ impl ConfigSnapshot {
     pub fn mock_folder_rows(&self) -> Vec<FolderRow<'_>> {
         self.mock_folders
             .iter()
+            .filter(|f| !f.deleted)
             .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
             .collect()
     }

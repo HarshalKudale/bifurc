@@ -29,12 +29,14 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use self::runner::{FolderRunner, RunnerEvent};
-use self::tree::{RequestTree, RequestTreeEvent, new_menu};
+use self::tree::{RequestTree, RequestTreeEvent, is_deleted, new_menu};
 use crate::{
-    app_model::{AppModel, Load, ModelEvent},
+    app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
         EntityAction, StripTab, TabAction, TabStrip,
-        dialogs::{PromptField, confirm_danger, prompt},
+        dialogs::{
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
+        },
         entity_bar, tab_strip,
     },
     engine::{call, call_in, describe},
@@ -175,6 +177,22 @@ impl RequestsScreen {
             RequestTreeEvent::Delete(node) => self.confirm_delete(node.clone(), window, cx),
             RequestTreeEvent::Duplicate(node) => self.duplicate(node.clone(), window, cx),
             RequestTreeEvent::RunFolder(folder) => self.open_runner(folder, window, cx),
+            RequestTreeEvent::RevertDelete(node) => {
+                let target = Self::deleted_target(node);
+                self.model.update(cx, |model, cx| model.revert_delete(target, cx));
+            }
+            RequestTreeEvent::ConfirmDelete(node) => {
+                let target = Self::deleted_target(node);
+                self.model.update(cx, |model, cx| model.confirm_delete(target, cx));
+            }
+        }
+    }
+
+    /// How the model names a deleted request or folder.
+    fn deleted_target(node: &NodeRef) -> Deleted {
+        match node {
+            NodeRef::Folder { kind, id } => Deleted::Folder { kind: kind.folder_kind(), id: id.clone() },
+            NodeRef::Request { kind, id } => Deleted::Entity { kind: kind.entity_kind(), id: id.clone() },
         }
     }
 
@@ -233,6 +251,12 @@ impl RequestsScreen {
 
     pub fn open_node(&mut self, node: &NodeRef, window: &mut Window, cx: &mut Context<Self>) {
         let NodeRef::Request { kind, id } = node else { return };
+        // A deleted request has nothing to open: it is brought back or deleted for good.
+        if is_deleted(self.model.read(cx), node) {
+            let name = self.name_of(node, cx);
+            resolve_deleted(self.model.clone(), Self::deleted_target(node), name, window, cx);
+            return;
+        }
         let key = TabKey::Saved { kind: *kind, id: id.clone() };
         if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
             self.set_active(Some(ix), cx);
@@ -545,8 +569,9 @@ impl RequestsScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                TabKey::Saved { kind, id } => config.request(*kind, id).is_none(),
-                TabKey::Runner(folder) => config.folder(RequestKind::Rest, folder).is_none(),
+                // Deleted and still listed counts as gone: there is no file an edit could be written to.
+                TabKey::Saved { kind, id } => config.request(*kind, id).is_none_or(|r| r.deleted),
+                TabKey::Runner(folder) => config.folder(RequestKind::Rest, folder).is_none_or(|f| f.deleted),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.key.clone())
@@ -682,8 +707,8 @@ impl RequestsScreen {
     fn confirm_delete(&mut self, node: NodeRef, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&node, cx);
         let (what, consequence) = match &node {
-            NodeRef::Folder { .. } => ("folder", "The folder and everything in it will be deleted."),
-            NodeRef::Request { .. } => ("request", "This can't be undone."),
+            NodeRef::Folder { .. } => ("folder", FOLDER_DELETE_CONSEQUENCE),
+            NodeRef::Request { id, .. } => ("request", delete_consequence(self.model.read(cx).git().entity_state(id))),
         };
         confirm_danger(
             cx.weak_entity(),
