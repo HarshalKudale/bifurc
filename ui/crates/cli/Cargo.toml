@@ -1,0 +1,15 @@
+[package]
+name = "bifurc-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The `bifurc` command of an installed Bifurc: starts the bundled CLI on the bundled Node."
+
+[[bin]]
+name = "bifurc"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+# The user's PATH lives in the registry.
+winreg = "0.56"

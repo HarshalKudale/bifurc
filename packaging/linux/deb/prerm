@@ -1,0 +1,12 @@
+#!/bin/sh
+# The engine outlives the window that started it. It is asked to stop before its files are removed or
+# replaced, so what runs afterwards is what is installed. Workspaces live in the user's home and stay.
+set -e
+
+case "$1" in
+  remove|upgrade|deconfigure)
+    if command -v pkill >/dev/null 2>&1; then
+      pkill -TERM -f '^/usr/lib/bifurc/bifurc-engine' || true
+    fi
+    ;;
+esac
