@@ -68,9 +68,10 @@ The same build script compiles `build/icon.ico` into the executable, which is th
 ## Package
 
 ```sh
-cargo xtask package                        # Windows: installer + Store package; Linux: AppImage
-cargo xtask package --target nsis          # one or more of nsis, msix, appimage, dir
+cargo xtask package                        # everything this platform has: packages and store manifests
+cargo xtask package --target nsis          # one or more of the targets below, or dir
 cargo xtask package --skip-build           # package what is already built
+cargo xtask package --release-tag v1.2.3   # the GitHub release the manifests download from (default: v<version>)
 ```
 
 `xtask` (at the repository root) builds the engine and the release executables, lays out one folder
@@ -89,14 +90,33 @@ resources/bifurc-cli[.exe]   the CLI (packages/cli-rust)
 | ------- | ---- | ------------------ |
 | Installer (NSIS, `packaging/windows/bifurc.nsi`) | `Bifurc-<version>-setup.exe` | Adds `<install>\bin` to the user's `PATH`; removed on uninstall. Per-user, no elevation, installs to `%LOCALAPPDATA%\Programs\bifurc-desktop`. |
 | Store (`packaging/windows/AppxManifest.xml`) | `Bifurc-<version>.msix` | An app execution alias, `bifurc.exe`. Unsigned: the Store signs it; sign it yourself to sideload. |
+| Zip (`zip`) | `Bifurc-<version>-win-x64.zip` | The staged folder as it is; nothing is put on `PATH`. What Scoop installs. |
 | AppImage (`packaging/linux/AppRun`) | `Bifurc-<version>-x86_64.AppImage` | The first run links `~/.local/bin/bifurc`; `Bifurc.AppImage cli …` works too. |
+| Debian package (`packaging/linux/deb`) | `bifurc_<version>_amd64.deb` | `/usr/bin/bifurc`, a link into `/usr/lib/bifurc`. Its `postinst` gives the engine `cap_net_bind_service`, so the reverse proxy can listen on port 80 without root. |
+| Tarball (`tarball`) | `Bifurc-<version>-linux-x86_64.tar.gz` | The staged folder as `bifurc-<version>/`, with a launcher entry. What the AUR package installs. |
+
+The store manifests are written to `release/desktop/manifests`, each naming the file it downloads from the GitHub
+release (`--release-tag`, in `GITHUB_REPOSITORY`) and that file's SHA-256:
+
+| Manifest | Target | Files | Publishing it |
+| -------- | ------ | ----- | ------------- |
+| winget | `winget` | `winget/manifests/h/HarshalKudale/Bifurc/<version>/*.yaml` | A pull request to `microsoft/winget-pkgs` with that folder. |
+| Scoop | `scoop` | `scoop/bifurc.json` | A file of a bucket; `scoop install <url of the file>` works without one. |
+| Chocolatey | `choco` | `chocolatey/` (`bifurc.nuspec`, `tools/`), and `bifurc.<version>.nupkg` when `choco` is installed | `choco push` of the `.nupkg`. |
+| AUR | `aur` | `aur/PKGBUILD`, `.SRCINFO`, `bifurc.install` | A commit to the `bifurc-bin` AUR repository. |
+
+A manifest's target builds the file it describes too (`winget` and `choco` the installer, `scoop` the zip, `aur` the
+tarball). None of them is published by a workflow: a release attaches them, and submitting one is done by hand.
 
 The AppImage does not run the app from inside the image: the engine outlives the window, and the image's files are
 only there while the process it launched runs. Its first run copies the app to `~/.local/share/bifurc/app/<build>`
 and adds a launcher entry; everything runs from that copy.
 
 The installer needs NSIS (`makensis` on `PATH`, in `Program Files`, or `MAKENSIS`), the Store package needs the
-Windows SDK (`makeappx`, `makepri`). `.github/workflows/package-desktop.yml` builds all three.
+Windows SDK (`makeappx`, `makepri`), the zip Windows' own `tar.exe`, the `.deb` `dpkg-deb` (and `dpkg-shlibdeps`,
+which reads its dependencies from the executables). `.github/workflows/package-desktop.yml` runs
+`cargo xtask package` once per platform and builds all of it; `release.yml` calls that workflow and publishes
+what it built.
 
 ## Using it
 

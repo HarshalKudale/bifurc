@@ -66,9 +66,19 @@ fn io_error(err: std::io::Error) -> CliError {
     CliError::msg(format!("i/o error talking to the engine: {err}"))
 }
 
+/// `details.reason` of the engine's refusal to serve the command line before the first-run setup is finished.
+const SETUP_REQUIRED: &str = "setupRequired";
+
 /// The error of a failed response.
 fn engine_error(raw: &Value) -> CliError {
     let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_string);
+    // The engine refuses the command line until the first-run setup is finished, and opens the interface
+    // itself. Its message is the whole story; the code in front of it would only be noise.
+    if raw.pointer("/details/reason").and_then(Value::as_str) == Some(SETUP_REQUIRED) {
+        if let Some(message) = text("message") {
+            return CliError::msg(message);
+        }
+    }
     match (text("code"), text("message")) {
         (Some(code), Some(message)) => CliError::Engine { code, message },
         _ => CliError::Engine {
@@ -326,6 +336,20 @@ mod tests {
         let err = session.call("x.y", json!({})).unwrap_err();
         assert_eq!(err, CliError::Engine { code: "UNKNOWN_COMMAND".into(), message: "no such command".into() });
         assert_eq!(err.line(), "bifurc: UNKNOWN_COMMAND: no such command");
+    }
+
+    #[test]
+    fn the_refusal_before_the_first_run_setup_is_shown_as_the_engine_worded_it() {
+        let error = json!({"code": "FORBIDDEN", "message": "Bifurc has not been set up yet.",
+            "details": {"reason": "setupRequired"}});
+        let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
+        let err = Session::new(stream).call("config.get", json!({})).unwrap_err();
+        assert_eq!(err.line(), "bifurc: Bifurc has not been set up yet.");
+        // Any other refusal keeps its code.
+        let error = json!({"code": "FORBIDDEN", "message": "no", "details": {"required": "admin"}});
+        let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
+        let err = Session::new(stream).call("config.get", json!({})).unwrap_err();
+        assert_eq!(err.line(), "bifurc: FORBIDDEN: no");
     }
 
     #[test]
