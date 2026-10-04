@@ -1,16 +1,19 @@
 //! Helpers the importers and exporters share: JavaScript-flavoured text handling, the config snapshot lookups
 //! they all start from, and the bookkeeping every imported entity needs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value, json};
 
 use crate::{
     runtime::instances::notify_config_changed,
-    utils::json::{array_of, is_truthy, opt_str, str_of},
+    utils::{
+        id::now_ms,
+        json::{array_of, is_truthy, opt_str, str_of},
+    },
     workspace::{
         config::save_config,
-        fs::{sync_enabled_set, upsert_name_entry, write_entity},
+        fs::{create_folder, ensure_default_folder, sync_enabled_set, upsert_name_entry, write_entity},
     },
 };
 
@@ -130,10 +133,117 @@ pub fn commit_config(cfg: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Write a request into its folder and list it in the names index.
+/// The Default folder of a kind, for an imported entity that came with none. It is listed in `cfg[folders_key]` so
+/// a snapshot saved later finds its name.
+pub fn default_folder(cfg: &mut Value, folders_key: &str, fs_kind: &str, ws_id: &str) -> Result<(String, String), String> {
+    let (id, name) = ensure_default_folder(ws_id, fs_kind).map_err(io_failure)?;
+    if !array_of(cfg, folders_key).iter().any(|f| str_of(f, "id") == id) {
+        push_to(cfg, folders_key, new_folder(&id, &name, None, json!(now_ms()), ws_id));
+    }
+    Ok((id, name))
+}
+
+/// List a folder in `cfg[folders_key]` unless it is there.
+fn list_folder(cfg: &mut Value, folders_key: &str, id: &str, name: &str, parent_id: Option<&str>, ws_id: &str) {
+    if !array_of(cfg, folders_key).iter().any(|f| str_of(f, "id") == id) {
+        push_to(cfg, folders_key, new_folder(id, name, parent_id, json!(now_ms()), ws_id));
+    }
+}
+
+/// The folder one import run puts everything it brings in: `import-<date>_<time>`, at the top level.
+pub fn import_folder(cfg: &mut Value, folders_key: &str, fs_kind: &str, ws_id: &str) -> Result<(String, String), String> {
+    let stamp = iso_from_ms(now_ms() as i64)?;
+    let name = format!("import-{}", stamp[..19].replace('T', "_").replace(':', "-"));
+    let (id, name) = create_folder(ws_id, fs_kind, &name, None, true).map_err(io_failure)?;
+    list_folder(cfg, folders_key, &id, &name, None, ws_id);
+    Ok((id, name))
+}
+
+/// The import folder of one run, made when the first entity needs it so that an import of nothing leaves nothing.
+pub struct ImportRoot {
+    folders_key: &'static str,
+    fs_kind: &'static str,
+    made: Option<(String, String)>,
+}
+
+impl ImportRoot {
+    pub fn new(folders_key: &'static str, fs_kind: &'static str) -> Self {
+        Self { folders_key, fs_kind, made: None }
+    }
+
+    /// The `(id, name)` of the folder, which is made on the first call.
+    pub fn get(&mut self, cfg: &mut Value, ws_id: &str) -> Result<(String, String), String> {
+        if self.made.is_none() {
+            self.made = Some(import_folder(cfg, self.folders_key, self.fs_kind, ws_id)?);
+        }
+        Ok(self.made.clone().unwrap_or_default())
+    }
+}
+
+/// A folder of a source file: `key` is what the file calls it, `parent` the key of the folder it is in.
+pub struct FolderSpec {
+    pub key: String,
+    pub name: String,
+    pub parent: Option<String>,
+}
+
+/// Make the folders of a source file inside the import folder `root_id`, parents before the folders in them.
+/// Returns each folder's id by its key. A folder whose parent is not in the file goes straight into the root.
+pub fn add_import_folders(
+    cfg: &mut Value,
+    folders_key: &str,
+    fs_kind: &str,
+    ws_id: &str,
+    root_id: &str,
+    specs: &[FolderSpec],
+) -> Result<HashMap<String, String>, String> {
+    let known: HashSet<&str> = specs.iter().map(|s| s.key.as_str()).collect();
+    let mut made: HashMap<String, String> = HashMap::new();
+    let mut waiting: Vec<&FolderSpec> = specs.iter().collect();
+    while !waiting.is_empty() {
+        let before = waiting.len();
+        let mut next = Vec::new();
+        for spec in waiting {
+            let parent = match spec.parent.as_deref().filter(|p| known.contains(p) && *p != spec.key) {
+                None => Some(root_id.to_string()),
+                Some(parent) => made.get(parent).cloned(),
+            };
+            match parent {
+                Some(parent) => {
+                    let (id, name) =
+                        create_folder(ws_id, fs_kind, &spec.name, Some(&parent), false).map_err(io_failure)?;
+                    list_folder(cfg, folders_key, &id, &name, Some(&parent), ws_id);
+                    made.insert(spec.key.clone(), id);
+                }
+                None => next.push(spec),
+            }
+        }
+        waiting = next;
+        if waiting.len() == before {
+            // A cycle of parents: what is left goes into the root.
+            for spec in waiting.drain(..) {
+                let (id, name) =
+                    create_folder(ws_id, fs_kind, &spec.name, Some(root_id), false).map_err(io_failure)?;
+                list_folder(cfg, folders_key, &id, &name, Some(root_id), ws_id);
+                made.insert(spec.key.clone(), id);
+            }
+        }
+    }
+    Ok(made)
+}
+
+/// Write a request into its folder (the Default one when it has none) and list it in the names index.
 pub fn store_request(ws_id: &str, request: &Value, folder: Option<&str>) -> Result<(), String> {
     let id = str_of(request, "id");
-    write_entity(ws_id, "requests", id, request, folder).map_err(io_failure)?;
+    let mut request = request.clone();
+    let mut folder = folder.map(str::to_string).filter(|name| !name.is_empty());
+    if folder.is_none() {
+        let (folder_id, name) = ensure_default_folder(ws_id, "requests").map_err(io_failure)?;
+        crate::utils::json::object_mut(&mut request).insert("folderId".into(), json!(folder_id));
+        folder = Some(name);
+    }
+    let request = &request;
+    write_entity(ws_id, "requests", id, request, folder.as_deref()).map_err(io_failure)?;
     let entry = json!({
         "name": request.get("name").cloned().unwrap_or(Value::Null),
         "method": request.get("method").cloned().unwrap_or(Value::Null),

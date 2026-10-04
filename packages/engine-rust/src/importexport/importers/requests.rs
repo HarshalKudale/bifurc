@@ -8,8 +8,8 @@ use crate::{
     importexport::{
         formats::postman::parse_postman_requests,
         support::{
-            commit_config, folder_name, js_str, js_trim, ms_from_iso, new_folder, parse_json, present, push_to,
-            store_request, text_or,
+            FolderSpec, ImportRoot, add_import_folders, commit_config, folder_name, js_str, js_trim, ms_from_iso,
+            parse_json, present, store_request, text_or,
         },
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
     },
@@ -92,12 +92,14 @@ fn curl_names(text: &str) -> HashMap<String, String> {
 
 pub async fn curl_run(ws_id: String, source: ImportSource, _strategy: Strategy) -> ImportOutcome {
     let blocks = split_curl_blocks(&source.content);
-    let _ = load_config();
+    let mut cfg = load_config();
+    let mut root = ImportRoot::new("requestFolders", "requests");
     let names = curl_names(&source.content);
 
     let mut imported = 0;
     for block in blocks {
         let Some(parsed) = parse_curl_command(&block) else { continue };
+        let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
         let id = generate_id();
         let first_line = block.split('\n').next().unwrap_or("");
         let name = names
@@ -113,10 +115,10 @@ pub async fn curl_run(ws_id: String, source: ImportSource, _strategy: Strategy) 
             json!(parsed.headers),
             json!(parsed.body),
             json!(now_ms()),
-            None,
+            Some(&root_id),
             &ws_id,
         );
-        store_request(&ws_id, &request, None)?;
+        store_request(&ws_id, &request, Some(&root_name))?;
         imported += 1;
     }
     crate::runtime::instances::notify_config_changed();
@@ -139,12 +141,8 @@ pub async fn har_run(ws_id: String, source: ImportSource, _strategy: Strategy) -
 
     let mut cfg = load_config();
     let comment = present(log, "comment").map(js_str);
-    let mut folder_id: Option<String> = None;
-    if let Some(comment) = comment.as_ref().filter(|c| !c.is_empty()) {
-        let id = generate_id();
-        push_to(&mut cfg, "requestFolders", new_folder(&id, comment, None, json!(now_ms()), &ws_id));
-        folder_id = Some(id);
-    }
+    let mut root = ImportRoot::new("requestFolders", "requests");
+    let mut commented: Option<(String, String)> = None;
 
     let mut imported = 0;
     for entry in array_of(log, "entries") {
@@ -159,6 +157,18 @@ pub async fn har_run(ws_id: String, source: ImportSource, _strategy: Strategy) -
                 headers.insert(name, header.get("value").cloned().unwrap_or(Value::Null));
             }
         }
+        let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+        let (folder_id, folder) = match comment.as_ref().filter(|c| !c.is_empty()) {
+            None => (root_id, root_name),
+            Some(comment) => {
+                if commented.is_none() {
+                    let spec = FolderSpec { key: "har".into(), name: comment.clone(), parent: None };
+                    let made = add_import_folders(&mut cfg, "requestFolders", "requests", &ws_id, &root_id, &[spec])?;
+                    commented = Some((made["har"].clone(), comment.clone()));
+                }
+                commented.clone().unwrap_or_default()
+            }
+        };
         let method = js_str(&request["method"]);
         let created_at = match opt_str(entry, "startedDateTime").filter(|s| !s.is_empty()) {
             Some(started) => ms_from_iso(started).map_or(Value::Null, |ms| json!(ms)),
@@ -174,10 +184,10 @@ pub async fn har_run(ws_id: String, source: ImportSource, _strategy: Strategy) -
             Value::Object(headers),
             body,
             created_at,
-            folder_id.as_deref(),
+            Some(&folder_id),
             &ws_id,
         );
-        store_request(&ws_id, &request, comment.as_deref())?;
+        store_request(&ws_id, &request, Some(&folder))?;
         imported += 1;
     }
 
@@ -203,15 +213,21 @@ pub async fn insomnia_run(ws_id: String, source: ImportSource, _strategy: Strate
     let Some(resources) = resources.as_array() else { return Err("TypeError: data.resources is not iterable".into()) };
 
     let mut cfg = load_config();
-    let mut folder_ids: HashMap<String, String> = HashMap::new();
-    for resource in resources.iter().filter(|r| opt_str(r, "_type") == Some("request_group")) {
-        let id = generate_id();
-        folder_ids.insert(text_or(resource, "_id", "undefined"), id.clone());
-        let parent = opt_str(resource, "parentId").filter(|p| !p.is_empty()).and_then(|p| folder_ids.get(p)).cloned();
-        let created_at = present(resource, "created").cloned().unwrap_or(json!(now_ms()));
-        let name = text_or(resource, "name", "Folder");
-        push_to(&mut cfg, "requestFolders", new_folder(&id, &name, parent.as_deref(), created_at, &ws_id));
+    if !resources.iter().any(|r| opt_str(r, "_type") == Some("request")) {
+        return Ok(Imported::all(0));
     }
+    let mut root = ImportRoot::new("requestFolders", "requests");
+    let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+    let specs: Vec<FolderSpec> = resources
+        .iter()
+        .filter(|r| opt_str(r, "_type") == Some("request_group"))
+        .map(|resource| FolderSpec {
+            key: text_or(resource, "_id", "undefined"),
+            name: text_or(resource, "name", "Folder"),
+            parent: opt_str(resource, "parentId").filter(|p| !p.is_empty()).map(str::to_string),
+        })
+        .collect();
+    let folder_ids = add_import_folders(&mut cfg, "requestFolders", "requests", &ws_id, &root_id, &specs)?;
 
     let mut imported = 0;
     for resource in resources.iter().filter(|r| opt_str(r, "_type") == Some("request")) {
@@ -221,9 +237,9 @@ pub async fn insomnia_run(ws_id: String, source: ImportSource, _strategy: Strate
                 headers.insert(js_str(&header["name"]), present(header, "value").cloned().unwrap_or(json!("")));
             }
         }
-        let folder_id =
-            opt_str(resource, "parentId").filter(|p| !p.is_empty()).and_then(|p| folder_ids.get(p)).cloned();
-        let folder = folder_name(&cfg, "requestFolders", folder_id.as_deref());
+        let in_group = opt_str(resource, "parentId").filter(|p| !p.is_empty()).and_then(|p| folder_ids.get(p)).cloned();
+        let folder_id = in_group.unwrap_or_else(|| root_id.clone());
+        let folder = folder_name(&cfg, "requestFolders", Some(&folder_id)).unwrap_or_else(|| root_name.clone());
         let method = text_or(resource, "method", "GET");
         let url = present(resource, "url").cloned().unwrap_or(json!(""));
         let name = match present(resource, "name") {
@@ -240,10 +256,10 @@ pub async fn insomnia_run(ws_id: String, source: ImportSource, _strategy: Strate
             Value::Object(headers),
             body,
             created_at,
-            folder_id.as_deref(),
+            Some(&folder_id),
             &ws_id,
         );
-        store_request(&ws_id, &request, folder.as_deref())?;
+        store_request(&ws_id, &request, Some(&folder))?;
         imported += 1;
     }
 
@@ -301,8 +317,11 @@ pub async fn openapi_run(ws_id: String, source: ImportSource, _strategy: Strateg
     let title =
         spec.get("info").and_then(|i| present(i, "title")).map(js_str).unwrap_or_else(|| "Imported".to_string());
 
-    let folder_id = generate_id();
-    push_to(&mut cfg, "requestFolders", new_folder(&folder_id, &title, None, json!(now_ms()), &ws_id));
+    let mut root = ImportRoot::new("requestFolders", "requests");
+    let (root_id, _) = root.get(&mut cfg, &ws_id)?;
+    let title_folder = FolderSpec { key: "spec".into(), name: title.clone(), parent: None };
+    let folder_id = add_import_folders(&mut cfg, "requestFolders", "requests", &ws_id, &root_id, &[title_folder])?.remove("spec").unwrap_or_default();
+    let title = folder_name(&cfg, "requestFolders", Some(&folder_id)).unwrap_or(title);
 
     let mut imported = 0;
     for (op_path, path_item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
@@ -352,19 +371,22 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
     let (folders, requests) = parse_postman_requests(&source.content)?;
     let mut cfg = load_config();
 
-    let mut folder_ids: HashMap<String, String> = HashMap::new();
-    for folder in &folders {
-        let id = generate_id();
-        let parent = folder.parent.as_ref().and_then(|p| folder_ids.get(p)).cloned();
-        push_to(&mut cfg, "requestFolders", new_folder(&id, &folder.name, parent.as_deref(), json!(now_ms()), &ws_id));
-        folder_ids.insert(folder.name.clone(), id);
+    if requests.is_empty() {
+        return Ok(Imported::all(0));
     }
+    let mut root = ImportRoot::new("requestFolders", "requests");
+    let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+    let specs: Vec<FolderSpec> = folders
+        .iter()
+        .map(|f| FolderSpec { key: f.name.clone(), name: f.name.clone(), parent: f.parent.clone() })
+        .collect();
+    let folder_ids = add_import_folders(&mut cfg, "requestFolders", "requests", &ws_id, &root_id, &specs)?;
 
     let mut imported = 0;
     for parsed in &requests {
         let id = generate_id();
-        let folder_id = parsed.folder.as_ref().and_then(|f| folder_ids.get(f)).cloned();
-        let folder = folder_name(&cfg, "requestFolders", folder_id.as_deref());
+        let folder_id = parsed.folder.as_ref().and_then(|f| folder_ids.get(f)).cloned().unwrap_or_else(|| root_id.clone());
+        let folder = folder_name(&cfg, "requestFolders", Some(&folder_id)).unwrap_or_else(|| root_name.clone());
         let mut request = Map::new();
         request.insert("id".into(), json!(id));
         request.insert("name".into(), json!(parsed.name));
@@ -381,7 +403,7 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
         request.insert("createdAt".into(), json!(now_ms()));
         request.insert("folderId".into(), json!(folder_id));
         request.insert("workspaceId".into(), json!(ws_id));
-        store_request(&ws_id, &Value::Object(request), folder.as_deref())?;
+        store_request(&ws_id, &Value::Object(request), Some(&folder))?;
         imported += 1;
     }
 
@@ -400,6 +422,16 @@ mod tests {
 
     fn source(content: &str, filename: &str) -> ImportSource {
         ImportSource { content: content.to_string(), filename: filename.to_string() }
+    }
+
+    /// An import puts everything in one new top-level folder named after the moment it ran.
+    fn default_folder_id(ws: &str) -> Value {
+        let index = crate::workspace::fs::read_index(ws, "requests");
+        let made: Vec<_> =
+            index.folders.iter().filter(|f| f["name"].as_str().is_some_and(|n| n.starts_with("import-"))).collect();
+        assert_eq!(made.len(), 1, "one import folder per run");
+        assert_eq!(made[0]["parentId"], Value::Null);
+        made[0]["id"].clone()
     }
 
     fn requests(ws: &str) -> Vec<Value> {
@@ -425,7 +457,7 @@ mod tests {
         assert_eq!(create["body"], "{\"a\":1}");
         assert_eq!(create["workspaceId"], ws.as_str());
         let ping = all.iter().find(|r| r["name"] == "not a command").unwrap();
-        assert_eq!(ping["folderId"], Value::Null);
+        assert_eq!(ping["folderId"], default_folder_id(&ws));
         assert_eq!(read_names_index(&ws, "requests").len(), 2);
     }
 
@@ -480,7 +512,7 @@ mod tests {
         assert_eq!(one["createdAt"], 5);
         assert!(one["folderId"].is_string());
         let two = all.iter().find(|r| r["name"] == "GET http://h/2").unwrap();
-        assert_eq!(two["folderId"], Value::Null);
+        assert_eq!(two["folderId"], default_folder_id(&ws));
         assert_eq!(insomnia_preflight(&ws, &source("{}", "i.json")).err().unwrap(), "Not a valid Insomnia export file");
     }
 
@@ -533,6 +565,6 @@ mod tests {
             ["id", "name", "method", "url", "headers", "body", "postScript", "createdAt", "folderId", "workspaceId"]
         );
         let top = all.iter().find(|r| r["name"] == "Top").unwrap();
-        assert_eq!(top["folderId"], Value::Null);
+        assert_eq!(top["folderId"], default_folder_id(&ws));
     }
 }
