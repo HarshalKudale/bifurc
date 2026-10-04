@@ -220,6 +220,15 @@ impl Session {
         }
     }
 
+    /// Fills this draft with a request of its type that the engine built, from a cURL command.
+    pub fn adopt_import(&self, entity: serde_json::Map<String, serde_json::Value>, window: &mut Window, cx: &mut App) {
+        match self {
+            Session::Rest(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+            Session::WebSocket(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+            Session::Protocol(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+        }
+    }
+
     /// The request's main verb: send it, or open its connection.
     pub fn run(&self, window: &mut Window, cx: &mut App) {
         match self {

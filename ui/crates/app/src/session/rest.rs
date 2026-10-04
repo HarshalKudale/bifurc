@@ -394,6 +394,16 @@ impl RestSession {
         self.changed(cx);
     }
 
+    /// Fills this draft with a request the engine built, from a cURL command. It stays a draft, in the
+    /// folder it was started in, and what was filled in is its first edit.
+    pub fn adopt_import(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
+        let (folder, baseline) = (self.folder_id.clone(), self.baseline.clone());
+        self.adopt_entity(entity, window, cx);
+        (self.folder_id, self.saved_folder) = (folder.clone(), folder);
+        self.baseline = baseline;
+        self.changed(cx);
+    }
+
     fn fields(&self, cx: &gpui_kit::App) -> Fields {
         let body = match self.body_mode {
             BodyMode::None | BodyMode::Multipart | BodyMode::File => String::new(),

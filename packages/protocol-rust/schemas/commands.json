@@ -2209,6 +2209,30 @@
    ],
    "additionalProperties": false
   },
+  "curl.buildRequest": {
+   "type": "object",
+   "properties": {
+    "curl": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "curl"
+   ],
+   "additionalProperties": false
+  },
+  "curl.buildMock": {
+   "type": "object",
+   "properties": {
+    "curl": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "curl"
+   ],
+   "additionalProperties": false
+  },
   "healthbar.getServices": {
    "type": "object",
    "properties": {

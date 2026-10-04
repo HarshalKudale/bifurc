@@ -545,7 +545,10 @@ impl MockEditor {
         cx.notify();
         let client = self.model.read(cx).client().clone();
         let method = if method == ANY_METHOD_LABEL { "GET" } else { method };
-        let payload = json!({ "method": method, "url": url, "headers": {}, "body": "" });
+        // A mock started from a command asks with the command's headers, which is how the real server knows the caller.
+        let headers = self.entity.get("capturedHeaders").filter(|headers| headers.is_object()).cloned();
+        let payload =
+            json!({ "method": method, "url": url, "headers": headers.unwrap_or_else(|| json!({})), "body": "" });
         call_in(&client, window, cx, "request.replay", payload, move |this, outcome, window, cx| {
             if this.probe_key.as_ref() != Some(&key) {
                 return;
@@ -755,6 +758,18 @@ impl MockEditor {
         self.entity = entity;
         self.baseline = self.fields(cx);
         self.pristine = self.response_state(cx);
+    }
+
+    /// Fills this draft with a mock the engine built, from a cURL command. It stays a draft, in the folder it
+    /// was started in, and what was filled in is its first edit. The command says what is called, not what
+    /// answers, so the real server is asked as it is when a URL is typed.
+    pub fn adopt_import(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
+        let (folder, baseline) = (self.folder_id.clone(), self.baseline.clone());
+        self.adopt_entity(entity, window, cx);
+        (self.folder_id, self.saved_folder) = (folder.clone(), folder);
+        self.baseline = baseline;
+        self.changed(cx);
+        self.maybe_probe(window, cx);
     }
 
     /// The loaded entity with the editor's fields written over it, or what stops it from being saved.

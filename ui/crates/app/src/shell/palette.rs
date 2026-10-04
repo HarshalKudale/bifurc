@@ -15,7 +15,8 @@ use gpui_kit::{Action, Context, ParentElement as _, Styled as _, Window};
 use super::{Screen, Shell};
 use crate::{
     commands::{
-        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, NewEnvironment, NewFolder, NewGraphQlFolder,
+        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, ImportCurlMock, ImportCurlRequest, NewEnvironment,
+        NewFolder, NewGraphQlFolder,
         NewGraphQlRequest, NewGrpcFolder, NewGrpcRequest, NewHealthCheck, NewMapping, NewMock, NewMockFolder,
         NewProxyRule, NewRestRequest, NewSoapFolder, NewSoapRequest, NewWebSocketFolder, NewWebSocketRequest,
         NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, RenameWorkspace, RestartForwardProxy,
@@ -57,6 +58,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 ("New gRPC request", IconName::Plus, Box::new(NewGrpcRequest)),
                 ("New SOAP request", IconName::Plus, Box::new(NewSoapRequest)),
                 ("New WebSocket request", IconName::Plus, Box::new(NewWebSocketRequest)),
+                ("Import a request from cURL", IconName::Plus, Box::new(ImportCurlRequest)),
                 ("New REST folder…", IconName::Folder, Box::new(NewFolder)),
                 ("New GraphQL folder…", IconName::Folder, Box::new(NewGraphQlFolder)),
                 ("New gRPC folder…", IconName::Folder, Box::new(NewGrpcFolder)),
@@ -69,6 +71,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
             "Mocks",
             vec![
                 ("New mock", IconName::Plus, Box::new(NewMock)),
+                ("Import a mock from cURL", IconName::Plus, Box::new(ImportCurlMock)),
                 ("New mock folder…", IconName::Folder, Box::new(NewMockFolder)),
             ],
         ),

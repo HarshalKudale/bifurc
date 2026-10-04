@@ -274,6 +274,22 @@
   },
   "invalid": {}
  },
+ "curl.buildMock": {
+  "valid": {
+   "curl": "curl http://x"
+  },
+  "invalid": {
+   "curlCommand": "curl http://x"
+  }
+ },
+ "curl.buildRequest": {
+  "valid": {
+   "curl": "curl http://x"
+  },
+  "invalid": {
+   "curlCommand": "curl http://x"
+  }
+ },
  "engine.shutdown": {
   "valid": {},
   "invalid": {
