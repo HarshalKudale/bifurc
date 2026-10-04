@@ -9,8 +9,8 @@ use serde_json::{Map, Value, json};
 use super::{
     accounts::public_accounts,
     fs::{
-        EntityStub, auto_sync_fs_directories, bootstrap_names_index, get_pending_deletions, load_enabled_set,
-        read_all_entities, read_entity, read_entity_stubs, read_names_index, write_entity, write_flat_entity,
+        EntityStub, auto_sync_fs_directories, bootstrap_names_index, default_global_environment,
+        ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity, read_entity_stubs, read_names_index, write_entity, write_flat_entity,
     },
     settings::{DEFAULT_COMPANION_PORT, DEFAULT_FORWARD_PROXY_PORT, load_settings, save_settings},
 };
@@ -133,10 +133,7 @@ pub fn load_config() -> Value {
 
     let mut environments = read_all_entities(ws_id, "environments");
     if !environments.iter().any(|e| str_of(e, "id") == GLOBAL_ENV_ID) {
-        let global = json!({
-            "id": GLOBAL_ENV_ID, "name": "Global", "variables": [], "createdAt": now_ms(), "workspaceId": ws_id,
-        });
-        let _ = write_flat_entity(ws_id, "environments", GLOBAL_ENV_ID, &global);
+        let global = ensure_global_environment(ws_id).ok().flatten().unwrap_or_else(|| default_global_environment(ws_id));
         environments.insert(0, global);
     }
 
