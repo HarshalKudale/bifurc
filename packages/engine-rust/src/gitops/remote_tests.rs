@@ -299,6 +299,28 @@ async fn a_first_run_is_onboarded_only_after_the_privacy_policy_is_accepted() {
 }
 
 #[tokio::test]
+async fn the_proxies_are_the_engines_to_start_only_once_the_servers_step_is_passed() {
+    let _root = empty_root();
+    let _guard = start_hub().await;
+    let engine = Engine::new();
+    assert_eq!(engine.call("setup.getState", json!({})).await["serversConfirmed"], false);
+    assert!(!load_settings().servers_confirmed());
+
+    // Two proxies on one port is refused, and nothing is recorded.
+    let same = engine.call("setup.startServers", json!({ "port": 8123, "forwardProxyPort": 8123 })).await;
+    assert_eq!(same["ok"], false);
+    assert!(!load_settings().servers_confirmed());
+
+    let started = engine.call("setup.startServers", json!({ "port": 8123 })).await;
+    assert_eq!(started["ok"], true);
+    let settings = load_settings();
+    assert!(settings.servers_confirmed());
+    assert_eq!((settings.port(), settings.forward_proxy_port()), (8123, 8080));
+    let setup = engine.call("setup.getState", json!({})).await;
+    assert_eq!((setup["serversConfirmed"].as_bool(), setup["onboarded"].as_bool()), (Some(true), Some(false)));
+}
+
+#[tokio::test]
 async fn a_first_run_has_no_workspace_and_the_first_one_created_becomes_active() {
     if !check_git_installed().await {
         return;

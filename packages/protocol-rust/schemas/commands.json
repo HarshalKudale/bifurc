@@ -3006,6 +3006,23 @@
    "required": [],
    "additionalProperties": false
   },
+  "setup.startServers": {
+   "type": "object",
+   "properties": {
+    "port": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
+    "forwardProxyPort": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  },
   "account.login.start": {
    "type": "object",
    "properties": {},
