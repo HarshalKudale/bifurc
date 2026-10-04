@@ -52,6 +52,7 @@ actions!(
         ToggleForwardProxy,
         RestartForwardProxy,
         PublishChanges,
+        SyncWorkspace,
         ToggleSidebar,
         ToggleInspector,
         ToggleFolderTree,
@@ -175,6 +176,7 @@ pub fn register_actions(cx: &mut App) {
     on_shell::<ToggleForwardProxy>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.toggle_proxy(cx)));
     on_shell::<RestartForwardProxy>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.restart_proxy(cx)));
     on_shell::<PublishChanges>(cx, |shell, _, cx| shell.publish_changes(cx));
+    on_shell::<SyncWorkspace>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.sync_all(cx)));
     on_shell::<ToggleSidebar>(cx, |shell, _, cx| shell.toggle_sidebar(cx));
     on_shell::<ToggleInspector>(cx, |shell, window, cx| shell.toggle_right_sidebar(window, cx));
     on_shell::<ToggleFolderTree>(cx, |shell, _, cx| shell.toggle_folder_tree(cx));

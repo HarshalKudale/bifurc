@@ -21,7 +21,8 @@ use crate::{
         NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, RenameWorkspace, RestartForwardProxy,
         RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowHealthBar,
         ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig,
-        SyncEntity, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector, ToggleSidebar,
+        SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
+        ToggleSidebar,
     },
     model::NodeRef,
 };
@@ -107,6 +108,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 ("Add workspace…", IconName::Plus, Box::new(NewWorkspace)),
                 ("Rename this workspace…", IconName::File, Box::new(RenameWorkspace)),
                 ("Publish this screen's changes", IconName::Github, Box::new(PublishChanges)),
+                ("Sync the whole workspace", IconName::Github, Box::new(SyncWorkspace)),
                 ("Reload workspace", IconName::RefreshCw, Box::new(ReloadWorkspace)),
             ],
         ),

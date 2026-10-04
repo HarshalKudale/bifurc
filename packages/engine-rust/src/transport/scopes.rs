@@ -80,6 +80,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("runner.listFolderIds", Scope::Read),
     ("sync.publish", Scope::Write),
     ("sync.push", Scope::Write),
+    ("sync.all", Scope::Write),
     ("sync.pull", Scope::Write),
     ("sync.getState", Scope::Read),
     ("sync.getEntityStatus", Scope::Read),

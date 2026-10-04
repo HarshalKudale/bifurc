@@ -14,6 +14,7 @@ mod login;
 mod publish_service;
 mod remote;
 mod status_tracker;
+mod sync_all;
 mod sync_commands;
 mod sync_manager;
 mod sync_state;
