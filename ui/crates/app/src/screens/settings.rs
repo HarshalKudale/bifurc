@@ -592,6 +592,7 @@ impl SettingsScreen {
         let engine = self.model.read(cx).engine().clone();
         let (telemetry_read, telemetry_write) = (self.model.clone(), self.model.clone());
         let policy_url = self.model.read(cx).setup().privacy_policy_url.clone();
+        let terms_url = self.model.read(cx).setup().terms_of_service_url.clone();
         let fact =|title: &'static str, value: String| {
             SettingItem::new(
                 title,
@@ -623,9 +624,20 @@ impl SettingsScreen {
                         ),
                     )
                     .description(
-                        "What kind of thing you do, never its content. Off, only that Bifurc was installed on this device is reported, once.",
+                        "On by default. What kind of thing you do, never its content. Off, only that Bifurc was installed on this device is reported, once.",
                     )
                     .keywords(["telemetry", "tracking", "posthog"]),
+                )
+                .item(
+                    SettingItem::new(
+                        "Terms of service",
+                        SettingField::render(move |_, _, _| {
+                            Link::new("terms-link")
+                                .href(terms_url.clone())
+                                .child(terms_url.trim_start_matches("https://").to_owned())
+                        }),
+                    )
+                    .layout(Axis::Horizontal),
                 )
                 .item(
                     SettingItem::new(
