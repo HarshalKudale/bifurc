@@ -237,9 +237,31 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let workspace = workspace_id(ctx)?;
             let payload = json!({
                 "workspaceId": workspace, "accountId": account, "repoName": name, "private": !ctx.args.has("public"),
+                "syncAll": ctx.args.has("all"),
             });
             let result = refused(ctx.request("sync.publish", payload)?)?;
             Ok(ctx.print(&result, || format!("Published to {}", js_template(result.pointer("/repo/fullName")))))
+        }
+        "sync" => {
+            let workspace = workspace_id(ctx)?;
+            let result = refused(ctx.request("sync.all", json!({ "workspaceId": workspace }))?)?;
+            Ok(ctx.print(&result, || {
+                let count = |key: &str| result.get(key).and_then(Value::as_u64).unwrap_or(0);
+                let mut line = match count("synced") {
+                    0 => "Nothing new to sync".to_string(),
+                    synced => format!("Synced {synced} change(s), each in a commit of its own"),
+                };
+                if result.get("initialized").is_some_and(truthy) {
+                    line = format!("The workspace is now a git repository.\n{line}");
+                }
+                if result.get("pushed").is_some_and(truthy) {
+                    line.push_str(", and pushed them");
+                }
+                if count("pendingDeletions") > 0 {
+                    line.push_str(&format!("\n{} deletion(s) still wait to be confirmed or reverted", count("pendingDeletions")));
+                }
+                line
+            }))
         }
         other => Err(CliError::msg(format!("unknown: workspaces {other}"))),
     }

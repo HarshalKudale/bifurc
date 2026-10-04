@@ -32,6 +32,7 @@ use crate::{
         dialogs::confirm_danger,
     },
     engine::{call, describe, failure, fetch_artifact, upload_and_call},
+    model::git::FileState,
 };
 
 /// The kinds of thing the engine can export and import, in the order they are offered.
@@ -83,7 +84,7 @@ impl SyncInfo {
     }
 
     fn is_working(&self) -> bool {
-        matches!(self.status.as_str(), "pushing" | "pulling" | "cloning")
+        matches!(self.status.as_str(), "pushing" | "pulling" | "cloning" | "syncing")
     }
 }
 
@@ -129,7 +130,11 @@ impl WorkspaceScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
         let subscriptions = vec![
-            cx.observe_in(&model, window, |this, _, window, cx| this.follow_workspace(window, cx)),
+            cx.observe_in(&model, window, |this, _, window, cx| {
+                this.follow_workspace(window, cx);
+                // The count of what is not synced is the model's, and changes without the workspace changing.
+                cx.notify();
+            }),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::SyncStatus | ModelEvent::AccountChanged(_) => this.refresh_sync(cx),
                 ModelEvent::EngineRestarted => {
@@ -412,18 +417,31 @@ impl WorkspaceScreen {
         };
 
         if setup.known && !setup.git_installed {
+            let check_model = model.clone();
             return page.groups(vec![
                 SettingGroup::new()
                     .title("Git")
-                    .item(SettingItem::render(|_, _, cx| {
-                        div().text_color(cx.theme().muted_foreground).child(
-                            "Git is not installed, so this workspace is plain files on this computer: no history, no \
-                             audit log, no way to revert a change, and no sync. Install Git and restart Bifurc.",
-                        )
+                    .item(SettingItem::render(move |options, _, cx| {
+                        let model = check_model.clone();
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(div().flex_1().text_color(cx.theme().muted_foreground).child(
+                                "Git is not installed, so this workspace is plain files on this computer: no history, \
+                                 no audit log, no way to revert a change, and no sync. Install Git, then check again.",
+                            ))
+                            .child(Button::new("check-git").with_size(options.size()).label("Check again").on_click(
+                                move |_, _, cx| model.update(cx, |model, cx| model.refresh_setup(cx)),
+                            ))
                     }))
-                    .footer(|_, _| "Nothing is lost: once Git is there, the workspace becomes a repository."),
+                    .footer(|_, _| {
+                        "Nothing is lost: once Git is there, the workspace becomes a repository and everything in it \
+                         can be synced at once."
+                    }),
             ]);
         }
+
+        let changes_group = self.changes_group(workspace.sync.is_some(), cx);
 
         let account_label = match &workspace.account {
             Some(account) if account.signed_in => format!("@{}", account.login),
@@ -505,7 +523,7 @@ impl WorkspaceScreen {
                     "Publishing creates a new repository on your account and pushes this workspace to it. \
                      Once set, the repository can't be changed."
                 });
-            return page.groups(vec![account_group, remote_group]);
+            return page.groups(vec![account_group, changes_group, remote_group]);
         };
 
         let remote_group = SettingGroup::new()
@@ -523,6 +541,7 @@ impl WorkspaceScreen {
 
         let status_label = match sync.status.as_str() {
             "pushing" => "Pushing…",
+            "syncing" => "Syncing…",
             "pulling" => "Pulling…",
             "cloning" => "Cloning…",
             "error" => "Error",
@@ -576,7 +595,63 @@ impl WorkspaceScreen {
                 )))
                 .children(sync.error.clone().map(|error| div().text_xs().text_color(theme.danger).child(error)))
         }));
-        page.groups(vec![account_group, remote_group, status_group])
+        page.groups(vec![account_group, changes_group, remote_group, status_group])
+    }
+
+    /// What the workspace holds that was never synced, and the one action that syncs all of it.
+    fn changes_group(&self, has_remote: bool, cx: &mut Context<Self>) -> SettingGroup {
+        let model = self.model.clone();
+        let git = self.model.read(cx).git();
+        let waiting = git.files.values().filter(|s| matches!(s, FileState::New | FileState::Modified)).count();
+        let deleted = git.files.values().filter(|s| **s == FileState::Deleted).count();
+        let unpushed = git.has_remote && git.ahead;
+        let busy = self.model.read(cx).is_publishing() || self.sync.is_working();
+        let progress = self.sync.progress.clone().filter(|_| self.sync.is_working());
+        let count = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
+        let mut summary = match (waiting, unpushed) {
+            (0, true) => "Everything is committed. Commits are waiting to be pushed.".to_owned(),
+            (0, false) => "Everything is synced.".to_owned(),
+            (n, _) => format!("{} not synced yet.", count(n, "item is", "items are")),
+        };
+        if deleted > 0 {
+            summary.push_str(&format!(
+                " {} to be confirmed or reverted where it was deleted.",
+                count(deleted, "deletion waits", "deletions wait")
+            ));
+        }
+        SettingGroup::new()
+            .title("Changes")
+            .item(SettingItem::render(move |options, _, cx| {
+                let model = model.clone();
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(progress.clone().unwrap_or_else(|| summary.clone())),
+                    )
+                    .child(
+                        Button::new("sync-all")
+                            .with_size(options.size())
+                            .primary()
+                            .icon(IconName::Github)
+                            .label("Sync all")
+                            .loading(busy)
+                            .disabled(busy || (waiting == 0 && !unpushed))
+                            .on_click(move |_, _, cx| model.update(cx, |model, cx| model.sync_all(cx))),
+                    )
+            }))
+            .footer(move |_, _| {
+                if has_remote {
+                    "Each new or changed item gets a commit of its own, then all of them are pushed together."
+                } else {
+                    "Each new or changed item gets a commit of its own. Nothing leaves this computer until the \
+                     workspace is published."
+                }
+            })
     }
 
     /// A dropdown of kinds, and one of the formats the chosen kind has.

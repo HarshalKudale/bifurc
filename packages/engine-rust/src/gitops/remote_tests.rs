@@ -588,3 +588,67 @@ async fn only_the_owner_imports_a_workspace_and_nothing_local_is_replaced() {
     let refused = engine.call("sync.push", json!({ "workspaceId": "remote-ws" })).await;
     refuse(refused, "belongs to @octo");
 }
+
+#[tokio::test]
+async fn a_workspace_of_plain_files_becomes_a_repository_and_is_synced_whole() {
+    if !check_git_installed().await {
+        return;
+    }
+    let root = scratch_data_root();
+    let ws = root.ws_id;
+    let guard = start_hub().await;
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let subjects = |log: String| log.lines().map(str::to_string).collect::<Vec<_>>();
+
+    // Made while git was missing: files, no repository.
+    write_entity(ws, "requests", "r1", &request("r1", "First"), None).unwrap();
+    write_entity(ws, "requests", "r2", &request("r2", "Second"), Some("Folder")).unwrap();
+    write_entity(ws, "mocks", "m1", &json!({ "id": "m1", "name": "Mock", "urlPattern": "/x" }), None).unwrap();
+    assert!(!ws_dir(ws).join(".git").exists());
+
+    // Asking what the machine has is how a git installed since is noticed: the workspace is a repository
+    // from then on, with everything in it new.
+    assert_eq!(engine.call("setup.getState", json!({})).await["gitInstalled"], true);
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["gitTracked"], true);
+    let status = get_workspace_sync_status(ws).await;
+    assert_eq!(status.values().filter(|state| *state == "new").count(), 3, "{status:?}");
+
+    // One sync commits each of them as created, in a commit of its own.
+    let synced = engine.call("sync.all", json!({ "workspaceId": ws })).await;
+    assert_eq!(synced["ok"], true, "{synced}");
+    assert_eq!((synced["total"].as_u64(), synced["synced"].as_u64(), synced["pushed"].as_bool()), (Some(3), Some(3), Some(false)));
+    let log = subjects(run(&ws_dir(ws), &["log", "--reverse", "--format=%s"]).await);
+    assert_eq!(log, ["create workspace Workspace 1", "create mock Mock", "create request Second", "create request First"]);
+    assert!(run(&ws_dir(ws), &["log", "-1", "--format=%b"]).await.contains("entity-id: r1"));
+    assert!(get_workspace_sync_status(ws).await.values().all(|state| state == "clean"));
+    let again = engine.call("sync.all", json!({ "workspaceId": ws })).await;
+    assert_eq!((again["ok"].as_bool(), again["total"].as_u64()), (Some(true), Some(0)), "{again}");
+
+    // Publishing takes what was never synced with it when asked to.
+    write_entity(ws, "requests", "r3", &request("r3", "Third"), None).unwrap();
+    write_entity(ws, "requests", "r1", &request("r1", "First again"), None).unwrap();
+    let published = engine
+        .call("sync.publish", json!({ "workspaceId": ws, "accountId": octo, "repoName": "whole", "syncAll": true }))
+        .await;
+    assert_eq!(published["ok"], true, "{published}");
+    assert_eq!((published["sync"]["synced"].as_u64(), published["sync"]["pushed"].as_bool()), (Some(2), Some(true)));
+    auto_sync::stop_auto_sync(ws);
+    let bare = guard.hub.lock().repos["octo/whole"].1.clone();
+    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
+    let log = subjects(run(&bare, &["log", "--format=%s", "-2", "main"]).await);
+    assert_eq!(log, ["create request Third", "update request First again"]);
+
+    // With a remote, the commits of one sync are pushed together. A deletion is not part of it: it waits
+    // to be confirmed or reverted.
+    write_entity(ws, "requests", "r4", &request("r4", "Fourth"), None).unwrap();
+    write_entity(ws, "requests", "r5", &request("r5", "Fifth"), None).unwrap();
+    std::fs::remove_file(ws_dir(ws).join("mocks/m1.json")).unwrap();
+    let synced = engine.call("sync.all", json!({ "workspaceId": ws })).await;
+    assert_eq!(synced["ok"], true, "{synced}");
+    assert_eq!((synced["synced"].as_u64(), synced["pushed"].as_bool(), synced["pendingDeletions"].as_u64()), (Some(2), Some(true), Some(1)));
+    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
+    assert!(run(&bare, &["show", "main:mocks/m1.json"]).await.contains("Mock"));
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["status"], "idle");
+    auto_sync::stop_all_auto_sync();
+}

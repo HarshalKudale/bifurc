@@ -70,9 +70,56 @@ pub async fn git_net_in(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>) ->
     run_git(dir, args, auth, true).await
 }
 
+/// Where git was found when it is not on the engine's `PATH`.
+static LOCATED_GIT: parking_lot::Mutex<Option<std::path::PathBuf>> = parking_lot::Mutex::new(None);
+
+/// A git installed after the engine started is not on the `PATH` the engine was given, and the engine
+/// outlives the windows that could restart it. So the places an installer puts it are looked at too.
+fn locate_git() -> Option<std::path::PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let under = |var: &str, rest: &str| std::env::var_os(var).map(|base| Path::new(&base).join(rest));
+    [
+        under("ProgramFiles", "Git\\cmd\\git.exe"),
+        under("ProgramW6432", "Git\\cmd\\git.exe"),
+        under("ProgramFiles(x86)", "Git\\cmd\\git.exe"),
+        under("LOCALAPPDATA", "Programs\\Git\\cmd\\git.exe"),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|path| path.is_file())
+}
+
 async fn run_git(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>, network: bool) -> Result<String, GitError> {
+    let located = LOCATED_GIT.lock().clone();
+    let output = match git_command(located.as_deref(), dir, args, auth, network).output().await {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && located.is_none() => match locate_git() {
+            Some(found) => {
+                *LOCATED_GIT.lock() = Some(found.clone());
+                git_command(Some(&found), dir, args, auth, network).output().await
+            }
+            None => Err(e),
+        },
+        other => other,
+    }
+    .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(GitError(if stderr.is_empty() { String::from_utf8_lossy(&output.stdout).trim().to_string() } else { stderr }))
+}
+
+fn git_command(
+    program: Option<&Path>,
+    dir: &Path,
+    args: &[&str],
+    auth: Option<&RemoteAuth>,
+    network: bool,
+) -> tokio::process::Command {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
-    let mut command = hidden_command("git");
+    let mut command = hidden_command(program.unwrap_or(Path::new("git")));
     command.args(args).current_dir(dir).env("GIT_OPTIONAL_LOCKS", "0").stdin(std::process::Stdio::null());
     for name in STRIPPED_GIT_VARS {
         command.env_remove(name);
@@ -89,12 +136,7 @@ async fn run_git(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>, network: 
             .env("GIT_CONFIG_KEY_1", format!("http.{}/.extraheader", auth.origin))
             .env("GIT_CONFIG_VALUE_1", format!("Authorization: Basic {basic}"));
     }
-    let output = command.output().await.map_err(|e| GitError(format!("could not run git: {e}")))?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(GitError(if stderr.is_empty() { String::from_utf8_lossy(&output.stdout).trim().to_string() } else { stderr }))
+    command
 }
 
 /// Run `git <args>` in a workspace's repository.

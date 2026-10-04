@@ -552,6 +552,48 @@ impl AppModel {
         });
     }
 
+    /// Syncs everything in the workspace that was never synced: the engine commits each new or changed item
+    /// in a commit of its own, then pushes when there is a remote. Progress arrives as `event.sync.status`.
+    pub fn sync_all(&mut self, cx: &mut Context<Self>) {
+        if self.publishing {
+            return;
+        }
+        self.publishing = true;
+        cx.notify();
+        let client = self.engine.client.clone();
+        let payload = json!({ "workspaceId": self.workspace_id() });
+        call(&client, cx, "sync.all", payload, |this, outcome, cx| {
+            this.publishing = false;
+            let message = match failure(&outcome) {
+                Some(message) => format!("Couldn't sync the workspace. {message}"),
+                None => {
+                    let result = outcome.unwrap_or(Value::Null);
+                    let count = |key: &str| result.get(key).and_then(Value::as_u64).unwrap_or(0);
+                    let pushed = result.get("pushed").and_then(Value::as_bool) == Some(true);
+                    let mut message = match (count("synced"), pushed) {
+                        (0, true) => "Nothing new to commit. Pushed what was waiting.".to_owned(),
+                        (0, false) => "Everything is already synced.".to_owned(),
+                        (1, true) => "Synced 1 change and pushed it.".to_owned(),
+                        (1, false) => "Synced 1 change.".to_owned(),
+                        (synced, true) => format!("Synced {synced} changes and pushed them."),
+                        (synced, false) => format!("Synced {synced} changes."),
+                    };
+                    match count("pendingDeletions") {
+                        0 => {}
+                        1 => message.push_str(" 1 deletion still waits to be confirmed or reverted."),
+                        waiting => {
+                            message.push_str(&format!(" {waiting} deletions still wait to be confirmed or reverted."))
+                        }
+                    }
+                    message
+                }
+            };
+            cx.emit(ModelEvent::Notice(message));
+            this.refresh(cx);
+            cx.notify();
+        });
+    }
+
     /// Commits the file of the entity with `id` (and pushes, when the workspace has a remote).
     pub fn sync_entity(&mut self, id: &str, cx: &mut Context<Self>) {
         match self.git.entity_path(id).map(str::to_owned) {
