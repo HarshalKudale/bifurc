@@ -8,8 +8,9 @@
 //! - one `command used` per (command, client, outcome) with a count, every [`TALLIES_EVERY`] flushes, so a
 //!   client that polls does not become an event per call.
 //!
-//! Off when the build has no project key, when `BIFURC_TELEMETRY=0` or `DO_NOT_TRACK=1` is set, and when
-//! `app.json` has `"telemetryEnabled": false`. The key comes from `BIFURC_POSTHOG_KEY` when the engine runs,
+//! Off when the build has no project key and when `BIFURC_TELEMETRY=0` or `DO_NOT_TRACK=1` is set. With
+//! `"telemetryEnabled": false` in `app.json` one event is still sent, once per data directory: `app installed`,
+//! so that an install is known of; nothing the user does is. The key comes from `BIFURC_POSTHOG_KEY` when the engine runs,
 //! else from when it was built.
 
 pub mod events;
@@ -93,14 +94,39 @@ fn env_opts_out(telemetry: Option<&str>, do_not_track: Option<&str>) -> bool {
     telemetry.is_some_and(off) || do_not_track.is_some_and(|value| !value.trim().is_empty() && !off(value))
 }
 
-fn opted_out() -> bool {
+/// The environment says to send nothing at all.
+fn env_opted_out() -> bool {
     env_opts_out(std::env::var("BIFURC_TELEMETRY").ok().as_deref(), std::env::var("DO_NOT_TRACK").ok().as_deref())
-        || load_settings().as_value().get("telemetryEnabled").and_then(Value::as_bool) == Some(false)
+}
+
+/// The user turned usage analytics off: only the install itself is reported.
+fn switched_off() -> bool {
+    !load_settings().telemetry_enabled()
+}
+
+fn opted_out() -> bool {
+    env_opted_out() || switched_off()
+}
+
+fn analytics_path() -> std::path::PathBuf {
+    data_dir().join("analytics.json")
+}
+
+/// Whether `stored` (what `analytics.json` holds) says the install was already reported.
+fn install_reported(stored: Option<&Value>) -> bool {
+    stored.and_then(|v| v.get("installReported")).and_then(Value::as_bool) == Some(true)
+}
+
+/// Remember that `app installed` reached PostHog, so it is sent once per data directory.
+fn mark_install_reported() {
+    let path = analytics_path();
+    let stored = read_json(&path).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let _ = write_json_pretty(&path, &merged(&stored, &json!({ "installReported": true })));
 }
 
 /// The random id of this data directory, made on first use. It is derived from nothing.
 fn install_id() -> String {
-    let path = data_dir().join("analytics.json");
+    let path = analytics_path();
     let stored = read_json(&path);
     if let Some(id) = stored.as_ref().and_then(|v| v.get("installId")).and_then(Value::as_str).filter(|id| !id.is_empty())
     {
@@ -154,19 +180,40 @@ async fn send(target: &Target, batch: Vec<Value>) -> Result<(), String> {
 /// Turn analytics on for this engine, if the build has a project key and the user has not opted out.
 pub fn start(transport: &str) {
     let Some(key) = project_key() else { return };
-    if opted_out() {
+    if env_opted_out() {
         return;
     }
     let target = Target { key, host: host(), install_id: install_id() };
+    let installed =
+        (!install_reported(read_json(&analytics_path()).as_ref())).then(|| event(&target, "app installed", json!({})));
+    // Switched off in the settings: that the app was installed here is still reported, once, and nothing else.
+    if switched_off() {
+        if let Some(installed) = installed {
+            notice(
+                "usage analytics are off; that Bifurc was installed on this device is reported once — set \
+                 BIFURC_TELEMETRY=0 to send nothing at all",
+            );
+            tokio::spawn(async move {
+                if send(&target, vec![installed]).await.is_ok() {
+                    mark_install_reported();
+                }
+            });
+        }
+        return;
+    }
     notice(
         "anonymous usage analytics are on (what kind of thing you do, never its content) — set \
-         \"telemetryEnabled\": false in app.json or BIFURC_TELEMETRY=0 to turn them off",
+         \"telemetryEnabled\": false in app.json to report only the install, or BIFURC_TELEMETRY=0 to send nothing",
     );
     let started = event(&target, "engine started", json!({ "transport": transport }));
     let first = target.clone();
     let flusher = tokio::spawn(async move {
-        if let Err(reason) = send(&first, vec![started]).await {
-            notice(&format!("usage analytics could not be sent: {reason}"));
+        let reports_install = installed.is_some();
+        let batch: Vec<Value> = installed.into_iter().chain([started]).collect();
+        match send(&first, batch).await {
+            Ok(()) if reports_install => mark_install_reported(),
+            Ok(()) => {}
+            Err(reason) => notice(&format!("usage analytics could not be sent: {reason}")),
         }
         let mut tick = tokio::time::interval(EVENTS_EVERY);
         tick.tick().await;
@@ -279,6 +326,13 @@ mod tests {
         assert!(env_opts_out(None, Some("1")));
         assert!(!env_opts_out(None, Some("0")));
         assert!(!env_opts_out(None, Some("")));
+    }
+
+    #[test]
+    fn the_install_is_reported_once() {
+        assert!(!install_reported(None));
+        assert!(!install_reported(Some(&json!({ "installId": "install-1" }))));
+        assert!(install_reported(Some(&json!({ "installId": "install-1", "installReported": true }))));
     }
 
     #[test]
