@@ -51,11 +51,20 @@ fn refused(message: impl Into<String>) -> Value {
 async fn signed_in(account_id: &str) -> Result<(Account, String), String> {
     let account = find_account(account_id).ok_or("That account is not signed in on this device.")?;
     let token = account.token.clone().ok_or_else(|| format!("Sign in to GitHub as {} again first.", account.login))?;
-    let user = github::fetch_user(&token).await?;
+    let user = github::fetch_user(&token).await.map_err(|e| flag_if_rejected(account_id, e))?;
     if user.id != account.user_id {
         return Err(format!("This sign-in is not @{0}'s. Sign in to GitHub as {0} again.", account.login));
     }
     Ok((account, token))
+}
+
+/// When GitHub refused the account's token, put the account in the signed-out state (its workspaces pause
+/// until it signs in again) and tell the clients. Returns the error unchanged.
+pub fn flag_if_rejected(account_id: &str, error: String) -> String {
+    if github::is_rejected(&error) && crate::workspace::accounts::revoke_token(account_id).is_ok() {
+        crate::kernel::bus().emit("account.changed", json!({ "accountId": account_id, "status": "needsRelogin" }));
+    }
+    error
 }
 
 fn sync_config_for(repo: &Repo) -> Value {
@@ -88,7 +97,17 @@ pub fn workspace_auth(ws_id: &str) -> Result<Option<RemoteAuth>, GitError> {
 /// account, whichever workspace is in front.
 pub async fn git_net(ws_id: &str, args: &[&str]) -> Result<String, GitError> {
     let auth = workspace_auth(ws_id)?;
-    git_net_in(&ws_dir(ws_id), args, auth.as_ref()).await
+    let result = git_net_in(&ws_dir(ws_id), args, auth.as_ref()).await;
+    // A push or pull the remote refused for its credentials: ask GitHub whether the token is still good.
+    if let (Err(e), Some(auth), Some(account)) = (&result, &auth, workspace_account(ws_id)) {
+        let text = e.0.to_lowercase();
+        if text.contains("authentication failed") || text.contains("invalid username or password") || text.contains("401") {
+            if let Err(error) = github::fetch_user(&auth.token).await {
+                flag_if_rejected(&account.id, error);
+            }
+        }
+    }
+    result
 }
 
 /// The (workspace, account, repository) links GitHub has confirmed since the engine started. A sync runs
@@ -111,7 +130,7 @@ pub async fn ensure_owner(ws_id: &str) -> Result<(), GitError> {
         .token
         .clone()
         .ok_or_else(|| GitError(format!("Sign in to GitHub as {} to sync this workspace.", account.login)))?;
-    let repo = github::get_repo(&token, &repo_name).await.map_err(GitError)?;
+    let repo = github::get_repo(&token, &repo_name).await.map_err(|e| GitError(flag_if_rejected(&account.id, e)))?;
     if repo.owner_id != account.user_id {
         return Err(GitError(format!(
             "This workspace belongs to {}. Only its owner can sync it.",
