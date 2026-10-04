@@ -2,6 +2,7 @@
 
 pub mod autosave;
 pub mod binary;
+pub mod certificate;
 pub mod curl_import;
 pub mod dialogs;
 pub mod entity_bar;

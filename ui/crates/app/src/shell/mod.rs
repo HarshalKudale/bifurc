@@ -11,7 +11,7 @@ mod palette;
 mod right_sidebar;
 
 use gpui_kit::component::{
-    ActiveTheme as _, StyledExt as _, TitleBar, WindowExt as _,
+    ActiveTheme as _, WindowExt as _,
     command::CommandState,
     h_flex,
     input::InputState,
@@ -21,8 +21,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyView, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    px,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
 pub use self::nav::Screen;
@@ -43,13 +42,14 @@ use crate::{
         healthbar::HealthBarScreen,
         mappings::MappingsScreen,
         mocks::MocksScreen,
+        onboarding::Onboarding,
         proxy_rules::ProxyRulesScreen,
         requests::RequestsScreen,
         services::ServicesScreen,
         settings::SettingsScreen,
         vaults::VaultsScreen,
         workspace::WorkspaceScreen,
-        workspace_setup::{DIALOG_WIDTH, Purpose, WorkspaceSetup, open_setup_dialog},
+        workspace_setup::{Purpose, open_setup_dialog},
     },
 };
 
@@ -92,8 +92,8 @@ pub struct Shell {
     settings: Entity<SettingsScreen>,
     workspace: Entity<WorkspaceScreen>,
     audit: Entity<AuditScreen>,
-    /// What the window shows while there is no workspace: how to get the first one.
-    setup: Entity<WorkspaceSetup>,
+    /// What the window shows until the app is set up and has a workspace.
+    onboarding: Entity<Onboarding>,
     right: Entity<RightSidebar>,
     right_open: bool,
     palette: Entity<CommandState>,
@@ -116,7 +116,7 @@ impl Shell {
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
         let workspace = cx.new(|cx| WorkspaceScreen::new(model.clone(), window, cx));
         let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
-        let setup = cx.new(|cx| WorkspaceSetup::new(model.clone(), Purpose::First, window, cx));
+        let onboarding = cx.new(|cx| Onboarding::new(model.clone(), window, cx));
         let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
         let finder = cx.new(|cx| CommandState::new(window, cx));
@@ -154,7 +154,7 @@ impl Shell {
             settings,
             workspace,
             audit,
-            setup,
+            onboarding,
             right,
             right_open: false,
             palette,
@@ -408,39 +408,12 @@ impl Shell {
         }
     }
 
-    /// The engine has answered, and it holds no workspace: nothing else in the window has anything to show.
-    fn needs_first_workspace(&self, cx: &gpui_kit::App) -> bool {
+    /// The engine has answered, and the app is not set up or holds no workspace: nothing else in the window
+    /// has anything to show.
+    fn needs_onboarding(&self, cx: &gpui_kit::App) -> bool {
         let model = self.model.read(cx);
-        *model.load() == Load::Ready && model.config().workspaces.is_empty()
-    }
-
-    /// The first run: the window is only the way to a first workspace.
-    fn render_first_run(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        v_flex()
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .child(TitleBar::new().child("Bifurc"))
-            .child(
-                div().id("first-run").flex_1().min_h_0().overflow_y_scroll().child(
-                    v_flex().w_full().items_center().py_12().px_4().child(
-                        v_flex()
-                            .w_full()
-                            .max_w(gpui_kit::rems(DIALOG_WIDTH))
-                            .gap_6()
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(div().text_xl().font_semibold().child("Set up your first workspace"))
-                                    .child(div().text_color(theme.muted_foreground).child(
-                                        "A workspace holds your requests, mocks, mappings and environments.",
-                                    )),
-                            )
-                            .child(self.setup.clone()),
-                    ),
-                ),
-            )
+        let setup = model.setup();
+        *model.load() == Load::Ready && (model.config().workspaces.is_empty() || (setup.known && !setup.onboarded))
     }
 
     pub(super) fn prompt_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -485,8 +458,8 @@ impl Focusable for Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        if self.needs_first_workspace(cx) {
-            return self.render_first_run(cx).into_any_element();
+        if self.needs_onboarding(cx) {
+            return self.onboarding.clone().into_any_element();
         }
         let screen = match self.screen_view() {
             Some(view) => view.into_any_element(),

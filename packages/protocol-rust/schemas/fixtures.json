@@ -954,6 +954,18 @@
    "port": 70000
   }
  },
+ "setup.acceptPrivacy": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "setup.complete": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "setup.getState": {
   "valid": {},
   "invalid": {

@@ -270,6 +270,29 @@ fn empty_root() -> ScratchRoot {
 }
 
 #[tokio::test]
+async fn a_first_run_is_onboarded_only_after_the_privacy_policy_is_accepted() {
+    let _root = empty_root();
+    let _guard = start_hub().await;
+    let engine = Engine::new();
+
+    let setup = engine.call("setup.getState", json!({})).await;
+    assert_eq!((setup["privacyAccepted"].as_bool(), setup["onboarded"].as_bool()), (Some(false), Some(false)));
+    assert!(setup["privacyPolicyUrl"].as_str().is_some_and(|url| url.starts_with("https://")));
+
+    assert_eq!(engine.call("setup.complete", json!({})).await["ok"], false);
+    assert_eq!(engine.call("setup.getState", json!({})).await["onboarded"], false);
+
+    assert_eq!(engine.call("setup.acceptPrivacy", json!({})).await["ok"], true);
+    assert_eq!(engine.call("setup.complete", json!({})).await["ok"], true);
+    let setup = engine.call("setup.getState", json!({})).await;
+    assert_eq!((setup["privacyAccepted"].as_bool(), setup["onboarded"].as_bool()), (Some(true), Some(true)));
+
+    assert_eq!(engine.call("config.get", json!({})).await["telemetryEnabled"], true);
+    engine.call("settings.update", json!({ "telemetryEnabled": false })).await;
+    assert_eq!(engine.call("config.get", json!({})).await["telemetryEnabled"], false);
+}
+
+#[tokio::test]
 async fn a_first_run_has_no_workspace_and_the_first_one_created_becomes_active() {
     if !check_git_installed().await {
         return;

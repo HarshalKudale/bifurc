@@ -518,6 +518,9 @@
     "tlsEnabled": {
      "type": "boolean"
     },
+    "telemetryEnabled": {
+     "type": "boolean"
+    },
     "tlsCaCertPath": {
      "type": [
       "string",
@@ -2273,6 +2276,9 @@
    "properties": {
     "url": {
      "type": "string"
+    },
+    "manual": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -2992,6 +2998,18 @@
    ]
   },
   "setup.getState": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "setup.acceptPrivacy": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "setup.complete": {
    "type": "object",
    "properties": {},
    "required": [],

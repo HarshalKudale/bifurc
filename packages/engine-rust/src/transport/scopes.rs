@@ -31,6 +31,8 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("workspace.setActive", Scope::Write),
     ("workspace.import", Scope::Write),
     ("setup.getState", Scope::Read),
+    ("setup.acceptPrivacy", Scope::Write),
+    ("setup.complete", Scope::Write),
     ("account.list", Scope::Read),
     ("account.repos", Scope::Read),
     ("account.login.start", Scope::Admin),
