@@ -3,7 +3,8 @@
 //! It is a short walk in a fixed order. The terms of service come first and the privacy policy second, and
 //! nothing else is reachable until both are accepted; then what the app does, how it looks, HTTPS, the two
 //! proxies' ports, and last the first workspace. Everything after the policy can be left as it is and changed
-//! later in Settings.
+//! later in Settings. Usage analytics are not asked about here: accepting the terms and the policy is what
+//! allows them, and the switch that turns them off is in Settings, under About.
 //!
 //! Nothing here is this view's to keep. That the terms and the policy were accepted and that the walk was
 //! finished are the engine's (`setup.acceptTerms`, `setup.acceptPrivacy`, `setup.complete`), as are the ports,
@@ -387,7 +388,9 @@ impl Onboarding {
             .gap_4()
             .child(
                 "The terms of service are the agreement between you and Bifurc: what you may use the app for, \
-                 what it comes with and without, and who is responsible for what. Read them before you go on.",
+                 what it comes with and without, and who is responsible for what. They also say that anonymous \
+                 usage analytics are on by default and can be turned off in Settings, under About. Read them \
+                 before you go on.",
             )
             .child(
                 h_flex()
@@ -418,8 +421,9 @@ impl Onboarding {
             .child(
                 "Your workspaces, requests and captured traffic stay on this computer. Bifurc sends anonymous \
                  usage analytics: what kind of thing you do, from which interface and on which platform. Never \
-                 a name, a URL, a path or anything you typed. You can turn them off in the next steps; \
-                 that Bifurc was installed on this device is still reported, once.",
+                 a name, a URL, a path or anything you typed. They are on by default once you accept, and you \
+                 can turn them off at any time in Settings, under About; that Bifurc was installed on this \
+                 device is still reported, once.",
             )
             .child(
                 h_flex()
@@ -539,28 +543,9 @@ impl Onboarding {
                 },
             );
 
-        let model = self.model.clone();
-        let analytics = Switch::new("onboarding-analytics")
-            .checked(self.model.read(cx).config().settings.telemetry_enabled)
-            .on_change(move |checked: &bool, _, cx| {
-                let checked = *checked;
-                model.update(cx, |model, cx| model.update_settings(json!({ "telemetryEnabled": checked }), cx));
-            });
-
-        v_flex()
-            .gap_4()
-            .child(
-                Self::group(cx)
-                    .child(Self::row("Color theme", "Each theme is light or dark.", theme_menu, cx))
-                    .child(Self::row("Interface size", "Scales text, spacing and controls together.", size_menu, cx)),
-            )
-            .child(Self::group(cx).child(Self::row(
-                "Anonymous usage analytics",
-                "What kind of thing you do, never its content. Off, only that Bifurc was installed on this device \
-                 is reported, once. Turning them back on applies when the engine next starts.",
-                analytics,
-                cx,
-            )))
+        Self::group(cx)
+            .child(Self::row("Color theme", "Each theme is light or dark.", theme_menu, cx))
+            .child(Self::row("Interface size", "Scales text, spacing and controls together.", size_menu, cx))
             .into_any_element()
     }
 
@@ -800,9 +785,7 @@ impl Onboarding {
             Stage::Terms => ("Terms of service", "Accept the terms to use Bifurc."),
             Stage::Privacy => ("Privacy policy", "Accept the policy to use Bifurc."),
             Stage::Overview => ("What Bifurc does", "One place for the calls your work makes and receives."),
-            Stage::Preferences => {
-                ("Preferences", "How the app looks, and what it reports. Change them any time in Settings.")
-            }
+            Stage::Preferences => ("Preferences", "How the app looks. Change it any time in Settings."),
             Stage::Https => (
                 "HTTPS",
                 "Optional. To work on HTTPS traffic, the forward proxy signs the sites it intercepts with a root \
