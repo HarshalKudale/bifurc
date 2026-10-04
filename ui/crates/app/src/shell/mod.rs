@@ -27,7 +27,7 @@ use gpui_kit::{
 pub use self::nav::Screen;
 use self::right_sidebar::RightSidebar;
 use crate::{
-    app_model::{AppModel, ModelEvent},
+    app_model::{AppModel, Load, ModelEvent},
     commands::ShellHandle,
     components::{
         EntityAction,
@@ -42,11 +42,14 @@ use crate::{
         healthbar::HealthBarScreen,
         mappings::MappingsScreen,
         mocks::MocksScreen,
+        onboarding::Onboarding,
         proxy_rules::ProxyRulesScreen,
         requests::RequestsScreen,
         services::ServicesScreen,
         settings::SettingsScreen,
+        vaults::VaultsScreen,
         workspace::WorkspaceScreen,
+        workspace_setup::{Purpose, open_setup_dialog},
     },
 };
 
@@ -85,9 +88,12 @@ pub struct Shell {
     capture: Entity<CaptureScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
+    vaults: Entity<VaultsScreen>,
     settings: Entity<SettingsScreen>,
     workspace: Entity<WorkspaceScreen>,
     audit: Entity<AuditScreen>,
+    /// What the window shows until the app is set up and has a workspace.
+    onboarding: Entity<Onboarding>,
     right: Entity<RightSidebar>,
     right_open: bool,
     palette: Entity<CommandState>,
@@ -106,9 +112,11 @@ impl Shell {
         let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
+        let vaults = cx.new(|cx| VaultsScreen::new(model.clone(), cx));
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
         let workspace = cx.new(|cx| WorkspaceScreen::new(model.clone(), window, cx));
         let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
+        let onboarding = cx.new(|cx| Onboarding::new(model.clone(), window, cx));
         let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
         let finder = cx.new(|cx| CommandState::new(window, cx));
@@ -142,9 +150,11 @@ impl Shell {
             capture,
             mappings,
             environments,
+            vaults,
             settings,
             workspace,
             audit,
+            onboarding,
             right,
             right_open: false,
             palette,
@@ -175,6 +185,7 @@ impl Shell {
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)
             | ModelEvent::SyncStatus
+            | ModelEvent::AccountChanged(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::EntityReverted(_) => {}
         }
@@ -199,6 +210,7 @@ impl Shell {
             Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            Screen::Vaults => self.vaults.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             _ => {}
         }
     }
@@ -221,6 +233,7 @@ impl Shell {
             Screen::Mocks => Some(self.mocks.clone().into()),
             Screen::Mappings => Some(self.mappings.clone().into()),
             Screen::Environments => Some(self.environments.clone().into()),
+            Screen::Vaults => Some(self.vaults.clone().into()),
             Screen::Settings => Some(self.settings.clone().into()),
             Screen::WorkspaceConfig => Some(self.workspace.clone().into()),
             Screen::AuditLog => Some(self.audit.clone().into()),
@@ -293,6 +306,18 @@ impl Shell {
         self.mocks.update(cx, |mocks, cx| mocks.new_mock(None, window, cx));
     }
 
+    /// Opens a tab that asks for a cURL command and becomes the request it describes.
+    pub fn import_curl_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Requests, window, cx);
+        self.requests.update(cx, |requests, cx| requests.import_curl(window, cx));
+    }
+
+    /// Opens a tab that asks for a cURL command and becomes a mock of the call it makes.
+    pub fn import_curl_mock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Mocks, window, cx);
+        self.mocks.update(cx, |mocks, cx| mocks.import_curl(None, window, cx));
+    }
+
     pub fn prompt_new_mock_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_screen(Screen::Mocks, window, cx);
         self.mocks.update(cx, |mocks, cx| mocks.prompt_new_folder(None, window, cx));
@@ -359,6 +384,9 @@ impl Shell {
     pub fn run_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.screen == Screen::Requests {
             self.requests.update(cx, |screen, cx| screen.run_active(window, cx));
+        } else if self.screen == Screen::Mocks {
+            // A mock has no verb of its own; a tab waiting for a cURL command does.
+            self.mocks.update(cx, |screen, cx| screen.submit_curl(cx));
         }
     }
 
@@ -380,16 +408,16 @@ impl Shell {
         }
     }
 
+    /// The engine has answered, and the app is not set up or holds no workspace: nothing else in the window
+    /// has anything to show.
+    fn needs_onboarding(&self, cx: &gpui_kit::App) -> bool {
+        let model = self.model.read(cx);
+        let setup = model.setup();
+        *model.load() == Load::Ready && (model.config().workspaces.is_empty() || (setup.known && !setup.onboarded))
+    }
+
     pub(super) fn prompt_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        prompt(
-            cx.weak_entity(),
-            window,
-            cx,
-            "New workspace",
-            "Create",
-            vec![PromptField::new("Name", "Workspace name")],
-            |this, values, _, cx| this.model.update(cx, |model, cx| model.add_workspace(&values[0], cx)),
-        );
+        open_setup_dialog(self.model.clone(), Purpose::Add, window, cx);
     }
 
     pub(super) fn prompt_rename_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -430,6 +458,9 @@ impl Focusable for Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        if self.needs_onboarding(cx) {
+            return self.onboarding.clone().into_any_element();
+        }
         let screen = match self.screen_view() {
             Some(view) => view.into_any_element(),
             None => crate::components::page::empty(
@@ -464,5 +495,6 @@ impl Render for Shell {
                 ),
             )
             .child(self.render_footer(cx))
+            .into_any_element()
     }
 }

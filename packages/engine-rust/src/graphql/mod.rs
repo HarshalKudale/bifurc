@@ -100,7 +100,9 @@ pub fn register(registry: &mut CommandRegistry) {
             "variables": resolve_vars(str_of(&stored, "variables"), env),
             "operationName": resolve_vars(str_of(&stored, "operationName"), env),
         });
-        ctx.registry.invoke("graphql.execute", payload, ctx.clone()).await
+        let mut result = ctx.registry.invoke("graphql.execute", payload, ctx.clone()).await?;
+        crate::vault::redact_value(ws_id, &mut result);
+        Ok(result)
     });
 }
 

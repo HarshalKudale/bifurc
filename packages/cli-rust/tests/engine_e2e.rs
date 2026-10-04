@@ -34,8 +34,64 @@ fn start_status_call_and_stop_a_real_engine() {
     assert!(ok, "{out}{err}");
     assert!(out.contains("activeWorkspaceId"), "{out}");
 
+    let (ok, out, err) = bifurc(data, &["--no-start", "workspaces", "create", "E2E"]);
+    assert!(ok && out.starts_with("Created workspace "), "{out}{err}");
     let (ok, out, err) = bifurc(data, &["--no-start", "workspaces"]);
     assert!(ok && out.starts_with("ACTIVE  ID"), "{out}{err}");
+
+    // Every group of saved items is created, read, updated and switched or run the same way, by id or name.
+    for (create, update, read) in [
+        (
+            vec!["mappings", "create", "api", "127.0.0.1:3999"],
+            vec!["mappings", "update", "api.localhost", "--target", "127.0.0.1:4000"],
+            (vec!["mappings", "show", "api.localhost"], "127.0.0.1:4000"),
+        ),
+        (
+            vec!["rules", "create", "api.example.com/v1", "--mapping", "api.localhost", "--name", "V1"],
+            vec!["rules", "update", "V1", "--target", "http://localhost:9000"],
+            (vec!["rules", "show", "V1"], "\"targetType\": \"external\""),
+        ),
+        (
+            vec!["mocks", "create", "https://api.example.com/users", "--name", "Users", "--status", "201"],
+            vec!["mocks", "update", "Users", "--status", "404"],
+            (vec!["mocks", "show", "Users"], "\"responseStatus\": 404"),
+        ),
+        (
+            vec!["requests", "create", "--type", "grpc", "--url", "127.0.0.1:1", "--method", "pkg.S/M", "--name", "Rpc"],
+            vec!["requests", "update", "Rpc", "--method", "pkg.S/Other"],
+            (vec!["requests", "show", "Rpc"], "\"methodName\": \"Other\""),
+        ),
+        (
+            vec!["health", "create", "Dead", "http://127.0.0.1:1/"],
+            vec!["health", "update", "Dead", "--auto"],
+            (vec!["health", "show", "Dead"], "\"autoRefreshEnabled\": true"),
+        ),
+    ] {
+        for argv in [&create, &update] {
+            let (ok, out, err) = bifurc(data, argv);
+            assert!(ok, "{argv:?}: {out}{err}");
+        }
+        let (ok, out, err) = bifurc(data, &read.0);
+        assert!(ok && out.contains(read.1), "{:?}: {out}{err}", read.0);
+        let (ok, _, err) = bifurc(data, &[create[0], "delete", "x"]);
+        assert!(!ok && err.contains("deleting is done in the desktop app"), "{err}");
+    }
+    for group in ["mappings", "rules", "mocks"] {
+        let named = if group == "mappings" { "api.localhost" } else if group == "rules" { "V1" } else { "Users" };
+        let (ok, out, err) = bifurc(data, &[group, "disable", named]);
+        assert!(ok && out.starts_with("Disabled "), "{out}{err}");
+        let (ok, out, err) = bifurc(data, &[group, "list"]);
+        assert!(ok && out.contains("false"), "{out}{err}");
+    }
+    let (ok, out, err) = bifurc(data, &["requests", "list", "--type", "grpc"]);
+    assert!(ok && out.contains("pkg.S/Other") && out.contains("grpc"), "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "list", "--type", "rest"]);
+    assert!(ok && out.trim() == "(none)", "{out}{err}");
+    // What was run failed, so the command does: nothing listens on that port.
+    let (ok, out, _) = bifurc(data, &["health", "run"]);
+    assert!(!ok && out.contains("failing"), "{out}");
+    let (ok, _, err) = bifurc(data, &["requests", "send", "Rpc"]);
+    assert!(!ok && err.starts_with("bifurc: "), "{err}");
 
     let (ok, out, err) = bifurc(data, &["engine", "stop"]);
     assert!(ok && out.starts_with("stopped  pid "), "{out}{err}");

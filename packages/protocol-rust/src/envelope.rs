@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn hello_uses_camel_case_and_closed_enums() {
         let hello: HelloRequest = serde_json::from_value(
-            json!({ "protocolVersion": "1.0.0", "clientName": "desktop-ui", "clientVersion": "0.3.3", "lastSeq": 0 }),
+            json!({ "protocolVersion": "1.0.0", "clientName": "desktop-ui", "clientVersion": "0.4.0", "lastSeq": 0 }),
         )
         .unwrap();
         assert_eq!(hello.client_name, ClientName::DesktopUi);
@@ -193,7 +193,7 @@ mod tests {
     fn hello_response_omits_absent_members() {
         let response = HelloResponse {
             protocol_version: "1.0.0".into(),
-            engine_version: "0.3.3".into(),
+            engine_version: "0.4.0".into(),
             capabilities: vec![Capability::Socket, Capability::EventsReplay],
             session_id: "s".into(),
             host_domain: None,

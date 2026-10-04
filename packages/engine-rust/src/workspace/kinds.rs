@@ -266,6 +266,18 @@ pub fn crud_kind(kind: &str) -> Option<&'static CrudKind> {
     CRUD_KINDS.iter().find(|k| k.kind == kind)
 }
 
+/// The store's kind for a folder kind (`folder.*` name folders by `mock`, `ws`, `rule`, `request`, ...).
+pub fn folder_store_kind(folder_kind: &str) -> Option<&'static str> {
+    let store = match folder_kind {
+        "mock" => "mocks",
+        "ws" => "sockets",
+        "rule" => "rules",
+        "request" => "requests",
+        other => other,
+    };
+    crud_kind(store).filter(|kind| kind.folder_config_key.is_some()).map(|kind| kind.kind)
+}
+
 pub fn is_simple_kind(kind: &str) -> bool {
     SIMPLE_KINDS.contains(&kind)
 }

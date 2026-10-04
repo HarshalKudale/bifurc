@@ -28,8 +28,12 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    app_model::{AppModel, ModelEvent},
-    components::{Autosave, EntityAction, EntityBar, Syntax, VarEditor, dialogs::confirm_danger, entity_bar, page},
+    app_model::{AppModel, Deleted, ModelEvent},
+    components::{
+        Autosave, EntityAction, EntityBar, Syntax, VarEditor,
+        dialogs::{confirm_danger, delete_consequence, resolve_deleted},
+        entity_bar, page,
+    },
     engine::{call, call_in, describe, failure},
     session::SaveMode,
     shell::ActiveTarget,
@@ -236,6 +240,19 @@ impl ProxyRulesScreen {
             }
             cx.notify();
         });
+    }
+
+    /// Rules that are deleted and still waiting to be confirmed or reverted. `entity.list` does not return
+    /// them, so they come from the snapshot.
+    fn deleted_rules(&self, cx: &gpui_kit::App) -> Vec<crate::model::config::DeletedRule> {
+        self.model
+            .read(cx)
+            .config()
+            .deleted_rules
+            .iter()
+            .filter(|deleted| self.rule(&deleted.id).is_none())
+            .cloned()
+            .collect()
     }
 
     fn rule(&self, id: &str) -> Option<&Map<String, Value>> {
@@ -514,12 +531,13 @@ impl ProxyRulesScreen {
             return;
         };
         let name = self.rule(&id).map(|rule| text(rule, "name")).unwrap_or_default();
+        let consequence = delete_consequence(self.model.read(cx).git().entity_state(&id));
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
             format!("Delete rule “{name}”?"),
-            "Traffic it matched will go where it was originally headed.",
+            consequence,
             "Delete",
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
@@ -580,6 +598,28 @@ impl ProxyRulesScreen {
                     cx.listener(move |this, _, window, cx| this.go_to(Selection::Saved(select_id.clone()), window, cx)),
                 )
         });
+        // Deleted rules stay in place, struck through. Opening one asks whether to revert or confirm.
+        let deleted_rows = self.deleted_rules(cx).into_iter().map(|deleted| {
+            let name = if deleted.name.is_empty() { deleted.pattern.clone() } else { deleted.name.clone() };
+            let (id, label) = (deleted.id.clone(), name.clone());
+            ListItem::new(gpui_kit::ElementId::Name(format!("rule-deleted-{id}").into()))
+                .px_2()
+                .py_1()
+                .text_sm()
+                .child(
+                    div()
+                        .w_full()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .line_through()
+                        .text_color(theme.muted_foreground)
+                        .child(label),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let target = Deleted::Entity { kind: "proxyRules", id: id.clone() };
+                    resolve_deleted(this.model.clone(), target, name.clone(), window, cx);
+                }))
+        });
         v_flex()
             .id("rule-list")
             .w_72()
@@ -592,6 +632,7 @@ impl ProxyRulesScreen {
             .p_2()
             .gap_1()
             .children(rows)
+            .children(deleted_rows)
             .when(self.selection == Selection::Draft, |this| {
                 this.child(
                     ListItem::new("rule-draft")
@@ -607,7 +648,7 @@ impl ProxyRulesScreen {
     fn render_target(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let mappings: Vec<(String, String)> =
-            self.model.read(cx).config().mappings.iter().map(|m| (m.id.clone(), m.domain.clone())).collect();
+            self.model.read(cx).config().mappings.iter().filter(|m| !m.deleted).map(|m| (m.id.clone(), m.domain.clone())).collect();
         let chosen =
             mappings.iter().find(|(id, _)| *id == self.mapping_id).map(|(_, domain)| domain.clone()).unwrap_or_else(
                 || if mappings.is_empty() { "No mappings yet".to_owned() } else { "Choose a mapping".to_owned() },
@@ -767,7 +808,8 @@ impl Render for ProxyRulesScreen {
                 .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx))),
             cx,
         );
-        let has_list = !self.rules.is_empty() || self.selection == Selection::Draft;
+        let has_list =
+            !self.rules.is_empty() || !self.deleted_rules(cx).is_empty() || self.selection == Selection::Draft;
         let body = h_flex()
             .size_full()
             .items_stretch()

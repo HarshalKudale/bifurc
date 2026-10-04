@@ -2,6 +2,8 @@
 
 pub mod autosave;
 pub mod binary;
+pub mod certificate;
+pub mod curl_import;
 pub mod dialogs;
 pub mod entity_bar;
 pub mod kv_table;
@@ -11,6 +13,7 @@ pub mod tab_strip;
 pub mod var_editor;
 
 pub use autosave::Autosave;
+pub use curl_import::{CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget};
 pub use entity_bar::{EntityAction, EntityBar, FolderPicker, entity_bar};
 pub use kv_table::{KeyValueEvent, KeyValueTable};
 pub use parts_table::{FileData, Part, PartValue, PartsEvent, PartsTable};

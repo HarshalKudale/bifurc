@@ -31,6 +31,10 @@ jobs:
       # NSIS and the Windows SDK (makeappx, makepri) are on the runner image.
       - name: Build the installer and the Store package
         run: cargo xtask package --target nsis,msix
+        env:
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -62,6 +66,10 @@ jobs:
 
       - name: Build the AppImage
         run: cargo xtask package --target appimage
+        env:
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
 
       - uses: actions/upload-artifact@v4
         with:

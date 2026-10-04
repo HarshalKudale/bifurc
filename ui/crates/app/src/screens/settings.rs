@@ -19,6 +19,7 @@ use gpui_kit::component::{
     link::Link,
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     tag::Tag,
+    v_flex,
 };
 use gpui_kit::{
     App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
@@ -27,10 +28,10 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use crate::{
-    app_model::{AppModel, ProxyStatus},
-    components::binary::{PickedFile, pick_file},
-    engine::{call, describe, failure, upload_and_call},
-    model::trust,
+    app_model::{AppModel, ModelEvent, ProxyStatus},
+    components::{certificate::Certificate, dialogs::confirm_danger},
+    engine::{call, call_in, failure},
+    model::config::AccountInfo,
     preferences::Preferences,
     theme,
 };
@@ -38,188 +39,170 @@ use crate::{
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc/releases";
 
-/// The engine's root certificate, as `tls.certStatus` reports it.
-#[derive(Debug, Clone, Default, PartialEq)]
-struct Certificate {
-    generated: bool,
-    fingerprint: Option<String>,
-    /// A generate or remove is in flight.
-    busy: bool,
-    /// The user's own certificate and key are being uploaded.
-    importing: bool,
-    /// The certificate is being added to this computer's trust store.
-    installing: bool,
-    /// How the last install went: whether it worked, and what to say about it.
-    note: Option<(bool, String)>,
+/// A workspace that syncs as an account, and what it holds that its repository does not.
+#[derive(Debug, Clone, PartialEq)]
+struct AccountWorkspace {
+    name: String,
+    /// `owner/name`; `None` while the workspace was never published.
+    repo: Option<String>,
+    /// Files that differ from the last sync.
+    changes: u64,
+    /// Commits the repository has not got.
+    unpushed: bool,
 }
 
-/// The certificate's bytes from a `tls.exportCert` artifact: it is a PEM of a kilobyte or so, so the engine
-/// always sends it inline as base64.
-fn certificate_bytes(artifact: &Value) -> Result<Vec<u8>, String> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    if artifact.get("ok").and_then(Value::as_bool) == Some(false) {
-        return Err(artifact.get("error").and_then(Value::as_str).unwrap_or("There is no certificate.").to_owned());
+impl AccountWorkspace {
+    /// What would be lost with the workspace, if anything would.
+    fn unsynced(&self) -> Option<String> {
+        match (&self.repo, self.changes, self.unpushed) {
+            (None, _, _) => Some("never published".to_owned()),
+            (_, 0, false) => None,
+            (_, 0, true) => Some("unpushed commits".to_owned()),
+            (_, 1, _) => Some("1 unsynced change".to_owned()),
+            (_, changes, _) => Some(format!("{changes} unsynced changes")),
+        }
     }
-    let inline = artifact.get("inline").and_then(Value::as_str).ok_or("The engine sent no certificate.")?;
-    STANDARD.decode(inline).map_err(|error| format!("The certificate could not be read. {error}"))
+}
+
+/// A signed-in account and the workspaces that use it, as `account.list` reports them.
+#[derive(Debug, Clone, PartialEq)]
+struct AccountRow {
+    info: AccountInfo,
+    workspaces: Vec<AccountWorkspace>,
+}
+
+fn accounts_from(value: &Value) -> Vec<AccountRow> {
+    let list = |value: &Value, key: &str| value.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
+    list(value, "accounts")
+        .iter()
+        .filter_map(|account| {
+            let workspaces = list(account, "workspaces")
+                .iter()
+                .map(|ws| AccountWorkspace {
+                    name: ws.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    repo: ws.get("repo").and_then(Value::as_str).filter(|repo| !repo.is_empty()).map(str::to_owned),
+                    changes: ws.get("changes").and_then(Value::as_u64).unwrap_or(0),
+                    unpushed: ws.get("unpushed").and_then(Value::as_bool).unwrap_or(false),
+                })
+                .collect();
+            Some(AccountRow { info: AccountInfo::from_value(account)?, workspaces })
+        })
+        .collect()
+}
+
+/// What signing the account out does, beyond what the question itself says.
+fn sign_out_consequence(account: &AccountRow) -> String {
+    if account.workspaces.is_empty() {
+        return "Bifurc forgets this account on this computer. No workspace uses it.".to_owned();
+    }
+    let names: Vec<String> = account.workspaces.iter().map(|ws| format!("“{}”", ws.name)).collect();
+    let lost: Vec<String> = account
+        .workspaces
+        .iter()
+        .filter_map(|ws| Some(format!("“{}” ({})", ws.name, ws.unsynced()?)))
+        .collect();
+    let removed = format!("Its workspaces are removed from this computer: {}.", names.join(", "));
+    if lost.is_empty() {
+        format!("{removed} They stay on GitHub and can be imported again.")
+    } else {
+        format!("{removed} What was never synced is lost with them: {}.", lost.join(", "))
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 pub struct SettingsScreen {
     model: Entity<AppModel>,
-    certificate: Certificate,
-    _subscription: Subscription,
+    certificate: Entity<Certificate>,
+    accounts: Vec<AccountRow>,
+    /// The account being signed out.
+    signing_out: Option<String>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SettingsScreen {
     pub fn new(model: Entity<AppModel>, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.observe(&model, |_, _, cx| cx.notify());
-        let mut this = Self { model, certificate: Certificate::default(), _subscription: subscription };
-        this.refresh_certificate(cx);
+        let mut subscriptions = vec![
+            cx.observe(&model, |_, _, cx| cx.notify()),
+            cx.subscribe(&model, |this, _, event: &ModelEvent, cx| {
+                // What an account's workspaces hold unsynced changes with every sync.
+                if matches!(
+                    event,
+                    ModelEvent::AccountChanged(_)
+                        | ModelEvent::SyncStatus
+                        | ModelEvent::WorkspaceSwitched
+                        | ModelEvent::EngineRestarted
+                ) {
+                    this.refresh_accounts(cx);
+                }
+            }),
+        ];
+        let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
+        subscriptions.push(cx.observe(&certificate, |_, _, cx| cx.notify()));
+        let mut this =
+            Self { model, certificate, accounts: Vec::new(), signing_out: None, _subscriptions: subscriptions };
+        this.refresh_accounts(cx);
         this
     }
 
-    fn refresh_certificate(&mut self, cx: &mut Context<Self>) {
+    fn refresh_accounts(&mut self, cx: &mut Context<Self>) {
         let client = self.model.read(cx).client().clone();
-        call(&client, cx, "tls.certStatus", json!({}), |this, outcome, cx| {
-            if let Ok(status) = outcome {
-                this.certificate = Certificate {
-                    generated: status.get("generated").and_then(Value::as_bool).unwrap_or(false),
-                    fingerprint: status.get("fingerprint").and_then(Value::as_str).map(str::to_owned),
-                    busy: false,
-                    importing: this.certificate.importing,
-                    installing: this.certificate.installing,
-                    note: this.certificate.note.clone(),
-                };
+        call(&client, cx, "account.list", json!({}), |this, outcome, cx| {
+            if let Ok(listed) = outcome {
+                this.accounts = accounts_from(&listed);
                 cx.notify();
             }
         });
     }
 
+    /// Asks before signing out, with what the account's workspaces hold right now: signing out removes them.
+    fn ask_sign_out(&mut self, account_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "account.list", json!({}), move |this, outcome, window, cx| {
+            if let Ok(listed) = outcome {
+                this.accounts = accounts_from(&listed);
+                cx.notify();
+            }
+            let Some(account) = this.accounts.iter().find(|account| account.info.id == account_id) else { return };
+            let ok_text = if account.workspaces.is_empty() { "Sign out" } else { "Sign out and remove" };
+            let id = account_id.clone();
+            confirm_danger(
+                cx.weak_entity(),
+                window,
+                cx,
+                format!("Sign out @{}?", account.info.login),
+                sign_out_consequence(account),
+                ok_text,
+                move |this, _, cx| this.sign_out(id.clone(), cx),
+            );
+        });
+    }
+
+    fn sign_out(&mut self, account_id: String, cx: &mut Context<Self>) {
+        if self.signing_out.is_some() {
+            return;
+        }
+        self.signing_out = Some(account_id.clone());
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "account.logout", json!({ "accountId": account_id }), |this, outcome, cx| {
+            this.signing_out = None;
+            if let Some(message) = failure(&outcome) {
+                this.report(format!("Couldn't sign out. {message}"), cx);
+            }
+            this.model.update(cx, |model, cx| {
+                model.refresh_setup(cx);
+                model.refresh(cx);
+            });
+            this.refresh_accounts(cx);
+        });
+    }
+
     fn report(&mut self, message: String, cx: &mut Context<Self>) {
         self.model.update(cx, |model, cx| model.notice(message, cx));
-    }
-
-    /// The forward proxy reads the certificate when it starts, so a running one is started again to use a
-    /// new certificate.
-    fn reload_proxy(&mut self, cx: &mut Context<Self>) {
-        if self.model.read(cx).proxy().running {
-            self.model.update(cx, |model, cx| model.restart_proxy(cx));
-        }
-    }
-
-    /// Asks for the user's own certificate and then its private key, and hands both to the engine.
-    fn import_certificate(&mut self, cx: &mut Context<Self>) {
-        if self.certificate.busy || self.certificate.importing {
-            return;
-        }
-        pick_file("Choose the CA certificate (.pem or .crt)", cx, |this, certificate, cx| {
-            let certificate = match certificate {
-                Ok(certificate) => certificate,
-                Err(error) => return this.report(format!("Couldn't read the certificate. {error}"), cx),
-            };
-            pick_file("Now choose its private key (.pem or .key)", cx, move |this, key, cx| match key {
-                Ok(key) => this.upload_certificate(certificate, key, cx),
-                Err(error) => this.report(format!("Couldn't read the private key. {error}"), cx),
-            });
-        });
-    }
-
-    fn upload_certificate(&mut self, certificate: PickedFile, key: PickedFile, cx: &mut Context<Self>) {
-        self.certificate.importing = true;
-        self.certificate.note = None;
-        cx.notify();
-        let client = self.model.read(cx).client().clone();
-        let key_client = client.clone();
-        upload_and_call(
-            &client,
-            cx,
-            None,
-            &certificate.name,
-            &certificate.bytes,
-            "tls.importCert",
-            Default::default(),
-            move |this, outcome, cx| {
-                if let Err(message) = outcome {
-                    return this.finish_import(Some(format!("Couldn't import the certificate. {message}")), cx);
-                }
-                upload_and_call(
-                    &key_client,
-                    cx,
-                    None,
-                    &key.name,
-                    &key.bytes,
-                    "tls.importKey",
-                    Default::default(),
-                    |this, outcome, cx| {
-                        let failed = outcome.err().map(|message| format!("Couldn't import the private key. {message}"));
-                        this.finish_import(failed, cx)
-                    },
-                );
-            },
-        );
-    }
-
-    fn finish_import(&mut self, failed: Option<String>, cx: &mut Context<Self>) {
-        self.certificate.importing = false;
-        match failed {
-            Some(message) => self.report(message, cx),
-            None => self.reload_proxy(cx),
-        }
-        self.refresh_certificate(cx);
-    }
-
-    /// Reads the certificate from the engine and puts it in this computer's trust store.
-    fn install_certificate(&mut self, cx: &mut Context<Self>) {
-        if self.certificate.installing {
-            return;
-        }
-        self.certificate.installing = true;
-        self.certificate.note = None;
-        cx.notify();
-        let client = self.model.read(cx).client().clone();
-        call(&client, cx, "tls.exportCert", json!({}), |this, outcome, cx| {
-            let pem = match outcome {
-                Ok(artifact) => certificate_bytes(&artifact),
-                Err(error) => Err(describe(&error)),
-            };
-            let pem = match pem {
-                Ok(pem) => pem,
-                Err(message) => return this.finish_install(Err(message), cx),
-            };
-            let installing = cx.background_spawn(async move { trust::install(&pem) });
-            cx.spawn(async move |this, cx| {
-                let outcome = installing.await;
-                this.update(cx, |this, cx| this.finish_install(outcome, cx)).ok();
-            })
-            .detach();
-        });
-    }
-
-    fn finish_install(&mut self, outcome: Result<String, String>, cx: &mut Context<Self>) {
-        self.certificate.installing = false;
-        self.certificate.note = Some(match outcome {
-            Ok(message) => (true, message),
-            Err(message) => (false, message),
-        });
-        cx.notify();
-    }
-
-    fn run_certificate_command(&mut self, action: &'static str, what: &'static str, cx: &mut Context<Self>) {
-        if self.certificate.busy {
-            return;
-        }
-        self.certificate.busy = true;
-        cx.notify();
-        let client = self.model.read(cx).client().clone();
-        call(&client, cx, action, json!({}), move |this, outcome, cx| {
-            if let Some(message) = failure(&outcome) {
-                this.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
-            }
-            this.certificate.busy = false;
-            this.certificate.note = None;
-            this.reload_proxy(cx);
-            this.refresh_certificate(cx);
-        });
     }
 
     fn appearance_page(&self, cx: &App) -> SettingPage {
@@ -407,13 +390,11 @@ impl SettingsScreen {
         ])
     }
 
-    fn https_page(&self, cx: &mut Context<Self>) -> SettingPage {
+    fn https_page(&self) -> SettingPage {
         let tls_read = self.model.clone();
         let tls_write = self.model.clone();
-        let certificate = self.certificate.clone();
-        let this = cx.weak_entity();
-        let install_this = this.clone();
-        let install_certificate = certificate.clone();
+        let control = self.certificate.clone();
+        let install_control = control.clone();
         SettingPage::new("HTTPS").icon(IconName::Globe).groups(vec![
             SettingGroup::new().title("Interception").item(
                 SettingItem::new(
@@ -433,8 +414,9 @@ impl SettingsScreen {
                 .item(
                     SettingItem::render(move |options, _, cx| {
                         let theme = cx.theme().clone();
-                        let (generate, import, remove) = (this.clone(), this.clone(), this.clone());
-                        let working = certificate.busy || certificate.importing;
+                        let (generate, import, remove) = (control.clone(), control.clone(), control.clone());
+                        let certificate = control.read(cx);
+                        let working = certificate.working();
                         h_flex()
                             .w_full()
                             .gap_2()
@@ -460,17 +442,7 @@ impl SettingsScreen {
                                     .label(if certificate.generated { "Regenerate" } else { "Generate" })
                                     .loading(certificate.busy)
                                     .disabled(working)
-                                    .on_click(move |_, _, cx| {
-                                        generate
-                                            .update(cx, |this, cx| {
-                                                this.run_certificate_command(
-                                                    "tls.generate",
-                                                    "Couldn't generate the certificate.",
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }),
+                                    .on_click(move |_, _, cx| generate.update(cx, |certificate, cx| certificate.generate(cx))),
                             )
                             .child(
                                 Button::new("import-certificate")
@@ -479,26 +451,14 @@ impl SettingsScreen {
                                     .loading(certificate.importing)
                                     .disabled(working)
                                     .tooltip("Use your own certificate and private key instead")
-                                    .on_click(move |_, _, cx| {
-                                        import.update(cx, |this, cx| this.import_certificate(cx)).ok();
-                                    }),
+                                    .on_click(move |_, _, cx| import.update(cx, |certificate, cx| certificate.import(cx))),
                             )
                             .child(
                                 Button::new("remove-certificate")
                                     .with_size(options.size())
                                     .label("Remove")
                                     .disabled(!certificate.generated || working)
-                                    .on_click(move |_, _, cx| {
-                                        remove
-                                            .update(cx, |this, cx| {
-                                                this.run_certificate_command(
-                                                    "tls.removeCert",
-                                                    "Couldn't remove the certificate.",
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    }),
+                                    .on_click(move |_, _, cx| remove.update(cx, |certificate, cx| certificate.remove(cx))),
                             )
                     })
                     .keywords(["ca", "root", "fingerprint", "import", "own", "generate"]),
@@ -506,8 +466,8 @@ impl SettingsScreen {
                 .item(
                     SettingItem::render(move |options, _, cx| {
                         let theme = cx.theme().clone();
-                        let install = install_this.clone();
-                        let certificate = install_certificate.clone();
+                        let install = install_control.clone();
+                        let certificate = install_control.read(cx);
                         let note = certificate.note.clone().map(|(ok, text)| {
                             div()
                                 .text_xs()
@@ -532,9 +492,7 @@ impl SettingsScreen {
                                     .loading(certificate.installing)
                                     .disabled(!certificate.generated || certificate.installing)
                                     .tooltip("Add the certificate to this computer's trusted roots")
-                                    .on_click(move |_, _, cx| {
-                                        install.update(cx, |this, cx| this.install_certificate(cx)).ok();
-                                    }),
+                                    .on_click(move |_, _, cx| install.update(cx, |certificate, cx| certificate.install(cx))),
                             )
                     })
                     .keywords(["trust", "install", "keychain", "store"]),
@@ -545,9 +503,96 @@ impl SettingsScreen {
         ])
     }
 
+    /// The GitHub accounts signed in on this computer: one group each, with the workspaces that sync as it.
+    fn accounts_page(&self, cx: &mut Context<Self>) -> SettingPage {
+        let page = SettingPage::new("Accounts").icon(IconName::Github);
+        if self.accounts.is_empty() {
+            return page.groups(vec![
+                SettingGroup::new()
+                    .title("GitHub")
+                    .item(SettingItem::render(|_, _, cx| {
+                        div().text_color(cx.theme().muted_foreground).child("No account is signed in.")
+                    }))
+                    .footer(|_, _| {
+                        "An account is only needed to sync a workspace with GitHub. Sign in when you add a workspace, or when you publish one from its Config."
+                    }),
+            ]);
+        }
+        let groups = self.accounts.iter().enumerate().map(|(index, account)| {
+            let this = cx.weak_entity();
+            let (id, signed_in) = (account.info.id.clone(), account.info.signed_in);
+            let host = account.info.host.clone();
+            let busy = self.signing_out.as_deref() == Some(account.info.id.as_str());
+            let blocked = self.signing_out.is_some();
+            let count = account.workspaces.len();
+            let header = SettingItem::render(move |options, _, cx| {
+                let theme = cx.theme().clone();
+                let (this, id) = (this.clone(), id.clone());
+                let state = if signed_in { Tag::success().child("Signed in") } else { Tag::warning().child("Signed out") };
+                let detail = match count {
+                    0 => format!("{host} · no workspaces"),
+                    1 => format!("{host} · 1 workspace"),
+                    count => format!("{host} · {count} workspaces"),
+                };
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().text_color(theme.muted_foreground).child(detail))
+                    .child(state)
+                    .child(
+                        Button::new(("sign-out", index))
+                            .with_size(options.size())
+                            .label("Sign out")
+                            .loading(busy)
+                            .disabled(blocked)
+                            .on_click(move |_, window, cx| {
+                                this.update(cx, |this, cx| this.ask_sign_out(id.clone(), window, cx)).ok();
+                            }),
+                    )
+            })
+            .keywords(["github", "login", "logout", "sign out"]);
+            let workspaces = account.workspaces.iter().cloned().map(|workspace| {
+                SettingItem::render(move |_, _, cx| {
+                    let theme = cx.theme().clone();
+                    let state = match workspace.unsynced() {
+                        Some(unsynced) => Tag::warning().child(capitalized(&unsynced)),
+                        None => Tag::secondary().child("Synced"),
+                    };
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .child(div().overflow_hidden().text_ellipsis().child(workspace.name.clone()))
+                                .children(workspace.repo.clone().map(|repo| {
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .font_family(theme.mono_font_family.clone())
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .child(repo)
+                                })),
+                        )
+                        .child(state)
+                })
+            });
+            SettingGroup::new()
+                .title(format!("@{}", account.info.login))
+                .item(header)
+                .items(workspaces)
+                .footer(|_, _| "Signing out removes the account and its workspaces from this computer.")
+        });
+        page.groups(groups.collect::<Vec<_>>())
+    }
+
     fn about_page(&self, cx: &App) -> SettingPage {
         let engine = self.model.read(cx).engine().clone();
-        let fact = |title: &'static str, value: String| {
+        let (telemetry_read, telemetry_write) = (self.model.clone(), self.model.clone());
+        let policy_url = self.model.read(cx).setup().privacy_policy_url.clone();
+        let fact =|title: &'static str, value: String| {
             SettingItem::new(
                 title,
                 SettingField::render(move |_, _, cx| {
@@ -563,6 +608,37 @@ impl SettingsScreen {
                 fact("Protocol", engine.hello.protocol_version.to_string()),
                 fact("Engine process", format!("pid {} · {origin}", engine.info.pid)),
             ]),
+            SettingGroup::new()
+                .title("Privacy")
+                .item(
+                    SettingItem::new(
+                        "Anonymous usage analytics",
+                        SettingField::switch(
+                            move |cx: &App| telemetry_read.read(cx).config().settings.telemetry_enabled,
+                            move |value: bool, cx: &mut App| {
+                                telemetry_write.update(cx, |model, cx| {
+                                    model.update_settings(json!({ "telemetryEnabled": value }), cx)
+                                })
+                            },
+                        ),
+                    )
+                    .description(
+                        "What kind of thing you do, never its content. Off, only that Bifurc was installed on this device is reported, once.",
+                    )
+                    .keywords(["telemetry", "tracking", "posthog"]),
+                )
+                .item(
+                    SettingItem::new(
+                        "Privacy policy",
+                        SettingField::render(move |_, _, _| {
+                            Link::new("privacy-link")
+                                .href(policy_url.clone())
+                                .child(policy_url.trim_start_matches("https://").to_owned())
+                        }),
+                    )
+                    .layout(Axis::Horizontal),
+                )
+                .footer(|_, _| "Turning analytics back on applies when the engine next starts."),
             SettingGroup::new()
                 .title("Updates")
                 .item(
@@ -590,10 +666,43 @@ impl SettingsScreen {
 
 impl Render for SettingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pages = vec![self.appearance_page(cx), self.servers_page(), self.https_page(cx), self.about_page(cx)];
+        let pages = vec![
+            self.appearance_page(cx),
+            self.accounts_page(cx),
+            self.servers_page(),
+            self.https_page(),
+            self.about_page(cx),
+        ];
         div()
             .size_full()
             .bg(cx.theme().background)
             .child(Settings::new("settings").with_group_variant(GroupBoxVariant::Outline).pages(pages))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signing_out_says_which_workspaces_go_and_what_is_lost_with_them() {
+        let accounts = accounts_from(&json!({ "accounts": [
+            { "id": "github.com:1", "login": "octo", "host": "github.com", "signedIn": true, "workspaces": [
+                { "id": "a", "name": "Synced", "repo": "octo/a", "changes": 0, "unpushed": false },
+                { "id": "b", "name": "Edited", "repo": "octo/b", "changes": 2, "unpushed": false },
+                { "id": "c", "name": "Local", "repo": null, "changes": 0, "unpushed": false },
+            ]},
+            { "id": "github.com:2", "login": "idle", "host": "github.com", "signedIn": true, "workspaces": [] },
+        ]}));
+        assert_eq!(accounts.len(), 2);
+        let unsynced: Vec<Option<String>> = accounts[0].workspaces.iter().map(AccountWorkspace::unsynced).collect();
+        assert_eq!(unsynced, [None, Some("2 unsynced changes".to_owned()), Some("never published".to_owned())]);
+        let warning = sign_out_consequence(&accounts[0]);
+        assert!(warning.contains("“Synced”, “Edited”, “Local”"), "{warning}");
+        assert!(warning.contains("“Edited” (2 unsynced changes), “Local” (never published)"), "{warning}");
+        assert!(sign_out_consequence(&accounts[1]).contains("No workspace uses it"));
+
+        let synced = AccountRow { workspaces: accounts[0].workspaces[..1].to_vec(), ..accounts[0].clone() };
+        assert!(sign_out_consequence(&synced).contains("can be imported again"));
     }
 }

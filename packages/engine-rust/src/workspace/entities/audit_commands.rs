@@ -89,9 +89,12 @@ mod tests {
         let ctx = CommandContext::internal(Arc::new(registry));
 
         let all = ctx.registry.invoke("audit.list", json!({}), ctx.clone()).await.unwrap();
-        assert_eq!(all["total"], 2);
+        // The two mocks, and the commit that created the workspace.
+        assert_eq!(all["total"], 3);
         assert_eq!(all["entries"][0]["entityName"], "Second");
         assert_eq!(all["entries"][0]["actor"], "tester");
+        assert_eq!(all["entries"][2]["entity"], "workspace");
+        assert_eq!(all["entries"][2]["action"], "create");
 
         let one = ctx
             .registry
@@ -102,7 +105,7 @@ mod tests {
         assert_eq!(one["entries"][0]["entityId"], "m1");
 
         let page = ctx.registry.invoke("audit.list", json!({ "limit": 1, "offset": 1 }), ctx.clone()).await.unwrap();
-        assert_eq!(page["total"], 2);
+        assert_eq!(page["total"], 3);
         assert_eq!(page["entries"].as_array().unwrap().len(), 1);
         assert_eq!(page["entries"][0]["entityName"], "First");
     }

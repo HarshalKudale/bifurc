@@ -1033,6 +1033,19 @@ impl ProtocolSession {
         self.sync_picker(window, cx);
     }
 
+    /// Fills this draft with a request the engine built, from a cURL command. It stays a draft, in the
+    /// folder it was started in, and what was filled in is its first edit. What the command does not say
+    /// keeps the value a new request of this type starts with.
+    pub fn adopt_import(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
+        let (folder, baseline) = (self.folder_id.clone(), self.baseline.clone());
+        let mut merged = self.entity.clone();
+        merged.extend(entity);
+        self.adopt_entity(merged, window, cx);
+        (self.folder_id, self.saved_folder) = (folder.clone(), folder);
+        self.baseline = baseline;
+        self.changed(cx);
+    }
+
     fn values(&self, cx: &gpui_kit::App) -> (String, Vec<FieldValue>) {
         let fields = fields_of(self.kind)
             .iter()

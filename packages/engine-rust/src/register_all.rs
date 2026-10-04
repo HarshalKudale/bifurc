@@ -24,6 +24,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::gitops::register(registry);
     crate::websocket::register(registry);
     crate::capture::register(registry);
+    crate::vault::register(registry);
 }
 
 /// The protocol commands no module has registered.

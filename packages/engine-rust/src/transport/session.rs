@@ -285,7 +285,17 @@ impl Session {
         let ctx = CommandContext { registry: self.inner.opts.registry.clone(), session: Some(identity) };
         tokio::spawn(async move {
             let registry = session.inner.opts.registry.clone();
-            let reply = match registry.invoke(&action, payload, ctx).await {
+            let client = ctx.session.as_ref().and_then(|s| s.client_name.clone());
+            let described = crate::analytics::describe(&action, &payload);
+            let result = registry.invoke(&action, payload, ctx).await;
+            if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
+                let outcome = result.as_ref().err().map_or("ok", |error| error.code.as_str());
+                crate::analytics::record_command(&action, &client, outcome);
+                if let (Some(described), Ok(data)) = (described, &result) {
+                    crate::analytics::record_event(described, &action, &client, data);
+                }
+            }
+            let reply = match result {
                 Ok(data) => success(&id, data),
                 Err(error) => failure(&id, &error),
             };

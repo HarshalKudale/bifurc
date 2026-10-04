@@ -1,8 +1,10 @@
 //! The workspace store: settings, the on-disk entity layout, the config snapshot and the git repository
 //! behind each workspace.
 
+pub mod accounts;
 pub mod blob;
 pub mod config;
+pub mod deletions;
 pub mod dispatch;
 pub mod entities;
 pub mod entity_paths;
