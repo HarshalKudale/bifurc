@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use super::{config::GLOBAL_ENV_ID, paths::data_dir};
 use crate::utils::{
-    id::now_ms,
+    id::{generate_id, now_ms},
     json::{read_json, str_of, write_json_pretty},
 };
 
@@ -355,6 +355,60 @@ pub fn auto_sync_fs_directories(ws_id: &str, kind: &str, make_id: impl Fn() -> S
         let _ = write_index(ws_id, kind, &index);
     }
     index
+}
+
+/// The folder that takes what is saved without one.
+pub const DEFAULT_FOLDER_NAME: &str = "Default";
+
+/// The `(id, name)` of the kind's Default folder, which is created when the kind has none.
+pub fn ensure_default_folder(ws_id: &str, kind: &str) -> std::io::Result<(String, String)> {
+    create_folder(ws_id, kind, DEFAULT_FOLDER_NAME, None, false)
+}
+
+/// Make a folder of a kind and return its `(id, name)`. Folders of one name share a directory, so with `unique` false a
+/// folder of that name that exists is the answer; with `unique` true the name gets a number until it is free.
+pub fn create_folder(
+    ws_id: &str,
+    kind: &str,
+    name: &str,
+    parent_id: Option<&str>,
+    unique: bool,
+) -> std::io::Result<(String, String)> {
+    let mut index = auto_sync_fs_directories(ws_id, kind, generate_id);
+    let taken = |name: &str| index.folders.iter().find(|f| sanitize_dir_name(str_of(f, "name")) == sanitize_dir_name(name));
+    let mut name = name.to_string();
+    if unique {
+        let base = name.clone();
+        let mut n = 2;
+        while taken(&name).is_some() {
+            name = format!("{base}-{n}");
+            n += 1;
+        }
+    } else if let Some(folder) = taken(&name) {
+        return Ok((str_of(folder, "id").to_string(), str_of(folder, "name").to_string()));
+    }
+    let folder = json!({
+        "name": name,
+        "parentId": parent_id,
+        "id": generate_id(),
+        "createdAt": now_ms(),
+        "workspaceId": ws_id,
+    });
+    std::fs::create_dir_all(entity_dir(ws_id, kind).join(sanitize_dir_name(&name)))?;
+    index.folders.push(folder.clone());
+    write_index(ws_id, kind, &index)?;
+    Ok((str_of(&folder, "id").to_string(), name))
+}
+
+/// The `(id, name)` of the folder `folder_id` names, or of the Default folder when it names none that exists.
+pub fn resolve_folder(ws_id: &str, kind: &str, folder_id: Option<&str>) -> std::io::Result<(String, String)> {
+    if let Some(folder_id) = folder_id.filter(|id| !id.is_empty()) {
+        let index = auto_sync_fs_directories(ws_id, kind, generate_id);
+        if let Some(folder) = index.folders.iter().find(|f| str_of(f, "id") == folder_id) {
+            return Ok((folder_id.to_string(), str_of(folder, "name").to_string()));
+        }
+    }
+    ensure_default_folder(ws_id, kind)
 }
 
 // ── names.json ─────────────────────────────────────────────────────────────────────────────────────────

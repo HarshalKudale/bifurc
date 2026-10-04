@@ -45,7 +45,7 @@ use crate::{
         http::{BodyEncoding, HTTP_METHODS, HttpResponse, header_map, header_pairs, pretty_json},
         media::{self, BodyClass},
     },
-    session::{LoadState, SaveMode},
+    session::{LoadState, SaveMode, engine_folder},
 };
 
 const DEFAULT_NAME: &str = "New mock";
@@ -890,9 +890,13 @@ impl MockEditor {
                 Ok(result) if creating => match result.get("entity").and_then(Value::as_object).cloned() {
                     Some(saved) => {
                         this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                        let placed = engine_folder(&saved);
                         this.entity = saved;
                         this.baseline = fields;
-                        this.saved_folder = folder.clone();
+                        if this.folder_id == folder {
+                            this.folder_id = placed.clone();
+                        }
+                        this.saved_folder = placed;
                         if let Some(id) = this.saved_id.clone() {
                             cx.emit(MockEvent::Saved { id });
                         }
