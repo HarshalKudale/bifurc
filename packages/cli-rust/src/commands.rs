@@ -690,7 +690,7 @@ mod tests {
 
     fn info() -> RuntimeInfo {
         RuntimeInfo::from_json(json!({
-            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.3.3"
+            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.4.0"
         }))
         .unwrap()
     }
@@ -1143,7 +1143,7 @@ mod tests {
         let (out, _) = run(&argv, answers, |c| status(c));
         assert_eq!(
             out.unwrap(),
-            "engine     pid 5, socket addr, v0.3.3\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
+            "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
         );
 
         let argv = ["status", "--json"];
