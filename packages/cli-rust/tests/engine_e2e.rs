@@ -30,6 +30,23 @@ fn start_status_call_and_stop_a_real_engine() {
     let (ok, out, err) = bifurc(data, &["engine", "status"]);
     assert!(ok && out.starts_with("running  pid "), "{out}{err}");
 
+    // A data directory whose first-run setup is not finished is the interface's: every command is refused,
+    // except asking how far the setup is.
+    for argv in [vec!["--no-start", "call", "config.get", "{}"], vec!["--no-start", "status"], vec!["--no-start", "mocks"]] {
+        let (ok, out, err) = bifurc(data, &argv);
+        assert!(!ok && out.is_empty(), "{argv:?}: {out}");
+        assert!(err.starts_with("bifurc: Bifurc has not been set up yet."), "{argv:?}: {err}");
+    }
+    let (ok, out, err) = bifurc(data, &["--no-start", "call", "setup.getState"]);
+    assert!(ok && out.contains("\"onboarded\": false"), "{out}{err}");
+
+    // What the interface's setup leaves behind when it is finished.
+    let settings_path = data.join("app.json");
+    let mut settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    settings["hasSeenWelcome"] = true.into();
+    std::fs::write(&settings_path, settings.to_string()).unwrap();
+
     let (ok, out, err) = bifurc(data, &["--no-start", "call", "config.get", "{}"]);
     assert!(ok, "{out}{err}");
     assert!(out.contains("activeWorkspaceId"), "{out}");

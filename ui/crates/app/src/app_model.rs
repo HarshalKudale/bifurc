@@ -88,6 +88,8 @@ pub struct SetupState {
     pub privacy_accepted: bool,
     /// The first-run setup was walked through to its end.
     pub onboarded: bool,
+    /// The first run's servers step was passed: the engine starts the two proxies by itself.
+    pub servers_confirmed: bool,
 }
 
 impl SetupState {
@@ -102,6 +104,7 @@ impl SetupState {
             privacy_policy_url: value.get("privacyPolicyUrl").and_then(Value::as_str).unwrap_or_default().to_owned(),
             privacy_accepted: flag("privacyAccepted"),
             onboarded: flag("onboarded"),
+            servers_confirmed: flag("serversConfirmed"),
             accounts: value
                 .get("accounts")
                 .and_then(Value::as_array)

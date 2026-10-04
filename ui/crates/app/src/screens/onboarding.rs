@@ -31,7 +31,7 @@ use gpui_kit::{
     AnyElement, AppContext as _, Context, Div, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, rems,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
     app_model::{AppModel, Load, ProxyStatus, SetupState},
@@ -109,6 +109,23 @@ fn mapping_address(port: u16) -> String {
     if port == HTTP_PORT { "http://api.localhost".to_owned() } else { format!("http://api.localhost:{port}") }
 }
 
+/// Ports below this one need permission to listen on, on Linux.
+const FIRST_UNRESERVED_PORT: u16 = 1024;
+
+/// Which of the two proxies `setup.startServers` could not start, and why, if one could not.
+fn start_problem(result: &Value) -> Option<String> {
+    let problems: Vec<String> = [("reverse", "reverse proxy"), ("forward", "forward proxy")]
+        .into_iter()
+        .filter_map(|(key, name)| {
+            let listener = result.get(key)?;
+            let error = listener.get("error").and_then(Value::as_str)?;
+            let port = listener.get("port").and_then(Value::as_u64).unwrap_or_default();
+            Some(format!("The {name} could not start on port {port}: {}.", error.trim_end_matches('.')))
+        })
+        .collect();
+    (!problems.is_empty()).then(|| problems.join(" "))
+}
+
 /// What is wrong with the two ports as typed, if something is.
 fn ports_problem(reverse: Option<u16>, forward: Option<u16>) -> Option<&'static str> {
     match (reverse, forward) {
@@ -135,6 +152,9 @@ pub struct Onboarding {
     forward_port: Entity<InputState>,
     /// The port fields show the engine's ports; before that, what they hold is not something the user typed.
     ports_filled: bool,
+    /// The ports (reverse, forward) a proxy last failed to start with. Going on with the same two is the
+    /// user's choice to sort it out later.
+    servers_failed_on: Option<(u16, u16)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -167,6 +187,7 @@ impl Onboarding {
             reverse_port,
             forward_port,
             ports_filled: false,
+            servers_failed_on: None,
             _subscriptions: subscriptions,
         };
         this.sync(window, cx);
@@ -233,14 +254,52 @@ impl Onboarding {
             Some(Stage::Overview) => self.go_to(Stage::Preferences, window, cx),
             Some(Stage::Preferences) => self.go_to(Stage::Https, window, cx),
             Some(Stage::Https) => self.go_to(Stage::Proxies, window, cx),
-            Some(Stage::Proxies) => {
-                if !self.apply_ports(cx) {
-                    return;
-                }
-                if self.has_workspace(cx) { self.complete(cx) } else { self.go_to(Stage::Workspace, window, cx) }
-            }
+            Some(Stage::Proxies) => self.start_servers(window, cx),
             Some(Stage::Workspace) | None => {}
         }
+    }
+
+    /// Hands the engine the two ports and has it start both proxies; from then on every run of the engine
+    /// starts them by itself. A proxy that could not start keeps the walk here once, so its port can be
+    /// changed; going on with the same ports leaves it for Settings.
+    fn start_servers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.ports_filled {
+            return;
+        }
+        let (Some(reverse), Some(forward)) = self.typed_ports(cx) else { return };
+        if reverse == forward {
+            return;
+        }
+        let acknowledged = self.servers_failed_on == Some((reverse, forward));
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "port": reverse, "forwardProxyPort": forward });
+        call_in(&client, window, cx, "setup.startServers", payload, move |this, outcome, window, cx| {
+            this.busy = false;
+            this.model.update(cx, |model, cx| {
+                model.refresh(cx);
+                model.refresh_setup(cx);
+            });
+            if let Some(message) = failure(&outcome) {
+                this.error = Some(format!("Couldn't start the proxies. {message}"));
+                cx.notify();
+                return;
+            }
+            match outcome.ok().as_ref().and_then(start_problem) {
+                Some(problem) if !acknowledged => {
+                    this.servers_failed_on = Some((reverse, forward));
+                    this.error =
+                        Some(format!("{problem} Choose another port, or continue and change it later in Settings."));
+                    cx.notify();
+                }
+                _ => {
+                    this.servers_failed_on = None;
+                    if this.has_workspace(cx) { this.complete(cx) } else { this.go_to(Stage::Workspace, window, cx) }
+                }
+            }
+        });
     }
 
     fn accept_terms(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -315,6 +374,12 @@ impl Onboarding {
 
     fn typed_ports(&self, cx: &Context<Self>) -> (Option<u16>, Option<u16>) {
         (parse_port(&self.reverse_port.read(cx).value()), parse_port(&self.forward_port.read(cx).value()))
+    }
+
+    /// Both ports as typed, when both are ports.
+    fn typed_port_pair(&self, cx: &Context<Self>) -> Option<(u16, u16)> {
+        let (reverse, forward) = self.typed_ports(cx);
+        reverse.zip(forward)
     }
 
     /// A port is sent when its field is left or Enter is pressed in it, not on every key: each new port is a
@@ -685,6 +750,17 @@ impl Onboarding {
                     ),
                 )
                 .title(format!("Names need the port while the reverse proxy is on {port}"))
+            }))
+            .children(reverse.filter(|port| cfg!(target_os = "linux") && *port < FIRST_UNRESERVED_PORT).map(|port| {
+                Alert::warning(
+                    "reverse-port-permission",
+                    format!(
+                        "Linux only lets a program listen below {FIRST_UNRESERVED_PORT} when it has been allowed \
+                         to. The .deb package allows Bifurc's engine; with any other package, port {port} may be \
+                         refused, and a port from {FIRST_UNRESERVED_PORT} up, such as 8000, always works.",
+                    ),
+                )
+                .title(format!("Port {port} needs permission"))
             }));
 
         let forward_group = Self::group(cx)
@@ -714,7 +790,13 @@ impl Onboarding {
             .child(reverse_group)
             .child(forward_group)
             .children(problem.map(|problem| div().text_sm().text_color(theme.danger).child(problem)))
-            .child(muted("A new port takes effect at once while its proxy is running.".to_owned()))
+            .child(muted(if model.setup().servers_confirmed {
+                "A new port takes effect at once while its proxy is running.".to_owned()
+            } else {
+                "Neither proxy has been started yet. Both start on these ports when you continue, and with \
+                 Bifurc from then on."
+                    .to_owned()
+            }))
             .into_any_element()
     }
 
@@ -743,6 +825,9 @@ impl Onboarding {
     fn render_actions(&self, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
         let label = match stage {
             Stage::Terms | Stage::Privacy => "Accept and continue",
+            Stage::Proxies if self.servers_failed_on.is_some() && self.servers_failed_on == self.typed_port_pair(cx) => {
+                "Continue anyway"
+            }
             Stage::Proxies if self.has_workspace(cx) => "Finish",
             _ => "Continue",
         };
@@ -903,5 +988,17 @@ mod tests {
         assert!(ports_problem(Some(80), Some(8080)).is_none());
         assert!(ports_problem(Some(8080), Some(8080)).is_some());
         assert!(ports_problem(None, Some(8080)).is_some());
+    }
+
+    #[test]
+    fn a_proxy_that_could_not_start_is_named_with_its_port() {
+        let running = json!({ "running": true, "port": 8080, "error": null });
+        let refused = json!({ "running": false, "port": 80, "error": "Permission denied." });
+        assert_eq!(start_problem(&json!({ "ok": true, "forward": running, "reverse": running })), None);
+        assert_eq!(start_problem(&json!({ "ok": true, "forward": null, "reverse": null })), None);
+        assert_eq!(
+            start_problem(&json!({ "ok": true, "forward": running, "reverse": refused })).as_deref(),
+            Some("The reverse proxy could not start on port 80: Permission denied.")
+        );
     }
 }
