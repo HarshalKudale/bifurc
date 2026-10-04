@@ -21,10 +21,12 @@ pub fn register(registry: &mut CommandRegistry) {
 
     registry.register_sync("healthbar.saveServices", |params, _| {
         let ws_id = str_of(&params, "workspaceId");
-        save_services(ws_id, params.get("services").unwrap_or(&Value::Null))?;
+        let services = params.get("services").unwrap_or(&Value::Null);
+        let added = added_count(&get_services(ws_id), services);
+        save_services(ws_id, services)?;
         invalidate_cache(ws_id);
         emit_entity_status(ws_id);
-        Ok(json!({ "ok": true }))
+        Ok(json!({ "ok": true, "added": added }))
     });
 
     registry.register("healthbar.checkUrl", |params, _| async move { Ok(check_url(str_of(&params, "url")).await) });
@@ -37,6 +39,15 @@ fn services_file(ws_id: &str) -> std::path::PathBuf {
 /// The saved services of a workspace; an empty list when there is no readable file.
 fn get_services(ws_id: &str) -> Value {
     read_json(&services_file(ws_id)).unwrap_or_else(|| json!([]))
+}
+
+/// How many of `next`'s services are not in `saved`, by id: the ones a save creates.
+fn added_count(saved: &Value, next: &Value) -> usize {
+    let ids = |list: &Value| -> Vec<String> {
+        list.as_array().into_iter().flatten().map(|service| str_of(service, "id").to_string()).collect()
+    };
+    let before = ids(saved);
+    ids(next).iter().filter(|id| !before.contains(id)).count()
 }
 
 fn save_services(ws_id: &str, services: &Value) -> std::io::Result<()> {
