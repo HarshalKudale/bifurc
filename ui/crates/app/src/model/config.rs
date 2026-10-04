@@ -25,7 +25,7 @@ pub struct AccountInfo {
     pub id: String,
     pub login: String,
     pub host: String,
-    /// `false` once it was signed out while workspaces still use it.
+    /// `false` once GitHub stopped accepting the sign-in: the account needs to sign in again.
     pub signed_in: bool,
 }
 

@@ -209,6 +209,18 @@ pub fn workspaces_using(account_id: &str) -> Vec<String> {
         .collect()
 }
 
+/// Drop the token GitHub no longer accepts, keeping the account: it shows as signed out, and signing in
+/// again as the same person puts it back.
+pub fn revoke_token(account_id: &str) -> std::io::Result<()> {
+    let mut file = load_file();
+    for stored in array_mut(&mut file, "accounts") {
+        if str_of(stored, "id") == account_id {
+            stored["secret"] = Value::Null;
+        }
+    }
+    save_file(&file)
+}
+
 /// Forget the account and its token. The workspaces that used it are taken off the device by the caller.
 pub fn sign_out(account_id: &str) -> std::io::Result<()> {
     let mut file = load_file();
