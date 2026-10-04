@@ -330,7 +330,7 @@ mod tests {
         let root = scratch_data_root();
         seed(root.ws_id);
         let out = curl(root.ws_id).unwrap();
-        let block = out.content.split("# Create\n").nth(1).unwrap();
+        let block = out.content.split("# Create\n").nth(1).unwrap().split("\n\n").next().unwrap();
         let parsed = crate::utils::curl::parse_curl_command(block.trim()).unwrap();
         assert_eq!(parsed.method, "POST");
         assert_eq!(parsed.url, "https://api.test/users");
