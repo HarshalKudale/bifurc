@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     accounts::public_accounts,
+    deletions::pending_folders,
     fs::{
         EntityStub, auto_sync_fs_directories, bootstrap_names_index, default_global_environment,
         ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity, read_entity_stubs, read_names_index, write_entity, write_flat_entity,
@@ -18,7 +19,7 @@ use crate::{
     env::effective_environment_id,
     utils::{
         id::{generate_id, now_ms},
-        json::{array_of, opt_str, str_of},
+        json::{array_of, opt_str, str_of, truthy},
     },
 };
 
@@ -83,6 +84,12 @@ fn name_field<'a>(names: &'a Map<String, Value>, id: &str, field: &str) -> Optio
     names.get(id).and_then(|entry| opt_str(entry, field))
 }
 
+/// A listing field of a stub: from the names index, or from its record when it is deleted and the index no
+/// longer has it.
+fn stub_field<'a>(names: &'a Map<String, Value>, stub: &'a EntityStub, field: &str) -> Option<&'a str> {
+    name_field(names, &stub.id, field).or_else(|| stub.deleted.as_ref().and_then(|record| opt_str(record, field)))
+}
+
 fn stub_base(stub: &EntityStub, ws_id: &str) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("id".into(), json!(stub.id));
@@ -91,8 +98,22 @@ fn stub_base(stub: &EntityStub, ws_id: &str) -> Map<String, Value> {
     out
 }
 
+/// `entity`, marked as deleted here with the deletion not yet confirmed or reverted.
+fn marked_deleted(entity: Value) -> Value {
+    let mut out = entity.as_object().cloned().unwrap_or_default();
+    out.insert("deleted".into(), json!(true));
+    Value::Object(out)
+}
+
+fn stub_done(out: Map<String, Value>, stub: &EntityStub) -> Value {
+    if stub.deleted.is_some() { marked_deleted(Value::Object(out)) } else { Value::Object(out) }
+}
+
+/// A kind's folders, then the deleted ones that still hold something waiting.
 fn folders(ws_id: &str, kind: &str) -> Value {
-    Value::Array(auto_sync_fs_directories(ws_id, kind, generate_id).folders)
+    let mut all = auto_sync_fs_directories(ws_id, kind, generate_id).folders;
+    all.extend(pending_folders(ws_id, kind).into_iter().map(marked_deleted));
+    Value::Array(all)
 }
 
 /// Entities deleted locally and not yet published, absent from `present`, shaped by `shape`.
@@ -100,7 +121,7 @@ fn pending(ws_id: &str, kind: &str, present: &[Value], shape: impl Fn(&Value) ->
     get_pending_deletions(ws_id, kind)
         .iter()
         .filter(|p| !present.iter().any(|e| str_of(e, "id") == str_of(p, "id")))
-        .map(shape)
+        .map(|p| marked_deleted(shape(p)))
         .collect()
 }
 
@@ -173,19 +194,26 @@ pub fn load_config() -> Value {
     let mut proxy_rules: Vec<Value> = rule_stubs
         .iter()
         .map(|s| {
-            rule_shape(
+            let rule = rule_shape(
                 &s.id,
                 Some(json!(s.folder_id)),
-                name_field(&rule_names, &s.id, "name").unwrap_or(""),
-                name_field(&rule_names, &s.id, "url").unwrap_or(""),
+                stub_field(&rule_names, s, "name").unwrap_or(""),
+                stub_field(&rule_names, s, "url").unwrap_or(""),
                 rule_enabled.contains(&s.id),
-            )
+            );
+            if s.deleted.is_some() { marked_deleted(rule) } else { rule }
         })
         .collect();
     for p in get_pending_deletions(ws_id, "rules") {
         if !rule_stubs.iter().any(|s| s.id == str_of(&p, "id")) {
             let folder = opt_str(&p, "folderId").map(|f| json!(f));
-            proxy_rules.push(rule_shape(str_of(&p, "id"), folder, str_of(&p, "name"), str_of(&p, "url"), false));
+            proxy_rules.push(marked_deleted(rule_shape(
+                str_of(&p, "id"),
+                folder,
+                str_of(&p, "name"),
+                str_of(&p, "url"),
+                false,
+            )));
         }
     }
 
@@ -229,13 +257,13 @@ pub fn load_config() -> Value {
         .iter()
         .map(|s| {
             let mut out = stub_base(s, ws_id);
-            out.insert("name".into(), json!(name_field(&request_names, &s.id, "name").unwrap_or("")));
-            out.insert("method".into(), json!(name_field(&request_names, &s.id, "method").unwrap_or("GET")));
-            out.insert("url".into(), json!(name_field(&request_names, &s.id, "url").unwrap_or("")));
+            out.insert("name".into(), json!(stub_field(&request_names, s, "name").unwrap_or("")));
+            out.insert("method".into(), json!(stub_field(&request_names, s, "method").unwrap_or("GET")));
+            out.insert("url".into(), json!(stub_field(&request_names, s, "url").unwrap_or("")));
             out.insert("headers".into(), json!({}));
             out.insert("body".into(), json!(""));
             out.insert("createdAt".into(), json!(0));
-            Value::Object(out)
+            stub_done(out, s)
         })
         .collect();
 
@@ -243,11 +271,11 @@ pub fn load_config() -> Value {
         .iter()
         .map(|s| {
             let mut out = stub_base(s, ws_id);
-            out.insert("name".into(), json!(name_field(&socket_names, &s.id, "name").unwrap_or("")));
-            out.insert("url".into(), json!(name_field(&socket_names, &s.id, "url").unwrap_or("")));
+            out.insert("name".into(), json!(stub_field(&socket_names, s, "name").unwrap_or("")));
+            out.insert("url".into(), json!(stub_field(&socket_names, s, "url").unwrap_or("")));
             out.insert("headers".into(), json!({}));
             out.insert("createdAt".into(), json!(0));
-            Value::Object(out)
+            stub_done(out, s)
         })
         .collect();
 
@@ -258,14 +286,14 @@ pub fn load_config() -> Value {
             .iter()
             .map(|s| {
                 let mut out = stub_base(s, ws_id);
-                out.insert("name".into(), json!(name_field(&names, &s.id, "name").unwrap_or("")));
+                out.insert("name".into(), json!(stub_field(&names, s, "name").unwrap_or("")));
                 for field in fields {
-                    out.insert((*field).into(), json!(name_field(&names, &s.id, field).unwrap_or("")));
+                    out.insert((*field).into(), json!(stub_field(&names, s, field).unwrap_or("")));
                 }
                 for (key, value) in rest.as_object().into_iter().flatten() {
                     out.insert(key.clone(), value.clone());
                 }
-                Value::Object(out)
+                stub_done(out, s)
             })
             .collect()
     };
@@ -402,7 +430,8 @@ pub fn save_config(cfg: &Value) -> std::io::Result<()> {
     let mock_folders = array_of(cfg, "mockFolders");
     for mock in array_of(cfg, "mocks") {
         let id = str_of(mock, "id");
-        if str_of(mock, "workspaceId") != ws_id || pending_mock_ids.iter().any(|p| p == id) {
+        if str_of(mock, "workspaceId") != ws_id || pending_mock_ids.iter().any(|p| p == id) || truthy(mock, "deleted")
+        {
             continue;
         }
         let folder_name = opt_str(mock, "folderId")
@@ -413,7 +442,8 @@ pub fn save_config(cfg: &Value) -> std::io::Result<()> {
     }
     for kind in ["mappings", "environments"] {
         for entity in array_of(cfg, kind) {
-            if str_of(entity, "workspaceId") == ws_id {
+            // A deleted entity is listed in a snapshot but has no file; writing it would bring a stub back.
+            if str_of(entity, "workspaceId") == ws_id && !truthy(entity, "deleted") {
                 write_flat_entity(ws_id, kind, str_of(entity, "id"), entity)?;
             }
         }

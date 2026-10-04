@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     auto_sync::{pull_and_announce, update_last_known_head},
+    delete_commands::reconcile_deletions,
     git_ops::{discard_changes, get_file_diff, get_file_history, sync_changes},
     git_state::get_workspace_git_state,
     remote::workspace_owner,
@@ -35,7 +36,7 @@ fn string_list(params: &Value, key: &str) -> Vec<String> {
 
 /// After a publish: tell clients the entity statuses changed, and remember the remote tip so auto-sync does
 /// not pull the push this engine just made. Reading the tip is bookkeeping; its failure is not reported.
-async fn after_publish(ws_id: &str) {
+pub(super) async fn after_publish(ws_id: &str) {
     emit_entity_status(ws_id);
     if let Some(sha) = get_remote_head(ws_id).await {
         update_last_known_head(ws_id, &sha);
@@ -75,7 +76,14 @@ pub fn register(registry: &mut CommandRegistry) {
 
     registry.register("sync.getEntityStatus", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId");
-        let (files, git) = (get_workspace_sync_status(ws_id).await, get_workspace_git_state(ws_id).await);
+        let (mut files, git) = (get_workspace_sync_status(ws_id).await, get_workspace_git_state(ws_id).await);
+        // A file that went missing behind the engine's back becomes a deletion to confirm or revert; the
+        // event tells clients to read the workspace again.
+        if reconcile_deletions(ws_id, &files).await {
+            files = get_workspace_sync_status(ws_id).await;
+            notify_config_changed();
+            emit_entity_status(ws_id);
+        }
         let maps = load_entity_path_maps();
         let to_object = |map: indexmap::IndexMap<String, String>| {
             Value::Object(map.into_iter().map(|(k, v)| (k, Value::String(v))).collect::<Map<String, Value>>())

@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use super::{
     config::load_config,
-    fs::{entity_rel_path, flat_entity_rel_path, sanitize_dir_name},
+    fs::{entity_rel_path, flat_entity_rel_path, get_pending_deletions, sanitize_dir_name},
     kinds::crud_kind,
 };
 use crate::utils::json::{array_of, opt_str, str_of};
@@ -53,6 +53,12 @@ pub fn load_entity_path_maps() -> EntityPathMaps {
                 entity_rel_path(kind.kind, id, folder_name)
             };
             maps.entities.insert(id.to_string(), path);
+        }
+        // A deleted entity is where it was when it was deleted, whatever became of its folder since.
+        for record in get_pending_deletions(str_of(&cfg, "activeWorkspaceId"), kind.kind) {
+            if let Some(path) = opt_str(&record, "path") {
+                maps.entities.insert(str_of(&record, "id").to_string(), path.to_string());
+            }
         }
     }
     maps
