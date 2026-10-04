@@ -24,7 +24,7 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use super::{
-    Carry, LoadState, SaveMode, SessionEvent,
+    Carry, LoadState, SaveMode, SessionEvent, engine_folder,
     connection::{ConnectionEvent, SocketConnection},
 };
 use crate::{
@@ -397,9 +397,13 @@ impl WsSession {
                 Ok(result) if creating => match result.get("entity").and_then(Value::as_object).cloned() {
                     Some(saved) => {
                         this.saved_id = saved.get("id").and_then(Value::as_str).map(str::to_owned);
+                        let placed = engine_folder(&saved);
                         this.entity = saved;
                         this.baseline = fields;
-                        this.saved_folder = folder.clone();
+                        if this.folder_id == folder {
+                            this.folder_id = placed.clone();
+                        }
+                        this.saved_folder = placed;
                         // A draft that is already connected stays under the name it connected with.
                         if !this.connection.read(cx).state().is_live()
                             && let Some(id) = &this.saved_id
