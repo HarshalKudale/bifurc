@@ -12,7 +12,8 @@ authors = ["Harshal Kudale"]
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
+codegen-units = 1
 strip = true
 
 # Argon2 is the one slow thing a vault does; unoptimised it takes seconds per key in debug builds and tests.

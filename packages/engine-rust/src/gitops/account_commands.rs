@@ -24,7 +24,7 @@ use crate::{
     workspace::{
         accounts::{find_account, public_accounts, sign_out, workspaces_using},
         git_store::git_version,
-        settings::{PRIVACY_POLICY_URL, load_settings, save_settings},
+        settings::{PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, load_settings, save_settings},
     },
 };
 
@@ -63,10 +63,23 @@ pub fn register(registry: &mut CommandRegistry) {
             "host": github::host(),
             "needsWorkspace": settings.workspaces().is_empty(),
             "accounts": public_accounts(),
+            "termsOfServiceUrl": TERMS_OF_SERVICE_URL,
+            "termsAccepted": settings.terms_accepted(),
             "privacyPolicyUrl": PRIVACY_POLICY_URL,
             "privacyAccepted": settings.privacy_accepted(),
             "onboarded": settings.onboarded(),
         }))
+    });
+
+    // The user accepted the terms of service. When is kept, so later terms can ask again.
+    registry.register_sync("setup.acceptTerms", |_, _| {
+        let mut settings = load_settings();
+        if !settings.terms_accepted() {
+            settings.set("termsAcceptedAt", json!(now_ms()));
+            save_settings(&settings)?;
+            bus().emit("settings.changed", json!({}));
+        }
+        Ok(json!({ "ok": true }))
     });
 
     // The user accepted the privacy policy. When is kept, so a later policy can ask again.
@@ -83,6 +96,9 @@ pub fn register(registry: &mut CommandRegistry) {
     // The first-run setup reached its end; a client does not walk the user through it again.
     registry.register_sync("setup.complete", |_, _| {
         let mut settings = load_settings();
+        if !settings.terms_accepted() {
+            return Ok(json!({ "ok": false, "error": "The terms of service have not been accepted yet." }));
+        }
         if !settings.privacy_accepted() {
             return Ok(json!({ "ok": false, "error": "The privacy policy has not been accepted yet." }));
         }
