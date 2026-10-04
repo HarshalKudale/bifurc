@@ -85,6 +85,8 @@ pub struct EngineSettings {
     pub companion_port: u16,
     pub minimize_to_tray: bool,
     pub tls_enabled: bool,
+    /// Anonymous usage analytics are not turned off.
+    pub telemetry_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -316,6 +318,7 @@ impl ConfigSnapshot {
                 companion_port: port("companionPort"),
                 minimize_to_tray: flag("minimizeToTray"),
                 tls_enabled: flag("tlsEnabled"),
+                telemetry_enabled: config.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true),
             },
         })
     }

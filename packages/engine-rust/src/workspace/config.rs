@@ -370,6 +370,7 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         "companionPort": raw.get("companionPort").filter(|v| !v.is_null()).cloned().unwrap_or(json!(DEFAULT_COMPANION_PORT)),
         "minimizeToTray": raw.get("minimizeToTray").cloned().unwrap_or(Value::Null),
         "tlsEnabled": settings.tls_enabled(),
+        "telemetryEnabled": settings.telemetry_enabled(),
         "tlsCaCertPath": settings.tls_ca_cert_path(),
         "tlsCaKeyPath": settings.tls_ca_key_path(),
         "workspaces": workspaces,
