@@ -9,6 +9,9 @@ pub enum CliError {
     Message(String),
     /// The engine refused or failed a request; shown with its error code.
     Engine { code: String, message: String },
+    /// The command ran and what it reports is a failure (a failed test, a service that does not answer). The
+    /// report is printed like any other answer; only the exit code says it failed.
+    Failed(String),
 }
 
 /// A result carrying a [`CliError`].
@@ -29,7 +32,7 @@ impl CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CliError::Message(message) => f.write_str(message),
+            CliError::Message(message) | CliError::Failed(message) => f.write_str(message),
             CliError::Engine { code, message } => write!(f, "{code}: {message}"),
         }
     }

@@ -2,8 +2,8 @@
 //!
 //! A vault's file can be committed and shared; its values open only with the vault's passphrase, and only the
 //! engine ever holds the key or the plaintext. Clients get names and states: `vault.list` shows what exists
-//! and whether each vault is sealed, ready or open, and nothing returns a value except `vault.checkout`, which
-//! the CLI uses to launch a program with the secrets as environment variables. Opening a vault is the CLI's alone.
+//! and whether each vault is sealed or unsealed, and nothing returns a value except `vault.secrets`,
+//! which the CLI uses to launch a program with the secrets of an unsealed vault as environment variables.
 //!
 //! Secrets are used in requests as `{{vault.secret}}` (see `env::resolve_vars`); everything the engine sends
 //! back to a client or writes to a file passes through [`Redactor`] first.
@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use serde_json::{Value, json};
 
-pub use state::{Redactor, redact_text, redact_value, references_in, resolve_allowed, resolve_reference, resolve_value_allowed, session_ended};
+pub use state::{Redactor, redact_text, redact_value, references_in, resolve_allowed, resolve_reference, resolve_value_allowed};
 use store::VaultFile;
 
 use crate::{
@@ -42,20 +42,12 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + '
 
 /// A vault as clients see it: names and state, never a value.
 fn summary(ws_id: &str, vault: &VaultFile) -> Value {
-    let leases = state::leases_of(ws_id, &vault.id);
-    let state_name = if state::key_of(ws_id, &vault.id).is_none() {
-        "sealed"
-    } else if leases.is_empty() {
-        "ready"
-    } else {
-        "open"
-    };
+    let state_name = if state::key_of(ws_id, &vault.id).is_none() { "sealed" } else { "unsealed" };
     json!({
         "id": vault.id,
         "name": vault.name,
         "state": state_name,
         "secrets": vault.secret_names(),
-        "openedBy": leases.len(),
         "createdAt": vault.created_at,
         "path": store::rel_path(&vault.id),
         "workspaceId": ws_id,
@@ -105,10 +97,10 @@ fn changed_event(ws_id: &str, id: &str) {
     crate::kernel::bus::bus().emit("vault.changed", json!({ "workspaceId": ws_id, "id": id }));
 }
 
-/// `vault.checkout` hands plaintext to its caller, so only the CLI session that will launch the program gets it.
-fn require_cli_session(ctx: &CommandContext) -> Result<String> {
+/// `vault.secrets` hands plaintext to its caller, so only the CLI session that will launch the program gets it.
+fn require_cli_session(ctx: &CommandContext) -> Result<()> {
     let Some(session) = &ctx.session else {
-        return Err(EngineError::bad_request("vault.checkout needs a client session."));
+        return Err(EngineError::bad_request("vault.secrets needs a client session."));
     };
     if session.client_name.as_deref() != Some("cli") {
         return Err(EngineError::new(
@@ -116,7 +108,7 @@ fn require_cli_session(ctx: &CommandContext) -> Result<String> {
             "Secret values are given only to the command line, which launches programs with them.",
         ));
     }
-    Ok(session.session_id.clone())
+    Ok(())
 }
 
 pub fn register(registry: &mut CommandRegistry) {
@@ -251,28 +243,20 @@ pub fn register(registry: &mut CommandRegistry) {
         .await
     });
 
-    registry.register("vault.checkout", |params, ctx| async move {
-        let session_id = require_cli_session(&ctx)?;
+    // The values of an unsealed vault. A sealed one is refused: it is unsealed first (`vault.unseal`), which is
+    // the only place a passphrase is asked for.
+    registry.register("vault.secrets", |params, ctx| async move {
+        require_cli_session(&ctx)?;
         let ws_id = str_of(&params, "workspaceId").to_string();
         let id = str_of(&params, "id").to_string();
-        let passphrase = str_of(&params, "passphrase").to_string();
         blocking(move || {
             let vault = store::get(&ws_id, &id)?;
-            // Opening always proves the passphrase, even when the engine already holds the key (it is ready).
-            let key = verify(&ws_id, &vault, &passphrase)?;
-            if state::key_of(&ws_id, &id).is_none() {
-                state::set_key(&ws_id, &id, key.clone());
-            }
+            let key = ready_key(&ws_id, &vault)?;
             let secrets: serde_json::Map<String, Value> =
                 vault.read_all(&key).into_iter().map(|(name, value)| (name, json!(value.as_str()))).collect();
-            let lease = state::add_lease(&ws_id, &id, session_id);
-            Ok(json!({ "leaseId": lease.id, "id": vault.id, "name": vault.name, "secrets": secrets }))
+            Ok(json!({ "id": vault.id, "name": vault.name, "secrets": secrets }))
         })
         .await
-    });
-
-    registry.register("vault.release", |params, _| async move {
-        Ok(json!({ "ok": state::release(str_of(&params, "leaseId")) }))
     });
 }
 

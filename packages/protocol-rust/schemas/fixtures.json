@@ -1102,14 +1102,6 @@
   },
   "invalid": {}
  },
- "vault.checkout": {
-  "valid": {
-   "workspaceId": "x",
-   "id": "x",
-   "passphrase": "x"
-  },
-  "invalid": {}
- },
  "vault.create": {
   "valid": {
    "workspaceId": "x",
@@ -1139,12 +1131,6 @@
   },
   "invalid": {}
  },
- "vault.release": {
-  "valid": {
-   "leaseId": "x"
-  },
-  "invalid": {}
- },
  "vault.rename": {
   "valid": {
    "workspaceId": "x",
@@ -1154,6 +1140,13 @@
   "invalid": {}
  },
  "vault.seal": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
+ "vault.secrets": {
   "valid": {
    "workspaceId": "x",
    "id": "x"
