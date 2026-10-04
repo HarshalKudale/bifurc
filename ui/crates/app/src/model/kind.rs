@@ -34,6 +34,11 @@ impl RequestKind {
         }
     }
 
+    /// The request type an `EntityKind` names, for an answer of the engine that says which type it built.
+    pub fn from_entity_kind(kind: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|candidate| candidate.entity_kind() == kind)
+    }
+
     /// The `kind` of `folder.add` / `folder.rename` / `folder.delete`.
     pub fn folder_kind(self) -> &'static str {
         match self {

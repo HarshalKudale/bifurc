@@ -33,7 +33,8 @@ use self::tree::{RequestTree, RequestTreeEvent, is_deleted, new_menu};
 use crate::{
     app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
-        EntityAction, StripTab, TabAction, TabStrip,
+        CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget, EntityAction, StripTab, TabAction,
+        TabStrip,
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
         },
@@ -59,6 +60,8 @@ enum TabKey {
 enum TabContent {
     Request(Session),
     Runner(Entity<FolderRunner>),
+    /// A tab waiting for a cURL command. It becomes a `Request` of the type the command describes.
+    Curl(Entity<CurlImport>),
 }
 
 struct OpenTab {
@@ -71,7 +74,7 @@ impl OpenTab {
     fn session(&self) -> Option<&Session> {
         match &self.content {
             TabContent::Request(session) => Some(session),
-            TabContent::Runner(_) => None,
+            TabContent::Runner(_) | TabContent::Curl(_) => None,
         }
     }
 
@@ -172,6 +175,7 @@ impl RequestsScreen {
         match event {
             RequestTreeEvent::Open(node) => self.open_node(node, window, cx),
             RequestTreeEvent::NewRequest { kind, folder } => self.new_request(*kind, folder.clone(), window, cx),
+            RequestTreeEvent::ImportCurl => self.import_curl(window, cx),
             RequestTreeEvent::NewFolder { kind, parent } => self.prompt_new_folder(*kind, parent.clone(), window, cx),
             RequestTreeEvent::Rename(node) => self.prompt_rename(node.clone(), window, cx),
             RequestTreeEvent::Delete(node) => self.confirm_delete(node.clone(), window, cx),
@@ -226,6 +230,14 @@ impl RequestsScreen {
                     &model.config().request_folder_rows(RequestKind::Rest),
                     runner.read(cx).folder_id(),
                 ),
+            }),
+            TabContent::Curl(_) => Some(ActiveTarget {
+                title: CURL_TAB_TITLE.into(),
+                entity_id: None,
+                request: None,
+                name: None,
+                kind: None,
+                folders: Vec::new(),
             }),
         }
     }
@@ -317,6 +329,42 @@ impl RequestsScreen {
         let key = TabKey::Draft(self.next_draft);
         self.next_draft += 1;
         self.add_tab(key, session, window, cx);
+    }
+
+    /// Opens a tab that asks for a cURL command. The engine reads the command, and the tab becomes a draft
+    /// of the request type it describes, filled in from it.
+    pub fn import_curl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.model.clone();
+        let import = cx.new(|cx| CurlImport::new(model, CurlTarget::Request, window, cx));
+        let subscription = cx.subscribe_in(&import, window, |this, import, event: &CurlImportEvent, window, cx| {
+            let CurlImportEvent::Built(built) = event;
+            this.adopt_curl(import, built, window, cx);
+        });
+        let key = TabKey::Draft(self.next_draft);
+        self.next_draft += 1;
+        self.tabs.push(OpenTab { key, content: TabContent::Curl(import.clone()), _subscription: subscription });
+        self.set_active(Some(self.tabs.len() - 1), cx);
+        import.update(cx, |import, cx| import.focus(window, cx));
+    }
+
+    /// Turns the tab `import` fills into a draft of what the engine built from its command: `{ kind, request }`.
+    fn adopt_curl(&mut self, import: &Entity<CurlImport>, built: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let is_tab = |tab: &OpenTab| matches!(&tab.content, TabContent::Curl(open) if open == import);
+        let Some(ix) = self.tabs.iter().position(is_tab) else { return };
+        let kind = built.get("kind").and_then(Value::as_str).and_then(RequestKind::from_entity_kind);
+        let entity = built.get("request").and_then(Value::as_object).cloned();
+        let (Some(kind), Some(entity)) = (kind, entity) else {
+            self.notify_failure("The engine did not return a request for this cURL command.".to_owned(), cx);
+            return;
+        };
+        let session = self.draft(kind, None, window, cx);
+        session.adopt_import(entity, window, cx);
+        let subscription = session.subscribe_in(window, cx, Self::on_session_event);
+        let tab = &mut self.tabs[ix];
+        tab.content = TabContent::Request(session);
+        tab._subscription = subscription;
+        // The docks follow the tab in front, which this one may no longer be.
+        self.set_active(self.active, cx);
     }
 
     /// Makes the active draft a request of another type. A request's type is fixed once it is saved, so
@@ -489,6 +537,13 @@ impl RequestsScreen {
                 dirty: false,
                 can_duplicate: false,
             },
+            TabContent::Curl(_) => StripTab {
+                id: id.into(),
+                badge: CURL_TAB_BADGE.into(),
+                title: CURL_TAB_TITLE.into(),
+                dirty: false,
+                can_duplicate: false,
+            },
         })
     }
 
@@ -588,6 +643,7 @@ impl RequestsScreen {
         match self.active_tab().map(|tab| &tab.content) {
             Some(TabContent::Request(session)) => session.clone().run(window, cx),
             Some(TabContent::Runner(runner)) => runner.clone().update(cx, |runner, cx| runner.run(cx)),
+            Some(TabContent::Curl(import)) => import.clone().update(cx, |import, cx| import.submit(cx)),
             None => {}
         }
     }
@@ -793,6 +849,29 @@ impl RequestsScreen {
                 )
                 .on_click(cx.listener(move |this, _, window, cx| this.new_request(kind, None, window, cx)))
         });
+        let import = Button::new("welcome-import-curl")
+            .ghost()
+            .w_full()
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(div().w_12().flex_none().child(Tag::secondary().small().child(CURL_TAB_BADGE)))
+                    .child(div().flex_none().child(CURL_TAB_TITLE))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_left()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child("A request of the type a pasted cURL command describes"),
+                    ),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.import_curl(window, cx)));
         // Wider than the kit's empty state, which is sized for a sentence and one button.
         div()
             .size_full()
@@ -817,7 +896,7 @@ impl RequestsScreen {
                                     .child("Open one from the folder tree, or start a new one."),
                             ),
                     )
-                    .child(v_flex().gap_1().children(rows)),
+                    .child(v_flex().gap_1().children(rows).child(import)),
             )
             .into_any_element()
     }
@@ -830,6 +909,7 @@ impl Render for RequestsScreen {
             None => self.render_welcome(cx),
             Some(TabContent::Request(_)) => self.dock.clone().into_any_element(),
             Some(TabContent::Runner(runner)) => runner.clone().into_any_element(),
+            Some(TabContent::Curl(import)) => import.clone().into_any_element(),
         };
         // The footer belongs to the tab, not to a dock panel: it stays put however the panels are arranged.
         let footer = self.active_session().map(|session| session.bar(self.model.read(cx), cx)).map(|bar| {

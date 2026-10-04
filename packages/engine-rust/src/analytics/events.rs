@@ -175,7 +175,8 @@ fn sent(request_type: &str, params: &Value, streaming: bool) -> Option<Event> {
 /// lists, variable resolution), apart from the few a user asks for by hand; switching an entity on or off and
 /// the steps of a transfer are not counted either.
 pub fn is_user_action(action: &str) -> bool {
-    const ASKED_FOR_READS: [&str; 3] = ["request.parseCurl", "graphql.introspect", "soap.fetchWsdl"];
+    const ASKED_FOR_READS: [&str; 5] =
+        ["request.parseCurl", "curl.buildRequest", "curl.buildMock", "graphql.introspect", "soap.fetchWsdl"];
     const NOT_COUNTED: [&str; 5] =
         ["entity.setEnabled", "blob.put", "blob.release", "import.preflight", "runner.loadConfig"];
     match required_scope_for(action) {
@@ -236,6 +237,8 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         }
         "capture.buildMock" => event("mock built from capture", json!({})),
         "capture.buildRequest" => event("request built from capture", json!({})),
+        "curl.buildMock" => event("mock built from curl", json!({})),
+        "curl.buildRequest" => event("request built from curl", json!({})),
 
         "vault.create" => event("vault created", json!({})),
         "vault.setSecret" => event("vault secret set", json!({})),
