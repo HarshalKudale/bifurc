@@ -2,8 +2,9 @@
 //!
 //! This screen creates vaults and fills them, and shows their secrets by *name*; no value is ever shown,
 //! because the engine never sends one. A vault must be unsealed with its passphrase before secrets can be
-//! added or used in requests (`{{vault.SECRET}}`). Opening a vault for a program is done from the command
-//! line (`bifurc unlock <vault> -- <command>`), not here.
+//! added or used in requests (`{{vault.SECRET}}`), and it stays unsealed until it is sealed or the engine stops.
+//! Starting a program with a vault's secrets is done from the command line
+//! (`bifurc vault run <vault> -- <command>`), not here.
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
@@ -134,22 +135,6 @@ impl VaultsScreen {
         self.run("vault.seal", payload, "Couldn't seal the vault.", cx);
     }
 
-    fn confirm_seal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(vault) = self.vault(cx) else { return };
-        if vault.opened_by == 0 {
-            return self.seal(cx);
-        }
-        confirm_danger(
-            cx.weak_entity(),
-            window,
-            cx,
-            format!("Seal “{}”?", vault.name),
-            "A program is running with this vault open. It is stopped when the vault is sealed.",
-            "Seal and stop",
-            |this, _, cx| this.seal(cx),
-        );
-    }
-
     fn prompt_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(vault) = self.vault(cx) else { return };
         prompt(
@@ -271,12 +256,7 @@ impl VaultsScreen {
     fn state_tag(vault: &VaultInfo) -> Tag {
         match vault.state {
             VaultState::Sealed => Tag::secondary().small().child("Sealed"),
-            VaultState::Ready => Tag::success().small().child("Ready"),
-            VaultState::Open => Tag::warning().small().child(if vault.opened_by > 1 {
-                format!("Open · {} programs", vault.opened_by)
-            } else {
-                "Open".to_owned()
-            }),
+            VaultState::Unsealed => Tag::success().small().child("Unsealed"),
         }
     }
 
@@ -408,7 +388,7 @@ impl VaultsScreen {
                     .small()
                     .label("Seal")
                     .tooltip("Forget the key; the passphrase is needed again")
-                    .on_click(cx.listener(|this, _, window, cx| this.confirm_seal(window, cx)))
+                    .on_click(cx.listener(|this, _, _, cx| this.seal(cx)))
                     .into_any_element()
             })
             .child(
@@ -454,7 +434,7 @@ impl VaultsScreen {
                 .into_any_element()
         };
         let usage = div().flex_none().px_4().py_2().text_xs().text_color(theme.muted_foreground).child(format!(
-            "To run a program with these as environment variables:  bifurc unlock {} -- <command>",
+            "To run a program with these as environment variables:  bifurc vault run {} -- <command>",
             vault.name
         ));
 

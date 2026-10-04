@@ -274,7 +274,6 @@ impl WorkspaceHost {
                 }
             })),
             on_session_end: Some(Arc::new(move |identity| {
-                crate::vault::session_ended(&identity.session_id);
                 if let Some(desktop) = &ended {
                     desktop.on_session_end(identity);
                 }
