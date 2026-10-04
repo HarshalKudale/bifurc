@@ -278,6 +278,11 @@ pub fn folder_store_kind(folder_kind: &str) -> Option<&'static str> {
     crud_kind(store).filter(|kind| kind.folder_config_key.is_some()).map(|kind| kind.kind)
 }
 
+/// Whether every entity of `kind` lives in a folder: the requests and mocks, never loose at the top level.
+pub fn requires_folder(kind: &CrudKind) -> bool {
+    kind.folder_config_key.is_some() && kind.kind != "rules"
+}
+
 pub fn is_simple_kind(kind: &str) -> bool {
     SIMPLE_KINDS.contains(&kind)
 }

@@ -34,7 +34,6 @@ use crate::{
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
-        dialogs::{PromptField, prompt},
         page,
     },
     engine::{call, call_in, describe, failure},
@@ -496,17 +495,9 @@ impl CaptureScreen {
             let run = SaveRun { pending, mock, folder: None, saved: 0, last: None, first_failure: None };
             return self.save_next(run, window, cx);
         }
-        let default_name = format!("Capture {}", date_time_utc(traffic::now_ms()));
-        let title = if mock { "Save as mocks" } else { "Save as requests" };
-        prompt(
-            cx.weak_entity(),
-            window,
-            cx,
-            title,
-            "Save",
-            vec![PromptField::new("Folder", "Folder name").initial(default_name)],
-            move |this, values, window, cx| this.create_folder_then_save(pending.clone(), mock, values[0].clone(), window, cx),
-        );
+        let now = traffic::now_ms();
+        let name = format!("capture-{}-{:02}", date_time_utc(now).replace(' ', "_").replace(':', "-"), now / 1000 % 60);
+        self.create_folder_then_save(pending, mock, name, window, cx);
     }
 
     fn create_folder_then_save(
