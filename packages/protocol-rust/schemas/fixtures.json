@@ -960,6 +960,12 @@
    "extra": true
   }
  },
+ "setup.acceptTerms": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "setup.complete": {
   "valid": {},
   "invalid": {
