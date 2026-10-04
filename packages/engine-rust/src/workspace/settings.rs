@@ -13,6 +13,8 @@ use crate::utils::json::{read_json, write_json_pretty};
 pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
+/// Where the privacy policy a first run asks the user to accept is published.
+pub const PRIVACY_POLICY_URL: &str = "https://bifurc.harshalkudale.com/privacy";
 
 /// The settings object. Read fields through the accessors; mutate through [`AppSettings::set`] or
 /// [`AppSettings::as_value_mut`].
@@ -61,6 +63,21 @@ impl AppSettings {
 
     pub fn tls_ca_key_path(&self) -> Option<String> {
         self.0.get("tlsCaKeyPath").and_then(Value::as_str).map(str::to_string)
+    }
+
+    /// `false` only when the user turned anonymous usage analytics off.
+    pub fn telemetry_enabled(&self) -> bool {
+        self.0.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true)
+    }
+
+    /// The privacy policy was accepted on this data directory.
+    pub fn privacy_accepted(&self) -> bool {
+        self.0.get("privacyAcceptedAt").is_some_and(|at| !at.is_null())
+    }
+
+    /// The first-run setup was walked through to its end.
+    pub fn onboarded(&self) -> bool {
+        self.0.get("hasSeenWelcome").and_then(Value::as_bool).unwrap_or(false)
     }
 
     pub fn active_workspace_id(&self) -> String {
@@ -118,6 +135,7 @@ fn make_default_settings() -> Value {
         "workspaces": [],
         "activeWorkspaceId": "",
         "hasSeenWelcome": false,
+        "privacyAcceptedAt": null,
         "zoomLevel": 0,
         "zoomLevelSetByUser": false,
         "themeId": null,

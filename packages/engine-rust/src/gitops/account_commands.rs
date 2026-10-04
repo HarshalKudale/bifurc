@@ -17,11 +17,14 @@ use crate::{
     kernel::{CommandRegistry, bus},
     protocol::EngineError,
     runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
-    utils::json::{bool_of, str_of},
+    utils::{
+        id::now_ms,
+        json::{bool_of, str_of},
+    },
     workspace::{
         accounts::{find_account, public_accounts, sign_out, workspaces_using},
         git_store::git_version,
-        settings::load_settings,
+        settings::{PRIVACY_POLICY_URL, load_settings, save_settings},
     },
 };
 
@@ -52,14 +55,43 @@ pub fn register(registry: &mut CommandRegistry) {
                 emit_entity_status(&ws_id);
             }
         }
+        let settings = load_settings();
         Ok(json!({
             "gitInstalled": version.is_some(),
             "gitVersion": version,
             "signInAvailable": github::client_id().is_some(),
             "host": github::host(),
-            "needsWorkspace": load_settings().workspaces().is_empty(),
+            "needsWorkspace": settings.workspaces().is_empty(),
             "accounts": public_accounts(),
+            "privacyPolicyUrl": PRIVACY_POLICY_URL,
+            "privacyAccepted": settings.privacy_accepted(),
+            "onboarded": settings.onboarded(),
         }))
+    });
+
+    // The user accepted the privacy policy. When is kept, so a later policy can ask again.
+    registry.register_sync("setup.acceptPrivacy", |_, _| {
+        let mut settings = load_settings();
+        if !settings.privacy_accepted() {
+            settings.set("privacyAcceptedAt", json!(now_ms()));
+            save_settings(&settings)?;
+            bus().emit("settings.changed", json!({}));
+        }
+        Ok(json!({ "ok": true }))
+    });
+
+    // The first-run setup reached its end; a client does not walk the user through it again.
+    registry.register_sync("setup.complete", |_, _| {
+        let mut settings = load_settings();
+        if !settings.privacy_accepted() {
+            return Ok(json!({ "ok": false, "error": "The privacy policy has not been accepted yet." }));
+        }
+        if !settings.onboarded() {
+            settings.set("hasSeenWelcome", json!(true));
+            save_settings(&settings)?;
+            bus().emit("settings.changed", json!({}));
+        }
+        Ok(json!({ "ok": true }))
     });
 
     registry.register("account.login.start", |_, _| async move {
