@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/engine-client", "crates/app", "crates/tray", "crates/cli"]
 
 [workspace.package]
-version = "0.3.3"
+version = "0.4.0"
 edition = "2024"
 license = "SEE LICENSE IN LICENSE"
 authors = ["Harshal Kudale"]

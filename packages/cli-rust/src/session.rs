@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn hello_identifies_the_client_as_cli() {
-        let stream = Scripted::new(&[json!({"id": "cli-1", "ok": true, "data": {"engineVersion": "0.3.3"}})]);
+        let stream = Scripted::new(&[json!({"id": "cli-1", "ok": true, "data": {"engineVersion": "0.4.0"}})]);
         let mut session = Session::new(stream);
         session.hello("9.9.9").unwrap();
         assert_eq!(
