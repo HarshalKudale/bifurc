@@ -19,8 +19,11 @@ Workspaces
   workspaces use <id>
   workspaces add <name> [--account <login>]      A new local workspace; with --account that account owns it
   workspaces import <owner/repo> --account <login>   Bring a workspace from the account's own repository
-  workspaces publish <repo-name> --account <login> [--public]
-                                         Push the workspace to a new repository (private unless --public)
+  workspaces publish <repo-name> --account <login> [--public] [--all]
+                                         Push the workspace to a new repository (private unless --public);
+                                         --all also syncs everything in it that was never synced
+  workspaces sync                        Sync everything that was never synced, one commit per item, then push
+                                         when there is a remote. Makes a workspace of plain files a repository
 
 Accounts (GitHub sign-in, per workspace; only needed to sync with a remote)
   account login                          Shows a code to enter on GitHub, then waits

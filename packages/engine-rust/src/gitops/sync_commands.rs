@@ -10,6 +10,7 @@ use super::{
     git_state::get_workspace_git_state,
     remote::workspace_owner,
     status_tracker::get_workspace_sync_status,
+    sync_all::sync_workspace,
     sync_manager::{get_remote_head, sync_push},
     sync_state::get_sync_state,
 };
@@ -62,6 +63,18 @@ pub fn register(registry: &mut CommandRegistry) {
 
     registry.register("sync.pull", |params, _| async move {
         Ok(pull_and_announce(str_of(&params, "workspaceId")).await)
+    });
+
+    // Everything in the workspace that was never synced, an entity to a commit, then one push. A workspace
+    // that was plain files becomes a repository first. Progress arrives as `sync.status`.
+    registry.register("sync.all", |params, _| async move {
+        let ws_id = str_of(&params, "workspaceId");
+        let result = sync_workspace(ws_id).await;
+        if result.get("initialized") == Some(&Value::Bool(true)) {
+            notify_config_changed();
+        }
+        after_publish(ws_id).await;
+        Ok(result)
     });
 
     // How a sync is going, plus who the workspace syncs as, who owns it and where its remote is.

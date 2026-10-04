@@ -1567,6 +1567,18 @@
    ],
    "additionalProperties": false
   },
+  "sync.all": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
   "sync.pull": {
    "type": "object",
    "properties": {
@@ -3050,6 +3062,9 @@
      "type": "string"
     },
     "private": {
+     "type": "boolean"
+    },
+    "syncAll": {
      "type": "boolean"
     }
    },

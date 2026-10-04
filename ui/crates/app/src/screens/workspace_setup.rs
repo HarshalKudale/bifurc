@@ -131,6 +131,8 @@ pub struct WorkspaceSetup {
     repos: Repos,
     selected_repo: Option<String>,
     private: bool,
+    /// Publishing also syncs what the workspace holds that was never synced.
+    sync_all: bool,
     /// The create, import or publish command is in flight.
     busy: bool,
     error: Option<String>,
@@ -187,6 +189,7 @@ impl WorkspaceSetup {
             repos: Repos::Idle,
             selected_repo: None,
             private: true,
+            sync_all: true,
             busy: false,
             error: None,
             _subscriptions: subscriptions,
@@ -352,7 +355,10 @@ impl WorkspaceSetup {
             (Purpose::SignIn { .. }, _) => return,
             (Purpose::Publish { workspace_id, .. }, _) => (
                 "sync.publish",
-                json!({ "workspaceId": workspace_id, "accountId": self.account, "repoName": name, "private": self.private }),
+                json!({
+                    "workspaceId": workspace_id, "accountId": self.account, "repoName": name,
+                    "private": self.private, "syncAll": self.sync_all,
+                }),
             ),
             (_, Mode::New) => {
                 let mut payload = json!({ "name": name });
@@ -404,7 +410,7 @@ impl WorkspaceSetup {
                 Alert::warning(
                     "git-missing",
                     "Workspaces made now are plain files on this computer: no history, no audit log, no way to \
-                     revert a change, and no sync. Install Git and restart Bifurc to get them.",
+                     revert a change, and no sync. Install Git, then check again, to get them.",
                 )
                 .title("Git is not installed"),
             )
@@ -826,6 +832,15 @@ impl Render for WorkspaceSetup {
                         .checked(self.private)
                         .on_change(cx.listener(|this, checked: &bool, _, cx| {
                             this.private = *checked;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Checkbox::new("publish-sync-all")
+                        .label("Also sync everything that was never synced, one commit per item")
+                        .checked(self.sync_all)
+                        .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                            this.sync_all = *checked;
                             cx.notify();
                         })),
                 )
