@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: {{PACKAGE_ID}}
+PackageVersion: {{VERSION}}
+PackageLocale: en-US
+Publisher: {{PUBLISHER}}
+PublisherUrl: {{HOMEPAGE}}
+PublisherSupportUrl: {{REPO_URL}}/issues
+PrivacyUrl: {{HOMEPAGE}}/privacy
+Author: {{PUBLISHER}}
+PackageName: Bifurc
+PackageUrl: {{HOMEPAGE}}
+License: Proprietary
+LicenseUrl: {{LICENSE_URL}}
+Copyright: Copyright (c) {{PUBLISHER}}
+ShortDescription: {{SUMMARY}}
+Description: {{DESCRIPTION}}
+Moniker: bifurc
+Tags:
+- api-client
+- grpc
+- graphql
+- localhost
+- mock
+- proxy
+- rest
+ReleaseNotesUrl: {{REPO_URL}}/releases/tag/{{TAG}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

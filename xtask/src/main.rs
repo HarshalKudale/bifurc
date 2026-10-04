@@ -1,12 +1,30 @@
 //! Packages the desktop app — the Rust UI, the Rust engine and the Rust CLI — as one install.
 //!
 //! ```text
-//! cargo xtask package                       # this platform's packages
+//! cargo xtask package                       # everything this platform has: packages and store manifests
 //! cargo xtask package --target nsis,msix    # windows: installer exe, Store package
-//! cargo xtask package --target appimage     # linux
+//! cargo xtask package --target appimage,deb # linux
 //! cargo xtask package --target dir          # the staged folder only
 //! cargo xtask package --skip-build          # package what is already built
+//! cargo xtask package --release-tag v1.2.3  # the release the manifests download from (default: v<version>)
 //! ```
+//!
+//! | target     | platform | output in `release/desktop`                                               |
+//! | ---------- | -------- | ------------------------------------------------------------------------- |
+//! | `nsis`     | windows  | `Bifurc-<version>-setup.exe`                                              |
+//! | `msix`     | windows  | `Bifurc-<version>.msix`                                                   |
+//! | `zip`      | windows  | `Bifurc-<version>-win-<arch>.zip`, the staged folder as it is             |
+//! | `winget`   | windows  | `manifests/winget/…`, the three files a winget-pkgs pull request holds    |
+//! | `scoop`    | windows  | `manifests/scoop/bifurc.json`                                             |
+//! | `choco`    | windows  | `manifests/chocolatey/…`, and `bifurc.<version>.nupkg` when `choco` is here |
+//! | `appimage` | linux    | `Bifurc-<version>-<arch>.AppImage`                                        |
+//! | `deb`      | linux    | `bifurc_<version>_<arch>.deb`                                             |
+//! | `tarball`  | linux    | `Bifurc-<version>-linux-<arch>.tar.gz`, the staged folder as it is        |
+//! | `aur`      | linux    | `manifests/aur/…`: `PKGBUILD`, `.SRCINFO`, `bifurc.install`               |
+//!
+//! A manifest names the file a package manager downloads and its hash, so its target builds that file too:
+//! `winget` and `choco` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
+//! name on the GitHub release `--release-tag` names, in `GITHUB_REPOSITORY` (default: this repository).
 //!
 //! Every package is the same folder (`release/desktop/<platform>-unpacked`) in a different wrapper:
 //!
@@ -44,14 +62,68 @@ fn appimage_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "aarch64" } else { "x86_64" }
 }
 
+/// What Debian calls it.
+fn deb_arch() -> &'static str {
+    if env::consts::ARCH == "aarch64" { "arm64" } else { "amd64" }
+}
+
+/// What Scoop calls it.
+fn scoop_arch() -> &'static str {
+    if env::consts::ARCH == "aarch64" { "arm64" } else { "64bit" }
+}
+
+/// Every target of each platform, in the order they are made: a manifest after the file it describes.
+const WINDOWS_TARGETS: [&str; 6] = ["nsis", "msix", "zip", "winget", "scoop", "choco"];
+const LINUX_TARGETS: [&str; 4] = ["appimage", "deb", "tarball", "aur"];
+
+/// The package a manifest's target describes, which is built with it.
+fn needs(target: &str) -> Option<&'static str> {
+    match target {
+        "winget" | "choco" => Some("nsis"),
+        "scoop" => Some("zip"),
+        "aur" => Some("tarball"),
+        _ => None,
+    }
+}
+
+const DEFAULT_REPOSITORY: &str = "HarshalKudale/bifurc";
+const HOMEPAGE: &str = "https://bifurc.harshalkudale.com";
+const PUBLISHER: &str = "Harshal Kudale";
+/// A package's maintainer field wants an address; this one reaches the maintainer through GitHub.
+const MAINTAINER_EMAIL: &str = "HarshalKudale@users.noreply.github.com";
+const WINGET_PUBLISHER: &str = "HarshalKudale";
+const WINGET_NAME: &str = "Bifurc";
+/// One line and one paragraph, in words that are safe as they are in YAML, XML, JSON and a shell string.
+const SUMMARY: &str = "Desktop API development workspace for localhost routing, capture, mocking and protocol testing";
+const DESCRIPTION: &str = "Bifurc brings together .localhost mappings, proxy rules, traffic capture, mocks, and REST, \
+                           GraphQL, SOAP, gRPC and WebSocket requests, kept as files in git-backed workspaces.";
+
 struct Ctx {
     repo: PathBuf,
     out_dir: PathBuf,
+    /// `owner/name` on GitHub: where the release the manifests download from is.
+    repository: String,
+    /// The tag of that release.
+    release_tag: String,
 }
 
 impl Ctx {
     fn packaging(&self) -> PathBuf {
         self.repo.join("packaging")
+    }
+
+    fn manifests(&self) -> PathBuf {
+        self.out_dir.join("manifests")
+    }
+
+    fn repo_url(&self) -> String {
+        format!("https://github.com/{}", self.repository)
+    }
+
+    /// Where `file` is downloaded from once it is attached to the release.
+    fn asset_url(&self, file: &Path) -> String {
+        let name = file.file_name().unwrap_or_default().to_string_lossy();
+        format!("{}/releases/download/{}/{name}", self.repo_url(), self.release_tag)
     }
 }
 
@@ -69,48 +141,90 @@ fn run() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("package") => {}
-        _ => return Err("usage: cargo xtask package [--target dir,nsis,msix,appimage] [--skip-build]".into()),
+        _ => {
+            return Err(format!(
+                "usage: cargo xtask package [--target dir,{},{}] [--skip-build] [--release-tag <tag>]",
+                WINDOWS_TARGETS.join(","),
+                LINUX_TARGETS.join(",")
+            ));
+        }
     }
     let args: Vec<String> = args.collect();
     let skip_build = args.iter().any(|a| a == "--skip-build");
-    let spec = match args.iter().position(|a| a == "--target") {
-        Some(at) => args.get(at + 1).ok_or("--target needs a value")?.as_str(),
-        None if WINDOWS => "nsis,msix",
-        None => "appimage",
+    let value_of = |flag: &str| -> Result<Option<&str>> {
+        match args.iter().position(|a| a == flag) {
+            Some(at) => Ok(Some(args.get(at + 1).ok_or(format!("{flag} needs a value"))?.as_str())),
+            None => Ok(None),
+        }
     };
-    let targets: Vec<&str> = spec.split(',').filter(|t| !t.is_empty()).collect();
+    let platform_targets: &[&str] = if WINDOWS { &WINDOWS_TARGETS } else { &LINUX_TARGETS };
+    let mut targets: Vec<&str> = match value_of("--target")? {
+        Some(spec) => spec.split(',').filter(|t| !t.is_empty()).collect(),
+        None => platform_targets.to_vec(),
+    };
     for target in &targets {
-        let platform = match *target {
-            "dir" => None,
-            "nsis" | "msix" => Some(true),
-            "appimage" => Some(false),
-            other => return Err(format!("unknown target \"{other}\" (dir, nsis, msix, appimage)")),
-        };
-        if let Some(windows_only) = platform
-            && windows_only != WINDOWS
-        {
-            return Err(format!("{target} is built on {}; this is {}", if windows_only { "windows" } else { "linux" }, env::consts::OS));
+        if *target == "dir" || platform_targets.contains(target) {
+            continue;
+        }
+        if WINDOWS_TARGETS.contains(target) || LINUX_TARGETS.contains(target) {
+            return Err(format!("{target} is built on {}; this is {}", if WINDOWS { "linux" } else { "windows" }, env::consts::OS));
+        }
+        return Err(format!("unknown target \"{target}\" (dir, {}, {})", WINDOWS_TARGETS.join(", "), LINUX_TARGETS.join(", ")));
+    }
+    for needed in targets.clone().into_iter().filter_map(needs) {
+        if !targets.contains(&needed) {
+            targets.push(needed);
         }
     }
+    let wanted = |target: &str| targets.contains(&target);
 
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().ok_or("no repository above xtask")?.to_path_buf();
-    let ctx = Ctx { out_dir: repo.join("release").join("desktop"), repo };
+    let ctx = Ctx {
+        out_dir: repo.join("release").join("desktop"),
+        repo,
+        repository: env::var("GITHUB_REPOSITORY").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| DEFAULT_REPOSITORY.to_owned()),
+        release_tag: value_of("--release-tag")?.filter(|tag| !tag.is_empty()).map_or_else(|| format!("v{VERSION}"), str::to_owned),
+    };
 
     if !skip_build {
         build(&ctx)?;
     }
     let staged = stage(&ctx)?;
     let mut made = vec![staged.clone()];
-    if targets.iter().any(|t| *t == "nsis") {
-        made.push(package_nsis(&ctx, &staged)?);
+    if wanted("nsis") {
+        let installer = package_nsis(&ctx, &staged)?;
+        made.push(installer.clone());
+        if wanted("winget") {
+            made.push(manifest_winget(&ctx, &installer)?);
+        }
+        if wanted("choco") {
+            made.push(manifest_choco(&ctx, &installer)?);
+        }
     }
-    if targets.iter().any(|t| *t == "msix") {
+    if wanted("msix") {
         made.push(package_msix(&ctx, &staged)?);
     }
-    if targets.iter().any(|t| *t == "appimage") {
+    if wanted("zip") {
+        let zip = package_zip(&ctx, &staged)?;
+        made.push(zip.clone());
+        if wanted("scoop") {
+            made.push(manifest_scoop(&ctx, &zip)?);
+        }
+    }
+    if wanted("appimage") {
         made.push(package_appimage(&ctx, &staged)?);
     }
-    println!("\nBifurc {VERSION}:");
+    if wanted("deb") {
+        made.push(package_deb(&ctx, &staged)?);
+    }
+    if wanted("tarball") {
+        let tarball = package_tarball(&ctx, &staged)?;
+        made.push(tarball.clone());
+        if wanted("aur") {
+            made.push(manifest_aur(&ctx, &tarball)?);
+        }
+    }
+    println!("\nBifurc {VERSION} (manifests download from {}):", ctx.asset_url(Path::new("")).trim_end_matches('/'));
     for file in made {
         println!("  {}", file.strip_prefix(&ctx.repo).unwrap_or(&file).display());
     }
@@ -193,6 +307,62 @@ fn template(ctx: &Ctx, file: &str, values: &[(&str, &str)]) -> Result<String> {
         text = text.replace(&format!("{{{{{name}}}}}"), value);
     }
     Ok(text)
+}
+
+/// A template with what every manifest says about the app filled in, besides its own `values`.
+fn manifest(ctx: &Ctx, file: &str, values: &[(&str, &str)]) -> Result<String> {
+    let repo_url = ctx.repo_url();
+    let license_url = format!("{repo_url}/blob/master/LICENSE");
+    let icon_url = format!("https://raw.githubusercontent.com/{}/master/build/icon.png", ctx.repository);
+    let mut all = vec![
+        ("VERSION", VERSION),
+        ("TAG", ctx.release_tag.as_str()),
+        ("HOMEPAGE", HOMEPAGE),
+        ("REPO_URL", repo_url.as_str()),
+        ("LICENSE_URL", license_url.as_str()),
+        ("ICON_URL", icon_url.as_str()),
+        ("PUBLISHER", PUBLISHER),
+        ("MAINTAINER_EMAIL", MAINTAINER_EMAIL),
+        ("SUMMARY", SUMMARY),
+        ("DESCRIPTION", DESCRIPTION),
+    ];
+    all.extend_from_slice(values);
+    template(ctx, file, &all)
+}
+
+/// The SHA-256 of a file, in lowercase hex: what a manifest pins its download to.
+fn sha256_of(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// The size of everything under `dir`, in bytes.
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
+            Ok(kind) if kind.is_file() => entry.metadata().map_or(0, |meta| meta.len()),
+            _ => 0,
+        })
+        .sum()
+}
+
+#[cfg(unix)]
+fn symlink(target: &str, link: &Path) -> Result<()> {
+    if let Some(parent) = link.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::os::unix::fs::symlink(target, link).map_err(|e| format!("{}: {e}", link.display()))
+}
+
+#[cfg(not(unix))]
+fn symlink(_: &str, link: &Path) -> Result<()> {
+    Err(format!("{}: a Linux package is laid out on Linux", link.display()))
 }
 
 fn on_path(name: &str) -> Option<PathBuf> {
@@ -413,6 +583,187 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     pack.args(["pack", "/d"]).arg(&layout).arg("/p").arg(&out).arg("/o").current_dir(&ctx.repo);
     exec(pack, true)?;
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Windows: portable zip, and the manifests of winget, Scoop and Chocolatey
+// ---------------------------------------------------------------------------------------------------------
+
+/// The staged folder as a zip: what Scoop installs, and a Bifurc that runs from wherever it is unpacked.
+fn package_zip(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
+    let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-win-{}.zip", sdk_arch()));
+    let _ = fs::remove_file(&out);
+    // Windows' own tar (bsdtar) writes a zip when the name says so. Named by its path: a `tar` earlier on
+    // PATH may be GNU tar, which does not.
+    let tar = env_path("SystemRoot").map(|root| root.join("System32").join("tar.exe")).filter(|tar| tar.exists());
+    let mut command = Command::new(tar.ok_or("tar.exe was not found in System32 (it ships with Windows 10 1803 and later)")?);
+    command.args(["-a", "-c", "-f"]).arg(&out).arg("-C").arg(staged);
+    // Each entry by name, so the archive's paths start at the app's files and not at `./`.
+    let mut entries: Vec<_> = fs::read_dir(staged).map_err(|e| format!("{}: {e}", staged.display()))?.flatten().map(|e| e.file_name()).collect();
+    entries.sort();
+    command.args(entries);
+    exec(command, true)?;
+    Ok(out)
+}
+
+/// The three files of a winget-pkgs pull request, in the folder they have there.
+fn manifest_winget(ctx: &Ctx, installer: &Path) -> Result<PathBuf> {
+    let id = format!("{WINGET_PUBLISHER}.{WINGET_NAME}");
+    let initial = WINGET_PUBLISHER[..1].to_lowercase();
+    let root = ctx.manifests().join("winget");
+    empty_dir(&root)?;
+    let dir = root.join("manifests").join(initial).join(WINGET_PUBLISHER).join(WINGET_NAME).join(VERSION);
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let url = ctx.asset_url(installer);
+    let hash = sha256_of(installer)?.to_uppercase();
+    let values = [("PACKAGE_ID", id.as_str()), ("ARCH", sdk_arch()), ("URL", url.as_str()), ("SHA256", hash.as_str())];
+    for (template, file) in [
+        ("version.yaml", format!("{id}.yaml")),
+        ("installer.yaml", format!("{id}.installer.yaml")),
+        ("locale.yaml", format!("{id}.locale.en-US.yaml")),
+    ] {
+        write_file(&dir.join(file), &manifest(ctx, &format!("windows/winget/{template}"), &values)?)?;
+    }
+    Ok(dir)
+}
+
+/// The Scoop manifest: `scoop install <its url>`, or a file of a bucket.
+fn manifest_scoop(ctx: &Ctx, zip: &Path) -> Result<PathBuf> {
+    let dir = ctx.manifests().join("scoop");
+    empty_dir(&dir)?;
+    let (url, hash) = (ctx.asset_url(zip), sha256_of(zip)?);
+    let values = [("ARCH", scoop_arch()), ("FILE_ARCH", sdk_arch()), ("URL", url.as_str()), ("SHA256", hash.as_str())];
+    let out = dir.join("bifurc.json");
+    write_file(&out, &manifest(ctx, "windows/scoop/bifurc.json", &values)?)?;
+    Ok(out)
+}
+
+/// The Chocolatey package's source, and the package itself where `choco` is installed to pack it.
+fn manifest_choco(ctx: &Ctx, installer: &Path) -> Result<PathBuf> {
+    let dir = ctx.manifests().join("chocolatey");
+    empty_dir(&dir)?;
+    let (url, hash) = (ctx.asset_url(installer), sha256_of(installer)?);
+    let values = [("URL", url.as_str()), ("SHA256", hash.as_str())];
+    let nuspec = dir.join("bifurc.nuspec");
+    write_file(&nuspec, &manifest(ctx, "windows/chocolatey/bifurc.nuspec", &values)?)?;
+    fs::create_dir_all(dir.join("tools")).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for script in ["chocolateyinstall.ps1", "chocolateyuninstall.ps1"] {
+        write_file(&dir.join("tools").join(script), &manifest(ctx, &format!("windows/chocolatey/{script}"), &values)?)?;
+    }
+    let Some(choco) = on_path("choco") else {
+        println!("choco is not installed: the package source is written, pack it with `choco pack` in {}", dir.display());
+        return Ok(dir);
+    };
+    let out = ctx.out_dir.join(format!("bifurc.{VERSION}.nupkg"));
+    let _ = fs::remove_file(&out);
+    let mut pack = Command::new(choco);
+    pack.arg("pack").arg(&nuspec).arg("--outputdirectory").arg(&ctx.out_dir).current_dir(&dir);
+    exec(pack, true)?;
+    if out.exists() { Ok(out) } else { Err(format!("choco pack did not write {}", out.display())) }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Linux: .deb, tarball, and the AUR package's source
+// ---------------------------------------------------------------------------------------------------------
+
+/// The app's four executables, which are what its shared library dependencies are read from.
+fn staged_executables(dir: &Path) -> [PathBuf; 4] {
+    [dir.join("bifurc-ui"), dir.join("bifurc-engine"), dir.join("bin").join("bifurc"), dir.join("resources").join("bifurc-cli")]
+}
+
+/// The packages the executables' shared libraries come from, as `dpkg-shlibdeps` finds them on this machine.
+/// Vulkan is loaded at run time and is in no executable's list, so it is added.
+fn deb_depends(ctx: &Ctx, lib: &Path) -> String {
+    const FALLBACK: &str = "libc6, libgcc-s1, libasound2, libfontconfig1, libx11-xcb1, libxkbcommon0, libxkbcommon-x11-0, libzstd1";
+    // The tool reads a source package's control file from where it runs; an empty one is enough for it.
+    let work = ctx.out_dir.join("deb-shlibdeps");
+    let found = (|| -> Result<String> {
+        empty_dir(&work.join("debian"))?;
+        write_file(&work.join("debian").join("control"), "Source: bifurc\n\nPackage: bifurc\nArchitecture: any\n")?;
+        let mut command = Command::new("dpkg-shlibdeps");
+        command.args(["-O", "--ignore-missing-info"]).current_dir(&work);
+        for executable in staged_executables(lib) {
+            command.arg(format!("-e{}", executable.display()));
+        }
+        let output = command.output().map_err(|e| format!("could not run dpkg-shlibdeps: {e}"))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        text.lines()
+            .find_map(|line| line.strip_prefix("shlibs:Depends="))
+            .map(|depends| depends.trim().to_owned())
+            .filter(|depends| !depends.is_empty())
+            .ok_or_else(|| format!("dpkg-shlibdeps named no dependency\n{}", String::from_utf8_lossy(&output.stderr)))
+    })();
+    let depends = found.unwrap_or_else(|why| {
+        println!("warning: {why}\nwarning: the .deb depends on a fixed list instead: {FALLBACK}");
+        FALLBACK.to_owned()
+    });
+    format!("{depends}, libvulkan1")
+}
+
+/// A Debian package: the staged folder under `/usr/lib/bifurc`, `bifurc` in `/usr/bin`, a launcher entry.
+fn package_deb(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
+    let root = ctx.out_dir.join("deb-root");
+    empty_dir(&root)?;
+    let usr = root.join("usr");
+    let lib = usr.join("lib").join("bifurc");
+    copy_dir(staged, &lib)?;
+    symlink("../lib/bifurc/bin/bifurc", &usr.join("bin").join("bifurc"))?;
+    let share = usr.join("share");
+    fs::create_dir_all(share.join("applications")).map_err(|e| format!("{}: {e}", share.display()))?;
+    write_file(
+        &share.join("applications").join("bifurc.desktop"),
+        &template(ctx, "linux/bifurc.desktop", &[("EXEC", "/usr/lib/bifurc/bifurc-ui")])?,
+    )?;
+    let icon = ctx.repo.join("build").join("icon.png");
+    copy_file(&icon, &share.join("icons").join("hicolor").join("512x512").join("apps").join("bifurc.png"))?;
+    copy_file(&ctx.repo.join("LICENSE"), &share.join("doc").join("bifurc").join("copyright"))?;
+
+    let depends = deb_depends(ctx, &lib);
+    let installed_kib = dir_size(&usr).div_ceil(1024).to_string();
+    let control = root.join("DEBIAN");
+    fs::create_dir_all(&control).map_err(|e| format!("{}: {e}", control.display()))?;
+    let values = [("ARCH", deb_arch()), ("DEPENDS", depends.as_str()), ("INSTALLED_SIZE", installed_kib.as_str())];
+    write_file(&control.join("control"), &manifest(ctx, "linux/deb/control", &values)?)?;
+    for script in ["postinst", "prerm"] {
+        write_file(&control.join(script), &manifest(ctx, &format!("linux/deb/{script}"), &[])?)?;
+        make_executable(&control.join(script))?;
+    }
+
+    let out = ctx.out_dir.join(format!("bifurc_{VERSION}_{}.deb", deb_arch()));
+    let mut command = Command::new("dpkg-deb");
+    command.args(["--root-owner-group", "--build"]).arg(&root).arg(&out).current_dir(&ctx.repo);
+    exec(command, false)?;
+    Ok(out)
+}
+
+/// The staged folder as `bifurc-<version>/` in a tarball, with the launcher entry a package puts in
+/// `/usr/share/applications`: what the AUR package installs, and what any other distribution's would.
+fn package_tarball(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
+    let parent = ctx.out_dir.join("tarball");
+    empty_dir(&parent)?;
+    let name = format!("bifurc-{VERSION}");
+    copy_dir(staged, &parent.join(&name))?;
+    write_file(
+        &parent.join(&name).join("bifurc.desktop"),
+        &template(ctx, "linux/bifurc.desktop", &[("EXEC", "/usr/lib/bifurc/bifurc-ui")])?,
+    )?;
+    let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-linux-{}.tar.gz", appimage_arch()));
+    let mut command = Command::new("tar");
+    command.args(["--owner=0", "--group=0", "-czf"]).arg(&out).arg("-C").arg(&parent).arg(&name).current_dir(&ctx.repo);
+    exec(command, false)?;
+    Ok(out)
+}
+
+/// The AUR package `bifurc-bin`: the files its git repository holds.
+fn manifest_aur(ctx: &Ctx, tarball: &Path) -> Result<PathBuf> {
+    let dir = ctx.manifests().join("aur");
+    empty_dir(&dir)?;
+    let (url, hash) = (ctx.asset_url(tarball), sha256_of(tarball)?);
+    let values = [("ARCH", appimage_arch()), ("URL", url.as_str()), ("SHA256", hash.as_str())];
+    for (template, file) in [("PKGBUILD", "PKGBUILD"), ("SRCINFO", ".SRCINFO"), ("bifurc.install", "bifurc.install")] {
+        write_file(&dir.join(file), &manifest(ctx, &format!("linux/aur/{template}"), &values)?)?;
+    }
+    Ok(dir)
 }
 
 // ---------------------------------------------------------------------------------------------------------
