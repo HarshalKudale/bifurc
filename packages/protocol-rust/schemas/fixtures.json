@@ -1,4 +1,40 @@
 {
+ "account.list": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "account.login.cancel": {
+  "valid": {
+   "loginId": "l1"
+  },
+  "invalid": {}
+ },
+ "account.login.start": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "account.login.status": {
+  "valid": {
+   "loginId": "l1"
+  },
+  "invalid": {}
+ },
+ "account.logout": {
+  "valid": {
+   "accountId": "github.com:1"
+  },
+  "invalid": {}
+ },
+ "account.repos": {
+  "valid": {
+   "accountId": "github.com:1"
+  },
+  "invalid": {}
+ },
  "application.checkPort": {
   "valid": {
    "port": 3000
@@ -238,10 +274,35 @@
   },
   "invalid": {}
  },
+ "curl.buildMock": {
+  "valid": {
+   "curl": "curl http://x"
+  },
+  "invalid": {
+   "curlCommand": "curl http://x"
+  }
+ },
+ "curl.buildRequest": {
+  "valid": {
+   "curl": "curl http://x"
+  },
+  "invalid": {
+   "curlCommand": "curl http://x"
+  }
+ },
  "engine.shutdown": {
   "valid": {},
   "invalid": {
    "now": true
+  }
+ },
+ "entity.confirmDelete": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks"
   }
  },
  "entity.create": {
@@ -314,6 +375,15 @@
   },
   "invalid": {
    "workspaceId": "ws1"
+  }
+ },
+ "entity.revertDelete": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1"
+  },
+  "invalid": {
+   "kind": "mocks"
   }
  },
  "entity.setEnabled": {
@@ -392,6 +462,15 @@
    "parentId": null
   }
  },
+ "folder.confirmDelete": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1"
+  },
+  "invalid": {
+   "kind": "mock"
+  }
+ },
  "folder.delete": {
   "valid": {
    "kind": "mock",
@@ -432,6 +511,15 @@
   "invalid": {
    "kind": "mock",
    "id": "f1"
+  }
+ },
+ "folder.revertDelete": {
+  "valid": {
+   "kind": "mock",
+   "id": "f1"
+  },
+  "invalid": {
+   "kind": "mock"
   }
  },
  "git.diff": {
@@ -866,6 +954,30 @@
    "port": 70000
   }
  },
+ "setup.acceptPrivacy": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "setup.acceptTerms": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "setup.complete": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "setup.getState": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "soap.execute": {
   "valid": {
    "endpointUrl": "http://x",
@@ -904,7 +1016,7 @@
    }
   }
  },
- "sync.disconnect": {
+ "sync.all": {
   "valid": {
    "workspaceId": "ws1"
   },
@@ -922,6 +1034,17 @@
   },
   "invalid": {}
  },
+ "sync.publish": {
+  "valid": {
+   "workspaceId": "ws1",
+   "accountId": "github.com:1",
+   "repoName": "workspace"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "accountId": "github.com:1"
+  }
+ },
  "sync.pull": {
   "valid": {
    "workspaceId": "ws1"
@@ -933,27 +1056,6 @@
    "workspaceId": "ws1"
   },
   "invalid": {}
- },
- "sync.setAutoSync": {
-  "valid": {
-   "workspaceId": "ws1",
-   "enabled": true
-  },
-  "invalid": {
-   "workspaceId": "ws1",
-   "enabled": "yes"
-  }
- },
- "sync.setRemote": {
-  "valid": {
-   "workspaceId": "ws1",
-   "remote": "r",
-   "branch": "main"
-  },
-  "invalid": {
-   "workspaceId": "ws1",
-   "remote": "r"
-  }
  },
  "tls.certStatus": {
   "valid": {},
@@ -991,6 +1093,83 @@
    "extra": true
   }
  },
+ "vault.changePassphrase": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "passphrase": "x",
+   "newPassphrase": "x"
+  },
+  "invalid": {}
+ },
+ "vault.create": {
+  "valid": {
+   "workspaceId": "x",
+   "name": "x",
+   "passphrase": "x"
+  },
+  "invalid": {}
+ },
+ "vault.delete": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
+ "vault.deleteSecret": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "name": "x"
+  },
+  "invalid": {}
+ },
+ "vault.list": {
+  "valid": {
+   "workspaceId": "x"
+  },
+  "invalid": {}
+ },
+ "vault.rename": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "name": "x"
+  },
+  "invalid": {}
+ },
+ "vault.seal": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
+ "vault.secrets": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
+ "vault.setSecret": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "name": "x",
+   "value": "x"
+  },
+  "invalid": {}
+ },
+ "vault.unseal": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "passphrase": "x"
+  },
+  "invalid": {}
+ },
  "workspace.add": {
   "valid": {
    "name": "WS"
@@ -1002,6 +1181,15 @@
    "id": "w1"
   },
   "invalid": {}
+ },
+ "workspace.import": {
+  "valid": {
+   "accountId": "github.com:1",
+   "repo": "octo/workspace"
+  },
+  "invalid": {
+   "accountId": "github.com:1"
+  }
  },
  "workspace.rename": {
   "valid": {

@@ -27,13 +27,13 @@ use crate::{
         ws::{WsServer, create_ws_server},
     },
     utils::{
-        id::{generate_id, now_ms},
+        id::now_ms,
         json::str_of,
         net::DEFAULT_HOST_DOMAIN,
     },
     workspace::{
         fs::{init_workspace_dir, ws_dir},
-        git_store::init_workspace_repo,
+        git_store::{check_git_installed, init_workspace_repo},
         paths::{data_dir, set_data_root},
         settings::{AppSettings, load_settings, save_settings},
     },
@@ -107,35 +107,31 @@ fn workspace_dir_exists(ws_id: &str) -> bool {
 /// Make every workspace's directory a usable repository, resume auto-sync, and make sure the active
 /// workspace exists (creating "Workspace 1" in an empty data directory).
 async fn bootstrap_workspaces(mut settings: AppSettings) -> Result<AppSettings> {
+    let git_installed = check_git_installed().await;
+    if !git_installed {
+        notice("git is not installed: workspaces are plain files, with no history, audit log or sync");
+    }
     for ws in settings.workspaces().to_vec() {
         let id = str_of(&ws, "id");
         init_workspace_dir(id, str_of(&ws, "name"))?;
+        if !git_installed {
+            continue;
+        }
         if let Err(err) = init_workspace_repo(id).await {
             notice(&format!("workspace \"{id}\": could not prepare its git repository: {err}"));
         }
-        if crate::gitops::get_sync_config(id).is_some_and(|cfg| crate::utils::json::truthy(&cfg, "autoSync")) {
-            crate::gitops::start_auto_sync(id);
-        }
+        crate::gitops::start_auto_sync(id);
     }
     if !workspace_dir_exists(&settings.active_workspace_id()) {
         let valid =
             settings.workspaces().iter().map(|w| str_of(w, "id").to_string()).find(|id| workspace_dir_exists(id));
-        match valid {
-            Some(id) => settings.set("activeWorkspaceId", json!(id)),
-            None => {
-                let id = generate_id();
-                let name = "Workspace 1";
-                settings.set("workspaces", json!([{ "id": id, "name": name, "activeEnvironmentId": null }]));
-                settings.set("activeWorkspaceId", json!(id));
-                save_settings(&settings)?;
-                init_workspace_dir(&id, name)?;
-                if let Err(err) = init_workspace_repo(&id).await {
-                    notice(&format!("workspace \"{id}\": could not prepare its git repository: {err}"));
-                }
-                return Ok(settings);
-            }
+        // With no workspace at all there is no active one: the first is created or imported by a client
+        // (`workspace.add`, `workspace.import`), and becomes active then.
+        let active = valid.unwrap_or_default();
+        if settings.active_workspace_id() != active {
+            settings.set("activeWorkspaceId", json!(active));
+            save_settings(&settings)?;
         }
-        save_settings(&settings)?;
     }
     Ok(settings)
 }
@@ -190,11 +186,17 @@ impl WorkspaceHost {
 
         let served: Arc<RwLock<Vec<ServedWorkspace>>> = Arc::new(RwLock::new(Vec::new()));
         let edge_port = opts.edge_port.unwrap_or_else(|| settings.port());
-        let (edge_served, edge_proxy) = (served.clone(), forward_proxy.clone());
+        let (edge_wanted, edge_proxy) = (opts.workspace_ids.clone(), forward_proxy.clone());
         let edge = crate::reverseproxy::create_edge_router(Arc::new(move || {
-            // The edge serves the active workspace, and only if this host serves it.
-            let active = load_settings().active_workspace_id();
-            if !edge_served.read().iter().any(|s| s.workspace_id == active) {
+            // The edge serves the active workspace, and only if this host serves it. A host that was not
+            // limited to some workspaces serves every one in the settings, including ones added since it started.
+            let settings = load_settings();
+            let active = settings.active_workspace_id();
+            let served = match &edge_wanted {
+                Some(wanted) => wanted.iter().any(|id| *id == active),
+                None => settings.workspace(&active).is_some(),
+            };
+            if !served {
                 return None;
             }
             edge_proxy.dispatch_config()
@@ -329,6 +331,7 @@ impl WorkspaceHost {
         if let Some(desktop) = &desktop {
             desktop.start();
         }
+        crate::analytics::start(opts.transport.kind().as_str());
 
         Ok(Self { opts, log, forward_proxy, edge, edge_url, rpc, rpc_address, companion_port, served, sweeper })
     }
@@ -346,6 +349,7 @@ impl WorkspaceHost {
         crate::applications::stop_all();
         crate::gitops::stop_all_auto_sync();
         crate::capture::flush_capture();
+        crate::analytics::stop().await;
         self.sweeper.abort();
         bind_forward_proxy(None);
         bind_edge(None);

@@ -13,6 +13,7 @@ use crate::{
     env::{apply_variable_changes, load_merged_environment, resolve_headers, resolve_vars},
     protocol::Result,
     scripting::execute_ipc_script,
+    vault::{Redactor, references_in, resolve_value_allowed},
     utils::{
         json::{array_of, merged, opt_str, str_of},
         replay::decode_base64_lenient,
@@ -90,7 +91,19 @@ where
     F: FnOnce(Value) -> Fut + Send,
     Fut: Future<Output = Result<Value>> + Send,
 {
-    let env = load_merged_environment(ws_id);
+    let full_env = load_merged_environment(ws_id);
+    // Scripts, the echoed request and the logs hold `{{vault.secret}}` as written; the values are put in only
+    // on the copy that is sent, and only for references the request's own author wrote (not ones that arrived
+    // from elsewhere, such as a response a script copied from).
+    let mut allowed = references_in(&request.to_string());
+    for script in [&scripts.pre, &scripts.post, &scripts.test].into_iter().flatten() {
+        allowed.extend(references_in(script));
+    }
+    allowed.extend(references_in(&full_env.as_ref().map(|e| e["variables"].to_string()).unwrap_or_default()));
+    let env = full_env.map(|mut env| {
+        env["workspaceId"] = json!("");
+        env
+    });
 
     let mut resolved = json!({
         "method": request.get("method").cloned().unwrap_or(Value::Null),
@@ -125,7 +138,9 @@ where
     }
 
     let send_start = Instant::now();
-    let response = send(resolved.clone()).await?;
+    let mut wire = resolved.clone();
+    resolve_value_allowed(ws_id, &mut wire, &allowed);
+    let response = send(wire).await?;
     let duration_ms = send_start.elapsed().as_millis() as u64;
 
     let response_body = body_text(&response);
@@ -198,6 +213,20 @@ where
     }
     if let Some(error) = post_script_error {
         out["postScriptError"] = json!(error);
+    }
+    // What goes back to a client (and into history and reports) names a secret, never shows it.
+    if let Some(redactor) = Redactor::for_workspace(ws_id) {
+        let mut body = out["response"]["body"].take();
+        redactor.base64_body(&mut body);
+        out["response"]["body"] = body;
+        for part in ["request", "tests", "testLogs", "preScriptError", "postScriptError"] {
+            if let Some(value) = out.get_mut(part) {
+                redactor.value(value);
+            }
+        }
+        if let Some(headers) = out["response"].get_mut("headers") {
+            redactor.value(headers);
+        }
     }
     Ok(out)
 }

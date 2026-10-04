@@ -25,7 +25,7 @@ use gpui_kit::{
 
 use crate::{
     app_model::AppModel,
-    components::page,
+    components::{CURL_TAB_TITLE, page},
     model::{ExplorerNode, NodeRef, RequestKind, build_explorer, git::FileState},
 };
 
@@ -34,6 +34,8 @@ use crate::{
 pub enum RequestTreeEvent {
     Open(NodeRef),
     NewRequest { kind: RequestKind, folder: Option<String> },
+    /// Start a request from a cURL command; its type comes from the command.
+    ImportCurl,
     NewFolder { kind: RequestKind, parent: Option<String> },
     Rename(NodeRef),
     Delete(NodeRef),
@@ -41,6 +43,19 @@ pub enum RequestTreeEvent {
     Duplicate(NodeRef),
     /// Open the REST folder with this id as a runner tab.
     RunFolder(String),
+    /// Bring back a deleted request or folder.
+    RevertDelete(NodeRef),
+    /// Sync the deletion of a deleted request or folder, removing it for good.
+    ConfirmDelete(NodeRef),
+}
+
+/// Whether the request or folder is deleted here, with the deletion not confirmed or reverted yet.
+pub fn is_deleted(model: &AppModel, node: &NodeRef) -> bool {
+    let config = model.config();
+    match node {
+        NodeRef::Folder { kind, id } => config.folder(*kind, id).is_some_and(|f| f.deleted),
+        NodeRef::Request { kind, id } => config.request(*kind, id).is_some_and(|r| r.deleted),
+    }
 }
 
 pub struct RequestTree {
@@ -158,6 +173,7 @@ fn render_row(
     let theme = cx.theme().clone();
     let node = NodeRef::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
+    let deleted = node.as_ref().is_some_and(|node| is_deleted(model.read(cx), node));
     let mut pending = false;
     let lead: gpui_kit::AnyElement = match &node {
         Some(NodeRef::Folder { .. }) => {
@@ -191,7 +207,16 @@ fn render_row(
                 .gap_2()
                 .items_center()
                 .child(lead)
-                .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(label))
+                // Deleted, and waiting to be confirmed or reverted: still listed, struck through.
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
+                        .child(label),
+                )
                 // A request with changes that are not published yet says so with a mark, not only a color.
                 .children(pending.then(|| div().flex_none().pr_2().text_xs().text_color(theme.warning).child("●"))),
         )
@@ -212,8 +237,26 @@ fn emitter(
     }
 }
 
-fn context_menu(entry: &TreeEntry, menu: PopupMenu, tree: &WeakEntity<RequestTree>) -> PopupMenu {
+fn context_menu(
+    entry: &TreeEntry,
+    menu: PopupMenu,
+    tree: &WeakEntity<RequestTree>,
+    model: &Entity<AppModel>,
+    cx: &App,
+) -> PopupMenu {
     let Some(node) = NodeRef::parse(entry.item().id.as_str()) else { return menu };
+    // What is deleted can only be brought back or deleted for good.
+    if is_deleted(model.read(cx), &node) {
+        return menu
+            .item(
+                PopupMenuItem::new("Revert delete")
+                    .on_click(emitter(tree, RequestTreeEvent::RevertDelete(node.clone()))),
+            )
+            .item(
+                PopupMenuItem::new("Confirm delete")
+                    .on_click(emitter(tree, RequestTreeEvent::ConfirmDelete(node.clone()))),
+            );
+    }
     match node {
         NodeRef::Request { .. } => menu
             .item(PopupMenuItem::new("Open").on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))))
@@ -244,7 +287,7 @@ fn context_menu(entry: &TreeEntry, menu: PopupMenu, tree: &WeakEntity<RequestTre
     }
 }
 
-/// The "new" menu: one request of each type, and a folder for each type's tree.
+/// The "new" menu: one request of each type, one from a cURL command, and a folder for each type's tree.
 pub fn new_menu(
     menu: PopupMenu,
     tree: &WeakEntity<RequestTree>,
@@ -258,6 +301,9 @@ pub fn new_menu(
                 .on_click(emitter(tree, RequestTreeEvent::NewRequest { kind, folder: folder.clone() })),
         )
     });
+    let menu = menu
+        .separator()
+        .item(PopupMenuItem::new(CURL_TAB_TITLE).on_click(emitter(tree, RequestTreeEvent::ImportCurl)));
     let tree = tree.clone();
     menu.separator().submenu("Folder", window, cx, move |submenu, _, _| {
         RequestKind::ALL.into_iter().fold(submenu, |submenu, kind| {
@@ -274,6 +320,7 @@ impl Render for RequestTree {
         let model = self.model.clone();
         let this = cx.entity().downgrade();
         let menu_tree = this.clone();
+        let menu_model = self.model.clone();
         let config = self.model.read(cx).config();
         let has_requests = !config.requests.is_empty() || !config.folders.is_empty();
         let filtering = !self.filter.read(cx).value().trim().is_empty();
@@ -284,7 +331,7 @@ impl Render for RequestTree {
             page::empty("No matches", "No request matches the filter.")
         } else {
             tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &this, cx))
-                .context_menu(move |_, entry, menu, _, _| context_menu(entry, menu, &menu_tree))
+                .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_tree, &menu_model, cx))
                 .into_any_element()
         };
         v_flex()

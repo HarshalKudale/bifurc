@@ -41,22 +41,27 @@ jobs:
 
       - id: meta
         shell: bash
+        # What was typed into the form reaches the script as data, never as part of it.
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)"
 
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             tag="${GITHUB_REF_NAME}"
             prerelease=false
           else
-            tag="${{ inputs.tag_name }}"
-            prerelease="${{ inputs.prerelease }}"
+            tag="${INPUT_TAG_NAME}"
+            prerelease="${INPUT_PRERELEASE}"
           fi
 
           if [ -z "$tag" ]; then
             tag="v${version}"
           fi
 
-          release_name="${{ inputs.release_name }}"
+          release_name="${INPUT_RELEASE_NAME}"
           if [ -z "$release_name" ]; then
             release_name="Bifurc ${tag}"
           fi
@@ -85,6 +90,10 @@ jobs:
       # NSIS and the Windows SDK (makeappx, makepri) are on the runner image.
       - name: Build the installer and the Store package
         run: cargo xtask package --target nsis,msix
+        env:
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
 
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v4
@@ -117,6 +126,10 @@ jobs:
 
       - name: Build the AppImage
         run: cargo xtask package --target appimage
+        env:
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
 
       - name: Upload Linux release assets
         uses: actions/upload-artifact@v4

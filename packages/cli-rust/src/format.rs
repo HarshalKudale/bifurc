@@ -97,7 +97,32 @@ pub fn describe_send(result: &Value) -> String {
     lines.join("\n")
 }
 
-/// A gRPC result as printed by `grpc call` and `grpc send`: the status line, the metadata, then each response.
+/// The response of a GraphQL or SOAP request as printed by `requests send`: its body is text already.
+pub fn describe_text_response(result: &Value) -> String {
+    let mut lines =
+        vec![format!("HTTP {}  ({} ms)", js_template(result.get("status")), js_template(result.get("durationMs")))];
+    if let Some(headers) = result.get("headers").and_then(Value::as_object) {
+        lines.extend(headers.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
+    }
+    lines.push(String::new());
+    lines.push(result.get("body").and_then(Value::as_str).unwrap_or_default().to_string());
+    lines.join("\n")
+}
+
+/// A WebSocket connection as printed by `requests send`: its state, then what was sent (`>`) and received (`<`).
+pub fn describe_socket(snapshot: &Value) -> String {
+    let mut lines = vec![format!("WebSocket {}  {}", js_template(snapshot.get("status")), js_template(snapshot.get("url")))];
+    if let Some(error) = snapshot.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+        lines.push(format!("error: {error}"));
+    }
+    for message in snapshot.get("messages").and_then(Value::as_array).into_iter().flatten() {
+        let mark = if message.get("direction").and_then(Value::as_str) == Some("sent") { ">" } else { "<" };
+        lines.push(format!("{mark} {}", js_template(message.get("data"))));
+    }
+    lines.join("\n")
+}
+
+/// A gRPC result as printed by `requests send`: the status line, the metadata, then each response.
 pub fn describe_grpc(result: &Value) -> String {
     let status = result.get("status").and_then(Value::as_i64).unwrap_or(0);
     let message = result.get("statusMessage").and_then(Value::as_str).unwrap_or_default();
@@ -249,6 +274,25 @@ mod tests {
     }
 
     #[test]
+    fn a_text_response_prints_its_body_as_it_is() {
+        let result = json!({"status": 200, "durationMs": 7, "headers": {"content-type": "application/json"},
+                            "body": "{\"data\":{}}"});
+        assert_eq!(
+            describe_text_response(&result),
+            "HTTP 200  (7 ms)\ncontent-type: application/json\n\n{\"data\":{}}"
+        );
+    }
+
+    #[test]
+    fn a_socket_prints_its_state_and_its_messages_by_direction() {
+        let snapshot = json!({"status": "connected", "url": "ws://h/", "error": null, "messages": [
+            {"direction": "sent", "data": "ping"}, {"direction": "received", "data": "pong"}]});
+        assert_eq!(describe_socket(&snapshot), "WebSocket connected  ws://h/\n> ping\n< pong");
+        let failed = json!({"status": "error", "url": "ws://h/", "error": "refused", "messages": []});
+        assert_eq!(describe_socket(&failed), "WebSocket error  ws://h/\nerror: refused");
+    }
+
+    #[test]
     fn an_empty_body_still_leaves_the_blank_separator() {
         let result = json!({"status": 204, "durationMs": 1, "headers": {}, "body": ""});
         assert_eq!(describe_send(&result), "HTTP 204  (1 ms)\n\n");
@@ -257,13 +301,13 @@ mod tests {
     #[test]
     fn status_shows_engine_proxy_and_workspace() {
         let info = RuntimeInfo::from_json(json!({
-            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.3.3"
+            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.4.0"
         }))
         .unwrap();
         let workspace = json!({"id": "w1", "name": "Default"});
         assert_eq!(
             describe_status(&info, &json!({"running": true, "port": 8080}), &workspace),
-            "engine     pid 5, socket addr, v0.3.3\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
+            "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
         );
         assert!(
             describe_status(&info, &json!({"running": false}), &json!("w9"))

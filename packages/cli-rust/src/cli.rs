@@ -11,13 +11,17 @@ use serde_json::json;
 
 use crate::{
     args::{ParsedArgs, parse_args},
-    commands::{self, Connector, Context},
+    commands::{self, Connector, Context, unknown_verb},
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
+    entities,
     error::{CliError, Result},
+    health,
     locate::locate_engine,
+    requests,
     session::{Engine, connect},
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
-    usage::USAGE,
+    usage::{USAGE, canonical_group, group_usage},
+    vault,
 };
 
 /// The version this client reports in the handshake.
@@ -36,7 +40,7 @@ fn connect_or_start(data_dir: &Path) -> Result<Box<dyn Engine>> {
     if find_running_engine(data_dir).is_none() {
         start_engine(&locate_engine()?, data_dir, "socket", true, START_TIMEOUT)?;
     }
-    Ok(Box::new(connect(data_dir, VERSION)?))
+    connect_existing(data_dir)
 }
 
 fn connect_existing(data_dir: &Path) -> Result<Box<dyn Engine>> {
@@ -53,7 +57,13 @@ pub fn transport_of(args: &ParsedArgs) -> Result<&str> {
 
 fn engine_command(args: &ParsedArgs, ctx: &Context, data_dir: &Path) -> Result<String> {
     let started = |label: &str, info: &RuntimeInfo| ctx.print(&info.raw, || format!("{label}  {}", info.describe()));
-    match args.positional(1).unwrap_or("status") {
+    let verb = args.positional(1).unwrap_or("status");
+    match verb {
+        "start" => ctx.accept(&["transport", "no-tray"], 0)?,
+        "status" | "restart" | "stop" => ctx.accept(&[], 0)?,
+        other => return Err(unknown_verb("engine", other)),
+    }
+    match verb {
         "status" => Ok(match find_running_engine(data_dir) {
             Some(info) => ctx.print(&info.raw, || format!("running  {}", info.describe())),
             None => ctx.print(&json!({ "running": false, "dataDir": data_dir.to_string_lossy() }), || {
@@ -78,31 +88,53 @@ fn engine_command(args: &ParsedArgs, ctx: &Context, data_dir: &Path) -> Result<S
             stop_engine(engine, data_dir, STOP_TIMEOUT)?;
             Ok(ctx.print(&json!({ "ok": true }), || format!("stopped  pid {pid}")))
         }
-        other => Err(CliError::msg(format!("unknown: engine {other}"))),
+        other => Err(unknown_verb("engine", other)),
     }
+}
+
+/// What a command of `args` runs against: the engine of `data_dir`, reached when it is first needed.
+fn context<'a>(args: &'a ParsedArgs, data_dir: &'a Path) -> Context<'a> {
+    let no_start = args.has("no-start");
+    let connector: Connector =
+        Box::new(move || if no_start { connect_existing(data_dir) } else { connect_or_start(data_dir) });
+    Context::new(args, connector)
 }
 
 /// Run the command in `args` and return the text to print.
 fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
-    let no_start = args.has("no-start");
-    let connector: Connector =
-        Box::new(move || if no_start { connect_existing(data_dir) } else { connect_or_start(data_dir) });
-    let mut ctx = Context::new(args, connector);
+    let mut ctx = context(args, data_dir);
     let group = args.positional(0).unwrap_or_default();
     let sub = args.positional(1);
-    match group {
+    match canonical_group(group) {
         "engine" => engine_command(args, &ctx, data_dir),
         "status" => commands::status(&mut ctx),
-        "workspaces" | "workspace" => commands::workspaces(&mut ctx, sub),
-        "env" | "environments" | "environment" => commands::env(&mut ctx, sub),
-        "mappings" | "mapping" => commands::mappings(&mut ctx, sub),
+        "workspaces" => commands::workspaces(&mut ctx, sub),
+        "account" => commands::account(&mut ctx, sub),
+        "env" => commands::env(&mut ctx, sub),
+        "mappings" => entities::mappings(&mut ctx, sub),
+        "rules" => entities::rules(&mut ctx, sub),
+        "mocks" => entities::mocks(&mut ctx, sub),
+        "requests" => requests::requests(&mut ctx, sub),
+        "health" => health::health(&mut ctx, sub),
         "services" => commands::services(&mut ctx, sub),
-        "requests" | "request" => commands::requests(&mut ctx, sub),
-        "grpc" => commands::grpc(&mut ctx, sub),
+        "vault" => vault::vaults(&mut ctx, sub),
         "call" => commands::call(&mut ctx),
         "commands" => Ok(commands::commands(&ctx)),
-        other => Err(CliError::msg(format!("unknown command \"{other}\"\n\n{USAGE}"))),
+        // gRPC requests are requests like the others.
+        "grpc" => Err(CliError::msg(
+            "gRPC is a type of request: bifurc requests list|create|send --type grpc, and bifurc requests reflect <address> (see: bifurc requests --help)",
+        )),
+        // A vault is unsealed once and then used; nothing is unlocked around one program any more.
+        "unlock" | "unlock-vault" => Err(CliError::msg(
+            "a vault is no longer unlocked for one program: bifurc vault run <vault> -- <command> (see: bifurc vault --help)",
+        )),
+        _ => Err(CliError::msg(format!("unknown command \"{group}\"\n\n{USAGE}"))),
     }
+}
+
+/// Whether `head`, the arguments before a `--`, are `vault run <vault>`.
+fn is_vault_run(head: &ParsedArgs) -> bool {
+    head.positional(0).is_some_and(|group| canonical_group(group) == "vault") && head.positional(1) == Some("run")
 }
 
 /// Run one command line and return the process exit code. Output goes to `stdout`, errors to `stderr`.
@@ -117,6 +149,22 @@ pub fn run_with_env(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> i32 {
+    // `bifurc vault run <vault> -- <command…>`: what follows `--` is the command to run, not arguments of
+    // ours, and the exit code is that command's.
+    if let Some(split) = argv.iter().position(|a| a == "--") {
+        if let Ok(head) = parse_args(&argv[..split]) {
+            if is_vault_run(&head) && !head.has("help") {
+                let data_dir = data_dir_of(&head, env_data_dir);
+                return match vault::run(&mut context(&head, &data_dir), &argv[split + 1..]) {
+                    Ok(code) => code,
+                    Err(err) => {
+                        let _ = writeln!(stderr, "{}", err.line());
+                        1
+                    }
+                };
+            }
+        }
+    }
     let args = match parse_args(argv) {
         Ok(args) => args,
         Err(message) => {
@@ -126,7 +174,9 @@ pub fn run_with_env(
     };
     let group = args.positional(0);
     if group.is_none() || args.has("help") || group == Some("help") {
-        let _ = writeln!(stdout, "{USAGE}");
+        // `bifurc help mocks` and `bifurc mocks --help` are the help of that group.
+        let topic = if group == Some("help") { args.positional(1) } else { group };
+        let _ = writeln!(stdout, "{}", topic.and_then(group_usage).unwrap_or(USAGE));
         return 0;
     }
     let data_dir = data_dir_of(&args, env_data_dir);
@@ -134,6 +184,11 @@ pub fn run_with_env(
         Ok(text) => {
             let _ = writeln!(stdout, "{text}");
             0
+        }
+        // What the command found is printed where an answer goes; only the exit code differs.
+        Err(CliError::Failed(report)) => {
+            let _ = writeln!(stdout, "{report}");
+            1
         }
         Err(err) => {
             let _ = writeln!(stderr, "{}", err.line());
@@ -269,14 +324,77 @@ mod tests {
     #[test]
     fn an_unknown_engine_subcommand_is_an_error() {
         let outcome = go(&["engine", "explode"]);
-        assert_eq!(outcome.stderr, "bifurc: unknown: engine explode\n");
+        assert_eq!(outcome.stderr, "bifurc: unknown: engine explode (see: bifurc engine --help)\n");
+    }
+
+    #[test]
+    fn a_group_has_its_own_help_under_any_of_its_names() {
+        for argv in [vec!["mocks", "--help"], vec!["help", "mocks"], vec!["mock", "create", "-h"]] {
+            let outcome = go(&argv);
+            assert_eq!(outcome.code, 0, "{argv:?}");
+            assert_eq!(outcome.stdout, format!("{}\n", group_usage("mocks").unwrap()));
+        }
+        assert_eq!(go(&["help", "nonsense"]).stdout, format!("{USAGE}\n"));
+    }
+
+    #[test]
+    fn vault_run_takes_its_command_after_a_double_dash_and_checks_it_before_needing_an_engine() {
+        let dir = empty_dir();
+        let path = dir.path().to_str().unwrap();
+        let example = "bifurc: missing the command to run, e.g.: bifurc vault run keys -- npm run dev\n";
+        for argv in [
+            vec!["vault", "run", "keys", "--no-start", "--data-dir", path],
+            vec!["vault", "run", "keys", "--no-start", "--data-dir", path, "--"],
+        ] {
+            let outcome = go(&argv);
+            assert_eq!((outcome.code, outcome.stderr.as_str()), (1, example), "{argv:?}");
+        }
+        // With a command, the vault is what is needed next, so the engine is.
+        let outcome = go(&["vaults", "run", "keys", "--no-start", "--data-dir", path, "--", "npm", "run", "dev", "--help"]);
+        assert_eq!(outcome.code, 1);
+        assert!(outcome.stderr.starts_with("bifurc: No engine is running for"), "{}", outcome.stderr);
+        assert_eq!(outcome.stdout, "");
+    }
+
+    #[test]
+    fn unlock_is_no_longer_a_command_and_says_what_replaced_it() {
+        for argv in [vec!["unlock", "keys", "--", "npm", "run", "dev"], vec!["unlock-vault", "keys"]] {
+            let outcome = go(&argv);
+            assert_eq!(outcome.code, 1, "{argv:?}");
+            assert!(outcome.stderr.contains("bifurc vault run <vault> -- <command>"), "{}", outcome.stderr);
+        }
+    }
+
+    #[test]
+    fn grpc_is_no_longer_a_group_and_says_where_it_went() {
+        let outcome = go(&["grpc", "list"]);
+        assert_eq!(outcome.code, 1);
+        assert!(outcome.stderr.starts_with("bifurc: gRPC is a type of request: bifurc requests"), "{}", outcome.stderr);
+    }
+
+    #[test]
+    fn an_unknown_option_is_refused_without_starting_an_engine() {
+        let dir = empty_dir();
+        let outcome = go(&["mocks", "list", "--al", "x", "--data-dir", dir.path().to_str().unwrap()]);
+        assert_eq!(outcome.code, 1);
+        assert_eq!(outcome.stderr, "bifurc: unknown option --al for \"mocks list\" (see: bifurc mocks --help)\n");
+        assert!(!dir.path().join("runtime.json").exists());
     }
 
     #[test]
     fn no_start_fails_instead_of_starting_an_engine() {
         let dir = empty_dir();
         let path = dir.path().to_str().unwrap();
-        for argv in [vec!["status"], vec!["workspaces"], vec!["mappings", "list"], vec!["services"]] {
+        for argv in [
+            vec!["status"],
+            vec!["workspaces"],
+            vec!["mappings", "list"],
+            vec!["rules"],
+            vec!["mocks"],
+            vec!["requests", "list", "--type", "grpc"],
+            vec!["health"],
+            vec!["services"],
+        ] {
             let mut argv = argv;
             argv.extend(["--no-start", "--data-dir", path]);
             let outcome = go(&argv);
@@ -290,7 +408,7 @@ mod tests {
         let dir = empty_dir();
         let outcome = go(&["commands", "--no-start", "--data-dir", dir.path().to_str().unwrap()]);
         assert_eq!(outcome.code, 0);
-        assert!(outcome.stdout.starts_with("application.checkPort\n"));
+        assert!(outcome.stdout.starts_with("account.list\n"));
         assert!(outcome.stdout.contains("\nworkspace.setActive\n"));
     }
 
@@ -310,7 +428,9 @@ mod tests {
     fn command_aliases_reach_the_same_commands() {
         let dir = empty_dir();
         let path = dir.path().to_str().unwrap();
-        for group in ["workspace", "environment", "environments", "mapping", "request"] {
+        for group in
+            ["workspace", "environment", "environments", "mapping", "request", "rule", "proxy-rules", "mock", "healthchecks"]
+        {
             let outcome = go(&[group, "--no-start", "--data-dir", path]);
             assert!(outcome.stderr.starts_with("bifurc: No engine is running"), "{group}: {}", outcome.stderr);
         }

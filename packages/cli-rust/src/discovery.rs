@@ -119,13 +119,13 @@ mod tests {
         write_runtime(
             dir.path(),
             &json!({"pid": 47820, "transport": "socket", "address": r"\\.\pipe\bifurc-a70f", "dataDir": "C:\\x",
-                    "protocolVersion": "1.0.0", "engineVersion": "0.3.3", "startedAt": 1}),
+                    "protocolVersion": "1.0.0", "engineVersion": "0.4.0", "startedAt": 1}),
         );
         let info = read_runtime_info(dir.path()).unwrap();
         assert_eq!(info.pid, 47820);
         assert_eq!(info.transport, "socket");
         assert_eq!(info.address, r"\\.\pipe\bifurc-a70f");
-        assert_eq!(info.engine_version, "0.3.3");
+        assert_eq!(info.engine_version, "0.4.0");
         assert_eq!(info.describe(), r"pid 47820, socket \\.\pipe\bifurc-a70f");
         assert_eq!(info.raw["startedAt"], 1);
     }

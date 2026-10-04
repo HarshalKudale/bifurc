@@ -15,13 +15,15 @@ use gpui_kit::{Action, Context, ParentElement as _, Styled as _, Window};
 use super::{Screen, Shell};
 use crate::{
     commands::{
-        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, NewEnvironment, NewFolder, NewGraphQlFolder,
+        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, ImportCurlMock, ImportCurlRequest, NewEnvironment,
+        NewFolder, NewGraphQlFolder,
         NewGraphQlRequest, NewGrpcFolder, NewGrpcRequest, NewHealthCheck, NewMapping, NewMock, NewMockFolder,
         NewProxyRule, NewRestRequest, NewSoapFolder, NewSoapRequest, NewWebSocketFolder, NewWebSocketRequest,
         NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, RenameWorkspace, RestartForwardProxy,
         RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowHealthBar,
-        ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowWorkspaceConfig,
-        SyncEntity, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector, ToggleSidebar,
+        ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig,
+        SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
+        ToggleSidebar,
     },
     model::NodeRef,
 };
@@ -56,6 +58,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 ("New gRPC request", IconName::Plus, Box::new(NewGrpcRequest)),
                 ("New SOAP request", IconName::Plus, Box::new(NewSoapRequest)),
                 ("New WebSocket request", IconName::Plus, Box::new(NewWebSocketRequest)),
+                ("Import a request from cURL", IconName::Plus, Box::new(ImportCurlRequest)),
                 ("New REST folder…", IconName::Folder, Box::new(NewFolder)),
                 ("New GraphQL folder…", IconName::Folder, Box::new(NewGraphQlFolder)),
                 ("New gRPC folder…", IconName::Folder, Box::new(NewGrpcFolder)),
@@ -68,6 +71,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
             "Mocks",
             vec![
                 ("New mock", IconName::Plus, Box::new(NewMock)),
+                ("Import a mock from cURL", IconName::Plus, Box::new(ImportCurlMock)),
                 ("New mock folder…", IconName::Folder, Box::new(NewMockFolder)),
             ],
         ),
@@ -104,9 +108,10 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
             "Workspace",
             vec![
                 ("New environment…", IconName::Plus, Box::new(NewEnvironment)),
-                ("New workspace…", IconName::Plus, Box::new(NewWorkspace)),
+                ("Add workspace…", IconName::Plus, Box::new(NewWorkspace)),
                 ("Rename this workspace…", IconName::File, Box::new(RenameWorkspace)),
                 ("Publish this screen's changes", IconName::Github, Box::new(PublishChanges)),
+                ("Sync the whole workspace", IconName::Github, Box::new(SyncWorkspace)),
                 ("Reload workspace", IconName::RefreshCw, Box::new(ReloadWorkspace)),
             ],
         ),
@@ -121,6 +126,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 ("Go to Requests", Screen::Requests.icon(), Box::new(ShowRequests)),
                 ("Go to Mocks", Screen::Mocks.icon(), Box::new(ShowMocks)),
                 ("Go to Environments", Screen::Environments.icon(), Box::new(ShowEnvironments)),
+                ("Go to Vaults", Screen::Vaults.icon(), Box::new(ShowVaults)),
                 ("Go to Workspace config", Screen::WorkspaceConfig.icon(), Box::new(ShowWorkspaceConfig)),
                 ("Go to Audit log", Screen::AuditLog.icon(), Box::new(ShowAuditLog)),
                 ("Go to Settings", Screen::Settings.icon(), Box::new(ShowSettings)),
@@ -226,6 +232,7 @@ impl Shell {
         let requests: Vec<Entry> = config
             .requests
             .iter()
+            .filter(|r| !r.deleted)
             .map(|r| {
                 let label = if r.name.is_empty() { r.target.clone() } else { r.name.clone() };
                 Entry {
@@ -238,6 +245,7 @@ impl Shell {
         let mocks: Vec<Entry> = config
             .mocks
             .iter()
+            .filter(|m| !m.deleted)
             .map(|m| {
                 let label = if m.name.is_empty() { m.url_pattern.clone() } else { m.name.clone() };
                 let method = if m.method == "*" { "ANY" } else { m.method.as_str() };
@@ -251,6 +259,7 @@ impl Shell {
         let mappings: Vec<Entry> = config
             .mappings
             .iter()
+            .filter(|m| !m.deleted)
             .map(|m| Entry {
                 label: format!("{}  →  {}", m.domain, m.target),
                 keywords: vec![m.label.clone().unwrap_or_default(), "mapping".to_owned()],

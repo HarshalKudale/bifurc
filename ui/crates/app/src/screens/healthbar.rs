@@ -96,7 +96,7 @@ impl HealthBarScreen {
         let auto = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(AUTO_INTERVAL).await;
-                if this.update_in(cx, |this, window, cx| this.check_matching(is_auto, window, cx)).is_err() {
+                if this.update_in(cx, |this, window, cx| this.check_matching(is_auto, false, window, cx)).is_err() {
                     return;
                 }
             }
@@ -147,7 +147,7 @@ impl HealthBarScreen {
                         .unwrap_or_default();
                     this.loaded = true;
                     // The first look at the list checks everything once.
-                    this.check_matching(|_| true, window, cx);
+                    this.check_matching(|_| true, false, window, cx);
                 }
                 Err(error) => this.report("Couldn't read the health checks.", describe(&error), cx),
             }
@@ -180,7 +180,7 @@ impl HealthBarScreen {
             }
             for id in known {
                 if !this.results.contains_key(&id) {
-                    this.check(&id, window, cx);
+                    this.check(&id, false, window, cx);
                 }
             }
             cx.notify();
@@ -220,23 +220,25 @@ impl HealthBarScreen {
 
     /// Checks every URL now.
     pub fn check_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.check_matching(|_| true, window, cx);
+        self.check_matching(|_| true, true, window, cx);
     }
 
     fn check_matching(
         &mut self,
         include: fn(&Map<String, Value>) -> bool,
+        manual: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let ids: Vec<String> =
             self.services.iter().filter(|service| include(service)).map(|service| text(service, "id")).collect();
         for id in ids {
-            self.check(&id, window, cx);
+            self.check(&id, manual, window, cx);
         }
     }
 
-    fn check(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    /// `manual` says the user asked for this check, rather than the screen running it on its own.
+    fn check(&mut self, id: &str, manual: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(url) = self.services.iter().find(|s| text(s, "id") == id).map(|s| text(s, "url")) else { return };
         if self.results.get(id) == Some(&Outcome::Checking) {
             return;
@@ -254,7 +256,7 @@ impl HealthBarScreen {
                 .ok()
                 .and_then(|result| result.get("text").and_then(Value::as_str).map(str::to_owned))
                 .unwrap_or(url);
-            let check = json!({ "url": resolved });
+            let check = json!({ "url": resolved, "manual": manual });
             call_in(&check_client, window, cx, "healthbar.checkUrl", check, move |this, outcome, window, cx| {
                 let done = match outcome {
                     Ok(result) => Outcome::Done {
@@ -302,7 +304,7 @@ impl HealthBarScreen {
                     this.services.push(service);
                 }
                 this.store(window, cx);
-                this.check(&id, window, cx);
+                this.check(&id, false, window, cx);
             },
         );
     }
@@ -325,7 +327,7 @@ impl HealthBarScreen {
                     service.insert("url".into(), json!(values[1]));
                 }
                 this.store(window, cx);
-                this.check(&id, window, cx);
+                this.check(&id, false, window, cx);
             },
         );
     }
@@ -451,7 +453,7 @@ impl HealthBarScreen {
                             .child(Button::new(key("check")).small().label("Check").on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     cx.stop_propagation();
-                                    this.check(&check_id, window, cx);
+                                    this.check(&check_id, true, window, cx);
                                 },
                             )))
                             .child(Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(
@@ -564,7 +566,7 @@ impl Render for HealthBarScreen {
                         .small()
                         .icon(IconName::RefreshCw)
                         .label("Check all")
-                        .on_click(cx.listener(|this, _, window, cx| this.check_matching(|_| true, window, cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.check_matching(|_| true, true, window, cx))),
                 )
                 .child(
                     Button::new("health-new")

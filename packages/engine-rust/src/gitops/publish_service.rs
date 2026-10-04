@@ -10,14 +10,18 @@ use serde_json::{Value, json};
 
 use super::{
     git_lock::{with_index_lock_retry, workspace_lock},
+    git_sync_ops::perform_git_pull,
+    remote::{ensure_owner, git_net},
     status_tracker::{parse_porcelain_z, unquote_git_path},
     sync_state::get_sync_config,
 };
 use crate::{
+    runtime::instances::notify_config_changed,
     utils::json::{str_of, truthy},
     workspace::{
+        accounts::commit_identity,
         fs::ws_dir,
-        git_store::{GitError, device_name, git},
+        git_store::{GitError, git},
     },
 };
 
@@ -42,7 +46,7 @@ fn entity_kind_from_path(rel_path: &str) -> String {
     rel_path.split(['/', '\\']).next().filter(|k| !k.is_empty()).unwrap_or("entity").to_string()
 }
 
-fn singular_kind(kind: &str) -> String {
+pub(super) fn singular_kind(kind: &str) -> String {
     match kind {
         "requests" => "request",
         "mocks" => "mock",
@@ -212,7 +216,29 @@ pub async fn publish_entities(opts: PublishOptions) -> Value {
 
 async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
     let ws_id = opts.ws_id.as_str();
-    let actor = device_name();
+
+    // The commit goes on top of what the remote has now, so the push that follows is never behind it. A
+    // remote that cannot be reached is met again at the push.
+    let remote = get_sync_config(ws_id).filter(|c| truthy(c, "remote"));
+    if let Some(config) = &remote {
+        ensure_owner(ws_id).await?;
+        if perform_git_pull(ws_id, str_of(config, "branch")).await.is_ok_and(|pulled| pulled.updated) {
+            notify_config_changed();
+        }
+    }
+
+    let result = commit_paths(opts).await?;
+    if let Some(config) = remote.filter(|_| result.get("commit").is_some_and(Value::is_string)) {
+        git_net(ws_id, &["push", "origin", &format!("HEAD:{}", str_of(&config, "branch"))]).await?;
+    }
+    Ok(result)
+}
+
+/// Stage `opts.paths` and commit them, without reaching the remote: the part of a publish that a sync of the
+/// whole workspace repeats for each entity. The caller holds the workspace's lock.
+pub(super) async fn commit_paths(opts: &PublishOptions) -> Result<Value, GitError> {
+    let ws_id = opts.ws_id.as_str();
+    let actor = commit_identity(ws_id).actor;
 
     // The status before staging says which files are new, modified or deleted. Not `-z`, so keys are unquoted.
     let pre_raw = git(ws_id, &["status", "--porcelain", "-uall"]).await.unwrap_or_default();
@@ -255,10 +281,6 @@ async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
     };
     with_index_lock_retry(ws_id, &["commit", "-m", full_message.as_str()]).await?;
     let commit = git(ws_id, &["rev-parse", "HEAD"]).await?.trim().to_string();
-
-    if let Some(config) = get_sync_config(ws_id).filter(|c| truthy(c, "remote")) {
-        git(ws_id, &["push", "origin", &format!("HEAD:{}", str_of(&config, "branch"))]).await?;
-    }
 
     Ok(json!({ "ok": true, "commit": if commit.is_empty() { Value::Null } else { json!(commit) } }))
 }

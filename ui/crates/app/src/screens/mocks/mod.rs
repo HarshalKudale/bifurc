@@ -21,24 +21,28 @@ use gpui_kit::component::{
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy,
     SharedString, Styled as _, Subscription, WeakEntity, Window, div, px, rems,
 };
-use serde_json::{Map, json};
+use serde_json::{Map, Value, json};
 
 use self::editor::{MockEditor, MockEvent};
 use crate::{
-    app_model::{AppModel, Load, ModelEvent},
+    app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
-        EntityAction, EntityBar, FolderPicker, StripTab, TabAction, TabStrip,
-        dialogs::{PromptField, confirm_danger, prompt},
+        CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget, EntityAction, EntityBar, FolderPicker,
+        StripTab, TabAction, TabStrip,
+        dialogs::{
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
+        },
         entity_bar, page, tab_strip,
     },
     engine::{call, call_in, failure, patch_entity},
     model::{
         git::FileState,
-        tree::{ItemRow, TreeKey, TreeNode, build_tree, folder_path},
+        tree::{FolderRow, ItemRow, TreeKey, TreeNode, build_tree, folder_path},
     },
     panels::host::{HostPanel, PartView},
     preferences::Preferences,
@@ -58,6 +62,9 @@ struct OpenTab {
     editor: Entity<MockEditor>,
     rule: AnyView,
     response: AnyView,
+    /// The box asking for a cURL command, while the tab is waiting for one. It fills the tab until the
+    /// engine has turned the command into a mock, which the editor then holds.
+    curl: Option<(Entity<CurlImport>, Subscription)>,
     _subscription: Subscription,
 }
 
@@ -165,7 +172,12 @@ impl MocksScreen {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter.read(cx).value().to_string();
         let config = self.model.read(cx).config();
-        let folders = config.mock_folder_rows();
+        // Deleted folders stay in the tree, so a deleted mock shows inside its deleted folder.
+        let folders: Vec<FolderRow> = config
+            .mock_folders
+            .iter()
+            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
+            .collect();
         let items: Vec<ItemRow> = config
             .mocks
             .iter()
@@ -192,8 +204,31 @@ impl MocksScreen {
         self.active.and_then(|ix| self.tabs.get(ix)).map(|tab| &tab.editor)
     }
 
+    /// The cURL box of the tab in front, while that tab is waiting for a command.
+    fn active_curl(&self) -> Option<&Entity<CurlImport>> {
+        let tab = self.active.and_then(|ix| self.tabs.get(ix))?;
+        tab.curl.as_ref().map(|(import, _)| import)
+    }
+
+    /// Sends the command in the tab in front to the engine, when that tab is waiting for one.
+    pub fn submit_curl(&mut self, cx: &mut Context<Self>) {
+        if let Some(import) = self.active_curl().cloned() {
+            import.update(cx, |import, cx| import.submit(cx));
+        }
+    }
+
     /// The open mock, for the breadcrumb and the right sidebar.
     pub fn active_target(&self, cx: &App) -> Option<ActiveTarget> {
+        if self.active_curl().is_some() {
+            return Some(ActiveTarget {
+                title: CURL_TAB_TITLE.into(),
+                entity_id: None,
+                request: None,
+                name: None,
+                kind: None,
+                folders: Vec::new(),
+            });
+        }
         let editor = self.active_editor()?.read(cx);
         let folders = self.model.read(cx).config().mock_folder_rows();
         Some(ActiveTarget {
@@ -217,6 +252,13 @@ impl MocksScreen {
     }
 
     pub fn open_mock(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // A deleted mock has nothing to open: it is brought back or deleted for good.
+        let key = TreeKey::Item(id.to_owned());
+        if is_deleted(self.model.read(cx), &key) {
+            let name = self.name_of(&key, cx);
+            resolve_deleted(self.model.clone(), deleted_target(&key), name, window, cx);
+            return;
+        }
         let key = TabKey::Saved(id.to_owned());
         if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
             self.set_active(Some(ix), cx);
@@ -235,6 +277,37 @@ impl MocksScreen {
         self.add_tab(key, editor, cx);
     }
 
+    /// Opens a tab that asks for a cURL command. The engine reads the command, and the tab becomes a draft
+    /// of a mock of the call it makes.
+    pub fn import_curl(&mut self, folder: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_mock(folder, window, cx);
+        let model = self.model.clone();
+        let import = cx.new(|cx| CurlImport::new(model, CurlTarget::Mock, window, cx));
+        let subscription = cx.subscribe_in(&import, window, |this, import, event: &CurlImportEvent, window, cx| {
+            let CurlImportEvent::Built(built) = event;
+            this.adopt_curl(import, built, window, cx);
+        });
+        if let Some(tab) = self.tabs.last_mut() {
+            tab.curl = Some((import.clone(), subscription));
+        }
+        import.update(cx, |import, cx| import.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Fills the tab `import` is in with what the engine built from its command: `{ mock }`.
+    fn adopt_curl(&mut self, import: &Entity<CurlImport>, built: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let is_tab = |tab: &OpenTab| tab.curl.as_ref().is_some_and(|(open, _)| open == import);
+        let Some(ix) = self.tabs.iter().position(is_tab) else { return };
+        let Some(mock) = built.get("mock").and_then(Value::as_object).cloned() else {
+            self.report("Couldn't import the command.", "The engine did not return a mock for it.".to_owned(), cx);
+            return;
+        };
+        let tab = &mut self.tabs[ix];
+        tab.curl = None;
+        tab.editor.clone().update(cx, |editor, cx| editor.adopt_import(mock, window, cx));
+        cx.notify();
+    }
+
     fn add_tab(&mut self, key: TabKey, editor: Entity<MockEditor>, cx: &mut Context<Self>) {
         let subscription = cx.subscribe(&editor, |this, editor, event: &MockEvent, cx| {
             if let MockEvent::Saved { id } = event {
@@ -247,7 +320,7 @@ impl MocksScreen {
         });
         let rule = PartView::new(&editor, MockEditor::render_rule, cx).into();
         let response = PartView::new(&editor, MockEditor::render_response, cx).into();
-        self.tabs.push(OpenTab { key, editor, rule, response, _subscription: subscription });
+        self.tabs.push(OpenTab { key, editor, rule, response, curl: None, _subscription: subscription });
         self.set_active(Some(self.tabs.len() - 1), cx);
     }
 
@@ -349,6 +422,15 @@ impl MocksScreen {
             TabKey::Saved(id) => format!("mock-{id}"),
             TabKey::Draft(number) => format!("draft-{number}"),
         };
+        if tab.curl.is_some() {
+            return Some(StripTab {
+                id: id.into(),
+                badge: CURL_TAB_BADGE.into(),
+                title: CURL_TAB_TITLE.into(),
+                dirty: false,
+                can_duplicate: false,
+            });
+        }
         let editor = tab.editor.read(cx);
         Some(StripTab {
             id: id.into(),
@@ -389,6 +471,13 @@ impl MocksScreen {
     /// Does what the footer asked for to the mock in the active tab.
     pub fn entity_action(&mut self, action: EntityAction, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.active else { return };
+        // A tab waiting for a command holds no mock yet: the only thing to do with it is close it.
+        if self.active_curl().is_some() {
+            if action == EntityAction::Close {
+                self.close_tab(ix, window, cx);
+            }
+            return;
+        }
         let Some(editor) = self.active_editor().cloned() else { return };
         let saved_id = editor.read(cx).saved_id().map(str::to_owned);
         match action {
@@ -431,7 +520,8 @@ impl MocksScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                TabKey::Saved(id) => model.config().mock(id).is_none(),
+                // Deleted and still listed counts as gone: there is no file an edit could be written to.
+                TabKey::Saved(id) => model.config().mock(id).is_none_or(|m| m.deleted),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.editor.clone())
@@ -529,8 +619,8 @@ impl MocksScreen {
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
         let (what, consequence) = match &key {
-            TreeKey::Folder(_) => ("folder", "The folder and every mock in it will be deleted."),
-            TreeKey::Item(_) => ("mock", "Requests it answered will reach the real server again."),
+            TreeKey::Folder(_) => ("folder", FOLDER_DELETE_CONSEQUENCE),
+            TreeKey::Item(id) => ("mock", delete_consequence(self.model.read(cx).git().entity_state(id))),
         };
         confirm_danger(
             cx.weak_entity(),
@@ -558,6 +648,7 @@ impl MocksScreen {
         let this = cx.weak_entity();
         let (row_view, menu_view, new_view) = (this.clone(), this.clone(), this.clone());
         let model = self.model.clone();
+        let menu_model = self.model.clone();
         let config = self.model.read(cx).config();
         let has_mocks = !config.mocks.is_empty() || !config.mock_folders.is_empty();
         let filtering = !self.filter.read(cx).value().trim().is_empty();
@@ -568,7 +659,7 @@ impl MocksScreen {
             page::empty("No matches", "No mock matches the filter.")
         } else {
             tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &row_view, cx))
-                .context_menu(move |_, entry, menu, _, _| context_menu(entry, menu, &menu_view))
+                .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_view, &menu_model, cx))
                 .into_any_element()
         };
         v_flex()
@@ -617,11 +708,12 @@ impl MocksScreen {
                 })),
         );
         let suffix = h_flex().flex_none().px_1().child(
-            Button::new("new-mock-tab").icon(IconName::Plus).ghost().small().tooltip("New mock").on_click(
-                move |_, window, cx| {
-                    this.update(cx, |this, cx| this.new_mock(None, window, cx)).ok();
-                },
-            ),
+            Button::new("new-mock-tab")
+                .icon(IconName::Plus)
+                .ghost()
+                .small()
+                .tooltip("New mock")
+                .dropdown_menu(move |menu, _, _| new_tab_menu(menu, &this)),
         );
         tab_strip(self, strip, prefix, suffix, window, cx)
     }
@@ -637,11 +729,24 @@ fn act(
     }
 }
 
+/// What a new tab can start as: an empty mock, or one made from a cURL command.
+fn new_tab_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
+    menu.item(PopupMenuItem::new("Mock").on_click(act(view, |this, window, cx| this.new_mock(None, window, cx))))
+        .item(
+            PopupMenuItem::new(CURL_TAB_TITLE)
+                .on_click(act(view, |this, window, cx| this.import_curl(None, window, cx))),
+        )
+}
+
 fn new_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>, folder: Option<String>) -> PopupMenu {
-    let parent = folder.clone();
+    let (parent, curl_folder) = (folder.clone(), folder.clone());
     menu.item(
         PopupMenuItem::new("Mock")
             .on_click(act(view, move |this, window, cx| this.new_mock(folder.clone(), window, cx))),
+    )
+    .item(
+        PopupMenuItem::new(CURL_TAB_TITLE)
+            .on_click(act(view, move |this, window, cx| this.import_curl(curl_folder.clone(), window, cx))),
     )
     .item(
         PopupMenuItem::new("Folder…")
@@ -649,8 +754,43 @@ fn new_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>, folder: Option<Stri
     )
 }
 
-fn context_menu(entry: &TreeEntry, menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
+/// How the model names a deleted mock or folder.
+fn deleted_target(key: &TreeKey) -> Deleted {
+    match key {
+        TreeKey::Folder(id) => Deleted::Folder { kind: "mock", id: id.clone() },
+        TreeKey::Item(id) => Deleted::Entity { kind: "mocks", id: id.clone() },
+    }
+}
+
+/// Whether the mock or folder is deleted here, with the deletion not confirmed or reverted yet.
+fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
+    let config = model.config();
+    match key {
+        TreeKey::Folder(id) => config.mock_folders.iter().any(|f| f.id == *id && f.deleted),
+        TreeKey::Item(id) => config.mock(id).is_some_and(|m| m.deleted),
+    }
+}
+
+fn context_menu(
+    entry: &TreeEntry,
+    menu: PopupMenu,
+    view: &WeakEntity<MocksScreen>,
+    model: &Entity<AppModel>,
+    cx: &App,
+) -> PopupMenu {
     let Some(key) = TreeKey::parse(entry.item().id.as_str()) else { return menu };
+    // What is deleted can only be brought back or deleted for good.
+    if is_deleted(model.read(cx), &key) {
+        let (revert_model, confirm_model) = (model.clone(), model.clone());
+        let (revert, confirm) = (deleted_target(&key), deleted_target(&key));
+        return menu
+            .item(PopupMenuItem::new("Revert delete").on_click(move |_, _, cx| {
+                revert_model.update(cx, |model, cx| model.revert_delete(revert.clone(), cx));
+            }))
+            .item(PopupMenuItem::new("Confirm delete").on_click(move |_, _, cx| {
+                confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
+            }));
+    }
     let (rename, delete) = (key.clone(), key.clone());
     let menu = match &key {
         TreeKey::Item(id) => {
@@ -697,6 +837,7 @@ fn render_row(
     let theme = cx.theme().clone();
     let key = TreeKey::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
+    let deleted = key.as_ref().is_some_and(|key| is_deleted(model.read(cx), key));
     let mut pending = false;
     let mut toggle: Option<gpui_kit::AnyElement> = None;
     let lead: gpui_kit::AnyElement = match &key {
@@ -713,7 +854,8 @@ fn render_row(
             let method = mock.map(|m| if m.method == "*" { "ANY".to_owned() } else { m.method.clone() });
             let enabled = mock.is_some_and(|m| m.enabled);
             let (toggle_model, toggle_id) = (model.clone(), id.clone());
-            toggle = Some(
+            // A deleted mock has no switch: it answers nothing until it is reverted.
+            toggle = (!mock.is_some_and(|m| m.deleted)).then(|| {
                 Switch::new(gpui_kit::ElementId::Name(format!("mock-enabled-{id}").into()))
                     .checked(enabled)
                     .small()
@@ -723,8 +865,8 @@ fn render_row(
                         let checked = *checked;
                         toggle_model.update(cx, |m, cx| m.set_enabled("mocks", &toggle_id, checked, cx));
                     })
-                    .into_any_element(),
-            );
+                    .into_any_element()
+            });
             div()
                 .w_12()
                 .flex_none()
@@ -751,7 +893,16 @@ fn render_row(
                 .gap_2()
                 .items_center()
                 .child(lead)
-                .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(label))
+                // Deleted, and waiting to be confirmed or reverted: still listed, struck through.
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
+                        .child(label),
+                )
                 .children(pending.then(|| div().flex_none().text_xs().text_color(theme.warning).child("●")))
                 .children(toggle.map(|toggle| div().flex_none().pr_2().child(toggle))),
         )
@@ -765,18 +916,31 @@ fn render_row(
 impl Render for MocksScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
+        let curl = self.active_curl().cloned();
         let body = if self.tabs.is_empty() {
             page::empty_with_action(
                 "No mock open",
                 "A mock answers matching requests through the proxy instead of the real server.",
-                Button::new("welcome-new-mock")
-                    .label("New mock")
-                    .on_click(cx.listener(|this, _, window, cx| this.new_mock(None, window, cx))),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("welcome-new-mock")
+                            .label("New mock")
+                            .on_click(cx.listener(|this, _, window, cx| this.new_mock(None, window, cx))),
+                    )
+                    .child(
+                        Button::new("welcome-import-curl")
+                            .label(CURL_TAB_TITLE)
+                            .on_click(cx.listener(|this, _, window, cx| this.import_curl(None, window, cx))),
+                    ),
             )
+        } else if let Some(import) = &curl {
+            import.clone().into_any_element()
         } else {
             self.dock.clone().into_any_element()
         };
-        let bar = self.active_editor().map(|editor| {
+        // A tab waiting for a command has no mock to save, move or delete yet.
+        let bar = self.active_editor().filter(|_| curl.is_none()).map(|editor| {
             let editor = editor.read(cx);
             let saved_id = editor.saved_id().map(str::to_owned);
             EntityBar {
