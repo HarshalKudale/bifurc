@@ -25,7 +25,7 @@ use gpui_kit::{
 
 use crate::{
     app_model::AppModel,
-    components::page,
+    components::{CURL_TAB_TITLE, page},
     model::{ExplorerNode, NodeRef, RequestKind, build_explorer, git::FileState},
 };
 
@@ -34,6 +34,8 @@ use crate::{
 pub enum RequestTreeEvent {
     Open(NodeRef),
     NewRequest { kind: RequestKind, folder: Option<String> },
+    /// Start a request from a cURL command; its type comes from the command.
+    ImportCurl,
     NewFolder { kind: RequestKind, parent: Option<String> },
     Rename(NodeRef),
     Delete(NodeRef),
@@ -285,7 +287,7 @@ fn context_menu(
     }
 }
 
-/// The "new" menu: one request of each type, and a folder for each type's tree.
+/// The "new" menu: one request of each type, one from a cURL command, and a folder for each type's tree.
 pub fn new_menu(
     menu: PopupMenu,
     tree: &WeakEntity<RequestTree>,
@@ -299,6 +301,9 @@ pub fn new_menu(
                 .on_click(emitter(tree, RequestTreeEvent::NewRequest { kind, folder: folder.clone() })),
         )
     });
+    let menu = menu
+        .separator()
+        .item(PopupMenuItem::new(CURL_TAB_TITLE).on_click(emitter(tree, RequestTreeEvent::ImportCurl)));
     let tree = tree.clone();
     menu.separator().submenu("Folder", window, cx, move |submenu, _, _| {
         RequestKind::ALL.into_iter().fold(submenu, |submenu, kind| {

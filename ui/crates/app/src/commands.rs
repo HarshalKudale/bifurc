@@ -26,6 +26,8 @@ actions!(
         NewGrpcRequest,
         NewSoapRequest,
         NewWebSocketRequest,
+        ImportCurlRequest,
+        ImportCurlMock,
         NewFolder,
         NewGraphQlFolder,
         NewGrpcFolder,
@@ -150,6 +152,8 @@ pub fn register_actions(cx: &mut App) {
     new_request::<NewGrpcRequest>(cx, RequestKind::Grpc);
     new_request::<NewSoapRequest>(cx, RequestKind::Soap);
     new_request::<NewWebSocketRequest>(cx, RequestKind::WebSocket);
+    on_shell::<ImportCurlRequest>(cx, |shell, window, cx| shell.import_curl_request(window, cx));
+    on_shell::<ImportCurlMock>(cx, |shell, window, cx| shell.import_curl_mock(window, cx));
     new_folder::<NewFolder>(cx, RequestKind::Rest);
     new_folder::<NewGraphQlFolder>(cx, RequestKind::GraphQl);
     new_folder::<NewGrpcFolder>(cx, RequestKind::Grpc);
