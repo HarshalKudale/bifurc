@@ -1,7 +1,7 @@
 ; The Bifurc installer: the staged desktop folder (`cargo xtask package`), installed for the current
 ; user with no elevation, the `bifurc` command on the user's PATH, and an entry in Apps & features.
 ;
-; makensis /DVERSION=0.3.3 /DSTAGE=<staged folder> /DOUT=<setup.exe> /DICON=<icon.ico> bifurc.nsi
+; makensis /DVERSION=0.4.0 /DSTAGE=<staged folder> /DOUT=<setup.exe> /DICON=<icon.ico> bifurc.nsi
 
 Unicode true
 SetCompressor /SOLID lzma
