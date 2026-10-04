@@ -1,5 +1,6 @@
-//! Auto-sync: while a workspace has it switched on, the remote branch's tip is checked every 30 seconds and a
-//! pull runs when it moved.
+//! Auto-pull: a workspace with a remote has that remote's tip checked every few seconds, and a pull runs when
+//! it moved. The workspace's `HEAD` so stays what the remote has, with what was changed here and not yet
+//! synced kept on top of it. There is no switch: nothing is pushed until the user syncs.
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -8,12 +9,13 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 use super::{
+    status_tracker::invalidate_cache,
     sync_manager::{get_remote_head, sync_pull},
     sync_state::get_sync_config,
 };
-use crate::{runtime::instances::notify_config_changed, utils::json::bool_of};
+use crate::runtime::{entity_status::emit_entity_status, instances::notify_config_changed};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(30);
+const POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 struct Poller {
     task: JoinHandle<()>,
@@ -22,15 +24,22 @@ struct Poller {
 
 static POLLERS: Mutex<Option<HashMap<String, Poller>>> = Mutex::new(None);
 
-fn auto_sync_enabled(ws_id: &str) -> bool {
-    get_sync_config(ws_id).is_some_and(|config| bool_of(&config, "autoSync", false))
+/// Pull, and tell clients when it changed what the workspace holds.
+pub async fn pull_and_announce(ws_id: &str) -> Value {
+    let result = sync_pull(ws_id).await;
+    if result.get("ok") == Some(&Value::Bool(true)) && result.get("updated") == Some(&Value::Bool(true)) {
+        notify_config_changed();
+        invalidate_cache(ws_id);
+        emit_entity_status(ws_id);
+    }
+    result
 }
 
-/// Start polling the workspace's remote, replacing a poller that is already running. Does nothing unless the
-/// workspace's auto-sync is switched on.
+/// Start polling the workspace's remote, replacing a poller that is already running. Does nothing for a
+/// workspace with no remote.
 pub fn start_auto_sync(ws_id: &str) {
     stop_auto_sync(ws_id);
-    if !auto_sync_enabled(ws_id) {
+    if get_sync_config(ws_id).is_none() {
         return;
     }
 
@@ -38,24 +47,22 @@ pub fn start_auto_sync(ws_id: &str) {
     let task = {
         let (ws_id, last_known) = (ws_id.to_string(), last_known.clone());
         tokio::spawn(async move {
-            // Seed the last-known head so the first tick does not pull straight away.
-            let seed = get_remote_head(&ws_id).await;
-            *last_known.lock() = seed;
-            let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + POLL_INTERVAL, POLL_INTERVAL);
+            // The first look pulls too: the remote may have moved while the engine was not running.
+            let mut ticker = tokio::time::interval(POLL_INTERVAL);
             loop {
                 ticker.tick().await;
-                if !auto_sync_enabled(&ws_id) {
+                if get_sync_config(&ws_id).is_none() {
                     stop_auto_sync(&ws_id);
                     return;
                 }
+                // Unreadable while offline or signed out: looked at again on the next tick.
                 let Some(head) = get_remote_head(&ws_id).await else { continue };
                 if last_known.lock().as_deref() == Some(head.as_str()) {
                     continue;
                 }
-                *last_known.lock() = Some(head);
-                let result = sync_pull(&ws_id).await;
-                if result.get("ok") == Some(&Value::Bool(true)) && result.get("updated") == Some(&Value::Bool(true)) {
-                    notify_config_changed();
+                // A pull that failed is tried again on the next tick.
+                if pull_and_announce(&ws_id).await.get("ok") == Some(&Value::Bool(true)) {
+                    *last_known.lock() = Some(head);
                 }
             }
         })

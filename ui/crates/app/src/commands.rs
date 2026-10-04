@@ -26,6 +26,8 @@ actions!(
         NewGrpcRequest,
         NewSoapRequest,
         NewWebSocketRequest,
+        ImportCurlRequest,
+        ImportCurlMock,
         NewFolder,
         NewGraphQlFolder,
         NewGrpcFolder,
@@ -52,6 +54,7 @@ actions!(
         ToggleForwardProxy,
         RestartForwardProxy,
         PublishChanges,
+        SyncWorkspace,
         ToggleSidebar,
         ToggleInspector,
         ToggleFolderTree,
@@ -63,6 +66,7 @@ actions!(
         ShowRequests,
         ShowMocks,
         ShowEnvironments,
+        ShowVaults,
         ShowWorkspaceConfig,
         ShowAuditLog,
         ShowSettings,
@@ -100,6 +104,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-6", ShowRequests, None),
         KeyBinding::new("secondary-7", ShowMocks, None),
         KeyBinding::new("secondary-8", ShowEnvironments, None),
+        KeyBinding::new("secondary-9", ShowVaults, None),
         KeyBinding::new("secondary-,", ShowSettings, None),
         KeyBinding::new("f5", ReloadWorkspace, None),
         KeyBinding::new("secondary-q", Quit, None),
@@ -147,6 +152,8 @@ pub fn register_actions(cx: &mut App) {
     new_request::<NewGrpcRequest>(cx, RequestKind::Grpc);
     new_request::<NewSoapRequest>(cx, RequestKind::Soap);
     new_request::<NewWebSocketRequest>(cx, RequestKind::WebSocket);
+    on_shell::<ImportCurlRequest>(cx, |shell, window, cx| shell.import_curl_request(window, cx));
+    on_shell::<ImportCurlMock>(cx, |shell, window, cx| shell.import_curl_mock(window, cx));
     new_folder::<NewFolder>(cx, RequestKind::Rest);
     new_folder::<NewGraphQlFolder>(cx, RequestKind::GraphQl);
     new_folder::<NewGrpcFolder>(cx, RequestKind::Grpc);
@@ -173,6 +180,7 @@ pub fn register_actions(cx: &mut App) {
     on_shell::<ToggleForwardProxy>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.toggle_proxy(cx)));
     on_shell::<RestartForwardProxy>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.restart_proxy(cx)));
     on_shell::<PublishChanges>(cx, |shell, _, cx| shell.publish_changes(cx));
+    on_shell::<SyncWorkspace>(cx, |shell, _, cx| shell.model.update(cx, |model, cx| model.sync_all(cx)));
     on_shell::<ToggleSidebar>(cx, |shell, _, cx| shell.toggle_sidebar(cx));
     on_shell::<ToggleInspector>(cx, |shell, window, cx| shell.toggle_right_sidebar(window, cx));
     on_shell::<ToggleFolderTree>(cx, |shell, _, cx| shell.toggle_folder_tree(cx));
@@ -184,6 +192,7 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowRequests>(cx, Screen::Requests);
     show::<ShowMocks>(cx, Screen::Mocks);
     show::<ShowEnvironments>(cx, Screen::Environments);
+    show::<ShowVaults>(cx, Screen::Vaults);
     show::<ShowWorkspaceConfig>(cx, Screen::WorkspaceConfig);
     show::<ShowAuditLog>(cx, Screen::AuditLog);
     show::<ShowSettings>(cx, Screen::Settings);

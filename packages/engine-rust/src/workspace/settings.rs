@@ -8,14 +8,15 @@ use std::path::PathBuf;
 use serde_json::{Map, Value, json};
 
 use super::paths::data_dir;
-use crate::utils::{
-    id::generate_id,
-    json::{read_json, write_json_pretty},
-};
+use crate::utils::json::{read_json, write_json_pretty};
 
 pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
+/// Where the terms of service a first run asks the user to accept are published.
+pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.harshalkudale.com/tos";
+/// Where the privacy policy a first run asks the user to accept is published.
+pub const PRIVACY_POLICY_URL: &str = "https://bifurc.harshalkudale.com/privacy";
 
 /// The settings object. Read fields through the accessors; mutate through [`AppSettings::set`] or
 /// [`AppSettings::as_value_mut`].
@@ -66,11 +67,31 @@ impl AppSettings {
         self.0.get("tlsCaKeyPath").and_then(Value::as_str).map(str::to_string)
     }
 
+    /// `false` only when the user turned anonymous usage analytics off.
+    pub fn telemetry_enabled(&self) -> bool {
+        self.0.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true)
+    }
+
+    /// The terms of service were accepted on this data directory.
+    pub fn terms_accepted(&self) -> bool {
+        self.0.get("termsAcceptedAt").is_some_and(|at| !at.is_null())
+    }
+
+    /// The privacy policy was accepted on this data directory.
+    pub fn privacy_accepted(&self) -> bool {
+        self.0.get("privacyAcceptedAt").is_some_and(|at| !at.is_null())
+    }
+
+    /// The first-run setup was walked through to its end.
+    pub fn onboarded(&self) -> bool {
+        self.0.get("hasSeenWelcome").and_then(Value::as_bool).unwrap_or(false)
+    }
+
     pub fn active_workspace_id(&self) -> String {
         self.0.get("activeWorkspaceId").and_then(Value::as_str).unwrap_or("").to_string()
     }
 
-    /// The workspace metas: `{id, name, activeEnvironmentId, syncConfig?, syncMeta?}`.
+    /// The workspace metas: `{id, name, activeEnvironmentId, accountId?, syncConfig?, syncMeta?}`.
     pub fn workspaces(&self) -> &[Value] {
         self.0.get("workspaces").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
     }
@@ -106,8 +127,9 @@ pub fn forward_proxy_port_from_env() -> Option<u16> {
     }
 }
 
+/// A new data directory holds no workspace: the first one is made by whoever sets the app up (new, or
+/// imported from a remote), so that its first commit is theirs.
 fn make_default_settings() -> Value {
-    let id = generate_id();
     json!({
         "port": DEFAULT_REVERSE_PROXY_PORT,
         "forwardProxyPort": DEFAULT_FORWARD_PROXY_PORT,
@@ -117,9 +139,11 @@ fn make_default_settings() -> Value {
         "tlsCaCertPath": null,
         "tlsCaKeyPath": null,
         "tlsTrustedCa": null,
-        "workspaces": [{ "id": id, "name": "Workspace 1", "activeEnvironmentId": null }],
-        "activeWorkspaceId": id,
+        "workspaces": [],
+        "activeWorkspaceId": "",
         "hasSeenWelcome": false,
+        "termsAcceptedAt": null,
+        "privacyAcceptedAt": null,
         "zoomLevel": 0,
         "zoomLevelSetByUser": false,
         "themeId": null,

@@ -8,10 +8,17 @@ pub mod args;
 pub mod cli;
 pub mod commands;
 pub mod discovery;
+pub mod entities;
 pub mod error;
 pub mod format;
+pub mod health;
 pub mod locate;
+pub mod prompt;
 pub mod protocol;
+pub mod requests;
 pub mod session;
 pub mod supervisor;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod usage;
+pub mod vault;

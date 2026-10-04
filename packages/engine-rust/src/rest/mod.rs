@@ -3,6 +3,7 @@
 
 pub mod commands;
 pub mod direct_http;
+pub mod from_curl;
 pub mod pipeline;
 pub mod request_body;
 pub mod send_commands;

@@ -1,39 +1,20 @@
 //! The git operations behind connecting to, cloning from and pulling from a remote.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::workspace::git_store::{GitError, git, git_in};
+use super::remote::git_net;
+use crate::workspace::git_store::{GitError, RemoteAuth, git, git_net_in};
 
 /// A directory git can run in without a repository (remote queries and clones).
 fn neutral_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
 }
 
-/// Whether the remote has no refs at all. An unreachable remote is an error.
-pub async fn is_remote_empty(remote: &str) -> Result<bool, String> {
-    match git_in(&neutral_dir(), &["ls-remote", "--refs", remote]).await {
-        Ok(out) => Ok(out.trim().is_empty()),
-        Err(e) => Err(format!("Cannot access remote: {e}")),
-    }
-}
-
 /// The commit a remote branch points at, or `None` if it cannot be read or the branch does not exist.
-pub async fn fetch_remote_head(remote: &str, branch: &str) -> Option<String> {
-    let out = git_in(&neutral_dir(), &["ls-remote", remote, &format!("refs/heads/{branch}")]).await.ok()?;
+pub async fn fetch_remote_head(remote: &str, branch: &str, auth: Option<&RemoteAuth>) -> Option<String> {
+    let out =
+        git_net_in(&neutral_dir(), &["ls-remote", remote, &format!("refs/heads/{branch}")], auth).await.ok()?;
     out.split_whitespace().next().filter(|sha| !sha.is_empty()).map(str::to_string)
-}
-
-/// Clone `branch` of `remote` into `temp_dir` (a directory that does not exist yet).
-pub async fn clone_branch(remote: &str, branch: &str, temp_dir: &Path) -> Result<(), GitError> {
-    let target = temp_dir.to_string_lossy();
-    git_in(&neutral_dir(), &["clone", "--branch", branch, "--single-branch", remote, &target]).await.map(|_| ())
-}
-
-/// Give a freshly cloned workspace the committer identity it commits with.
-pub async fn set_local_identity(dir: &Path) -> Result<(), GitError> {
-    git_in(dir, &["config", "--local", "user.email", "bifurc@local"]).await?;
-    git_in(dir, &["config", "--local", "user.name", "Bifurc"]).await?;
-    Ok(())
 }
 
 /// What a pull brought in.
@@ -42,10 +23,10 @@ pub struct PullOutcome {
     pub changed_paths: Vec<String>,
 }
 
-/// Fetch `origin/<branch>` and merge it, setting local changes aside (stashed, then restored) around the
-/// merge. A merge that fails is aborted and reported as `Pull merge failed`.
+/// Fetch `origin/<branch>` and merge it, setting local changes aside (stashed, then restored on top) around
+/// the merge. A merge that fails is aborted and reported as `Pull merge failed`.
 pub async fn perform_git_pull(ws_id: &str, branch: &str) -> Result<PullOutcome, GitError> {
-    git(ws_id, &["fetch", "origin", branch]).await?;
+    git_net(ws_id, &["fetch", "origin", branch]).await?;
 
     let remote_ref = format!("origin/{branch}");
     let (Ok(local_head), Ok(remote_head)) =
@@ -81,9 +62,19 @@ pub async fn perform_git_pull(ws_id: &str, branch: &str) -> Result<PullOutcome, 
     }
 
     if stashed && git(ws_id, &["stash", "pop"]).await.is_err() {
-        if git(ws_id, &["checkout", "--ours", "."]).await.is_ok() {
-            let _ = git(ws_id, &["stash", "drop"]).await;
+        // The remote changed a file that was also changed here. What was changed here stays on top (in the
+        // pop, "theirs" is the stash), as a difference from the new `HEAD` for the user to sync or revert.
+        // Only when the pop did apply and left conflicts: a pop that applied nothing must keep its stash.
+        let conflicted = git(ws_id, &["ls-files", "--unmerged"]).await.is_ok_and(|out| !out.trim().is_empty());
+        if !conflicted || git(ws_id, &["checkout", "--theirs", "--", "."]).await.is_err() {
+            return Err(GitError(
+                "The remote's changes were pulled, but the changes made here could not be put back on top of them. \
+                 They are kept in the repository's stash."
+                    .to_string(),
+            ));
         }
+        let _ = git(ws_id, &["reset", "--quiet"]).await;
+        let _ = git(ws_id, &["stash", "drop"]).await;
     }
 
     Ok(PullOutcome { updated: true, changed_paths })

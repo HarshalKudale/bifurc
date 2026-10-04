@@ -3,7 +3,20 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 4] = ["json", "help", "no-start", "no-tray"];
+const BOOLEAN_FLAGS: [&str; 12] = [
+    "json",
+    "help",
+    "no-start",
+    "no-tray",
+    "passphrase-stdin",
+    "value-stdin",
+    "regex",
+    "no-regex",
+    "disabled",
+    "auto",
+    "no-auto",
+    "reflection",
+];
 
 /// Single-letter aliases; any other letter stands for itself.
 fn alias(letter: char) -> String {
@@ -12,6 +25,7 @@ fn alias(letter: char) -> String {
         'X' => "method",
         'd' => "body",
         'h' => "help",
+        't' => "type",
         'w' => "workspace",
         other => return other.to_string(),
     }
@@ -39,6 +53,13 @@ impl ParsedArgs {
     /// Whether `name` was given at all.
     pub fn has(&self, name: &str) -> bool {
         self.flags.contains_key(name)
+    }
+
+    /// The name of every flag given, sorted.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.flags.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names
     }
 
     /// The positional at `index`.
@@ -165,8 +186,17 @@ mod tests {
     }
 
     #[test]
-    fn workspace_has_a_short_form() {
+    fn workspace_and_type_have_short_forms() {
         assert_eq!(ok(&["-w", "ws1"]).flag("workspace"), Some("ws1"));
+        assert_eq!(ok(&["-t", "grpc"]).flag("type"), Some("grpc"));
+    }
+
+    #[test]
+    fn the_entity_switches_take_no_value() {
+        let a = ok(&["mocks", "create", "--regex", "/a", "--disabled"]);
+        assert!(a.has("regex") && a.has("disabled"));
+        assert_eq!(a.positionals, ["mocks", "create", "/a"]);
+        assert_eq!(a.names(), ["disabled", "regex"]);
     }
 
     #[test]

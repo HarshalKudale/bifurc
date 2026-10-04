@@ -25,10 +25,10 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    app_model::{AppModel, ModelEvent},
+    app_model::{AppModel, Deleted, ModelEvent},
     components::{
         Autosave, EntityAction, EntityBar, KeyValueEvent, KeyValueTable,
-        dialogs::{PromptField, confirm_danger, prompt},
+        dialogs::{PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted},
         entity_bar, page,
     },
     engine::{call, failure, patch_entity},
@@ -161,7 +161,9 @@ impl EnvironmentsScreen {
     /// the engine's copy whatever the controls hold.
     fn follow_model(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let config = self.model.read(cx).config().clone();
-        let selected = self.selected.as_deref().and_then(|id| config.environments.iter().find(|e| e.id == id));
+        // A deleted environment has nothing to edit: the selection leaves it.
+        let selected =
+            self.selected.as_deref().and_then(|id| config.environments.iter().find(|e| e.id == id && !e.deleted));
         match selected {
             Some(environment) => {
                 let differs = Self::engine_edit(environment) != self.baseline;
@@ -173,7 +175,11 @@ impl EnvironmentsScreen {
                 }
             }
             None => {
-                let fallback = config.active_environment().or_else(|| config.environments.first()).cloned();
+                let fallback = config
+                    .active_environment()
+                    .filter(|e| !e.deleted)
+                    .or_else(|| config.environments.iter().find(|e| !e.deleted))
+                    .cloned();
                 match fallback {
                     Some(environment) => self.load(&environment, window, cx),
                     None => {
@@ -192,6 +198,12 @@ impl EnvironmentsScreen {
         let Some(target) = self.model.read(cx).config().environments.iter().find(|e| e.id == id).cloned() else {
             return;
         };
+        // A deleted environment is brought back or deleted for good, not edited.
+        if target.deleted {
+            let deleted = Deleted::Entity { kind: "environments", id: target.id.clone() };
+            resolve_deleted(self.model.clone(), deleted, target.name.clone(), window, cx);
+            return;
+        }
         if !self.is_dirty(cx) {
             self.load(&target, window, cx);
             return;
@@ -338,12 +350,13 @@ impl EnvironmentsScreen {
     fn confirm_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(environment) = self.environment(cx).filter(|e| !e.is_global()) else { return };
         let id = environment.id.clone();
+        let consequence = delete_consequence(self.model.read(cx).git().entity_state(&id));
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
             format!("Delete environment “{}”?", environment.name),
-            "Its variables are deleted. Requests that use them will send the names unresolved.",
+            consequence,
             "Delete",
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
@@ -395,6 +408,9 @@ impl EnvironmentsScreen {
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
+                                    .when(environment.deleted, |this| {
+                                        this.line_through().text_color(theme.muted_foreground)
+                                    })
                                     .child(environment.name.clone()),
                             )
                             .when(environment.is_global(), |this| {

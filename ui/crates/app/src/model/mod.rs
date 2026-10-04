@@ -15,6 +15,7 @@ pub mod traffic;
 pub mod tree;
 pub mod trust;
 pub mod variables;
+pub mod vault;
 
 pub use config::ConfigSnapshot;
 pub use explorer::{ExplorerNode, NodeRef, build_explorer};

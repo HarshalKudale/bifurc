@@ -19,9 +19,9 @@ use gpui_kit::{
 use serde_json::{Map, json};
 
 use crate::{
-    app_model::AppModel,
+    app_model::{AppModel, Deleted},
     components::{
-        dialogs::{PromptField, confirm_danger, prompt},
+        dialogs::{PromptField, confirm_danger, delete_consequence, prompt},
         page,
     },
     engine::{call, failure, patch_entity},
@@ -130,12 +130,13 @@ impl MappingsScreen {
 
     fn confirm_delete(&mut self, mapping: MappingInfo, window: &mut Window, cx: &mut Context<Self>) {
         let id = mapping.id.clone();
+        let consequence = delete_consequence(self.model.read(cx).git().entity_state(&id));
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
             format!("Delete mapping “{}”?", mapping.domain),
-            "Requests to this name will no longer be routed.",
+            consequence,
             "Delete",
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
@@ -178,7 +179,9 @@ impl MappingsScreen {
             Some(FileState::Clean) | None => "",
         };
         let changed = !state_label.is_empty();
+        let deleted = mapping.deleted;
         let model = self.model.clone();
+        let deleted_model = self.model.clone();
         let toggle_id = mapping.id.clone();
         let this = cx.weak_entity();
         let (edit, delete) = (mapping.clone(), mapping.clone());
@@ -198,42 +201,67 @@ impl MappingsScreen {
             .text_sm()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().w_12().flex_none().child(
+            .child(div().w_12().flex_none().children((!deleted).then(|| {
                 Switch::new(key("enabled")).checked(mapping.enabled).small().on_change(move |checked: &bool, _, cx| {
                     let checked = *checked;
                     model.update(cx, |m, cx| m.set_enabled("mappings", &toggle_id, checked, cx));
-                }),
-            ))
-            .child(
-                div()
+                })
+            })))
+            .child({
+                let domain = div()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
                     .font_family(theme.mono_font_family.clone())
-                    .child(mapping.domain.clone()),
-            )
+                    .child(mapping.domain.clone());
+                // Deleted, and waiting to be confirmed or reverted: still listed, struck through.
+                if deleted { domain.line_through().text_color(theme.muted_foreground) } else { domain }
+            })
             .child(Icon::new(IconName::ArrowRight).small().text_color(theme.muted_foreground))
-            .child(
+            .child(if deleted {
+                // A deleted mapping has no target to show: what can be done with it goes here.
+                let (revert_model, confirm_model) = (deleted_model.clone(), deleted_model);
+                let (revert_id, confirm_id) = (mapping.id.clone(), mapping.id.clone());
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_2()
+                    .child(Button::new(key("revert-delete")).small().label("Revert delete").on_click(
+                        move |_, _, cx| {
+                            let target = Deleted::Entity { kind: "mappings", id: revert_id.clone() };
+                            revert_model.update(cx, |model, cx| model.revert_delete(target, cx));
+                        },
+                    ))
+                    .child(Button::new(key("confirm-delete")).small().label("Confirm delete").on_click(
+                        move |_, _, cx| {
+                            let target = Deleted::Entity { kind: "mappings", id: confirm_id.clone() };
+                            confirm_model.update(cx, |model, cx| model.confirm_delete(target, cx));
+                        },
+                    ))
+                    .into_any_element()
+            } else {
                 div()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
                     .font_family(theme.mono_font_family.clone())
-                    .child(mapping.target.clone()),
-            )
-            .child(
-                div()
+                    .child(mapping.target.clone())
+                    .into_any_element()
+            })
+            .child({
+                let label = div()
                     .w_48()
                     .flex_none()
                     .overflow_hidden()
                     .text_ellipsis()
                     .text_color(theme.muted_foreground)
-                    .child(mapping.label.clone().unwrap_or_default()),
-            )
+                    .child(mapping.label.clone().unwrap_or_default());
+                if deleted { label.line_through() } else { label }
+            })
             .child(div().w_24().flex_none().text_xs().text_color(theme.muted_foreground).child(state_label))
-            .child(div().w_8().flex_none().child(
+            .child(div().w_8().flex_none().children((!deleted).then(|| {
                 Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(
                     move |menu, _, _| {
                         let (edit_view, delete_view) = (this.clone(), this.clone());
@@ -272,8 +300,8 @@ impl MappingsScreen {
                             },
                         ))
                     },
-                ),
-            ))
+                )
+            })))
             .into_any_element()
     }
 }
