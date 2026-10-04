@@ -99,9 +99,17 @@ async fn api(method: reqwest::Method, token: &str, path: &str, body: Option<Valu
     read(request.send().await.map_err(unreachable)?).await
 }
 
+/// What an answer of 401 is reported as.
+const REJECTED: &str = "GitHub no longer accepts this sign-in. Sign in again.";
+
+/// Whether an error says GitHub refused the token itself (revoked, expired), as opposed to anything else.
+pub fn is_rejected(error: &str) -> bool {
+    error == REJECTED
+}
+
 fn api_error(status: u16, body: &Value) -> String {
     match status {
-        401 => "GitHub no longer accepts this sign-in. Sign in again.".to_string(),
+        401 => REJECTED.to_string(),
         _ => match str_of(body, "message") {
             "" => format!("GitHub answered {status}"),
             message => format!("GitHub: {message}"),
