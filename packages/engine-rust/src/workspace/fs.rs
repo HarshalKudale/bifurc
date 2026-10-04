@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
 
-use super::paths::data_dir;
+use super::{config::GLOBAL_ENV_ID, paths::data_dir};
 use crate::utils::{
     id::now_ms,
     json::{read_json, str_of, write_json_pretty},
@@ -124,7 +124,27 @@ pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     if !gitignore.exists() {
         std::fs::write(gitignore, "capture/\n*.tmp\n")?;
     }
+    ensure_global_environment(ws_id)?;
     Ok(())
+}
+
+/// Workspace-relative path of the environment every workspace has.
+pub const GLOBAL_ENV_PATH: &str = "environments/__global__.json";
+
+/// The Global environment as a new workspace gets it. The same on every device, so two of them that each
+/// had to make it agree on the file.
+pub fn default_global_environment(ws_id: &str) -> Value {
+    json!({ "id": GLOBAL_ENV_ID, "name": "Global", "variables": [], "createdAt": 0, "workspaceId": ws_id })
+}
+
+/// Write the Global environment when the workspace has none. Returns it when it was written.
+pub fn ensure_global_environment(ws_id: &str) -> std::io::Result<Option<Value>> {
+    if ws_dir(ws_id).join(GLOBAL_ENV_PATH).exists() {
+        return Ok(None);
+    }
+    let global = default_global_environment(ws_id);
+    write_flat_entity(ws_id, "environments", GLOBAL_ENV_ID, &global)?;
+    Ok(Some(global))
 }
 
 /// The sub-directories of a kind that are folders.

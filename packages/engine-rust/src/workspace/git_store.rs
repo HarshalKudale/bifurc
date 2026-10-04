@@ -6,7 +6,10 @@ use std::path::Path;
 use regress::Regex;
 use serde_json::{Value, json};
 
-use super::{accounts::commit_identity, fs::ws_dir};
+use super::{
+    accounts::commit_identity,
+    fs::{GLOBAL_ENV_PATH, ws_dir},
+};
 use crate::utils::process::hidden_command;
 
 /// Variables that would make git open an editor or a pager, which a background engine can never answer.
@@ -137,6 +140,9 @@ pub async fn init_workspace_repo(ws_id: &str) -> Result<(), GitError> {
         git_in(&dir, &["add", ".gitignore"]).await?;
         if dir.join("workspace.json").exists() {
             git_in(&dir, &["add", "workspace.json"]).await?;
+        }
+        if dir.join(GLOBAL_ENV_PATH).exists() {
+            git_in(&dir, &["add", GLOBAL_ENV_PATH]).await?;
         }
         let identity = commit_identity(ws_id);
         let name = crate::utils::json::read_json(&dir.join("workspace.json"))

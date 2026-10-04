@@ -367,6 +367,11 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["owner"]["login"], "octo");
     let pushed: Value = serde_json::from_str(&run(&bare, &["show", "main:workspace.json"]).await).unwrap();
     assert_eq!((pushed["kind"].as_str(), pushed["id"].as_str()), (Some("bifurc-workspace"), Some(ws)));
+    // The Global environment every workspace has went with it, so nothing is left unsynced on either side.
+    let global: Value = serde_json::from_str(&run(&bare, &["show", "main:environments/__global__.json"]).await).unwrap();
+    assert_eq!(global["id"], "__global__");
+    let status = get_workspace_sync_status(ws).await;
+    assert!(status.values().all(|state| state == "clean"), "{status:?}");
     // A published workspace is watched for what its remote gets; there is no switch for it. The watch is
     // stopped here so that the pulls below are the test's own.
     assert_eq!(auto_sync::poller_count(), 1);
