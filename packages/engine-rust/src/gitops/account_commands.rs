@@ -78,6 +78,8 @@ pub fn register(registry: &mut CommandRegistry) {
             settings.set("termsAcceptedAt", json!(now_ms()));
             save_settings(&settings)?;
             bus().emit("settings.changed", json!({}));
+            // With both accepted, usage analytics may begin.
+            crate::analytics::resume();
         }
         Ok(json!({ "ok": true }))
     });
@@ -89,6 +91,8 @@ pub fn register(registry: &mut CommandRegistry) {
             settings.set("privacyAcceptedAt", json!(now_ms()));
             save_settings(&settings)?;
             bus().emit("settings.changed", json!({}));
+            // With both accepted, usage analytics may begin.
+            crate::analytics::resume();
         }
         Ok(json!({ "ok": true }))
     });
