@@ -247,6 +247,15 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
             let mode = if opt_str(params, "mode") == Some("debug") { "debug" } else { "run" };
             event("application started", json!({ "mode": mode }))
         }
+        // Saving the list is an event only when it creates a check, which the result says ([`complete`]).
+        "healthbar.saveServices" => event("health check created", json!({})),
+        // Only a check the user asked for: the ones an interface runs on a timer are not sent. Checking a
+        // whole list at once is one event.
+        "healthbar.checkUrl" if bool_of(params, "manual", false) => Some(Event {
+            name: "health check run".to_string(),
+            properties: Map::new(),
+            replaces: Some("health check run".to_string()),
+        }),
         "tls.generate" => event("tls certificate generated", json!({})),
         "tls.importCert" => event("tls certificate imported", json!({})),
         _ => None,
@@ -257,6 +266,9 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
 pub fn complete(event: &mut Event, action: &str, result: &Value) -> bool {
     if result.get("ok") == Some(&json!(false)) || opt_str(result, "status") == Some("failed") {
         return false;
+    }
+    if action == "healthbar.saveServices" {
+        return result.get("added").and_then(Value::as_u64).unwrap_or(0) > 0;
     }
     if action == "request.send" {
         let request = result.get("request").unwrap_or(&Value::Null);
@@ -351,10 +363,13 @@ mod tests {
             "workspaceId": secret, "id": secret, "name": secret, "accountId": secret, "repo": secret,
             "repoName": secret, "kind": "free text!", "format": "also free text", "paths": [secret],
             "method": secret, "url": secret, "passphrase": secret, "value": secret, "blobId": secret,
+            "manual": true, "services": [{ "id": secret, "name": secret, "url": secret }],
         });
         for action in crate::protocol::schema::command_names() {
             if let Some(mut event) = describe(action, &params) {
-                let result = json!({ "request": { "method": secret, "url": secret }, "status": 200, "body": secret });
+                let result = json!({
+                    "request": { "method": secret, "url": secret }, "status": 200, "body": secret, "added": 1,
+                });
                 assert!(complete(&mut event, action, &result));
                 events.push(event);
             }
@@ -368,13 +383,37 @@ mod tests {
 
     #[test]
     fn what_an_interface_does_on_its_own_is_not_counted() {
-        for action in ["server.status", "env.resolveText", "setup.getState", "config.get", "entity.setEnabled"] {
+        for action in [
+            "server.status",
+            "env.resolveText",
+            "healthbar.checkUrl",
+            "setup.getState",
+            "config.get",
+            "entity.setEnabled",
+        ] {
             assert!(!is_user_action(action), "{action}");
         }
+        assert!(describe("env.resolveText", &json!({ "workspaceId": "w", "text": "{{HOST}}" })).is_none());
         for action in ["request.send", "entity.create", "workspace.add", "request.parseCurl", "runner.start"] {
             assert!(is_user_action(action), "{action}");
         }
         assert!(describe("entity.setEnabled", &json!({ "kind": "mocks", "id": "m", "enabled": true })).is_none());
+    }
+
+    #[test]
+    fn a_health_check_is_an_event_when_it_is_created_or_run_by_hand() {
+        let url = "https://internal.example.com/health";
+        assert!(describe("healthbar.checkUrl", &json!({ "url": url })).is_none());
+        assert!(describe("healthbar.checkUrl", &json!({ "url": url, "manual": false })).is_none());
+        let run = describe("healthbar.checkUrl", &json!({ "url": url, "manual": true })).unwrap();
+        assert_eq!((run.name.as_str(), properties(&run)), ("health check run", json!({})));
+        assert!(run.replaces.is_some());
+
+        let save = json!({ "workspaceId": "w", "services": [{ "id": "s1", "name": "Billing", "url": url }] });
+        let mut created = describe("healthbar.saveServices", &save).unwrap();
+        assert!(!complete(&mut created, "healthbar.saveServices", &json!({ "ok": true, "added": 0 })));
+        assert!(complete(&mut created, "healthbar.saveServices", &json!({ "ok": true, "added": 1 })));
+        assert_eq!((created.name.as_str(), properties(&created)), ("health check created", json!({})));
     }
 
     #[test]
