@@ -978,6 +978,15 @@
    "extra": true
   }
  },
+ "setup.startServers": {
+  "valid": {
+   "port": 8000,
+   "forwardProxyPort": 8081
+  },
+  "invalid": {
+   "port": 70000
+  }
+ },
  "soap.execute": {
   "valid": {
    "endpointUrl": "http://x",

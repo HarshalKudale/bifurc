@@ -52,8 +52,13 @@ pub struct SessionOptions {
     pub on_auth_failure: Option<Arc<dyn Fn(&EngineError, Option<&str>) + Send + Sync>>,
     pub on_session_start: Option<SessionHook>,
     pub on_session_end: Option<SessionHook>,
+    /// Asked before a command of an identified session runs: the error to refuse it with, if it is refused.
+    pub refuse_command: Option<CommandGate>,
     pub peer: Option<String>,
 }
+
+/// Given the session and the command's name, why the command is refused, if it is.
+pub type CommandGate = Arc<dyn Fn(&SessionIdentity, &str) -> Option<EngineError> + Send + Sync>;
 
 #[derive(Default)]
 struct State {
@@ -259,6 +264,11 @@ impl Session {
             return;
         };
 
+        if let Some(error) = self.inner.opts.refuse_command.as_ref().and_then(|gate| gate(&identity, action)) {
+            self.send(failure(id, &error));
+            return;
+        }
+
         let granted = identity.scopes.clone().unwrap_or_else(shell_scopes);
         if !command_is_allowed(&granted, action) {
             // A name with no scope is not a command: let the registry say so.
@@ -404,9 +414,27 @@ mod tests {
             on_auth_failure: None,
             on_session_start: None,
             on_session_end: None,
+            // Only `gated.command` is ever refused, so the other tests see no gate.
+            refuse_command: Some(Arc::new(|identity, action| {
+                (action == "gated.command")
+                    .then(|| EngineError::new(ErrorCode::Forbidden, format!("not for {:?}", identity.client_name)))
+            })),
             peer: None,
         };
         (Session::new(opts, tx), rx, bus)
+    }
+
+    #[tokio::test]
+    async fn a_command_the_gate_refuses_is_answered_with_the_gates_error_and_the_session_goes_on() {
+        let (session, mut rx, _) = session();
+        session.handle_frame(hello());
+        frame(&mut rx).await;
+        session.handle_frame(json!({ "id": "1", "action": "gated.command", "payload": {} }));
+        let reply = frame(&mut rx).await;
+        assert_eq!((reply["ok"].as_bool(), reply["error"]["code"].as_str()), (Some(false), Some("FORBIDDEN")));
+        assert_eq!(reply["error"]["message"], "not for Some(\"cli\")");
+        session.handle_frame(json!({ "id": "2", "action": "proxy.status", "payload": {} }));
+        assert_eq!(frame(&mut rx).await["ok"], true);
     }
 
     fn hello() -> Value {

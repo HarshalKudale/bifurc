@@ -276,6 +276,7 @@ mod tests {
             on_auth_failure: None,
             on_session_start: None,
             on_session_end: None,
+            refuse_command: None,
             peer: None,
         };
         (create_ws_server(0, opts).await.unwrap(), bus)

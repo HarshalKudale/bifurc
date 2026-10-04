@@ -225,7 +225,8 @@ impl Desktop {
         }
     }
 
-    fn open_interface(&self) {
+    /// Brings the interface in front of the user: the one that is attached, or a new one.
+    pub fn open_interface(&self) {
         {
             let state = self.state.lock();
             if !state.interfaces.is_empty() {
