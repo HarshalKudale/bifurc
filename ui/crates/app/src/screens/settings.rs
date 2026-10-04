@@ -13,7 +13,7 @@
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
-    button::Button,
+    button::{Button, ButtonVariants as _},
     group_box::GroupBoxVariant,
     h_flex,
     link::Link,
@@ -33,6 +33,7 @@ use crate::{
     engine::{call, call_in, failure},
     model::config::AccountInfo,
     preferences::Preferences,
+    screens::workspace_setup::{Purpose, open_setup_dialog},
     theme,
 };
 
@@ -520,6 +521,7 @@ impl SettingsScreen {
         }
         let groups = self.accounts.iter().enumerate().map(|(index, account)| {
             let this = cx.weak_entity();
+            let model = self.model.clone();
             let (id, signed_in) = (account.info.id.clone(), account.info.signed_in);
             let host = account.info.host.clone();
             let busy = self.signing_out.as_deref() == Some(account.info.id.as_str());
@@ -527,8 +529,10 @@ impl SettingsScreen {
             let count = account.workspaces.len();
             let header = SettingItem::render(move |options, _, cx| {
                 let theme = cx.theme().clone();
-                let (this, id) = (this.clone(), id.clone());
-                let state = if signed_in { Tag::success().child("Signed in") } else { Tag::warning().child("Signed out") };
+                let (this, id, model) = (this.clone(), id.clone(), model.clone());
+                let relogin_id = id.clone();
+                let state =
+                    if signed_in { Tag::success().child("Signed in") } else { Tag::warning().child("Sign-in expired") };
                 let detail = match count {
                     0 => format!("{host} · no workspaces"),
                     1 => format!("{host} · 1 workspace"),
@@ -539,6 +543,14 @@ impl SettingsScreen {
                     .gap_2()
                     .child(div().flex_1().min_w_0().text_color(theme.muted_foreground).child(detail))
                     .child(state)
+                    .children((!signed_in).then(|| {
+                        Button::new(("sign-in-again", index)).with_size(options.size()).primary().label("Sign in again").on_click(
+                            move |_, window, cx| {
+                                let purpose = Purpose::SignIn { account_id: relogin_id.clone() };
+                                open_setup_dialog(model.clone(), purpose, window, cx);
+                            },
+                        )
+                    }))
                     .child(
                         Button::new(("sign-out", index))
                             .with_size(options.size())
