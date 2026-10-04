@@ -1,0 +1,16 @@
+Package: bifurc
+Version: {{VERSION}}
+Section: devel
+Priority: optional
+Architecture: {{ARCH}}
+Maintainer: {{PUBLISHER}} <{{MAINTAINER_EMAIL}}>
+Installed-Size: {{INSTALLED_SIZE}}
+Depends: {{DEPENDS}}
+Recommends: libcap2-bin, git, xdg-desktop-portal
+Homepage: {{HOMEPAGE}}
+Description: {{SUMMARY}}
+ Bifurc brings together *.localhost mappings, proxy rules, traffic capture,
+ mocks, and REST, GraphQL, SOAP, gRPC and WebSocket requests, kept as files
+ in git-backed workspaces.
+ .
+ This package installs the interface, the engine and the bifurc command.

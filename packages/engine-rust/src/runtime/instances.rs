@@ -58,6 +58,10 @@ fn tls_changed(next: &AppSettings, prev: &AppSettings) -> bool {
 
 /// After a whole config was saved: make sure both listeners run, on the ports now configured.
 pub fn rebind_runtime_ports(incoming: &AppSettings, prev: &AppSettings) {
+    // Before the first run's servers step nothing is started that was not asked for.
+    if !incoming.servers_confirmed() {
+        return rebind_changed_listeners(incoming, prev);
+    }
     if let Some(edge) = edge() {
         if !edge.is_running() || incoming.port() != prev.port() {
             edge.start(incoming.port());
@@ -87,6 +91,28 @@ pub fn rebind_changed_listeners(next: &AppSettings, prev: &AppSettings) {
             proxy.start(next.forward_proxy_port());
         }
     }
+}
+
+fn listener_status(listener: &dyn Listener) -> Value {
+    serde_json::json!({ "running": listener.is_running(), "port": listener.port(), "error": listener.error() })
+}
+
+/// Starts each of the two listeners that is not already serving its configured port, and says how each fared
+/// (`{forward, reverse}`, each `{running, port, error}` or `null` for a listener this engine does not have).
+pub fn start_listeners(settings: &AppSettings) -> Value {
+    let reverse = edge().map(|edge| {
+        if !edge.is_running() || edge.port() != settings.port() {
+            edge.start(settings.port());
+        }
+        listener_status(edge.as_ref())
+    });
+    let forward = forward_proxy().map(|proxy| {
+        if !proxy.is_running() || proxy.port() != settings.forward_proxy_port() {
+            proxy.start(settings.forward_proxy_port());
+        }
+        listener_status(proxy.as_ref())
+    });
+    serde_json::json!({ "forward": forward, "reverse": reverse })
 }
 
 /// A listener that cannot serve; `error()` says so.
