@@ -260,14 +260,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join(RUNTIME_FILE),
-            r#"{"pid":47820,"transport":"socket","address":"\\\\.\\pipe\\bifurc-a70f","dataDir":"C:\\x","protocolVersion":"1.0.0","engineVersion":"0.3.3","startedAt":1}"#,
+            r#"{"pid":47820,"transport":"socket","address":"\\\\.\\pipe\\bifurc-a70f","dataDir":"C:\\x","protocolVersion":"1.0.0","engineVersion":"0.4.0","startedAt":1}"#,
         )
         .unwrap();
         let info = read_runtime_info(dir.path()).unwrap();
         assert_eq!(info.pid, 47820);
         assert_eq!(info.transport, "socket");
         assert_eq!(info.address, r"\\.\pipe\bifurc-a70f");
-        assert_eq!(info.engine_version, "0.3.3");
+        assert_eq!(info.engine_version, "0.4.0");
     }
 
     #[test]

@@ -28,23 +28,18 @@ engine, and `bootstrap.rs` the root view that is on screen before the engine is.
 ## Run
 
 Prerequisites: Rust (stable, 2024 edition). The engine and the CLI are Rust too (`packages/engine-rust`,
-`packages/cli-rust`, the repository's own cargo workspace); the TypeScript ones (`packages/engine`,
-`packages/cli`) are **scheduled for decommissioning** and are no longer what the UI starts.
+`packages/cli-rust`, the repository's own cargo workspace).
 
 ```sh
-npm run dev:ui         # from the repository root: builds bifurc-engine and bifurc, then runs the UI
-# or by hand:
+cargo dev:ui           # from the repository root: runs the UI, which joins a running engine or starts one
+# the engine and the CLI it starts come from the repository workspace:
 cargo build -p bifurc-engine -p bifurc-cli     # at the repository root
-cd ui
-cargo run -p bifurc-ui
 ```
 
 On start the UI reads `<data dir>/runtime.json`. If an engine is already running for that data directory (for
 example one started with `bifurc engine start`) it **joins** it, whichever engine that is. Otherwise it starts
 `bifurc-engine --transport socket`, detached: the one beside its executable (an install), else the newest build
-in a `target/release` or `target/debug` above the executable or the working directory. Only when no
-`bifurc-engine` exists anywhere does it fall back to the deprecated Node engine (`BIFURC_ENGINE_ENTRY`, then
-`packages/engine/dist/runtime/hostCli.js`) and say so. Either way the CLI and the UI see
+in a `target/release` or `target/debug` above the executable or the working directory. Either way the CLI and the UI see
 the same workspace live: a request created with `bifurc call entity.create …` shows up in the request tree
 without a refresh.
 
@@ -63,8 +58,6 @@ The engine's lifetime is its own, whichever client started it:
 | ---------------------- | --------------------------------------------------------------------------------------- |
 | `BIFURC_DATA_DIR`      | Data directory (default: the desktop app's, e.g. `%LOCALAPPDATA%\Bifurc` on Windows)    |
 | `BIFURC_ENGINE`        | The `bifurc-engine` executable to start (default: beside this executable, else the newest `target/` build above it) |
-| `BIFURC_NODE`          | Deprecated Node engine only: the `node` to run it with (default: `node` on `PATH`)      |
-| `BIFURC_ENGINE_ENTRY`  | Deprecated Node engine only: its `hostCli.js`                                           |
 | `BIFURC_TRAY`          | The tray helper (default: `bifurc-tray` beside this executable, else the engine's search) |
 | `BIFURC_UI`            | The interface the tray icon opens (default: this executable)                            |
 
@@ -75,12 +68,12 @@ The same build script compiles `build/icon.ico` into the executable, which is th
 ## Package
 
 ```sh
-npm run package:desktop                        # Windows: installer + Store package; Linux: AppImage
-npm run package:desktop -- --target nsis       # one of nsis, msix, appimage, dir
-npm run package:desktop -- --skip-build        # package what is already built
+cargo xtask package                        # Windows: installer + Store package; Linux: AppImage
+cargo xtask package --target nsis          # one or more of nsis, msix, appimage, dir
+cargo xtask package --skip-build           # package what is already built
 ```
 
-`scripts/package-desktop.mjs` builds the engine and the release executables, lays out one folder
+`xtask` (at the repository root) builds the engine and the release executables, lays out one folder
 (`release/desktop/<platform>-unpacked`) and wraps it. Every package installs the same things: the interface, the
 Rust engine, the tray helper (Windows), and the `bifurc` command. No Node is shipped.
 
