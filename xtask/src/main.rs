@@ -215,15 +215,45 @@ fn first_existing(candidates: impl IntoIterator<Item = Option<PathBuf>>) -> Opti
 // Build
 // ---------------------------------------------------------------------------------------------------------
 
+/// The compiler flags of a packaged build: they keep the build machine out of the binaries. A panic message
+/// names the file it came from, and without these that is a path under the home directory of whoever built it.
+fn release_rustflags(ctx: &Ctx) -> String {
+    let home = if WINDOWS { "USERPROFILE" } else { "HOME" };
+    let cargo_home = env_path("CARGO_HOME").or_else(|| env_path(home).map(|dir| dir.join(".cargo")));
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()));
+    let mut flags = env::var("RUSTFLAGS").unwrap_or_default();
+    for (path, name) in [(Some(ctx.repo.clone()), "bifurc"), (cargo_home, "cargo"), (sysroot, "rust")] {
+        let Some(path) = path.map(|path| path.display().to_string()) else { continue };
+        // RUSTFLAGS is split at spaces, so a path with one in it cannot be passed this way.
+        if path.contains(char::is_whitespace) {
+            println!("warning: {path} has a space in it and stays in the binaries as it is");
+            continue;
+        }
+        flags.push_str(&format!(" --remap-path-prefix={path}={name}"));
+    }
+    flags.trim().to_string()
+}
+
 fn build(ctx: &Ctx) -> Result<()> {
+    let rustflags = release_rustflags(ctx);
     // The engine and the CLI: the repository's own cargo workspace.
     let mut engine = Command::new("cargo");
-    engine.args(["build", "--release", "-p", "bifurc-engine", "-p", "bifurc-cli"]).current_dir(&ctx.repo);
+    engine
+        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli"])
+        .env("RUSTFLAGS", &rustflags)
+        .current_dir(&ctx.repo);
     exec(engine, false)?;
     // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
     // `bifurc` launcher that goes on PATH.
     let mut ui = Command::new("cargo");
-    ui.args(["build", "--release", "-p", "bifurc-ui", "-p", "bifurc-cli"]).current_dir(ctx.repo.join("ui"));
+    ui.args(["build", "--release", "--locked", "-p", "bifurc-ui", "-p", "bifurc-cli"])
+        .env("RUSTFLAGS", &rustflags)
+        .current_dir(ctx.repo.join("ui"));
     exec(ui, false)
 }
 
