@@ -3,8 +3,10 @@ name: Publish release to public repo
 # Copies releases made in this (private) repository to the public bifurc-releases repository, which hosts
 # the downloads and the issue tracker. Manual only: nothing is published until someone names the tags.
 #
-# Only the release's built files are copied. The public repository holds nothing but a README and issue
-# templates, so the "Source code" archives GitHub adds to every release contain no Bifurc source.
+# Only the installable downloads are copied (Windows installer and zip, Linux .deb, AppImage and tarball).
+# Store packages, package-manager manifests and GitHub's generated "Source code" archives are not. GitHub
+# still adds its own source archives to every release, but this repository holds nothing but a README and
+# issue templates, so they contain no Bifurc source.
 #
 # Needs the secret PUBLIC_RELEASES_TOKEN: a fine-grained personal access token for the public repository
 # with "Contents: read and write". The workflow's own token cannot write to another repository.
@@ -79,14 +81,14 @@ jobs:
             GH_TOKEN="$SOURCE_TOKEN" gh release view "$tag" --repo "$SOURCE_REPO" \
               --json name,body,isPrerelease > "$work/release.json"
 
-            # Skip the store manifests: they download from this private repo's release, which nobody
-            # outside can reach, so they would be broken in public.
-            GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets" \
-              --pattern '*' --skip-existing
-            rm -f "$work"/assets/*-store-manifests.zip "$work/assets/bifurc.json"
+            # Only what a person installs from: the Windows installer and portable zip, and the Linux .deb,
+            # AppImage and tarball. Everything else on the private release stays there: the Store .msix,
+            # the winget, Scoop and Chocolatey packages and manifests (useless to download by hand), and
+            # the "Source code" archives GitHub generates (never downloaded here, they are not assets).
+            GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets"               --pattern '*-setup.exe'               --pattern '*-win-*.zip'               --pattern '*.deb'               --pattern '*.AppImage'               --pattern '*-linux-*.tar.gz'
 
             if [ -z "$(ls -A "$work/assets")" ]; then
-              echo "::error::$tag has no files to publish."
+              echo "::error::$tag has no installable files (exe, zip, deb, AppImage, tar.gz) to publish."
               exit 1
             fi
 
