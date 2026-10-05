@@ -43,7 +43,13 @@ jobs:
             .
             ui
 
-      # NSIS, the Windows SDK (makeappx, makepri) and Chocolatey are on the runner image.
+      # The Windows SDK (makeappx, makepri) and Chocolatey are on the runner image; NSIS no longer is.
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          "C:\Program Files (x86)\NSIS" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
       - name: Package
         shell: bash
         # What was typed into the form reaches the script as data, never as part of it.
