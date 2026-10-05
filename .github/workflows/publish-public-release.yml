@@ -85,7 +85,12 @@ jobs:
             # AppImage and tarball. Everything else on the private release stays there: the Store .msix,
             # the winget, Scoop and Chocolatey packages and manifests (useless to download by hand), and
             # the "Source code" archives GitHub generates (never downloaded here, they are not assets).
-            GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets"               --pattern '*-setup.exe'               --pattern '*-win-*.zip'               --pattern '*.deb'               --pattern '*.AppImage'               --pattern '*-linux-*.tar.gz'
+            GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets" \
+              --pattern '*-setup.exe' \
+              --pattern '*-win-*.zip' \
+              --pattern '*.deb' \
+              --pattern '*.AppImage' \
+              --pattern '*-linux-*.tar.gz'
 
             if [ -z "$(ls -A "$work/assets")" ]; then
               echo "::error::$tag has no installable files (exe, zip, deb, AppImage, tar.gz) to publish."
