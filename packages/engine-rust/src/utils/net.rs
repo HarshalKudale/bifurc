@@ -14,11 +14,17 @@ pub fn normalize_hostname(host: &str) -> String {
     lower.strip_suffix('.').unwrap_or(&lower).to_string()
 }
 
-/// Whether a browser `Origin` may open a session: none at all, loopback, or the host domain and its
-/// subdomains.
+/// The origin schemes of a browser extension, whose host is the extension's id rather than a name.
+const EXTENSION_SCHEMES: [&str; 2] = ["chrome-extension", "moz-extension"];
+
+/// Whether a browser `Origin` may open a session: none at all, loopback, the host domain and its
+/// subdomains, or a browser extension (the companion extension connects from its service worker).
 pub fn is_allowed_origin(origin: Option<&str>, host_domain: &str) -> bool {
     let Some(origin) = origin.filter(|o| !o.is_empty()) else { return true };
     let Ok(url) = url::Url::parse(origin) else { return false };
+    if EXTENSION_SCHEMES.contains(&url.scheme()) {
+        return true;
+    }
     let Some(host) = url.host_str() else { return false };
     let host = host.trim_start_matches('[').trim_end_matches(']').to_lowercase();
     if is_loopback_host(&host) {
@@ -49,6 +55,7 @@ mod tests {
         assert!(is_allowed_origin(None, "localhost"));
         assert!(is_allowed_origin(Some("http://app.localhost:3000"), "localhost"));
         assert!(is_allowed_origin(Some("http://[::1]:80"), "localhost"));
+        assert!(is_allowed_origin(Some("chrome-extension://abcdefghijklmnopabcdefghijklmnop"), "localhost"));
         assert!(!is_allowed_origin(Some("https://evil.example"), "localhost"));
         assert!(!is_allowed_origin(Some("not a url"), "localhost"));
     }
