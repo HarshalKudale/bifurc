@@ -417,14 +417,20 @@ fn build(ctx: &Ctx) -> Result<()> {
         .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli"])
         .env("RUSTFLAGS", &rustflags)
         .current_dir(&ctx.repo);
-    exec(engine, false)?;
     // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
     // `bifurc` launcher that goes on PATH.
     let mut ui = Command::new("cargo");
     ui.args(["build", "--release", "--locked", "-p", "bifurc-ui", "-p", "bifurc-cli"])
         .env("RUSTFLAGS", &rustflags)
         .current_dir(ctx.repo.join("ui"));
-    exec(ui, false)
+    // The two workspaces have their own target directories, so they build side by side: a fat-LTO link runs on
+    // one core, and the other build uses the rest.
+    std::thread::scope(|scope| {
+        let engine = scope.spawn(|| exec(engine, false));
+        let ui = exec(ui, false);
+        engine.join().unwrap_or_else(|_| Err("the engine build panicked".to_owned()))?;
+        ui
+    })
 }
 
 /// A release build from `workspace` (the repository root, or `ui`).

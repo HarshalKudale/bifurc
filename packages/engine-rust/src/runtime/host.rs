@@ -21,6 +21,7 @@ use crate::{
     register_all::register_all_engine_commands,
     transport::{
         event_log::EventLog,
+        scopes::companion_scopes,
         session::SessionOptions,
         socket::{SocketServer, create_socket_server},
         stdio::run_stdio_server,
@@ -95,6 +96,8 @@ pub struct WorkspaceHost {
     edge_url: String,
     rpc: Rpc,
     rpc_address: String,
+    /// The WebSocket endpoint the browser extension connects to, when it is not the RPC endpoint itself.
+    companion: Option<Arc<WsServer>>,
     companion_port: Option<u16>,
     served: Arc<RwLock<Vec<ServedWorkspace>>>,
     sweeper: tokio::task::JoinHandle<()>,
@@ -330,8 +333,27 @@ impl WorkspaceHost {
         };
 
         let mut companion_port = None;
+        let mut companion = None;
         let (rpc, rpc_address) = match &opts.transport {
             HostTransport::Socket { path } => {
+                // A browser extension can only speak WebSocket, so the companion endpoint is served beside the
+                // socket. The engine is whole without it, so one that cannot be served is only reported.
+                let companion_session =
+                    SessionOptions { scopes_for: Some(Arc::new(|_: &Value| companion_scopes())), ..session.clone() };
+                let base = settings.companion_port();
+                match find_free_port_from(base, &[edge_port, forward_port]).await {
+                    Some(port) => match create_ws_server(port, companion_session).await {
+                        Ok(server) => {
+                            companion_port = Some(port);
+                            companion = Some(server);
+                            notice(&format!("companion: {port} — the browser extension connects here"));
+                        }
+                        Err(err) => notice(&format!("companion on {port} FAILED to start: {}", err.message)),
+                    },
+                    None => notice(&format!(
+                        "companion FAILED to start: no free port within {SCAN_LIMIT} of {base} — set a different                          base in Settings → Ports"
+                    )),
+                }
                 let path = path.clone().unwrap_or_else(|| engine_socket_path(&opts.data_dir));
                 let server = create_socket_server(&path, session).await?;
                 (Rpc::Socket(server), path)
@@ -381,7 +403,19 @@ impl WorkspaceHost {
         }
         crate::analytics::start(opts.transport.kind().as_str());
 
-        Ok(Self { opts, log, forward_proxy, edge, edge_url, rpc, rpc_address, companion_port, served, sweeper })
+        Ok(Self {
+            opts,
+            log,
+            forward_proxy,
+            edge,
+            edge_url,
+            rpc,
+            rpc_address,
+            companion,
+            companion_port,
+            served,
+            sweeper,
+        })
     }
 
     /// Close the endpoint and the listeners, and flush what is pending to disk.
@@ -391,6 +425,9 @@ impl WorkspaceHost {
             Rpc::Socket(server) => server.close().await,
             Rpc::Ws(server) => server.close().await,
             Rpc::Stdio => {}
+        }
+        if let Some(companion) = &self.companion {
+            companion.close().await;
         }
         self.edge.stop();
         self.forward_proxy.stop();
