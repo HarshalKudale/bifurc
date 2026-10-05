@@ -46,6 +46,21 @@ fn refused(message: impl Into<String>) -> Value {
     json!({ "ok": false, "error": message.into() })
 }
 
+/// The `reason` of an import refused because the repository is another account's.
+pub const NOT_OWNER: &str = "notOwner";
+
+/// Why an import was refused: what the user is told, and a word for the refusals a client can tell apart.
+struct Refusal {
+    message: String,
+    reason: Option<&'static str>,
+}
+
+impl From<String> for Refusal {
+    fn from(message: String) -> Self {
+        Refusal { message, reason: None }
+    }
+}
+
 /// The account and its token, once GitHub has said the token is that account's: what this device has stored
 /// about who signed in is not taken on trust.
 async fn signed_in(account_id: &str) -> Result<(Account, String), String> {
@@ -271,42 +286,53 @@ async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
 }
 
 /// Bring a workspace that lives in one of the account's repositories to this device, as a new workspace.
-/// Returns `{ ok: true, workspace }` or `{ ok: false, error }`.
+/// Returns `{ ok: true, workspace }` or `{ ok: false, error }`, with `reason: "notOwner"` when the repository
+/// is another account's.
 pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
     match import(account_id, repo_name).await {
         Ok(workspace) => json!({ "ok": true, "workspace": workspace }),
-        Err(message) => refused(message),
+        Err(refusal) => {
+            let mut result = refused(refusal.message);
+            if let Some(reason) = refusal.reason {
+                result["reason"] = json!(reason);
+            }
+            result
+        }
     }
 }
 
-async fn import(account_id: &str, repo_name: &str) -> Result<Value, String> {
+async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     if !check_git_installed().await {
-        return Err("Git is not installed, so a remote workspace cannot be imported.".to_string());
+        return Err("Git is not installed, so a remote workspace cannot be imported.".to_string().into());
     }
     let (account, token) = signed_in(account_id).await?;
     let repo = github::get_repo(&token, repo_name).await?;
     if repo.owner_id != account.user_id {
-        return Err(format!(
-            "{} belongs to {}, not @{}. A workspace can only be imported by the account that owns it.",
-            repo.full_name,
-            named(&repo.owner_login),
-            account.login
-        ));
+        return Err(Refusal {
+            message: format!(
+                "{} belongs to {}, not @{}. A workspace can only be imported by the account that owns it.",
+                repo.full_name,
+                named(&repo.owner_login),
+                account.login
+            ),
+            reason: Some(NOT_OWNER),
+        });
     }
     if workspace_for_repo(&repo.full_name).is_some() {
-        return Err(format!("{} is already a workspace on this device.", repo.full_name));
+        return Err(format!("{} is already a workspace on this device.", repo.full_name).into());
     }
     // Asked before anything is cloned: a repository that is not a workspace never reaches this device.
     let not_a_workspace = || format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name);
     let listed = github::read_json_file(&token, &repo.full_name, WORKSPACE_FILE).await?;
     let Some((id, _)) = listed.as_ref().and_then(workspace_identity).filter(|(id, _)| is_plain_id(id)) else {
-        return Err(not_a_workspace());
+        return Err(not_a_workspace().into());
     };
     if let Some(existing) = load_settings().workspace(&id) {
         return Err(format!(
             "A workspace with this id is already on this device (\"{}\"). A remote workspace never replaces a local one.",
             str_of(existing, "name")
-        ));
+        )
+        .into());
     }
 
     std::fs::create_dir_all(data_root()).map_err(|e| e.to_string())?;
@@ -323,7 +349,9 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, String> {
 
     // What landed is what counts: it has to be the workspace the repository said it was.
     let cloned = read_json(&temp.0.join(WORKSPACE_FILE)).as_ref().and_then(workspace_identity);
-    let Some((_, name)) = cloned.filter(|(cloned_id, _)| *cloned_id == id) else { return Err(not_a_workspace()) };
+    let Some((_, name)) = cloned.filter(|(cloned_id, _)| *cloned_id == id) else {
+        return Err(not_a_workspace().into());
+    };
     let name = if name.is_empty() { repo.name.clone() } else { name };
 
     let mut settings = load_settings();

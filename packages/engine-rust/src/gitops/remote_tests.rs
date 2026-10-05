@@ -574,11 +574,12 @@ async fn only_the_owner_imports_a_workspace_and_nothing_local_is_replaced() {
         assert!(result["error"].as_str().unwrap().contains(needle), "{result}");
     };
     // Asking by name for a repository the account was only given access to is refused.
-    refuse(
-        engine.call("workspace.import", json!({ "accountId": eve, "repo": "octo/team" })).await,
-        "belongs to @octo, not @eve",
-    );
-    refuse(engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/clash" })).await, "never replaces");
+    let not_owner = engine.call("workspace.import", json!({ "accountId": eve, "repo": "octo/team" })).await;
+    assert_eq!(not_owner["reason"], "notOwner", "{not_owner}");
+    refuse(not_owner, "belongs to @octo, not @eve");
+    let clash = engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/clash" })).await;
+    assert!(clash.get("reason").is_none(), "{clash}");
+    refuse(clash, "never replaces");
     for not_a_workspace in ["octo/code", "octo/other-tool", "octo/notes"] {
         refuse(
             engine.call("workspace.import", json!({ "accountId": octo, "repo": not_a_workspace })).await,
