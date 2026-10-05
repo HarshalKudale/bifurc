@@ -264,6 +264,12 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
 
 /// Add what only the command's result says. `false` when the result reports that nothing was done.
 pub fn complete(event: &mut Event, action: &str, result: &Value) -> bool {
+    // The one refusal that is an event: someone wanted a workspace that is another account's.
+    if action == "workspace.import" && opt_str(result, "reason") == Some(crate::gitops::NOT_OWNER) {
+        event.name = "workspace import blocked".to_string();
+        event.properties.insert("reason".into(), json!("not_owner"));
+        return true;
+    }
     if result.get("ok") == Some(&json!(false)) || opt_str(result, "status") == Some("failed") {
         return false;
     }
@@ -421,6 +427,17 @@ mod tests {
         let mut event = describe("workspace.delete", &json!({ "id": "w" })).unwrap();
         assert!(!complete(&mut event, "workspace.delete", &json!({ "ok": false })));
         assert!(complete(&mut event, "workspace.delete", &json!({ "ok": true })));
+
+        let import = json!({ "accountId": "github.com:7", "repo": "octo/team" });
+        let mut refused = describe("workspace.import", &import).unwrap();
+        let not_a_workspace = json!({ "ok": false, "error": "octo/team is not a Bifurc workspace" });
+        assert!(!complete(&mut refused, "workspace.import", &not_a_workspace));
+        let not_owner = json!({ "ok": false, "error": "octo/team belongs to @octo, not @eve.", "reason": "notOwner" });
+        assert!(complete(&mut refused, "workspace.import", &not_owner));
+        assert_eq!(
+            (refused.name.as_str(), properties(&refused)),
+            ("workspace import blocked", json!({ "reason": "not_owner" }))
+        );
 
         let mut sent = describe("request.send", &json!({ "workspaceId": "w", "id": "r" })).unwrap();
         let result = json!({ "request": { "method": "get" }, "status": 404, "tests": [{}] });
