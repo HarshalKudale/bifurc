@@ -11,12 +11,14 @@ use crate::{
     utils::json::{opt_str, str_of, truthy},
     workspace::{
         deletions::{forget_deleted, pending_entity, prune_pending_folders, record_path, restore_folder_chain},
+        entity_paths::kind_of_path,
         fs::{
             ALL_ENTITY_KINDS, FLAT_ENTITY_KINDS, find_entity_rel_path, get_pending_deletions, read_entity,
             remove_name_entry, remove_pending_deletion, upsert_name_entry, ws_dir,
         },
         git_store::{QueryLogOptions, git, query_log},
         kinds::kind_name_entry,
+        tree,
     },
 };
 
@@ -87,9 +89,8 @@ pub async fn discard_changes(ws_id: &str, rel_path: &str) -> Value {
 
 async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
     let mut normalized = rel_path.replace('\\', "/");
-    let parts: Vec<&str> = normalized.split('/').collect();
-    let kind = parts[0].to_string();
-    let base = parts.last().copied().unwrap_or("").to_string();
+    let kind = kind_of_path(ws_id, &normalized);
+    let base = normalized.rsplit('/').next().unwrap_or("").to_string();
     let entity_id = base.strip_suffix(".json").map(str::to_string);
 
     // A deleted entity comes back into its folder, so a deleted folder is a folder again first: the
@@ -132,6 +133,9 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
         }
     }
 
+    // A file of a tree came back, changed or went: its index reads the tree again.
+    tree::mark_stale(ws_id);
+
     if let Some(id) = &entity_id {
         for k in ALL_ENTITY_KINDS {
             if get_pending_deletions(ws_id, k).iter().any(|e| str_of(e, "id") == id) {
@@ -143,7 +147,7 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
 
         // Foldered kinds only: a flat kind has no names index, and writing one would leave a stray
         // `names.json` that the next publish commits.
-        if !FLAT_ENTITY_KINDS.contains(&kind.as_str()) {
+        if !FLAT_ENTITY_KINDS.contains(&kind.as_str()) && !tree::is_tree_kind(&kind) {
             let result = match read_entity(ws_id, &kind, id) {
                 Some(restored) => match extract_name_entry(&kind, &restored) {
                     Some(entry) => upsert_name_entry(ws_id, &kind, id, entry),

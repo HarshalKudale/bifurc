@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::lists::{ListSpec, preflight_list, run_list};
 use crate::{
     importexport::{
-        support::{FolderSpec, ImportRoot, add_import_folders, commit_config, folder_name, io_failure, parse_json, thrown},
+        support::{FolderSpec, ImportRoot, add_import_folders, commit_config, io_failure, parse_json, thrown},
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
     },
     utils::{
@@ -16,7 +16,7 @@ use crate::{
     },
     workspace::{
         config::load_config,
-        fs::{read_all_entities, upsert_name_entry, write_entity},
+        fs::{read_all_entities, write_entity},
     },
 };
 
@@ -76,7 +76,7 @@ pub async fn websockets_run(ws_id: String, source: ImportSource, strategy: Strat
         read_all_entities(&ws_id, "sockets").iter().map(|c| str_of(c, "id").to_string()).collect();
 
     let skips = |c: &Value| existing.contains(str_of(c, "id")) && strategy == Strategy::Keep;
-    let mut root = ImportRoot::new("wsFolders", "sockets");
+    let mut root = ImportRoot::new("requestFolders", "sockets");
     let mut folder_ids: HashMap<String, String> = HashMap::new();
     if connections.iter().any(|c| !skips(c)) {
         let (root_id, _) = root.get(&mut cfg, &ws_id)?;
@@ -88,7 +88,7 @@ pub async fn websockets_run(ws_id: String, source: ImportSource, strategy: Strat
                 parent: opt_str(f, "parentId").filter(|p| !p.is_empty()).map(str::to_string),
             })
             .collect();
-        folder_ids = add_import_folders(&mut cfg, "wsFolders", "sockets", &ws_id, &root_id, &specs)?;
+        folder_ids = add_import_folders(&mut cfg, "requestFolders", "sockets", &ws_id, &root_id, &specs)?;
     }
 
     let (mut imported, mut skipped) = (0, 0);
@@ -98,18 +98,12 @@ pub async fn websockets_run(ws_id: String, source: ImportSource, strategy: Strat
             continue;
         }
         let new_id = if strategy == Strategy::New { generate_id() } else { str_of(connection, "id").to_string() };
-        let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+        let (root_id, _) = root.get(&mut cfg, &ws_id)?;
         let in_folder =
             opt_str(connection, "folderId").filter(|f| !f.is_empty()).and_then(|f| folder_ids.get(f)).cloned();
         let folder_id = in_folder.unwrap_or(root_id);
-        let folder = folder_name(&cfg, "wsFolders", Some(&folder_id)).unwrap_or(root_name);
         let stored = merged(connection, &json!({ "id": new_id, "folderId": folder_id, "workspaceId": ws_id }));
-        write_entity(&ws_id, "sockets", &new_id, &stored, Some(&folder)).map_err(io_failure)?;
-        let entry = json!({
-            "name": stored.get("name").cloned().unwrap_or(Value::Null),
-            "url": stored.get("url").cloned().unwrap_or(Value::Null),
-        });
-        upsert_name_entry(&ws_id, "sockets", &new_id, entry).map_err(io_failure)?;
+        write_entity(&ws_id, "sockets", &new_id, &stored, Some(&folder_id)).map_err(io_failure)?;
         imported += 1;
     }
 
@@ -177,15 +171,16 @@ mod tests {
         ], "folders": [{ "id": "f1", "name": "Live", "parentId": null, "createdAt": 1, "workspaceId": "old" }] });
         let done = websockets_run(ws.clone(), source(&file), Strategy::Keep).await.unwrap();
         assert_eq!((done.imported, done.skipped), (2, Some(0)));
-        assert!(entity_dir(&ws, "sockets").join("Live").join("c1.json").exists());
         let stored = read_entity(&ws, "sockets", "c1").unwrap();
-        let index = crate::workspace::fs::read_index(&ws, "sockets");
-        let live = index.folders.iter().find(|f| f["name"] == "Live").unwrap();
-        assert_eq!(stored["folderId"], live["id"]);
-        let top = index.folders.iter().find(|f| f["id"] == live["parentId"]).unwrap();
-        assert!(top["name"].as_str().unwrap().starts_with("import-"));
+        let folders = crate::workspace::tree::folders(&ws, crate::workspace::tree::Scope::Requests);
+        let live = folders.iter().find(|f| f.name == "Live").unwrap();
+        assert_eq!(stored["folderId"], live.id.as_str());
+        let top = folders.iter().find(|f| Some(&f.id) == live.parent_id.as_ref()).unwrap();
+        assert!(top.name.starts_with("import-"));
+        // A WebSocket is a request: it is in the request tree, in the directory of its folder.
+        assert!(entity_dir(&ws, "requests").join(&top.name).join("Live").join("c1.json").exists());
         let loose = read_entity(&ws, "sockets", "c2").unwrap();
-        assert_eq!(loose["folderId"], top["id"], "a connection with no folder goes in the import folder");
+        assert_eq!(loose["folderId"], top.id.as_str(), "a connection with no folder goes in the import folder");
         assert_eq!(stored["workspaceId"], ws.as_str());
         assert_eq!(websockets_preflight(&ws, &source(&file)).unwrap().collision_ids, ["c1", "c2"]);
         let again = websockets_run(ws.clone(), source(&file), Strategy::New).await.unwrap();

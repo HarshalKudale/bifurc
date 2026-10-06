@@ -14,7 +14,8 @@ pub struct CrudKind {
     pub kind: &'static str,
     /// The entity list's key in a config snapshot.
     pub config_key: &'static str,
-    /// The folder list's key in a config snapshot; `None` for a kind without folders.
+    /// The folder list's key in a config snapshot; `None` for a kind without folders. Every request type is
+    /// in the one request tree, so they all name `requestFolders`.
     pub folder_config_key: Option<&'static str>,
     /// One directory, no folders, no names index.
     pub is_flat: bool,
@@ -191,7 +192,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "sockets",
         config_key: "wsConnections",
-        folder_config_key: Some("wsFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: None,
@@ -213,7 +214,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "graphqlRequests",
         config_key: "graphqlRequests",
-        folder_config_key: Some("graphqlRequestFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: None,
@@ -224,7 +225,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "soapRequests",
         config_key: "soapRequests",
-        folder_config_key: Some("soapRequestFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: None,
@@ -241,7 +242,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "grpcRequests",
         config_key: "grpcRequests",
-        folder_config_key: Some("grpcRequestFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: Some(|request, _| {
@@ -262,7 +263,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "sseRequests",
         config_key: "sseRequests",
-        folder_config_key: Some("sseRequestFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: Some(|request, _| required(request, "url", "url is required for SSE requests")),
@@ -275,7 +276,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "mcpRequests",
         config_key: "mcpRequests",
-        folder_config_key: Some("mcpRequestFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: Some(|request, _| {
@@ -290,7 +291,7 @@ pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "socketioRequests",
         config_key: "socketioRequests",
-        folder_config_key: Some("socketioRequestFolders"),
+        folder_config_key: Some("requestFolders"),
         is_flat: false,
         has_enabled_state: false,
         validate: Some(|request, _| required(request, "url", "url is required for Socket.IO requests")),
@@ -307,16 +308,15 @@ pub fn crud_kind(kind: &str) -> Option<&'static CrudKind> {
     CRUD_KINDS.iter().find(|k| k.kind == kind)
 }
 
-/// The store's kind for a folder kind (`folder.*` name folders by `mock`, `ws`, `rule`, `request`, ...).
+/// The store's kind for a folder kind: `folder.*` name folders by `request` (the request tree, whatever the
+/// types of the requests in it), `mock` and `rule`.
 pub fn folder_store_kind(folder_kind: &str) -> Option<&'static str> {
-    let store = match folder_kind {
-        "mock" => "mocks",
-        "ws" => "sockets",
-        "rule" => "rules",
-        "request" => "requests",
-        other => other,
-    };
-    crud_kind(store).filter(|kind| kind.folder_config_key.is_some()).map(|kind| kind.kind)
+    match folder_kind {
+        "mock" => Some("mocks"),
+        "rule" => Some("rules"),
+        "request" => Some("requests"),
+        _ => None,
+    }
 }
 
 /// Whether every entity of `kind` lives in a folder: the requests and mocks, never loose at the top level.
