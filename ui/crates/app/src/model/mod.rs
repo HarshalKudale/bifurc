@@ -11,6 +11,7 @@ pub mod kind;
 pub mod media;
 pub mod snippet;
 pub mod socket;
+pub mod socketio;
 pub mod stream;
 pub mod traffic;
 pub mod tree;

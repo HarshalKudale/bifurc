@@ -72,7 +72,7 @@ impl Screen {
     /// A screen that is not about saved entities covers the whole workspace.
     pub fn git_prefixes(self) -> &'static [&'static str] {
         match self {
-            Screen::Requests => &["requests/", "graphqlRequests/", "soapRequests/", "grpcRequests/", "sseRequests/", "sockets/"],
+            Screen::Requests => &["requests/", "graphqlRequests/", "soapRequests/", "grpcRequests/", "sseRequests/", "socketioRequests/", "sockets/"],
             Screen::Mocks => &["mocks/"],
             Screen::Mappings => &["mappings/"],
             Screen::ProxyRules => &["rules/"],
