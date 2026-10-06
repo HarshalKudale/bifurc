@@ -25,4 +25,5 @@ package() {
   install -Dm644 "$srcdir/bifurc-$pkgver/resources/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/bifurc.png"
   install -Dm644 "$srcdir/bifurc-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   ln -s /usr/lib/bifurc/bin/bifurc "$pkgdir/usr/bin/bifurc"
+  ln -s /usr/lib/bifurc/bin/bifurc-mcp "$pkgdir/usr/bin/bifurc-mcp"
 }
