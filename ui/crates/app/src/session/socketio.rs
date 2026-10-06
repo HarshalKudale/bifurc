@@ -6,15 +6,19 @@
 //! session's name field.
 //!
 //! Besides the address and the headers a request holds what a Socket.IO client is given: the namespace to
-//! join, the path the server listens on and the `auth` payload sent with the connection.
+//! join, the path the server listens on and the `auth` payload sent with the connection. It also holds the
+//! event to send (its name, its arguments and whether the server is to acknowledge it), in the Message tab
+//! with Send above it, as a gRPC request holds its message. The Listeners tab names the events to hear:
+//! only those are logged when the server sends them, unless every event is listened to.
 //!
 //! Connecting a saved, unedited request sends only its id (`socketio.connect {workspaceId, connectionId}`); a
 //! draft or an edited request sends the target it holds. The engine resolves environment variables either way.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{Editor, InputEvent, InputState},
     notification::Notification,
@@ -34,11 +38,12 @@ use super::{
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
     model::{
         RequestKind,
         http::{header_map, header_pairs},
+        socket::SocketState,
         socketio::SocketIoView,
     },
 };
@@ -47,16 +52,21 @@ const DEFAULT_NAME: &str = "New Socket.IO request";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
+    Message,
+    Listeners,
     Headers,
     Auth,
     Settings,
 }
 
 impl Section {
-    const ALL: [Section; 3] = [Section::Headers, Section::Auth, Section::Settings];
+    const ALL: [Section; 5] =
+        [Section::Message, Section::Listeners, Section::Headers, Section::Auth, Section::Settings];
 
     fn label(self) -> &'static str {
         match self {
+            Section::Message => "Message",
+            Section::Listeners => "Listeners",
             Section::Headers => "Headers",
             Section::Auth => "Auth",
             Section::Settings => "Settings",
@@ -72,6 +82,22 @@ struct Fields {
     namespace: String,
     path: String,
     auth: String,
+    /// The event to send: its name, what is written for its arguments, and whether an acknowledgement is asked for.
+    event: String,
+    args: String,
+    ack: bool,
+    /// The events listened to, each with a note for the reader, and whether every event is heard instead.
+    listeners: Vec<(String, String)>,
+    listen_all: bool,
+}
+
+impl Fields {
+    /// The names of the events listened to, or `None` when every event is.
+    fn heard(&self) -> Option<Vec<String>> {
+        (!self.listen_all).then(|| {
+            self.listeners.iter().map(|(event, _)| event.trim().to_owned()).filter(|event| !event.is_empty()).collect()
+        })
+    }
 }
 
 pub struct SocketIoSession {
@@ -91,6 +117,11 @@ pub struct SocketIoSession {
     namespace: VarEditor,
     path: VarEditor,
     auth: VarEditor,
+    event: VarEditor,
+    args: VarEditor,
+    ack: bool,
+    listeners: Entity<KeyValueTable>,
+    listen_all: bool,
     section: Section,
     baseline: Fields,
     connection: Entity<SocketIoConnection>,
@@ -116,7 +147,15 @@ impl SocketIoSession {
         let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
         let namespace = VarEditor::line("/  (the main namespace)", window, cx);
         let path = VarEditor::line("/socket.io", window, cx);
+        let listeners = cx.new(|cx| KeyValueTable::new("Event", "Description", window, cx));
         let auth = VarEditor::code(Syntax::Json, "{ \"token\": \"…\" }  (sent when the connection opens)", window, cx);
+        let event = VarEditor::line("Event name", window, cx);
+        let args = VarEditor::code(
+            Syntax::Json,
+            "Arguments: a JSON array is one argument per element, anything else is one argument",
+            window,
+            cx,
+        );
         let connection = cx.new(|cx| SocketIoConnection::new(window, cx));
 
         let mut subscriptions = Vec::new();
@@ -137,17 +176,27 @@ impl SocketIoSession {
                 },
             ));
         }
-        subscriptions.push(cx.subscribe(auth.state(), |this, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.changed(cx);
-            }
-        }));
+        // Enter in the event's name sends it.
+        subscriptions.push(cx.subscribe_in(
+            event.state(),
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => this.changed(cx),
+                InputEvent::PressEnter { .. } => this.send_event(window, cx),
+                _ => {}
+            },
+        ));
+        for editor in [&auth, &args] {
+            subscriptions.push(cx.subscribe(editor.state(), |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.changed(cx);
+                }
+            }));
+        }
         subscriptions.push(cx.subscribe(&headers, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
-        subscriptions.push(cx.subscribe_in(&connection, window, |this, _, event: &SocketIoEvent, window, cx| {
-            match event {
-                SocketIoEvent::Emit { event, args, ack } => this.emit(event.clone(), args.clone(), *ack, window, cx),
-                SocketIoEvent::Clear => this.clear_messages(cx),
-            }
+        subscriptions.push(cx.subscribe(&listeners, |this, _, _: &KeyValueEvent, cx| this.listening_changed(cx)));
+        subscriptions.push(cx.subscribe(&connection, |this, _, event: &SocketIoEvent, cx| match event {
+            SocketIoEvent::Clear => this.clear_messages(cx),
         }));
         subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
             ModelEvent::SocketIoStatus(payload) if this.is_mine(payload) => {
@@ -172,6 +221,11 @@ impl SocketIoSession {
             namespace: String::new(),
             path: String::new(),
             auth: String::new(),
+            event: String::new(),
+            args: String::new(),
+            ack: false,
+            listeners: Vec::new(),
+            listen_all: false,
         };
         let mut this = Self {
             model,
@@ -188,7 +242,12 @@ impl SocketIoSession {
             namespace,
             path,
             auth,
-            section: Section::Headers,
+            event,
+            args,
+            ack: false,
+            listeners,
+            listen_all: false,
+            section: Section::Message,
             baseline: baseline.clone(),
             connection,
             saving: false,
@@ -346,7 +405,7 @@ impl SocketIoSession {
             name: (!fields.name.is_empty() && fields.name != DEFAULT_NAME).then_some(fields.name),
             url: fields.url,
             headers: fields.headers,
-            body: String::new(),
+            body: fields.args,
         }
     }
 
@@ -357,6 +416,7 @@ impl SocketIoSession {
         }
         self.url.set_value(carry.url.clone(), window, cx);
         self.headers.update(cx, |table, cx| table.set_pairs(&carry.headers, window, cx));
+        self.args.set_value(carry.body.clone(), window, cx);
         self.changed(cx);
     }
 
@@ -379,11 +439,17 @@ impl SocketIoSession {
             namespace: self.namespace.line_value(cx),
             path: self.path.line_value(cx),
             auth: self.auth.value(cx),
+            event: self.event.line_value(cx),
+            args: self.args.value(cx),
+            ack: self.ack,
+            listeners: self.listeners.read(cx).pairs(cx),
+            listen_all: self.listen_all,
         }
     }
 
     fn fields_of(entity: &Map<String, Value>) -> Fields {
         let text = |key: &str| entity.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let listed = entity.get("listeners").and_then(Value::as_array);
         Fields {
             name: text("name").trim().to_owned(),
             url: text("url").trim().to_owned(),
@@ -391,6 +457,22 @@ impl SocketIoSession {
             namespace: text("namespace").trim().to_owned(),
             path: text("path").trim().to_owned(),
             auth: text("auth"),
+            event: text("event").trim().to_owned(),
+            args: text("args"),
+            ack: entity.get("ack").and_then(Value::as_bool).unwrap_or(false),
+            listeners: listed
+                .into_iter()
+                .flatten()
+                .filter_map(|item| match item {
+                    Value::String(event) => Some((event.clone(), String::new())),
+                    row => Some((
+                        row.get("event")?.as_str()?.to_owned(),
+                        row.get("description").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    )),
+                })
+                .collect(),
+            // A request saved without a list (by the command line) hears every event, as the engine has it.
+            listen_all: entity.get("listenAll").and_then(Value::as_bool).unwrap_or(listed.is_none()),
         }
     }
 
@@ -401,6 +483,37 @@ impl SocketIoSession {
         self.namespace.set_value(fields.namespace.clone(), window, cx);
         self.path.set_value(fields.path.clone(), window, cx);
         self.auth.set_value(fields.auth.clone(), window, cx);
+        self.event.set_value(fields.event.clone(), window, cx);
+        self.args.set_value(fields.args.clone(), window, cx);
+        self.ack = fields.ack;
+        self.listeners.update(cx, |table, cx| table.set_pairs(&fields.listeners, window, cx));
+        self.listen_all = fields.listen_all;
+        self.show_listening(fields, cx);
+    }
+
+    /// Tells the live side what is listened to, for its header and its empty log.
+    fn show_listening(&mut self, fields: &Fields, cx: &mut Context<Self>) {
+        let heard = fields.heard().map(|events| events.len());
+        self.connection.update(cx, |c, cx| c.set_listening(heard, cx));
+    }
+
+    /// The listeners were edited: an open connection hears the new ones from now on.
+    fn listening_changed(&mut self, cx: &mut Context<Self>) {
+        let fields = self.fields(cx);
+        self.show_listening(&fields, cx);
+        self.changed(cx);
+        if self.connection.read(cx).state().is_live() {
+            let mut payload = json!({ "workspaceId": self.workspace_id, "connectionId": self.connection_id });
+            if let Some(heard) = fields.heard() {
+                payload["listeners"] = json!(heard);
+            }
+            let client = self.model.read(cx).client().clone();
+            call(&client, cx, "socketio.listen", payload, |_, outcome, cx| {
+                if let Some(message) = refusal(outcome, "The listeners were not changed.") {
+                    cx.emit(SessionEvent::Notice(format!("Couldn't change the listeners. {message}")));
+                }
+            });
+        }
     }
 
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
@@ -421,6 +534,16 @@ impl SocketIoSession {
         entity.insert("namespace".into(), json!(fields.namespace));
         entity.insert("path".into(), json!(fields.path));
         entity.insert("auth".into(), json!(fields.auth));
+        entity.insert("event".into(), json!(fields.event));
+        entity.insert("args".into(), json!(fields.args));
+        entity.insert("ack".into(), json!(fields.ack));
+        let listeners: Vec<Value> = fields
+            .listeners
+            .iter()
+            .map(|(event, description)| json!({ "event": event, "description": description }))
+            .collect();
+        entity.insert("listeners".into(), Value::Array(listeners));
+        entity.insert("listenAll".into(), json!(fields.listen_all));
         entity
     }
 
@@ -517,17 +640,28 @@ impl SocketIoSession {
             return;
         }
         self.connection_id = self.saved_id.clone().unwrap_or_else(|| self.connection_id.clone());
-        let payload = match (&self.saved_id, fields == self.baseline) {
+        // The event to send is not part of the target: editing it does not make the saved target stale.
+        let target = |f: &Fields| {
+            (f.url.clone(), f.headers.clone(), f.namespace.clone(), f.path.clone(), f.auth.clone(), f.heard())
+        };
+        let payload = match (&self.saved_id, target(&fields) == target(&self.baseline)) {
             (Some(_), true) => json!({ "workspaceId": self.workspace_id, "connectionId": self.connection_id }),
-            _ => json!({
-                "workspaceId": self.workspace_id,
-                "connectionId": self.connection_id,
-                "url": fields.url,
-                "headers": header_map(&fields.headers),
-                "namespace": fields.namespace,
-                "path": fields.path,
-                "auth": fields.auth,
-            }),
+            _ => {
+                let mut payload = json!({
+                    "workspaceId": self.workspace_id,
+                    "connectionId": self.connection_id,
+                    "url": fields.url,
+                    "headers": header_map(&fields.headers),
+                    "namespace": fields.namespace,
+                    "path": fields.path,
+                    "auth": fields.auth,
+                });
+                // Without a list the engine logs every event.
+                if let Some(heard) = fields.heard() {
+                    payload["listeners"] = json!(heard);
+                }
+                payload
+            }
         };
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "socketio.connect", payload, move |_this, outcome, window, cx| {
@@ -547,16 +681,25 @@ impl SocketIoSession {
         });
     }
 
-    /// Emits an event over the open connection. What was composed is kept: an event is often emitted again.
-    fn emit(&mut self, event: String, args: String, ack: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Whether the event in the Message tab can be sent: the connection is open and the event has a name.
+    fn can_send(&self, cx: &gpui_kit::App) -> bool {
+        self.connection.read(cx).state() == SocketState::Connected && !self.event.line_value(cx).is_empty()
+    }
+
+    /// Sends the event of the Message tab over the open connection. It stays as written: an event is often
+    /// sent again.
+    fn send_event(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_send(cx) {
+            return;
+        }
         let client = self.model.read(cx).client().clone();
         let payload = json!({
-            "workspaceId": self.workspace_id, "connectionId": self.connection_id, "event": event, "args": args,
-            "ack": ack,
+            "workspaceId": self.workspace_id, "connectionId": self.connection_id,
+            "event": self.event.line_value(cx), "args": self.args.value(cx), "ack": self.ack,
         });
         call_in(&client, window, cx, "socketio.emit", payload, |_this, outcome, window, cx| {
-            if let Some(message) = refusal(outcome, "The event was not emitted.") {
-                window.push_notification(Notification::error(message).title("Couldn't emit the event"), cx);
+            if let Some(message) = refusal(outcome, "The event was not sent.") {
+                window.push_notification(Notification::error(message).title("Couldn't send the event"), cx);
             }
         });
     }
@@ -570,7 +713,7 @@ impl SocketIoSession {
 
     fn render_sections(&self, cx: &mut Context<Self>) -> TabBar {
         TabBar::new("socketio-sections")
-            .segmented()
+            .underline()
             .small()
             .selected_index(Section::ALL.iter().position(|s| *s == self.section).unwrap_or(0))
             .on_click(cx.listener(|this, ix: &usize, _, cx| {
@@ -640,8 +783,54 @@ impl Render for SocketIoSession {
         }
 
         let live = self.connection.read(cx).state().is_live();
-        let row_height = VarEditor::row_height(cx);
+        let can_send = self.can_send(cx);
         let content = match self.section {
+            // The event: its name and whether it is to be acknowledged, then its arguments.
+            Section::Message => v_flex()
+                .size_full()
+                .child(
+                    h_flex()
+                        .flex_none()
+                        .gap_3()
+                        .px_3()
+                        .py_2()
+                        .child(div().flex_1().min_w_0().child(self.event.line_field(cx)))
+                        .child(
+                            Checkbox::new("socketio-ack")
+                                .checked(self.ack)
+                                .small()
+                                .label("Ask for an acknowledgement")
+                                .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                    this.ack = *checked;
+                                    this.changed(cx);
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .border_t_1()
+                        .border_color(theme.border)
+                        .child(Editor::new(self.args.state()).bordered(false).h_full()),
+                )
+                .into_any_element(),
+            Section::Listeners => v_flex()
+                .size_full()
+                .child(
+                    h_flex().flex_none().px_3().py_2().child(
+                        Checkbox::new("socketio-listen-all")
+                            .checked(self.listen_all)
+                            .small()
+                            .label("Listen to every event the server sends")
+                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                this.listen_all = *checked;
+                                this.listening_changed(cx);
+                            })),
+                    ),
+                )
+                .child(div().flex_1().min_h_0().child(self.listeners.clone()))
+                .into_any_element(),
             Section::Headers => self.headers.clone().into_any_element(),
             Section::Auth => Editor::new(self.auth.state()).bordered(false).h_full().into_any_element(),
             Section::Settings => self.render_settings(live, cx),
@@ -649,26 +838,26 @@ impl Render for SocketIoSession {
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .child(div().flex_1().min_w_0().child(self.url.line_field(cx).disabled(live)))
-                    .child(if live {
-                        Button::new("disconnect-socketio")
-                            .h(row_height)
-                            .label("Disconnect")
-                            .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
-                    } else {
-                        Button::new("connect-socketio")
-                            .primary()
-                            .h(row_height)
-                            .label("Connect")
-                            .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
-                    }),
-            )
+            .child(request_bar(
+                None,
+                self.url.line_field(cx).disabled(live),
+                if live {
+                    Button::new("disconnect-socketio")
+                        .label("Disconnect")
+                        .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
+                } else {
+                    Button::new("connect-socketio")
+                        .primary()
+                        .label("Connect")
+                        .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
+                },
+                [Button::new("send-socketio-event")
+                    .primary()
+                    .label("Send message")
+                    .disabled(!can_send)
+                    .on_click(cx.listener(|this, _, window, cx| this.send_event(window, cx)))],
+                cx,
+            ))
             .child(div().flex_none().px_3().child(self.render_sections(cx)))
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()

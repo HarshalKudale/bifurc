@@ -22,7 +22,6 @@ use gpui_kit::component::{
     tab::{Tab, TabBar},
     v_flex,
 };
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Subscription, Window, div,
@@ -32,7 +31,7 @@ use serde_json::{Map, Value, json};
 use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call_in, describe},
     model::{
         RequestKind,
@@ -1297,20 +1296,41 @@ impl Render for ProtocolSession {
             Control::Pairs(table) => table.clone().into_any_element(),
         });
 
+        // What a method the client streams to adds: after the call is invoked, each message is sent by hand.
+        let mut secondary = Vec::new();
+        if self.grpc.is_some() && matches!(self.streaming_kind(cx), "client" | "bidi") {
+            let open = self.live && self.connected;
+            secondary.push(
+                Button::new("grpc-send-message")
+                    .primary()
+                    .label("Send message")
+                    .disabled(!open)
+                    .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx))),
+            );
+            secondary.push(
+                Button::new("grpc-end-streaming")
+                    .outline()
+                    .label("End streaming")
+                    .disabled(!open)
+                    .on_click(cx.listener(|this, _, window, cx| this.end_streaming(window, cx))),
+            );
+        }
+
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex().flex_none().gap_2().px_3().py_2().child(div().flex_1().min_w_0().child(line(0))).child(
-                    Button::new("send-request")
-                        .primary()
-                        .h(VarEditor::row_height(cx))
-                        .label(self.send_label(cx))
-                        .disabled(self.live && !self.connected)
-                        .loading(self.sending)
-                        .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
-                ),
-            )
+            .child(request_bar(
+                None,
+                line(0),
+                Button::new("send-request")
+                    .primary()
+                    .label(self.send_label(cx))
+                    .disabled(self.live && !self.connected)
+                    .loading(self.sending)
+                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                secondary,
+                cx,
+            ))
             .child(if self.grpc.is_some() {
                 self.grpc_row(cx)
             } else {
@@ -1329,31 +1349,6 @@ impl Render for ProtocolSession {
                             .child(line(ix))
                     }))
                     .into_any_element()
-            })
-            .when(self.live && matches!(self.streaming_kind(cx), "client" | "bidi"), |this| {
-                this.child(
-                    h_flex()
-                        .flex_none()
-                        .gap_2()
-                        .px_3()
-                        .pb_2()
-                        .child(
-                            Button::new("grpc-send-message")
-                                .primary()
-                                .small()
-                                .label("Send message")
-                                .disabled(!self.connected)
-                                .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx))),
-                        )
-                        .child(
-                            Button::new("grpc-end-streaming")
-                                .outline()
-                                .small()
-                                .label("End streaming")
-                                .disabled(!self.connected)
-                                .on_click(cx.listener(|this, _, window, cx| this.end_streaming(window, cx))),
-                        ),
-                )
             })
             .child(
                 div().flex_none().px_3().child(
