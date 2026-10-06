@@ -135,7 +135,8 @@ Options of each type
   sse         [-X, --method GET] [-d, --body <text> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
               it opens the stream, prints the events that arrive in that time (or until the server ends it),
               and closes it
-  socketio    [--namespace </ns>] [--path </socket.io>] [--auth <json object>]; send takes
+  socketio    [--namespace </ns>] [--path </socket.io>] [--auth <json object>] [--listen <event>]...;
+              only the events named with --listen are printed (every event when none is named); send takes
               [--event <name> [-d, --body <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
               emits the event, prints what was emitted and received in that time, and disconnects. The
               arguments are a JSON array (one per element), any other JSON value or plain text (one argument);
