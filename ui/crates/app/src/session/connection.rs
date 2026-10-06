@@ -20,9 +20,9 @@ use gpui_kit::{
 };
 use serde_json::Value;
 
-use crate::model::{
-    socket::{Direction, SocketMessage, SocketState, SocketView},
-    traffic::clock_utc,
+use crate::{
+    components::stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
+    model::socket::{Direction, SocketMessage, SocketState, SocketView},
 };
 
 #[derive(Debug, Clone)]
@@ -37,6 +37,9 @@ pub struct SocketConnection {
     composer: Entity<TextareaState>,
     scroll: ScrollHandle,
     follow_tail: bool,
+    /// The messages opened to their whole text, by id.
+    open: OpenRows,
+    search: LogSearch,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -55,6 +58,11 @@ impl SocketConnection {
             composer,
             scroll: ScrollHandle::new(),
             follow_tail: true,
+            open: OpenRows::default(),
+            search: LogSearch::new(window, cx, |this, cx| {
+                this.open.highlight(&this.search.query(cx), cx);
+                cx.notify();
+            }),
             _subscriptions: vec![subscription],
         }
     }
@@ -65,6 +73,7 @@ impl SocketConnection {
 
     pub fn replace_view(&mut self, view: SocketView, cx: &mut Context<Self>) {
         self.view = view;
+        self.forget_dropped();
         self.follow_tail = true;
         cx.notify();
     }
@@ -76,12 +85,14 @@ impl SocketConnection {
 
     pub fn apply_message_event(&mut self, payload: &Value, cx: &mut Context<Self>) {
         self.view.apply_message_event(payload);
+        self.forget_dropped();
         self.follow_tail = true;
         cx.notify();
     }
 
     pub fn clear_messages(&mut self, cx: &mut Context<Self>) {
         self.view.clear_messages();
+        self.open.clear();
         cx.notify();
     }
 
@@ -96,22 +107,38 @@ impl SocketConnection {
         }
     }
 
-    fn render_message(message: &SocketMessage, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme().clone();
-        let (tag, label) = match message.direction {
-            Direction::Sent => (Tag::secondary().outline(), "Sent"),
-            Direction::Received => (Tag::secondary(), "Received"),
+    /// The log is bounded, so an open message can leave it.
+    fn forget_dropped(&mut self) {
+        if !self.open.is_empty() {
+            let messages = &self.view.messages;
+            self.open.retain(|id| messages.iter().any(|m| m.id == id));
+        }
+    }
+
+    /// One message: the shared log row, which opens to the whole message.
+    fn render_message(&self, message: &SocketMessage, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let sent = message.direction == Direction::Sent;
+        let row = LogRow {
+            id: message.id.clone(),
+            ts: message.ts,
+            tag: if sent { "Sent" } else { "Received" }.to_owned(),
+            outline: sent,
+            way: Some(if sent { Way::Sent } else { Way::Received }),
+            note: None,
+            data: message.data.clone(),
         };
-        h_flex()
-            .id(gpui_kit::ElementId::Name(message.id.clone().into()))
-            .gap_3()
-            .px_3()
-            .py_1()
-            .items_start()
-            .child(div().w_20().flex_none().text_sm().text_color(theme.muted_foreground).child(clock_utc(message.ts)))
-            .child(div().w_20().flex_none().child(tag.child(label)))
-            .child(div().flex_1().min_w_0().child(message.data.clone()))
-            .into_any_element()
+        let id = message.id.clone();
+        log_row(
+            &row,
+            self.open.get(&message.id),
+            cx.listener(move |this, _, window, cx| {
+                let Some(message) = this.view.messages.iter().find(|m| m.id == id) else { return };
+                let query = this.search.query(cx);
+                this.open.toggle(&id, &message.data, &query, window, cx);
+                cx.notify();
+            }),
+            cx,
+        )
     }
 }
 
@@ -129,6 +156,11 @@ impl Render for SocketConnection {
             self.follow_tail = false;
             self.scroll.scroll_to_bottom();
         }
+        let needle = self.search.needle(cx);
+        let shown: Vec<&SocketMessage> =
+            self.view.messages.iter().filter(|m| found(needle.as_deref(), &[&m.data])).collect();
+        let search_bar = self.search.bar(shown.len(), self.view.messages.len(), cx);
+        let none_found = shown.is_empty() && !self.view.messages.is_empty();
         let can_send = state == SocketState::Connected && !self.composer.read(cx).value().is_empty();
 
         v_flex()
@@ -149,6 +181,10 @@ impl Render for SocketConnection {
                         self.view.messages.len(),
                         if self.view.messages.len() == 1 { "" } else { "s" }
                     )))
+                    .child(search_button("search-messages").on_click(cx.listener(|this, _, window, cx| {
+                        this.search.toggle(window, cx);
+                        cx.notify();
+                    })))
                     .child(
                         Button::new("clear-messages")
                             .ghost()
@@ -158,6 +194,7 @@ impl Render for SocketConnection {
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(ConnectionEvent::Clear))),
                     ),
             )
+            .children(search_bar)
             .child(
                 div()
                     .id("socket-messages")
@@ -178,7 +215,8 @@ impl Render for SocketConnection {
                             ),
                         ))
                     })
-                    .children(self.view.messages.iter().map(|m| Self::render_message(m, cx))),
+                    .when(none_found, |this| this.child(nothing_found()))
+                    .children(shown.into_iter().map(|m| self.render_message(m, cx))),
             )
             .child(
                 v_flex()
