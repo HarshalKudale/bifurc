@@ -491,7 +491,7 @@ impl SettingsScreen {
                 ))
                 .item(self.port_item(
                     "Port",
-                    "Where .localhost names are served and sent on to their mappings. 80 lets the names work without a port.",
+                    "Where .localhost names are served and sent on to their mappings, over HTTPS while Intercept HTTPS is on. 80 (HTTP) or 443 (HTTPS) lets the names work without a port.",
                     "port",
                 ))
                 .footer(|_, _| "A new port takes effect at once while the reverse proxy is running."),
@@ -519,7 +519,7 @@ impl SettingsScreen {
                         },
                     ),
                 )
-                .description("Decrypt HTTPS traffic through the forward proxy so rules, mocks and capture apply to it.")
+                .description("Run Bifurc over HTTPS with its certificate: the reverse proxy serves .localhost names over HTTPS on its port, the forward proxy also accepts HTTPS proxy clients on its port, and HTTPS traffic through it is decrypted so rules, mocks and capture apply.")
                 .keywords(["tls", "ssl", "certificate"]),
             ),
             SettingGroup::new()
