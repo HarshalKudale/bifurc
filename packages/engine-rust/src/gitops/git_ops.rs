@@ -36,6 +36,7 @@ pub fn extract_name_entry(kind: &str, entity: &Value) -> Option<Value> {
         "mocks" => json!({ "name": text("name"), "method": text_or("method", "GET"), "url": text("urlPattern") }),
         "requests" => json!({ "name": text("name"), "method": text_or("method", "GET"), "url": text("url") }),
         "sockets" => json!({ "name": text("name"), "url": text("url") }),
+        "socketioRequests" => json!({ "name": text("name"), "url": text("url"), "namespace": text("namespace") }),
         "soapRequests" => {
             json!({ "name": text("name"), "endpointUrl": text("endpointUrl"), "soapAction": text("soapAction") })
         }

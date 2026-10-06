@@ -46,6 +46,7 @@ fn folder_config(kind: &str) -> Result<FolderConfig> {
         "graphqlRequest" => ("graphqlRequestFolders", "graphqlRequests", "graphqlRequests"),
         "grpcRequest" => ("grpcRequestFolders", "grpcRequests", "grpcRequests"),
         "sseRequest" => ("sseRequestFolders", "sseRequests", "sseRequests"),
+        "socketioRequest" => ("socketioRequestFolders", "socketioRequests", "socketioRequests"),
         "soapRequest" => ("soapRequestFolders", "soapRequests", "soapRequests"),
         "request" => ("requestFolders", "requests", "requests"),
         other => return Err(EngineError::engine(format!("Unknown folder kind \"{other}\"."))),
