@@ -286,11 +286,10 @@ impl Shell {
         self.requests.update(cx, |requests, cx| requests.new_request(kind, None, window, cx));
     }
 
-    /// Asks for the name of a new top-level folder for requests of `kind`. Each request type has its own
-    /// folders.
-    pub fn prompt_new_folder(&mut self, kind: RequestKind, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks for the name of a new top-level folder for requests, of whatever type.
+    pub fn prompt_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_screen(Screen::Requests, window, cx);
-        self.requests.update(cx, |requests, cx| requests.prompt_new_folder(kind, None, window, cx));
+        self.requests.update(cx, |requests, cx| requests.prompt_new_folder(None, window, cx));
     }
 
     /// Opens a saved request in a tab and selects it in the tree.
