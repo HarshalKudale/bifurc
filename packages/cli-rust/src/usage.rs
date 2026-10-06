@@ -33,6 +33,7 @@ Engine
 Anything else
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
   commands                               List every engine command
+  bifurc-mcp                             A command of its own: these commands as tools for an AI agent (MCP, stdio)
   help [<group>]
 
 Options
