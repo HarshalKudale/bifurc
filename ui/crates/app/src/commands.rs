@@ -26,6 +26,7 @@ actions!(
         NewGrpcRequest,
         NewSoapRequest,
         NewWebSocketRequest,
+        NewSseRequest,
         ImportCurlRequest,
         ImportCurlMock,
         NewFolder,
@@ -33,6 +34,7 @@ actions!(
         NewGrpcFolder,
         NewSoapFolder,
         NewWebSocketFolder,
+        NewSseFolder,
         NewMock,
         NewMockFolder,
         NewMapping,
@@ -152,6 +154,7 @@ pub fn register_actions(cx: &mut App) {
     new_request::<NewGrpcRequest>(cx, RequestKind::Grpc);
     new_request::<NewSoapRequest>(cx, RequestKind::Soap);
     new_request::<NewWebSocketRequest>(cx, RequestKind::WebSocket);
+    new_request::<NewSseRequest>(cx, RequestKind::Sse);
     on_shell::<ImportCurlRequest>(cx, |shell, window, cx| shell.import_curl_request(window, cx));
     on_shell::<ImportCurlMock>(cx, |shell, window, cx| shell.import_curl_mock(window, cx));
     new_folder::<NewFolder>(cx, RequestKind::Rest);
@@ -159,6 +162,7 @@ pub fn register_actions(cx: &mut App) {
     new_folder::<NewGrpcFolder>(cx, RequestKind::Grpc);
     new_folder::<NewSoapFolder>(cx, RequestKind::Soap);
     new_folder::<NewWebSocketFolder>(cx, RequestKind::WebSocket);
+    new_folder::<NewSseFolder>(cx, RequestKind::Sse);
     on_shell::<NewMock>(cx, |shell, window, cx| shell.new_mock(window, cx));
     on_shell::<NewMockFolder>(cx, |shell, window, cx| shell.prompt_new_mock_folder(window, cx));
     on_shell::<NewMapping>(cx, |shell, window, cx| shell.prompt_new_mapping(window, cx));

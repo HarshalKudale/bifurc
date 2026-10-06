@@ -7,11 +7,18 @@ pub enum RequestKind {
     Grpc,
     Soap,
     WebSocket,
+    Sse,
 }
 
 impl RequestKind {
-    pub const ALL: [RequestKind; 5] =
-        [RequestKind::Rest, RequestKind::GraphQl, RequestKind::Grpc, RequestKind::Soap, RequestKind::WebSocket];
+    pub const ALL: [RequestKind; 6] = [
+        RequestKind::Rest,
+        RequestKind::GraphQl,
+        RequestKind::Grpc,
+        RequestKind::Soap,
+        RequestKind::WebSocket,
+        RequestKind::Sse,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -20,6 +27,7 @@ impl RequestKind {
             RequestKind::Grpc => "gRPC",
             RequestKind::Soap => "SOAP",
             RequestKind::WebSocket => "WebSocket",
+            RequestKind::Sse => "SSE",
         }
     }
 
@@ -31,6 +39,7 @@ impl RequestKind {
             RequestKind::Grpc => "grpcRequests",
             RequestKind::Soap => "soapRequests",
             RequestKind::WebSocket => "wsConnections",
+            RequestKind::Sse => "sseRequests",
         }
     }
 
@@ -47,6 +56,7 @@ impl RequestKind {
             RequestKind::Grpc => "grpcRequest",
             RequestKind::Soap => "soapRequest",
             RequestKind::WebSocket => "ws",
+            RequestKind::Sse => "sseRequest",
         }
     }
 
@@ -58,6 +68,7 @@ impl RequestKind {
             RequestKind::Grpc => "grpcRequests",
             RequestKind::Soap => "soapRequests",
             RequestKind::WebSocket => "wsConnections",
+            RequestKind::Sse => "sseRequests",
         }
     }
 
@@ -69,17 +80,18 @@ impl RequestKind {
             RequestKind::Grpc => "grpcRequestFolders",
             RequestKind::Soap => "soapRequestFolders",
             RequestKind::WebSocket => "wsFolders",
+            RequestKind::Sse => "sseRequestFolders",
         }
     }
 
-    /// The by-id send command for the kinds that have one. WebSocket connects instead of sending.
+    /// The by-id send command for the kinds that have one. WebSocket and SSE connect instead of sending.
     pub fn send_command(self) -> Option<&'static str> {
         match self {
             RequestKind::Rest => Some("request.send"),
             RequestKind::GraphQl => Some("graphql.send"),
             RequestKind::Grpc => Some("grpc.send"),
             RequestKind::Soap => Some("soap.send"),
-            RequestKind::WebSocket => None,
+            RequestKind::WebSocket | RequestKind::Sse => None,
         }
     }
 
@@ -91,6 +103,7 @@ impl RequestKind {
             RequestKind::Grpc => "gRPC",
             RequestKind::Soap => "SOAP",
             RequestKind::WebSocket => "WS",
+            RequestKind::Sse => "SSE",
         }
     }
 }
@@ -106,6 +119,18 @@ mod tests {
         assert_eq!(RequestKind::WebSocket.folder_kind(), "ws");
         assert_eq!(RequestKind::WebSocket.send_command(), None);
         assert_eq!(RequestKind::Rest.send_command(), Some("request.send"));
+    }
+
+    #[test]
+    fn sse_is_one_of_the_request_kinds_with_the_same_shape_of_names() {
+        assert!(RequestKind::ALL.contains(&RequestKind::Sse));
+        assert_eq!(RequestKind::Sse.entity_kind(), "sseRequests");
+        assert_eq!(RequestKind::Sse.folder_kind(), "sseRequest");
+        assert_eq!(RequestKind::Sse.config_key(), "sseRequests");
+        assert_eq!(RequestKind::Sse.folders_key(), "sseRequestFolders");
+        assert_eq!(RequestKind::Sse.send_command(), None);
+        assert_eq!(RequestKind::Sse.badge(), "SSE");
+        assert_eq!(RequestKind::from_entity_kind("sseRequests"), Some(RequestKind::Sse));
     }
 
     #[test]

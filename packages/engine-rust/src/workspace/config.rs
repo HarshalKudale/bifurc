@@ -310,6 +310,11 @@ pub fn load_config() -> Value {
             "streamingType": "unary", "createdAt": 0,
         }),
     );
+    let sse_requests = listed(
+        "sseRequests",
+        &["url", "method"],
+        json!({ "headers": {}, "body": "", "createdAt": 0 }),
+    );
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 
@@ -332,6 +337,8 @@ pub fn load_config() -> Value {
         "grpcRequests": grpc_requests,
         "protoFiles": read_all_entities(ws_id, "protoFiles"),
         "grpcRequestFolders": folders(ws_id, "grpcRequests"),
+        "sseRequests": sse_requests,
+        "sseRequestFolders": folders(ws_id, "sseRequests"),
         "soapRequests": soap_requests,
         "savedWsdls": [],
         "soapRequestFolders": folders(ws_id, "soapRequests"),

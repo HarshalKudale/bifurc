@@ -122,6 +122,24 @@ pub fn describe_socket(snapshot: &Value) -> String {
     lines.join("\n")
 }
 
+/// An SSE stream as printed by `requests send`: its state, then each event it delivered (`<`), named in
+/// brackets unless it is a plain `message`.
+pub fn describe_stream(snapshot: &Value) -> String {
+    let mut lines = vec![format!("SSE {}  {}", js_template(snapshot.get("status")), js_template(snapshot.get("url")))];
+    if let Some(error) = snapshot.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+        lines.push(format!("error: {error}"));
+    }
+    for message in snapshot.get("messages").and_then(Value::as_array).into_iter().flatten() {
+        let name = message.get("event").and_then(Value::as_str).filter(|name| !name.is_empty() && *name != "message");
+        let data = js_template(message.get("data")).replace('\n', "\n  ");
+        lines.push(match name {
+            Some(name) => format!("< [{name}] {data}"),
+            None => format!("< {data}"),
+        });
+    }
+    lines.join("\n")
+}
+
 /// A gRPC result as printed by `requests send`: the status line, the metadata, then each response.
 pub fn describe_grpc(result: &Value) -> String {
     let status = result.get("status").and_then(Value::as_i64).unwrap_or(0);
@@ -290,6 +308,15 @@ mod tests {
         assert_eq!(describe_socket(&snapshot), "WebSocket connected  ws://h/\n> ping\n< pong");
         let failed = json!({"status": "error", "url": "ws://h/", "error": "refused", "messages": []});
         assert_eq!(describe_socket(&failed), "WebSocket error  ws://h/\nerror: refused");
+    }
+
+    #[test]
+    fn a_stream_prints_its_state_and_its_events_by_name() {
+        let snapshot = json!({"status": "connected", "url": "http://h/e", "error": null, "messages": [
+            {"event": "message", "data": "hi"}, {"event": "tick", "data": "1"}, {"event": "message", "data": "a\nb"}]});
+        assert_eq!(describe_stream(&snapshot), "SSE connected  http://h/e\n< hi\n< [tick] 1\n< a\n  b");
+        let failed = json!({"status": "error", "url": "http://h/e", "error": "HTTP 404 Not Found", "messages": []});
+        assert_eq!(describe_stream(&failed), "SSE error  http://h/e\nerror: HTTP 404 Not Found");
     }
 
     #[test]
