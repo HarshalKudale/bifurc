@@ -14,6 +14,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -50,6 +51,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -83,6 +85,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -115,6 +118,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments"
      ]
@@ -144,6 +148,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments"
      ]
@@ -173,6 +178,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -206,6 +212,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -240,6 +247,7 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -293,6 +301,7 @@
       "rule",
       "graphqlRequest",
       "grpcRequest",
+      "sseRequest",
       "soapRequest"
      ]
     },
@@ -327,6 +336,7 @@
       "rule",
       "graphqlRequest",
       "grpcRequest",
+      "sseRequest",
       "soapRequest"
      ]
     },
@@ -355,6 +365,7 @@
       "rule",
       "graphqlRequest",
       "grpcRequest",
+      "sseRequest",
       "soapRequest"
      ]
     },
@@ -386,6 +397,7 @@
       "rule",
       "graphqlRequest",
       "grpcRequest",
+      "sseRequest",
       "soapRequest"
      ]
     },
@@ -413,6 +425,7 @@
       "rule",
       "graphqlRequest",
       "grpcRequest",
+      "sseRequest",
       "soapRequest"
      ]
     },
@@ -440,6 +453,7 @@
       "rule",
       "graphqlRequest",
       "grpcRequest",
+      "sseRequest",
       "soapRequest"
      ]
     },
@@ -1555,6 +1569,103 @@
    "required": [
     "workspaceId",
     "socketId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.connect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "body": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.disconnect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.clearMessages": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
    ],
    "additionalProperties": false
   },
