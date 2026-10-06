@@ -190,6 +190,7 @@ impl Shell {
             | ModelEvent::RunnerFinished(_)
             | ModelEvent::SyncStatus
             | ModelEvent::AccountChanged(_)
+            | ModelEvent::CompanionsChanged
             | ModelEvent::EngineRestarted
             | ModelEvent::EntityReverted(_) => {}
         }

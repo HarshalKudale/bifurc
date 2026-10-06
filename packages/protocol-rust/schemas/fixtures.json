@@ -290,6 +290,12 @@
    "curlCommand": "curl http://x"
   }
  },
+ "engine.companions": {
+  "valid": {},
+  "invalid": {
+   "now": true
+  }
+ },
  "engine.shutdown": {
   "valid": {},
   "invalid": {
