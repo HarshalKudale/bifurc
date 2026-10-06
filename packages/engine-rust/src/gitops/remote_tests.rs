@@ -454,11 +454,25 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     run(&other, &["config", "user.name", "Other"]).await;
     std::fs::write(other.join("requests/r9.json"), serde_json::to_string_pretty(&request("r9", "Nine")).unwrap())
         .unwrap();
+    // And a WebSocket in a folder in a folder: directories, and a file that says what it is.
+    std::fs::create_dir_all(other.join("requests/Team/Live")).unwrap();
+    let socket = json!({ "type": "websocket", "id": "s9", "name": "Feed", "url": "ws://a/feed" });
+    std::fs::write(other.join("requests/Team/Live/s9.json"), serde_json::to_string_pretty(&socket).unwrap()).unwrap();
     run(&other, &["add", "-A"]).await;
     run(&other, &["commit", "-m", "create request Nine"]).await;
     run(&other, &["push", "origin", "HEAD:main"]).await;
+    // The index of this device is not something the other one has, or sends.
+    assert!(ws_dir(ws).join("requests/index.db").is_file() && !other.join("requests/index.db").exists());
     let pulled = engine.call("sync.pull", json!({ "workspaceId": ws })).await;
-    assert_eq!(pulled, json!({ "ok": true, "updated": true, "updatedIds": ["r9"] }));
+    assert_eq!(pulled, json!({ "ok": true, "updated": true, "updatedIds": ["s9", "r9"] }));
+    // What came in is listed at once, in the folders its directories are: the index read the tree again.
+    let cfg = crate::workspace::config::load_config();
+    let folder = |name: &str| cfg["requestFolders"].as_array().unwrap().iter().find(|f| f["name"] == name).cloned().unwrap();
+    assert_eq!(folder("Live")["parentId"], folder("Team")["id"]);
+    assert_eq!(cfg["wsConnections"][0]["name"], "Feed");
+    assert_eq!(cfg["wsConnections"][0]["folderId"], folder("Live")["id"]);
+    assert!(cfg["requests"].as_array().unwrap().iter().any(|r| r["id"] == "r9" && r["name"] == "Nine"));
+    assert!(ws_dir(ws).join("requests/index.db").is_file(), "a pull leaves the index where it is");
     assert_eq!(engine.call("sync.pull", json!({ "workspaceId": ws })).await, json!({ "ok": true, "updated": false }));
 
     run(&ws_dir(ws), &["commit", "--allow-empty", "-m", "local only"]).await;
@@ -655,7 +669,8 @@ async fn a_workspace_of_plain_files_becomes_a_repository_and_is_synced_whole() {
 
     // Made while git was missing: files, no repository.
     write_entity(ws, "requests", "r1", &request("r1", "First"), None).unwrap();
-    write_entity(ws, "requests", "r2", &request("r2", "Second"), Some("Folder")).unwrap();
+    let folder = crate::workspace::fs::create_folder(ws, "requests", "Folder", None, false).unwrap().0;
+    write_entity(ws, "requests", "r2", &request("r2", "Second"), Some(&folder)).unwrap();
     write_entity(ws, "mocks", "m1", &json!({ "id": "m1", "name": "Mock", "urlPattern": "/x" }), None).unwrap();
     assert!(!ws_dir(ws).join(".git").exists());
 

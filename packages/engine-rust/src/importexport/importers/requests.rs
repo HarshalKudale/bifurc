@@ -8,7 +8,7 @@ use crate::{
     importexport::{
         formats::postman::parse_postman_requests,
         support::{
-            FolderSpec, ImportRoot, add_import_folders, commit_config, folder_name, js_str, js_trim, ms_from_iso,
+            FolderSpec, ImportRoot, add_import_folders, commit_config, js_str, js_trim, ms_from_iso,
             parse_json, present, store_request, text_or,
         },
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
@@ -99,7 +99,7 @@ pub async fn curl_run(ws_id: String, source: ImportSource, _strategy: Strategy) 
     let mut imported = 0;
     for block in blocks {
         let Some(parsed) = parse_curl_command(&block) else { continue };
-        let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+        let (root_id, _) = root.get(&mut cfg, &ws_id)?;
         let id = generate_id();
         let first_line = block.split('\n').next().unwrap_or("");
         let name = names
@@ -118,7 +118,7 @@ pub async fn curl_run(ws_id: String, source: ImportSource, _strategy: Strategy) 
             Some(&root_id),
             &ws_id,
         );
-        store_request(&ws_id, &request, Some(&root_name))?;
+        store_request(&ws_id, &request, Some(&root_id))?;
         imported += 1;
     }
     crate::runtime::instances::notify_config_changed();
@@ -142,7 +142,7 @@ pub async fn har_run(ws_id: String, source: ImportSource, _strategy: Strategy) -
     let mut cfg = load_config();
     let comment = present(log, "comment").map(js_str);
     let mut root = ImportRoot::new("requestFolders", "requests");
-    let mut commented: Option<(String, String)> = None;
+    let mut commented: Option<String> = None;
 
     let mut imported = 0;
     for entry in array_of(log, "entries") {
@@ -157,14 +157,14 @@ pub async fn har_run(ws_id: String, source: ImportSource, _strategy: Strategy) -
                 headers.insert(name, header.get("value").cloned().unwrap_or(Value::Null));
             }
         }
-        let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
-        let (folder_id, folder) = match comment.as_ref().filter(|c| !c.is_empty()) {
-            None => (root_id, root_name),
+        let (root_id, _) = root.get(&mut cfg, &ws_id)?;
+        let folder_id = match comment.as_ref().filter(|c| !c.is_empty()) {
+            None => root_id,
             Some(comment) => {
                 if commented.is_none() {
                     let spec = FolderSpec { key: "har".into(), name: comment.clone(), parent: None };
                     let made = add_import_folders(&mut cfg, "requestFolders", "requests", &ws_id, &root_id, &[spec])?;
-                    commented = Some((made["har"].clone(), comment.clone()));
+                    commented = Some(made["har"].clone());
                 }
                 commented.clone().unwrap_or_default()
             }
@@ -187,7 +187,7 @@ pub async fn har_run(ws_id: String, source: ImportSource, _strategy: Strategy) -
             Some(&folder_id),
             &ws_id,
         );
-        store_request(&ws_id, &request, Some(&folder))?;
+        store_request(&ws_id, &request, Some(&folder_id))?;
         imported += 1;
     }
 
@@ -217,7 +217,7 @@ pub async fn insomnia_run(ws_id: String, source: ImportSource, _strategy: Strate
         return Ok(Imported::all(0));
     }
     let mut root = ImportRoot::new("requestFolders", "requests");
-    let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+    let (root_id, _) = root.get(&mut cfg, &ws_id)?;
     let specs: Vec<FolderSpec> = resources
         .iter()
         .filter(|r| opt_str(r, "_type") == Some("request_group"))
@@ -239,7 +239,6 @@ pub async fn insomnia_run(ws_id: String, source: ImportSource, _strategy: Strate
         }
         let in_group = opt_str(resource, "parentId").filter(|p| !p.is_empty()).and_then(|p| folder_ids.get(p)).cloned();
         let folder_id = in_group.unwrap_or_else(|| root_id.clone());
-        let folder = folder_name(&cfg, "requestFolders", Some(&folder_id)).unwrap_or_else(|| root_name.clone());
         let method = text_or(resource, "method", "GET");
         let url = present(resource, "url").cloned().unwrap_or(json!(""));
         let name = match present(resource, "name") {
@@ -259,7 +258,7 @@ pub async fn insomnia_run(ws_id: String, source: ImportSource, _strategy: Strate
             Some(&folder_id),
             &ws_id,
         );
-        store_request(&ws_id, &request, Some(&folder))?;
+        store_request(&ws_id, &request, Some(&folder_id))?;
         imported += 1;
     }
 
@@ -321,7 +320,6 @@ pub async fn openapi_run(ws_id: String, source: ImportSource, _strategy: Strateg
     let (root_id, _) = root.get(&mut cfg, &ws_id)?;
     let title_folder = FolderSpec { key: "spec".into(), name: title.clone(), parent: None };
     let folder_id = add_import_folders(&mut cfg, "requestFolders", "requests", &ws_id, &root_id, &[title_folder])?.remove("spec").unwrap_or_default();
-    let title = folder_name(&cfg, "requestFolders", Some(&folder_id)).unwrap_or(title);
 
     let mut imported = 0;
     for (op_path, path_item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
@@ -351,7 +349,7 @@ pub async fn openapi_run(ws_id: String, source: ImportSource, _strategy: Strateg
                 Some(&folder_id),
                 &ws_id,
             );
-            store_request(&ws_id, &request, Some(&title))?;
+            store_request(&ws_id, &request, Some(&folder_id))?;
             imported += 1;
         }
     }
@@ -375,7 +373,7 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
         return Ok(Imported::all(0));
     }
     let mut root = ImportRoot::new("requestFolders", "requests");
-    let (root_id, root_name) = root.get(&mut cfg, &ws_id)?;
+    let (root_id, _) = root.get(&mut cfg, &ws_id)?;
     let specs: Vec<FolderSpec> = folders
         .iter()
         .map(|f| FolderSpec { key: f.name.clone(), name: f.name.clone(), parent: f.parent.clone() })
@@ -386,7 +384,6 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
     for parsed in &requests {
         let id = generate_id();
         let folder_id = parsed.folder.as_ref().and_then(|f| folder_ids.get(f)).cloned().unwrap_or_else(|| root_id.clone());
-        let folder = folder_name(&cfg, "requestFolders", Some(&folder_id)).unwrap_or_else(|| root_name.clone());
         let mut request = Map::new();
         request.insert("id".into(), json!(id));
         request.insert("name".into(), json!(parsed.name));
@@ -403,7 +400,7 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
         request.insert("createdAt".into(), json!(now_ms()));
         request.insert("folderId".into(), json!(folder_id));
         request.insert("workspaceId".into(), json!(ws_id));
-        store_request(&ws_id, &Value::Object(request), Some(&folder))?;
+        store_request(&ws_id, &Value::Object(request), Some(&folder_id))?;
         imported += 1;
     }
 
@@ -426,12 +423,19 @@ mod tests {
 
     /// An import puts everything in one new top-level folder named after the moment it ran.
     fn default_folder_id(ws: &str) -> Value {
-        let index = crate::workspace::fs::read_index(ws, "requests");
-        let made: Vec<_> =
-            index.folders.iter().filter(|f| f["name"].as_str().is_some_and(|n| n.starts_with("import-"))).collect();
+        let folders = crate::workspace::tree::folders(ws, crate::workspace::tree::Scope::Requests);
+        let made: Vec<_> = folders.iter().filter(|f| f.name.starts_with("import-")).collect();
         assert_eq!(made.len(), 1, "one import folder per run");
-        assert_eq!(made[0]["parentId"], Value::Null);
-        made[0]["id"].clone()
+        assert_eq!(made[0].parent_id, None);
+        json!(made[0].id)
+    }
+
+    /// The directory of the folder named `name`, wherever in the request tree it is.
+    fn folder_dir(ws: &str, name: &str) -> std::path::PathBuf {
+        let folders = crate::workspace::tree::folders(ws, crate::workspace::tree::Scope::Requests);
+        let folder = folders.iter().find(|f| f.name == name).expect("the folder is made");
+        assert!(folder.path.starts_with("import-"), "inside the import folder");
+        crate::workspace::fs::entity_dir(ws, "requests").join(&folder.path)
     }
 
     fn requests(ws: &str) -> Vec<Value> {
@@ -481,12 +485,7 @@ mod tests {
         assert_eq!(all[0]["body"], "body");
         assert_eq!(all[0]["createdAt"], 1_700_000_000_000_i64);
         assert!(all[0]["folderId"].is_string());
-        assert!(
-            crate::workspace::fs::entity_dir(&ws, "requests")
-                .join("Session")
-                .join(format!("{}.json", all[0]["id"].as_str().unwrap()))
-                .exists()
-        );
+        assert!(folder_dir(&ws, "Session").join(format!("{}.json", all[0]["id"].as_str().unwrap())).exists());
         assert_eq!(har_preflight(&ws, &source("{}", "a.har")).err().unwrap(), "Not a valid HAR file");
     }
 
@@ -532,7 +531,7 @@ mod tests {
         assert_eq!(post["body"], "{\"n\":1}");
         let list = all.iter().find(|r| r["name"] == "List pets").unwrap();
         assert!(list["folderId"].is_string());
-        assert!(crate::workspace::fs::entity_dir(&ws, "requests").join("Pets").is_dir());
+        assert!(folder_dir(&ws, "Pets").is_dir());
         assert_eq!(
             openapi_preflight(&ws, &source("{\"a\":1}", "spec.json")).err().unwrap(),
             "Not a valid OpenAPI specification"
@@ -562,7 +561,7 @@ mod tests {
         let keys: Vec<_> = inside.as_object().unwrap().keys().collect();
         assert_eq!(
             keys,
-            ["id", "name", "method", "url", "headers", "body", "postScript", "createdAt", "folderId", "workspaceId"]
+            ["type", "id", "name", "method", "url", "headers", "body", "postScript", "createdAt", "workspaceId", "folderId"]
         );
         let top = all.iter().find(|r| r["name"] == "Top").unwrap();
         assert_eq!(top["folderId"], default_folder_id(&ws));
