@@ -1,4 +1,4 @@
-//! Packages the desktop app — the Rust UI, the Rust engine and the Rust CLI — as one install.
+//! Packages the desktop app — the Rust UI, the Rust engine, the Rust CLI and the MCP server — as one install.
 //!
 //! ```text
 //! cargo xtask package                       # everything this platform has: packages and store manifests
@@ -33,6 +33,7 @@
 //! bifurc-engine[.exe]  the engine
 //! bifurc-tray.exe      the engine's tray icon (Windows)
 //! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
+//! bin/bifurc-mcp[.exe] the `bifurc-mcp` command: the MCP server (`packages/mcp-rust`), on PATH beside it
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
 //! ```
 //!
@@ -411,10 +412,10 @@ fn release_rustflags(ctx: &Ctx) -> String {
 
 fn build(ctx: &Ctx) -> Result<()> {
     let rustflags = release_rustflags(ctx);
-    // The engine and the CLI: the repository's own cargo workspace.
+    // The engine, the CLI and the MCP server: the repository's own cargo workspace.
     let mut engine = Command::new("cargo");
     engine
-        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli"])
+        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli", "-p", "bifurc-mcp"])
         .env("RUSTFLAGS", &rustflags)
         .current_dir(&ctx.repo);
     // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
@@ -455,17 +456,20 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the others.
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
+    // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli-rust/src/locate.rs`).
+    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"), true)?, &dir.join("bin").join(format!("bifurc-mcp{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"), true)?, &dir.join(format!("bifurc-engine{EXE}")))?;
     copy_file(&ctx.repo.join("build").join("icon.png"), &dir.join("resources").join("icon.png"))?;
     copy_file(&ctx.repo.join("LICENSE"), &dir.join("LICENSE"))?;
-    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("resources/bifurc-cli{EXE}")] {
+    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("bin/bifurc-mcp{EXE}"), format!("resources/bifurc-cli{EXE}")] {
         make_executable(&dir.join(file))?;
     }
     smoke_test(&dir)?;
     Ok(dir)
 }
 
-/// The staged `bifurc` must reach the staged CLI, and the staged engine must run, before anything wraps them.
+/// The staged `bifurc` must reach the staged CLI, and the staged MCP server and engine must run, before anything
+/// wraps them.
 fn smoke_test(dir: &Path) -> Result<()> {
     let cli = Command::new(dir.join("bin").join(format!("bifurc{EXE}"))).args(["commands", "--json"]).output();
     match cli {
@@ -473,13 +477,19 @@ fn smoke_test(dir: &Path) -> Result<()> {
         Ok(out) => return Err(format!("the staged CLI does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged CLI does not run:\n{e}")),
     }
+    let mcp = Command::new(dir.join("bin").join(format!("bifurc-mcp{EXE}"))).arg("--version").output();
+    match mcp {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Err(e) => return Err(format!("the staged MCP server does not run:\n{e}")),
+    }
     let engine = Command::new(dir.join(format!("bifurc-engine{EXE}"))).arg("--help").output();
     match engine {
         Ok(out) if out.status.success() => {}
         Ok(out) => return Err(format!("the staged engine does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged engine does not run:\n{e}")),
     }
-    println!("staged CLI and engine start");
+    println!("staged CLI, MCP server and engine start");
     Ok(())
 }
 
@@ -672,9 +682,15 @@ fn manifest_choco(ctx: &Ctx, installer: &Path) -> Result<PathBuf> {
 // Linux: .deb, tarball, and the AUR package's source
 // ---------------------------------------------------------------------------------------------------------
 
-/// The app's four executables, which are what its shared library dependencies are read from.
-fn staged_executables(dir: &Path) -> [PathBuf; 4] {
-    [dir.join("bifurc-ui"), dir.join("bifurc-engine"), dir.join("bin").join("bifurc"), dir.join("resources").join("bifurc-cli")]
+/// The app's five executables, which are what its shared library dependencies are read from.
+fn staged_executables(dir: &Path) -> [PathBuf; 5] {
+    [
+        dir.join("bifurc-ui"),
+        dir.join("bifurc-engine"),
+        dir.join("bin").join("bifurc"),
+        dir.join("bin").join("bifurc-mcp"),
+        dir.join("resources").join("bifurc-cli"),
+    ]
 }
 
 /// The packages the executables' shared libraries come from, as `dpkg-shlibdeps` finds them on this machine.
@@ -714,6 +730,7 @@ fn package_deb(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let lib = usr.join("lib").join("bifurc");
     copy_dir(staged, &lib)?;
     symlink("../lib/bifurc/bin/bifurc", &usr.join("bin").join("bifurc"))?;
+    symlink("../lib/bifurc/bin/bifurc-mcp", &usr.join("bin").join("bifurc-mcp"))?;
     let share = usr.join("share");
     fs::create_dir_all(share.join("applications")).map_err(|e| format!("{}: {e}", share.display()))?;
     write_file(
