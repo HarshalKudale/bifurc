@@ -1,0 +1,459 @@
+//! Running a tool: its arguments become the command line of the command it stands for, and the CLI's own
+//! `run` executes that line, finding (or starting) the engine exactly as `bifurc` does. What the command would
+//! have printed is the tool's result; a non-zero exit code makes it an error result.
+
+use std::ffi::OsString;
+
+use serde_json::{Map, Value};
+
+use crate::tools::{Place, Tool, Type};
+
+/// What `bifurc-mcp` was started with; it applies to every tool.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Settings {
+    /// `--data-dir`: the data directory whose engine the tools talk to.
+    pub data_dir: Option<String>,
+    /// `--no-start`: fail instead of starting an engine when none is running.
+    pub no_start: bool,
+    /// The value of `BIFURC_DATA_DIR`.
+    pub env_data_dir: Option<OsString>,
+}
+
+/// What a tool answered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outcome {
+    pub text: String,
+    pub failed: bool,
+}
+
+/// An argument as one word of a command line: text as it is, anything else as its JSON.
+fn word(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn wrong(tool: &Tool, name: &str, expected: &str) -> String {
+    format!("{}: \"{name}\" must be {expected}", tool.name)
+}
+
+/// The value of one argument, checked against what its parameter is.
+fn checked(tool: &Tool, name: &str, ty: Type, value: &Value) -> Result<(), String> {
+    let ok = match ty {
+        Type::Text => value.is_string() || value.is_number() || value.is_boolean(),
+        Type::Integer => value.is_i64() || value.is_u64() || value.as_str().is_some_and(|t| t.parse::<i64>().is_ok()),
+        Type::Number => value.is_number() || value.as_str().is_some_and(|t| t.parse::<f64>().is_ok()),
+        Type::Boolean => value.is_boolean(),
+        Type::Choice(words) => value.as_str().is_some_and(|t| words.contains(&t)),
+        Type::Json => value.is_object() || value.is_array() || value.is_string(),
+        Type::TextMap | Type::AnyMap => value.is_object(),
+        Type::TextList => value.as_array().is_some_and(|items| items.iter().all(Value::is_string)),
+    };
+    if ok {
+        return Ok(());
+    }
+    Err(wrong(
+        tool,
+        name,
+        &match ty {
+            Type::Text => "text".to_string(),
+            Type::Integer => "a whole number".to_string(),
+            Type::Number => "a number".to_string(),
+            Type::Boolean => "true or false".to_string(),
+            Type::Choice(words) => format!("one of {}", words.join(", ")),
+            Type::Json => "a JSON object or array".to_string(),
+            Type::TextMap | Type::AnyMap => "an object".to_string(),
+            Type::TextList => "a list of text".to_string(),
+        },
+    ))
+}
+
+/// The command line a call of `tool` with `arguments` stands for, after the program name. An argument the tool
+/// does not have, one of the wrong type and a missing required one are errors; a `null` is an argument left out.
+pub fn command_line(tool: &Tool, arguments: &Map<String, Value>) -> Result<Vec<String>, String> {
+    if let Some(unknown) = arguments.keys().find(|name| !tool.params.iter().any(|param| param.name == *name)) {
+        let known: Vec<&str> = tool.params.iter().map(|param| param.name).collect();
+        return Err(format!("{}: unknown argument \"{unknown}\"; it takes: {}", tool.name, known.join(", ")));
+    }
+    let mut line: Vec<String> = tool.words.iter().map(|word| word.to_string()).collect();
+    let mut operands = Vec::new();
+    for param in &tool.params {
+        let Some(value) = arguments.get(param.name).filter(|value| !value.is_null()) else {
+            if param.required {
+                return Err(format!("{}: missing \"{}\" ({})", tool.name, param.name, param.about));
+            }
+            continue;
+        };
+        checked(tool, param.name, param.ty, value)?;
+        match param.place {
+            Place::Operand => operands.push(word(value)),
+            Place::Option(option) => line.extend([format!("--{option}"), word(value)]),
+            Place::Switch(on, off) => match (value.as_bool(), off) {
+                (Some(true), _) => line.push(format!("--{on}")),
+                (_, Some(off)) => line.push(format!("--{off}")),
+                _ => {}
+            },
+            Place::Pairs(option, separator) => {
+                for (name, value) in value.as_object().into_iter().flatten() {
+                    if param.ty == Type::TextMap && !value.is_string() {
+                        return Err(wrong(tool, &format!("{}.{name}", param.name), "text"));
+                    }
+                    line.extend([format!("--{option}"), format!("{name}{separator}{}", word(value))]);
+                }
+            }
+            Place::Each(option) => {
+                for value in value.as_array().into_iter().flatten() {
+                    line.extend([format!("--{option}"), word(value)]);
+                }
+            }
+        }
+    }
+    // After `--` nothing is an option, so an operand may start with a dash.
+    if !operands.is_empty() {
+        line.push("--".to_string());
+        line.extend(operands);
+    }
+    Ok(line)
+}
+
+/// The error line of the CLI without the program's name in front.
+fn said(stderr: &str) -> &str {
+    stderr.strip_prefix("bifurc: ").unwrap_or(stderr)
+}
+
+/// Run `tool` with `arguments` and return what the command printed.
+pub fn run(tool: &Tool, arguments: &Map<String, Value>, settings: &Settings) -> Outcome {
+    let mut line = match command_line(tool, arguments) {
+        Ok(line) => line,
+        Err(message) => return Outcome { text: message, failed: true },
+    };
+    // The server's own options go before the `--` that ends the options.
+    let at = tool.words.len();
+    let mut ours = Vec::new();
+    if let Some(dir) = &settings.data_dir {
+        ours.extend(["--data-dir".to_string(), dir.clone()]);
+    }
+    if settings.no_start {
+        ours.push("--no-start".to_string());
+    }
+    line.splice(at..at, ours);
+
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let code = bifurc_cli::cli::run_with_env(&line, settings.env_data_dir.clone(), &mut stdout, &mut stderr);
+    let (stdout, stderr) = (String::from_utf8_lossy(&stdout), String::from_utf8_lossy(&stderr));
+    let parts: Vec<&str> =
+        [stdout.trim_end(), said(stderr.trim_end())].into_iter().filter(|part| !part.is_empty()).collect();
+    Outcome { text: parts.join("\n"), failed: code != 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::catalog;
+    use serde_json::json;
+
+    fn tool(name: &str) -> Tool {
+        catalog().into_iter().find(|tool| tool.name == name).unwrap_or_else(|| panic!("no tool {name}"))
+    }
+
+    fn line(name: &str, arguments: Value) -> Result<Vec<String>, String> {
+        command_line(&tool(name), arguments.as_object().unwrap())
+    }
+
+    #[test]
+    fn options_come_before_the_operands_which_follow_a_double_dash() {
+        let built = line("mappings_create", json!({"domain": "api", "target": "127.0.0.1:3000", "label": "My API"}));
+        assert_eq!(built.unwrap(), ["mappings", "create", "--label", "My API", "--", "api", "127.0.0.1:3000"]);
+        // So an operand that looks like an option is still an operand.
+        let built = line("rules_create", json!({"pattern": "--help", "target": "http://x"}));
+        assert_eq!(built.unwrap(), ["rules", "create", "--target", "http://x", "--", "--help"]);
+    }
+
+    #[test]
+    fn a_tool_without_arguments_is_its_command() {
+        assert_eq!(line("status", json!({})).unwrap(), ["status"]);
+        assert_eq!(
+            line("mocks_list", json!({"workspace": "w2", "json": true})).unwrap(),
+            ["mocks", "list", "--workspace", "w2", "--json"]
+        );
+    }
+
+    #[test]
+    fn switches_take_their_on_or_off_form() {
+        let built = line("rules_update", json!({"rule": "r1", "regex": false})).unwrap();
+        assert_eq!(built, ["rules", "update", "--no-regex", "--", "r1"]);
+        let built = line("rules_update", json!({"rule": "r1", "regex": true})).unwrap();
+        assert_eq!(built, ["rules", "update", "--regex", "--", "r1"]);
+        // A switch with no off form is left out when false.
+        let built = line("mocks_create", json!({"url": "http://x/a", "disabled": false, "regex": false})).unwrap();
+        assert_eq!(built, ["mocks", "create", "--url", "http://x/a"]);
+    }
+
+    #[test]
+    fn headers_lists_and_tool_arguments_repeat_their_option() {
+        let built = line(
+            "requests_send",
+            json!({
+                "url": "http://x", "type": "socketio", "headers": {"Accept": "a/b", "X-Gone": ""},
+                "listen": ["tick", "tock"], "wait": 1.5,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            built,
+            [
+                "requests",
+                "send",
+                "--type",
+                "socketio",
+                "--url",
+                "http://x",
+                "--header",
+                "Accept: a/b",
+                "--header",
+                "X-Gone: ",
+                "--listen",
+                "tick",
+                "--listen",
+                "tock",
+                "--wait",
+                "1.5",
+            ]
+        );
+        let built = line(
+            "requests_send",
+            json!({"request": "Files", "tool": "read", "arguments": {"path": "/a", "depth": 2, "deep": true}}),
+        );
+        assert_eq!(
+            built.unwrap(),
+            [
+                "requests",
+                "send",
+                "--tool",
+                "read",
+                "--arg",
+                "path=/a",
+                "--arg",
+                "depth=2",
+                "--arg",
+                "deep=true",
+                "--",
+                "Files",
+            ]
+        );
+    }
+
+    #[test]
+    fn json_arguments_are_given_as_an_object_or_as_its_text() {
+        for variables in [json!({"id": 1}), json!("{\"id\":1}")] {
+            let built = line(
+                "requests_create",
+                json!({"type": "graphql", "url": "http://x", "query": "{a}", "variables": variables}),
+            );
+            assert_eq!(built.unwrap()[8..], ["--variables".to_string(), "{\"id\":1}".to_string()]);
+        }
+    }
+
+    #[test]
+    fn numbers_are_written_as_the_command_line_reads_them() {
+        let built = line("mocks_update", json!({"mock": "m1", "status": 404, "delay": "250"})).unwrap();
+        assert_eq!(built, ["mocks", "update", "--status", "404", "--delay", "250", "--", "m1"]);
+    }
+
+    #[test]
+    fn a_null_is_an_argument_left_out() {
+        assert_eq!(line("health_run", json!({"check": null})).unwrap(), ["health", "run"]);
+    }
+
+    #[test]
+    fn missing_unknown_and_mistyped_arguments_are_refused() {
+        let err = line("requests_show", json!({})).unwrap_err();
+        assert_eq!(err, "requests_show: missing \"request\" (The request's id or name.)");
+        let err = line("status", json!({"verbose": true})).unwrap_err();
+        assert_eq!(err, "status: unknown argument \"verbose\"; it takes: json");
+        for (arguments, expected) in [
+            (
+                json!({"type": "carrier-pigeon"}),
+                "requests_list: \"type\" must be one of rest, graphql, grpc, soap, websocket, sse, socketio, mcp",
+            ),
+            (json!({"json": "yes"}), "requests_list: \"json\" must be true or false"),
+            (json!({"workspace": ["w1"]}), "requests_list: \"workspace\" must be text"),
+        ] {
+            assert_eq!(line("requests_list", arguments).unwrap_err(), expected);
+        }
+        let err = line("mocks_update", json!({"mock": "m1", "status": "teapot"})).unwrap_err();
+        assert_eq!(err, "mocks_update: \"status\" must be a whole number");
+        let err = line("mocks_update", json!({"mock": "m1", "headers": {"a": 1}})).unwrap_err();
+        assert_eq!(err, "mocks_update: \"headers.a\" must be text");
+        let err = line("requests_send", json!({"url": "http://x", "listen": "tick"})).unwrap_err();
+        assert_eq!(err, "requests_send: \"listen\" must be a list of text");
+    }
+
+    /// Arguments that use every parameter of every tool at least once, in sets the command line accepts.
+    fn examples() -> Vec<(&'static str, Value)> {
+        let all = json!({"workspace": "w1", "json": true});
+        let with = |extra: Value| {
+            let mut merged = all.as_object().cloned().unwrap();
+            merged.extend(extra.as_object().cloned().unwrap());
+            Value::Object(merged)
+        };
+        vec![
+            ("status", json!({"json": true})),
+            ("requests_list", with(json!({"type": "grpc"}))),
+            ("requests_show", with(json!({"request": "Ping", "type": "rest"}))),
+            ("requests_send", with(json!({"request": "Ping", "type": "rest"}))),
+            ("requests_send", with(json!({"url": "http://x", "method": "POST", "body": "{}", "headers": {"a": "b"}}))),
+            (
+                "requests_send",
+                with(
+                    json!({"type": "graphql", "url": "http://x", "query": "{a}", "variables": {"a": 1}, "operation": "A"}),
+                ),
+            ),
+            ("requests_send", with(json!({"type": "grpc", "url": "x:1", "method": "p.S/M", "proto": "p1"}))),
+            ("requests_send", with(json!({"type": "grpc", "url": "x:1", "method": "p.S/M", "reflection": true}))),
+            ("requests_send", with(json!({"type": "soap", "url": "http://x", "action": "urn:a", "body": "<a/>"}))),
+            (
+                "requests_send",
+                with(
+                    json!({"type": "socketio", "url": "http://x", "namespace": "/n", "path": "/s", "auth": {"t": 1}, "listen": ["a"], "event": "e", "body": "[1]", "ack": true, "wait": 1}),
+                ),
+            ),
+            (
+                "requests_send",
+                with(json!({"type": "mcp", "url": "npx x", "transport": "stdio", "tool": "t", "arguments": {"a": 1}})),
+            ),
+            ("requests_send", with(json!({"type": "mcp", "url": "http://x/mcp", "prompt": "p"}))),
+            ("requests_send", with(json!({"type": "mcp", "url": "http://x/mcp", "resource": "file:///a"}))),
+            (
+                "requests_create",
+                with(json!({"name": "N", "url": "http://x", "method": "POST", "body": "{}", "headers": {"a": "b"}})),
+            ),
+            ("requests_create", with(json!({"curl": "curl http://x", "name": "N"}))),
+            (
+                "requests_create",
+                with(
+                    json!({"type": "graphql", "url": "http://x", "query": "{a}", "variables": "{}", "operation": "A"}),
+                ),
+            ),
+            ("requests_create", with(json!({"type": "grpc", "url": "x:1", "method": "p.S/M", "proto": "p1"}))),
+            ("requests_create", with(json!({"type": "grpc", "url": "x:1", "method": "p.S/M", "reflection": true}))),
+            ("requests_create", with(json!({"type": "soap", "url": "http://x", "action": "urn:a"}))),
+            (
+                "requests_create",
+                with(
+                    json!({"type": "socketio", "url": "http://x", "namespace": "/n", "path": "/s", "auth": {"t": 1}, "listen": ["a"]}),
+                ),
+            ),
+            ("requests_create", with(json!({"type": "mcp", "url": "npx x", "transport": "stdio"}))),
+            (
+                "requests_update",
+                with(
+                    json!({"request": "Ping", "type": "rest", "name": "N", "url": "http://x", "headers": {"a": ""}, "method": "PUT", "body": "b", "query": "{a}", "variables": {}, "operation": "A", "proto": "p", "reflection": true, "action": "a", "namespace": "/n", "path": "/p", "auth": {}, "listen": ["a"], "transport": "http"}),
+                ),
+            ),
+            ("requests_reflect", with(json!({"address": "localhost:50051"}))),
+            ("mocks_list", all.clone()),
+            ("mocks_show", with(json!({"mock": "m1"}))),
+            ("mocks_enable", with(json!({"mock": "m1"}))),
+            ("mocks_disable", with(json!({"mock": "m1"}))),
+            (
+                "mocks_create",
+                with(
+                    json!({"url": "http://x/a", "method": "*", "name": "N", "status": 201, "headers": {"a": "b"}, "body": "{}", "delay": 10, "regex": true, "disabled": true}),
+                ),
+            ),
+            ("mocks_create", with(json!({"curl": "curl http://x"}))),
+            (
+                "mocks_update",
+                with(
+                    json!({"mock": "m1", "url": "http://x/b", "method": "GET", "name": "N", "status": 200, "headers": {"a": ""}, "body": "", "delay": 0, "regex": false}),
+                ),
+            ),
+            ("mappings_list", all.clone()),
+            ("mappings_show", with(json!({"mapping": "api"}))),
+            ("mappings_enable", with(json!({"mapping": "api"}))),
+            ("mappings_disable", with(json!({"mapping": "api"}))),
+            (
+                "mappings_create",
+                with(json!({"domain": "api", "target": "127.0.0.1:1", "label": "L", "disabled": true})),
+            ),
+            ("mappings_update", with(json!({"mapping": "api", "domain": "b", "target": "127.0.0.1:2", "label": "L"}))),
+            ("rules_list", all.clone()),
+            ("rules_show", with(json!({"rule": "r1"}))),
+            ("rules_enable", with(json!({"rule": "r1"}))),
+            ("rules_disable", with(json!({"rule": "r1"}))),
+            (
+                "rules_create",
+                with(json!({"pattern": "a.com", "mapping": "api", "name": "N", "regex": true, "disabled": true})),
+            ),
+            ("rules_create", with(json!({"pattern": "a.com", "target": "http://x"}))),
+            (
+                "rules_update",
+                with(json!({"rule": "r1", "pattern": "b.com", "regex": false, "mapping": "api", "name": "N"})),
+            ),
+            ("rules_update", with(json!({"rule": "r1", "target": "http://x"}))),
+            ("env_list", all.clone()),
+            ("env_show", all.clone()),
+            ("env_use", with(json!({"environment": "Dev"}))),
+            ("health_list", all.clone()),
+            ("health_show", with(json!({"check": "h1"}))),
+            ("health_create", with(json!({"name": "Users", "url": "http://x/health", "auto": true}))),
+            ("health_update", with(json!({"check": "h1", "name": "N", "url": "http://y", "auto": false}))),
+            ("health_run", with(json!({"check": "h1"}))),
+            ("workspaces_list", json!({"json": true})),
+            ("workspaces_show", json!({"workspace": "w1", "json": true})),
+            ("workspaces_create", json!({"name": "Mine", "account": "octocat", "json": true})),
+            ("workspaces_update", json!({"workspace": "w1", "name": "New", "json": true})),
+            ("workspaces_use", json!({"workspace": "w1", "json": true})),
+            ("workspaces_sync", all.clone()),
+            ("vault_list", all.clone()),
+            ("account_list", json!({"json": true})),
+            ("account_repos", json!({"account": "octocat", "json": true})),
+            ("services_list", json!({"json": true})),
+        ]
+    }
+
+    #[test]
+    fn the_examples_use_every_parameter_of_every_tool() {
+        let examples = examples();
+        for tool in catalog() {
+            for param in &tool.params {
+                let used =
+                    examples.iter().any(|(name, arguments)| *name == tool.name && arguments.get(param.name).is_some());
+                assert!(used, "no example uses {}.{}", tool.name, param.name);
+            }
+        }
+    }
+
+    /// The command line is the judge of what a command takes: every example gets as far as needing the engine,
+    /// which means the CLI found no unknown option, no extra operand and no missing one.
+    #[test]
+    fn the_command_line_accepts_what_every_tool_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings =
+            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        for (name, arguments) in examples() {
+            let outcome = run(&tool(name), arguments.as_object().unwrap(), &settings);
+            assert!(outcome.failed, "{name}");
+            assert!(outcome.text.starts_with("No engine is running for"), "{name} {arguments}: {}", outcome.text);
+        }
+        assert!(!dir.path().join("runtime.json").exists());
+    }
+
+    #[test]
+    fn what_the_command_line_refuses_is_the_tools_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings =
+            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let arguments = json!({"type": "rest", "url": "http://x", "query": "{a}"});
+        let outcome = run(&tool("requests_create"), arguments.as_object().unwrap(), &settings);
+        assert_eq!(
+            outcome,
+            Outcome {
+                text: "--query is not an option of a rest request (see: bifurc requests --help)".to_string(),
+                failed: true,
+            }
+        );
+    }
+}
