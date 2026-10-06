@@ -20,6 +20,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::graphql::register(registry);
     crate::soap::register(registry);
     crate::grpc::register(registry);
+    crate::sse::register(registry);
     crate::applications::register(registry);
     crate::gitops::register(registry);
     crate::websocket::register(registry);

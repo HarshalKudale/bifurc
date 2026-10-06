@@ -130,7 +130,7 @@ pub fn validate_mapping(mapping: &Value, siblings: &[Value]) -> Result<()> {
     Ok(())
 }
 
-pub static CRUD_KINDS: [CrudKind; 9] = [
+pub static CRUD_KINDS: [CrudKind; 10] = [
     CrudKind {
         kind: "mappings",
         config_key: "mappings",
@@ -256,6 +256,19 @@ pub static CRUD_KINDS: [CrudKind; 9] = [
                 ("serviceName", field(r, "serviceName")),
                 ("methodName", field(r, "methodName")),
             ])
+        }),
+        gate_kind: None,
+    },
+    CrudKind {
+        kind: "sseRequests",
+        config_key: "sseRequests",
+        folder_config_key: Some("sseRequestFolders"),
+        is_flat: false,
+        has_enabled_state: false,
+        validate: Some(|request, _| required(request, "url", "url is required for SSE requests")),
+        on_add_conflict: None,
+        name_entry: Some(|r| {
+            entry(&[("name", field(r, "name")), ("method", field(r, "method")), ("url", field(r, "url"))])
         }),
         gate_kind: None,
     },
