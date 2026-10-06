@@ -36,6 +36,7 @@ use crate::{
         binary::{BinaryBody, pick_file},
         page,
         parts_table::{parts_from_json, parts_to_json},
+        request_bar,
     },
     engine::{call_in, describe},
     model::{
@@ -981,23 +982,17 @@ impl Render for RestSession {
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .child(div().w_32().flex_none().child(Select::new(&self.method).h(row_height)))
-                    .child(div().flex_1().min_w_0().child(self.url.line_field(cx)))
-                    .child(
-                        Button::new("send-request")
-                            .primary()
-                            .h(row_height)
-                            .label("Send")
-                            .loading(self.sending)
-                            .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
-                    ),
-            )
+            .child(request_bar(
+                Some(div().w_32().flex_none().child(Select::new(&self.method).h(row_height)).into_any_element()),
+                self.url.line_field(cx),
+                Button::new("send-request")
+                    .primary()
+                    .label("Send")
+                    .loading(self.sending)
+                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                [],
+                cx,
+            ))
             .child(div().flex_none().px_3().child(self.render_sections(cx)))
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
