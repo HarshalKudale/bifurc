@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, IconName, Sizable as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -29,13 +29,13 @@ use serde_json::Value;
 use crate::{
     components::{
         Syntax,
+        stream_log::{LogRow, Way, log_row},
         binary::{BinaryBody, save_to_file, suggested_file_name},
         page,
     },
     model::{
         http::{BodyEncoding, HttpResponse, pretty_json, status_text},
         media::{self, BodyClass},
-        traffic::clock_utc,
     },
 };
 
@@ -511,75 +511,29 @@ impl Exchange {
 }
 
 impl Exchange {
-    /// One message of a live call: a line that opens to the whole message.
+    /// One message of a live call: the shared log row, which opens to the whole message.
     fn render_live_row(&self, entry: &LiveEntry, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme().clone();
-        let open = self.live_open.contains(&entry.id);
-        let compact = serde_json::from_str::<Value>(&entry.data)
-            .ok()
-            .and_then(|value| serde_json::to_string(&value).ok())
-            .unwrap_or_else(|| entry.data.split_whitespace().collect::<Vec<_>>().join(" "));
-        let chevron = Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
-            .small()
-            .text_color(theme.muted_foreground);
-        let direction = Icon::new(if entry.sent { IconName::ArrowRight } else { IconName::ArrowLeft })
-            .small()
-            .text_color(theme.muted_foreground);
+        let row = LogRow {
+            id: entry.id.clone(),
+            ts: entry.ts,
+            tag: if entry.sent { "Sent" } else { "Received" }.to_owned(),
+            outline: entry.sent,
+            way: Some(if entry.sent { Way::Sent } else { Way::Received }),
+            note: None,
+            data: entry.data.clone(),
+        };
         let id = entry.id.clone();
-        let row = h_flex()
-            .id(gpui_kit::ElementId::Name(format!("live-row-{}", entry.id).into()))
-            .w_full()
-            .gap_3()
-            .px_3()
-            .py_2()
-            .items_center()
-            .text_sm()
-            .cursor_pointer()
-            .hover(|style| style.bg(theme.muted))
-            .on_click(cx.listener(move |this, _, _, cx| {
+        log_row(
+            &row,
+            self.live_open.contains(&entry.id),
+            cx.listener(move |this, _, _, cx| {
                 if !this.live_open.remove(&id) {
                     this.live_open.insert(id.clone());
                 }
                 cx.notify();
-            }))
-            .child(div().size_4().flex_none().child(chevron))
-            .child(div().size_4().flex_none().child(direction))
-            .child(div().w_20().flex_none().child(if entry.sent {
-                Tag::secondary().small().outline().child("Sent")
-            } else {
-                Tag::secondary().small().child("Received")
-            }))
-            .child(div().w_20().flex_none().text_xs().text_color(theme.muted_foreground).child(clock_utc(entry.ts)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_color(theme.muted_foreground)
-                    .child(compact),
-            );
-        let mut block = v_flex().w_full().border_b_1().border_color(theme.border).child(row);
-        if open {
-            block = block.child(
-                div().px_4().pb_3().child(
-                    div()
-                        .w_full()
-                        .p_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.muted)
-                        .text_xs()
-                        .font_family(theme.mono_font_family.clone())
-                        .child(entry.data.clone()),
-                ),
-            );
-        }
-        block.into_any_element()
+            }),
+            cx,
+        )
     }
 
     fn render_live(&mut self, live: &LiveCall, cx: &mut Context<Self>) -> gpui_kit::AnyElement {

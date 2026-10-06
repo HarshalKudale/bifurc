@@ -44,7 +44,10 @@ use crate::{
     model::{NodeRef, RequestKind, tree::folder_path},
     panels::host::HostPanel,
     preferences::Preferences,
-    session::{SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, websocket::WsSession},
+    session::{
+        SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, sse::SseSession,
+        websocket::WsSession,
+    },
     shell::ActiveTarget,
 };
 
@@ -92,6 +95,7 @@ fn kind_summary(kind: RequestKind) -> &'static str {
         RequestKind::Grpc => "A call to a method of a gRPC service",
         RequestKind::Soap => "An XML envelope sent to a SOAP action",
         RequestKind::WebSocket => "A connection that sends and receives messages",
+        RequestKind::Sse => "A one-way stream of events from a server",
     }
 }
 
@@ -279,6 +283,7 @@ impl RequestsScreen {
         let session = match kind {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::open_saved(model, id, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::open_saved(model, id, window, cx))),
+            RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::open_saved(model, id, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::open_saved(model, kind, id, window, cx)))
             }
@@ -311,6 +316,7 @@ impl RequestsScreen {
         match kind {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::new_draft(model, folder, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::new_draft(model, folder, window, cx))),
+            RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::new_draft(model, folder, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
             }

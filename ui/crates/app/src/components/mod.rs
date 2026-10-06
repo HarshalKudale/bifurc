@@ -9,6 +9,7 @@ pub mod entity_bar;
 pub mod kv_table;
 pub mod page;
 pub mod parts_table;
+pub mod stream_log;
 pub mod tab_strip;
 pub mod var_editor;
 
