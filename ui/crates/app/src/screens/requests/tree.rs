@@ -36,12 +36,12 @@ pub enum RequestTreeEvent {
     NewRequest { kind: RequestKind, folder: Option<String> },
     /// Start a request from a cURL command; its type comes from the command.
     ImportCurl,
-    NewFolder { kind: RequestKind, parent: Option<String> },
+    NewFolder { parent: Option<String> },
     Rename(NodeRef),
     Delete(NodeRef),
     /// Copy the request, next to the original.
     Duplicate(NodeRef),
-    /// Open the REST folder with this id as a runner tab.
+    /// Open the folder with this id as a runner tab.
     RunFolder(String),
     /// Bring back a deleted request or folder.
     RevertDelete(NodeRef),
@@ -53,7 +53,7 @@ pub enum RequestTreeEvent {
 pub fn is_deleted(model: &AppModel, node: &NodeRef) -> bool {
     let config = model.config();
     match node {
-        NodeRef::Folder { kind, id } => config.folder(*kind, id).is_some_and(|f| f.deleted),
+        NodeRef::Folder { id } => config.folder(id).is_some_and(|f| f.deleted),
         NodeRef::Request { kind, id } => config.request(*kind, id).is_some_and(|r| r.deleted),
     }
 }
@@ -264,22 +264,18 @@ fn context_menu(
             .separator()
             .item(PopupMenuItem::new("Rename…").on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
             .item(PopupMenuItem::new("Delete…").on_click(emitter(tree, RequestTreeEvent::Delete(node.clone())))),
-        NodeRef::Folder { kind, ref id } => menu
-            // The engine runs folders of REST requests; the other types have no runner.
-            .when(kind == RequestKind::Rest, |menu| {
-                menu.item(
-                    PopupMenuItem::new("Open as runner")
-                        .on_click(emitter(tree, RequestTreeEvent::RunFolder(id.clone()))),
-                )
-                .separator()
-            })
-            .item(
-                PopupMenuItem::new(format!("New {} request here", kind.label()))
-                    .on_click(emitter(tree, RequestTreeEvent::NewRequest { kind, folder: Some(id.clone()) })),
-            )
+        NodeRef::Folder { ref id } => menu
+            // The engine runs the REST requests of a folder; the other types in it have no runner.
+            .item(PopupMenuItem::new("Open as runner").on_click(emitter(tree, RequestTreeEvent::RunFolder(id.clone()))))
+            .separator()
+            // A new request starts as REST; its type is changed in the breadcrumb until it is saved.
+            .item(PopupMenuItem::new("New request here").on_click(emitter(
+                tree,
+                RequestTreeEvent::NewRequest { kind: RequestKind::Rest, folder: Some(id.clone()) },
+            )))
             .item(
                 PopupMenuItem::new("New folder here…")
-                    .on_click(emitter(tree, RequestTreeEvent::NewFolder { kind, parent: Some(id.clone()) })),
+                    .on_click(emitter(tree, RequestTreeEvent::NewFolder { parent: Some(id.clone()) })),
             )
             .separator()
             .item(PopupMenuItem::new("Rename…").on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
@@ -287,13 +283,14 @@ fn context_menu(
     }
 }
 
-/// The "new" menu: one request of each type, one from a cURL command, and a folder for each type's tree.
+/// The "new" menu: one request of each type, one from a cURL command, and a folder. A folder takes requests
+/// of every type.
 pub fn new_menu(
     menu: PopupMenu,
     tree: &WeakEntity<RequestTree>,
     folder: Option<String>,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
+    _: &mut Window,
+    _: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let menu = RequestKind::ALL.into_iter().fold(menu, |menu, kind| {
         menu.item(
@@ -304,15 +301,8 @@ pub fn new_menu(
     let menu = menu
         .separator()
         .item(PopupMenuItem::new(CURL_TAB_TITLE).on_click(emitter(tree, RequestTreeEvent::ImportCurl)));
-    let tree = tree.clone();
-    menu.separator().submenu("Folder", window, cx, move |submenu, _, _| {
-        RequestKind::ALL.into_iter().fold(submenu, |submenu, kind| {
-            submenu.item(
-                PopupMenuItem::new(format!("{} folder…", kind.label()))
-                    .on_click(emitter(&tree, RequestTreeEvent::NewFolder { kind, parent: None })),
-            )
-        })
-    })
+    menu.separator()
+        .item(PopupMenuItem::new("Folder…").on_click(emitter(tree, RequestTreeEvent::NewFolder { parent: folder })))
 }
 
 impl Render for RequestTree {
