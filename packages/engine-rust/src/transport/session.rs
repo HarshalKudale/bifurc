@@ -206,6 +206,7 @@ impl Session {
             client_name: Some(client_name.to_string()),
             client_version: Some(client_version.to_string()),
             peer: opts.peer.clone(),
+            client_info: payload.get("clientInfo").and_then(super::companions::sanitize_client_info),
             scopes: Some(opts.scopes_for.as_ref().map(|f| f(payload)).unwrap_or_else(shell_scopes)),
         };
 

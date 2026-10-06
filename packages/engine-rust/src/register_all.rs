@@ -4,7 +4,7 @@
 
 use crate::kernel::CommandRegistry;
 
-/// Register every engine command except `engine.shutdown`, which belongs to the process (`runtime::host`).
+/// Register every engine command except `engine.shutdown` and `engine.companions`, which belong to the process (`runtime::host`).
 pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::workspace::blob::register(registry);
     crate::importexport::register(registry);
@@ -33,7 +33,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
 pub fn unregistered_commands(registry: &CommandRegistry) -> Vec<&'static str> {
     crate::protocol::schema::command_names()
         .into_iter()
-        .filter(|name| *name != "engine.shutdown" && !registry.is_registered(name))
+        .filter(|name| *name != "engine.shutdown" && *name != "engine.companions" && !registry.is_registered(name))
         .collect()
 }
 

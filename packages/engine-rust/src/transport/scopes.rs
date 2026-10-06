@@ -124,6 +124,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("capture.buildRequest", Scope::Read),
     ("capture.buildMock", Scope::Read),
     ("engine.shutdown", Scope::Admin),
+    ("engine.companions", Scope::Read),
     ("capture.list", Scope::Read),
     ("capture.get", Scope::Read),
     ("capture.setPaused", Scope::Write),
