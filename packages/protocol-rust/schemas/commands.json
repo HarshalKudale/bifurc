@@ -2656,6 +2656,11 @@
     }
    ]
   },
+  "engine.companions": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "engine.shutdown": {
    "type": "object",
    "properties": {
