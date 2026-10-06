@@ -17,6 +17,7 @@ pub mod prompt;
 pub mod protocol;
 pub mod requests;
 pub mod session;
+pub mod stream;
 pub mod supervisor;
 #[cfg(test)]
 pub(crate) mod testing;

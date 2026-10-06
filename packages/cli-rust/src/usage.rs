@@ -17,7 +17,7 @@ Groups (bifurc <group> --help shows the arguments and options of each)
   mappings      list | show | create | update | enable | disable      <sub>.localhost → target
   rules         list | show | create | update | enable | disable      Forward-proxy rules
   mocks         list | show | create | update | enable | disable      Mocked responses
-  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket
+  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE
   health        list | show | create | update | run                   Health checks
   vault         list | create | set | unseal | seal | run            Encrypted secrets
   account       list | login | repos                                  GitHub sign-in
@@ -109,7 +109,7 @@ A mock created here is the whole response: nothing is asked of the real server.
 
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
-Saved requests of every type: rest (the default), graphql, grpc, soap, websocket.
+Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse.
 
   list [--type <type>]
   show <id|name> [--type <type>]
@@ -132,6 +132,9 @@ Options of each type
   soap        [--action <SOAPAction>] [-d, --body <xml> | --body-file <f>]
   websocket   send takes [-d, --body <message>] [--wait <seconds, default 2>]: it connects, sends the
               message, prints what was sent and received in that time, and disconnects
+  sse         [-X, --method GET] [-d, --body <text> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
+              it opens the stream, prints the events that arrive in that time (or until the server ends it),
+              and closes it
 
 --type is only needed to tell apart two requests of different types with the same name. Scripts and tests
 are written in the desktop app; send runs them.";
