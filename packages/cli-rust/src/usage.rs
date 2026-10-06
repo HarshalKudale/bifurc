@@ -17,7 +17,7 @@ Groups (bifurc <group> --help shows the arguments and options of each)
   mappings      list | show | create | update | enable | disable      <sub>.localhost → target
   rules         list | show | create | update | enable | disable      Forward-proxy rules
   mocks         list | show | create | update | enable | disable      Mocked responses
-  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE
+  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO
   health        list | show | create | update | run                   Health checks
   vault         list | create | set | unseal | seal | run            Encrypted secrets
   account       list | login | repos                                  GitHub sign-in
@@ -109,7 +109,7 @@ A mock created here is the whole response: nothing is asked of the real server.
 
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
-Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse.
+Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse, socketio.
 
   list [--type <type>]
   show <id|name> [--type <type>]
@@ -135,6 +135,11 @@ Options of each type
   sse         [-X, --method GET] [-d, --body <text> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
               it opens the stream, prints the events that arrive in that time (or until the server ends it),
               and closes it
+  socketio    [--namespace </ns>] [--path </socket.io>] [--auth <json object>]; send takes
+              [--event <name> [-d, --body <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
+              emits the event, prints what was emitted and received in that time, and disconnects. The
+              arguments are a JSON array (one per element), any other JSON value or plain text (one argument);
+              --ack asks the server to acknowledge the event
 
 --type is only needed to tell apart two requests of different types with the same name. Scripts and tests
 are written in the desktop app; send runs them.";
