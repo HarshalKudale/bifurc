@@ -8,6 +8,7 @@ pub mod explorer;
 pub mod git;
 pub mod http;
 pub mod kind;
+pub mod mcp;
 pub mod media;
 pub mod snippet;
 pub mod socket;
