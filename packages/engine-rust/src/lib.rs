@@ -17,6 +17,7 @@ pub mod grpc;
 pub mod sse;
 pub mod importexport;
 pub mod kernel;
+pub mod mcp;
 pub mod mocks;
 pub mod protocol;
 pub mod proxy;
