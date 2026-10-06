@@ -14,7 +14,7 @@ use crate::{
     kernel::{CommandContext, bus},
     runtime::instances::{bind_forward_proxy, forward_proxy},
     testing::scratch_data_root,
-    workspace::fs::{sync_enabled_set, write_flat_entity},
+    workspace::fs::{sync_enabled_set, write_entity, write_flat_entity},
 };
 
 /// A server that answers every connection with `response` and records each raw request.
@@ -106,7 +106,11 @@ fn start_proxy(port: u16) -> Arc<dyn Listener> {
 
 fn put(kind: &str, entity: Value) {
     let id = entity["id"].as_str().unwrap().to_string();
-    write_flat_entity("ws1", kind, &id, &entity).unwrap();
+    if kind == "mocks" {
+        write_entity("ws1", kind, &id, &entity, None).unwrap();
+    } else {
+        write_flat_entity("ws1", kind, &id, &entity).unwrap();
+    }
     sync_enabled_set("ws1", kind, &id, true).unwrap();
 }
 
@@ -383,7 +387,7 @@ async fn an_event_stream_is_relayed_and_reported_in_chunks() {
 async fn dispatch_config_serves_what_is_switched_on() {
     let _root = scratch_data_root();
     put("mocks", mock_entity("on", "http://a.test/", json!({})));
-    write_flat_entity("ws1", "mocks", "off", &mock_entity("off", "http://b.test/", json!({}))).unwrap();
+    write_entity("ws1", "mocks", "off", &mock_entity("off", "http://b.test/", json!({})), None).unwrap();
     let proxy = create_proxy_server();
     let cfg = proxy.dispatch_config().unwrap();
     let ids: Vec<&str> = cfg["mocks"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();

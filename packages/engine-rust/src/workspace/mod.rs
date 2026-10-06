@@ -14,3 +14,4 @@ pub mod kinds;
 pub mod paths;
 pub mod settings;
 pub mod status_cache;
+pub mod tree;

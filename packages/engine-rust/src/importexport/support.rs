@@ -9,11 +9,11 @@ use crate::{
     runtime::instances::notify_config_changed,
     utils::{
         id::now_ms,
-        json::{array_of, is_truthy, opt_str, str_of},
+        json::{array_of, is_truthy, str_of},
     },
     workspace::{
         config::save_config,
-        fs::{create_folder, ensure_default_folder, sync_enabled_set, upsert_name_entry, write_entity},
+        fs::{create_folder, ensure_default_folder, sync_enabled_set, write_entity},
     },
 };
 
@@ -109,16 +109,6 @@ pub fn upsert_by_id(cfg: &mut Value, key: &str, item: Value) {
         Some(index) => list[index] = item,
         None => list.push(item),
     }
-}
-
-/// The name of the folder `folder_id` in `cfg[key]`, when the entity is in one.
-pub fn folder_name(cfg: &Value, key: &str, folder_id: Option<&str>) -> Option<String> {
-    let folder_id = folder_id.filter(|id| !id.is_empty())?;
-    array_of(cfg, key)
-        .iter()
-        .find(|f| str_of(f, "id") == folder_id)
-        .and_then(|f| opt_str(f, "name"))
-        .map(str::to_string)
 }
 
 /// Switch an entity on or off in its kind's `enabled.json`.
@@ -232,24 +222,14 @@ pub fn add_import_folders(
     Ok(made)
 }
 
-/// Write a request into its folder (the Default one when it has none) and list it in the names index.
+/// Write a request into the folder `folder` names by id: the Default one when it names none.
 pub fn store_request(ws_id: &str, request: &Value, folder: Option<&str>) -> Result<(), String> {
     let id = str_of(request, "id");
-    let mut request = request.clone();
-    let mut folder = folder.map(str::to_string).filter(|name| !name.is_empty());
-    if folder.is_none() {
-        let (folder_id, name) = ensure_default_folder(ws_id, "requests").map_err(io_failure)?;
-        crate::utils::json::object_mut(&mut request).insert("folderId".into(), json!(folder_id));
-        folder = Some(name);
-    }
-    let request = &request;
-    write_entity(ws_id, "requests", id, request, folder.as_deref()).map_err(io_failure)?;
-    let entry = json!({
-        "name": request.get("name").cloned().unwrap_or(Value::Null),
-        "method": request.get("method").cloned().unwrap_or(Value::Null),
-        "url": request.get("url").cloned().unwrap_or(Value::Null),
-    });
-    upsert_name_entry(ws_id, "requests", id, entry).map_err(io_failure)
+    let folder_id = match folder.filter(|id| !id.is_empty()) {
+        Some(folder_id) => folder_id.to_string(),
+        None => ensure_default_folder(ws_id, "requests").map_err(io_failure)?.0,
+    };
+    write_entity(ws_id, "requests", id, request, Some(&folder_id)).map_err(io_failure)
 }
 
 /// A folder as the config snapshot lists it.

@@ -392,6 +392,18 @@
    "kind": "mocks"
   }
  },
+ "entity.search": {
+  "valid": {
+   "workspaceId": "ws1",
+   "scope": "requests",
+   "query": "users"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "scope": "rules",
+   "query": "users"
+  }
+ },
  "entity.setEnabled": {
   "valid": {
    "workspaceId": "ws1",

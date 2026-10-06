@@ -277,6 +277,39 @@
     "kind"
    ]
   },
+  "entity.search": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "scope": {
+     "type": "string",
+     "enum": [
+      "requests",
+      "mocks"
+     ]
+    },
+    "query": {
+     "type": "string"
+    },
+    "kinds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "limit": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "scope",
+    "query"
+   ],
+   "additionalProperties": false
+  },
   "entity.setEnabled": {
    "type": "object",
    "properties": {
@@ -313,14 +346,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "sseRequest",
-      "socketioRequest",
-      "mcpRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "name": {
@@ -350,14 +376,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "sseRequest",
-      "socketioRequest",
-      "mcpRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -381,14 +400,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "sseRequest",
-      "socketioRequest",
-      "mcpRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -415,14 +427,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "sseRequest",
-      "socketioRequest",
-      "mcpRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -445,14 +450,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "sseRequest",
-      "socketioRequest",
-      "mcpRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -475,14 +473,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "sseRequest",
-      "socketioRequest",
-      "mcpRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
