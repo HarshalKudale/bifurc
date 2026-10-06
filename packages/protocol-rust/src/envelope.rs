@@ -119,6 +119,10 @@ pub struct HelloRequest {
     /// The highest event `seq` the client has seen; absent on a first connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seq: Option<u64>,
+    /// What the client says about itself, for the engine to show: the browser extension sends `browser`,
+    /// `browserVersion`, `os`, `arch`, `extensionId`, `userAgent` and `language` (all strings).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_info: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

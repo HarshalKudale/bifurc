@@ -40,6 +40,8 @@ pub struct SessionIdentity {
     pub client_name: Option<String>,
     pub client_version: Option<String>,
     pub peer: Option<String>,
+    /// What the client said about itself in its handshake (`clientInfo`), already sanitized.
+    pub client_info: Option<Value>,
     pub scopes: Option<HashSet<Scope>>,
 }
 
