@@ -145,9 +145,13 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register("folder.publish", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId");
         let kind = str_of(&params, "kind");
-        // The folder was created under the storage layer's sanitised name; the pathspec must match it.
+        // The folder was created under the storage layer's sanitised name; the pathspec must match it. A
+        // folder in a folder is named by its path (`Outer/Inner`), each part sanitised the same way.
         let folder_path = match opt_str(&params, "folderName").filter(|n| !n.is_empty()) {
-            Some(name) => format!("{kind}/{}/", sanitize_dir_name(name)),
+            Some(name) => {
+                let parts: Vec<String> = name.split('/').filter(|p| !p.is_empty()).map(sanitize_dir_name).collect();
+                format!("{kind}/{}/", parts.join("/"))
+            }
             None => format!("{kind}/"),
         };
         let result = sync_changes(ws_id, &[folder_path], None).await;
