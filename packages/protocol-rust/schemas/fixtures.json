@@ -760,6 +760,74 @@
    "blobId": "blob_test"
   }
  },
+ "mcp.call": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "type": "tool",
+   "name": "echo",
+   "arguments": {
+    "text": "hello",
+    "count": "2"
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "type": "macro",
+   "name": "echo"
+  }
+ },
+ "mcp.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "mcp.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "transport": "stdio",
+   "url": "npx -y @modelcontextprotocol/server-everything",
+   "headers": {
+    "API_KEY": "k"
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "transport": "carrier-pigeon",
+   "url": "x"
+  }
+ },
+ "mcp.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "mcp.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "mcp.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "proxy.status": {
   "valid": {
    "workspaceId": "ws1"

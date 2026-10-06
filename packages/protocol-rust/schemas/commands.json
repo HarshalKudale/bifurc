@@ -16,6 +16,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -54,6 +55,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -89,6 +91,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -123,6 +126,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments"
      ]
@@ -154,6 +158,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments"
      ]
@@ -185,6 +190,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -220,6 +226,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -256,6 +263,7 @@
       "grpcRequests",
       "sseRequests",
       "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -311,6 +319,7 @@
       "grpcRequest",
       "sseRequest",
       "socketioRequest",
+      "mcpRequest",
       "soapRequest"
      ]
     },
@@ -347,6 +356,7 @@
       "grpcRequest",
       "sseRequest",
       "socketioRequest",
+      "mcpRequest",
       "soapRequest"
      ]
     },
@@ -377,6 +387,7 @@
       "grpcRequest",
       "sseRequest",
       "socketioRequest",
+      "mcpRequest",
       "soapRequest"
      ]
     },
@@ -410,6 +421,7 @@
       "grpcRequest",
       "sseRequest",
       "socketioRequest",
+      "mcpRequest",
       "soapRequest"
      ]
     },
@@ -439,6 +451,7 @@
       "grpcRequest",
       "sseRequest",
       "socketioRequest",
+      "mcpRequest",
       "soapRequest"
      ]
     },
@@ -468,6 +481,7 @@
       "grpcRequest",
       "sseRequest",
       "socketioRequest",
+      "mcpRequest",
       "soapRequest"
      ]
     },
@@ -1822,6 +1836,140 @@
    "additionalProperties": false
   },
   "socketio.clearMessages": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.connect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "transport": {
+     "type": "string",
+     "enum": [
+      "stdio",
+      "http"
+     ]
+    },
+    "url": {
+     "type": "string"
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.disconnect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.call": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "tool",
+      "prompt",
+      "resource"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "arguments": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {}
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId",
+    "type",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.clearMessages": {
    "type": "object",
    "properties": {
     "workspaceId": {
