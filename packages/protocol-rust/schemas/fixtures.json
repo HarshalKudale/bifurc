@@ -1025,6 +1025,52 @@
    }
   }
  },
+ "sse.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "sse.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "url": "https://example.test/events",
+   "method": "GET"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "url": 5
+  }
+ },
+ "sse.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "sse.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sse.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "sync.all": {
   "valid": {
    "workspaceId": "ws1"

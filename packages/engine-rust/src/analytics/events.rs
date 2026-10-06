@@ -63,6 +63,7 @@ fn noun(kind: &str) -> Option<(&'static str, Option<&'static str>)> {
         "graphqlRequests" => ("request", Some("graphql")),
         "soapRequests" => ("request", Some("soap")),
         "grpcRequests" => ("request", Some("grpc")),
+        "sseRequests" => ("request", Some("sse")),
         "wsConnections" => ("request", Some("websocket")),
         "graphqlSchemas" => ("definition file", Some("graphql")),
         "wsdls" => ("definition file", Some("wsdl")),
@@ -204,6 +205,7 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         "soap.send" | "soap.execute" => sent("soap", params, false),
         "grpc.send" | "grpc.execute" => sent("grpc", params, false),
         "grpc.stream.open" => sent("grpc", params, true),
+        "sse.connect" => event("request sent", json!({ "request_type": "sse", "saved": !has_text(params, "url") })),
         "ws.connect" => event("request sent", json!({ "request_type": "websocket", "saved": true })),
         "request.replay" => event("request replayed", json!({ "method": http_method(str_of(params, "method")) })),
         "runner.start" => event("runner started", json!({})),
@@ -357,7 +359,7 @@ mod tests {
         });
         let kinds = [
             "mocks", "proxyRules", "mappings", "environments", "requests", "graphqlRequests", "soapRequests",
-            "grpcRequests", "wsConnections", "graphqlSchemas", "wsdls", "protoFiles",
+            "grpcRequests", "sseRequests", "wsConnections", "graphqlSchemas", "wsdls", "protoFiles",
         ];
         let mut events: Vec<Event> = Vec::new();
         for kind in kinds {
