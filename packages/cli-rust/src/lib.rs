@@ -13,6 +13,7 @@ pub mod error;
 pub mod format;
 pub mod health;
 pub mod locate;
+pub mod mcp;
 pub mod prompt;
 pub mod protocol;
 pub mod requests;

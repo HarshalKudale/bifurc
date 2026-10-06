@@ -17,7 +17,7 @@ Groups (bifurc <group> --help shows the arguments and options of each)
   mappings      list | show | create | update | enable | disable      <sub>.localhost → target
   rules         list | show | create | update | enable | disable      Forward-proxy rules
   mocks         list | show | create | update | enable | disable      Mocked responses
-  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO
+  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
   health        list | show | create | update | run                   Health checks
   vault         list | create | set | unseal | seal | run            Encrypted secrets
   account       list | login | repos                                  GitHub sign-in
@@ -109,7 +109,7 @@ A mock created here is the whole response: nothing is asked of the real server.
 
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
-Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse, socketio.
+Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse, socketio, mcp.
 
   list [--type <type>]
   show <id|name> [--type <type>]
@@ -141,6 +141,12 @@ Options of each type
               emits the event, prints what was emitted and received in that time, and disconnects. The
               arguments are a JSON array (one per element), any other JSON value or plain text (one argument);
               --ack asks the server to acknowledge the event
+  mcp         [--transport stdio|http]; --url is the command that starts the server (stdio) or the address of
+              its endpoint (http), and says which when --transport does not; -H is a header of an endpoint
+              and an environment variable of a program. send connects and prints the tools, prompts and
+              resources the server declares, or takes one of [--tool <name> [--arg <name=value>]...],
+              [--prompt <name> [--arg <name=value>]...] and [--resource <uri>] and prints the answer, waiting
+              [--wait <seconds, default 60>] for it; a value is read as the type the tool declares for it
 
 --type is only needed to tell apart two requests of different types with the same name. Scripts and tests
 are written in the desktop app; send runs them.";
