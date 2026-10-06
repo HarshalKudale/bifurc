@@ -56,6 +56,11 @@ fn tls_changed(next: &AppSettings, prev: &AppSettings) -> bool {
         || next.tls_ca_key_path() != prev.tls_ca_key_path()
 }
 
+/// Whether the edge has to be restarted for the new settings: its port, or what decides whether it serves HTTPS.
+fn edge_changed(next: &AppSettings, prev: &AppSettings) -> bool {
+    next.port() != prev.port() || tls_changed(next, prev)
+}
+
 /// After a whole config was saved: make sure both listeners run, on the ports now configured.
 pub fn rebind_runtime_ports(incoming: &AppSettings, prev: &AppSettings) {
     // Before the first run's servers step nothing is started that was not asked for.
@@ -63,7 +68,7 @@ pub fn rebind_runtime_ports(incoming: &AppSettings, prev: &AppSettings) {
         return rebind_changed_listeners(incoming, prev);
     }
     if let Some(edge) = edge() {
-        if !edge.is_running() || incoming.port() != prev.port() {
+        if !edge.is_running() || edge_changed(incoming, prev) {
             edge.start(incoming.port());
         }
     }
@@ -81,7 +86,7 @@ pub fn rebind_runtime_ports(incoming: &AppSettings, prev: &AppSettings) {
 /// or had failed to bind (a listener the user stopped stays stopped).
 pub fn rebind_changed_listeners(next: &AppSettings, prev: &AppSettings) {
     if let Some(edge) = edge() {
-        if next.port() != prev.port() && (edge.is_running() || edge.error().is_some()) {
+        if edge_changed(next, prev) && (edge.is_running() || edge.error().is_some()) {
             edge.start(next.port());
         }
     }
