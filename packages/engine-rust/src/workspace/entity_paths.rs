@@ -10,12 +10,13 @@ use super::{
 use crate::utils::json::{array_of, opt_str, str_of};
 
 /// The order kinds are listed in: clients receive these maps, and their key order is part of the result.
-const KIND_ORDER: [&str; 11] = [
+const KIND_ORDER: [&str; 12] = [
     "soapRequests",
     "graphqlRequests",
     "grpcRequests",
     "sseRequests",
     "socketioRequests",
+    "mcpRequests",
     "mappings",
     "rules",
     "mocks",
