@@ -63,6 +63,10 @@ pub fn socketio_exchange(
                 connect[field] = target.get(field).cloned().unwrap_or_else(|| json!(""));
             }
             connect["headers"] = target.get("headers").cloned().unwrap_or_else(|| json!({}));
+            // Without --listen every event the server sends is printed.
+            if let Some(listeners) = target.get("listeners").filter(|listeners| listeners.is_array()) {
+                connect["listeners"] = listeners.clone();
+            }
         }
         refused(ctx.request("socketio.connect", connect)?)?;
         let started = Instant::now();
@@ -263,6 +267,38 @@ mod tests {
                     "path": "/rt", "namespace": "/chat", "auth": "{\"token\":\"t\"}", "headers": {"a": "1"}})]
         );
         assert_eq!(payloads(&calls, "socketio.disconnect").len(), 1);
+    }
+
+    #[test]
+    fn listen_names_the_events_that_are_printed() {
+        let answers = vec![
+            ("config.get", Ok(config())),
+            ("socketio.status", connection("disconnected", Value::Null, json!([]))),
+            ("socketio.connect", Ok(json!({"ok": true}))),
+            ("socketio.disconnect", Ok(json!({"ok": true}))),
+        ];
+        let argv = ["requests", "send", "-t", "socketio", "--url", "http://x", "--listen", "message", "--listen", "tick", "--wait", "0"];
+        let (_, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        assert_eq!(payloads(&calls, "socketio.connect")[0]["listeners"], json!(["message", "tick"]));
+
+        let mut answers = engine();
+        answers.extend([("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))), ("entity.update", Ok(json!({"ok": true})))]);
+        let argv = ["requests", "create", "-t", "socketio", "http://x", "--listen", "message"];
+        let (_, calls) = run(&argv, answers.clone(), |c| requests(c, sub(&argv)));
+        let entity = &payloads(&calls, "entity.create")[0]["entity"];
+        assert_eq!((entity["listeners"].clone(), entity["listenAll"].clone()), (json!(["message"]), json!(false)));
+
+        let argv = ["requests", "update", "Chat", "--listen", "tick"];
+        let (_, calls) = run(&argv, answers.clone(), |c| requests(c, sub(&argv)));
+        assert_eq!(payloads(&calls, "entity.update")[0]["entity"]["listeners"], json!(["tick"]));
+
+        // A saved request listens to what it has saved.
+        let argv = ["requests", "send", "Chat", "--listen", "tick"];
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::msg("a saved request is sent as it is saved, without --listen; change it with: bifurc requests update")
+        );
     }
 
     #[test]

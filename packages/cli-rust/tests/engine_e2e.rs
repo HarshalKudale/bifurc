@@ -247,6 +247,17 @@ fn start_status_call_and_stop_a_real_engine() {
     let (ok, out, _) =
         bifurc(data, &["requests", "send", "--type", "socketio", "--url", &url, "--namespace", "/deny", "--event", "echo"]);
     assert!(!ok && out.contains("error: Not authorized") && !out.contains("> [echo]"), "{out}");
+    // Only the events listened to are printed: the server's welcome is not among them.
+    let (ok, out, err) = bifurc(
+        data,
+        &["requests", "send", "--type", "socketio", "--url", &url, "--listen", "echo", "--event", "echo", "-d", "plain", "--wait", "1"],
+    );
+    let exchange = format!("Socket.IO connected  {url}\n> [echo] [\"plain\"]\n< [echo] [\"plain\"]");
+    assert!(ok && out.trim_end() == exchange, "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "update", "Chat", "--listen", "nothing"]);
+    assert!(ok, "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "send", "Chat", "--event", "echo", "-d", "x", "--wait", "1"]);
+    assert!(ok && out.trim_end() == format!("Socket.IO connected  {url}  /chat\n> [echo] [\"x\"]"), "{out}{err}");
     // Nothing is left open by the sends above.
     let (ok, out, err) = bifurc(data, &["--no-start", "call", "socketio.list", &payload]);
     assert!(ok && out.contains("\"connections\": []"), "{out}{err}");

@@ -108,8 +108,8 @@ const TYPES: [RequestType; 7] = [
         send: None,
         url_key: "url",
         headers_key: "headers",
-        options: &["namespace", "path", "auth"],
-        inline: &["url", "headers", "path", "namespace", "auth"],
+        options: &["namespace", "path", "auth", "listen"],
+        inline: &["url", "headers", "path", "namespace", "auth", "listeners"],
     },
 ];
 
@@ -318,6 +318,11 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
                 if let Some(value) = args.flag(option) {
                     set(entity, option, json!(value));
                 }
+            }
+            // The events listened to are the ones named, replacing the ones there were.
+            if args.has("listen") {
+                set(entity, "listeners", json!(args.flags("listen")));
+                set(entity, "listenAll", json!(false));
             }
         }
         _ => {}
