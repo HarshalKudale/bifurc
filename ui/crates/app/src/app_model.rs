@@ -20,7 +20,7 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 21] = [
+const EVENTS: [&str; 23] = [
     "event.account.changed",
     "event.companions.changed",
     "event.engine.stopping",
@@ -39,6 +39,8 @@ const EVENTS: [&str; 21] = [
     "event.sse.message",
     "event.socketio.status",
     "event.socketio.message",
+    "event.mcp.status",
+    "event.mcp.message",
     "event.log.entry",
     "event.runner.progress",
     "event.runner.finished",
@@ -150,6 +152,10 @@ pub enum ModelEvent {
     SocketIoStatus(Value),
     /// `event.socketio.message`: one event or acknowledgement of a Socket.IO connection.
     SocketIoMessage(Value),
+    /// `event.mcp.status`: an MCP connection opened, ended or failed, or its server declared something new.
+    McpStatus(Value),
+    /// `event.mcp.message`: one line of an MCP connection's log, new or answered.
+    McpMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
     /// `event.runner.progress`: one request of a folder run has finished.
@@ -350,6 +356,8 @@ impl AppModel {
                 "event.sse.message" => cx.emit(ModelEvent::SseMessage(event.payload)),
                 "event.socketio.status" => cx.emit(ModelEvent::SocketIoStatus(event.payload)),
                 "event.socketio.message" => cx.emit(ModelEvent::SocketIoMessage(event.payload)),
+                "event.mcp.status" => cx.emit(ModelEvent::McpStatus(event.payload)),
+                "event.mcp.message" => cx.emit(ModelEvent::McpMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
                 "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
                 "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
