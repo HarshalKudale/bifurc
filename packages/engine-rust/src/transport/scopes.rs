@@ -149,6 +149,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("socketio.connect", Scope::Execute),
     ("socketio.disconnect", Scope::Execute),
     ("socketio.emit", Scope::Execute),
+    ("socketio.listen", Scope::Execute),
     ("socketio.status", Scope::Read),
     ("socketio.list", Scope::Read),
     ("socketio.clearMessages", Scope::Write),
