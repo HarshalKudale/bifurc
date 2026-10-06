@@ -10,22 +10,24 @@ fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn port_suffix(port: u16) -> String {
-    if port == 80 { String::new() } else { format!(":{port}") }
+/// `:port`, or nothing for the port a scheme is served on by default.
+fn port_suffix(scheme: &str, port: u16) -> String {
+    let default = if scheme == "https" { 443 } else { 80 };
+    if port == default { String::new() } else { format!(":{port}") }
 }
 
 const LOGO: &str = "<div class=\"logo\"><div class=\"logo-icon\"></div><span class=\"logo-name\">Bifurc</span></div>";
 
 /// The home page: the enabled mappings of `cfg`, each linking to its domain on the port the page is served on.
-pub fn build_home_page(cfg: &Value, current_port: u16) -> String {
-    let suffix = port_suffix(current_port);
+pub fn build_home_page(cfg: &Value, scheme: &str, current_port: u16) -> String {
+    let suffix = port_suffix(scheme, current_port);
     let rows: String = array_of(cfg, "mappings")
         .iter()
         .filter(|m| truthy(m, "enabled"))
         .map(|m| {
             let (domain, target) = (escape(str_of(m, "domain")), escape(str_of(m, "target")));
             format!(
-                "<li><span class=\"dot\"></span><a href=\"http://{domain}{suffix}/\" class=\"domain\">{domain}</a>\
+                "<li><span class=\"dot\"></span><a href=\"{scheme}://{domain}{suffix}/\" class=\"domain\">{domain}</a>\
                  <span class=\"arr\">→</span><span class=\"tgt\">{target}</span></li>"
             )
         })
@@ -43,11 +45,11 @@ pub fn build_home_page(cfg: &Value, current_port: u16) -> String {
 }
 
 /// The 404 for a host no mapping serves.
-pub fn build_not_mapped_page(host: &str, current_port: u16) -> String {
-    let (host, suffix) = (escape(host), port_suffix(current_port));
+pub fn build_not_mapped_page(host: &str, scheme: &str, current_port: u16) -> String {
+    let (host, suffix) = (escape(host), port_suffix(scheme, current_port));
     format!(
         "{LOGO}\n<div class=\"badge\">Not Mapped</div>\n<h1>{host}</h1>\n<p>This domain is not mapped to any local \
-         service.</p>\n<p>Open <a href=\"http://localhost{suffix}/\">Bifurc</a> and add a mapping for \
+         service.</p>\n<p>Open <a href=\"{scheme}://localhost{suffix}/\">Bifurc</a> and add a mapping for \
          <code>{host}</code>.</p>"
     )
 }
@@ -74,7 +76,7 @@ mod tests {
             { "domain": "a.localhost", "target": "localhost:3000", "enabled": true },
             { "domain": "off.localhost", "target": "localhost:1", "enabled": false },
         ] });
-        let page = build_home_page(&cfg, 8081);
+        let page = build_home_page(&cfg, "http", 8081);
         assert!(page.contains("<div class=\"badge\">Port 8081</div>"));
         assert!(page.contains("<a href=\"http://a.localhost:8081/\" class=\"domain\">a.localhost</a>"));
         assert!(page.contains("<span class=\"tgt\">localhost:3000</span>"));
@@ -84,15 +86,15 @@ mod tests {
 
     #[test]
     fn port_80_has_no_suffix_and_an_empty_list_says_so() {
-        let page = build_home_page(&json!({ "mappings": [] }), 80);
+        let page = build_home_page(&json!({ "mappings": [] }), "http", 80);
         assert!(page.contains("<code>*.localhost</code>"));
         assert!(page.contains("No mappings yet. Open the Bifurc app to add one."));
-        assert!(build_not_mapped_page("x.localhost", 80).contains("<a href=\"http://localhost/\">Bifurc</a>"));
+        assert!(build_not_mapped_page("x.localhost", "http", 80).contains("<a href=\"http://localhost/\">Bifurc</a>"));
     }
 
     #[test]
     fn a_host_is_escaped() {
-        let page = build_not_mapped_page("<script>", 8080);
+        let page = build_not_mapped_page("<script>", "http", 8080);
         assert!(page.contains("<h1>&lt;script&gt;</h1>"));
     }
 

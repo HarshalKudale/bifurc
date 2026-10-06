@@ -2,7 +2,7 @@
 
 use std::{
     net::IpAddr,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
 };
@@ -14,9 +14,14 @@ use rcgen::{
     SanType,
 };
 use rsa::{RsaPrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::EncodePrivateKey};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    server::{ClientHello, ResolvesServerCert},
+    sign::CertifiedKey,
+};
 
-use super::manager::{first_cert_der, mkcert_serial};
+use super::manager::{ca_cert_path, ca_key_path, first_cert_der, mkcert_serial};
+use crate::workspace::settings::AppSettings;
 
 /// The most host certificates kept; the oldest is dropped to make room.
 pub const MAX_CACHE_SIZE: usize = 500;
@@ -141,6 +146,52 @@ pub(super) fn host_server_config_limited(
 /// first use and cached.
 pub fn host_server_config(hostname: &str) -> Result<Arc<rustls::ServerConfig>, String> {
     host_server_config_limited(hostname, MAX_CACHE_SIZE)
+}
+
+/// The name a client that sent no SNI is given a certificate for: one connecting by IP address.
+const NO_SNI_HOST: &str = "127.0.0.1";
+
+/// Picks the certificate of a TLS connection to one of Bifurc's own listeners by the name the client asked for.
+#[derive(Debug)]
+struct SniResolver;
+
+impl ResolvesServerCert for SniResolver {
+    fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        let name = client_hello.server_name().unwrap_or(NO_SNI_HOST).to_string();
+        let config = host_server_config(&name).ok()?;
+        config.cert_resolver.resolve(client_hello)
+    }
+}
+
+/// A TLS server configuration for a listener that is itself addressed by name (the reverse proxy, an HTTPS
+/// forward proxy): each connection gets a certificate for the name it asked for, signed by the loaded CA.
+pub fn listener_server_config() -> Result<Arc<rustls::ServerConfig>, String> {
+    if !is_ca_loaded() {
+        return Err("CA not loaded".to_string());
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(SniResolver));
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(Arc::new(config))
+}
+
+/// Make the loaded CA match the settings: loaded from the configured paths (or the engine's own) while HTTPS
+/// is on, forgotten otherwise. `true` when HTTPS is on and a CA is loaded, which is when every listener
+/// speaks HTTPS.
+pub fn apply_settings(settings: &AppSettings) -> bool {
+    if !settings.tls_enabled() {
+        unload_ca();
+        return false;
+    }
+    // A CA made or imported through `tls.*` lives at the engine's own CA paths and is never written into the
+    // settings, so those paths are the fallback when the settings name none.
+    let cert = settings.tls_ca_cert_path().map(PathBuf::from).unwrap_or_else(ca_cert_path);
+    let key = settings.tls_ca_key_path().map(PathBuf::from).unwrap_or_else(ca_key_path);
+    load_ca(&cert, &key)
 }
 
 /// The hostnames with a cached certificate, oldest first.
