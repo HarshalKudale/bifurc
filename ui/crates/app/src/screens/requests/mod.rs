@@ -40,7 +40,7 @@ use crate::{
         },
         entity_bar, tab_strip,
     },
-    engine::{call, call_in, describe},
+    engine::{call, call_in, describe, patch_entity},
     model::{NodeRef, RequestKind, config::REQUEST_FOLDER_KIND, tree::folder_path},
     panels::host::HostPanel,
     preferences::Preferences,
@@ -195,6 +195,40 @@ impl RequestsScreen {
             RequestTreeEvent::ConfirmDelete(node) => {
                 let target = Self::deleted_target(node);
                 self.model.update(cx, |model, cx| model.confirm_delete(target, cx));
+            }
+            RequestTreeEvent::Move { node, folder } => self.move_node(node.clone(), folder.clone(), cx),
+        }
+    }
+
+    /// Puts a request or folder in another folder. A request that is open is moved by its own next write,
+    /// so the tab and the file cannot disagree about where it is.
+    fn move_node(&mut self, node: NodeRef, folder: Option<String>, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let workspace_id = model.workspace_id().to_owned();
+        match node {
+            NodeRef::Folder { id } => {
+                let payload = json!({
+                    "kind": REQUEST_FOLDER_KIND, "id": id, "parentId": folder, "workspaceId": workspace_id,
+                });
+                call(&client, cx, "folder.move", payload, |this, outcome, cx| {
+                    if let Err(error) = outcome {
+                        this.notify_failure(format!("Couldn't move the folder. {}", describe(&error)), cx);
+                    }
+                });
+            }
+            NodeRef::Request { kind, id } => {
+                let open = self.tabs.iter().find(|tab| tab.key == TabKey::Saved { kind, id: id.clone() });
+                if let Some(session) = open.and_then(OpenTab::session).cloned() {
+                    return session.set_folder(folder, cx);
+                }
+                let mut patch = serde_json::Map::new();
+                patch.insert("folderId".into(), json!(folder));
+                patch_entity(&client, cx, &workspace_id, kind.entity_kind(), &id, patch, |this, outcome, cx| {
+                    if let Err(message) = outcome {
+                        this.notify_failure(format!("Couldn't move the request. {message}"), cx);
+                    }
+                });
             }
         }
     }
