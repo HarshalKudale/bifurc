@@ -108,7 +108,7 @@ impl SseSession {
         let url = VarEditor::line("https://example.test/events", window, cx);
         let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
         let body = VarEditor::code(Syntax::Json, "Request body (for a POST stream)", window, cx);
-        let stream = cx.new(|_| SseStream::default());
+        let stream = cx.new(|cx| SseStream::new(window, cx));
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {

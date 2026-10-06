@@ -3,8 +3,6 @@
 //! The SSE counterpart of [`SocketConnection`](super::connection::SocketConnection), without a composer: an
 //! event stream only sends one way. The engine owns the stream; this entity mirrors it ([`StreamView`]).
 
-use std::collections::HashSet;
-
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
@@ -20,7 +18,7 @@ use gpui_kit::{
 use serde_json::Value;
 
 use crate::{
-    components::stream_log::{LogRow, log_row},
+    components::stream_log::{LogRow, LogSearch, OpenRows, found, log_row, nothing_found, search_button},
     model::stream::{StreamMessage, StreamState, StreamView},
 };
 
@@ -34,24 +32,33 @@ pub struct SseStream {
     scroll: ScrollHandle,
     follow_tail: bool,
     /// The events opened to their whole data, by id.
-    open: HashSet<String>,
+    open: OpenRows,
+    search: LogSearch,
 }
 
 impl EventEmitter<StreamEvent> for SseStream {}
 
-impl Default for SseStream {
-    fn default() -> Self {
-        Self { view: StreamView::default(), scroll: ScrollHandle::new(), follow_tail: true, open: HashSet::new() }
-    }
-}
-
 impl SseStream {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self {
+            view: StreamView::default(),
+            scroll: ScrollHandle::new(),
+            follow_tail: true,
+            open: OpenRows::default(),
+            search: LogSearch::new(window, cx, |this, cx| {
+                this.open.highlight(&this.search.query(cx), cx);
+                cx.notify();
+            }),
+        }
+    }
+
     pub fn state(&self) -> StreamState {
         self.view.state
     }
 
     pub fn replace_view(&mut self, view: StreamView, cx: &mut Context<Self>) {
         self.view = view;
+        self.forget_dropped();
         self.follow_tail = true;
         cx.notify();
     }
@@ -63,6 +70,7 @@ impl SseStream {
 
     pub fn apply_message_event(&mut self, payload: &Value, cx: &mut Context<Self>) {
         self.view.apply_message_event(payload);
+        self.forget_dropped();
         self.follow_tail = true;
         cx.notify();
     }
@@ -71,6 +79,14 @@ impl SseStream {
         self.view.clear_messages();
         self.open.clear();
         cx.notify();
+    }
+
+    /// The log is bounded, so an open event can leave it.
+    fn forget_dropped(&mut self) {
+        if !self.open.is_empty() {
+            let messages = &self.view.messages;
+            self.open.retain(|id| messages.iter().any(|m| m.id == id));
+        }
     }
 
     /// One event: the shared log row, which opens to the whole event.
@@ -87,11 +103,11 @@ impl SseStream {
         let id = message.id.clone();
         log_row(
             &row,
-            self.open.contains(&message.id),
-            cx.listener(move |this, _, _, cx| {
-                if !this.open.remove(&id) {
-                    this.open.insert(id.clone());
-                }
+            self.open.get(&message.id),
+            cx.listener(move |this, _, window, cx| {
+                let Some(message) = this.view.messages.iter().find(|m| m.id == id) else { return };
+                let query = this.search.query(cx);
+                this.open.toggle(&id, &message.data, &query, window, cx);
                 cx.notify();
             }),
             cx,
@@ -113,6 +129,15 @@ impl Render for SseStream {
             self.follow_tail = false;
             self.scroll.scroll_to_bottom();
         }
+        let needle = self.search.needle(cx);
+        let shown: Vec<&StreamMessage> = self
+            .view
+            .messages
+            .iter()
+            .filter(|m| found(needle.as_deref(), &[&m.data, &m.event, m.event_id.as_deref().unwrap_or_default()]))
+            .collect();
+        let search_bar = self.search.bar(shown.len(), self.view.messages.len(), cx);
+        let none_found = shown.is_empty() && !self.view.messages.is_empty();
 
         v_flex()
             .size_full()
@@ -135,6 +160,10 @@ impl Render for SseStream {
                         self.view.messages.len(),
                         if self.view.messages.len() == 1 { "" } else { "s" }
                     )))
+                    .child(search_button("search-events").on_click(cx.listener(|this, _, window, cx| {
+                        this.search.toggle(window, cx);
+                        cx.notify();
+                    })))
                     .child(
                         Button::new("clear-events")
                             .ghost()
@@ -144,6 +173,7 @@ impl Render for SseStream {
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(StreamEvent::Clear))),
                     ),
             )
+            .children(search_bar)
             .child(
                 div()
                     .id("sse-events")
@@ -164,7 +194,8 @@ impl Render for SseStream {
                             ),
                         ))
                     })
-                    .children(self.view.messages.iter().map(|m| self.render_message(m, cx))),
+                    .when(none_found, |this| this.child(nothing_found()))
+                    .children(shown.into_iter().map(|m| self.render_message(m, cx))),
             )
     }
 }
