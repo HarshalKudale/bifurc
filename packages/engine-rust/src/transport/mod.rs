@@ -1,5 +1,6 @@
 //! How clients reach the engine: one session model (`session`) over three byte carriers.
 
+pub mod companions;
 pub mod event_log;
 pub mod event_pump;
 pub mod framing;

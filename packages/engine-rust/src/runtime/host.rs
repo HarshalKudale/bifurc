@@ -20,6 +20,7 @@ use crate::{
     protocol::{EngineError, PROTOCOL_VERSION, Result},
     register_all::register_all_engine_commands,
     transport::{
+        companions::CompanionRegistry,
         event_log::EventLog,
         scopes::companion_scopes,
         session::SessionOptions,
@@ -179,6 +180,9 @@ impl WorkspaceHost {
         let mut registry = CommandRegistry::new();
         register_all_engine_commands(&mut registry);
         let stop = shutdown.clone();
+        let companions = CompanionRegistry::new();
+        let listed = companions.clone();
+        registry.register_sync("engine.companions", move |_, _| Ok(listed.snapshot()));
         registry.register_sync("engine.shutdown", move |params, _| {
             let restart = params.get("restart").and_then(Value::as_bool).unwrap_or(false);
             stop.send(restart).map_err(|_| EngineError::engine("no engine is running in this process"))?;
@@ -295,6 +299,7 @@ impl WorkspaceHost {
         };
 
         let (started, ended, setup) = (desktop.clone(), desktop.clone(), desktop.clone());
+        let (companions_in, companions_out) = (companions.clone(), companions.clone());
         let session = SessionOptions {
             registry: registry.clone(),
             log: log.clone(),
@@ -311,11 +316,17 @@ impl WorkspaceHost {
                 ));
             })),
             on_session_start: Some(Arc::new(move |identity| {
+                if companions_in.connected(identity) {
+                    bus().emit("companions.changed", companions_in.snapshot());
+                }
                 if let Some(desktop) = &started {
                     desktop.on_session_start(identity);
                 }
             })),
             on_session_end: Some(Arc::new(move |identity| {
+                if companions_out.disconnected(identity) {
+                    bus().emit("companions.changed", companions_out.snapshot());
+                }
                 if let Some(desktop) = &ended {
                     desktop.on_session_end(identity);
                 }
