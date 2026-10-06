@@ -262,6 +262,31 @@ fn start_status_call_and_stop_a_real_engine() {
     let (ok, out, err) = bifurc(data, &["--no-start", "call", "socketio.list", &payload]);
     assert!(ok && out.contains("\"connections\": []"), "{out}{err}");
 
+    // Every request, whatever its type, is a file of the one request tree, in the directory of its folder, and
+    // says its type itself. No type has a directory of its own. Each tree has its index beside it, which git
+    // is told to leave alone, and a search reads that index.
+    let workspace = data.join("data").join(&active);
+    let default_folder = workspace.join("requests").join("Default");
+    let mut types: Vec<String> = std::fs::read_dir(&default_folder)
+        .unwrap()
+        .map(|entry| {
+            let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"].as_str().unwrap().to_string()
+        })
+        .collect();
+    types.sort();
+    assert_eq!(types, ["grpc", "socketio", "sse"]);
+    for gone in ["grpcRequests", "sseRequests", "socketioRequests", "sockets", "graphqlRequests"] {
+        assert!(!workspace.join(gone).exists(), "{gone}");
+    }
+    assert!(workspace.join("requests").join("index.db").is_file());
+    assert!(workspace.join("mocks").join("index.db").is_file());
+    assert!(std::fs::read_to_string(workspace.join(".gitignore")).unwrap().contains("index.db"));
+    let search = serde_json::json!({ "workspaceId": active, "scope": "requests", "query": "/CHAT" }).to_string();
+    let (ok, out, err) = bifurc(data, &["--no-start", "call", "entity.search", &search]);
+    assert!(ok && out.contains("\"name\": \"Chat\"") && out.contains("\"kind\": \"socketioRequests\""), "{out}{err}");
+    assert!(!out.contains("Feed"), "{out}");
+
     // What was run failed, so the command does: nothing listens on that port.
     let (ok, out, _) = bifurc(data, &["health", "run"]);
     assert!(!ok && out.contains("failing"), "{out}");

@@ -3,7 +3,10 @@
 use std::path::PathBuf;
 
 use super::remote::git_net;
-use crate::workspace::git_store::{GitError, RemoteAuth, git, git_net_in};
+use crate::workspace::{
+    git_store::{GitError, RemoteAuth, git, git_net_in},
+    tree,
+};
 
 /// A directory git can run in without a repository (remote queries and clones).
 fn neutral_dir() -> PathBuf {
@@ -26,6 +29,13 @@ pub struct PullOutcome {
 /// Fetch `origin/<branch>` and merge it, setting local changes aside (stashed, then restored on top) around
 /// the merge. A merge that fails is aborted and reported as `Pull merge failed`.
 pub async fn perform_git_pull(ws_id: &str, branch: &str) -> Result<PullOutcome, GitError> {
+    let outcome = pull(ws_id, branch).await;
+    // Files of the trees came and went without their indexes being told.
+    tree::mark_stale(ws_id);
+    outcome
+}
+
+async fn pull(ws_id: &str, branch: &str) -> Result<PullOutcome, GitError> {
     git_net(ws_id, &["fetch", "origin", branch]).await?;
 
     let remote_ref = format!("origin/{branch}");

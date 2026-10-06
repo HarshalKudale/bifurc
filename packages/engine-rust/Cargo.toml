@@ -54,6 +54,8 @@ flate2 = "1"
 brotli = "8"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 serde_yaml_ng = "0.10"
+# The local index of a workspace's request tree and mock tree.
+rusqlite = { version = "0.40", features = ["bundled"] }
 # The sandbox for request scripts, tests and proxy rule scripts.
 rquickjs = "0.14"
 

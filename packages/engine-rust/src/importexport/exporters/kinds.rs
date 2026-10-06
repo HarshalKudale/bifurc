@@ -45,7 +45,7 @@ pub fn websockets(ws_id: &str) -> ExportOutcome {
         "schema": "lp-websockets-v1",
         "name": workspace_name(&cfg, ws_id, "Bifurc"),
         "wsConnections": connections,
-        "folders": in_workspace(&cfg, "wsFolders", ws_id),
+        "folders": in_workspace(&cfg, "requestFolders", ws_id),
     });
     Ok(ExportFile { content: pretty(&payload), suggested_name: "websockets-export.json" })
 }
