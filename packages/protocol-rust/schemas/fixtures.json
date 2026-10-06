@@ -1076,6 +1076,20 @@
   },
   "invalid": {}
  },
+ "socketio.listen": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "listeners": [
+    "message"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "listeners": "message"
+  }
+ },
  "socketio.status": {
   "valid": {
    "workspaceId": "ws1",

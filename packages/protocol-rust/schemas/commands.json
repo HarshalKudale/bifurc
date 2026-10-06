@@ -1715,6 +1715,34 @@
     },
     "auth": {
      "type": "string"
+    },
+    "listeners": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.listen": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "listeners": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
     }
    },
    "required": [

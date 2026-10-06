@@ -8,6 +8,9 @@
 //!
 //! The transport is a WebSocket speaking Engine.IO v4 (Socket.IO servers v3 and v4); HTTP long-polling is not
 //! used. A connection joins one namespace.
+//!
+//! What the server sends is logged for the events the connection listens to, as a Socket.IO client only hears
+//! the events it has a listener for. Without a list of listeners every event is logged.
 
 use std::{
     collections::HashMap,
@@ -70,6 +73,8 @@ pub struct Target<'a> {
     pub namespace: &'a str,
     /// The JSON object sent with the namespace connect, or empty for none.
     pub auth: &'a str,
+    /// The events to log when the server sends them; `None` logs every event.
+    pub listeners: Option<Vec<String>>,
 }
 
 /// Everything a connect needs, already resolved.
@@ -113,6 +118,8 @@ struct Entry {
     next_ack: u64,
     /// The events waiting for the server's acknowledgement, by the id they were sent with.
     pending_acks: HashMap<u64, String>,
+    /// The events logged when the server sends them; `None` logs every event.
+    listeners: Option<Vec<String>>,
 }
 
 struct Event {
@@ -144,6 +151,7 @@ impl Entry {
         out.insert("error".into(), json!(self.error));
         out.insert("sid".into(), json!(self.sid));
         out.insert("closeReason".into(), json!(self.close_reason));
+        out.insert("listeners".into(), json!(self.listeners));
         out.insert("openedAt".into(), json!(self.opened_at));
         out.insert("messages".into(), Value::Array(self.messages.clone()));
         Value::Object(out)
@@ -329,6 +337,7 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
             seq: 0,
             next_ack: 0,
             pending_acks: HashMap::new(),
+            listeners: None,
         });
 
         // Supersede the old connection before closing it, so its end cannot report after the `connecting` below.
@@ -346,6 +355,7 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
         entry.opened_at = None;
         entry.close_requested = false;
         entry.pending_acks.clear();
+        entry.listeners = target.listeners.clone();
         if let Ok(prepared) = &prepared {
             entry.namespace = prepared.namespace.clone();
         }
@@ -445,6 +455,18 @@ pub fn emit_event(workspace_id: &str, connection_id: &str, event: &str, args: &s
     Ok(())
 }
 
+/// Change the events a connection listens to, live or not: `None` listens to every event. What is already in
+/// the log stays.
+pub fn set_listeners(workspace_id: &str, connection_id: &str, listeners: Option<Vec<String>>) -> OkResult {
+    match CONNECTIONS.lock().get_mut(&key_of(workspace_id, connection_id)) {
+        Some(entry) => {
+            entry.listeners = listeners;
+            Ok(())
+        }
+        None => Err(no_connection(workspace_id, connection_id)),
+    }
+}
+
 /// Drop the retained log of one connection; the connection itself is untouched.
 pub fn clear_connection_messages(workspace_id: &str, connection_id: &str) -> OkResult {
     match CONNECTIONS.lock().get_mut(&key_of(workspace_id, connection_id)) {
@@ -467,6 +489,10 @@ fn record_received(key: &str, generation: u64, incoming: Incoming) -> bool {
         };
         match incoming {
             Incoming::Event { name, args, ack_id } => {
+                // An event nothing listens to is not heard, as in a Socket.IO client.
+                if entry.listeners.as_ref().is_some_and(|heard| !heard.contains(&name)) {
+                    return true;
+                }
                 entry.push(Logged { direction: "received", kind: "event", event: &name, args: &args, ack_id })
             }
             Incoming::Ack { id, args } => {
@@ -666,7 +692,7 @@ mod tests {
     use super::*;
 
     fn target<'a>(url: &'a str, path: &'a str, namespace: &'a str, auth: &'a str) -> Target<'a> {
-        Target { url, headers: None, path, namespace, auth }
+        Target { url, headers: None, path, namespace, auth, listeners: None }
     }
 
     fn address(prepared: &Prepared) -> String {
@@ -719,6 +745,7 @@ mod tests {
                 path: "/{{NS}}-io",
                 namespace: "/{{NS}}",
                 auth: "{\"token\": \"{{TOKEN}}\"}",
+                listeners: None,
             },
             Some(&env),
         )
@@ -740,7 +767,10 @@ mod tests {
             assert!(error.starts_with("Invalid auth"), "{auth}: {error}");
         }
         let headers = json!({ "bad name": "v" });
-        let refused = prepare(&Target { url: "http://h", headers: Some(&headers), path: "", namespace: "", auth: "" }, None);
+        let refused = prepare(
+            &Target { url: "http://h", headers: Some(&headers), path: "", namespace: "", auth: "", listeners: None },
+            None,
+        );
         assert!(refused.err().unwrap().contains("header name"));
     }
 }

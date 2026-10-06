@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::registry::{
     MAX_SOCKETIO_CONNECTIONS, OkResult, Target, clear_connection_messages, connect_connection, disconnect_connection,
-    emit_event, get_connection, list_connections,
+    emit_event, get_connection, list_connections, set_listeners,
 };
 use crate::{
     kernel::CommandRegistry,
@@ -21,9 +21,20 @@ fn ok_result(result: OkResult) -> Result<Value> {
 }
 
 /// The fields of a target besides `url`, which a draft may send and a saved request holds.
-const TARGET_FIELDS: [&str; 4] = ["headers", "path", "namespace", "auth"];
+const TARGET_FIELDS: [&str; 5] = ["headers", "path", "namespace", "auth", "listeners"];
 
-/// Where a connect gets its target: `url` (with optional `headers`, `path`, `namespace`, `auth`) for a draft,
+/// The events a target listens to: the names in its `listeners` (each a name, or an object with an `event`),
+/// or `None` — every event — when it has no such list or says `listenAll`.
+fn listeners_of(source: &Value) -> Option<Vec<String>> {
+    if source.get("listenAll").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let listed = source.get("listeners")?.as_array()?;
+    let name = |item: &Value| item.as_str().or_else(|| item.get("event")?.as_str()).map(|name| name.trim().to_string());
+    Some(listed.iter().filter_map(name).filter(|name| !name.is_empty()).collect())
+}
+
+/// Where a connect gets its target: `url` (with optional `headers`, `path`, `namespace`, `auth`, `listeners`) for a draft,
 /// or the saved `socketioRequests` entity named by `id` (by `connectionId` when `id` is omitted). The draft's
 /// other fields without `url` are refused. Returns the object the target is read from.
 fn resolve_target(params: &Value) -> Result<Value> {
@@ -32,7 +43,7 @@ fn resolve_target(params: &Value) -> Result<Value> {
     }
     if TARGET_FIELDS.iter().any(|field| params.get(*field).is_some()) {
         return Err(EngineError::bad_request(
-            "socketio.connect takes `headers`, `path`, `namespace` and `auth` only together with `url`; \
+            "socketio.connect takes `headers`, `path`, `namespace`, `auth` and `listeners` only together with `url`; \
              a saved request supplies its own.",
         ));
     }
@@ -54,6 +65,7 @@ pub fn register(registry: &mut CommandRegistry) {
             path: str_of(&source, "path"),
             namespace: str_of(&source, "namespace"),
             auth: str_of(&source, "auth"),
+            listeners: listeners_of(&source),
         };
         ok_result(connect_connection(str_of(&params, "workspaceId"), str_of(&params, "connectionId"), &target))
     });
@@ -69,6 +81,14 @@ pub fn register(registry: &mut CommandRegistry) {
             str_of(&params, "event"),
             str_of(&params, "args"),
             params.get("ack").and_then(Value::as_bool).unwrap_or(false),
+        ))
+    });
+
+    registry.register_sync("socketio.listen", |params, _| {
+        ok_result(set_listeners(
+            str_of(&params, "workspaceId"),
+            str_of(&params, "connectionId"),
+            listeners_of(&params),
         ))
     });
 
@@ -465,6 +485,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_the_events_listened_to_are_logged() {
+        let _root = scratch_data_root();
+        let server = Server::start().await;
+        let events = Events::watch("heard");
+        let payload = json!({ "workspaceId": WS, "connectionId": "heard", "url": server.url, "listeners": ["echo"] });
+        assert_eq!(call("socketio.connect", payload).await, json!({ "ok": true }));
+        assert_eq!(wait_status("heard", "connected").await["listeners"], json!(["echo"]));
+
+        // The server's welcome is not heard; what is sent always is, and so is the event listened to.
+        emit("heard", "echo", "1").await;
+        wait_for("the echo", || events.messages().len() == 2).await;
+        assert_eq!(events.lines(), [line("sent", "event", "echo", "[1]"), line("received", "event", "echo", "[1]")]);
+
+        // The listeners can change while connected. An acknowledgement is the answer to what was sent: it is
+        // logged whatever is listened to.
+        let listen = |listeners: Value| async move {
+            let mut payload = json!({ "workspaceId": WS, "connectionId": "heard" });
+            if !listeners.is_null() {
+                payload["listeners"] = listeners;
+            }
+            call("socketio.listen", payload).await
+        };
+        assert_eq!(listen(json!(["question"])).await, json!({ "ok": true }));
+        let payload = json!({ "workspaceId": WS, "connectionId": "heard", "event": "echo", "args": "2", "ack": true });
+        call("socketio.emit", payload).await;
+        wait_for("the acknowledgement", || events.messages().iter().any(|m| m["type"] == "ack")).await;
+        emit("heard", "ask-me", "").await;
+        wait_for("the question", || events.messages().iter().any(|m| m["event"] == "question")).await;
+        assert_eq!(
+            events.lines()[2..],
+            [
+                line("sent", "event", "echo", "[2]"),
+                line("received", "ack", "echo", "[2]"),
+                line("sent", "event", "ask-me", "[]"),
+                line("received", "event", "question", "[1]"),
+            ]
+        );
+
+        // No listeners at all hears nothing; no list hears everything.
+        assert_eq!(listen(json!([])).await, json!({ "ok": true }));
+        // The acknowledgement follows the echo, so once it is here the echo has gone by unheard.
+        let payload = json!({ "workspaceId": WS, "connectionId": "heard", "event": "echo", "args": "3", "ack": true });
+        call("socketio.emit", payload).await;
+        wait_for("the second acknowledgement", || events.messages().iter().filter(|m| m["type"] == "ack").count() == 2)
+            .await;
+        assert_eq!(listen(Value::Null).await, json!({ "ok": true }));
+        assert_eq!(status("heard").await["listeners"], Value::Null);
+        emit("heard", "echo", "4").await;
+        wait_for("the last echo", || events.lines().last() == Some(&line("received", "event", "echo", "[4]"))).await;
+        assert_eq!(
+            events.lines()[6..],
+            [
+                line("sent", "event", "echo", "[3]"),
+                line("received", "ack", "echo", "[3]"),
+                line("sent", "event", "echo", "[4]"),
+                line("received", "event", "echo", "[4]"),
+            ]
+        );
+        disconnect("heard").await;
+        wait_status("heard", "disconnected").await;
+
+        let unknown = listen_to("never", json!(["x"])).await;
+        assert_eq!(unknown["ok"], false);
+    }
+
+    async fn listen_to(connection_id: &str, listeners: Value) -> Value {
+        call("socketio.listen", json!({ "workspaceId": WS, "connectionId": connection_id, "listeners": listeners })).await
+    }
+
+    #[tokio::test]
+    async fn a_saved_request_listens_to_what_it_lists() {
+        let root = scratch_data_root();
+        let server = Server::start().await;
+        let saved = |id: &str, extra: Value| {
+            let mut entity = json!({ "id": id, "name": id, "url": server.url, "createdAt": 1, "workspaceId": root.ws_id });
+            entity.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            write_entity(root.ws_id, "socketioRequests", id, &entity, None).unwrap();
+        };
+        // Names, or rows with a name; a blank one is no listener.
+        saved("listed", json!({ "listeners": [{ "event": " echo ", "description": "what I sent" }, "question", ""] }));
+        saved("all", json!({ "listeners": ["echo"], "listenAll": true }));
+        saved("plain", json!({}));
+        for (id, expected) in [("listed", json!(["echo", "question"])), ("all", Value::Null), ("plain", Value::Null)] {
+            call("socketio.connect", json!({ "workspaceId": WS, "connectionId": id })).await;
+            assert_eq!(wait_status(id, "connected").await["listeners"], expected, "{id}");
+        }
+        // The welcome reaches the two that hear everything, not the one with a list.
+        wait_for("the welcomes", || ["all", "plain"].iter().all(|id| get_connection(WS, id).unwrap()["messages"][0]["event"] == "welcome")).await;
+        assert_eq!(status("listed").await["messages"], json!([]));
+        for id in ["listed", "all", "plain"] {
+            disconnect(id).await;
+            wait_status(id, "disconnected").await;
+        }
+    }
+
+    #[tokio::test]
     async fn a_saved_request_resolves_variables() {
         let root = scratch_data_root();
         let server = Server::start().await;
@@ -519,7 +635,13 @@ mod tests {
         let _root = scratch_data_root();
         let missing = call_err("socketio.connect", json!({ "workspaceId": WS, "connectionId": "nope" })).await;
         assert_eq!(missing.code, ErrorCode::NotFound);
-        for stray in [json!({ "headers": { "A": "b" } }), json!({ "namespace": "/x" }), json!({ "auth": "{}" }), json!({ "path": "/p" })] {
+        for stray in [
+            json!({ "headers": { "A": "b" } }),
+            json!({ "namespace": "/x" }),
+            json!({ "auth": "{}" }),
+            json!({ "path": "/p" }),
+            json!({ "listeners": ["x"] }),
+        ] {
             let mut payload = json!({ "workspaceId": WS, "connectionId": "x" });
             payload.as_object_mut().unwrap().extend(stray.as_object().unwrap().clone());
             assert_eq!(call_err("socketio.connect", payload).await.code, ErrorCode::BadRequest, "{stray}");
