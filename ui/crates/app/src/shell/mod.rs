@@ -185,6 +185,8 @@ impl Shell {
             | ModelEvent::SseMessage(_)
             | ModelEvent::SocketIoStatus(_)
             | ModelEvent::SocketIoMessage(_)
+            | ModelEvent::McpStatus(_)
+            | ModelEvent::McpMessage(_)
             | ModelEvent::Traffic(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)

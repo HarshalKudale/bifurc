@@ -9,10 +9,11 @@ pub enum RequestKind {
     WebSocket,
     Sse,
     SocketIo,
+    Mcp,
 }
 
 impl RequestKind {
-    pub const ALL: [RequestKind; 7] = [
+    pub const ALL: [RequestKind; 8] = [
         RequestKind::Rest,
         RequestKind::GraphQl,
         RequestKind::Grpc,
@@ -20,6 +21,7 @@ impl RequestKind {
         RequestKind::WebSocket,
         RequestKind::Sse,
         RequestKind::SocketIo,
+        RequestKind::Mcp,
     ];
 
     pub fn label(self) -> &'static str {
@@ -31,6 +33,7 @@ impl RequestKind {
             RequestKind::WebSocket => "WebSocket",
             RequestKind::Sse => "SSE",
             RequestKind::SocketIo => "Socket.IO",
+            RequestKind::Mcp => "MCP",
         }
     }
 
@@ -44,6 +47,7 @@ impl RequestKind {
             RequestKind::WebSocket => "wsConnections",
             RequestKind::Sse => "sseRequests",
             RequestKind::SocketIo => "socketioRequests",
+            RequestKind::Mcp => "mcpRequests",
         }
     }
 
@@ -62,6 +66,7 @@ impl RequestKind {
             RequestKind::WebSocket => "ws",
             RequestKind::Sse => "sseRequest",
             RequestKind::SocketIo => "socketioRequest",
+            RequestKind::Mcp => "mcpRequest",
         }
     }
 
@@ -75,6 +80,7 @@ impl RequestKind {
             RequestKind::WebSocket => "wsConnections",
             RequestKind::Sse => "sseRequests",
             RequestKind::SocketIo => "socketioRequests",
+            RequestKind::Mcp => "mcpRequests",
         }
     }
 
@@ -88,17 +94,18 @@ impl RequestKind {
             RequestKind::WebSocket => "wsFolders",
             RequestKind::Sse => "sseRequestFolders",
             RequestKind::SocketIo => "socketioRequestFolders",
+            RequestKind::Mcp => "mcpRequestFolders",
         }
     }
 
-    /// The by-id send command for the kinds that have one. WebSocket, SSE and Socket.IO connect instead of sending.
+    /// The by-id send command for the kinds that have one. WebSocket, SSE, Socket.IO and MCP connect instead of sending.
     pub fn send_command(self) -> Option<&'static str> {
         match self {
             RequestKind::Rest => Some("request.send"),
             RequestKind::GraphQl => Some("graphql.send"),
             RequestKind::Grpc => Some("grpc.send"),
             RequestKind::Soap => Some("soap.send"),
-            RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo => None,
+            RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => None,
         }
     }
 
@@ -112,6 +119,7 @@ impl RequestKind {
             RequestKind::WebSocket => "WS",
             RequestKind::Sse => "SSE",
             RequestKind::SocketIo => "SIO",
+            RequestKind::Mcp => "MCP",
         }
     }
 }
@@ -152,6 +160,19 @@ mod tests {
         assert_eq!(RequestKind::SocketIo.send_command(), None);
         assert_eq!(RequestKind::SocketIo.badge(), "SIO");
         assert_eq!(RequestKind::from_entity_kind("socketioRequests"), Some(RequestKind::SocketIo));
+    }
+
+    #[test]
+    fn mcp_is_one_of_the_request_kinds_with_the_same_shape_of_names() {
+        assert!(RequestKind::ALL.contains(&RequestKind::Mcp));
+        assert_eq!(RequestKind::Mcp.label(), "MCP");
+        assert_eq!(RequestKind::Mcp.entity_kind(), "mcpRequests");
+        assert_eq!(RequestKind::Mcp.folder_kind(), "mcpRequest");
+        assert_eq!(RequestKind::Mcp.config_key(), "mcpRequests");
+        assert_eq!(RequestKind::Mcp.folders_key(), "mcpRequestFolders");
+        assert_eq!(RequestKind::Mcp.send_command(), None);
+        assert_eq!(RequestKind::Mcp.badge(), "MCP");
+        assert_eq!(RequestKind::from_entity_kind("mcpRequests"), Some(RequestKind::Mcp));
     }
 
     #[test]
