@@ -315,6 +315,11 @@ pub fn load_config() -> Value {
         &["url", "method"],
         json!({ "headers": {}, "body": "", "createdAt": 0 }),
     );
+    let socketio_requests = listed(
+        "socketioRequests",
+        &["url", "namespace"],
+        json!({ "headers": {}, "path": "", "auth": "", "createdAt": 0 }),
+    );
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 
@@ -339,6 +344,8 @@ pub fn load_config() -> Value {
         "grpcRequestFolders": folders(ws_id, "grpcRequests"),
         "sseRequests": sse_requests,
         "sseRequestFolders": folders(ws_id, "sseRequests"),
+        "socketioRequests": socketio_requests,
+        "socketioRequestFolders": folders(ws_id, "socketioRequests"),
         "soapRequests": soap_requests,
         "savedWsdls": [],
         "soapRequestFolders": folders(ws_id, "soapRequests"),

@@ -11,7 +11,6 @@ use gpui_kit::component::{
     ActiveTheme as _, IndexPath, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
-    h_flex,
     input::{Editor, InputEvent, InputState},
     notification::Notification,
     select::{Select, SelectEvent, SelectState},
@@ -30,7 +29,7 @@ use super::{
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
     model::{
         RequestKind,
@@ -551,7 +550,7 @@ impl SseSession {
 
     fn render_sections(&self, cx: &mut Context<Self>) -> TabBar {
         TabBar::new("sse-sections")
-            .segmented()
+            .underline()
             .small()
             .selected_index(Section::ALL.iter().position(|s| *s == self.section).unwrap_or(0))
             .on_click(cx.listener(|this, ix: &usize, _, cx| {
@@ -590,27 +589,28 @@ impl Render for SseSession {
         v_flex()
             .size_full()
             .bg(theme.background)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .child(div().w_32().flex_none().child(Select::new(&self.method).h(row_height).disabled(live)))
-                    .child(div().flex_1().min_w_0().child(self.url.line_field(cx).disabled(live)))
-                    .child(if live {
-                        Button::new("disconnect-stream")
-                            .h(row_height)
-                            .label("Disconnect")
-                            .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
-                    } else {
-                        Button::new("connect-stream")
-                            .primary()
-                            .h(row_height)
-                            .label("Connect")
-                            .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
-                    }),
-            )
+            .child(request_bar(
+                Some(
+                    div()
+                        .w_32()
+                        .flex_none()
+                        .child(Select::new(&self.method).h(row_height).disabled(live))
+                        .into_any_element(),
+                ),
+                self.url.line_field(cx).disabled(live),
+                if live {
+                    Button::new("disconnect-stream")
+                        .label("Disconnect")
+                        .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
+                } else {
+                    Button::new("connect-stream")
+                        .primary()
+                        .label("Connect")
+                        .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
+                },
+                [],
+                cx,
+            ))
             .child(div().flex_none().px_3().child(self.render_sections(cx)))
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()

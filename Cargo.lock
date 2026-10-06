@@ -227,6 +227,7 @@ dependencies = [
  "libc",
  "serde_json",
  "tempfile",
+ "tungstenite",
  "windows-sys 0.59.0",
 ]
 
