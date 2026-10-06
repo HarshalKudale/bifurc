@@ -130,7 +130,7 @@ pub fn validate_mapping(mapping: &Value, siblings: &[Value]) -> Result<()> {
     Ok(())
 }
 
-pub static CRUD_KINDS: [CrudKind; 11] = [
+pub static CRUD_KINDS: [CrudKind; 12] = [
     CrudKind {
         kind: "mappings",
         config_key: "mappings",
@@ -269,6 +269,21 @@ pub static CRUD_KINDS: [CrudKind; 11] = [
         on_add_conflict: None,
         name_entry: Some(|r| {
             entry(&[("name", field(r, "name")), ("method", field(r, "method")), ("url", field(r, "url"))])
+        }),
+        gate_kind: None,
+    },
+    CrudKind {
+        kind: "mcpRequests",
+        config_key: "mcpRequests",
+        folder_config_key: Some("mcpRequestFolders"),
+        is_flat: false,
+        has_enabled_state: false,
+        validate: Some(|request, _| {
+            required(request, "url", "url is required for MCP requests: the command that starts the server, or its address")
+        }),
+        on_add_conflict: None,
+        name_entry: Some(|r| {
+            entry(&[("name", field(r, "name")), ("transport", field(r, "transport")), ("url", field(r, "url"))])
         }),
         gate_kind: None,
     },

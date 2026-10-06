@@ -45,7 +45,8 @@ use crate::{
     panels::host::HostPanel,
     preferences::Preferences,
     session::{
-        SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, socketio::SocketIoSession,
+        SaveMode, Session, SessionEvent, mcp::McpSession, protocol::ProtocolSession, rest::RestSession,
+        socketio::SocketIoSession,
         sse::SseSession, websocket::WsSession,
     },
     shell::ActiveTarget,
@@ -97,6 +98,7 @@ fn kind_summary(kind: RequestKind) -> &'static str {
         RequestKind::WebSocket => "A connection that sends and receives messages",
         RequestKind::Sse => "A one-way stream of events from a server",
         RequestKind::SocketIo => "A connection that emits and receives named events",
+        RequestKind::Mcp => "The tools, prompts and resources of an MCP server",
     }
 }
 
@@ -288,6 +290,7 @@ impl RequestsScreen {
             RequestKind::SocketIo => {
                 Session::SocketIo(cx.new(|cx| SocketIoSession::open_saved(model, id, window, cx)))
             }
+            RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::open_saved(model, id, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::open_saved(model, kind, id, window, cx)))
             }
@@ -324,6 +327,7 @@ impl RequestsScreen {
             RequestKind::SocketIo => {
                 Session::SocketIo(cx.new(|cx| SocketIoSession::new_draft(model, folder, window, cx)))
             }
+            RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::new_draft(model, folder, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
             }
