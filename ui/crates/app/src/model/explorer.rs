@@ -202,6 +202,8 @@ mod tests {
             ],
             "wsConnections": [{"id": "s1", "name": "Echo", "url": "wss://echo.test", "folderId": "wf"}],
             "wsFolders": [{"id": "wf", "name": "Live", "parentId": null}],
+            "sseRequests": [{"id": "e1", "name": "Feed", "url": "https://sse.test/events", "folderId": "ef"}],
+            "sseRequestFolders": [{"id": "ef", "name": "Streams", "parentId": null}],
         }))
         .unwrap()
     }
@@ -213,7 +215,16 @@ mod tests {
     #[test]
     fn folders_come_first_then_requests_each_sorted_without_regard_to_case() {
         let tree = build_explorer(&config(), "");
-        assert_eq!(labels(&tree), ["Live", "Users", "Ping", "Stranded"]);
+        assert_eq!(labels(&tree), ["Live", "Streams", "Users", "Ping", "Stranded"]);
+    }
+
+    #[test]
+    fn an_sse_request_sits_in_its_own_folders_with_its_own_badge() {
+        let tree = build_explorer(&config(), "");
+        let streams = tree.iter().find(|n| n.label == "Streams").unwrap();
+        assert_eq!(labels(&streams.children), ["Feed"]);
+        assert_eq!(streams.children[0].badge, "SSE");
+        assert_eq!(streams.children[0].node, NodeRef::Request { kind: RequestKind::Sse, id: "e1".into() });
     }
 
     #[test]
