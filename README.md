@@ -19,20 +19,37 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 - use a browser companion extension for DevTools-driven capture and mock creation
 - version workspace data with git and sync it between collaborators
 
-## Engine, CLI and desktop UI
+## Engine, CLI, MCP server and desktop UI
 
-The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the shared wire types
+The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the `bifurc-mcp` MCP server
+(`packages/mcp-rust`), the shared wire types
 (`packages/protocol-rust`) and the desktop UI (`ui/`) are all Rust. There is no Node runtime.
 
 ```bash
 cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
 cargo dev:ui         # the UI; attaches to a running engine, or starts one from target/ if none is
 cargo dev:cli <cmd>  # the `bifurc` CLI, e.g. `cargo dev:cli status`
+cargo dev:mcp        # the `bifurc-mcp` MCP server, on this terminal's stdin and stdout
 cargo xtask package  # installer / Store package / AppImage
 ```
 
-All three find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.
+All of them find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.
 On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it before rebuilding it.
+
+### MCP server
+
+`bifurc-mcp` gives an AI agent the commands of the `bifurc` CLI as tools, over stdio. It is installed on `PATH`
+beside `bifurc`, talks to the same engine and starts one if none is running. Register it with an MCP host as a
+stdio server whose command is `bifurc-mcp`, for example:
+
+```json
+{ "mcpServers": { "bifurc": { "command": "bifurc-mcp" } } }
+```
+
+The everyday tools (send a request, list requests, mocks and mappings, create a mock or a mapping) are listed to
+the agent; it finds the others with `search_tools`, reads one with `describe_tool` and runs it with `call_tool`.
+`bifurc-mcp --all-tools` lists every tool instead, for a host that searches tools itself. Like the CLI it cannot
+delete anything, read a secret, sign in or stop the engine.
 
 
 ## Repository structure
@@ -42,7 +59,8 @@ Bifurc/
 ├── packages/
 │   ├── protocol-rust/  # Wire types and command schemas shared by the engine and its clients
 │   ├── engine-rust/    # The engine: proxies, mocks, requests, workspaces, git
-│   └── cli-rust/       # The `bifurc` CLI
+│   ├── cli-rust/       # The `bifurc` CLI
+│   └── mcp-rust/       # The `bifurc-mcp` MCP server: the CLI's commands as tools
 ├── ui/                 # Desktop UI (GPUI), tray helper and the installed `bifurc` launcher
 ├── xtask/              # `cargo xtask package`
 ├── packaging/          # Installer, Store package and AppImage templates
