@@ -147,6 +147,100 @@ pub fn describe_socketio(snapshot: &Value) -> String {
     lines.join("\n")
 }
 
+/// The first line of an MCP connection as printed by `requests send`, with its error if it has one.
+fn mcp_head(snapshot: &Value) -> Vec<String> {
+    let head = format!(
+        "MCP {}  {}  {}",
+        js_template(snapshot.get("status")),
+        js_template(snapshot.get("transport")),
+        js_template(snapshot.get("url"))
+    );
+    let mut lines = vec![head];
+    if let Some(error) = snapshot.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+        lines.push(format!("error: {error}"));
+    }
+    lines
+}
+
+/// An MCP connection as printed by `requests send`: its state, the server, then what the server declares.
+/// A tool or a prompt is shown with its arguments, the required ones starred.
+pub fn describe_mcp(snapshot: &Value) -> String {
+    let mut lines = mcp_head(snapshot);
+    let text = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+    if let Some(server) = snapshot.get("serverInfo").filter(|server| server.is_object()) {
+        let version = snapshot.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
+        let name = format!("{} {}", text(server, "name"), text(server, "version"));
+        lines.push(format!("server: {} (protocol {version})", name.trim()));
+    }
+    let listed = |key: &str| snapshot.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
+    let described = |signature: String, item: &Value| match text(item, "description").lines().next() {
+        Some(description) if !description.trim().is_empty() => format!("  {signature}  {}", description.trim()),
+        _ => format!("  {signature}"),
+    };
+    let starred = |name: &str, required: bool| if required { format!("{name}*") } else { name.to_string() };
+
+    let tools = listed("tools");
+    if !tools.is_empty() {
+        lines.push("tools".to_string());
+    }
+    for tool in &tools {
+        let schema = tool.get("inputSchema");
+        let required: Vec<&str> = schema
+            .and_then(|schema| schema.get("required")?.as_array())
+            .map(|names| names.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let arguments: Vec<String> = schema
+            .and_then(|schema| schema.get("properties")?.as_object())
+            .map(|properties| properties.keys().map(|name| starred(name, required.contains(&name.as_str()))).collect())
+            .unwrap_or_default();
+        lines.push(described(format!("{}({})", text(tool, "name"), arguments.join(", ")), tool));
+    }
+    let prompts = listed("prompts");
+    if !prompts.is_empty() {
+        lines.push("prompts".to_string());
+    }
+    for prompt in &prompts {
+        let arguments: Vec<String> = prompt
+            .get("arguments")
+            .and_then(Value::as_array)
+            .map(|arguments| {
+                arguments.iter().map(|a| starred(&text(a, "name"), a.get("required").is_some_and(truthy))).collect()
+            })
+            .unwrap_or_default();
+        lines.push(described(format!("{}({})", text(prompt, "name"), arguments.join(", ")), prompt));
+    }
+    for (key, heading, address) in
+        [("resources", "resources", "uri"), ("resourceTemplates", "resource templates", "uriTemplate")]
+    {
+        let resources = listed(key);
+        if !resources.is_empty() {
+            lines.push(heading.to_string());
+        }
+        for resource in &resources {
+            lines.push(format!("  {}  {}", text(resource, address), text(resource, "name")).trim_end().to_string());
+        }
+    }
+    lines.join("\n")
+}
+
+/// One call over an MCP connection as printed by `requests send`: the connection's state, what was asked
+/// (`>`), how it ended (`<`) and the text of the answer.
+pub fn describe_mcp_call(snapshot: &Value, line: &Value) -> String {
+    let mut lines = mcp_head(snapshot);
+    let text = |key: &str| line.get(key).and_then(Value::as_str).unwrap_or_default();
+    lines.push(format!("> {} {} {}", text("type"), text("name"), text("arguments")).trim_end().to_string());
+    match line.get("durationMs").and_then(Value::as_u64) {
+        Some(took) => lines.push(format!("< {}  ({took} ms)", text("status"))),
+        None => lines.push(format!("< {}", text("status"))),
+    }
+    // The text of the answer is the engine's reading of it; an engine that gives none gave the answer.
+    let answer = if text("text").is_empty() { text("data") } else { text("text") };
+    if !answer.is_empty() {
+        lines.push(answer.to_string());
+    }
+    lines.join("\n")
+}
+
 /// An SSE stream as printed by `requests send`: its state, then each event it delivered (`<`), named in
 /// brackets unless it is a plain `message`.
 pub fn describe_stream(snapshot: &Value) -> String {
@@ -347,6 +441,56 @@ mod tests {
         );
         let failed = json!({"status": "error", "url": "http://h", "namespace": "/", "error": "Not authorized", "messages": []});
         assert_eq!(describe_socketio(&failed), "Socket.IO error  http://h\nerror: Not authorized");
+    }
+
+    #[test]
+    fn an_mcp_connection_prints_what_the_server_declares() {
+        let snapshot = json!({"status": "connected", "transport": "http", "url": "https://h/mcp", "error": null,
+            "serverInfo": {"name": "everything", "version": "2.0"}, "protocolVersion": "2025-06-18",
+            "tools": [
+                {"name": "echo", "description": "Echoes.\nSecond line.",
+                 "inputSchema": {"properties": {"message": {}, "loud": {}}, "required": ["message"]}},
+                {"name": "now", "inputSchema": {"type": "object"}}],
+            "prompts": [{"name": "greet", "arguments": [{"name": "who", "required": true}, {"name": "tone"}]}],
+            "resources": [{"uri": "mem://a", "name": "alpha"}],
+            "resourceTemplates": [{"uriTemplate": "mem://{id}", "name": "by id"}]});
+        assert_eq!(
+            describe_mcp(&snapshot),
+            "MCP connected  http  https://h/mcp\nserver: everything 2.0 (protocol 2025-06-18)\n\
+             tools\n  echo(message*, loud)  Echoes.\n  now()\nprompts\n  greet(who*, tone)\n\
+             resources\n  mem://a  alpha\nresource templates\n  mem://{id}  by id"
+        );
+        let failed = json!({"status": "error", "transport": "stdio", "url": "npx x", "error": "it ended",
+                            "serverInfo": null, "tools": []});
+        assert_eq!(describe_mcp(&failed), "MCP error  stdio  npx x\nerror: it ended");
+    }
+
+    #[test]
+    fn an_mcp_call_prints_what_was_asked_and_the_text_of_the_answer() {
+        let snapshot = json!({"status": "connected", "transport": "stdio", "url": "npx x", "error": null});
+        let head = "MCP connected  stdio  npx x";
+        let line = |kind: &str, name: &str, arguments: &str, status: &str, text: &str| {
+            json!({"type": kind, "name": name, "arguments": arguments, "status": status, "durationMs": 5,
+                   "data": "{\"as\":\"it came\"}", "text": text})
+        };
+        let tool = line("tool", "echo", "{\"a\":1}", "ok", "one
+two");
+        assert_eq!(describe_mcp_call(&snapshot, &tool), format!("{head}
+> tool echo {{\"a\":1}}
+< ok  (5 ms)
+one
+two"));
+        let resource = line("resource", "mem://a", "", "error", "boom");
+        assert_eq!(describe_mcp_call(&snapshot, &resource), format!("{head}
+> resource mem://a
+< error  (5 ms)
+boom"));
+        // A call that is not answered yet has no time and no text.
+        let pending = json!({"type": "tool", "name": "slow", "arguments": "{}", "status": "pending", "durationMs": null,
+                             "data": "", "text": ""});
+        assert_eq!(describe_mcp_call(&snapshot, &pending), format!("{head}
+> tool slow {{}}
+< pending"));
     }
 
     #[test]

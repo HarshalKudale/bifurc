@@ -375,7 +375,7 @@ impl ConfigSnapshot {
 
 fn stub_target(kind: RequestKind, stub: &Value) -> String {
     match kind {
-        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo => {
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => {
             text(stub, "url").unwrap_or_default()
         }
         RequestKind::GraphQl | RequestKind::Soap => text(stub, "endpointUrl").unwrap_or_default(),
@@ -422,6 +422,8 @@ mod tests {
             "sseRequestFolders": [{"id": "ef", "name": "Streams", "parentId": ""}],
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
             "socketioRequestFolders": [{"id": "if", "name": "Realtime", "parentId": ""}],
+            "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
+            "mcpRequestFolders": [{"id": "mf", "name": "Servers", "parentId": ""}],
         })
     }
 
@@ -439,8 +441,21 @@ mod tests {
                 (RequestKind::WebSocket, "s1"),
                 (RequestKind::Sse, "e1"),
                 (RequestKind::SocketIo, "i1"),
+                (RequestKind::Mcp, "m1"),
             ]
         );
+    }
+
+    #[test]
+    fn an_mcp_request_is_listed_like_any_other_request_in_its_own_folders() {
+        let c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let tools = c.request(RequestKind::Mcp, "m1").unwrap();
+        assert_eq!(tools.name, "Tools");
+        // Its target is the command that starts the server, or the server's address.
+        assert_eq!(tools.target, "npx my-server");
+        assert_eq!(tools.folder_id.as_deref(), Some("mf"));
+        assert_eq!(c.folder(RequestKind::Mcp, "mf").unwrap().parent_id, None);
+        assert!(c.folder(RequestKind::SocketIo, "mf").is_none());
     }
 
     #[test]

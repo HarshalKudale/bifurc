@@ -92,7 +92,7 @@ fn fields_of(kind: RequestKind) -> &'static [FieldSpec] {
         RequestKind::GraphQl => GRAPHQL_FIELDS,
         RequestKind::Grpc => GRPC_FIELDS,
         RequestKind::Soap => SOAP_FIELDS,
-        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo => &[],
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => &[],
     }
 }
 
@@ -110,7 +110,8 @@ fn body_key(kind: RequestKind) -> Option<&'static str> {
         | RequestKind::Rest
         | RequestKind::WebSocket
         | RequestKind::Sse
-        | RequestKind::SocketIo => None,
+        | RequestKind::SocketIo
+        | RequestKind::Mcp => None,
     }
 }
 
@@ -124,7 +125,7 @@ fn defaults_of(kind: RequestKind) -> Map<String, Value> {
             "protocol": "grpc", "requestBody": "{}", "metadata": {}, "useReflection": true, "streamingType": "unary",
         }),
         RequestKind::Soap => json!({ "protocol": "soap", "soapAction": "", "headers": {}, "body": "" }),
-        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo => json!({}),
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => json!({}),
     };
     value.as_object().cloned().unwrap_or_default()
 }
