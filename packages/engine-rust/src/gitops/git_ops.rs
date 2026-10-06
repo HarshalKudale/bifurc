@@ -40,6 +40,7 @@ pub fn extract_name_entry(kind: &str, entity: &Value) -> Option<Value> {
             json!({ "name": text("name"), "endpointUrl": text("endpointUrl"), "soapAction": text("soapAction") })
         }
         "graphqlRequests" => json!({ "name": text("name"), "endpointUrl": text("endpointUrl") }),
+        "sseRequests" => json!({ "name": text("name"), "method": text_or("method", "GET"), "url": text("url") }),
         "grpcRequests" | "environments" => json!({ "name": text("name") }),
         "mappings" => {
             let name = if truthy(entity, "label") { text("label") } else { text("domain") };
