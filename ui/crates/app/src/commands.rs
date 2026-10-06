@@ -32,13 +32,6 @@ actions!(
         ImportCurlRequest,
         ImportCurlMock,
         NewFolder,
-        NewGraphQlFolder,
-        NewGrpcFolder,
-        NewSoapFolder,
-        NewWebSocketFolder,
-        NewSseFolder,
-        NewSocketIoFolder,
-        NewMcpFolder,
         NewMock,
         NewMockFolder,
         NewMapping,
@@ -146,10 +139,6 @@ fn new_request<A: Action + Clone>(cx: &mut App, kind: RequestKind) {
     on_shell::<A>(cx, move |shell, window, cx| shell.new_request(kind, window, cx));
 }
 
-fn new_folder<A: Action + Clone>(cx: &mut App, kind: RequestKind) {
-    on_shell::<A>(cx, move |shell, window, cx| shell.prompt_new_folder(kind, window, cx));
-}
-
 pub fn register_actions(cx: &mut App) {
     on_shell::<OpenCommandPalette>(cx, |shell, window, cx| shell.open_command_palette(window, cx));
     on_shell::<OpenFinder>(cx, |shell, window, cx| shell.open_finder(window, cx));
@@ -163,14 +152,7 @@ pub fn register_actions(cx: &mut App) {
     new_request::<NewMcpRequest>(cx, RequestKind::Mcp);
     on_shell::<ImportCurlRequest>(cx, |shell, window, cx| shell.import_curl_request(window, cx));
     on_shell::<ImportCurlMock>(cx, |shell, window, cx| shell.import_curl_mock(window, cx));
-    new_folder::<NewFolder>(cx, RequestKind::Rest);
-    new_folder::<NewGraphQlFolder>(cx, RequestKind::GraphQl);
-    new_folder::<NewGrpcFolder>(cx, RequestKind::Grpc);
-    new_folder::<NewSoapFolder>(cx, RequestKind::Soap);
-    new_folder::<NewWebSocketFolder>(cx, RequestKind::WebSocket);
-    new_folder::<NewSseFolder>(cx, RequestKind::Sse);
-    new_folder::<NewSocketIoFolder>(cx, RequestKind::SocketIo);
-    new_folder::<NewMcpFolder>(cx, RequestKind::Mcp);
+    on_shell::<NewFolder>(cx, |shell, window, cx| shell.prompt_new_folder(window, cx));
     on_shell::<NewMock>(cx, |shell, window, cx| shell.new_mock(window, cx));
     on_shell::<NewMockFolder>(cx, |shell, window, cx| shell.prompt_new_mock_folder(window, cx));
     on_shell::<NewMapping>(cx, |shell, window, cx| shell.prompt_new_mapping(window, cx));

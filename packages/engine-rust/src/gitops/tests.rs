@@ -10,8 +10,7 @@ use crate::{
     testing::scratch_data_root,
     workspace::{
         fs::{
-            add_pending_deletion, get_pending_deletions, pending_folders_key, read_index, read_names_index,
-            write_entity, write_index, ws_dir,
+            add_pending_deletion, get_pending_deletions, pending_folders_key, read_names_index, write_entity, ws_dir,
         },
         git_store::{check_git_installed, git, git_in, init_workspace_repo},
     },
@@ -153,8 +152,9 @@ async fn folder_publish_and_pending_deletions() {
     let engine = Engine::new();
     init_ws(ws).await;
 
-    write_entity(ws, "requests", "a", &request("a", "A"), Some("My Folder")).unwrap();
-    write_entity(ws, "requests", "b", &request("b", "B"), Some("My Folder")).unwrap();
+    let folder = crate::workspace::fs::create_folder(ws, "requests", "My Folder", None, false).unwrap().0;
+    write_entity(ws, "requests", "a", &request("a", "A"), Some(&folder)).unwrap();
+    write_entity(ws, "requests", "b", &request("b", "B"), Some(&folder)).unwrap();
     let status = get_workspace_sync_status(ws).await;
     assert_eq!(status["requests/My Folder/a.json"], "new");
 
@@ -285,7 +285,6 @@ async fn a_deleted_folder_stays_with_what_was_synced_in_it_and_says_so() {
     assert!(!ws_dir(ws).join("requests/Outer").exists() && !ws_dir(ws).join("requests/Child").exists());
     assert_eq!(listed("requests"), [("Synced".to_string(), true)]);
     assert_eq!(listed("requestFolders"), [("Outer".to_string(), true)]);
-    assert_eq!(read_names_index(ws, "requests").len(), 1);
     let again = engine.call("folder.delete", json!({ "kind": "request", "id": outer })).await;
     assert_eq!(again, json!({ "ok": true, "pending": true }));
 
@@ -322,12 +321,9 @@ async fn a_synced_file_that_went_missing_without_a_record_is_listed_as_deleted()
     init_ws(ws).await;
     let ([outer, _], [synced, _, _]) = folder_with_synced_and_local_requests(&engine, ws).await;
 
-    // What an engine that kept no record left behind: the directory, its folder and the names are gone.
+    // What a hand, or an engine that kept no record, left behind: the directory is gone, and nothing says why.
     std::fs::remove_dir_all(ws_dir(ws).join("requests/Outer")).unwrap();
-    let mut index = read_index(ws, "requests");
-    index.folders.retain(|f| f["id"] != outer.as_str());
-    write_index(ws, "requests", &index).unwrap();
-    std::fs::remove_file(ws_dir(ws).join("requests/names.json")).unwrap();
+    let _ = outer;
 
     let status = engine.call("sync.getEntityStatus", json!({ "workspaceId": ws })).await;
     assert_eq!(status["files"][format!("requests/Outer/{synced}.json")], "deleted");

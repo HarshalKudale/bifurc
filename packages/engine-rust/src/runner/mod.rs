@@ -250,6 +250,8 @@ mod tests {
         let _root = scratch_data_root();
         runs::reset_runs();
         let base = test_server::start(HashMap::new()).await;
+        let folder = crate::workspace::fs::create_folder(WS, "requests", "F", None, false).unwrap().0;
+        let f1 = folder.as_str();
         for (id, name) in [("r1", "first"), ("r2", "second")] {
             write_entity(
                 WS,
@@ -257,16 +259,16 @@ mod tests {
                 id,
                 &json!({
                     "id": id, "name": name, "method": "GET", "url": format!("{base}/{id}"), "headers": {},
-                    "body": "", "folderId": "f1", "workspaceId": WS, "createdAt": 0,
+                    "body": "", "folderId": f1, "workspaceId": WS, "createdAt": 0,
                     "testScript": "lp.test('ok', () => { lp.expect(lp.response.status).to.equal(200); });",
                 }),
-                None,
+                Some(f1),
             )
             .unwrap();
         }
         call(
             "runner.saveConfig",
-            json!({ "workspaceId": WS, "folderId": "f1", "config": { "requestOrder": ["r2", "r1"] } }),
+            json!({ "workspaceId": WS, "folderId": f1, "config": { "requestOrder": ["r2", "r1"] } }),
         )
         .await
         .unwrap();
@@ -277,10 +279,10 @@ mod tests {
 
         let (registry, ctx) = context();
         let started =
-            registry.invoke("runner.start", json!({ "workspaceId": WS, "folderId": "f1" }), ctx.clone()).await.unwrap();
+            registry.invoke("runner.start", json!({ "workspaceId": WS, "folderId": f1 }), ctx.clone()).await.unwrap();
         assert_eq!(started, json!({ "ok": true, "total": 2 }));
         let again =
-            registry.invoke("runner.start", json!({ "workspaceId": WS, "folderId": "f1" }), ctx.clone()).await.unwrap();
+            registry.invoke("runner.start", json!({ "workspaceId": WS, "folderId": f1 }), ctx.clone()).await.unwrap();
         assert_eq!(again["ok"], false);
 
         for _ in 0..200 {
@@ -292,7 +294,7 @@ mod tests {
         bus().off(listener);
 
         let status =
-            registry.invoke("runner.status", json!({ "workspaceId": WS, "folderId": "f1" }), ctx).await.unwrap();
+            registry.invoke("runner.status", json!({ "workspaceId": WS, "folderId": f1 }), ctx).await.unwrap();
         assert_eq!(status["running"], false);
         assert_eq!(status["completed"], 2);
         let names: Vec<&str> = status["results"].as_array().unwrap().iter().map(|r| str_of(r, "requestName")).collect();
@@ -307,7 +309,7 @@ mod tests {
         assert!(row["responseHeaders"].is_object());
         assert!(row["responseBody"].is_string());
         assert!(row["requestHeaders"].is_object() || row["requestHeaders"].is_array());
-        let saved = call("runner.getHistory", json!({ "workspaceId": WS, "folderId": "f1" })).await.unwrap();
+        let saved = call("runner.getHistory", json!({ "workspaceId": WS, "folderId": f1 })).await.unwrap();
         assert_eq!(saved[0]["summary"], json!({ "total": 2, "passed": 2, "failed": 0 }));
     }
 }

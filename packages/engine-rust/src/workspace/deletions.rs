@@ -18,6 +18,7 @@ use super::{
     },
     git_store::git,
     kinds::CrudKind,
+    tree::{self, Scope},
 };
 use crate::utils::json::{merged, opt_str, str_of};
 
@@ -104,9 +105,20 @@ pub fn folder_subtree(folders: &[Value], root: &str) -> Vec<String> {
     ids
 }
 
+/// The kinds whose entities are in the folders of `kind`: every kind of its tree, or the kind alone.
+pub fn sharing_kinds(kind: &str) -> Vec<&str> {
+    match Scope::of_kind(kind) {
+        Some(scope) => scope.types().iter().map(|(kind, _)| *kind).collect(),
+        None => vec![kind],
+    }
+}
+
 /// Point what was waiting in the deleted folder `from` at the folder `to`.
 fn retarget(ws_id: &str, kind: &str, from: &str, to: &str) -> std::io::Result<()> {
-    for (key, field) in [(kind.to_string(), "folderId"), (pending_folders_key(kind), "parentId")] {
+    let mut keys: Vec<(String, &str)> =
+        sharing_kinds(kind).into_iter().map(|kind| (kind.to_string(), "folderId")).collect();
+    keys.push((pending_folders_key(kind), "parentId"));
+    for (key, field) in keys {
         let records = get_pending_deletions(ws_id, &key);
         if !records.iter().any(|record| opt_str(record, field) == Some(from)) {
             continue;
@@ -130,6 +142,15 @@ pub fn restore_folder_chain(ws_id: &str, kind: &str, folder_id: &str) -> std::io
     while let Some(id) = next.take() {
         let Some(folder) = pending_folders(ws_id, kind).into_iter().find(|f| str_of(f, "id") == id) else { break };
         remove_pending_deletion(ws_id, &key, &id)?;
+        if let Some(scope) = Scope::of_kind(kind) {
+            // Its directory is made where it was. A folder made there since takes what comes back.
+            let live = tree::restore_folder(ws_id, scope, &id, str_of(&folder, "path"))?;
+            if live.id != id {
+                retarget(ws_id, kind, &id, &live.id)?;
+            }
+            next = opt_str(&folder, "parentId").map(str::to_string);
+            continue;
+        }
         let mut index = read_index(ws_id, kind);
         let dir_name = sanitize_dir_name(str_of(&folder, "name"));
         let same_directory =
@@ -153,7 +174,8 @@ pub fn prune_pending_folders(ws_id: &str, kind: &str) -> std::io::Result<()> {
     let key = pending_folders_key(kind);
     loop {
         let folders = pending_folders(ws_id, kind);
-        let entities = get_pending_deletions(ws_id, kind);
+        let entities: Vec<Value> =
+            sharing_kinds(kind).into_iter().flat_map(|kind| get_pending_deletions(ws_id, kind)).collect();
         let empty = folders.iter().map(|f| str_of(f, "id")).find(|id| {
             !entities.iter().any(|e| opt_str(e, "folderId") == Some(id))
                 && !folders.iter().any(|f| opt_str(f, "parentId") == Some(id))

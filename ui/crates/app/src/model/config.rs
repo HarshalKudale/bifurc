@@ -141,9 +141,9 @@ pub struct RequestStub {
     pub deleted: bool,
 }
 
+/// A folder of the request tree. It holds requests of any type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FolderInfo {
-    pub kind: RequestKind,
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
@@ -167,6 +167,12 @@ pub struct ConfigSnapshot {
     pub deleted_rules: Vec<DeletedRule>,
     pub settings: EngineSettings,
 }
+
+/// The array of the request tree's folders in `config.get`.
+const REQUEST_FOLDERS_KEY: &str = "requestFolders";
+
+/// The `kind` of `folder.add` / `folder.rename` / `folder.delete` for a folder of the request tree.
+pub const REQUEST_FOLDER_KIND: &str = "request";
 
 fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
@@ -254,11 +260,12 @@ impl ConfigSnapshot {
                     deleted: is_deleted(stub),
                 });
             }
-            for folder in array(config, kind.folders_key()) {
-                let (Some(id), Some(name)) = (text(folder, "id"), text(folder, "name")) else { continue };
-                let parent_id = non_empty(folder, "parentId");
-                folders.push(FolderInfo { kind, id, name, parent_id, deleted: is_deleted(folder) });
-            }
+        }
+        // One tree of folders for every request type.
+        for folder in array(config, REQUEST_FOLDERS_KEY) {
+            let (Some(id), Some(name)) = (text(folder, "id"), text(folder, "name")) else { continue };
+            let parent_id = non_empty(folder, "parentId");
+            folders.push(FolderInfo { id, name, parent_id, deleted: is_deleted(folder) });
         }
 
         let port = |key: &str| config.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
@@ -350,16 +357,16 @@ impl ConfigSnapshot {
         self.environments.iter().find(|e| e.is_global())
     }
 
-    pub fn folder(&self, kind: RequestKind, id: &str) -> Option<&FolderInfo> {
-        self.folders.iter().find(|f| f.kind == kind && f.id == id)
+    pub fn folder(&self, id: &str) -> Option<&FolderInfo> {
+        self.folders.iter().find(|f| f.id == id)
     }
 
-    /// The folders requests of `kind` are kept in. Each request type has its own. A deleted folder is not
-    /// one something can be kept in.
-    pub fn request_folder_rows(&self, kind: RequestKind) -> Vec<FolderRow<'_>> {
+    /// The folders requests are kept in, whatever their type. A deleted folder is not one something can be
+    /// kept in.
+    pub fn request_folder_rows(&self) -> Vec<FolderRow<'_>> {
         self.folders
             .iter()
-            .filter(|f| f.kind == kind && !f.deleted)
+            .filter(|f| !f.deleted)
             .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
             .collect()
     }
@@ -412,18 +419,20 @@ mod tests {
                 {"id": "r1", "name": "List users", "method": "GET", "url": "{{HOST}}/users", "folderId": "f1"},
                 {"id": "r2", "name": "Ping", "method": "POST", "url": "/ping"},
             ],
-            "requestFolders": [{"id": "f1", "name": "Users", "parentId": null}],
+            "requestFolders": [
+                {"id": "f1", "name": "Users", "parentId": null},
+                {"id": "wf", "name": "Live", "parentId": ""},
+                {"id": "ef", "name": "Streams", "parentId": "wf"},
+                {"id": "if", "name": "Realtime", "parentId": ""},
+                {"id": "mf", "name": "Servers", "parentId": ""},
+            ],
             "wsConnections": [{"id": "s1", "name": "Echo", "url": "wss://echo.test", "folderId": "wf"}],
-            "wsFolders": [{"id": "wf", "name": "Live", "parentId": ""}],
             "grpcRequests": [{"id": "g1", "name": "Say hi", "serverAddress": "localhost:50051",
                               "serviceName": "Greeter", "methodName": "SayHello"}],
             "graphqlRequests": [{"id": "q1", "name": "Me", "endpointUrl": "https://gql.test"}],
             "sseRequests": [{"id": "e1", "name": "Feed", "url": "https://sse.test/events", "method": "GET", "folderId": "ef"}],
-            "sseRequestFolders": [{"id": "ef", "name": "Streams", "parentId": ""}],
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
-            "socketioRequestFolders": [{"id": "if", "name": "Realtime", "parentId": ""}],
             "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
-            "mcpRequestFolders": [{"id": "mf", "name": "Servers", "parentId": ""}],
         })
     }
 
@@ -447,39 +456,36 @@ mod tests {
     }
 
     #[test]
-    fn an_mcp_request_is_listed_like_any_other_request_in_its_own_folders() {
+    fn an_mcp_request_is_listed_like_any_other_request_in_the_request_folders() {
         let c = ConfigSnapshot::from_value(&sample()).unwrap();
         let tools = c.request(RequestKind::Mcp, "m1").unwrap();
         assert_eq!(tools.name, "Tools");
         // Its target is the command that starts the server, or the server's address.
         assert_eq!(tools.target, "npx my-server");
         assert_eq!(tools.folder_id.as_deref(), Some("mf"));
-        assert_eq!(c.folder(RequestKind::Mcp, "mf").unwrap().parent_id, None);
-        assert!(c.folder(RequestKind::SocketIo, "mf").is_none());
+        assert_eq!(c.folder("mf").unwrap().parent_id, None);
     }
 
     #[test]
-    fn a_socketio_request_is_listed_like_any_other_request_in_its_own_folders() {
+    fn a_socketio_request_is_listed_like_any_other_request_in_the_request_folders() {
         let c = ConfigSnapshot::from_value(&sample()).unwrap();
         let chat = c.request(RequestKind::SocketIo, "i1").unwrap();
         assert_eq!(chat.name, "Chat");
         assert_eq!(chat.target, "https://io.test");
         assert_eq!(chat.folder_id.as_deref(), Some("if"));
-        assert_eq!(c.folder(RequestKind::SocketIo, "if").unwrap().parent_id, None);
-        // The folder lists of the other types do not hold it.
-        assert!(c.folder(RequestKind::Sse, "if").is_none());
+        assert_eq!(c.folder("if").unwrap().parent_id, None);
     }
 
     #[test]
-    fn an_sse_request_is_listed_like_any_other_request_in_its_own_folders() {
+    fn an_sse_request_is_listed_like_any_other_request_in_the_request_folders() {
         let c = ConfigSnapshot::from_value(&sample()).unwrap();
         let sse = c.request(RequestKind::Sse, "e1").unwrap();
         assert_eq!(sse.name, "Feed");
         assert_eq!(sse.target, "https://sse.test/events");
         assert_eq!(sse.folder_id.as_deref(), Some("ef"));
-        assert_eq!(c.folder(RequestKind::Sse, "ef").unwrap().parent_id, None);
-        // The folder lists of the other types do not hold it.
-        assert!(c.folder(RequestKind::WebSocket, "ef").is_none());
+        // Its folder is in the folder a WebSocket is in: the folders are every type's.
+        assert_eq!(c.folder("ef").unwrap().parent_id.as_deref(), Some("wf"));
+        assert_eq!(c.request_folder_rows().len(), 5);
     }
 
     #[test]
@@ -504,8 +510,8 @@ mod tests {
     fn empty_ids_for_root_level_items_read_as_none() {
         let c = ConfigSnapshot::from_value(&sample()).unwrap();
         assert_eq!(c.request(RequestKind::Rest, "r2").unwrap().folder_id, None);
-        assert_eq!(c.folder(RequestKind::Rest, "f1").unwrap().parent_id, None);
-        assert_eq!(c.folder(RequestKind::WebSocket, "wf").unwrap().parent_id, None);
+        assert_eq!(c.folder("f1").unwrap().parent_id, None);
+        assert_eq!(c.folder("wf").unwrap().parent_id, None);
     }
 
     #[test]

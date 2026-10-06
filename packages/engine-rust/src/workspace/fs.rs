@@ -3,21 +3,24 @@
 //! ```text
 //! <dataDir>/data/<wsId>/            a git repository
 //!   workspace.json  .gitignore  pending-deletions.json
-//!   <kind>/<id>.json                an entity at the top level
-//!   <kind>/<folder name>/<id>.json  an entity in a folder (one level deep)
-//!   <kind>/index.json               { folders: [...], order: [...] }
-//!   <kind>/names.json               id -> { name, method?, url?, ... } for cheap listings
+//!   requests/  mocks/               the two trees: see `workspace::tree`
+//!   rules/<id>.json                 a proxy rule at the top level
+//!   rules/<folder name>/<id>.json   a proxy rule in a folder (one level deep)
+//!   rules/index.json                { folders: [...], order: [...] }
+//!   rules/names.json                id -> { name, url } for cheap listings
 //!   <kind>/enabled.json             ids that are switched on (not in git's entity files)
 //! ```
 //!
-//! `mappings` and `environments` are flat: no folders, no names index.
+//! Every request, whatever its type, is in the `requests` tree, and every mock in the `mocks` tree; the
+//! functions here hand those kinds over to `workspace::tree`. `mappings` and `environments` are flat: no
+//! folders, no names index.
 
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
 
-use super::{config::GLOBAL_ENV_ID, paths::data_dir};
+use super::{config::GLOBAL_ENV_ID, paths::data_dir, tree};
 use crate::utils::{
     id::{generate_id, now_ms},
     json::{read_json, str_of, write_json_pretty},
@@ -55,8 +58,9 @@ pub fn ws_dir(ws_id: &str) -> PathBuf {
     data_root().join(ws_id)
 }
 
+/// The directory the entities of `kind` are in: a tree's for the kinds kept in one.
 pub fn entity_dir(ws_id: &str, kind: &str) -> PathBuf {
-    ws_dir(ws_id).join(kind)
+    ws_dir(ws_id).join(tree::Scope::of_kind(kind).map_or(kind, |scope| scope.dir()))
 }
 
 /// A folder's directory name: its display name without the characters a filesystem rejects.
@@ -98,22 +102,7 @@ pub fn workspace_identity(info: &Value) -> Option<(String, String)> {
 pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     let root = ws_dir(ws_id);
     std::fs::create_dir_all(&root)?;
-    for kind in [
-        "mappings",
-        "rules",
-        "environments",
-        "mocks",
-        "requests",
-        "sockets",
-        "capture",
-        "graphqlRequests",
-        "soapRequests",
-        "grpcRequests",
-        "sseRequests",
-        "socketioRequests",
-        "mcpRequests",
-        "applications",
-    ] {
+    for kind in ["mappings", "rules", "environments", "mocks", "requests", "capture", "applications"] {
         std::fs::create_dir_all(root.join(kind))?;
     }
     let ws_file = root.join("workspace.json");
@@ -128,7 +117,7 @@ pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     }
     let gitignore = root.join(".gitignore");
     if !gitignore.exists() {
-        std::fs::write(gitignore, "capture/\n*.tmp\n")?;
+        std::fs::write(gitignore, format!("capture/\n*.tmp\n{}*\n", tree::INDEX_FILE))?;
     }
     ensure_global_environment(ws_id)?;
     Ok(())
@@ -166,6 +155,9 @@ fn folder_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
 
 /// The absolute path of an entity's file, wherever in its kind it is.
 pub fn find_entity_file(ws_id: &str, kind: &str, id: &str) -> Option<PathBuf> {
+    if tree::is_tree_kind(kind) {
+        return tree::locate(ws_id, kind, id).map(|(_, file)| file);
+    }
     let dir = entity_dir(ws_id, kind);
     let root_file = dir.join(format!("{id}.json"));
     if root_file.exists() {
@@ -176,6 +168,9 @@ pub fn find_entity_file(ws_id: &str, kind: &str, id: &str) -> Option<PathBuf> {
 
 /// The path of an entity's file relative to the workspace, with forward slashes (as git names it).
 pub fn find_entity_rel_path(ws_id: &str, kind: &str, id: &str) -> Option<String> {
+    if let Some(scope) = tree::Scope::of_kind(kind) {
+        return tree::locate(ws_id, kind, id).map(|(entry, _)| tree::rel_path(scope, &entry));
+    }
     let dir = entity_dir(ws_id, kind);
     if dir.join(format!("{id}.json")).exists() {
         return Some(format!("{kind}/{id}.json"));
@@ -204,13 +199,21 @@ fn without_enabled(data: &Value) -> Value {
     Value::Object(out)
 }
 
-/// Write an entity, moving its file if its folder changed.
-pub fn write_entity(ws_id: &str, kind: &str, id: &str, data: &Value, folder_name: Option<&str>) -> std::io::Result<()> {
+/// Write an entity, moving its file if its folder changed. `folder` is the folder's id for a kind kept in a
+/// tree, and its name for the others.
+pub fn write_entity(ws_id: &str, kind: &str, id: &str, data: &Value, folder: Option<&str>) -> std::io::Result<()> {
+    if tree::is_tree_kind(kind) {
+        return tree::write_entity(ws_id, kind, id, data, folder);
+    }
+    let folder_name = folder;
     delete_entity_file(ws_id, kind, id)?;
     write_json_pretty(&entity_file(ws_id, kind, id, folder_name), &without_enabled(data))
 }
 
 pub fn delete_entity_file(ws_id: &str, kind: &str, id: &str) -> std::io::Result<()> {
+    if tree::is_tree_kind(kind) {
+        return tree::delete_entity(ws_id, kind, id);
+    }
     match find_entity_file(ws_id, kind, id) {
         Some(file) => std::fs::remove_file(file),
         None => Ok(()),
@@ -255,6 +258,9 @@ fn entity_files(ws_id: &str, kind: &str) -> Vec<(String, PathBuf, Option<String>
 
 /// Every entity of a kind, parsed. Unreadable files are skipped.
 pub fn read_all_entities(ws_id: &str, kind: &str) -> Vec<Value> {
+    if tree::is_tree_kind(kind) {
+        return tree::read_all(ws_id, kind, None);
+    }
     entity_files(ws_id, kind).into_iter().filter_map(|(_, path, _)| read_json(&path)).collect()
 }
 
@@ -264,6 +270,9 @@ pub fn read_enabled_entities(ws_id: &str, kind: &str, enabled_ids: Option<&Index
     if enabled.is_empty() {
         return Vec::new();
     }
+    if tree::is_tree_kind(kind) {
+        return tree::read_all(ws_id, kind, Some(&|id| enabled.contains(id)));
+    }
     entity_files(ws_id, kind)
         .into_iter()
         .filter(|(id, _, _)| enabled.contains(id))
@@ -272,6 +281,9 @@ pub fn read_enabled_entities(ws_id: &str, kind: &str, enabled_ids: Option<&Index
 }
 
 pub fn read_entity(ws_id: &str, kind: &str, id: &str) -> Option<Value> {
+    if tree::is_tree_kind(kind) {
+        return tree::read_entity(ws_id, kind, id);
+    }
     read_json(&find_entity_file(ws_id, kind, id)?)
 }
 
@@ -380,6 +392,9 @@ pub fn create_folder(
     parent_id: Option<&str>,
     unique: bool,
 ) -> std::io::Result<(String, String)> {
+    if let Some(scope) = tree::Scope::of_kind(kind) {
+        return tree::create_folder(ws_id, scope, name, parent_id, unique).map(|folder| (folder.id, folder.name));
+    }
     let mut index = auto_sync_fs_directories(ws_id, kind, generate_id);
     let taken = |name: &str| index.folders.iter().find(|f| sanitize_dir_name(str_of(f, "name")) == sanitize_dir_name(name));
     let mut name = name.to_string();
@@ -408,7 +423,11 @@ pub fn create_folder(
 
 /// The `(id, name)` of the folder `folder_id` names, or of the Default folder when it names none that exists.
 pub fn resolve_folder(ws_id: &str, kind: &str, folder_id: Option<&str>) -> std::io::Result<(String, String)> {
-    if let Some(folder_id) = folder_id.filter(|id| !id.is_empty()) {
+    if let (Some(scope), Some(folder_id)) = (tree::Scope::of_kind(kind), folder_id.filter(|id| !id.is_empty())) {
+        if let Some(folder) = tree::folder(ws_id, scope, folder_id) {
+            return Ok((folder.id, folder.name));
+        }
+    } else if let Some(folder_id) = folder_id.filter(|id| !id.is_empty()) {
         let index = auto_sync_fs_directories(ws_id, kind, generate_id);
         if let Some(folder) = index.folders.iter().find(|f| str_of(f, "id") == folder_id) {
             return Ok((folder_id.to_string(), str_of(folder, "name").to_string()));
@@ -419,8 +438,16 @@ pub fn resolve_folder(ws_id: &str, kind: &str, folder_id: Option<&str>) -> std::
 
 // ── names.json ─────────────────────────────────────────────────────────────────────────────────────────
 
-/// A kind's names index: entity id -> `{name, method?, url?, ...}`.
+/// A kind's names index: entity id -> `{name, method?, url?, ...}`. For a kind kept in a tree it is what the
+/// tree's index lists of each entity, and the three functions that write one have nothing to do.
 pub fn read_names_index(ws_id: &str, kind: &str) -> Map<String, Value> {
+    if let (Some(scope), Some(ty)) = (tree::Scope::of_kind(kind), tree::type_of_kind(kind)) {
+        return tree::entries(ws_id, scope)
+            .into_iter()
+            .filter(|entry| entry.ty == ty)
+            .map(|entry| (entry.id, entry.details))
+            .collect();
+    }
     read_json(&entity_dir(ws_id, kind).join("names.json")).and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
@@ -429,12 +456,18 @@ fn write_names_index(ws_id: &str, kind: &str, names: &Map<String, Value>) -> std
 }
 
 pub fn upsert_name_entry(ws_id: &str, kind: &str, id: &str, entry: Value) -> std::io::Result<()> {
+    if tree::is_tree_kind(kind) {
+        return Ok(());
+    }
     let mut names = read_names_index(ws_id, kind);
     names.insert(id.to_string(), entry);
     write_names_index(ws_id, kind, &names)
 }
 
 pub fn remove_name_entry(ws_id: &str, kind: &str, id: &str) -> std::io::Result<()> {
+    if tree::is_tree_kind(kind) {
+        return Ok(());
+    }
     let mut names = read_names_index(ws_id, kind);
     names.shift_remove(id);
     write_names_index(ws_id, kind, &names)
@@ -442,6 +475,9 @@ pub fn remove_name_entry(ws_id: &str, kind: &str, id: &str) -> std::io::Result<(
 
 /// Rebuild a names index from the entity files (`name`, and `method` / `url` when non-empty).
 pub fn bootstrap_names_index(ws_id: &str, kind: &str) -> Map<String, Value> {
+    if tree::is_tree_kind(kind) {
+        return read_names_index(ws_id, kind);
+    }
     let mut names = Map::new();
     for entity in read_all_entities(ws_id, kind) {
         let mut entry = Map::new();
@@ -542,9 +578,10 @@ pub fn get_pending_deletions(ws_id: &str, kind: &str) -> Vec<Value> {
     read_pending_deletions(ws_id).get(kind).and_then(Value::as_array).cloned().unwrap_or_default()
 }
 
-/// The key a kind's deleted folders are kept under in `pending-deletions.json`.
+/// The key a kind's deleted folders are kept under in `pending-deletions.json`. The kinds of a tree share its
+/// folders, so they share the key.
 pub fn pending_folders_key(kind: &str) -> String {
-    format!("{kind}.folders")
+    format!("{}.folders", tree::Scope::of_kind(kind).map_or(kind, |scope| scope.dir()))
 }
 
 pub fn clear_pending_deletions(ws_id: &str, kind: &str) -> std::io::Result<()> {
@@ -566,7 +603,7 @@ mod tests {
 
     #[test]
     fn relative_paths_use_the_sanitized_folder() {
-        assert_eq!(entity_rel_path("mocks", "m1", Some("a/b")), "mocks/ab/m1.json");
-        assert_eq!(entity_rel_path("mocks", "m1", None), "mocks/m1.json");
+        assert_eq!(entity_rel_path("rules", "m1", Some("a/b")), "rules/ab/m1.json");
+        assert_eq!(entity_rel_path("rules", "m1", None), "rules/m1.json");
     }
 }

@@ -11,13 +11,16 @@ use serde_json::{Value, json};
 
 use crate::{
     importexport::{
-        support::{default_folder, io_failure, js_str, parse_json, pretty, push_to, store_request, sync_enabled},
+        support::{
+            FolderSpec, add_import_folders, default_folder, io_failure, js_str, parse_json, pretty, push_to,
+            store_request, sync_enabled,
+        },
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
     },
     runtime::instances::notify_config_changed,
     utils::{
         id::{generate_id, now_ms},
-        json::{array_mut, array_of, is_truthy, merged, object_mut, str_of},
+        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, str_of},
     },
     workspace::{
         config::load_config,
@@ -60,6 +63,26 @@ fn folder_names(folders: &[Value]) -> HashMap<String, String> {
     folders.iter().map(|f| (str_of(f, "id").to_string(), str_of(f, "name").to_string())).collect()
 }
 
+/// Make the folders a snapshot lists for a tree in workspace `ws_id`, parents before the folders in them.
+/// Returns the id each got, by the id the snapshot knows it under.
+fn tree_folders(
+    cfg: &mut Value,
+    folders_key: &str,
+    fs_kind: &str,
+    ws_id: &str,
+    folders: &[Value],
+) -> Result<HashMap<String, String>, String> {
+    let specs: Vec<FolderSpec> = folders
+        .iter()
+        .map(|f| FolderSpec {
+            key: str_of(f, "id").to_string(),
+            name: str_of(f, "name").to_string(),
+            parent: opt_str(f, "parentId").filter(|p| !p.is_empty()).map(str::to_string),
+        })
+        .collect();
+    add_import_folders(cfg, folders_key, fs_kind, ws_id, "", &specs)
+}
+
 /// A name no workspace has: `name`, else `name (2)`, `name (3)`, …
 fn unique_name(taken: &HashSet<String>, name: &str) -> String {
     if !taken.contains(name) {
@@ -91,10 +114,7 @@ pub async fn json_run(_ws_id: String, source: ImportSource, _strategy: Strategy)
         ("mappings", "mappings"),
         ("proxyRules", "proxyRules"),
         ("mocks", "mocks"),
-        ("mockFolders", "mockFolders"),
         ("ruleFolders", "ruleFolders"),
-        ("requestFolders", "requestFolders"),
-        ("wsFolders", "wsFolders"),
         ("environments", "environments"),
     ] {
         for item in remap(data, data_key, &new_id) {
@@ -107,46 +127,55 @@ pub async fn json_run(_ws_id: String, source: ImportSource, _strategy: Strategy)
     init_workspace_dir(&new_id, &name).map_err(io_failure)?;
     init_workspace_repo(&new_id).await.map_err(io_failure)?;
 
-    // A snapshot from before every mock had a folder: the ones in none go into the Default folder.
-    let known: HashSet<String> =
-        array_of(&cfg, "mockFolders").iter().map(|f| str_of(f, "id").to_string()).collect();
-    let is_loose = |mock: &Value| str_of(mock, "workspaceId") == new_id && !known.contains(str_of(mock, "folderId"));
-    if array_of(&cfg, "mocks").iter().any(is_loose) {
-        let (default_id, _) = default_folder(&mut cfg, "mockFolders", "mocks", &new_id)?;
-        for mock in array_mut(&mut cfg, "mocks").iter_mut().filter(|m| is_loose(m)) {
-            object_mut(mock).insert("folderId".into(), json!(default_id));
+    // The snapshot's folders are made as directories of the new workspace's trees, where they get ids of its
+    // own: `folder_of` gives the folder here of an item that named one there.
+    let folder_of = |item: &Value, made: &HashMap<String, String>| -> Option<String> {
+        item.get("folderId").filter(|f| is_truthy(f)).and_then(|f| made.get(&js_str(f)).cloned())
+    };
+
+    // A mock in no folder, or in one the snapshot does not have, goes into the Default folder.
+    let mock_folders = tree_folders(&mut cfg, "mockFolders", "mocks", &new_id, array_of(data, "mockFolders"))?;
+    let mut default_mock_folder: Option<String> = None;
+    for index in 0..array_of(&cfg, "mocks").len() {
+        let mock = &array_of(&cfg, "mocks")[index];
+        if str_of(mock, "workspaceId") != new_id {
+            continue;
         }
+        let folder_id = match folder_of(mock, &mock_folders) {
+            Some(folder_id) => folder_id,
+            None => match &default_mock_folder {
+                Some(default_id) => default_id.clone(),
+                None => {
+                    let (default_id, _) = default_folder(&mut cfg, "mockFolders", "mocks", &new_id)?;
+                    default_mock_folder.insert(default_id).clone()
+                }
+            },
+        };
+        object_mut(&mut array_mut(&mut cfg, "mocks")[index]).insert("folderId".into(), json!(folder_id));
     }
     commit_config_without_notify(&cfg)?;
 
-    let request_folders = folder_names(&remap(data, "requestFolders", &new_id));
-    let ws_folders = folder_names(&remap(data, "wsFolders", &new_id));
+    // Every request is in the one request tree. A snapshot from before that lists the WebSocket folders apart.
+    let mut request_folders =
+        tree_folders(&mut cfg, "requestFolders", "requests", &new_id, array_of(data, "requestFolders"))?;
+    request_folders.extend(tree_folders(&mut cfg, "requestFolders", "requests", &new_id, array_of(data, "wsFolders"))?);
     let rule_folders = folder_names(&remap(data, "ruleFolders", &new_id));
-    let folder_of = |item: &Value, names: &HashMap<String, String>| -> Option<String> {
-        item.get("folderId").filter(|f| is_truthy(f)).and_then(|f| names.get(&js_str(f)).cloned())
-    };
 
     for request in remap(data, "requests", &new_id) {
         store_request(&new_id, &request, folder_of(&request, &request_folders).as_deref())?;
     }
-    for mut connection in remap(data, "wsConnections", &new_id) {
+    for connection in remap(data, "wsConnections", &new_id) {
         let id = str_of(&connection, "id").to_string();
-        let mut folder = folder_of(&connection, &ws_folders);
-        if folder.is_none() {
-            let (folder_id, name) = ensure_default_folder(&new_id, "sockets").map_err(io_failure)?;
-            object_mut(&mut connection).insert("folderId".into(), json!(folder_id));
-            folder = Some(name);
-        }
-        write_entity(&new_id, "sockets", &id, &connection, folder.as_deref()).map_err(io_failure)?;
-        let entry = json!({
-            "name": connection.get("name").cloned().unwrap_or(Value::Null),
-            "url": connection.get("url").cloned().unwrap_or(Value::Null),
-        });
-        upsert_name_entry(&new_id, "sockets", &id, entry).map_err(io_failure)?;
+        let folder_id = match folder_of(&connection, &request_folders) {
+            Some(folder_id) => folder_id,
+            None => ensure_default_folder(&new_id, "sockets").map_err(io_failure)?.0,
+        };
+        write_entity(&new_id, "sockets", &id, &connection, Some(&folder_id)).map_err(io_failure)?;
     }
     for rule in remap(data, "proxyRules", &new_id) {
         let id = str_of(&rule, "id");
-        write_entity(&new_id, "rules", id, &rule, folder_of(&rule, &rule_folders).as_deref()).map_err(io_failure)?;
+        let folder = folder_of(&rule, &rule_folders);
+        write_entity(&new_id, "rules", id, &rule, folder.as_deref()).map_err(io_failure)?;
         sync_enabled(&new_id, "rules", id, rule.get("enabled").unwrap_or(&Value::Null))?;
         let entry = json!({
             "name": rule.get("name").cloned().unwrap_or(Value::Null),
@@ -258,6 +287,8 @@ pub async fn zip_run(_ws_id: String, source: PathBuf, _strategy: Strategy) -> Im
         std::fs::write(&workspace_file, pretty(&data)).map_err(io_failure)?;
     }
 
+    // The archive's files arrived without the indexes of the trees being told.
+    crate::workspace::tree::mark_stale(&new_id);
     init_workspace_repo(&new_id).await.map_err(io_failure)?;
 
     push_to(settings.as_value_mut(), "workspaces", json!({ "id": new_id, "name": name, "activeEnvironmentId": null }));
