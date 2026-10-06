@@ -3,18 +3,19 @@
 //! Save, and a saved request is written a moment after each edit. What differs is the verb — Connect
 //! instead of Send — and that the "response" is a live stream owned by the engine ([`SocketConnection`]),
 //! which is why closing this tab does not close the socket. The name is edited in the window's breadcrumb,
-//! which shows this session's name field.
+//! which shows this session's name field. The message to send is part of the request: it is written in the
+//! Message tab, with Send above it, as a gRPC request's message is.
 //!
 //! Connecting a saved, unedited request sends only its id (`ws.connect {workspaceId, socketId}`); a draft or
 //! an edited request sends the target it holds. The engine resolves environment variables either way.
 
 use gpui_kit::component::{
-    ActiveTheme as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
-    h_flex,
-    input::{InputEvent, InputState},
+    input::{Editor, InputEvent, InputState},
     notification::Notification,
+    tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::{
@@ -29,22 +30,41 @@ use super::{
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, VarEditor, page},
+    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
     model::{
         RequestKind,
         http::{header_map, header_pairs},
-        socket::SocketView,
+        socket::{SocketState, SocketView},
     },
 };
 
 const DEFAULT_NAME: &str = "New WebSocket";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Message,
+    Headers,
+}
+
+impl Section {
+    const ALL: [Section; 2] = [Section::Message, Section::Headers];
+
+    fn label(self) -> &'static str {
+        match self {
+            Section::Message => "Message",
+            Section::Headers => "Headers",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct Fields {
     name: String,
     url: String,
     headers: Vec<(String, String)>,
+    /// The message to send over the open connection.
+    message: String,
 }
 
 pub struct WsSession {
@@ -61,6 +81,8 @@ pub struct WsSession {
     name: Entity<InputState>,
     url: VarEditor,
     headers: Entity<KeyValueTable>,
+    message: VarEditor,
+    section: Section,
     baseline: Fields,
     connection: Entity<SocketConnection>,
     saving: bool,
@@ -83,6 +105,7 @@ impl WsSession {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Connection name"));
         let url = VarEditor::line("wss://example.test/socket", window, cx);
         let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
+        let message = VarEditor::code(Syntax::Json, "Message to send", window, cx);
         let connection = cx.new(|cx| SocketConnection::new(window, cx));
 
         let mut subscriptions = Vec::new();
@@ -101,16 +124,20 @@ impl WsSession {
             },
         ));
         subscriptions.push(cx.subscribe(&headers, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
-        subscriptions.push(cx.subscribe_in(&connection, window, |this, _, event: &ConnectionEvent, window, cx| {
-            match event {
-                ConnectionEvent::Send(text) => this.send_message(text.clone(), window, cx),
-                ConnectionEvent::Clear => this.clear_messages(cx),
+        subscriptions.push(cx.subscribe(message.state(), |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.changed(cx);
             }
+        }));
+        subscriptions.push(cx.subscribe(&connection, |this, _, event: &ConnectionEvent, cx| match event {
+            ConnectionEvent::Clear => this.clear_messages(cx),
         }));
         subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
             ModelEvent::SocketStatus(payload) if this.is_mine(payload) => {
                 this.connection.update(cx, |c, cx| c.apply_status_event(payload, cx));
                 cx.emit(SessionEvent::Changed);
+                // The address, Connect and Send follow the connection's state.
+                cx.notify();
             }
             ModelEvent::SocketMessage(payload) if this.is_mine(payload) => {
                 this.connection.update(cx, |c, cx| c.apply_message_event(payload, cx));
@@ -121,7 +148,8 @@ impl WsSession {
             _ => {}
         }));
 
-        let baseline = Fields { name: DEFAULT_NAME.to_owned(), url: String::new(), headers: Vec::new() };
+        let baseline =
+            Fields { name: DEFAULT_NAME.to_owned(), url: String::new(), headers: Vec::new(), message: String::new() };
         let mut this = Self {
             model,
             workspace_id,
@@ -134,6 +162,8 @@ impl WsSession {
             name,
             url,
             headers,
+            message,
+            section: Section::Message,
             baseline: baseline.clone(),
             connection,
             saving: false,
@@ -201,6 +231,7 @@ impl WsSession {
                 let view = SocketView::from_status(&status);
                 this.connection.update(cx, |c, cx| c.replace_view(view, cx));
                 cx.emit(SessionEvent::Changed);
+                cx.notify();
             }
         });
     }
@@ -290,7 +321,7 @@ impl WsSession {
             name: (!fields.name.is_empty() && fields.name != DEFAULT_NAME).then_some(fields.name),
             url: fields.url,
             headers: fields.headers,
-            body: String::new(),
+            body: fields.message,
         }
     }
 
@@ -301,6 +332,7 @@ impl WsSession {
         }
         self.url.set_value(carry.url.clone(), window, cx);
         self.headers.update(cx, |table, cx| table.set_pairs(&carry.headers, window, cx));
+        self.message.set_value(carry.body.clone(), window, cx);
         self.changed(cx);
     }
 
@@ -320,6 +352,7 @@ impl WsSession {
             name: self.name.read(cx).value().trim().to_owned(),
             url: self.url.line_value(cx),
             headers: self.headers.read(cx).pairs(cx),
+            message: self.message.value(cx),
         }
     }
 
@@ -328,6 +361,7 @@ impl WsSession {
             name: entity.get("name").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
             url: entity.get("url").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
             headers: header_pairs(entity.get("headers").unwrap_or(&Value::Null)),
+            message: entity.get("message").and_then(Value::as_str).unwrap_or_default().to_owned(),
         }
     }
 
@@ -335,6 +369,7 @@ impl WsSession {
         self.name.update(cx, |s, cx| s.set_value(fields.name.clone(), window, cx));
         self.url.set_value(fields.url.clone(), window, cx);
         self.headers.update(cx, |table, cx| table.set_pairs(&fields.headers, window, cx));
+        self.message.set_value(fields.message.clone(), window, cx);
     }
 
     fn adopt_entity(&mut self, entity: Map<String, Value>, window: &mut Window, cx: &mut Context<Self>) {
@@ -352,6 +387,7 @@ impl WsSession {
         entity.insert("name".into(), json!(if fields.name.is_empty() { DEFAULT_NAME } else { fields.name.as_str() }));
         entity.insert("url".into(), json!(fields.url));
         entity.insert("headers".into(), Value::Object(header_map(&fields.headers)));
+        entity.insert("message".into(), json!(fields.message));
         entity
     }
 
@@ -448,7 +484,9 @@ impl WsSession {
             return;
         }
         self.socket_id = self.saved_id.clone().unwrap_or_else(|| self.socket_id.clone());
-        let payload = match (&self.saved_id, fields == self.baseline) {
+        // The message to send is not part of the target: editing it does not make the saved target stale.
+        let same_target = fields.url == self.baseline.url && fields.headers == self.baseline.headers;
+        let payload = match (&self.saved_id, same_target) {
             (Some(_), true) => json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id }),
             _ => json!({
                 "workspaceId": self.workspace_id,
@@ -486,10 +524,21 @@ impl WsSession {
         });
     }
 
-    fn send_message(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Whether the message of the Message tab can be sent: the connection is open and there is a message.
+    fn can_send(&self, cx: &gpui_kit::App) -> bool {
+        self.connection.read(cx).state() == SocketState::Connected && !self.message.value(cx).is_empty()
+    }
+
+    /// Sends the message of the Message tab over the open connection. It stays as written: a message is
+    /// often sent again.
+    fn send_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_send(cx) {
+            return;
+        }
+        let text = self.message.value(cx);
         let client = self.model.read(cx).client().clone();
         let payload = json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id, "data": text });
-        call_in(&client, window, cx, "ws.send", payload, |this, outcome, window, cx| {
+        call_in(&client, window, cx, "ws.send", payload, |_this, outcome, window, cx| {
             let failure = match outcome {
                 Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
                     Some(result.get("error").and_then(Value::as_str).unwrap_or("The message was not sent.").to_owned())
@@ -497,11 +546,8 @@ impl WsSession {
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
-            match failure {
-                Some(message) => {
-                    window.push_notification(Notification::error(message).title("Couldn't send the message"), cx)
-                }
-                None => this.connection.update(cx, |c, cx| c.clear_composer(window, cx)),
+            if let Some(message) = failure {
+                window.push_notification(Notification::error(message).title("Couldn't send the message"), cx);
             }
         });
     }
@@ -534,28 +580,48 @@ impl Render for WsSession {
         }
 
         let state = self.connection.read(cx).state();
+        let can_send = self.can_send(cx);
+        let content = match self.section {
+            Section::Message => Editor::new(self.message.state()).bordered(false).h_full().into_any_element(),
+            Section::Headers => self.headers.clone().into_any_element(),
+        };
         v_flex()
             .size_full()
             .bg(theme.background)
-            .gap_2()
-            .p_3()
+            .child(request_bar(
+                None,
+                self.url.line_field(cx).disabled(state.is_live()),
+                if state.is_live() {
+                    Button::new("disconnect-socket")
+                        .label("Disconnect")
+                        .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
+                } else {
+                    Button::new("connect-socket")
+                        .primary()
+                        .label("Connect")
+                        .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
+                },
+                [Button::new("send-socket-message")
+                    .primary()
+                    .label("Send message")
+                    .disabled(!can_send)
+                    .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx)))],
+                cx,
+            ))
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(div().flex_1().min_w_0().child(self.url.line_field(cx).disabled(state.is_live())))
-                    .child(if state.is_live() {
-                        Button::new("disconnect-socket")
-                            .label("Disconnect")
-                            .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
-                    } else {
-                        Button::new("connect-socket")
-                            .primary()
-                            .label("Connect")
-                            .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
-                    }),
+                div().flex_none().px_3().child(
+                    TabBar::new("socket-sections")
+                        .underline()
+                        .small()
+                        .selected_index(Section::ALL.iter().position(|s| *s == self.section).unwrap_or(0))
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                            this.section = Section::ALL[*ix];
+                            cx.notify();
+                        }))
+                        .children(Section::ALL.map(|section| Tab::new().label(section.label()))),
+                ),
             )
-            .child(page::section_label("Headers", cx))
-            .child(div().flex_1().min_h_0().child(self.headers.clone()))
+            .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }
 }

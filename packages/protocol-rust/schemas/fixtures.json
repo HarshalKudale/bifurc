@@ -1025,6 +1025,80 @@
    }
   }
  },
+ "socketio.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "socketio.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "url": "https://example.test",
+   "namespace": "/chat",
+   "auth": "{\"token\":\"abc\"}"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "url": 5
+  }
+ },
+ "socketio.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "socketio.emit": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "event": "chat message",
+   "args": "[\"hello\"]",
+   "ack": true
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  }
+ },
+ "socketio.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "socketio.listen": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "listeners": [
+    "message"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "listeners": "message"
+  }
+ },
+ "socketio.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "sse.clearMessages": {
   "valid": {
    "workspaceId": "ws1",

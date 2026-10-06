@@ -183,6 +183,8 @@ impl Shell {
             | ModelEvent::GrpcMessage(_)
             | ModelEvent::SseStatus(_)
             | ModelEvent::SseMessage(_)
+            | ModelEvent::SocketIoStatus(_)
+            | ModelEvent::SocketIoMessage(_)
             | ModelEvent::Traffic(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)

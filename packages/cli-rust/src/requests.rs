@@ -1,4 +1,4 @@
-//! `requests`: the saved requests of every type (REST, GraphQL, gRPC, SOAP, WebSocket, SSE) behind one group.
+//! `requests`: the saved requests of every type (REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO) behind one group.
 //!
 //! A type is a row of [`TYPES`]: where its requests are stored, which options describe one and which engine
 //! command sends it. `list`, `show`, `update` and `send` find a saved request among all the types, so `--type`
@@ -39,7 +39,7 @@ struct RequestType {
     inline: &'static [&'static str],
 }
 
-const TYPES: [RequestType; 6] = [
+const TYPES: [RequestType; 7] = [
     RequestType {
         name: "rest",
         kind: "requests",
@@ -102,6 +102,15 @@ const TYPES: [RequestType; 6] = [
         options: &["method", "body", "body-file"],
         inline: &["url", "method", "headers", "body"],
     },
+    RequestType {
+        name: "socketio",
+        kind: "socketioRequests",
+        send: None,
+        url_key: "url",
+        headers_key: "headers",
+        options: &["namespace", "path", "auth", "listen"],
+        inline: &["url", "headers", "path", "namespace", "auth", "listeners"],
+    },
 ];
 
 /// The options every type takes to describe a request.
@@ -119,12 +128,13 @@ fn describing_options() -> Vec<&'static str> {
     all
 }
 
-const TYPE_NAMES: &str = "rest, graphql, grpc, soap, websocket, sse";
+const TYPE_NAMES: &str = "rest, graphql, grpc, soap, websocket, sse, socketio";
 
 fn type_named(name: &str) -> Result<&'static RequestType> {
     let wanted = match name.to_lowercase().as_str() {
         "ws" => "websocket".to_string(),
         "http" => "rest".to_string(),
+        "socket.io" | "sio" => "socketio".to_string(),
         other => other.to_string(),
     };
     TYPES
@@ -173,6 +183,7 @@ fn row(ty: &RequestType, entity: &Value) -> Value {
         "grpc" => format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName")),
         "soap" => text(entity, "soapAction"),
         "sse" => text(entity, "method"),
+        "socketio" => text(entity, "namespace"),
         _ => String::new(),
     };
     json!({
@@ -214,6 +225,7 @@ fn blank(ty: &RequestType) -> Value {
         }),
         "soap" => json!({ "name": "", "protocol": "soap", "endpointUrl": "", "soapAction": "", "headers": {}, "body": "" }),
         "sse" => json!({ "name": "", "url": "", "method": "GET", "headers": {}, "body": "" }),
+        "socketio" => json!({ "name": "", "url": "", "headers": {}, "path": "", "namespace": "", "auth": "" }),
         _ => json!({ "name": "", "url": "", "headers": {} }),
     }
 }
@@ -301,6 +313,18 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
                 set(entity, "body", json!(body));
             }
         }
+        "socketio" => {
+            for option in ["namespace", "path", "auth"] {
+                if let Some(value) = args.flag(option) {
+                    set(entity, option, json!(value));
+                }
+            }
+            // The events listened to are the ones named, replacing the ones there were.
+            if args.has("listen") {
+                set(entity, "listeners", json!(args.flags("listen")));
+                set(entity, "listenAll", json!(false));
+            }
+        }
         _ => {}
     }
     Ok(changed)
@@ -333,6 +357,7 @@ fn default_name(ty: &RequestType, entity: &Value) -> String {
         "grpc" => format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName")),
         "soap" => format!("SOAP {url}"),
         "sse" => format!("SSE {url}"),
+        "socketio" => format!("Socket.IO {url}"),
         _ => format!("WebSocket {url}"),
     }
 }
@@ -368,7 +393,7 @@ fn sent(ctx: &Context, ty: &RequestType, response: Value) -> Result<String> {
     if failed { Err(CliError::Failed(out)) } else { Ok(out) }
 }
 
-/// How long a WebSocket or an SSE stream is given to open.
+/// How long a WebSocket, an SSE stream or a Socket.IO connection is given to open.
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `--wait`: how many seconds a live connection is listened to, `default` when not given.
@@ -383,10 +408,19 @@ pub(crate) fn listen_seconds(args: &ParsedArgs, default: f64) -> Result<f64> {
     }
 }
 
+/// The options only a send takes, each for the types [`exchange_options`] says.
+const SEND_OPTIONS: [&str; 3] = ["wait", "event", "ack"];
+
 /// The options a send of this type takes beyond the ones that describe a request: a WebSocket's message and how
-/// long to listen, an SSE stream's listening time (its body is part of the request).
+/// long to listen, an SSE stream's listening time (its body is part of the request), a Socket.IO event with its
+/// arguments and whether the server is to acknowledge it.
 fn exchange_options(ty: &RequestType) -> &'static [&'static str] {
-    if ty.name == "sse" { &["wait"] } else { &["body", "wait"] }
+    match ty.name {
+        "sse" => &["wait"],
+        "socketio" => &["event", "body", "ack", "wait"],
+        "websocket" => &["body", "wait"],
+        _ => &[],
+    }
 }
 
 /// One exchange over a WebSocket: connect (unless the engine already holds the connection), send `--body`,
@@ -528,14 +562,14 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(ctx.print(&entity, || format!("Updated {} request {}", ty.name, id_of(&entity))))
         }
         "send" => {
-            describing.push("wait");
+            describing.extend(SEND_OPTIONS);
             ctx.accept(&describing, 1)?;
             match args.positional(2) {
                 // A saved request goes by id: the engine loads it, resolves it and runs its scripts.
                 Some(wanted) => {
                     let workspace = workspace_id(ctx)?;
                     let (ty, entity) = find(ctx, &workspace, wanted)?;
-                    let exchange = if ty.send.is_none() { exchange_options(ty) } else { &[] };
+                    let exchange = exchange_options(ty);
                     let given = args.names().into_iter().find(|name| {
                         *name != "type" && describing.contains(name) && !exchange.contains(name)
                     });
@@ -551,6 +585,9 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                             sent(ctx, ty, response)
                         }
                         None if ty.name == "sse" => crate::stream::stream_exchange(ctx, &workspace, &id, None),
+                        None if ty.name == "socketio" => {
+                            crate::socketio::socketio_exchange(ctx, &workspace, &id, None)
+                        }
                         None => socket_exchange(ctx, &workspace, &id, None),
                     }
                 }
@@ -559,7 +596,14 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                         return Err(CliError::msg("missing request id or name, or --url for a request that is not saved"));
                     }
                     let ty = type_named(args.flag("type").unwrap_or("rest"))?;
-                    let entity = described(ty, args, if ty.send.is_none() { exchange_options(ty) } else { &[] })?;
+                    let exchange = exchange_options(ty);
+                    if let Some(option) = SEND_OPTIONS.iter().find(|o| args.has(o) && !exchange.contains(o)) {
+                        return Err(CliError::msg(format!(
+                            "--{option} is not an option of a {} request (see: bifurc requests --help)",
+                            ty.name
+                        )));
+                    }
+                    let entity = described(ty, args, exchange)?;
                     let workspace = workspace_id(ctx)?;
                     let request: Map<String, Value> = ty
                         .inline
@@ -578,6 +622,11 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                         None if ty.name == "sse" => {
                             let stream_id = format!("cli-{}", std::process::id());
                             crate::stream::stream_exchange(ctx, &workspace, &stream_id, Some(&Value::Object(request)))
+                        }
+                        None if ty.name == "socketio" => {
+                            let connection_id = format!("cli-{}", std::process::id());
+                            let target = Value::Object(request);
+                            crate::socketio::socketio_exchange(ctx, &workspace, &connection_id, Some(&target))
                         }
                         None => {
                             let socket_id = format!("cli-{}", std::process::id());
@@ -638,6 +687,9 @@ mod tests {
                 {"id": "k1", "name": "Feed", "url": "ws://x/feed", "headers": {}}]))),
             ("entity.list:sseRequests", listing(json!([
                 {"id": "e1", "name": "Events", "url": "http://x/events", "method": "GET", "headers": {}, "body": ""}]))),
+            ("entity.list:socketioRequests", listing(json!([
+                {"id": "i1", "name": "Chat", "url": "http://x", "namespace": "/chat", "path": "", "auth": "",
+                 "headers": {}}]))),
             ("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))),
             ("entity.update", Ok(json!({"ok": true}))),
         ]
@@ -655,7 +707,8 @@ mod tests {
              g1  grpc       Hello   pkg.Greeter/SayHello  localhost:50051\n\
              s1  soap       Add     urn:Add               http://x/soap\n\
              k1  websocket  Feed                          ws://x/feed\n\
-             e1  sse        Events  GET                   http://x/events"
+             e1  sse        Events  GET                   http://x/events\n\
+             i1  socketio   Chat    /chat                 http://x"
         );
     }
 
@@ -675,14 +728,14 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("unknown request type \"carrier-pigeon\": one of rest, graphql, grpc, soap, websocket, sse")
+            CliError::msg("unknown request type \"carrier-pigeon\": one of rest, graphql, grpc, soap, websocket, sse, socketio")
         );
         assert!(calls.is_empty());
     }
 
     #[test]
     fn show_finds_a_request_of_any_type_by_id_or_name() {
-        for (wanted, ty) in [("r1", "rest"), ("hello", "grpc"), ("Feed", "websocket"), ("events", "sse")] {
+        for (wanted, ty) in [("r1", "rest"), ("hello", "grpc"), ("Feed", "websocket"), ("events", "sse"), ("chat", "socketio")] {
             let argv = ["requests", "show", wanted];
             let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
             assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["type"], ty, "{wanted}");
