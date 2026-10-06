@@ -137,6 +137,7 @@ mod tests {
             ("entity.list:soapRequests", listing(json!([]))),
             ("entity.list:wsConnections", listing(json!([]))),
             ("entity.list:sseRequests", listing(json!([]))),
+            ("entity.list:mcpRequests", listing(json!([]))),
             (
                 "entity.list:socketioRequests",
                 listing(json!([{"id": "i1", "name": "Chat", "url": "http://x", "namespace": "/chat", "path": "",
