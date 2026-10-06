@@ -23,7 +23,7 @@ use crate::utils::{
     json::{read_json, str_of, write_json_pretty},
 };
 
-pub const ALL_ENTITY_KINDS: [&str; 11] = [
+pub const ALL_ENTITY_KINDS: [&str; 12] = [
     "requests",
     "mocks",
     "sockets",
@@ -34,6 +34,7 @@ pub const ALL_ENTITY_KINDS: [&str; 11] = [
     "grpcRequests",
     "sseRequests",
     "socketioRequests",
+    "mcpRequests",
     "environments",
 ];
 
@@ -110,6 +111,7 @@ pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
         "grpcRequests",
         "sseRequests",
         "socketioRequests",
+        "mcpRequests",
         "applications",
     ] {
         std::fs::create_dir_all(root.join(kind))?;
