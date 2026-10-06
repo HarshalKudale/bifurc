@@ -1,7 +1,43 @@
 //! End to end against a real `bifurc-engine` on a temporary data directory. Ignored by default because it
 //! needs the engine built: `cargo build -p bifurc-engine -p bifurc-cli && cargo test -p bifurc-cli -- --ignored`.
 
-use std::{path::Path, process::Command};
+use std::{
+    io::{Read, Write},
+    net::TcpListener,
+    path::Path,
+    process::Command,
+};
+
+/// A loopback SSE server: `/events` sends two events and ends, `/missing` is a 404. Returns its port.
+fn sse_server() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            std::thread::spawn(move || {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if stream.read(&mut byte).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    head.push(byte[0]);
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                if head.starts_with("GET /events") {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n\
+                          event: tick\ndata: one\n\ndata: two\ndata: lines\n\n",
+                    );
+                } else {
+                    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                }
+            });
+        }
+    });
+    port
+}
 
 fn bifurc(data_dir: &Path, args: &[&str]) -> (bool, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_bifurc"))
@@ -104,6 +140,33 @@ fn start_status_call_and_stop_a_real_engine() {
     assert!(ok && out.contains("pkg.S/Other") && out.contains("grpc"), "{out}{err}");
     let (ok, out, err) = bifurc(data, &["requests", "list", "--type", "rest"]);
     assert!(ok && out.trim() == "(none)", "{out}{err}");
+    // An SSE request is saved, changed, listed and sent like the others; what it receives is printed.
+    let port = sse_server();
+    let url = format!("http://127.0.0.1:{port}/events");
+    let (ok, out, err) = bifurc(data, &["requests", "create", "--type", "sse", "--url", &url, "--name", "Feed"]);
+    assert!(ok && out.starts_with("Saved sse request "), "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "update", "Feed", "-H", "X-Token: abc"]);
+    assert!(ok, "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "show", "Feed"]);
+    assert!(ok && out.contains("\"X-Token\": \"abc\"") && out.contains("\"type\": \"sse\""), "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "list", "--type", "sse"]);
+    assert!(ok && out.contains("Feed") && out.contains("GET") && out.contains(&url), "{out}{err}");
+    let events = format!("SSE disconnected  {url}\n< [tick] one\n< two\n  lines");
+    let (ok, out, err) = bifurc(data, &["requests", "send", "Feed", "--wait", "10"]);
+    assert!(ok && out.trim_end() == events, "{out}{err}");
+    let (ok, out, err) = bifurc(data, &["requests", "send", "--type", "sse", "--url", &url]);
+    assert!(ok && out.trim_end() == events, "{out}{err}");
+    let missing = format!("http://127.0.0.1:{port}/missing");
+    let (ok, out, _) = bifurc(data, &["requests", "send", "--type", "sse", "--url", &missing]);
+    assert!(!ok && out.contains("error: HTTP 404 Not Found"), "{out}");
+    // Nothing is left open by the sends above.
+    let (ok, out, err) = bifurc(data, &["--no-start", "call", "config.get", "{}"]);
+    assert!(ok, "{out}{err}");
+    let active = serde_json::from_str::<serde_json::Value>(&out).unwrap()["activeWorkspaceId"].as_str().unwrap().to_string();
+    let payload = serde_json::json!({ "workspaceId": active }).to_string();
+    let (ok, out, err) = bifurc(data, &["--no-start", "call", "sse.list", &payload]);
+    assert!(ok && out.contains("\"streams\": []"), "{out}{err}");
+
     // What was run failed, so the command does: nothing listens on that port.
     let (ok, out, _) = bifurc(data, &["health", "run"]);
     assert!(!ok && out.contains("failing"), "{out}");

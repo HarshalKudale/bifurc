@@ -375,7 +375,7 @@ impl ConfigSnapshot {
 
 fn stub_target(kind: RequestKind, stub: &Value) -> String {
     match kind {
-        RequestKind::Rest | RequestKind::WebSocket => text(stub, "url").unwrap_or_default(),
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse => text(stub, "url").unwrap_or_default(),
         RequestKind::GraphQl | RequestKind::Soap => text(stub, "endpointUrl").unwrap_or_default(),
         RequestKind::Grpc => {
             let address = text(stub, "serverAddress").unwrap_or_default();
@@ -416,6 +416,8 @@ mod tests {
             "grpcRequests": [{"id": "g1", "name": "Say hi", "serverAddress": "localhost:50051",
                               "serviceName": "Greeter", "methodName": "SayHello"}],
             "graphqlRequests": [{"id": "q1", "name": "Me", "endpointUrl": "https://gql.test"}],
+            "sseRequests": [{"id": "e1", "name": "Feed", "url": "https://sse.test/events", "method": "GET", "folderId": "ef"}],
+            "sseRequestFolders": [{"id": "ef", "name": "Streams", "parentId": ""}],
         })
     }
 
@@ -431,8 +433,21 @@ mod tests {
                 (RequestKind::GraphQl, "q1"),
                 (RequestKind::Grpc, "g1"),
                 (RequestKind::WebSocket, "s1"),
+                (RequestKind::Sse, "e1"),
             ]
         );
+    }
+
+    #[test]
+    fn an_sse_request_is_listed_like_any_other_request_in_its_own_folders() {
+        let c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let sse = c.request(RequestKind::Sse, "e1").unwrap();
+        assert_eq!(sse.name, "Feed");
+        assert_eq!(sse.target, "https://sse.test/events");
+        assert_eq!(sse.folder_id.as_deref(), Some("ef"));
+        assert_eq!(c.folder(RequestKind::Sse, "ef").unwrap().parent_id, None);
+        // The folder lists of the other types do not hold it.
+        assert!(c.folder(RequestKind::WebSocket, "ef").is_none());
     }
 
     #[test]

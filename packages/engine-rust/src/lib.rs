@@ -14,6 +14,7 @@ pub mod fileops;
 pub mod gitops;
 pub mod graphql;
 pub mod grpc;
+pub mod sse;
 pub mod importexport;
 pub mod kernel;
 pub mod mocks;
