@@ -122,6 +122,31 @@ pub fn describe_socket(snapshot: &Value) -> String {
     lines.join("\n")
 }
 
+/// A Socket.IO connection as printed by `requests send`: its state and namespace, then each event emitted (`>`)
+/// and received (`<`) with its arguments. `#n` is the id an acknowledgement was asked with, or answers.
+pub fn describe_socketio(snapshot: &Value) -> String {
+    let mut head = format!("Socket.IO {}  {}", js_template(snapshot.get("status")), js_template(snapshot.get("url")));
+    if let Some(namespace) = snapshot.get("namespace").and_then(Value::as_str).filter(|ns| !ns.is_empty() && *ns != "/") {
+        head.push_str(&format!("  {namespace}"));
+    }
+    let mut lines = vec![head];
+    if let Some(error) = snapshot.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+        lines.push(format!("error: {error}"));
+    }
+    for message in snapshot.get("messages").and_then(Value::as_array).into_iter().flatten() {
+        let mark = if message.get("direction").and_then(Value::as_str) == Some("sent") { ">" } else { "<" };
+        let ack = message.get("ackId").and_then(Value::as_u64);
+        let label = match (message.get("type").and_then(Value::as_str), ack) {
+            (Some("ack"), Some(id)) => format!("ack #{id}"),
+            (Some("ack"), None) => "ack".to_string(),
+            (_, Some(id)) => format!("{} #{id}", js_template(message.get("event"))),
+            (_, None) => js_template(message.get("event")),
+        };
+        lines.push(format!("{mark} [{label}] {}", js_template(message.get("data"))));
+    }
+    lines.join("\n")
+}
+
 /// An SSE stream as printed by `requests send`: its state, then each event it delivered (`<`), named in
 /// brackets unless it is a plain `message`.
 pub fn describe_stream(snapshot: &Value) -> String {
@@ -308,6 +333,20 @@ mod tests {
         assert_eq!(describe_socket(&snapshot), "WebSocket connected  ws://h/\n> ping\n< pong");
         let failed = json!({"status": "error", "url": "ws://h/", "error": "refused", "messages": []});
         assert_eq!(describe_socket(&failed), "WebSocket error  ws://h/\nerror: refused");
+    }
+
+    #[test]
+    fn a_socketio_connection_prints_its_namespace_and_each_event_with_its_arguments() {
+        let snapshot = json!({"status": "connected", "url": "http://h", "namespace": "/chat", "error": null, "messages": [
+            {"direction": "sent", "type": "event", "event": "say", "data": "[\"hi\"]", "ackId": 0},
+            {"direction": "received", "type": "ack", "event": "say", "data": "[\"ok\"]", "ackId": 0},
+            {"direction": "received", "type": "event", "event": "said", "data": "[\"hi\",1]", "ackId": null}]});
+        assert_eq!(
+            describe_socketio(&snapshot),
+            "Socket.IO connected  http://h  /chat\n> [say #0] [\"hi\"]\n< [ack #0] [\"ok\"]\n< [said] [\"hi\",1]"
+        );
+        let failed = json!({"status": "error", "url": "http://h", "namespace": "/", "error": "Not authorized", "messages": []});
+        assert_eq!(describe_socketio(&failed), "Socket.IO error  http://h\nerror: Not authorized");
     }
 
     #[test]
