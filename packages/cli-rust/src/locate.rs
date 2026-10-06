@@ -1,7 +1,8 @@
 //! Finding the engine binary `bifurc-engine[.exe]` that `engine start` launches.
 //!
-//! In order: the `BIFURC_ENGINE` environment variable; a binary next to this executable; then, walking up from
-//! the executable's directory, `target/release/` and `target/debug/` of each ancestor (a development build).
+//! In order: the `BIFURC_ENGINE` environment variable; a binary next to this executable; one in the folder above
+//! when this executable is in a `bin/` (an install, whose `bin/` holds the commands that go on `PATH`); then,
+//! walking up from the executable's directory, `target/release/` and `target/debug/` of each ancestor (a development build).
 
 use std::{
     env,
@@ -35,6 +36,11 @@ pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>
         if beside.is_file() {
             return Ok(beside);
         }
+        if dir.file_name().is_some_and(|folder| folder == "bin") {
+            if let Some(above) = dir.parent().map(|root| root.join(&name)).filter(|above| above.is_file()) {
+                return Ok(above);
+            }
+        }
         for ancestor in dir.ancestors() {
             for profile in ["release", "debug"] {
                 let candidate = ancestor.join("target").join(profile).join(&name);
@@ -45,7 +51,7 @@ pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>
         }
     }
     Err(CliError::msg(format!(
-        "Could not find the engine ({name}). Looked next to this executable and in target/release and target/debug \
+        "Could not find the engine ({name}). Looked next to this executable, above its bin/ and in target/release and target/debug \
          above it. Build it with `cargo build -p bifurc-engine`, or set {ENGINE_ENV} to its path."
     )))
 }
@@ -105,6 +111,18 @@ mod tests {
         touch(&beside);
         touch(&dir.path().join("target").join("release").join(engine_file_name()));
         assert_eq!(locate_engine_from(None, Some(&exe)).unwrap(), beside);
+    }
+
+    #[test]
+    fn an_installs_bin_folder_finds_the_engine_above_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let above = dir.path().join(engine_file_name());
+        touch(&above);
+        let exe = dir.path().join("bin").join("bifurc-mcp");
+        assert_eq!(locate_engine_from(None, Some(&exe)).unwrap(), above);
+        // Only a `bin/`: any other folder is not an install's.
+        let exe = dir.path().join("tools").join("bifurc-mcp");
+        assert!(locate_engine_from(None, Some(&exe)).is_err());
     }
 
     #[test]
