@@ -16,6 +16,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("folder.revertDelete", Scope::Write),
     ("entity.load", Scope::Read),
     ("entity.list", Scope::Read),
+    ("entity.search", Scope::Read),
     ("entity.setEnabled", Scope::Write),
     ("folder.add", Scope::Write),
     ("folder.rename", Scope::Write),
