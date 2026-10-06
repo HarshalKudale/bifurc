@@ -194,7 +194,7 @@ impl Session {
         }
     }
 
-    /// Puts the request in another folder of its type, or at the top level.
+    /// Puts the request in another folder.
     pub fn set_folder(&self, folder: Option<String>, cx: &mut App) {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
@@ -208,7 +208,7 @@ impl Session {
 
     /// The names of the folders the request is in, outermost first.
     pub fn folder_trail(&self, model: &AppModel, cx: &App) -> Vec<String> {
-        let folders = model.config().request_folder_rows(self.kind(cx));
+        let folders = model.config().request_folder_rows();
         self.folder_id(cx).map(|id| folder_path(&folders, &id)).unwrap_or_default()
     }
 
@@ -228,7 +228,7 @@ impl Session {
             unsaved: saved_id.is_some() && self.is_dirty(cx),
             problem,
             closable: true,
-            folder: Some(FolderPicker::new(self.folder_id(cx), &model.config().request_folder_rows(self.kind(cx)))),
+            folder: Some(FolderPicker::new(self.folder_id(cx), &model.config().request_folder_rows())),
             ..EntityBar::of(model, saved_id.as_deref())
         }
     }
