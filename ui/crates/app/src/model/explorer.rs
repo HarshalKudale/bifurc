@@ -204,6 +204,8 @@ mod tests {
             "wsFolders": [{"id": "wf", "name": "Live", "parentId": null}],
             "sseRequests": [{"id": "e1", "name": "Feed", "url": "https://sse.test/events", "folderId": "ef"}],
             "sseRequestFolders": [{"id": "ef", "name": "Streams", "parentId": null}],
+            "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "folderId": "if"}],
+            "socketioRequestFolders": [{"id": "if", "name": "Realtime", "parentId": null}],
         }))
         .unwrap()
     }
@@ -215,7 +217,16 @@ mod tests {
     #[test]
     fn folders_come_first_then_requests_each_sorted_without_regard_to_case() {
         let tree = build_explorer(&config(), "");
-        assert_eq!(labels(&tree), ["Live", "Streams", "Users", "Ping", "Stranded"]);
+        assert_eq!(labels(&tree), ["Live", "Realtime", "Streams", "Users", "Ping", "Stranded"]);
+    }
+
+    #[test]
+    fn a_socketio_request_sits_in_its_own_folders_with_its_own_badge() {
+        let tree = build_explorer(&config(), "");
+        let realtime = tree.iter().find(|n| n.label == "Realtime").unwrap();
+        assert_eq!(labels(&realtime.children), ["Chat"]);
+        assert_eq!(realtime.children[0].badge, "SIO");
+        assert_eq!(realtime.children[0].node, NodeRef::Request { kind: RequestKind::SocketIo, id: "i1".into() });
     }
 
     #[test]
