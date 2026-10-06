@@ -13,6 +13,7 @@ pub mod parts_table;
 pub mod request_bar;
 pub mod stream_log;
 pub mod tab_strip;
+pub mod tree_drag;
 pub mod var_editor;
 
 pub use autosave::Autosave;
