@@ -320,6 +320,8 @@ pub fn load_config() -> Value {
         &["url", "namespace"],
         json!({ "headers": {}, "path": "", "auth": "", "createdAt": 0 }),
     );
+    let mcp_requests =
+        listed("mcpRequests", &["url", "transport"], json!({ "headers": {}, "createdAt": 0 }));
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 
@@ -346,6 +348,8 @@ pub fn load_config() -> Value {
         "sseRequestFolders": folders(ws_id, "sseRequests"),
         "socketioRequests": socketio_requests,
         "socketioRequestFolders": folders(ws_id, "socketioRequests"),
+        "mcpRequests": mcp_requests,
+        "mcpRequestFolders": folders(ws_id, "mcpRequests"),
         "soapRequests": soap_requests,
         "savedWsdls": [],
         "soapRequestFolders": folders(ws_id, "soapRequests"),
