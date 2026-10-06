@@ -25,8 +25,12 @@ use gpui_kit::{
 
 use crate::{
     app_model::AppModel,
-    components::{CURL_TAB_TITLE, page},
-    model::{ExplorerNode, NodeRef, RequestKind, build_explorer, git::FileState},
+    components::{CURL_TAB_TITLE, page, tree_drag},
+    model::{
+        ExplorerNode, NodeRef, RequestKind, build_explorer,
+        git::FileState,
+        tree::{Moved, can_move},
+    },
 };
 
 /// What the user asked for in the tree. The screen acts on it.
@@ -47,6 +51,8 @@ pub enum RequestTreeEvent {
     RevertDelete(NodeRef),
     /// Sync the deletion of a deleted request or folder, removing it for good.
     ConfirmDelete(NodeRef),
+    /// Put the request or folder in another folder; a folder goes to the top level with `None`.
+    Move { node: NodeRef, folder: Option<String> },
 }
 
 /// Whether the request or folder is deleted here, with the deletion not confirmed or reverted yet.
@@ -58,6 +64,27 @@ pub fn is_deleted(model: &AppModel, node: &NodeRef) -> bool {
     }
 }
 
+/// The folder a drop on this row goes to: the folder itself, or the folder the request is in.
+fn drop_folder(model: &AppModel, node: &NodeRef) -> Option<String> {
+    match node {
+        NodeRef::Folder { id } => Some(id.clone()),
+        NodeRef::Request { kind, id } => model.config().request(*kind, id).and_then(|r| r.folder_id.clone()),
+    }
+}
+
+/// Whether the dragged request or folder can be put in `folder`, or at the top level with `None`.
+fn accepts(model: &AppModel, dragged: &NodeRef, folder: Option<&str>) -> bool {
+    let config = model.config();
+    let moved = match dragged {
+        NodeRef::Folder { id } => Moved::Folder(id),
+        NodeRef::Request { kind, id } => match config.request(*kind, id) {
+            Some(request) => Moved::Item { folder: request.folder_id.as_deref() },
+            None => return false,
+        },
+    };
+    can_move(&config.request_folder_rows(), moved, folder)
+}
+
 pub struct RequestTree {
     model: Entity<AppModel>,
     filter: Entity<InputState>,
@@ -65,6 +92,8 @@ pub struct RequestTree {
     /// Folders the user has opened, by tree id, so a rebuild does not collapse them.
     expanded: HashSet<String>,
     selected: Option<String>,
+    /// The row being dragged, while a drag is on.
+    dragging: Option<NodeRef>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -95,8 +124,15 @@ impl RequestTree {
             }),
         ];
 
-        let mut this =
-            Self { model, filter, tree, expanded: HashSet::new(), selected: None, _subscriptions: subscriptions };
+        let mut this = Self {
+            model,
+            filter,
+            tree,
+            expanded: HashSet::new(),
+            selected: None,
+            dragging: None,
+            _subscriptions: subscriptions,
+        };
         this.rebuild(cx);
         this
     }
@@ -134,6 +170,29 @@ impl RequestTree {
                 tree.set_selected_index(Some(ix), cx);
             }
         });
+    }
+
+    /// A row was picked up. Pressing a folder row opened or closed it before the press turned into a drag:
+    /// it is put back as it was.
+    fn drag_started(&mut self, node: NodeRef, cx: &mut Context<Self>) {
+        if matches!(node, NodeRef::Folder { .. }) {
+            let id = node.encode();
+            if !self.expanded.remove(&id) {
+                self.expanded.insert(id);
+            }
+            self.rebuild(cx);
+        }
+        self.dragging = Some(node);
+        cx.notify();
+    }
+
+    /// A row was dropped on a folder, or on the top level. The folder is opened, so the row is seen landing.
+    fn drop_on(&mut self, node: NodeRef, folder: Option<String>, cx: &mut Context<Self>) {
+        self.dragging = None;
+        if let Some(id) = &folder {
+            self.expanded.insert(NodeRef::Folder { id: id.clone() }.encode());
+        }
+        cx.emit(RequestTreeEvent::Move { node, folder });
     }
 
     fn is_tree_empty(&self, cx: &App) -> bool {
@@ -196,8 +255,10 @@ fn render_row(
     };
 
     let open = node.clone().filter(|n| matches!(n, NodeRef::Request { .. }));
+    let folder = node.as_ref().and_then(|node| drop_folder(model.read(cx), node));
+    let (drag_tree, drop_tree, drop_model) = (tree.clone(), tree.clone(), model.clone());
     let tree = tree.clone();
-    ListItem::new(ix)
+    let row = ListItem::new(ix)
         .selected(selected)
         .pl(rems(0.5 + entry.depth() as f32 * 1.0))
         .py_1()
@@ -215,7 +276,7 @@ fn render_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
-                        .child(label),
+                        .child(label.clone()),
                 )
                 // A request with changes that are not published yet says so with a mark, not only a color.
                 .children(pending.then(|| div().flex_none().pr_2().text_xs().text_color(theme.warning).child("●"))),
@@ -224,7 +285,30 @@ fn render_row(
             if let Some(node) = open.clone() {
                 tree.update(cx, |_, cx| cx.emit(RequestTreeEvent::Open(node))).ok();
             }
-        })
+        });
+    // A row dropped on a request goes to the folder that request is in.
+    let row = match folder {
+        Some(folder) => {
+            let target = folder.clone();
+            tree_drag::drop_target(
+                row,
+                move |dragged: &NodeRef, cx| accepts(drop_model.read(cx), dragged, Some(&target)),
+                move |dragged: &NodeRef, _, cx| {
+                    let (node, folder) = (dragged.clone(), Some(folder.clone()));
+                    drop_tree.update(cx, |this, cx| this.drop_on(node, folder, cx)).ok();
+                },
+            )
+        }
+        None => row,
+    };
+    // What is deleted stays where it is until it is reverted.
+    match node.filter(|_| !deleted) {
+        Some(node) => tree_drag::draggable(row, node, label, move |node: &NodeRef, cx| {
+            let node = node.clone();
+            drag_tree.update(cx, |this, cx| this.drag_started(node, cx)).ok();
+        }),
+        None => row,
+    }
 }
 
 fn emitter(
@@ -314,6 +398,23 @@ impl Render for RequestTree {
         let config = self.model.read(cx).config();
         let has_requests = !config.requests.is_empty() || !config.folders.is_empty();
         let filtering = !self.filter.read(cx).value().trim().is_empty();
+        if !cx.has_active_drag() {
+            self.dragging = None;
+        }
+        // A folder that is in a folder can be dragged out to the top level.
+        let top_level =
+            self.dragging.as_ref().filter(|dragged| accepts(self.model.read(cx), dragged, None)).map(|_| {
+                let (drop_model, drop_tree) = (self.model.clone(), this.clone());
+                tree_drag::top_level_target(
+                    "request-tree-top-level",
+                    move |dragged: &NodeRef, cx| accepts(drop_model.read(cx), dragged, None),
+                    move |dragged: &NodeRef, _, cx| {
+                        let node = dragged.clone();
+                        drop_tree.update(cx, |this, cx| this.drop_on(node, None, cx)).ok();
+                    },
+                    cx,
+                )
+            });
 
         let body = if !has_requests {
             page::empty("No requests yet", "Use + to create the first one.")
@@ -329,5 +430,6 @@ impl Render for RequestTree {
             .bg(cx.theme().sidebar)
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().child(body))
+            .children(top_level)
     }
 }
