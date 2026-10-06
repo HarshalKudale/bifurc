@@ -5,7 +5,10 @@ mod commands;
 mod host_certs;
 mod manager;
 
-pub use host_certs::{MAX_CACHE_SIZE, clear_cert_cache, host_server_config, is_ca_loaded, load_ca, unload_ca};
+pub use host_certs::{
+    MAX_CACHE_SIZE, apply_settings, clear_cert_cache, host_server_config, is_ca_loaded, listener_server_config,
+    load_ca, unload_ca,
+};
 pub use manager::{
     CertIdentity, GeneratedCa, ca_cert_path, ca_dir, ca_key_path, fingerprint_of, generate_ca, get_cert_status,
     identify_cert, remove_ca,

@@ -2,7 +2,7 @@
 //! requests (mocks, proxy rules, passthrough) and CONNECT, which it tunnels or, with a loaded CA, intercepts.
 //! Relative requests belong to the edge and are refused here.
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -10,6 +10,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
 };
+use tokio_rustls::TlsAcceptor;
 
 use super::{
     handler::tcp_tunnel,
@@ -20,16 +21,17 @@ use super::{
     wire::{Duplicates, Prefixed, RequestHead, parse_header_lines, read_body, read_head},
 };
 use crate::{
-    certificates::{ca_cert_path, ca_key_path, clear_cert_cache, is_ca_loaded, load_ca, unload_ca},
+    certificates::{apply_settings, clear_cert_cache, is_ca_loaded, listener_server_config},
     kernel::telemetry::{Headers, RequestLogEntry, emit_log},
     runtime::instances::Listener,
     utils::{
         cache_policy::strip_cache_headers,
         id::{mk_id, now_ms},
-        json::{bool_of, opt_str, str_of},
+        json::{bool_of, str_of},
     },
     workspace::{
         config::{load_config, load_workspace_dispatch_slice},
+        settings::load_settings,
         dispatch::{active_env, load_enabled_sets, workspace_cfg},
         fs::read_all_entities,
     },
@@ -38,8 +40,6 @@ use crate::{
 /// Everything a request needs of the config, composed when the proxy starts and whenever it is told to reload.
 struct Snapshot {
     tls_enabled: bool,
-    tls_cert_path: Option<PathBuf>,
-    tls_key_path: Option<PathBuf>,
     /// The served workspace's mocks, mappings, rules and environments, narrowed to what is switched on.
     dispatch: Value,
 }
@@ -52,8 +52,6 @@ fn compose_snapshot() -> Snapshot {
     let slice = load_workspace_dispatch_slice(&ws_id);
     Snapshot {
         tls_enabled: bool_of(&cfg, "tlsEnabled", false),
-        tls_cert_path: opt_str(&cfg, "tlsCaCertPath").map(PathBuf::from),
-        tls_key_path: opt_str(&cfg, "tlsCaKeyPath").map(PathBuf::from),
         dispatch: workspace_cfg(&cfg, &rules, &enabled, &slice),
     }
 }
@@ -93,15 +91,8 @@ impl Listener for ProxyServer {
     fn start(&self, port: u16) {
         self.stop();
         let snapshot = Arc::new(compose_snapshot());
-        // A CA made or imported through `tls.*` lives at the engine's own CA paths and is never written into
-        // the settings, so those paths are the fallback when the settings name none.
-        if snapshot.tls_enabled {
-            let cert = snapshot.tls_cert_path.clone().unwrap_or_else(ca_cert_path);
-            let key = snapshot.tls_key_path.clone().unwrap_or_else(ca_key_path);
-            load_ca(&cert, &key);
-        } else {
-            unload_ca();
-        }
+        // The CA is shared with the edge, which serves HTTPS with it.
+        apply_settings(&load_settings());
         *self.shared.snapshot.lock() = Some(snapshot);
         *self.shared.active.lock() = true;
         let shared = self.shared.clone();
@@ -111,8 +102,8 @@ impl Listener for ProxyServer {
 
     fn stop(&self) {
         self.shared.core.stop();
+        // The CA stays loaded: the edge may be serving HTTPS with it.
         if std::mem::take(&mut *self.shared.active.lock()) {
-            unload_ca();
             clear_cert_cache();
         }
     }
@@ -146,7 +137,24 @@ fn connect_target(raw: &str) -> (String, u16) {
     }
 }
 
-async fn handle_connection(shared: Arc<Shared>, mut socket: TcpStream) {
+/// The first byte of a TLS handshake record.
+const TLS_HANDSHAKE: u8 = 0x16;
+
+/// With HTTPS on, the one port serves both kinds of client: one that speaks TLS to the proxy itself (an HTTPS
+/// proxy setting) and one that speaks plain HTTP to it. A TLS handshake tells itself by its first byte.
+async fn handle_connection(shared: Arc<Shared>, socket: TcpStream) {
+    if shared.snapshot().tls_enabled && is_ca_loaded() {
+        let mut first = [0u8; 1];
+        if matches!(socket.peek(&mut first).await, Ok(1)) && first[0] == TLS_HANDSHAKE {
+            let Ok(config) = listener_server_config() else { return };
+            let Ok(tls) = TlsAcceptor::from(config).accept(socket).await else { return };
+            return serve(shared, tls).await;
+        }
+    }
+    serve(shared, socket).await
+}
+
+async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(shared: Arc<Shared>, mut socket: S) {
     let Some((head, leftover)) = read_head(&mut socket).await else { return };
     if head.method == "CONNECT" {
         let (host, port) = connect_target(&head.target);

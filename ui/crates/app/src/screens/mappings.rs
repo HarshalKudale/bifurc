@@ -167,7 +167,7 @@ impl MappingsScreen {
         );
     }
 
-    fn render_row(&self, mapping: &MappingInfo, port: u16, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn render_row(&self, mapping: &MappingInfo, scheme: &str, port: u16, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let state = self.model.read(cx).git().entity_state(&mapping.id);
         let path = self.model.read(cx).git().entity_path(&mapping.id).map(str::to_owned);
@@ -185,11 +185,12 @@ impl MappingsScreen {
         let toggle_id = mapping.id.clone();
         let this = cx.weak_entity();
         let (edit, delete) = (mapping.clone(), mapping.clone());
-        // The edge port is part of the address unless it is the default one.
-        let url = if port == 80 || port == 0 {
-            format!("http://{}", mapping.domain)
+        // The port is part of the address unless it is the default one of the scheme.
+        let default_port = if scheme == "https" { 443 } else { 80 };
+        let url = if port == default_port || port == 0 {
+            format!("{scheme}://{}", mapping.domain)
         } else {
-            format!("http://{}:{port}", mapping.domain)
+            format!("{scheme}://{}:{port}", mapping.domain)
         };
         let key = |part: &str| gpui_kit::ElementId::Name(format!("mapping-{part}-{}", mapping.id).into());
 
@@ -310,6 +311,8 @@ impl Render for MappingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let config = self.model.read(cx).config();
+        // With HTTPS on, the same port serves names over HTTPS.
+        let scheme = if config.settings.tls_enabled { "https" } else { "http" };
         let port = config.settings.proxy_port;
         let needle = self.filter.read(cx).value().trim().to_lowercase();
         let all = config.mappings.len();
@@ -383,7 +386,7 @@ impl Render for MappingsScreen {
             page::empty("No matches", "No mapping matches the filter.")
         } else {
             let rows: Vec<gpui_kit::AnyElement> =
-                mappings.iter().map(|mapping| self.render_row(mapping, port, cx)).collect();
+                mappings.iter().map(|mapping| self.render_row(mapping, scheme, port, cx)).collect();
             v_flex()
                 .size_full()
                 .child(
