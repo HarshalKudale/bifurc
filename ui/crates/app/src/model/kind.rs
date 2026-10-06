@@ -8,16 +8,18 @@ pub enum RequestKind {
     Soap,
     WebSocket,
     Sse,
+    SocketIo,
 }
 
 impl RequestKind {
-    pub const ALL: [RequestKind; 6] = [
+    pub const ALL: [RequestKind; 7] = [
         RequestKind::Rest,
         RequestKind::GraphQl,
         RequestKind::Grpc,
         RequestKind::Soap,
         RequestKind::WebSocket,
         RequestKind::Sse,
+        RequestKind::SocketIo,
     ];
 
     pub fn label(self) -> &'static str {
@@ -28,6 +30,7 @@ impl RequestKind {
             RequestKind::Soap => "SOAP",
             RequestKind::WebSocket => "WebSocket",
             RequestKind::Sse => "SSE",
+            RequestKind::SocketIo => "Socket.IO",
         }
     }
 
@@ -40,6 +43,7 @@ impl RequestKind {
             RequestKind::Soap => "soapRequests",
             RequestKind::WebSocket => "wsConnections",
             RequestKind::Sse => "sseRequests",
+            RequestKind::SocketIo => "socketioRequests",
         }
     }
 
@@ -57,6 +61,7 @@ impl RequestKind {
             RequestKind::Soap => "soapRequest",
             RequestKind::WebSocket => "ws",
             RequestKind::Sse => "sseRequest",
+            RequestKind::SocketIo => "socketioRequest",
         }
     }
 
@@ -69,6 +74,7 @@ impl RequestKind {
             RequestKind::Soap => "soapRequests",
             RequestKind::WebSocket => "wsConnections",
             RequestKind::Sse => "sseRequests",
+            RequestKind::SocketIo => "socketioRequests",
         }
     }
 
@@ -81,17 +87,18 @@ impl RequestKind {
             RequestKind::Soap => "soapRequestFolders",
             RequestKind::WebSocket => "wsFolders",
             RequestKind::Sse => "sseRequestFolders",
+            RequestKind::SocketIo => "socketioRequestFolders",
         }
     }
 
-    /// The by-id send command for the kinds that have one. WebSocket and SSE connect instead of sending.
+    /// The by-id send command for the kinds that have one. WebSocket, SSE and Socket.IO connect instead of sending.
     pub fn send_command(self) -> Option<&'static str> {
         match self {
             RequestKind::Rest => Some("request.send"),
             RequestKind::GraphQl => Some("graphql.send"),
             RequestKind::Grpc => Some("grpc.send"),
             RequestKind::Soap => Some("soap.send"),
-            RequestKind::WebSocket | RequestKind::Sse => None,
+            RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo => None,
         }
     }
 
@@ -104,6 +111,7 @@ impl RequestKind {
             RequestKind::Soap => "SOAP",
             RequestKind::WebSocket => "WS",
             RequestKind::Sse => "SSE",
+            RequestKind::SocketIo => "SIO",
         }
     }
 }
@@ -131,6 +139,19 @@ mod tests {
         assert_eq!(RequestKind::Sse.send_command(), None);
         assert_eq!(RequestKind::Sse.badge(), "SSE");
         assert_eq!(RequestKind::from_entity_kind("sseRequests"), Some(RequestKind::Sse));
+    }
+
+    #[test]
+    fn socketio_is_one_of_the_request_kinds_with_the_same_shape_of_names() {
+        assert!(RequestKind::ALL.contains(&RequestKind::SocketIo));
+        assert_eq!(RequestKind::SocketIo.label(), "Socket.IO");
+        assert_eq!(RequestKind::SocketIo.entity_kind(), "socketioRequests");
+        assert_eq!(RequestKind::SocketIo.folder_kind(), "socketioRequest");
+        assert_eq!(RequestKind::SocketIo.config_key(), "socketioRequests");
+        assert_eq!(RequestKind::SocketIo.folders_key(), "socketioRequestFolders");
+        assert_eq!(RequestKind::SocketIo.send_command(), None);
+        assert_eq!(RequestKind::SocketIo.badge(), "SIO");
+        assert_eq!(RequestKind::from_entity_kind("socketioRequests"), Some(RequestKind::SocketIo));
     }
 
     #[test]

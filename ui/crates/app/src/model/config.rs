@@ -375,7 +375,9 @@ impl ConfigSnapshot {
 
 fn stub_target(kind: RequestKind, stub: &Value) -> String {
     match kind {
-        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse => text(stub, "url").unwrap_or_default(),
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo => {
+            text(stub, "url").unwrap_or_default()
+        }
         RequestKind::GraphQl | RequestKind::Soap => text(stub, "endpointUrl").unwrap_or_default(),
         RequestKind::Grpc => {
             let address = text(stub, "serverAddress").unwrap_or_default();
@@ -418,6 +420,8 @@ mod tests {
             "graphqlRequests": [{"id": "q1", "name": "Me", "endpointUrl": "https://gql.test"}],
             "sseRequests": [{"id": "e1", "name": "Feed", "url": "https://sse.test/events", "method": "GET", "folderId": "ef"}],
             "sseRequestFolders": [{"id": "ef", "name": "Streams", "parentId": ""}],
+            "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
+            "socketioRequestFolders": [{"id": "if", "name": "Realtime", "parentId": ""}],
         })
     }
 
@@ -434,8 +438,21 @@ mod tests {
                 (RequestKind::Grpc, "g1"),
                 (RequestKind::WebSocket, "s1"),
                 (RequestKind::Sse, "e1"),
+                (RequestKind::SocketIo, "i1"),
             ]
         );
+    }
+
+    #[test]
+    fn a_socketio_request_is_listed_like_any_other_request_in_its_own_folders() {
+        let c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let chat = c.request(RequestKind::SocketIo, "i1").unwrap();
+        assert_eq!(chat.name, "Chat");
+        assert_eq!(chat.target, "https://io.test");
+        assert_eq!(chat.folder_id.as_deref(), Some("if"));
+        assert_eq!(c.folder(RequestKind::SocketIo, "if").unwrap().parent_id, None);
+        // The folder lists of the other types do not hold it.
+        assert!(c.folder(RequestKind::Sse, "if").is_none());
     }
 
     #[test]

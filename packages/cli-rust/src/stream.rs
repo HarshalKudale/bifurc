@@ -102,6 +102,7 @@ mod tests {
             ("entity.list:grpcRequests", listing(json!([]))),
             ("entity.list:soapRequests", listing(json!([]))),
             ("entity.list:wsConnections", listing(json!([]))),
+            ("entity.list:socketioRequests", listing(json!([]))),
             (
                 "entity.list:sseRequests",
                 listing(json!([{"id": "e1", "name": "Feed", "url": "http://x/events", "method": "GET",

@@ -45,8 +45,8 @@ use crate::{
     panels::host::HostPanel,
     preferences::Preferences,
     session::{
-        SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, sse::SseSession,
-        websocket::WsSession,
+        SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, socketio::SocketIoSession,
+        sse::SseSession, websocket::WsSession,
     },
     shell::ActiveTarget,
 };
@@ -96,6 +96,7 @@ fn kind_summary(kind: RequestKind) -> &'static str {
         RequestKind::Soap => "An XML envelope sent to a SOAP action",
         RequestKind::WebSocket => "A connection that sends and receives messages",
         RequestKind::Sse => "A one-way stream of events from a server",
+        RequestKind::SocketIo => "A connection that emits and receives named events",
     }
 }
 
@@ -284,6 +285,9 @@ impl RequestsScreen {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::open_saved(model, id, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::open_saved(model, id, window, cx))),
             RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::open_saved(model, id, window, cx))),
+            RequestKind::SocketIo => {
+                Session::SocketIo(cx.new(|cx| SocketIoSession::open_saved(model, id, window, cx)))
+            }
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::open_saved(model, kind, id, window, cx)))
             }
@@ -317,6 +321,9 @@ impl RequestsScreen {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::new_draft(model, folder, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::new_draft(model, folder, window, cx))),
             RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::new_draft(model, folder, window, cx))),
+            RequestKind::SocketIo => {
+                Session::SocketIo(cx.new(|cx| SocketIoSession::new_draft(model, folder, window, cx)))
+            }
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
             }
