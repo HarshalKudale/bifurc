@@ -143,9 +143,76 @@ pub fn folder_choices(folders: &[FolderRow]) -> Vec<(String, String)> {
     choices
 }
 
+/// What a drag in a tree is moving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Moved<'a> {
+    Folder(&'a str),
+    /// An entity, and the folder it is in now.
+    Item { folder: Option<&'a str> },
+}
+
+/// Whether `moved` can be put in the folder `target`, or at the top level with `None`. `folders` are the
+/// folders something can be kept in. An entity is always in a folder, so only a folder goes to the top; a
+/// folder does not go into itself or a folder under it; and a move to where it already is, is not one.
+pub fn can_move(folders: &[FolderRow], moved: Moved, target: Option<&str>) -> bool {
+    let parent_of = |id: &str| folders.iter().find(|f| f.id == id).map(|f| f.parent_id);
+    if target.is_some_and(|target| parent_of(target).is_none()) {
+        return false;
+    }
+    match (moved, target) {
+        (Moved::Item { folder }, Some(target)) => folder != Some(target),
+        (Moved::Item { .. }, None) => false,
+        (Moved::Folder(id), None) => parent_of(id).is_some_and(|parent| parent.is_some()),
+        (Moved::Folder(id), Some(target)) => {
+            let Some(parent) = parent_of(id) else { return false };
+            if parent == Some(target) {
+                return false;
+            }
+            // Walk up from the target: meeting the moved folder means the target is inside it.
+            let mut seen = HashSet::new();
+            let mut next = Some(target);
+            while let Some(current) = next {
+                if current == id {
+                    return false;
+                }
+                if !seen.insert(current) {
+                    break;
+                }
+                next = parent_of(current).flatten();
+            }
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entity_moves_to_any_other_folder_but_never_to_the_top() {
+        let item = Moved::Item { folder: Some("f1") };
+        assert!(can_move(&folders(), item, Some("f2")));
+        assert!(!can_move(&folders(), item, Some("f1")));
+        assert!(!can_move(&folders(), item, None));
+        assert!(!can_move(&folders(), item, Some("gone")));
+    }
+
+    #[test]
+    fn a_folder_moves_anywhere_but_into_itself_or_where_it_is() {
+        let mut all = folders();
+        all.push(FolderRow { id: "f3", name: "Other", parent_id: None });
+        assert!(can_move(&all, Moved::Folder("f2"), Some("f3")));
+        assert!(can_move(&all, Moved::Folder("f2"), None));
+        assert!(can_move(&all, Moved::Folder("f3"), Some("f2")));
+        // Already there.
+        assert!(!can_move(&all, Moved::Folder("f2"), Some("f1")));
+        assert!(!can_move(&all, Moved::Folder("f1"), None));
+        // Into itself, or a folder under it.
+        assert!(!can_move(&all, Moved::Folder("f1"), Some("f1")));
+        assert!(!can_move(&all, Moved::Folder("f1"), Some("f2")));
+        assert!(!can_move(&all, Moved::Folder("gone"), Some("f1")));
+    }
 
     #[test]
     fn a_folder_path_runs_from_the_top_down_to_the_folder() {
