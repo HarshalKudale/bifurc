@@ -110,6 +110,69 @@ fn sign_out_consequence(account: &AccountRow) -> String {
     }
 }
 
+/// A browser extension connected to the engine, as `engine.companions` reports it.
+#[derive(Debug, Clone, PartialEq)]
+struct CompanionRow {
+    browser: Option<String>,
+    browser_version: Option<String>,
+    os: Option<String>,
+    arch: Option<String>,
+    extension_version: Option<String>,
+    extension_id: Option<String>,
+    /// Milliseconds since the epoch.
+    connected_at: i64,
+}
+
+impl CompanionRow {
+    /// "Chrome 126", or "Browser" when the extension did not say.
+    fn title(&self) -> String {
+        match (&self.browser, &self.browser_version) {
+            (Some(name), Some(version)) => format!("{name} {version}"),
+            (Some(name), None) => name.clone(),
+            _ => "Browser".to_owned(),
+        }
+    }
+
+    /// The rest of what is known, as one line.
+    fn detail(&self) -> String {
+        let system = match (&self.os, &self.arch) {
+            (Some(os), Some(arch)) => Some(format!("{os} ({arch})")),
+            (Some(os), None) => Some(os.clone()),
+            _ => None,
+        };
+        let parts = [
+            system,
+            self.extension_version.as_ref().map(|version| format!("Extension {version}")),
+            self.extension_id.as_ref().map(|id| format!("ID {id}")),
+        ];
+        let known: Vec<String> = parts.into_iter().flatten().collect();
+        if known.is_empty() { "No details reported".to_owned() } else { known.join(" · ") }
+    }
+}
+
+fn companions_from(value: &Value) -> Vec<CompanionRow> {
+    let text = |companion: &Value, key: &str| companion.get(key).and_then(Value::as_str).map(str::to_owned);
+    let mut rows: Vec<CompanionRow> = value
+        .get("companions")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .map(|companion| CompanionRow {
+                    browser: text(companion, "browser"),
+                    browser_version: text(companion, "browserVersion"),
+                    os: text(companion, "os"),
+                    arch: text(companion, "arch"),
+                    extension_version: text(companion, "extensionVersion"),
+                    extension_id: text(companion, "extensionId"),
+                    connected_at: companion.get("connectedAt").and_then(Value::as_i64).unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort_by_key(|row| row.connected_at);
+    rows
+}
+
 fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
@@ -119,6 +182,8 @@ pub struct SettingsScreen {
     model: Entity<AppModel>,
     certificate: Entity<Certificate>,
     accounts: Vec<AccountRow>,
+    /// The browser extensions connected to the companion server.
+    companions: Vec<CompanionRow>,
     /// The account being signed out.
     signing_out: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -139,14 +204,35 @@ impl SettingsScreen {
                 ) {
                     this.refresh_accounts(cx);
                 }
+                if matches!(event, ModelEvent::CompanionsChanged | ModelEvent::EngineRestarted) {
+                    this.refresh_companions(cx);
+                }
             }),
         ];
         let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
         subscriptions.push(cx.observe(&certificate, |_, _, cx| cx.notify()));
         let mut this =
-            Self { model, certificate, accounts: Vec::new(), signing_out: None, _subscriptions: subscriptions };
+            Self {
+            model,
+            certificate,
+            accounts: Vec::new(),
+            companions: Vec::new(),
+            signing_out: None,
+            _subscriptions: subscriptions,
+        };
         this.refresh_accounts(cx);
+        this.refresh_companions(cx);
         this
+    }
+
+    fn refresh_companions(&mut self, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "engine.companions", json!({}), |this, outcome, cx| {
+            if let Ok(listed) = outcome {
+                this.companions = companions_from(&listed);
+                cx.notify();
+            }
+        });
     }
 
     fn refresh_accounts(&mut self, cx: &mut Context<Self>) {
@@ -317,8 +403,33 @@ impl SettingsScreen {
         .keywords(keywords)
     }
 
-    fn servers_page(&self) -> SettingPage {
+    /// The browser extensions connected right now, or a line saying there are none.
+    fn companions_item(&self, cx: &Context<Self>) -> SettingItem {
+        let companions = self.companions.clone();
+        let theme = cx.theme().clone();
+        SettingItem::render(move |_, _, _| {
+            let rows: Vec<_> = if companions.is_empty() {
+                vec![div().text_color(theme.muted_foreground).child("No browser extension is connected.").into_any_element()]
+            } else {
+                companions
+                    .iter()
+                    .map(|companion| {
+                        v_flex()
+                            .w_full()
+                            .child(companion.title())
+                            .child(div().text_xs().text_color(theme.muted_foreground).child(companion.detail()))
+                            .into_any_element()
+                    })
+                    .collect()
+            };
+            v_flex().w_full().gap_2().children(rows)
+        })
+        .keywords(["browser", "extension", "connected", "chrome", "firefox", "edge"])
+    }
+
+    fn servers_page(&self, cx: &Context<Self>) -> SettingPage {
         let engine_model = self.model.clone();
+        let companions = self.companions_item(cx);
         SettingPage::new("Servers").icon(IconName::Network).groups(vec![
             SettingGroup::new()
                 .title("Engine runtime")
@@ -387,6 +498,7 @@ impl SettingsScreen {
             SettingGroup::new()
                 .title("Companion")
                 .item(self.port_item("Port", "The browser extension connects here.", "companionPort"))
+                .item(companions)
                 .footer(|_, _| "The companion server always runs. A new port takes effect after the engine restarts."),
         ])
     }
@@ -693,7 +805,7 @@ impl Render for SettingsScreen {
         let pages = vec![
             self.appearance_page(cx),
             self.accounts_page(cx),
-            self.servers_page(),
+            self.servers_page(cx),
             self.https_page(),
             self.about_page(cx),
         ];
