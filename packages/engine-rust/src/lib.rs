@@ -28,6 +28,7 @@ pub mod runtime;
 pub mod scripting;
 pub mod services;
 pub mod soap;
+pub mod socketio;
 pub mod transport;
 pub mod utils;
 pub mod vault;

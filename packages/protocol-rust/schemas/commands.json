@@ -15,6 +15,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -52,6 +53,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -86,6 +88,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -119,6 +122,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments"
      ]
@@ -149,6 +153,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments"
      ]
@@ -179,6 +184,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -213,6 +219,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -248,6 +255,7 @@
       "graphqlRequests",
       "grpcRequests",
       "sseRequests",
+      "socketioRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -302,6 +310,7 @@
       "graphqlRequest",
       "grpcRequest",
       "sseRequest",
+      "socketioRequest",
       "soapRequest"
      ]
     },
@@ -337,6 +346,7 @@
       "graphqlRequest",
       "grpcRequest",
       "sseRequest",
+      "socketioRequest",
       "soapRequest"
      ]
     },
@@ -366,6 +376,7 @@
       "graphqlRequest",
       "grpcRequest",
       "sseRequest",
+      "socketioRequest",
       "soapRequest"
      ]
     },
@@ -398,6 +409,7 @@
       "graphqlRequest",
       "grpcRequest",
       "sseRequest",
+      "socketioRequest",
       "soapRequest"
      ]
     },
@@ -426,6 +438,7 @@
       "graphqlRequest",
       "grpcRequest",
       "sseRequest",
+      "socketioRequest",
       "soapRequest"
      ]
     },
@@ -454,6 +467,7 @@
       "graphqlRequest",
       "grpcRequest",
       "sseRequest",
+      "socketioRequest",
       "soapRequest"
      ]
     },
@@ -1666,6 +1680,132 @@
    "required": [
     "workspaceId",
     "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.connect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "path": {
+     "type": "string"
+    },
+    "namespace": {
+     "type": "string"
+    },
+    "auth": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.disconnect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.emit": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "event": {
+     "type": "string"
+    },
+    "args": {
+     "type": "string"
+    },
+    "ack": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId",
+    "event"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.clearMessages": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
    ],
    "additionalProperties": false
   },
