@@ -9,6 +9,8 @@ pub mod connection;
 pub mod exchange;
 pub mod protocol;
 pub mod rest;
+pub mod socketio;
+pub mod socketio_connection;
 pub mod sse;
 pub mod sse_stream;
 pub mod websocket;
@@ -22,7 +24,9 @@ use crate::{
     model::{RequestKind, snippet::RequestParts, tree::folder_path},
 };
 
-use self::{protocol::ProtocolSession, rest::RestSession, sse::SseSession, websocket::WsSession};
+use self::{
+    protocol::ProtocolSession, rest::RestSession, socketio::SocketIoSession, sse::SseSession, websocket::WsSession,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadState {
@@ -71,6 +75,7 @@ pub enum Session {
     Rest(Entity<RestSession>),
     WebSocket(Entity<WsSession>),
     Sse(Entity<SseSession>),
+    SocketIo(Entity<SocketIoSession>),
     Protocol(Entity<ProtocolSession>),
 }
 
@@ -80,6 +85,7 @@ impl Session {
             Session::Rest(_) => RequestKind::Rest,
             Session::WebSocket(_) => RequestKind::WebSocket,
             Session::Sse(_) => RequestKind::Sse,
+            Session::SocketIo(_) => RequestKind::SocketIo,
             Session::Protocol(s) => s.read(cx).kind(),
         }
     }
@@ -89,6 +95,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).saved_id().map(str::to_owned),
             Session::WebSocket(s) => s.read(cx).saved_id().map(str::to_owned),
             Session::Sse(s) => s.read(cx).saved_id().map(str::to_owned),
+            Session::SocketIo(s) => s.read(cx).saved_id().map(str::to_owned),
             Session::Protocol(s) => s.read(cx).saved_id().map(str::to_owned),
         }
     }
@@ -98,6 +105,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).title(cx),
             Session::WebSocket(s) => s.read(cx).title(cx),
             Session::Sse(s) => s.read(cx).title(cx),
+            Session::SocketIo(s) => s.read(cx).title(cx),
             Session::Protocol(s) => s.read(cx).title(cx),
         }
     }
@@ -117,6 +125,7 @@ impl Session {
             Session::Protocol(s) => s.read(cx).request_parts(cx),
             Session::WebSocket(_) => None,
             Session::Sse(_) => None,
+            Session::SocketIo(_) => None,
         }
     }
 
@@ -125,6 +134,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).is_dirty(cx),
             Session::WebSocket(s) => s.read(cx).is_dirty(cx),
             Session::Sse(s) => s.read(cx).is_dirty(cx),
+            Session::SocketIo(s) => s.read(cx).is_dirty(cx),
             Session::Protocol(s) => s.read(cx).is_dirty(cx),
         }
     }
@@ -135,6 +145,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).exchange().clone().into(),
             Session::WebSocket(s) => s.read(cx).connection().clone().into(),
             Session::Sse(s) => s.read(cx).stream().clone().into(),
+            Session::SocketIo(s) => s.read(cx).connection().clone().into(),
             Session::Protocol(s) => s.read(cx).exchange().clone().into(),
         }
     }
@@ -144,6 +155,7 @@ impl Session {
             Session::Rest(s) => s.clone().into(),
             Session::WebSocket(s) => s.clone().into(),
             Session::Sse(s) => s.clone().into(),
+            Session::SocketIo(s) => s.clone().into(),
             Session::Protocol(s) => s.clone().into(),
         }
     }
@@ -154,6 +166,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).name_input().clone(),
             Session::WebSocket(s) => s.read(cx).name_input().clone(),
             Session::Sse(s) => s.read(cx).name_input().clone(),
+            Session::SocketIo(s) => s.read(cx).name_input().clone(),
             Session::Protocol(s) => s.read(cx).name_input().clone(),
         }
     }
@@ -164,6 +177,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).folder_id().map(str::to_owned),
             Session::WebSocket(s) => s.read(cx).folder_id().map(str::to_owned),
             Session::Sse(s) => s.read(cx).folder_id().map(str::to_owned),
+            Session::SocketIo(s) => s.read(cx).folder_id().map(str::to_owned),
             Session::Protocol(s) => s.read(cx).folder_id().map(str::to_owned),
         }
     }
@@ -174,6 +188,7 @@ impl Session {
             Session::Rest(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
             Session::Sse(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
         }
     }
@@ -190,6 +205,7 @@ impl Session {
             Session::Rest(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
             Session::WebSocket(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
             Session::Sse(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+            Session::SocketIo(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
             Session::Protocol(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
         };
         let saved_id = self.saved_id(cx);
@@ -209,6 +225,7 @@ impl Session {
             Session::Rest(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
             Session::Sse(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
         }
     }
@@ -219,6 +236,7 @@ impl Session {
             Session::Rest(s) => s.update(cx, |s, cx| s.flush(window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.flush(window, cx)),
             Session::Sse(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.flush(window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.flush(window, cx)),
         }
     }
@@ -229,6 +247,7 @@ impl Session {
             Session::Rest(s) => s.read(cx).carry(cx),
             Session::WebSocket(s) => s.read(cx).carry(cx),
             Session::Sse(s) => s.read(cx).carry(cx),
+            Session::SocketIo(s) => s.read(cx).carry(cx),
             Session::Protocol(s) => s.read(cx).carry(cx),
         }
     }
@@ -239,6 +258,7 @@ impl Session {
             Session::Rest(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
             Session::Sse(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
         }
     }
@@ -249,6 +269,7 @@ impl Session {
             Session::Rest(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
             Session::Sse(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
         }
     }
@@ -259,6 +280,7 @@ impl Session {
             Session::Rest(s) => s.update(cx, |s, cx| s.send(window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.connect(window, cx)),
             Session::Sse(s) => s.update(cx, |s, cx| s.connect(window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.connect(window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.send(window, cx)),
         }
     }
@@ -272,6 +294,7 @@ impl Session {
             Session::Rest(s) => s.entity_id(),
             Session::WebSocket(s) => s.entity_id(),
             Session::Sse(s) => s.entity_id(),
+            Session::SocketIo(s) => s.entity_id(),
             Session::Protocol(s) => s.entity_id(),
         }
     }
@@ -294,6 +317,9 @@ impl Session {
             Session::Sse(s) => {
                 cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
             }
+            Session::SocketIo(s) => {
+                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
+            }
             Session::Protocol(s) => {
                 cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
             }
@@ -309,6 +335,7 @@ impl Session {
             Session::Rest(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
             Session::WebSocket(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
             Session::Sse(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
+            Session::SocketIo(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
             Session::Protocol(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
         }
     }
