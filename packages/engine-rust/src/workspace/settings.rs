@@ -42,7 +42,7 @@ impl AppSettings {
         self.0.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(default)
     }
 
-    /// The reverse proxy (edge) port: what `*.localhost` mappings are served on.
+    /// The reverse proxy (edge) port: what `*.localhost` mappings are served on, over HTTPS while HTTPS is on.
     pub fn port(&self) -> u16 {
         self.port_field("port", DEFAULT_REVERSE_PROXY_PORT)
     }

@@ -1,14 +1,18 @@
 //! The edge: the reverse proxy for domain mappings (and any `*.localhost` name) and the home page. A request
 //! meets the mocks first, then the mapping its `Host` names.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use base64::Engine as _;
 use serde_json::Value;
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
 };
+use tokio_rustls::TlsAcceptor;
 
 use super::pages::{build_home_page, build_not_mapped_page, build_unserved_page};
 use crate::{
@@ -23,6 +27,7 @@ use crate::{
         log_body, log_outcome, proxy_to_upstream, send_html,
         wire::{Duplicates, parse_header_lines, read_body, read_head},
     },
+    certificates::{apply_settings, listener_server_config},
     runtime::instances::Listener,
     utils::{
         cache_policy::strip_cache_headers,
@@ -30,7 +35,7 @@ use crate::{
         json::{array_of, str_of, truthy},
         net::hostname_of,
     },
-    workspace::dispatch::active_env,
+    workspace::{dispatch::active_env, settings::load_settings},
 };
 
 /// The routing config of the workspace the edge serves, or `None` when this engine does not serve it.
@@ -38,7 +43,20 @@ pub type ResolveConfig = Arc<dyn Fn() -> Option<Value> + Send + Sync>;
 
 struct Shared {
     core: ListenerCore,
+    /// Whether the last start put the edge in HTTPS mode: its one port then speaks TLS.
+    secure: AtomicBool,
     resolve_config: ResolveConfig,
+}
+
+impl Shared {
+    fn is_secure(&self) -> bool {
+        self.secure.load(Ordering::Relaxed)
+    }
+
+    fn scheme(&self) -> &'static str {
+        if self.is_secure() { "https" } else { "http" }
+    }
+
 }
 
 /// The edge as a [`Listener`].
@@ -48,12 +66,21 @@ pub struct EdgeRouter {
 
 impl EdgeRouter {
     pub fn new(resolve_config: ResolveConfig) -> Self {
-        Self { shared: Arc::new(Shared { core: ListenerCore::default(), resolve_config }) }
+        Self {
+            shared: Arc::new(Shared {
+                core: ListenerCore::default(),
+                secure: AtomicBool::new(false),
+                resolve_config,
+            }),
+        }
     }
 }
 
 impl Listener for EdgeRouter {
     fn start(&self, port: u16) {
+        let secure = apply_settings(&load_settings());
+        self.shared.secure.store(secure, Ordering::Relaxed);
+
         let shared = self.shared.clone();
         let handler: ConnectionHandler = Arc::new(move |socket| Box::pin(handle_connection(shared.clone(), socket)));
         self.shared.core.start(port, handler);
@@ -76,7 +103,38 @@ impl Listener for EdgeRouter {
     }
 }
 
+/// The first byte of a TLS handshake record.
+const TLS_HANDSHAKE: u8 = 0x16;
+
+/// With HTTPS on the port speaks TLS, presenting a certificate for the name the client asked for. A client
+/// that spoke plain HTTP to it is sent on to the same address on HTTPS.
 async fn handle_connection(shared: Arc<Shared>, mut socket: TcpStream) {
+    if !shared.is_secure() {
+        return serve(shared, socket).await;
+    }
+    let mut first = [0u8; 1];
+    if !matches!(socket.peek(&mut first).await, Ok(1)) {
+        return;
+    }
+    if first[0] == TLS_HANDSHAKE {
+        let Ok(config) = listener_server_config() else { return };
+        let Ok(tls) = TlsAcceptor::from(config).accept(socket).await else { return };
+        return serve(shared, tls).await;
+    }
+    let Some((head, _)) = read_head(&mut socket).await else { return };
+    let host = hostname_of(&crate::proxy::wire::raw_header(&head.header_lines, "host").unwrap_or_default());
+    let host = if host.is_empty() { "localhost".to_string() } else { host };
+    let port = shared.core.port();
+    let port = if port == 443 { String::new() } else { format!(":{port}") };
+    let path = if head.target.starts_with('/') { head.target.as_str() } else { "/" };
+    let answer = format!(
+        "HTTP/1.1 308 Permanent Redirect\r\nLocation: https://{host}{port}{path}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let _ = socket.write_all(answer.as_bytes()).await;
+    let _ = socket.shutdown().await;
+}
+
+async fn serve<S: AsyncRead + AsyncWrite + Unpin>(shared: Arc<Shared>, mut socket: S) {
     let Some((head, leftover)) = read_head(&mut socket).await else { return };
     let Ok(body) = read_body(&mut socket, leftover, &head.header_lines).await else { return };
     let mut headers = parse_header_lines(&head.header_lines, Duplicates::Joined);
@@ -96,8 +154,9 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
 ) {
     let t0 = now_ms();
     let host = hostname_of(host_header);
+    let scheme = shared.scheme();
     let url =
-        if req_path.starts_with("http") { req_path.to_string() } else { format!("http://{host_header}{req_path}") };
+        if req_path.starts_with("http") { req_path.to_string() } else { format!("{scheme}://{host_header}{req_path}") };
     let req_body = if body.is_empty() { String::new() } else { base64::engine::general_purpose::STANDARD.encode(body) };
     let current_port = shared.core.port();
 
@@ -125,11 +184,16 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     let is_localhost_domain = host.ends_with(".localhost");
 
     if mapping.is_none() && !is_localhost_domain {
-        send_html(out, 200, &build_home_page(&cfg, current_port)).await;
+        send_html(out, 200, &build_home_page(&cfg, scheme, current_port)).await;
         return;
     }
 
-    if let Some(mock) = match_mock(array_of(&cfg, "mocks"), method, &url, env.as_ref()) {
+    // Mocks written for a name's `http://` address keep applying once the name is served over HTTPS.
+    let mocks = array_of(&cfg, "mocks");
+    let http_url = format!("http://{host_header}{req_path}");
+    let matched = match_mock(mocks, method, &url, env.as_ref())
+        .or_else(|| if shared.is_secure() { match_mock(mocks, method, &http_url, env.as_ref()) } else { None });
+    if let Some(mock) = matched {
         let mock_target = Some(format!("mock:{}", str_of(mock, "id")));
         if is_fully_mocked(mock) {
             let resolved = resolve_mock_only_response(mock, env.as_ref());
@@ -203,7 +267,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
             }
         }
         None => {
-            send_html(out, 404, &build_not_mapped_page(&host, current_port)).await;
+            send_html(out, 404, &build_not_mapped_page(&host, scheme, current_port)).await;
             emit_log(&error_entry(&base, 404, now_ms() - t0));
         }
     }

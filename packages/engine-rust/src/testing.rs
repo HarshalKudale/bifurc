@@ -32,3 +32,27 @@ pub fn scratch_data_root() -> ScratchRoot {
     init_workspace_dir("ws1", "Workspace 1").expect("the workspace directory is created");
     ScratchRoot { dir, ws_id: "ws1", _turn: turn }
 }
+
+/// Turn HTTPS on in the scratch store: a CA is generated, and the client configuration returned trusts it.
+pub fn enable_https(root: &ScratchRoot) -> std::sync::Arc<rustls::ClientConfig> {
+    use std::sync::Arc;
+
+    let generated = crate::certificates::generate_ca(root.dir.path()).expect("a CA is generated");
+    let mut settings = load_settings();
+    settings.set("tlsEnabled", json!(true));
+    save_settings(&settings).expect("settings are saved");
+
+    let pem = std::fs::read(&generated.cert_path).expect("the CA certificate is readable");
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+        roots.add(cert.expect("a certificate")).expect("a usable root");
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    Arc::new(
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    )
+}
