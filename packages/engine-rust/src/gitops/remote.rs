@@ -1,17 +1,22 @@
 //! A workspace and its remote repository: importing one that is on the account, publishing a local one as a
-//! new repository, and the credentials and the owner check every later sync goes through.
+//! new repository, and the credentials and the access check every later sync goes through.
 //!
-//! The rules: a workspace has one owner and only the owner may bring it to a device or sync it; a remote is
-//! assigned once and never changed; a local workspace is only ever pushed to a repository created for it,
-//! and an imported one only ever lands in a directory of its own. Neither side can overwrite the other.
+//! The rules: a remote is assigned once and never changed; a local workspace is only ever pushed to a
+//! repository created for it, and an imported one only ever lands in a directory of its own. Neither side
+//! can overwrite the other.
 //!
-//! Who owns a published workspace is what GitHub says: the owner of its repository. The account a workspace
-//! syncs as has to be that owner, and the token it presents is asked who it belongs to. A repository is a
-//! workspace when the `workspace.json` at its root says so.
+//! Who owns a published workspace is what GitHub says: the owner of its repository. Who else may use it is
+//! what GitHub says too. With team sync ([`team_sync`]) everyone the repository is shared with may bring the
+//! workspace to a device, and syncs it with the access they were given: someone who may push syncs like the
+//! owner, someone who may only read has the workspace read-only (what the remote gets is pulled, what is
+//! changed here stays here). Without team sync only the owner imports and syncs. The token an account
+//! presents is asked who it belongs to. A repository is a workspace when the `workspace.json` at its root
+//! says so.
 
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
@@ -23,6 +28,7 @@ use super::{
     sync_state::{get_sync_config, save_sync_config, save_sync_meta, sync_meta_value},
 };
 use crate::{
+    features::team_sync,
     utils::{
         id::{generate_id, now_ms},
         json::{read_json, str_of, write_json_pretty},
@@ -46,7 +52,8 @@ fn refused(message: impl Into<String>) -> Value {
     json!({ "ok": false, "error": message.into() })
 }
 
-/// The `reason` of an import refused because the repository is another account's.
+/// The `reason` of an import refused because the repository is another account's, which only happens with
+/// team sync off.
 pub const NOT_OWNER: &str = "notOwner";
 
 /// Why an import was refused: what the user is told, and a word for the refusals a client can tell apart.
@@ -82,11 +89,58 @@ pub fn flag_if_rejected(account_id: &str, error: String) -> String {
     error
 }
 
-fn sync_config_for(repo: &Repo) -> Value {
+/// What the account a workspace syncs as may do with the workspace's repository, as GitHub says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// The repository is the account's own.
+    Owner,
+    /// Someone else's (a person's or an organization's), which the account may push to.
+    Write,
+    /// Someone else's, which the account may only read: the workspace is read-only on this device.
+    Read,
+}
+
+impl Access {
+    fn of(repo: &Repo, user_id: u64) -> Access {
+        if repo.owner_id == user_id {
+            Access::Owner
+        } else if repo.can_push == Some(true) {
+            Access::Write
+        } else {
+            Access::Read
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Access::Owner => "owner",
+            Access::Write => "write",
+            Access::Read => "read",
+        }
+    }
+}
+
+/// What a remote operation is about to do with the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Need {
+    Pull,
+    Push,
+}
+
+fn sync_config_for(repo: &Repo, access: Access) -> Value {
     json!({
         "remote": repo.clone_url, "branch": repo.default_branch, "repo": repo.full_name,
         "owner": { "host": github::host(), "userId": repo.owner_id, "login": repo.owner_login },
+        "access": access.as_str(),
     })
+}
+
+/// A repository as an account's listing shows it: with what the account may do with it.
+pub fn listed_repo(repo: &Repo, account: &Account) -> Value {
+    let mut listed = repo.public();
+    listed["access"] = json!(Access::of(repo, account.user_id).as_str());
+    listed["workspaceId"] = json!(workspace_for_repo(&repo.full_name));
+    listed
 }
 
 fn named(login: &str) -> String {
@@ -125,34 +179,95 @@ pub async fn git_net(ws_id: &str, args: &[&str]) -> Result<String, GitError> {
     result
 }
 
-/// The (workspace, account, repository) links GitHub has confirmed since the engine started. A sync runs
-/// every few seconds, so the question is asked once.
-static CONFIRMED_OWNERS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+/// What GitHub said each (workspace, account, repository) link may do, and when it said so. A pull runs
+/// whenever the remote moves, so the question is not asked every time.
+static KNOWN_ACCESS: Mutex<Option<HashMap<String, (Access, Instant)>>> = Mutex::new(None);
 
-/// Refuse to sync a workspace whose repository belongs to another account than the one it syncs as. The
-/// owner is the repository's owner, as GitHub reports it to that account.
-pub async fn ensure_owner(ws_id: &str) -> Result<(), GitError> {
-    let Some(account) = workspace_account(ws_id) else { return Ok(()) };
-    let repo_name = get_sync_config(ws_id).map(|config| str_of(&config, "repo").to_string()).unwrap_or_default();
-    if repo_name.is_empty() {
-        return Ok(());
+/// How long access that was given by someone else is taken as still given, for a pull. Being the owner does
+/// not lapse, and a push by anyone else always asks.
+const ACCESS_TTL: Duration = Duration::from_secs(300);
+
+/// Forget what GitHub said, as an engine that just started has.
+#[cfg(test)]
+pub fn forget_access() {
+    *KNOWN_ACCESS.lock() = None;
+}
+
+/// The account a workspace syncs as and the repository it syncs with, where it has both.
+fn remote_link(ws_id: &str) -> Option<(Account, String)> {
+    let account = workspace_account(ws_id)?;
+    let repo = get_sync_config(ws_id).map(|config| str_of(&config, "repo").to_string()).filter(|r| !r.is_empty())?;
+    Some((account, repo))
+}
+
+fn access_key(ws_id: &str, account: &Account, repo_name: &str) -> String {
+    format!("{ws_id}|{}|{repo_name}", account.id)
+}
+
+/// The access a workspace was last found to have, as its settings keep it: `owner`, `write` or `read`.
+/// `None` without a remote, and for a remote assigned before access was recorded (its owner's, then).
+pub fn workspace_access(ws_id: &str) -> Option<String> {
+    get_sync_config(ws_id).map(|config| str_of(&config, "access").to_string()).filter(|access| !access.is_empty())
+}
+
+/// Keep what GitHub said in the workspace's settings, and tell the clients when it is news to them.
+fn record_access(ws_id: &str, access: Access) {
+    let Some(mut config) = get_sync_config(ws_id) else { return };
+    if str_of(&config, "access") == access.as_str() {
+        return;
     }
-    let key = format!("{ws_id}|{}|{repo_name}", account.id);
-    if CONFIRMED_OWNERS.lock().as_ref().is_some_and(|confirmed| confirmed.contains(&key)) {
-        return Ok(());
-    }
+    config["access"] = json!(access.as_str());
+    save_sync_config(ws_id, Some(config));
+    crate::kernel::bus().emit("settings.changed", json!({}));
+}
+
+/// Ask GitHub what the workspace's account may do with its repository now. `None` for a workspace with no
+/// account or no repository.
+pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
+    let Some((account, repo_name)) = remote_link(ws_id) else { return Ok(None) };
     let token = account
         .token
         .clone()
         .ok_or_else(|| GitError(format!("Sign in to GitHub as {} to sync this workspace.", account.login)))?;
     let repo = github::get_repo(&token, &repo_name).await.map_err(|e| GitError(flag_if_rejected(&account.id, e)))?;
-    if repo.owner_id != account.user_id {
+    let access = Access::of(&repo, account.user_id);
+    KNOWN_ACCESS
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(access_key(ws_id, &account, &repo_name), (access, Instant::now()));
+    record_access(ws_id, access);
+    Ok(Some(access))
+}
+
+/// Refuse a remote operation the workspace's account may not do, by what GitHub says the account may do with
+/// the repository. With team sync anyone the repository is shared with pulls, and pushes when they were
+/// given write access; without it the repository has to be the account's own for either.
+pub async fn ensure_access(ws_id: &str, need: Need) -> Result<(), GitError> {
+    let Some((account, repo_name)) = remote_link(ws_id) else { return Ok(()) };
+    let known = KNOWN_ACCESS
+        .lock()
+        .as_ref()
+        .and_then(|known| known.get(&access_key(ws_id, &account, &repo_name)).copied())
+        .filter(|(access, at)| *access == Access::Owner || (need == Need::Pull && at.elapsed() < ACCESS_TTL))
+        .map(|(access, _)| access);
+    let access = match known {
+        Some(access) => access,
+        None => match refresh_access(ws_id).await? {
+            Some(access) => access,
+            None => return Ok(()),
+        },
+    };
+    let owner = named(str_of(&workspace_owner(ws_id), "login"));
+    if !team_sync() && access != Access::Owner {
+        return Err(GitError(format!("This workspace belongs to {owner}. Only its owner can sync it.")));
+    }
+    if need == Need::Push && access == Access::Read {
         return Err(GitError(format!(
-            "This workspace belongs to {}. Only its owner can sync it.",
-            named(&repo.owner_login)
+            "@{} has read access to {repo_name}, so this workspace is read-only here: what you change stays on \
+             this device. Ask {owner} for write access to sync it.",
+            account.login
         )));
     }
-    CONFIRMED_OWNERS.lock().get_or_insert_with(HashSet::new).insert(key);
     Ok(())
 }
 
@@ -285,9 +400,9 @@ async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// Bring a workspace that lives in one of the account's repositories to this device, as a new workspace.
-/// Returns `{ ok: true, workspace }` or `{ ok: false, error }`, with `reason: "notOwner"` when the repository
-/// is another account's.
+/// Bring a workspace that lives in a repository the account owns, or with team sync one it was given access
+/// to, to this device as a new workspace. Returns `{ ok: true, workspace }` or `{ ok: false, error }`, with
+/// `reason: "notOwner"` when the repository is another account's and team sync is off.
 pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
     match import(account_id, repo_name).await {
         Ok(workspace) => json!({ "ok": true, "workspace": workspace }),
@@ -307,7 +422,9 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     }
     let (account, token) = signed_in(account_id).await?;
     let repo = github::get_repo(&token, repo_name).await?;
-    if repo.owner_id != account.user_id {
+    // What the account may do with it goes with the workspace: someone who may only read has it read-only.
+    let access = Access::of(&repo, account.user_id);
+    if access != Access::Owner && !team_sync() {
         return Err(Refusal {
             message: format!(
                 "{} belongs to {}, not @{}. A workspace can only be imported by the account that owns it.",
@@ -364,7 +481,7 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
 
     let workspace = json!({
         "id": id, "name": name, "activeEnvironmentId": null, "accountId": account.id,
-        "syncConfig": sync_config_for(&repo),
+        "syncConfig": sync_config_for(&repo, access),
         "syncMeta": sync_meta_value(None, Some(now_ms()), None),
     });
     settings.workspaces_mut().push(workspace.clone());
@@ -418,7 +535,7 @@ async fn publish(ws_id: &str, account_id: &str, repo_name: &str, private: bool) 
         workspace["accountId"] = json!(account.id);
     }
     save_settings(&settings).map_err(|e| e.to_string())?;
-    save_sync_config(ws_id, Some(sync_config_for(&repo)));
+    save_sync_config(ws_id, Some(sync_config_for(&repo, Access::Owner)));
     apply_commit_identity(ws_id).await.map_err(|e| e.to_string())?;
     // What is pushed says it is a workspace, so the repository can be told from any other on import.
     mark_as_workspace(ws_id, &name).await?;

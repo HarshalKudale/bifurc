@@ -45,6 +45,9 @@ pub struct SyncConfig {
     pub remote: String,
     /// `owner/name` on the host, when the engine knows it.
     pub repo: Option<String>,
+    /// The repository is someone else's and the workspace's account may only read it: what the remote gets
+    /// comes in, and what is changed here stays on this device.
+    pub read_only: bool,
 }
 
 /// What the mocks tree shows for a mock rule. The whole rule is loaded by id when its tab opens.
@@ -204,6 +207,7 @@ impl ConfigSnapshot {
                     Some(SyncConfig {
                         remote: non_empty(s, "remote")?,
                         repo: non_empty(s, "repo"),
+                        read_only: s.get("access").and_then(Value::as_str) == Some("read"),
                     })
                 });
                 let account = w.get("account").and_then(AccountInfo::from_value);
@@ -523,6 +527,21 @@ mod tests {
         let names: Vec<_> = c.selectable_environments().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["Staging"]);
         assert_eq!(c.active_environment().unwrap().variables[0].key, "HOST");
+    }
+
+    #[test]
+    fn a_workspace_is_read_only_when_its_account_may_only_read_the_repository() {
+        let workspace = |sync: Value| {
+            let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W", "syncConfig": sync }] });
+            ConfigSnapshot::from_value(&config).unwrap().workspaces[0].clone()
+        };
+        let read_only = |sync: Value| workspace(sync).sync.map(|sync| sync.read_only);
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team", "access": "read" })), Some(true));
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team", "access": "write" })), Some(false));
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team", "access": "owner" })), Some(false));
+        // A remote assigned before access was recorded is its owner's.
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team" })), Some(false));
+        assert_eq!(read_only(Value::Null), None);
     }
 
     #[test]

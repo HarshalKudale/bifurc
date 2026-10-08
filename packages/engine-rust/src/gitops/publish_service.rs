@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{
     git_lock::{with_index_lock_retry, workspace_lock},
     git_sync_ops::perform_git_pull,
-    remote::{ensure_owner, git_net},
+    remote::{Need, ensure_access, git_net},
     status_tracker::{parse_porcelain_z, unquote_git_path},
     sync_state::get_sync_config,
 };
@@ -218,10 +218,10 @@ async fn publish_locked(opts: &PublishOptions) -> Result<Value, GitError> {
     let ws_id = opts.ws_id.as_str();
 
     // The commit goes on top of what the remote has now, so the push that follows is never behind it. A
-    // remote that cannot be reached is met again at the push.
+    // remote that cannot be reached is met again at the push. An account that may not push commits nothing.
     let remote = get_sync_config(ws_id).filter(|c| truthy(c, "remote"));
     if let Some(config) = &remote {
-        ensure_owner(ws_id).await?;
+        ensure_access(ws_id, Need::Push).await?;
         if perform_git_pull(ws_id, str_of(config, "branch")).await.is_ok_and(|pulled| pulled.updated) {
             notify_config_changed();
         }
