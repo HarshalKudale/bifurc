@@ -10,7 +10,10 @@ use serde_json::{Value, json};
 
 use crate::{
     env::effective_environment_id,
-    kernel::{CommandRegistry, bus, kinds::to_engine_kind},
+    kernel::{
+        CommandRegistry, bus,
+        kinds::{to_engine_kind, to_protocol_kind},
+    },
     protocol::{EngineError, Result},
     runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
     utils::{
@@ -27,6 +30,7 @@ use crate::{
         kinds::{CrudKind, crud_kind, is_simple_kind, requires_folder},
         settings::{load_settings, save_settings},
         status_cache::invalidate_cache,
+        tree,
     },
 };
 
@@ -74,6 +78,9 @@ fn place_in_folder(kind: &CrudKind, ws_id: &str, entity: &mut Value) -> Result<(
 fn write_entity_file(cfg: &Value, kind: &CrudKind, ws_id: &str, id: &str, entity: &Value) -> Result<()> {
     if kind.is_flat {
         write_flat_entity(ws_id, kind.kind, id, entity)?;
+    } else if tree::is_tree_kind(kind.kind) {
+        // A tree's folder is named by its id: its name is only the last part of where it is.
+        write_entity(ws_id, kind.kind, id, entity, opt_str(entity, "folderId"))?;
     } else {
         write_entity(ws_id, kind.kind, id, entity, folder_name_of(cfg, kind, entity).as_deref())?;
     }
@@ -109,6 +116,9 @@ fn create_entity_core(
     let ws_id = workspace_id.map(str::to_string).unwrap_or_else(|| workspace_of(entity, &load_config()));
 
     let mut new_entity = merged(entity, &json!({ "id": generate_id(), "createdAt": now_ms(), "workspaceId": ws_id }));
+    if let Some(ty) = tree::type_of_kind(kind.kind) {
+        new_entity["type"] = json!(ty);
+    }
     let id = str_of(&new_entity, "id").to_string();
     // After the folder is settled, so the snapshot lists a Default folder this call has just made.
     place_in_folder(kind, &ws_id, &mut new_entity)?;
@@ -307,6 +317,34 @@ pub fn register(registry: &mut CommandRegistry) {
         }
         Ok(json!({ "entities": read_all_entities(str_of(&params, "workspaceId"), engine_kind) }))
     });
+
+    // What a tree's index lists of the requests (or mocks) whose name, address or other listed field contains
+    // `query`, by name. No file is read. `kinds` narrows the requests to some types.
+    registry.register_sync("entity.search", |params, _| {
+        let ws_id = str_of(&params, "workspaceId");
+        let scope = if str_of(&params, "scope") == "mocks" { tree::Scope::Mocks } else { tree::Scope::Requests };
+        let types: Vec<String> = array_of(&params, "kinds")
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|kind| tree::type_of_kind(to_engine_kind(kind)))
+            .map(str::to_string)
+            .collect();
+        let limit = params.get("limit").and_then(Value::as_i64).unwrap_or(200).clamp(1, 1000);
+        let results: Vec<Value> = tree::search(ws_id, scope, str_of(&params, "query"), &types, limit)
+            .iter()
+            .map(|entry| {
+                let mut found = entry.details.as_object().cloned().unwrap_or_default();
+                let kind = scope.kind_of_type(&entry.ty).unwrap_or(scope.dir());
+                found.insert("id".into(), json!(entry.id));
+                found.insert("kind".into(), json!(to_protocol_kind(kind)));
+                found.insert("type".into(), json!(entry.ty));
+                found.insert("folderId".into(), json!(entry.folder_id));
+                found.insert("path".into(), json!(tree::rel_path(scope, entry)));
+                Value::Object(found)
+            })
+            .collect();
+        Ok(json!({ "results": results }))
+    });
 }
 
 #[cfg(test)]
@@ -398,10 +436,10 @@ mod tests {
         let _root = scratch_data_root();
         let ctx = context();
         let default_id = |kind: &str| -> Value {
-            let folders = crate::workspace::fs::read_index(WS, kind).folders;
-            let found: Vec<_> = folders.iter().filter(|f| f["name"] == "Default").collect();
-            assert_eq!(found.len(), 1, "one Default folder per kind");
-            found[0]["id"].clone()
+            let folders = tree::folders(WS, tree::Scope::of_kind(kind).unwrap());
+            let found: Vec<_> = folders.iter().filter(|f| f.name == "Default").collect();
+            assert_eq!(found.len(), 1, "one Default folder per tree");
+            json!(found[0].id)
         };
 
         // No folder, an empty one and one that does not exist all land in Default, which is made on the way.
@@ -446,7 +484,70 @@ mod tests {
         assert_eq!(copy["entity"]["folderId"], default_id("requests"));
 
         // Only Auth and Default exist: the Default folder is made once and reused.
-        assert_eq!(read_index(WS, "requests").folders.len(), 2);
+        assert_eq!(tree::folders(WS, tree::Scope::Requests).len(), 2);
+
+        // A request of another type has no folders of its own: it goes into the same Default folder, and its
+        // file says what it is.
+        let socket = json!({ "name": "Feed", "url": "ws://a" });
+        let socket = call(&ctx, "entity.create", json!({ "kind": "wsConnections", "entity": socket })).await.unwrap();
+        assert_eq!(socket["entity"]["folderId"], default_id("requests"));
+        assert_eq!(socket["entity"]["type"], "websocket");
+        let id = socket["id"].as_str().unwrap();
+        assert!(entity_dir(WS, "requests").join("Default").join(format!("{id}.json")).exists());
+        assert!(!ws_dir(WS).join("sockets").exists(), "no directory per request type");
+        let cfg = load_config();
+        assert_eq!(cfg["wsConnections"][0]["id"], id);
+        assert_eq!(cfg["wsConnections"][0]["folderId"], default_id("requests"));
+        assert!(cfg.get("wsFolders").is_none(), "the request folders are every request type's");
+        assert_eq!(cfg["requests"].as_array().unwrap().len(), 5);
+        let listed = call(&ctx, "entity.list", json!({ "workspaceId": WS, "kind": "wsConnections" })).await.unwrap();
+        assert_eq!(listed["entities"].as_array().unwrap().len(), 1);
+
+        // Into a folder in a folder: the file is in the directory in the directory.
+        let inner =
+            call(&ctx, "folder.add", json!({ "kind": "request", "name": "Tokens", "parentId": own["id"] })).await.unwrap();
+        let mut deep = socket["entity"].clone();
+        deep["folderId"] = inner["id"].clone();
+        call(&ctx, "entity.update", json!({ "kind": "wsConnections", "entity": deep })).await.unwrap();
+        assert!(entity_dir(WS, "requests").join("Auth").join("Tokens").join(format!("{id}.json")).exists());
+        assert!(!entity_dir(WS, "requests").join("Default").join(format!("{id}.json")).exists());
+    }
+
+    #[tokio::test]
+    async fn requests_are_searched_by_what_the_index_lists_of_them() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let users = json!({ "name": "List users", "method": "GET", "url": "http://a/people" });
+        let users = call(&ctx, "entity.create", json!({ "kind": "requests", "entity": users })).await.unwrap();
+        let feed = json!({ "name": "Feed", "url": "ws://a/users/live" });
+        call(&ctx, "entity.create", json!({ "kind": "wsConnections", "entity": feed })).await.unwrap();
+        let other = json!({ "name": "Ping", "method": "GET", "url": "http://a/ping" });
+        call(&ctx, "entity.create", json!({ "kind": "requests", "entity": other })).await.unwrap();
+
+        let search = |query: &str, kinds: Value| {
+            call(&ctx, "entity.search", json!({ "workspaceId": WS, "scope": "requests", "query": query, "kinds": kinds }))
+        };
+        // By name or by address, whatever the case, across every request type.
+        let found = search("USERS", json!([])).await.unwrap();
+        let names: Vec<&str> = found["results"].as_array().unwrap().iter().map(|r| str_of(r, "name")).collect();
+        assert_eq!(names, ["Feed", "List users"]);
+        assert_eq!(found["results"][0]["kind"], "wsConnections");
+        assert_eq!(found["results"][1]["id"], users["id"]);
+        assert_eq!(found["results"][1]["path"], format!("requests/Default/{}.json", str_of(&users, "id")));
+        assert_eq!(found["results"][1]["folderId"], users["entity"]["folderId"]);
+
+        let only = search("users", json!(["wsConnections"])).await.unwrap();
+        assert_eq!(only["results"].as_array().unwrap().len(), 1);
+        assert!(search("nothing", json!([])).await.unwrap()["results"].as_array().unwrap().is_empty());
+
+        // A rename is found at once: the index is written with the file.
+        let mut renamed = users["entity"].clone();
+        renamed["name"] = json!("People");
+        call(&ctx, "entity.update", json!({ "kind": "requests", "entity": renamed })).await.unwrap();
+        let found = search("people", json!(["requests"])).await.unwrap();
+        assert_eq!(found["results"][0]["name"], "People");
+        let none = call(&ctx, "entity.search", json!({ "workspaceId": WS, "scope": "mocks", "query": "people" })).await;
+        assert!(none.unwrap()["results"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

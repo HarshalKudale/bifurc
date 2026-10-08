@@ -7,8 +7,14 @@
 
 pub mod connection;
 pub mod exchange;
+pub mod mcp;
+pub mod mcp_connection;
 pub mod protocol;
 pub mod rest;
+pub mod socketio;
+pub mod socketio_connection;
+pub mod sse;
+pub mod sse_stream;
 pub mod websocket;
 
 use gpui_kit::component::input::InputState;
@@ -20,7 +26,9 @@ use crate::{
     model::{RequestKind, snippet::RequestParts, tree::folder_path},
 };
 
-use self::{protocol::ProtocolSession, rest::RestSession, websocket::WsSession};
+use self::{
+    mcp::McpSession, protocol::ProtocolSession, rest::RestSession, socketio::SocketIoSession, sse::SseSession, websocket::WsSession,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadState {
@@ -68,6 +76,9 @@ pub enum SessionEvent {
 pub enum Session {
     Rest(Entity<RestSession>),
     WebSocket(Entity<WsSession>),
+    Sse(Entity<SseSession>),
+    SocketIo(Entity<SocketIoSession>),
+    Mcp(Entity<McpSession>),
     Protocol(Entity<ProtocolSession>),
 }
 
@@ -76,6 +87,9 @@ impl Session {
         match self {
             Session::Rest(_) => RequestKind::Rest,
             Session::WebSocket(_) => RequestKind::WebSocket,
+            Session::Sse(_) => RequestKind::Sse,
+            Session::SocketIo(_) => RequestKind::SocketIo,
+            Session::Mcp(_) => RequestKind::Mcp,
             Session::Protocol(s) => s.read(cx).kind(),
         }
     }
@@ -84,6 +98,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).saved_id().map(str::to_owned),
             Session::WebSocket(s) => s.read(cx).saved_id().map(str::to_owned),
+            Session::Sse(s) => s.read(cx).saved_id().map(str::to_owned),
+            Session::SocketIo(s) => s.read(cx).saved_id().map(str::to_owned),
+            Session::Mcp(s) => s.read(cx).saved_id().map(str::to_owned),
             Session::Protocol(s) => s.read(cx).saved_id().map(str::to_owned),
         }
     }
@@ -92,6 +109,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).title(cx),
             Session::WebSocket(s) => s.read(cx).title(cx),
+            Session::Sse(s) => s.read(cx).title(cx),
+            Session::SocketIo(s) => s.read(cx).title(cx),
+            Session::Mcp(s) => s.read(cx).title(cx),
             Session::Protocol(s) => s.read(cx).title(cx),
         }
     }
@@ -110,6 +130,9 @@ impl Session {
             Session::Rest(s) => Some(s.read(cx).request_parts(cx)),
             Session::Protocol(s) => s.read(cx).request_parts(cx),
             Session::WebSocket(_) => None,
+            Session::Sse(_) => None,
+            Session::SocketIo(_) => None,
+            Session::Mcp(_) => None,
         }
     }
 
@@ -117,6 +140,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).is_dirty(cx),
             Session::WebSocket(s) => s.read(cx).is_dirty(cx),
+            Session::Sse(s) => s.read(cx).is_dirty(cx),
+            Session::SocketIo(s) => s.read(cx).is_dirty(cx),
+            Session::Mcp(s) => s.read(cx).is_dirty(cx),
             Session::Protocol(s) => s.read(cx).is_dirty(cx),
         }
     }
@@ -126,6 +152,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).exchange().clone().into(),
             Session::WebSocket(s) => s.read(cx).connection().clone().into(),
+            Session::Sse(s) => s.read(cx).stream().clone().into(),
+            Session::SocketIo(s) => s.read(cx).connection().clone().into(),
+            Session::Mcp(s) => s.read(cx).connection().clone().into(),
             Session::Protocol(s) => s.read(cx).exchange().clone().into(),
         }
     }
@@ -134,6 +163,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.clone().into(),
             Session::WebSocket(s) => s.clone().into(),
+            Session::Sse(s) => s.clone().into(),
+            Session::SocketIo(s) => s.clone().into(),
+            Session::Mcp(s) => s.clone().into(),
             Session::Protocol(s) => s.clone().into(),
         }
     }
@@ -143,6 +175,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).name_input().clone(),
             Session::WebSocket(s) => s.read(cx).name_input().clone(),
+            Session::Sse(s) => s.read(cx).name_input().clone(),
+            Session::SocketIo(s) => s.read(cx).name_input().clone(),
+            Session::Mcp(s) => s.read(cx).name_input().clone(),
             Session::Protocol(s) => s.read(cx).name_input().clone(),
         }
     }
@@ -152,22 +187,28 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).folder_id().map(str::to_owned),
             Session::WebSocket(s) => s.read(cx).folder_id().map(str::to_owned),
+            Session::Sse(s) => s.read(cx).folder_id().map(str::to_owned),
+            Session::SocketIo(s) => s.read(cx).folder_id().map(str::to_owned),
+            Session::Mcp(s) => s.read(cx).folder_id().map(str::to_owned),
             Session::Protocol(s) => s.read(cx).folder_id().map(str::to_owned),
         }
     }
 
-    /// Puts the request in another folder of its type, or at the top level.
+    /// Puts the request in another folder.
     pub fn set_folder(&self, folder: Option<String>, cx: &mut App) {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+            Session::Sse(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
+            Session::Mcp(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
         }
     }
 
     /// The names of the folders the request is in, outermost first.
     pub fn folder_trail(&self, model: &AppModel, cx: &App) -> Vec<String> {
-        let folders = model.config().request_folder_rows(self.kind(cx));
+        let folders = model.config().request_folder_rows();
         self.folder_id(cx).map(|id| folder_path(&folders, &id)).unwrap_or_default()
     }
 
@@ -176,6 +217,9 @@ impl Session {
         let (saving, problem) = match self {
             Session::Rest(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
             Session::WebSocket(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+            Session::Sse(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+            Session::SocketIo(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
+            Session::Mcp(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
             Session::Protocol(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
         };
         let saved_id = self.saved_id(cx);
@@ -184,7 +228,7 @@ impl Session {
             unsaved: saved_id.is_some() && self.is_dirty(cx),
             problem,
             closable: true,
-            folder: Some(FolderPicker::new(self.folder_id(cx), &model.config().request_folder_rows(self.kind(cx)))),
+            folder: Some(FolderPicker::new(self.folder_id(cx), &model.config().request_folder_rows())),
             ..EntityBar::of(model, saved_id.as_deref())
         }
     }
@@ -194,6 +238,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+            Session::Sse(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
+            Session::Mcp(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
         }
     }
@@ -203,6 +250,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.flush(window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+            Session::Sse(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.flush(window, cx)),
+            Session::Mcp(s) => s.update(cx, |s, cx| s.flush(window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.flush(window, cx)),
         }
     }
@@ -212,6 +262,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.read(cx).carry(cx),
             Session::WebSocket(s) => s.read(cx).carry(cx),
+            Session::Sse(s) => s.read(cx).carry(cx),
+            Session::SocketIo(s) => s.read(cx).carry(cx),
+            Session::Mcp(s) => s.read(cx).carry(cx),
             Session::Protocol(s) => s.read(cx).carry(cx),
         }
     }
@@ -221,6 +274,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
+            Session::Sse(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
+            Session::Mcp(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
         }
     }
@@ -230,6 +286,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+            Session::Sse(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
+            Session::Mcp(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
         }
     }
@@ -239,6 +298,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.update(cx, |s, cx| s.send(window, cx)),
             Session::WebSocket(s) => s.update(cx, |s, cx| s.connect(window, cx)),
+            Session::Sse(s) => s.update(cx, |s, cx| s.connect(window, cx)),
+            Session::SocketIo(s) => s.update(cx, |s, cx| s.connect(window, cx)),
+            Session::Mcp(s) => s.update(cx, |s, cx| s.connect(window, cx)),
             Session::Protocol(s) => s.update(cx, |s, cx| s.send(window, cx)),
         }
     }
@@ -251,6 +313,9 @@ impl Session {
         match self {
             Session::Rest(s) => s.entity_id(),
             Session::WebSocket(s) => s.entity_id(),
+            Session::Sse(s) => s.entity_id(),
+            Session::SocketIo(s) => s.entity_id(),
+            Session::Mcp(s) => s.entity_id(),
             Session::Protocol(s) => s.entity_id(),
         }
     }
@@ -270,6 +335,15 @@ impl Session {
             Session::WebSocket(s) => {
                 cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
             }
+            Session::Sse(s) => {
+                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
+            }
+            Session::SocketIo(s) => {
+                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
+            }
+            Session::Mcp(s) => {
+                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
+            }
             Session::Protocol(s) => {
                 cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
             }
@@ -284,6 +358,9 @@ impl Session {
         match self {
             Session::Rest(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
             Session::WebSocket(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
+            Session::Sse(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
+            Session::SocketIo(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
+            Session::Mcp(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
             Session::Protocol(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
         }
     }

@@ -1,13 +1,13 @@
 # The Rust engine and CLI. The desktop UI is its own workspace in `ui/`.
 [workspace]
 resolver = "2"
-members = ["packages/protocol-rust", "packages/engine-rust", "packages/cli-rust", "xtask"]
+members = ["packages/protocol-rust", "packages/engine-rust", "packages/cli-rust", "packages/mcp-rust", "xtask"]
 exclude = ["ui"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
-license = "SEE LICENSE IN LICENSE"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 authors = ["Harshal Kudale"]
 
 [profile.release]

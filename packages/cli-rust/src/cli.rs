@@ -20,6 +20,7 @@ use crate::{
     requests,
     session::{Engine, connect},
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
+    update,
     usage::{USAGE, canonical_group, group_usage},
     vault,
 };
@@ -118,6 +119,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
         "health" => health::health(&mut ctx, sub),
         "services" => commands::services(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
+        "update" => update::update(&mut ctx, sub),
         "call" => commands::call(&mut ctx),
         "commands" => Ok(commands::commands(&ctx)),
         // gRPC requests are requests like the others.

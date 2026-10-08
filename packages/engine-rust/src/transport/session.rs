@@ -206,6 +206,7 @@ impl Session {
             client_name: Some(client_name.to_string()),
             client_version: Some(client_version.to_string()),
             peer: opts.peer.clone(),
+            client_info: payload.get("clientInfo").and_then(super::companions::sanitize_client_info),
             scopes: Some(opts.scopes_for.as_ref().map(|f| f(payload)).unwrap_or_else(shell_scopes)),
         };
 
@@ -299,11 +300,8 @@ impl Session {
             let described = crate::analytics::describe(&action, &payload);
             let result = registry.invoke(&action, payload, ctx).await;
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
-                let outcome = result.as_ref().err().map_or("ok", |error| error.code.as_str());
-                crate::analytics::record_command(&action, &client, outcome);
-                if let (Some(described), Ok(data)) = (described, &result) {
-                    crate::analytics::record_event(described, &action, &client, data);
-                }
+                let outcome = result.as_ref().map_err(|error| error.code.as_str());
+                crate::analytics::record_command(described, &action, &client, outcome);
             }
             let reply = match result {
                 Ok(data) => success(&id, data),

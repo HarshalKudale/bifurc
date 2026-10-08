@@ -63,6 +63,9 @@ fn noun(kind: &str) -> Option<(&'static str, Option<&'static str>)> {
         "graphqlRequests" => ("request", Some("graphql")),
         "soapRequests" => ("request", Some("soap")),
         "grpcRequests" => ("request", Some("grpc")),
+        "sseRequests" => ("request", Some("sse")),
+        "socketioRequests" => ("request", Some("socketio")),
+        "mcpRequests" => ("request", Some("mcp")),
         "wsConnections" => ("request", Some("websocket")),
         "graphqlSchemas" => ("definition file", Some("graphql")),
         "wsdls" => ("definition file", Some("wsdl")),
@@ -186,7 +189,8 @@ pub fn is_user_action(action: &str) -> bool {
     }
 }
 
-/// The event `action` becomes if it succeeds; `None` for a command that is only counted.
+/// The event `action` becomes if it succeeds; `None` for a command that goes out under its own name
+/// ([`finished`]).
 pub fn describe(action: &str, params: &Value) -> Option<Event> {
     let kind = str_of(params, "kind");
     match action {
@@ -204,7 +208,12 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         "soap.send" | "soap.execute" => sent("soap", params, false),
         "grpc.send" | "grpc.execute" => sent("grpc", params, false),
         "grpc.stream.open" => sent("grpc", params, true),
-        "ws.connect" => event("request sent", json!({ "request_type": "websocket", "saved": true })),
+        "sse.connect" => event("request sent", json!({ "request_type": "sse", "saved": !has_text(params, "url") })),
+        "mcp.connect" => event("request sent", json!({ "request_type": "mcp", "saved": !has_text(params, "url") })),
+        "socketio.connect" => {
+            event("request sent", json!({ "request_type": "socketio", "saved": !has_text(params, "url") }))
+        }
+        "ws.connect" =>event("request sent", json!({ "request_type": "websocket", "saved": true })),
         "request.replay" => event("request replayed", json!({ "method": http_method(str_of(params, "method")) })),
         "runner.start" => event("runner started", json!({})),
 
@@ -289,6 +298,20 @@ pub fn complete(event: &mut Event, action: &str, result: &Value) -> bool {
     true
 }
 
+/// The one event of a finished command, or `None` when it has none. `described` is what [`describe`] made of
+/// it before it ran; `result` is its data, or its error code. A command that succeeded is the event that
+/// describes it, or else its own name; one that failed is `command failed`. Nothing but the name and the code
+/// leaves with those two.
+pub fn finished(described: Option<Event>, action: &str, result: Result<&Value, &str>) -> Option<Event> {
+    match (result, described) {
+        (Ok(result), Some(mut described)) => complete(&mut described, action, result).then_some(described),
+        (Ok(_), None) => is_user_action(action).then(|| event(action, json!({}))).flatten(),
+        (Err(code), _) => is_user_action(action)
+            .then(|| event("command failed", json!({ "command": action, "code": code })))
+            .flatten(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,7 +380,7 @@ mod tests {
         });
         let kinds = [
             "mocks", "proxyRules", "mappings", "environments", "requests", "graphqlRequests", "soapRequests",
-            "grpcRequests", "wsConnections", "graphqlSchemas", "wsdls", "protoFiles",
+            "grpcRequests", "sseRequests", "socketioRequests", "mcpRequests", "wsConnections", "graphqlSchemas", "wsdls", "protoFiles",
         ];
         let mut events: Vec<Event> = Vec::new();
         for kind in kinds {
@@ -404,6 +427,29 @@ mod tests {
             assert!(is_user_action(action), "{action}");
         }
         assert!(describe("entity.setEnabled", &json!({ "kind": "mocks", "id": "m", "enabled": true })).is_none());
+    }
+
+    #[test]
+    fn a_finished_command_is_one_event() {
+        let create = json!({ "kind": "requests", "entity": { "id": "r1", "method": "GET" } });
+        let created = finished(describe("entity.create", &create), "entity.create", Ok(&json!({ "ok": true }))).unwrap();
+        assert_eq!(created.name, "request created");
+
+        let parsed = finished(describe("request.parseCurl", &json!({})), "request.parseCurl", Ok(&json!({}))).unwrap();
+        assert_eq!((parsed.name.as_str(), properties(&parsed)), ("request.parseCurl", json!({})));
+
+        let failed = finished(describe("entity.create", &create), "entity.create", Err("invalid_params")).unwrap();
+        assert_eq!(
+            (failed.name.as_str(), properties(&failed)),
+            ("command failed", json!({ "command": "entity.create", "code": "invalid_params" }))
+        );
+
+        // What an interface does on its own is no event, whether it worked or not.
+        assert!(finished(None, "server.status", Ok(&json!({}))).is_none());
+        assert!(finished(None, "server.status", Err("internal")).is_none());
+        // Neither is a described command that did nothing.
+        let deleted = describe("workspace.delete", &json!({ "id": "w" }));
+        assert!(finished(deleted, "workspace.delete", Ok(&json!({ "ok": false }))).is_none());
     }
 
     #[test]

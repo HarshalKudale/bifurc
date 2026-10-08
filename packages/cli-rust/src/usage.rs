@@ -17,7 +17,7 @@ Groups (bifurc <group> --help shows the arguments and options of each)
   mappings      list | show | create | update | enable | disable      <sub>.localhost → target
   rules         list | show | create | update | enable | disable      Forward-proxy rules
   mocks         list | show | create | update | enable | disable      Mocked responses
-  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket
+  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
   health        list | show | create | update | run                   Health checks
   vault         list | create | set | unseal | seal | run            Encrypted secrets
   account       list | login | repos                                  GitHub sign-in
@@ -29,10 +29,12 @@ Engine
   engine restart                         Stop it and start it again; the interfaces reconnect
   engine status                          Where it runs, without opening a session
   status                                 Engine, proxy and active workspace
+  update [check]                         Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
   commands                               List every engine command
+  bifurc-mcp                             A command of its own: these commands as tools for an AI agent (MCP, stdio)
   help [<group>]
 
 Options
@@ -109,7 +111,7 @@ A mock created here is the whole response: nothing is asked of the real server.
 
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
-Saved requests of every type: rest (the default), graphql, grpc, soap, websocket.
+Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse, socketio, mcp.
 
   list [--type <type>]
   show <id|name> [--type <type>]
@@ -132,6 +134,21 @@ Options of each type
   soap        [--action <SOAPAction>] [-d, --body <xml> | --body-file <f>]
   websocket   send takes [-d, --body <message>] [--wait <seconds, default 2>]: it connects, sends the
               message, prints what was sent and received in that time, and disconnects
+  sse         [-X, --method GET] [-d, --body <text> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
+              it opens the stream, prints the events that arrive in that time (or until the server ends it),
+              and closes it
+  socketio    [--namespace </ns>] [--path </socket.io>] [--auth <json object>] [--listen <event>]...;
+              only the events named with --listen are printed (every event when none is named); send takes
+              [--event <name> [-d, --body <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
+              emits the event, prints what was emitted and received in that time, and disconnects. The
+              arguments are a JSON array (one per element), any other JSON value or plain text (one argument);
+              --ack asks the server to acknowledge the event
+  mcp         [--transport stdio|http]; --url is the command that starts the server (stdio) or the address of
+              its endpoint (http), and says which when --transport does not; -H is a header of an endpoint
+              and an environment variable of a program. send connects and prints the tools, prompts and
+              resources the server declares, or takes one of [--tool <name> [--arg <name=value>]...],
+              [--prompt <name> [--arg <name=value>]...] and [--resource <uri>] and prints the answer, waiting
+              [--wait <seconds, default 60>] for it; a value is read as the type the tool declares for it
 
 --type is only needed to tell apart two requests of different types with the same name. Scripts and tests
 are written in the desktop app; send runs them.";
@@ -171,7 +188,7 @@ GitHub sign-in, per workspace; only needed to sync with a remote.
 
   list
   login                                  Shows a code to enter on GitHub, then waits
-  repos <login>                          Repositories the account owns
+  repos <login>                          Repositories the account owns or was given access to
 
 Signing out removes the account's workspaces from this device; it is done in the desktop app.";
 
@@ -185,6 +202,15 @@ const ENGINE: &str = "Usage: bifurc engine <verb>
   stop                                   Stop it gracefully; the interfaces using it close too
   restart                                Stop it and start it again; the interfaces reconnect
   status                                 Where it runs, without opening a session";
+
+const UPDATE: &str = "Usage: bifurc update [<verb>]
+
+The engine reads the list of releases once a day and knows how this copy was installed. Nothing is installed
+from here: a Store install is updated by the Store, a package manager's by its own command, and any other by
+the file this names.
+
+  status                                 What the engine last found (the default)
+  check                                  Ask now";
 
 /// The name a command group is dispatched and documented under, whichever way it was spelled.
 pub fn canonical_group(group: &str) -> &str {
@@ -217,6 +243,7 @@ pub fn group_usage(group: &str) -> Option<&'static str> {
         "account" => ACCOUNT,
         "services" => SERVICES,
         "engine" => ENGINE,
+        "update" => UPDATE,
         _ => return None,
     })
 }

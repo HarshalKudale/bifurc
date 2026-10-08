@@ -40,11 +40,15 @@ use crate::{
         },
         entity_bar, tab_strip,
     },
-    engine::{call, call_in, describe},
-    model::{NodeRef, RequestKind, tree::folder_path},
+    engine::{call, call_in, describe, patch_entity},
+    model::{NodeRef, RequestKind, config::REQUEST_FOLDER_KIND, tree::folder_path},
     panels::host::HostPanel,
     preferences::Preferences,
-    session::{SaveMode, Session, SessionEvent, protocol::ProtocolSession, rest::RestSession, websocket::WsSession},
+    session::{
+        SaveMode, Session, SessionEvent, mcp::McpSession, protocol::ProtocolSession, rest::RestSession,
+        socketio::SocketIoSession,
+        sse::SseSession, websocket::WsSession,
+    },
     shell::ActiveTarget,
 };
 
@@ -92,6 +96,9 @@ fn kind_summary(kind: RequestKind) -> &'static str {
         RequestKind::Grpc => "A call to a method of a gRPC service",
         RequestKind::Soap => "An XML envelope sent to a SOAP action",
         RequestKind::WebSocket => "A connection that sends and receives messages",
+        RequestKind::Sse => "A one-way stream of events from a server",
+        RequestKind::SocketIo => "A connection that emits and receives named events",
+        RequestKind::Mcp => "The tools, prompts and resources of an MCP server",
     }
 }
 
@@ -176,7 +183,7 @@ impl RequestsScreen {
             RequestTreeEvent::Open(node) => self.open_node(node, window, cx),
             RequestTreeEvent::NewRequest { kind, folder } => self.new_request(*kind, folder.clone(), window, cx),
             RequestTreeEvent::ImportCurl => self.import_curl(window, cx),
-            RequestTreeEvent::NewFolder { kind, parent } => self.prompt_new_folder(*kind, parent.clone(), window, cx),
+            RequestTreeEvent::NewFolder { parent } => self.prompt_new_folder(parent.clone(), window, cx),
             RequestTreeEvent::Rename(node) => self.prompt_rename(node.clone(), window, cx),
             RequestTreeEvent::Delete(node) => self.confirm_delete(node.clone(), window, cx),
             RequestTreeEvent::Duplicate(node) => self.duplicate(node.clone(), window, cx),
@@ -189,13 +196,47 @@ impl RequestsScreen {
                 let target = Self::deleted_target(node);
                 self.model.update(cx, |model, cx| model.confirm_delete(target, cx));
             }
+            RequestTreeEvent::Move { node, folder } => self.move_node(node.clone(), folder.clone(), cx),
+        }
+    }
+
+    /// Puts a request or folder in another folder. A request that is open is moved by its own next write,
+    /// so the tab and the file cannot disagree about where it is.
+    fn move_node(&mut self, node: NodeRef, folder: Option<String>, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let workspace_id = model.workspace_id().to_owned();
+        match node {
+            NodeRef::Folder { id } => {
+                let payload = json!({
+                    "kind": REQUEST_FOLDER_KIND, "id": id, "parentId": folder, "workspaceId": workspace_id,
+                });
+                call(&client, cx, "folder.move", payload, |this, outcome, cx| {
+                    if let Err(error) = outcome {
+                        this.notify_failure(format!("Couldn't move the folder. {}", describe(&error)), cx);
+                    }
+                });
+            }
+            NodeRef::Request { kind, id } => {
+                let open = self.tabs.iter().find(|tab| tab.key == TabKey::Saved { kind, id: id.clone() });
+                if let Some(session) = open.and_then(OpenTab::session).cloned() {
+                    return session.set_folder(folder, cx);
+                }
+                let mut patch = serde_json::Map::new();
+                patch.insert("folderId".into(), json!(folder));
+                patch_entity(&client, cx, &workspace_id, kind.entity_kind(), &id, patch, |this, outcome, cx| {
+                    if let Err(message) = outcome {
+                        this.notify_failure(format!("Couldn't move the request. {message}"), cx);
+                    }
+                });
+            }
         }
     }
 
     /// How the model names a deleted request or folder.
     fn deleted_target(node: &NodeRef) -> Deleted {
         match node {
-            NodeRef::Folder { kind, id } => Deleted::Folder { kind: kind.folder_kind(), id: id.clone() },
+            NodeRef::Folder { id } => Deleted::Folder { kind: REQUEST_FOLDER_KIND, id: id.clone() },
             NodeRef::Request { kind, id } => Deleted::Entity { kind: kind.entity_kind(), id: id.clone() },
         }
     }
@@ -226,10 +267,7 @@ impl RequestsScreen {
                 request: None,
                 name: None,
                 kind: None,
-                folders: folder_path(
-                    &model.config().request_folder_rows(RequestKind::Rest),
-                    runner.read(cx).folder_id(),
-                ),
+                folders: folder_path(&model.config().request_folder_rows(), runner.read(cx).folder_id()),
             }),
             TabContent::Curl(_) => Some(ActiveTarget {
                 title: CURL_TAB_TITLE.into(),
@@ -279,6 +317,11 @@ impl RequestsScreen {
         let session = match kind {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::open_saved(model, id, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::open_saved(model, id, window, cx))),
+            RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::open_saved(model, id, window, cx))),
+            RequestKind::SocketIo => {
+                Session::SocketIo(cx.new(|cx| SocketIoSession::open_saved(model, id, window, cx)))
+            }
+            RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::open_saved(model, id, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::open_saved(model, kind, id, window, cx)))
             }
@@ -286,7 +329,7 @@ impl RequestsScreen {
         self.add_tab(key, session, window, cx);
     }
 
-    /// Opens the REST folder with this id as a tab that runs its requests in order.
+    /// Opens the folder with this id as a tab that runs its REST requests in order.
     pub fn open_runner(&mut self, folder_id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let key = TabKey::Runner(folder_id.to_owned());
         if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
@@ -311,6 +354,11 @@ impl RequestsScreen {
         match kind {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::new_draft(model, folder, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::new_draft(model, folder, window, cx))),
+            RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::new_draft(model, folder, window, cx))),
+            RequestKind::SocketIo => {
+                Session::SocketIo(cx.new(|cx| SocketIoSession::new_draft(model, folder, window, cx)))
+            }
+            RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::new_draft(model, folder, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
             }
@@ -626,7 +674,7 @@ impl RequestsScreen {
             .filter(|tab| match &tab.key {
                 // Deleted and still listed counts as gone: there is no file an edit could be written to.
                 TabKey::Saved { kind, id } => config.request(*kind, id).is_none_or(|r| r.deleted),
-                TabKey::Runner(folder) => config.folder(RequestKind::Rest, folder).is_none_or(|f| f.deleted),
+                TabKey::Runner(folder) => config.folder(folder).is_none_or(|f| f.deleted),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.key.clone())
@@ -656,24 +704,20 @@ impl RequestsScreen {
         self.model.update(cx, |model, cx| model.notice(text, cx));
     }
 
-    pub fn prompt_new_folder(
-        &mut self,
-        kind: RequestKind,
-        parent: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Asks for the name of a new folder in `parent`, or at the top of the tree. It takes requests of every
+    /// type.
+    pub fn prompt_new_folder(&mut self, parent: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         prompt(
             cx.weak_entity(),
             window,
             cx,
-            format!("New {} folder", kind.label()),
+            "New folder",
             "Create",
             vec![PromptField::new("Name", "Folder name")],
             move |this, values, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let payload = json!({
-                    "kind": kind.folder_kind(),
+                    "kind": REQUEST_FOLDER_KIND,
                     "name": values[0],
                     "parentId": parent,
                     "workspaceId": this.model.read(cx).workspace_id(),
@@ -690,7 +734,7 @@ impl RequestsScreen {
     fn name_of(&self, node: &NodeRef, cx: &Context<Self>) -> String {
         let config = self.model.read(cx).config();
         match node {
-            NodeRef::Folder { kind, id } => config.folder(*kind, id).map(|f| f.name.clone()),
+            NodeRef::Folder { id } => config.folder(id).map(|f| f.name.clone()),
             NodeRef::Request { kind, id } => config.request(*kind, id).map(|r| r.name.clone()),
         }
         .unwrap_or_default()
@@ -719,8 +763,8 @@ impl RequestsScreen {
             move |this, values, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 match node.clone() {
-                    NodeRef::Folder { kind, id } => {
-                        let payload = json!({ "kind": kind.folder_kind(), "id": id, "name": values[0] });
+                    NodeRef::Folder { id } => {
+                        let payload = json!({ "kind": REQUEST_FOLDER_KIND, "id": id, "name": values[0] });
                         call(&client, cx, "folder.rename", payload, |this, outcome, cx| {
                             if let Err(error) = outcome {
                                 this.notify_failure(format!("Couldn't rename the folder. {}", describe(&error)), cx);
@@ -776,7 +820,7 @@ impl RequestsScreen {
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let (action, payload) = match &node {
-                    NodeRef::Folder { kind, id } => ("folder.delete", json!({ "kind": kind.folder_kind(), "id": id })),
+                    NodeRef::Folder { id } => ("folder.delete", json!({ "kind": REQUEST_FOLDER_KIND, "id": id })),
                     NodeRef::Request { kind, id } => ("entity.delete", json!({ "kind": kind.entity_kind(), "id": id })),
                 };
                 call(&client, cx, action, payload, |this, outcome, cx| {

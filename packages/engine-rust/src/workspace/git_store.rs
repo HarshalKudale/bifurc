@@ -175,6 +175,7 @@ pub async fn init_workspace_repo(ws_id: &str) -> Result<(), GitError> {
         return Ok(());
     }
     git_in(&dir, &["init"]).await?;
+    super::tree::ensure_ignored(ws_id);
     // The same branch name on every device, whatever this machine's git defaults to.
     git_in(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]).await?;
     apply_commit_identity(ws_id).await?;

@@ -14,9 +14,9 @@ pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
 /// Where the terms of service a first run asks the user to accept are published.
-pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.harshalkudale.com/tos";
+pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.app/tos";
 /// Where the privacy policy a first run asks the user to accept is published.
-pub const PRIVACY_POLICY_URL: &str = "https://bifurc.harshalkudale.com/privacy";
+pub const PRIVACY_POLICY_URL: &str = "https://bifurc.app/privacy";
 
 /// The settings object. Read fields through the accessors; mutate through [`AppSettings::set`] or
 /// [`AppSettings::as_value_mut`].
@@ -42,7 +42,7 @@ impl AppSettings {
         self.0.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(default)
     }
 
-    /// The reverse proxy (edge) port: what `*.localhost` mappings are served on.
+    /// The reverse proxy (edge) port: what `*.localhost` mappings are served on, over HTTPS while HTTPS is on.
     pub fn port(&self) -> u16 {
         self.port_field("port", DEFAULT_REVERSE_PROXY_PORT)
     }
@@ -70,6 +70,11 @@ impl AppSettings {
     /// `false` only when the user turned anonymous usage analytics off.
     pub fn telemetry_enabled(&self) -> bool {
         self.0.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true)
+    }
+
+    /// `false` only when the user turned the daily look for a newer version off.
+    pub fn update_check_enabled(&self) -> bool {
+        self.0.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true)
     }
 
     /// The terms of service were accepted on this data directory.
