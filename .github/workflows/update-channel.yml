@@ -1,0 +1,66 @@
+name: Set a channel's version in the update manifest
+
+# A store or a package manager has a release some time after it is made: the Microsoft Store certifies it, a
+# winget pull request is merged. Until then an install from that channel must not be told about the release, so
+# the update manifest names the version each channel has. Run this when a channel has accepted a release.
+#
+# Needs the secret PUBLIC_RELEASES_TOKEN (see publish-public-release.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "The channel that now has the release"
+        required: true
+        type: choice
+        options:
+          - store
+          - winget
+          - scoop
+          - aur
+      version:
+        description: "The version it has (e.g. 0.5.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-public-release
+  cancel-in-progress: false
+
+env:
+  PUBLIC_REPO: HarshalKudale/bifurc-releases
+  MANIFEST_PATH: updates/v1/stable.json
+
+jobs:
+  set-channel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Update the manifest
+        shell: bash
+        # What was typed into the form reaches the script as data, never as part of it.
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$GH_TOKEN" ] || { echo "::error::The PUBLIC_RELEASES_TOKEN secret is not set."; exit 1; }
+
+          manifest="$RUNNER_TEMP/stable.json"
+          sha="$(gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" --jq .sha 2>/dev/null || true)"
+          [ -n "$sha" ] || { echo "::error::$PUBLIC_REPO has no $MANIFEST_PATH yet. Publish a release first."; exit 1; }
+          gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" -H "Accept: application/vnd.github.raw+json" > "$manifest"
+
+          python3 .github/scripts/update_manifest.py channel \
+            --manifest "$manifest" --channel "$INPUT_CHANNEL" --version "$INPUT_VERSION"
+
+          gh api --method PUT "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" \
+            -f message="Update manifest: $INPUT_CHANNEL has $INPUT_VERSION" \
+            -f content="$(base64 -w0 "$manifest")" -f sha="$sha" > /dev/null
+          echo "### $INPUT_CHANNEL now has $INPUT_VERSION" >> "$GITHUB_STEP_SUMMARY"

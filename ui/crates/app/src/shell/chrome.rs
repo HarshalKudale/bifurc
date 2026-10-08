@@ -318,6 +318,7 @@ impl Shell {
         let lost = model.is_connection_lost();
         let engine_version = model.engine().hello.engine_version.clone();
         let status = self.screen_status(cx);
+        let update = model.update().announced().map(|update| update.version.clone());
 
         let proxy_label = match (&proxy.error, proxy.running) {
             (Some(_), _) => format!("Forward proxy :{} unavailable", proxy.port),
@@ -335,6 +336,17 @@ impl Shell {
             h_flex()
                 .gap_3()
                 .when(!status.is_empty(), |this| this.child(div().text_color(theme.muted_foreground).child(status)))
+                .when_some(update, |this, version| {
+                    this.child(
+                        Button::new("update-available")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowUp)
+                            .label("Update available")
+                            .tooltip(format!("Version {version} is available. Open Settings to get it."))
+                            .on_click(cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx))),
+                    )
+                })
                 .child(
                     Button::new("proxy-toggle")
                         .ghost()
