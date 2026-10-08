@@ -50,7 +50,6 @@ pub fn json(ws_id: &str) -> ExportOutcome {
             "ruleFolders": in_workspace(&cfg, "ruleFolders", ws_id),
             "requestFolders": in_workspace(&cfg, "requestFolders", ws_id),
             "wsConnections": owned_by(read_all_entities(ws_id, "sockets"), ws_id),
-            "wsFolders": in_workspace(&cfg, "wsFolders", ws_id),
             "environments": in_workspace(&cfg, "environments", ws_id),
         },
     });
@@ -64,7 +63,8 @@ fn archive_entries(dir: &Path) -> std::io::Result<Vec<(String, PathBuf, bool)>> 
         children.sort_by_key(|entry| entry.file_name());
         for entry in children {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if top && name == ".git" {
+            // Git's data stays here, and so do the indexes of the trees: they are made from the files.
+            if (top && name == ".git") || name.starts_with(crate::workspace::tree::INDEX_FILE) {
                 continue;
             }
             let relative = format!("{prefix}{name}");
@@ -147,7 +147,6 @@ mod tests {
                 "ruleFolders",
                 "requestFolders",
                 "wsConnections",
-                "wsFolders",
                 "environments"
             ]
         );

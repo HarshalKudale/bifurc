@@ -269,6 +269,8 @@ impl Shell {
         let rollup = git.rollup(self.screen.git_prefixes());
         let publishing = model.is_publishing();
         let has_remote = git.has_remote;
+        // A read-only workspace has changes and nowhere to send them: it says so, and offers no sync.
+        let read_only = model.is_read_only();
         let place = match (&git.branch, has_remote) {
             (Some(branch), _) => branch.clone(),
             (None, true) => "remote".to_owned(),
@@ -276,8 +278,9 @@ impl Shell {
         };
         let scope = if self.screen.git_prefixes().is_empty() { "in this workspace" } else { "on this screen" };
         let state = match (rollup.changed.len(), rollup.action) {
-            (0, Some(_)) => "Commits waiting to be pushed".to_owned(),
-            (0, None) => "Up to date".to_owned(),
+            (0, Some(_)) if !read_only => "Commits waiting to be pushed".to_owned(),
+            (0, _) => "Up to date".to_owned(),
+            (count, _) if read_only => format!("{} {scope}, on this device only", plural(count, "change")),
             (count, _) => format!("{} {scope}", plural(count, "unpublished change")),
         };
         let action_label = match rollup.action {
@@ -292,8 +295,9 @@ impl Shell {
             .gap_2()
             .child(Icon::new(IconName::Github).small().text_color(theme.muted_foreground))
             .child(div().child(place))
+            .when(read_only, |this| this.child(Tag::secondary().small().child("Read-only")))
             .child(div().text_color(theme.muted_foreground).child(state))
-            .when(rollup.action.is_some(), |this| {
+            .when(rollup.action.is_some() && !read_only, |this| {
                 this.child(
                     Button::new("publish")
                         .outline()
@@ -318,6 +322,7 @@ impl Shell {
         let lost = model.is_connection_lost();
         let engine_version = model.engine().hello.engine_version.clone();
         let status = self.screen_status(cx);
+        let update = model.update().announced().map(|update| update.version.clone());
 
         let proxy_label = match (&proxy.error, proxy.running) {
             (Some(_), _) => format!("Forward proxy :{} unavailable", proxy.port),
@@ -335,6 +340,17 @@ impl Shell {
             h_flex()
                 .gap_3()
                 .when(!status.is_empty(), |this| this.child(div().text_color(theme.muted_foreground).child(status)))
+                .when_some(update, |this, version| {
+                    this.child(
+                        Button::new("update-available")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowUp)
+                            .label("Update available")
+                            .tooltip(format!("Version {version} is available. Open Settings to get it."))
+                            .on_click(cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx))),
+                    )
+                })
                 .child(
                     Button::new("proxy-toggle")
                         .ghost()

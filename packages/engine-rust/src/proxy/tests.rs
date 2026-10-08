@@ -14,7 +14,7 @@ use crate::{
     kernel::{CommandContext, bus},
     runtime::instances::{bind_forward_proxy, forward_proxy},
     testing::scratch_data_root,
-    workspace::fs::{sync_enabled_set, write_flat_entity},
+    workspace::fs::{sync_enabled_set, write_entity, write_flat_entity},
 };
 
 /// A server that answers every connection with `response` and records each raw request.
@@ -106,7 +106,11 @@ fn start_proxy(port: u16) -> Arc<dyn Listener> {
 
 fn put(kind: &str, entity: Value) {
     let id = entity["id"].as_str().unwrap().to_string();
-    write_flat_entity("ws1", kind, &id, &entity).unwrap();
+    if kind == "mocks" {
+        write_entity("ws1", kind, &id, &entity, None).unwrap();
+    } else {
+        write_flat_entity("ws1", kind, &id, &entity).unwrap();
+    }
     sync_enabled_set("ws1", kind, &id, true).unwrap();
 }
 
@@ -383,7 +387,7 @@ async fn an_event_stream_is_relayed_and_reported_in_chunks() {
 async fn dispatch_config_serves_what_is_switched_on() {
     let _root = scratch_data_root();
     put("mocks", mock_entity("on", "http://a.test/", json!({})));
-    write_flat_entity("ws1", "mocks", "off", &mock_entity("off", "http://b.test/", json!({}))).unwrap();
+    write_entity("ws1", "mocks", "off", &mock_entity("off", "http://b.test/", json!({})), None).unwrap();
     let proxy = create_proxy_server();
     let cfg = proxy.dispatch_config().unwrap();
     let ids: Vec<&str> = cfg["mocks"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
@@ -415,14 +419,14 @@ async fn the_server_commands_control_the_bound_proxy() {
     assert_eq!(call("proxy.status", json!({})).await, json!({ "running": false }));
     assert_eq!(
         call("server.status", json!({ "workspaceId": "ws1" })).await,
-        json!({ "running": false, "port": 0, "error": null, "workspaceId": "ws1" })
+        json!({ "running": false, "port": 0, "error": null, "https": false, "workspaceId": "ws1" })
     );
 
     assert_eq!(call("server.start", json!({})).await, json!({ "ok": true }));
     assert_eq!(call("proxy.status", json!({})).await, json!({ "running": true }));
     assert_eq!(
         call("server.status", json!({ "target": "forward" })).await,
-        json!({ "running": true, "port": port, "error": null })
+        json!({ "running": true, "port": port, "error": null, "https": false })
     );
 
     assert_eq!(call("server.restart", json!({})).await, json!({ "ok": true }));
@@ -440,7 +444,7 @@ async fn the_server_commands_control_the_bound_proxy() {
     assert_eq!(call("proxy.status", json!({})).await, json!({ "running": false }));
     assert_eq!(
         call("server.status", json!({ "target": "reverse" })).await,
-        json!({ "running": false, "port": 0, "error": "There is no reverse proxy in this engine." })
+        json!({ "running": false, "port": 0, "error": "There is no reverse proxy in this engine.", "https": false })
     );
     bind_forward_proxy(None);
 }
@@ -515,5 +519,30 @@ async fn a_rule_script_can_inject_a_secret_that_the_log_shows_unresolved() {
     assert_eq!(entry["reqHeaders"]["authorization"], "Bearer {{keys.TOKEN}}");
     assert!(!entry.to_string().contains("s3cret-token-value"), "no value in the log: {entry}");
     assert!(entry["resBody"].as_str().is_some_and(|b| !b.is_empty()));
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn with_https_on_the_one_port_serves_tls_clients_and_plain_ones() {
+    let root = scratch_data_root();
+    let client = crate::testing::enable_https(&root);
+    let (upstream, _) = canned_upstream(http_ok("", "hello")).await;
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+    let request = format!("GET http://127.0.0.1:{upstream}/hello HTTP/1.1\r\nHost: 127.0.0.1:{upstream}\r\n\r\n");
+
+    // A client with an HTTP proxy setting.
+    let plain = through(proxy_port, &request).await;
+    assert!(plain.starts_with("HTTP/1.1 200 OK\r\n") && plain.ends_with("hello"), "{plain}");
+
+    // A client with an HTTPS proxy setting: TLS to the proxy itself, no SNI when it connects by IP.
+    let socket = TcpStream::connect(("127.0.0.1", proxy_port)).await.unwrap();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
+    let mut tls = tokio_rustls::TlsConnector::from(client).connect(name, socket).await.unwrap();
+    tls.write_all(request.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tls.read_to_end(&mut out).await;
+    let secure = String::from_utf8_lossy(&out).into_owned();
+    assert!(secure.starts_with("HTTP/1.1 200 OK\r\n") && secure.ends_with("hello"), "{secure}");
     proxy.stop();
 }

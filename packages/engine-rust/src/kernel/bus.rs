@@ -12,7 +12,7 @@ use std::sync::{
 use parking_lot::Mutex;
 use serde_json::Value;
 
-pub const ENGINE_EVENT_NAMES: [&str; 19] = [
+pub const ENGINE_EVENT_NAMES: [&str; 27] = [
     "sync.status",
     "sync.entityStatus",
     "log.entry",
@@ -28,10 +28,18 @@ pub const ENGINE_EVENT_NAMES: [&str; 19] = [
     "ws.message",
     "grpc.stream.status",
     "grpc.stream.message",
+    "sse.status",
+    "sse.message",
+    "socketio.status",
+    "socketio.message",
+    "mcp.status",
+    "mcp.message",
     "engine.stopping",
     "ui.activate",
     "vault.changed",
     "account.changed",
+    "companions.changed",
+    "update.changed",
 ];
 
 type Listener = Arc<dyn Fn(&str, &Value) + Send + Sync>;

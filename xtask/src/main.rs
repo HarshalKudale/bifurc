@@ -1,4 +1,4 @@
-//! Packages the desktop app — the Rust UI, the Rust engine and the Rust CLI — as one install.
+//! Packages the desktop app — the Rust UI, the Rust engine, the Rust CLI and the MCP server — as one install.
 //!
 //! ```text
 //! cargo xtask package                       # everything this platform has: packages and store manifests
@@ -16,14 +16,13 @@
 //! | `zip`      | windows  | `Bifurc-<version>-win-<arch>.zip`, the staged folder as it is             |
 //! | `winget`   | windows  | `manifests/winget/…`, the three files a winget-pkgs pull request holds    |
 //! | `scoop`    | windows  | `manifests/scoop/bifurc.json`                                             |
-//! | `choco`    | windows  | `manifests/chocolatey/…`, and `bifurc.<version>.nupkg` when `choco` is here |
 //! | `appimage` | linux    | `Bifurc-<version>-<arch>.AppImage`                                        |
 //! | `deb`      | linux    | `bifurc_<version>_<arch>.deb`                                             |
 //! | `tarball`  | linux    | `Bifurc-<version>-linux-<arch>.tar.gz`, the staged folder as it is        |
 //! | `aur`      | linux    | `manifests/aur/…`: `PKGBUILD`, `.SRCINFO`, `bifurc.install`               |
 //!
 //! A manifest names the file a package manager downloads and its hash, so its target builds that file too:
-//! `winget` and `choco` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
+//! `winget` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
 //! name on the GitHub release `--release-tag` names, in `GITHUB_REPOSITORY` (default: this repository).
 //!
 //! Every package is the same folder (`release/desktop/<platform>-unpacked`) in a different wrapper:
@@ -33,12 +32,17 @@
 //! bifurc-engine[.exe]  the engine
 //! bifurc-tray.exe      the engine's tray icon (Windows)
 //! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
+//! bin/bifurc-mcp[.exe] the `bifurc-mcp` command: the MCP server (`packages/mcp-rust`), on PATH beside it
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
 //! ```
 //!
 //! `ui/crates/engine-client/src/sidecar.rs` and `ui/crates/cli/src/main.rs` look for exactly these paths
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
+//!
+//! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "nsis"}`): how the
+//! engine knows how this copy is updated (`packages/engine-rust/src/updates/channel.rs`). The staged folder
+//! itself has none, and is a build.
 
 use std::{
     env, fs,
@@ -73,13 +77,13 @@ fn scoop_arch() -> &'static str {
 }
 
 /// Every target of each platform, in the order they are made: a manifest after the file it describes.
-const WINDOWS_TARGETS: [&str; 6] = ["nsis", "msix", "zip", "winget", "scoop", "choco"];
+const WINDOWS_TARGETS: [&str; 5] = ["nsis", "msix", "zip", "winget", "scoop"];
 const LINUX_TARGETS: [&str; 4] = ["appimage", "deb", "tarball", "aur"];
 
 /// The package a manifest's target describes, which is built with it.
 fn needs(target: &str) -> Option<&'static str> {
     match target {
-        "winget" | "choco" => Some("nsis"),
+        "winget" => Some("nsis"),
         "scoop" => Some("zip"),
         "aur" => Some("tarball"),
         _ => None,
@@ -87,7 +91,7 @@ fn needs(target: &str) -> Option<&'static str> {
 }
 
 const DEFAULT_REPOSITORY: &str = "HarshalKudale/bifurc";
-const HOMEPAGE: &str = "https://bifurc.harshalkudale.com";
+const HOMEPAGE: &str = "https://bifurc.app";
 const PUBLISHER: &str = "Harshal Kudale";
 /// A package's maintainer field wants an address; this one reaches the maintainer through GitHub.
 const MAINTAINER_EMAIL: &str = "HarshalKudale@users.noreply.github.com";
@@ -192,19 +196,18 @@ fn run() -> Result<()> {
     let staged = stage(&ctx)?;
     let mut made = vec![staged.clone()];
     if wanted("nsis") {
+        mark(&staged, "nsis")?;
         let installer = package_nsis(&ctx, &staged)?;
         made.push(installer.clone());
         if wanted("winget") {
             made.push(manifest_winget(&ctx, &installer)?);
-        }
-        if wanted("choco") {
-            made.push(manifest_choco(&ctx, &installer)?);
         }
     }
     if wanted("msix") {
         made.push(package_msix(&ctx, &staged)?);
     }
     if wanted("zip") {
+        mark(&staged, "zip")?;
         let zip = package_zip(&ctx, &staged)?;
         made.push(zip.clone());
         if wanted("scoop") {
@@ -224,6 +227,7 @@ fn run() -> Result<()> {
             made.push(manifest_aur(&ctx, &tarball)?);
         }
     }
+    let _ = fs::remove_file(install_marker(&staged));
     println!("\nBifurc {VERSION} (manifests download from {}):", ctx.asset_url(Path::new("")).trim_end_matches('/'));
     for file in made {
         println!("  {}", file.strip_prefix(&ctx.repo).unwrap_or(&file).display());
@@ -286,6 +290,15 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 
 fn write_file(path: &Path, text: &str) -> Result<()> {
     fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn install_marker(app: &Path) -> PathBuf {
+    app.join("resources").join("install.json")
+}
+
+/// Says in the app folder `app` which package it is in.
+fn mark(app: &Path, package: &str) -> Result<()> {
+    write_file(&install_marker(app), &format!("{{\"package\": \"{package}\"}}\n"))
 }
 
 #[cfg(unix)]
@@ -411,10 +424,10 @@ fn release_rustflags(ctx: &Ctx) -> String {
 
 fn build(ctx: &Ctx) -> Result<()> {
     let rustflags = release_rustflags(ctx);
-    // The engine and the CLI: the repository's own cargo workspace.
+    // The engine, the CLI and the MCP server: the repository's own cargo workspace.
     let mut engine = Command::new("cargo");
     engine
-        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli"])
+        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli", "-p", "bifurc-mcp"])
         .env("RUSTFLAGS", &rustflags)
         .current_dir(&ctx.repo);
     // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
@@ -455,17 +468,20 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the others.
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
+    // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli-rust/src/locate.rs`).
+    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"), true)?, &dir.join("bin").join(format!("bifurc-mcp{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"), true)?, &dir.join(format!("bifurc-engine{EXE}")))?;
     copy_file(&ctx.repo.join("build").join("icon.png"), &dir.join("resources").join("icon.png"))?;
     copy_file(&ctx.repo.join("LICENSE"), &dir.join("LICENSE"))?;
-    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("resources/bifurc-cli{EXE}")] {
+    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("bin/bifurc-mcp{EXE}"), format!("resources/bifurc-cli{EXE}")] {
         make_executable(&dir.join(file))?;
     }
     smoke_test(&dir)?;
     Ok(dir)
 }
 
-/// The staged `bifurc` must reach the staged CLI, and the staged engine must run, before anything wraps them.
+/// The staged `bifurc` must reach the staged CLI, and the staged MCP server and engine must run, before anything
+/// wraps them.
 fn smoke_test(dir: &Path) -> Result<()> {
     let cli = Command::new(dir.join("bin").join(format!("bifurc{EXE}"))).args(["commands", "--json"]).output();
     match cli {
@@ -473,13 +489,19 @@ fn smoke_test(dir: &Path) -> Result<()> {
         Ok(out) => return Err(format!("the staged CLI does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged CLI does not run:\n{e}")),
     }
+    let mcp = Command::new(dir.join("bin").join(format!("bifurc-mcp{EXE}"))).arg("--version").output();
+    match mcp {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Err(e) => return Err(format!("the staged MCP server does not run:\n{e}")),
+    }
     let engine = Command::new(dir.join(format!("bifurc-engine{EXE}"))).arg("--help").output();
     match engine {
         Ok(out) if out.status.success() => {}
         Ok(out) => return Err(format!("the staged engine does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged engine does not run:\n{e}")),
     }
-    println!("staged CLI and engine start");
+    println!("staged CLI, MCP server and engine start");
     Ok(())
 }
 
@@ -548,6 +570,7 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let layout = ctx.out_dir.join("msix-layout");
     empty_dir(&layout)?;
     copy_dir(staged, &layout)?;
+    mark(&layout, "msix")?;
     // The icons are indexed from a folder of their own, so indexing never reads file names in the layout as
     // resource qualifiers.
     let icons = ctx.out_dir.join("msix-icons");
@@ -592,7 +615,7 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Windows: portable zip, and the manifests of winget, Scoop and Chocolatey
+// Windows: portable zip, and the manifests of winget and Scoop
 // ---------------------------------------------------------------------------------------------------------
 
 /// The staged folder as a zip: what Scoop installs, and a Bifurc that runs from wherever it is unpacked.
@@ -644,37 +667,19 @@ fn manifest_scoop(ctx: &Ctx, zip: &Path) -> Result<PathBuf> {
     Ok(out)
 }
 
-/// The Chocolatey package's source, and the package itself where `choco` is installed to pack it.
-fn manifest_choco(ctx: &Ctx, installer: &Path) -> Result<PathBuf> {
-    let dir = ctx.manifests().join("chocolatey");
-    empty_dir(&dir)?;
-    let (url, hash) = (ctx.asset_url(installer), sha256_of(installer)?);
-    let values = [("URL", url.as_str()), ("SHA256", hash.as_str())];
-    let nuspec = dir.join("bifurc.nuspec");
-    write_file(&nuspec, &manifest(ctx, "windows/chocolatey/bifurc.nuspec", &values)?)?;
-    fs::create_dir_all(dir.join("tools")).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for script in ["chocolateyinstall.ps1", "chocolateyuninstall.ps1"] {
-        write_file(&dir.join("tools").join(script), &manifest(ctx, &format!("windows/chocolatey/{script}"), &values)?)?;
-    }
-    let Some(choco) = on_path("choco") else {
-        println!("choco is not installed: the package source is written, pack it with `choco pack` in {}", dir.display());
-        return Ok(dir);
-    };
-    let out = ctx.out_dir.join(format!("bifurc.{VERSION}.nupkg"));
-    let _ = fs::remove_file(&out);
-    let mut pack = Command::new(choco);
-    pack.arg("pack").arg(&nuspec).arg("--outputdirectory").arg(&ctx.out_dir).current_dir(&dir);
-    exec(pack, true)?;
-    if out.exists() { Ok(out) } else { Err(format!("choco pack did not write {}", out.display())) }
-}
-
 // ---------------------------------------------------------------------------------------------------------
 // Linux: .deb, tarball, and the AUR package's source
 // ---------------------------------------------------------------------------------------------------------
 
-/// The app's four executables, which are what its shared library dependencies are read from.
-fn staged_executables(dir: &Path) -> [PathBuf; 4] {
-    [dir.join("bifurc-ui"), dir.join("bifurc-engine"), dir.join("bin").join("bifurc"), dir.join("resources").join("bifurc-cli")]
+/// The app's five executables, which are what its shared library dependencies are read from.
+fn staged_executables(dir: &Path) -> [PathBuf; 5] {
+    [
+        dir.join("bifurc-ui"),
+        dir.join("bifurc-engine"),
+        dir.join("bin").join("bifurc"),
+        dir.join("bin").join("bifurc-mcp"),
+        dir.join("resources").join("bifurc-cli"),
+    ]
 }
 
 /// The packages the executables' shared libraries come from, as `dpkg-shlibdeps` finds them on this machine.
@@ -713,7 +718,9 @@ fn package_deb(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let usr = root.join("usr");
     let lib = usr.join("lib").join("bifurc");
     copy_dir(staged, &lib)?;
+    mark(&lib, "deb")?;
     symlink("../lib/bifurc/bin/bifurc", &usr.join("bin").join("bifurc"))?;
+    symlink("../lib/bifurc/bin/bifurc-mcp", &usr.join("bin").join("bifurc-mcp"))?;
     let share = usr.join("share");
     fs::create_dir_all(share.join("applications")).map_err(|e| format!("{}: {e}", share.display()))?;
     write_file(
@@ -749,6 +756,7 @@ fn package_tarball(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     empty_dir(&parent)?;
     let name = format!("bifurc-{VERSION}");
     copy_dir(staged, &parent.join(&name))?;
+    mark(&parent.join(&name), "tarball")?;
     write_file(
         &parent.join(&name).join("bifurc.desktop"),
         &template(ctx, "linux/bifurc.desktop", &[("EXEC", "/usr/lib/bifurc/bifurc-ui")])?,
@@ -799,6 +807,7 @@ fn package_appimage(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let app_dir = ctx.out_dir.join("Bifurc.AppDir");
     empty_dir(&app_dir)?;
     copy_dir(staged, &app_dir.join("usr").join("lib").join("bifurc"))?;
+    mark(&app_dir.join("usr").join("lib").join("bifurc"), "appimage")?;
     // Rebuilding the same version must still replace what an earlier build of it unpacked.
     let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let build_id = format!("{VERSION}-{millis:x}");

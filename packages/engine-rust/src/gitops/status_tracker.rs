@@ -4,6 +4,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::workspace::{
+    deletions::record_path,
     fs::{ALL_ENTITY_KINDS, get_pending_deletions},
     git_store::git,
     status_cache::{get_cached_status, set_cached_status},
@@ -111,13 +112,13 @@ pub async fn get_workspace_sync_status(ws_id: &str) -> Map<String, Value> {
     for kind in ALL_ENTITY_KINDS {
         for pending in get_pending_deletions(ws_id, kind) {
             let id = pending.get("id").and_then(Value::as_str).unwrap_or("");
-            let root_path = format!("{kind}/{id}.json");
-            if result.contains_key(&root_path) {
+            let path = record_path(kind, &pending);
+            if result.contains_key(&path) {
                 continue;
             }
             let suffix = format!("/{id}.json");
-            if !result.keys().any(|k| k.ends_with(&suffix) && *k != root_path) {
-                result.insert(root_path, json!("deleted"));
+            if !result.keys().any(|k| k.ends_with(&suffix)) {
+                result.insert(path, json!("deleted"));
             }
         }
     }

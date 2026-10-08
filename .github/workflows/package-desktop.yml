@@ -1,7 +1,7 @@
 name: Package desktop app (Rust UI)
 
 # The Rust UI + engine + CLI, packaged. One `cargo xtask package` per platform makes everything that platform
-# has: on Windows the installer, the Store package, a portable zip, and the winget, Scoop and Chocolatey
+# has: on Windows the installer, the Store package, a portable zip, and the winget and Scoop
 # manifests; on Linux the AppImage, the .deb, a tarball, and the AUR package's source.
 # Run by hand, or called by `release.yml`, which publishes what this builds.
 on:
@@ -67,7 +67,6 @@ jobs:
             release/desktop/*-setup.exe
             release/desktop/*.msix
             release/desktop/*.zip
-            release/desktop/*.nupkg
             release/desktop/manifests/
           if-no-files-found: error
 

@@ -3,7 +3,7 @@
     "description": "{{SUMMARY}}",
     "homepage": "{{HOMEPAGE}}",
     "license": {
-        "identifier": "Proprietary",
+        "identifier": "PolyForm-Noncommercial-1.0.0",
         "url": "{{LICENSE_URL}}"
     },
     "architecture": {
@@ -12,7 +12,7 @@
             "hash": "{{SHA256}}"
         }
     },
-    "bin": "bin\\bifurc.exe",
+    "bin": ["bin\\bifurc.exe", "bin\\bifurc-mcp.exe"],
     "shortcuts": [
         [
             "bifurc-ui.exe",

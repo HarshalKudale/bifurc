@@ -1,7 +1,7 @@
-//! A WebSocket request's live side: connection state, the message stream and the composer.
+//! A WebSocket request's live side: connection state and the message stream.
 //!
 //! This is the WebSocket counterpart of [`Exchange`](super::exchange::Exchange): the request panel holds the
-//! target and the Connect command, this view holds what the connection is doing. The engine owns the socket;
+//! target, the Connect command and the message to send; this view holds what the connection is doing. The engine owns the socket;
 //! this entity mirrors it ([`SocketView`]) and asks the engine to act through the events it emits.
 
 use gpui_kit::component::{
@@ -9,53 +9,48 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle},
     h_flex,
-    input::{InputEvent, Textarea, TextareaState},
     tag::Tag,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    Context, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
+    StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use serde_json::Value;
 
-use crate::model::{
-    socket::{Direction, SocketMessage, SocketState, SocketView},
-    traffic::clock_utc,
+use crate::{
+    components::stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
+    model::socket::{Direction, SocketMessage, SocketState, SocketView},
 };
 
 #[derive(Debug, Clone)]
 pub enum ConnectionEvent {
-    /// The user asked to send this text over the open connection.
-    Send(String),
     Clear,
 }
 
 pub struct SocketConnection {
     view: SocketView,
-    composer: Entity<TextareaState>,
     scroll: ScrollHandle,
     follow_tail: bool,
-    _subscriptions: Vec<Subscription>,
+    /// The messages opened to their whole text, by id.
+    open: OpenRows,
+    search: LogSearch,
 }
 
 impl EventEmitter<ConnectionEvent> for SocketConnection {}
 
 impl SocketConnection {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let composer = cx.new(|cx| TextareaState::new(window, cx).placeholder("Message to send").rows(3));
-        let subscription = cx.subscribe_in(&composer, window, |_, _, event, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        });
         Self {
             view: SocketView::default(),
-            composer,
             scroll: ScrollHandle::new(),
             follow_tail: true,
-            _subscriptions: vec![subscription],
+            open: OpenRows::default(),
+            search: LogSearch::new(window, cx, |this, cx| {
+                this.open.highlight(&this.search.query(cx), cx);
+                cx.notify();
+            }),
         }
     }
 
@@ -65,6 +60,7 @@ impl SocketConnection {
 
     pub fn replace_view(&mut self, view: SocketView, cx: &mut Context<Self>) {
         self.view = view;
+        self.forget_dropped();
         self.follow_tail = true;
         cx.notify();
     }
@@ -76,42 +72,49 @@ impl SocketConnection {
 
     pub fn apply_message_event(&mut self, payload: &Value, cx: &mut Context<Self>) {
         self.view.apply_message_event(payload);
+        self.forget_dropped();
         self.follow_tail = true;
         cx.notify();
     }
 
     pub fn clear_messages(&mut self, cx: &mut Context<Self>) {
         self.view.clear_messages();
+        self.open.clear();
         cx.notify();
     }
 
-    pub fn clear_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.composer.update(cx, |state, cx| state.set_value("", window, cx));
-    }
-
-    fn send(&mut self, cx: &mut Context<Self>) {
-        let text = self.composer.read(cx).value().to_string();
-        if self.view.state == SocketState::Connected && !text.is_empty() {
-            cx.emit(ConnectionEvent::Send(text));
+    /// The log is bounded, so an open message can leave it.
+    fn forget_dropped(&mut self) {
+        if !self.open.is_empty() {
+            let messages = &self.view.messages;
+            self.open.retain(|id| messages.iter().any(|m| m.id == id));
         }
     }
 
-    fn render_message(message: &SocketMessage, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme().clone();
-        let (tag, label) = match message.direction {
-            Direction::Sent => (Tag::secondary().outline(), "Sent"),
-            Direction::Received => (Tag::secondary(), "Received"),
+    /// One message: the shared log row, which opens to the whole message.
+    fn render_message(&self, message: &SocketMessage, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let sent = message.direction == Direction::Sent;
+        let row = LogRow {
+            id: message.id.clone(),
+            ts: message.ts,
+            tag: if sent { "Sent" } else { "Received" }.to_owned(),
+            outline: sent,
+            way: Some(if sent { Way::Sent } else { Way::Received }),
+            note: None,
+            data: message.data.clone(),
         };
-        h_flex()
-            .id(gpui_kit::ElementId::Name(message.id.clone().into()))
-            .gap_3()
-            .px_3()
-            .py_1()
-            .items_start()
-            .child(div().w_20().flex_none().text_sm().text_color(theme.muted_foreground).child(clock_utc(message.ts)))
-            .child(div().w_20().flex_none().child(tag.child(label)))
-            .child(div().flex_1().min_w_0().child(message.data.clone()))
-            .into_any_element()
+        let id = message.id.clone();
+        log_row(
+            &row,
+            self.open.get(&message.id),
+            cx.listener(move |this, _, window, cx| {
+                let Some(message) = this.view.messages.iter().find(|m| m.id == id) else { return };
+                let query = this.search.query(cx);
+                this.open.toggle(&id, &message.data, &query, window, cx);
+                cx.notify();
+            }),
+            cx,
+        )
     }
 }
 
@@ -129,7 +132,11 @@ impl Render for SocketConnection {
             self.follow_tail = false;
             self.scroll.scroll_to_bottom();
         }
-        let can_send = state == SocketState::Connected && !self.composer.read(cx).value().is_empty();
+        let needle = self.search.needle(cx);
+        let shown: Vec<&SocketMessage> =
+            self.view.messages.iter().filter(|m| found(needle.as_deref(), &[&m.data])).collect();
+        let search_bar = self.search.bar(shown.len(), self.view.messages.len(), cx);
+        let none_found = shown.is_empty() && !self.view.messages.is_empty();
 
         v_flex()
             .size_full()
@@ -149,6 +156,10 @@ impl Render for SocketConnection {
                         self.view.messages.len(),
                         if self.view.messages.len() == 1 { "" } else { "s" }
                     )))
+                    .child(search_button("search-messages").on_click(cx.listener(|this, _, window, cx| {
+                        this.search.toggle(window, cx);
+                        cx.notify();
+                    })))
                     .child(
                         Button::new("clear-messages")
                             .ghost()
@@ -158,6 +169,7 @@ impl Render for SocketConnection {
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(ConnectionEvent::Clear))),
                     ),
             )
+            .children(search_bar)
             .child(
                 div()
                     .id("socket-messages")
@@ -178,24 +190,8 @@ impl Render for SocketConnection {
                             ),
                         ))
                     })
-                    .children(self.view.messages.iter().map(|m| Self::render_message(m, cx))),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(Textarea::new(&self.composer).disabled(state != SocketState::Connected))
-                    .child(
-                        h_flex().justify_end().child(
-                            Button::new("send-message")
-                                .primary()
-                                .label("Send")
-                                .disabled(!can_send)
-                                .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
-                        ),
-                    ),
+                    .when(none_found, |this| this.child(nothing_found()))
+                    .children(shown.into_iter().map(|m| self.render_message(m, cx))),
             )
     }
 }

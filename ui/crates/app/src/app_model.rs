@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{EngineSession, call, describe, failure},
-    model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, vault::VaultInfo},
+    model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, update::UpdateStatus, vault::VaultInfo},
 };
 
 /// Wire names of the engine events the UI listens to.
@@ -20,8 +20,10 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 16] = [
+const EVENTS: [&str; 24] = [
     "event.account.changed",
+    "event.companions.changed",
+    "event.update.changed",
     "event.engine.stopping",
     "event.ui.activate",
     "event.entity.changed",
@@ -34,6 +36,12 @@ const EVENTS: [&str; 16] = [
     "event.ws.message",
     "event.grpc.stream.status",
     "event.grpc.stream.message",
+    "event.sse.status",
+    "event.sse.message",
+    "event.socketio.status",
+    "event.socketio.message",
+    "event.mcp.status",
+    "event.mcp.message",
     "event.log.entry",
     "event.runner.progress",
     "event.runner.finished",
@@ -68,6 +76,9 @@ impl ProxyStatus {
     }
 }
 
+/// What a read-only workspace says when it is asked to sync.
+pub const READ_ONLY_NOTICE: &str = "This workspace is read-only: your account has read access to its repository.      Your changes are saved on this device. Ask the owner for write access to sync them.";
+
 /// What the engine says about this machine and its accounts (`setup.getState`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetupState {
@@ -77,6 +88,8 @@ pub struct SetupState {
     pub git_installed: bool,
     /// This build can sign in to GitHub.
     pub sign_in_available: bool,
+    /// A workspace is used by everyone its repository is shared with, not by its owner alone.
+    pub team_sync: bool,
     pub accounts: Vec<AccountInfo>,
     /// Where the terms of service are published.
     pub terms_of_service_url: String,
@@ -99,6 +112,7 @@ impl SetupState {
             known: true,
             git_installed: flag("gitInstalled"),
             sign_in_available: flag("signInAvailable"),
+            team_sync: flag("teamSync"),
             terms_of_service_url: value.get("termsOfServiceUrl").and_then(Value::as_str).unwrap_or_default().to_owned(),
             terms_accepted: flag("termsAccepted"),
             privacy_policy_url: value.get("privacyPolicyUrl").and_then(Value::as_str).unwrap_or_default().to_owned(),
@@ -137,6 +151,18 @@ pub enum ModelEvent {
     GrpcStatus(Value),
     /// `event.grpc.stream.message`: one message of a live gRPC call.
     GrpcMessage(Value),
+    /// `event.sse.status`: an SSE stream opened, ended or failed.
+    SseStatus(Value),
+    /// `event.sse.message`: one event of an SSE stream.
+    SseMessage(Value),
+    /// `event.socketio.status`: a Socket.IO connection opened, ended or failed.
+    SocketIoStatus(Value),
+    /// `event.socketio.message`: one event or acknowledgement of a Socket.IO connection.
+    SocketIoMessage(Value),
+    /// `event.mcp.status`: an MCP connection opened, ended or failed, or its server declared something new.
+    McpStatus(Value),
+    /// `event.mcp.message`: one line of an MCP connection's log, new or answered.
+    McpMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
     /// `event.runner.progress`: one request of a folder run has finished.
@@ -149,6 +175,8 @@ pub enum ModelEvent {
     SyncStatus,
     /// `event.account.changed`: a sign-in finished or failed, or an account was signed out.
     AccountChanged(Value),
+    /// `event.companions.changed`: a browser extension connected or disconnected.
+    CompanionsChanged,
     /// The engine was stopped and started again: anything that lived only in the old one is gone.
     EngineRestarted,
     /// A short message for the user: a failed command, a lost connection.
@@ -164,6 +192,8 @@ pub struct AppModel {
     proxy: ProxyStatus,
     reverse_proxy: ProxyStatus,
     setup: SetupState,
+    /// What the engine knows about newer versions.
+    update: UpdateStatus,
     /// The engine is being stopped and started again; its connection closing is expected.
     restarting_engine: bool,
     load: Load,
@@ -186,6 +216,7 @@ impl AppModel {
             proxy: ProxyStatus::default(),
             reverse_proxy: ProxyStatus::default(),
             setup: SetupState::default(),
+            update: UpdateStatus::default(),
             restarting_engine: false,
             load: Load::Loading,
             refreshing: false,
@@ -196,7 +227,55 @@ impl AppModel {
         model.listen(cx);
         model.refresh(cx);
         model.refresh_setup(cx);
+        model.refresh_update(cx);
         model
+    }
+
+    pub fn update(&self) -> &UpdateStatus {
+        &self.update
+    }
+
+    /// Re-reads what the engine last found about newer versions. It asks nobody: the engine looks once a day.
+    pub fn refresh_update(&mut self, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.status", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.update = UpdateStatus::from_value(&value);
+                cx.notify();
+            }
+        });
+    }
+
+    /// Has the engine read the list of releases now.
+    pub fn check_for_update(&mut self, cx: &mut Context<Self>) {
+        if self.update.checking {
+            return;
+        }
+        self.update.checking = true;
+        cx.notify();
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.check", json!({}), |this, outcome, cx| {
+            match outcome {
+                Ok(value) => this.update = UpdateStatus::from_value(&value),
+                Err(error) => {
+                    this.update.checking = false;
+                    cx.emit(ModelEvent::Notice(format!("Couldn't check for updates. {}", describe(&error))));
+                }
+            }
+            cx.notify();
+        });
+    }
+
+    /// Stops announcing `version`; a newer one is announced again.
+    pub fn skip_update(&mut self, version: &str, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.skip", json!({ "version": version }), |this, outcome, cx| match outcome {
+            Ok(value) => {
+                this.update = UpdateStatus::from_value(&value);
+                cx.notify();
+            }
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't skip the version. {}", describe(&error)))),
+        });
     }
 
     pub fn setup(&self) -> &SetupState {
@@ -262,6 +341,20 @@ impl AppModel {
         self.publishing
     }
 
+    /// The workspace in front is read-only: its account may read its repository and not push to it, so what
+    /// is changed here is saved here and nothing of it is synced.
+    pub fn is_read_only(&self) -> bool {
+        self.config.active_workspace().and_then(|workspace| workspace.sync.as_ref()).is_some_and(|sync| sync.read_only)
+    }
+
+    /// Says why nothing is synced, when the workspace is read-only. Returns whether it is.
+    fn refuse_read_only(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.is_read_only() {
+            cx.emit(ModelEvent::Notice(READ_ONLY_NOTICE.to_owned()));
+        }
+        self.is_read_only()
+    }
+
     fn listen(&mut self, cx: &mut Context<Self>) {
         let client = self.engine.client.clone();
         let subscribing = cx.background_spawn(async move { client.subscribe(&EVENTS).await });
@@ -325,11 +418,22 @@ impl AppModel {
                     self.refresh(cx);
                     cx.emit(ModelEvent::AccountChanged(event.payload));
                 }
+                "event.companions.changed" => cx.emit(ModelEvent::CompanionsChanged),
+                "event.update.changed" => {
+                    self.update = UpdateStatus::from_value(&event.payload);
+                    cx.notify();
+                }
                 "event.server.error" => self.refresh_proxy(cx),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
                 "event.grpc.stream.status" => cx.emit(ModelEvent::GrpcStatus(event.payload)),
                 "event.grpc.stream.message" => cx.emit(ModelEvent::GrpcMessage(event.payload)),
+                "event.sse.status" => cx.emit(ModelEvent::SseStatus(event.payload)),
+                "event.sse.message" => cx.emit(ModelEvent::SseMessage(event.payload)),
+                "event.socketio.status" => cx.emit(ModelEvent::SocketIoStatus(event.payload)),
+                "event.socketio.message" => cx.emit(ModelEvent::SocketIoMessage(event.payload)),
+                "event.mcp.status" => cx.emit(ModelEvent::McpStatus(event.payload)),
+                "event.mcp.message" => cx.emit(ModelEvent::McpMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
                 "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
                 "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
@@ -495,6 +599,7 @@ impl AppModel {
                         this.refresh(cx);
                         this.refresh_setup(cx);
                         cx.emit(ModelEvent::EngineRestarted);
+                        this.refresh_update(cx);
                     }
                     Err(message) => {
                         // The old connection is closed whatever happened, so nothing is live now.
@@ -540,7 +645,7 @@ impl AppModel {
 
     /// Commits `paths` (and pushes, when the workspace has a remote).
     pub fn publish(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        if self.publishing {
+        if self.publishing || self.refuse_read_only(cx) {
             return;
         }
         self.publishing = true;
@@ -573,7 +678,7 @@ impl AppModel {
     /// Syncs everything in the workspace that was never synced: the engine commits each new or changed item
     /// in a commit of its own, then pushes when there is a remote. Progress arrives as `event.sync.status`.
     pub fn sync_all(&mut self, cx: &mut Context<Self>) {
-        if self.publishing {
+        if self.publishing || self.refuse_read_only(cx) {
             return;
         }
         self.publishing = true;
@@ -657,7 +762,8 @@ impl AppModel {
     }
 
     fn resolve_delete(&mut self, target: Deleted, revert: bool, cx: &mut Context<Self>) {
-        if self.publishing {
+        // Confirming a delete syncs it; taking one back does not.
+        if self.publishing || (!revert && self.refuse_read_only(cx)) {
             return;
         }
         self.publishing = true;
