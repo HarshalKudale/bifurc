@@ -14,6 +14,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -50,6 +53,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -83,6 +89,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -115,6 +124,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments"
      ]
@@ -144,6 +156,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments"
      ]
@@ -173,6 +188,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -206,6 +224,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -240,6 +261,9 @@
       "wsConnections",
       "graphqlRequests",
       "grpcRequests",
+      "sseRequests",
+      "socketioRequests",
+      "mcpRequests",
       "soapRequests",
       "environments",
       "graphqlSchemas",
@@ -252,6 +276,39 @@
     "workspaceId",
     "kind"
    ]
+  },
+  "entity.search": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "scope": {
+     "type": "string",
+     "enum": [
+      "requests",
+      "mocks"
+     ]
+    },
+    "query": {
+     "type": "string"
+    },
+    "kinds": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "limit": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "scope",
+    "query"
+   ],
+   "additionalProperties": false
   },
   "entity.setEnabled": {
    "type": "object",
@@ -289,11 +346,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "name": {
@@ -323,11 +376,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -351,11 +400,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -382,11 +427,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -409,11 +450,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -436,11 +473,7 @@
      "enum": [
       "mock",
       "request",
-      "ws",
-      "rule",
-      "graphqlRequest",
-      "grpcRequest",
-      "soapRequest"
+      "rule"
      ]
     },
     "id": {
@@ -519,6 +552,9 @@
      "type": "boolean"
     },
     "telemetryEnabled": {
+     "type": "boolean"
+    },
+    "updateCheckEnabled": {
      "type": "boolean"
     },
     "tlsCaCertPath": {
@@ -1558,6 +1594,391 @@
    ],
    "additionalProperties": false
   },
+  "sse.connect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "body": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.disconnect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "sse.clearMessages": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "streamId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.connect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "path": {
+     "type": "string"
+    },
+    "namespace": {
+     "type": "string"
+    },
+    "auth": {
+     "type": "string"
+    },
+    "listeners": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.listen": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "listeners": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.disconnect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.emit": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "event": {
+     "type": "string"
+    },
+    "args": {
+     "type": "string"
+    },
+    "ack": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId",
+    "event"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "socketio.clearMessages": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.connect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "transport": {
+     "type": "string",
+     "enum": [
+      "stdio",
+      "http"
+     ]
+    },
+    "url": {
+     "type": "string"
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.disconnect": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.call": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string",
+     "enum": [
+      "tool",
+      "prompt",
+      "resource"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "arguments": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {}
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId",
+    "type",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "mcp.clearMessages": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "connectionId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "connectionId"
+   ],
+   "additionalProperties": false
+  },
   "sync.push": {
    "type": "object",
    "properties": {
@@ -2377,6 +2798,11 @@
     }
    ]
   },
+  "engine.companions": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "engine.shutdown": {
    "type": "object",
    "properties": {
@@ -2384,6 +2810,29 @@
      "type": "boolean"
     }
    },
+   "additionalProperties": false
+  },
+  "update.status": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "update.check": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "update.skip": {
+   "type": "object",
+   "properties": {
+    "version": {
+     "type": "string",
+     "minLength": 1
+    }
+   },
+   "required": [
+    "version"
+   ],
    "additionalProperties": false
   },
   "capture.list": {

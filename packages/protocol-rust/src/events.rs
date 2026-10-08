@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Every event that travels on the wire. A bus event is named without the `event.` prefix.
-pub const EVENT_NAMES: [&str; 18] = [
+pub const EVENT_NAMES: [&str; 26] = [
     "event.sync.status",
     "event.sync.entityStatus",
     "event.log.entry",
@@ -19,10 +19,18 @@ pub const EVENT_NAMES: [&str; 18] = [
     "event.ws.message",
     "event.grpc.stream.status",
     "event.grpc.stream.message",
+    "event.sse.status",
+    "event.sse.message",
+    "event.socketio.status",
+    "event.socketio.message",
+    "event.mcp.status",
+    "event.mcp.message",
     "event.engine.stopping",
     "event.ui.activate",
     "event.vault.changed",
     "event.account.changed",
+    "event.companions.changed",
+    "event.update.changed",
 ];
 
 pub fn is_wire_event(wire: &str) -> bool {

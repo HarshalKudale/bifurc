@@ -99,6 +99,7 @@ async fn the_home_page_lists_the_mappings() {
     let cfg = json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [
         { "id": "a", "domain": "app.localhost", "target": "localhost:3000", "enabled": true },
     ] });
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(Some(cfg));
     let page = ask(port, "localhost", "/").await;
     assert!(page.starts_with("HTTP/1.1 200 OK\r\n"), "{page}");
@@ -109,6 +110,7 @@ async fn the_home_page_lists_the_mappings() {
 
 #[tokio::test]
 async fn an_edge_without_a_workspace_answers_503() {
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(None);
     let page = ask(port, "localhost", "/").await;
     assert!(page.starts_with("HTTP/1.1 503 Service Unavailable\r\n"), "{page}");
@@ -124,6 +126,7 @@ async fn a_mapped_domain_is_proxied_to_its_target() {
         { "id": "a", "domain": "Shop.Example", "target": format!("127.0.0.1:{target}"), "enabled": true },
         { "id": "b", "domain": "off.example", "target": "127.0.0.1:1", "enabled": false },
     ] });
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(Some(cfg));
 
     let answer = ask(port, "shop.example", "/cart?x=1").await;
@@ -150,6 +153,7 @@ async fn a_localhost_subdomain_is_rfc6761_and_an_unmapped_one_is_404() {
     let cfg = json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [
         { "id": "a", "domain": "app.localhost", "target": format!("127.0.0.1:{target}"), "enabled": true },
     ] });
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(Some(cfg));
 
     assert!(ask(port, "app.localhost", "/").await.ends_with("dev server"));
@@ -169,6 +173,7 @@ async fn a_dead_target_is_a_502() {
     let cfg = json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [
         { "id": "a", "domain": "app.localhost", "target": format!("127.0.0.1:{dead}"), "enabled": true },
     ] });
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(Some(cfg));
     let answer = ask(port, "app.localhost", "/").await;
     assert!(answer.starts_with("HTTP/1.1 502 Bad Gateway\r\n"), "{answer}");
@@ -190,6 +195,7 @@ async fn mocks_take_precedence_and_partial_ones_need_a_mapping() {
             mock(json!({ "id": "orphan", "urlPattern": "http://free.localhost/partial", "responseBodyMocked": false })),
         ],
     });
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(Some(cfg));
 
     let full = ask(port, "app.localhost", "/mocked").await;
@@ -226,6 +232,7 @@ async fn a_request_body_is_forwarded() {
     let cfg = json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [
         { "id": "a", "domain": "app.localhost", "target": format!("127.0.0.1:{target}"), "enabled": true },
     ] });
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) = edge_with(Some(cfg));
     let mut socket = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     socket
@@ -242,6 +249,7 @@ async fn a_request_body_is_forwarded() {
 
 #[tokio::test]
 async fn restarting_moves_the_edge_to_another_port() {
+    let _root = crate::testing::scratch_data_root();
     let (edge, port) =
         edge_with(Some(json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [] })));
     assert!(edge.is_running() && edge.port() == port);
@@ -251,4 +259,39 @@ async fn restarting_moves_the_edge_to_another_port() {
     assert!(ask(other, "localhost", "/").await.contains(&format!("Port {other}")));
     edge.stop();
     assert!(!edge.is_running());
+}
+
+async fn tls_ask(client: Arc<rustls::ClientConfig>, port: u16, host: &str, path: &str) -> String {
+    let socket = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let name = rustls::pki_types::ServerName::try_from(host.to_string()).unwrap();
+    let mut tls = tokio_rustls::TlsConnector::from(client).connect(name, socket).await.unwrap();
+    tls.write_all(format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n").as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(10), tls.read_to_end(&mut out)).await.unwrap();
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[tokio::test]
+async fn with_https_on_the_one_port_serves_tls_and_redirects_plain_http() {
+    let root = crate::testing::scratch_data_root();
+    let client = crate::testing::enable_https(&root);
+    let (upstream, seen) = canned_upstream(ok("secure hello")).await;
+    let cfg = json!({
+        "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [],
+        "mappings": [{ "id": "a", "enabled": true, "domain": "app.localhost", "target": format!("127.0.0.1:{upstream}") }],
+    });
+    let (edge, port) = edge_with(Some(cfg));
+
+    let https_port = port;
+    let redirect = ask(port, "app.localhost", "/x?y=1").await;
+    assert!(redirect.starts_with("HTTP/1.1 308"), "{redirect}");
+    assert!(redirect.contains(&format!("Location: https://app.localhost:{https_port}/x?y=1\r\n")), "{redirect}");
+
+    let answer = tls_ask(client.clone(), port, "app.localhost", "/x").await;
+    assert!(answer.starts_with("HTTP/1.1 200") && answer.ends_with("secure hello"), "{answer}");
+    assert!(seen.lock()[0].to_lowercase().starts_with("get /x http/1.1"));
+
+    let home = tls_ask(client, port, "localhost", "/").await;
+    assert!(home.contains(&format!("https://app.localhost:{https_port}/")), "{home}");
+    edge.stop();
 }

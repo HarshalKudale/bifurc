@@ -8,6 +8,7 @@
 //!   command, and what the page shows is what the engine reports back. The only things done on this computer
 //!   are the ones the engine cannot reach: restarting its process, and trusting its certificate.
 //! - **About** says what is running.
+//! - **Licenses** carries the notices the libraries and assets Bifurc ships require.
 //!
 //! The screen is the kit's `Settings` component: pages in its own sidebar, groups of items, searchable.
 
@@ -22,8 +23,8 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, div,
+    App, AppContext as _, Axis, ClipboardItem, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Window, div,
 };
 use serde_json::{Value, json};
 
@@ -31,14 +32,14 @@ use crate::{
     app_model::{AppModel, ModelEvent, ProxyStatus},
     components::{certificate::Certificate, dialogs::confirm_danger},
     engine::{call, call_in, failure},
-    model::config::AccountInfo,
+    model::{config::AccountInfo, update::UpdateAction},
     preferences::Preferences,
     screens::workspace_setup::{Purpose, open_setup_dialog},
     theme,
 };
 
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
-const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc/releases";
+const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc-releases/releases";
 
 /// A workspace that syncs as an account, and what it holds that its repository does not.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +111,69 @@ fn sign_out_consequence(account: &AccountRow) -> String {
     }
 }
 
+/// A browser extension connected to the engine, as `engine.companions` reports it.
+#[derive(Debug, Clone, PartialEq)]
+struct CompanionRow {
+    browser: Option<String>,
+    browser_version: Option<String>,
+    os: Option<String>,
+    arch: Option<String>,
+    extension_version: Option<String>,
+    extension_id: Option<String>,
+    /// Milliseconds since the epoch.
+    connected_at: i64,
+}
+
+impl CompanionRow {
+    /// "Chrome 126", or "Browser" when the extension did not say.
+    fn title(&self) -> String {
+        match (&self.browser, &self.browser_version) {
+            (Some(name), Some(version)) => format!("{name} {version}"),
+            (Some(name), None) => name.clone(),
+            _ => "Browser".to_owned(),
+        }
+    }
+
+    /// The rest of what is known, as one line.
+    fn detail(&self) -> String {
+        let system = match (&self.os, &self.arch) {
+            (Some(os), Some(arch)) => Some(format!("{os} ({arch})")),
+            (Some(os), None) => Some(os.clone()),
+            _ => None,
+        };
+        let parts = [
+            system,
+            self.extension_version.as_ref().map(|version| format!("Extension {version}")),
+            self.extension_id.as_ref().map(|id| format!("ID {id}")),
+        ];
+        let known: Vec<String> = parts.into_iter().flatten().collect();
+        if known.is_empty() { "No details reported".to_owned() } else { known.join(" · ") }
+    }
+}
+
+fn companions_from(value: &Value) -> Vec<CompanionRow> {
+    let text = |companion: &Value, key: &str| companion.get(key).and_then(Value::as_str).map(str::to_owned);
+    let mut rows: Vec<CompanionRow> = value
+        .get("companions")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .map(|companion| CompanionRow {
+                    browser: text(companion, "browser"),
+                    browser_version: text(companion, "browserVersion"),
+                    os: text(companion, "os"),
+                    arch: text(companion, "arch"),
+                    extension_version: text(companion, "extensionVersion"),
+                    extension_id: text(companion, "extensionId"),
+                    connected_at: companion.get("connectedAt").and_then(Value::as_i64).unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort_by_key(|row| row.connected_at);
+    rows
+}
+
 fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
@@ -119,6 +183,8 @@ pub struct SettingsScreen {
     model: Entity<AppModel>,
     certificate: Entity<Certificate>,
     accounts: Vec<AccountRow>,
+    /// The browser extensions connected to the companion server.
+    companions: Vec<CompanionRow>,
     /// The account being signed out.
     signing_out: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -139,14 +205,35 @@ impl SettingsScreen {
                 ) {
                     this.refresh_accounts(cx);
                 }
+                if matches!(event, ModelEvent::CompanionsChanged | ModelEvent::EngineRestarted) {
+                    this.refresh_companions(cx);
+                }
             }),
         ];
         let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
         subscriptions.push(cx.observe(&certificate, |_, _, cx| cx.notify()));
         let mut this =
-            Self { model, certificate, accounts: Vec::new(), signing_out: None, _subscriptions: subscriptions };
+            Self {
+            model,
+            certificate,
+            accounts: Vec::new(),
+            companions: Vec::new(),
+            signing_out: None,
+            _subscriptions: subscriptions,
+        };
         this.refresh_accounts(cx);
+        this.refresh_companions(cx);
         this
+    }
+
+    fn refresh_companions(&mut self, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "engine.companions", json!({}), |this, outcome, cx| {
+            if let Ok(listed) = outcome {
+                this.companions = companions_from(&listed);
+                cx.notify();
+            }
+        });
     }
 
     fn refresh_accounts(&mut self, cx: &mut Context<Self>) {
@@ -317,8 +404,33 @@ impl SettingsScreen {
         .keywords(keywords)
     }
 
-    fn servers_page(&self) -> SettingPage {
+    /// The browser extensions connected right now, or a line saying there are none.
+    fn companions_item(&self, cx: &Context<Self>) -> SettingItem {
+        let companions = self.companions.clone();
+        let theme = cx.theme().clone();
+        SettingItem::render(move |_, _, _| {
+            let rows: Vec<_> = if companions.is_empty() {
+                vec![div().text_color(theme.muted_foreground).child("No browser extension is connected.").into_any_element()]
+            } else {
+                companions
+                    .iter()
+                    .map(|companion| {
+                        v_flex()
+                            .w_full()
+                            .child(companion.title())
+                            .child(div().text_xs().text_color(theme.muted_foreground).child(companion.detail()))
+                            .into_any_element()
+                    })
+                    .collect()
+            };
+            v_flex().w_full().gap_2().children(rows)
+        })
+        .keywords(["browser", "extension", "connected", "chrome", "firefox", "edge"])
+    }
+
+    fn servers_page(&self, cx: &Context<Self>) -> SettingPage {
         let engine_model = self.model.clone();
+        let companions = self.companions_item(cx);
         SettingPage::new("Servers").icon(IconName::Network).groups(vec![
             SettingGroup::new()
                 .title("Engine runtime")
@@ -380,13 +492,14 @@ impl SettingsScreen {
                 ))
                 .item(self.port_item(
                     "Port",
-                    "Where .localhost names are served and sent on to their mappings. 80 lets the names work without a port.",
+                    "Where .localhost names are served and sent on to their mappings, over HTTPS while Intercept HTTPS is on. 80 (HTTP) or 443 (HTTPS) lets the names work without a port.",
                     "port",
                 ))
                 .footer(|_, _| "A new port takes effect at once while the reverse proxy is running."),
             SettingGroup::new()
                 .title("Companion")
                 .item(self.port_item("Port", "The browser extension connects here.", "companionPort"))
+                .item(companions)
                 .footer(|_, _| "The companion server always runs. A new port takes effect after the engine restarts."),
         ])
     }
@@ -407,7 +520,7 @@ impl SettingsScreen {
                         },
                     ),
                 )
-                .description("Decrypt HTTPS traffic through the forward proxy so rules, mocks and capture apply to it.")
+                .description("Run Bifurc over HTTPS with its certificate: the reverse proxy serves .localhost names over HTTPS on its port, the forward proxy also accepts HTTPS proxy clients on its port, and HTTPS traffic through it is decrypted so rules, mocks and capture apply.")
                 .keywords(["tls", "ssl", "certificate"]),
             ),
             SettingGroup::new()
@@ -613,6 +726,43 @@ impl SettingsScreen {
                 }),
             )
         };
+        let (update_read, update_write) = (self.model.clone(), self.model.clone());
+        let mut updates = SettingGroup::new().title("Updates").item(self.update_item());
+        if let Some(available) = self.available_update_item(cx) {
+            updates = updates.item(available);
+        }
+        let updates = updates
+            .item(
+                SettingItem::new(
+                    "Check for updates automatically",
+                    SettingField::switch(
+                        move |cx: &App| update_read.read(cx).config().settings.update_check_enabled,
+                        move |value: bool, cx: &mut App| {
+                            update_write.update(cx, |model, cx| {
+                                model.update_settings(json!({ "updateCheckEnabled": value }), cx)
+                            })
+                        },
+                    ),
+                )
+                .description("Once a day. The request carries this app's version and nothing else.")
+                .keywords(["update", "automatic", "network"]),
+            )
+            .item(
+                SettingItem::new(
+                    "Releases",
+                    SettingField::render(|_, _, _| {
+                        Link::new("releases-link").href(RELEASES_URL).child("github.com/HarshalKudale/bifurc-releases")
+                    }),
+                )
+                .description("Every version, with its downloads.")
+                .layout(Axis::Horizontal),
+            )
+            .item(SettingItem::new(
+                "Source",
+                SettingField::render(|_, _, _| {
+                    Link::new("repository-link").href(REPOSITORY_URL).child("github.com/HarshalKudale/bifurc")
+                }),
+            ));
         let origin = if engine.started_here() { "Started by this app" } else { "Already running" };
         SettingPage::new("About").icon(IconName::Info).groups(vec![
             SettingGroup::new().title("Bifurc").items(vec![
@@ -663,28 +813,119 @@ impl SettingsScreen {
                     .layout(Axis::Horizontal),
                 )
                 .footer(|_, _| "Turning analytics back on applies when the engine next starts."),
-            SettingGroup::new()
-                .title("Updates")
-                .item(
-                    SettingItem::new(
-                        "Releases",
-                        SettingField::render(|_, _, _| {
-                            Link::new("releases-link")
-                                .href(RELEASES_URL)
-                                .child("github.com/HarshalKudale/bifurc/releases")
-                        }),
-                    )
-                    .description("New versions are published on GitHub.")
-                    .layout(Axis::Horizontal),
-                )
-                .item(SettingItem::new(
-                    "Source",
-                    SettingField::render(|_, _, _| {
-                        Link::new("repository-link").href(REPOSITORY_URL).child("github.com/HarshalKudale/bifurc")
-                    }),
-                ))
-                .footer(|_, _| "This app does not update itself yet. Download a new version from the releases page."),
+            updates,
         ])
+    }
+
+    /// The installed version, what the engine last found, and the button that has it look now.
+    fn update_item(&self) -> SettingItem {
+        let model = self.model.clone();
+        SettingItem::render(move |options, _, cx| {
+            let theme = cx.theme().clone();
+            let status = model.read(cx).update().clone();
+            let check_model = model.clone();
+            let state = match (&status.available, status.checked) {
+                (Some(update), _) => Tag::warning().child(format!("Version {} available", update.version)),
+                (None, true) => Tag::success().child("Up to date"),
+                (None, false) => Tag::secondary().child("Not checked yet"),
+            };
+            let unsupported = status.unsupported.then_some("This version is no longer supported.");
+            let failure = status.error.as_ref().map(|error| format!("Couldn't check for updates. {error}"));
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                        .child(div().text_xs().text_color(theme.muted_foreground).child(status.channel_note()))
+                        .children(unsupported.map(|text| div().text_xs().text_color(theme.warning).child(text)))
+                        .children(failure.map(|text| div().text_xs().text_color(theme.danger).child(text))),
+                )
+                .child(state)
+                .child(
+                    Button::new("check-for-update")
+                        .with_size(options.size())
+                        .label("Check now")
+                        .loading(status.checking)
+                        .disabled(status.checking)
+                        .on_click(move |_, _, cx| check_model.update(cx, |model, cx| model.check_for_update(cx))),
+                )
+        })
+        .keywords(["update", "upgrade", "version", "release", "latest"])
+    }
+
+    /// The newer version, when there is one: what it brings, the order to install in, and the way this install
+    /// gets it.
+    fn available_update_item(&self, cx: &App) -> Option<SettingItem> {
+        let status = self.model.read(cx).update().clone();
+        let (update, action) = (status.available?, status.action?);
+        let model = self.model.clone();
+        let item = SettingItem::render(move |options, _, cx| {
+            let theme = cx.theme().clone();
+            let security = update.critical.then(|| "It fixes a security problem.".to_owned());
+            let notes = [update.summary.clone(), update.steps(), security];
+            let get = match &action {
+                UpdateAction::Store(url) => {
+                    Link::new("update-store").href(url.clone()).child("Open Microsoft Store").into_any_element()
+                }
+                UpdateAction::Download(url) => Link::new("update-download")
+                    .href(url.clone())
+                    .child(format!("Download {}", update.next()))
+                    .into_any_element(),
+                UpdateAction::Command(command) => {
+                    let copied = command.clone();
+                    h_flex()
+                        .gap_2()
+                        .child(div().font_family(theme.mono_font_family.clone()).child(command.clone()))
+                        .child(
+                            Button::new("copy-update-command")
+                                .with_size(options.size())
+                                .icon(IconName::Copy)
+                                .label("Copy")
+                                .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))),
+                        )
+                        .into_any_element()
+                }
+            };
+            let skip = if update.critical {
+                None
+            } else if update.skipped {
+                Some(div().text_xs().text_color(theme.muted_foreground).child("Skipped").into_any_element())
+            } else {
+                let (skip_model, version) = (model.clone(), update.version.clone());
+                Some(
+                    Button::new("skip-update")
+                        .ghost()
+                        .with_size(options.size())
+                        .label("Skip this version")
+                        .on_click(move |_, _, cx| skip_model.update(cx, |model, cx| model.skip_update(&version, cx)))
+                        .into_any_element(),
+                )
+            };
+            let changes = update
+                .notes_url
+                .clone()
+                .map(|url| Link::new("update-notes").href(url).child("What changed").into_any_element());
+            h_flex()
+                .w_full()
+                .gap_3()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(format!("Version {}", update.version))
+                        .children(
+                            notes.into_iter().flatten().map(|note| div().text_xs().text_color(theme.muted_foreground).child(note)),
+                        ),
+                )
+                .children(changes)
+                .children(skip)
+                .child(get)
+        })
+        .keywords(["update", "upgrade", "download", "install"]);
+        Some(item)
     }
 }
 
@@ -693,9 +934,10 @@ impl Render for SettingsScreen {
         let pages = vec![
             self.appearance_page(cx),
             self.accounts_page(cx),
-            self.servers_page(),
+            self.servers_page(cx),
             self.https_page(),
             self.about_page(cx),
+            super::licenses::page(),
         ];
         div()
             .size_full()

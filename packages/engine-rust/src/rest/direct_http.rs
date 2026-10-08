@@ -27,7 +27,7 @@ pub fn header_pairs(headers: &Value) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-fn client() -> Result<&'static Client, String> {
+pub(crate) fn client() -> Result<&'static Client, String> {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     if let Some(client) = CLIENT.get() {
         return Ok(client);
@@ -44,7 +44,7 @@ fn client() -> Result<&'static Client, String> {
 }
 
 /// Node's wording for the failures a user meets most, the innermost message of the chain otherwise.
-fn describe_error(err: &reqwest::Error, host: &str, port: u16) -> String {
+pub(crate) fn describe_error(err: &reqwest::Error, host: &str, port: u16) -> String {
     let mut message = err.to_string();
     let mut source = std::error::Error::source(err);
     while let Some(inner) = source {

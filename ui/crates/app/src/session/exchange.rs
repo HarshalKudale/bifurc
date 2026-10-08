@@ -6,36 +6,33 @@
 //! The body is shown in a read-only code editor highlighted for its content type, either re-indented
 //! ("Pretty") or exactly as received ("Raw").
 
-use std::collections::HashSet;
-
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Editor, EditorState},
     tab::{Tab, TabBar},
     tag::Tag,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use serde_json::Value;
 
 use crate::{
     components::{
-        Syntax,
+        BodyPane, Syntax,
+        stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
         binary::{BinaryBody, save_to_file, suggested_file_name},
         page,
     },
     model::{
         http::{BodyEncoding, HttpResponse, pretty_json, status_text},
         media::{self, BodyClass},
-        traffic::clock_utc,
     },
 };
 
@@ -47,12 +44,6 @@ enum Section {
 }
 
 const SECTIONS: [Section; 3] = [Section::Body, Section::Headers, Section::Tests];
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BodyView {
-    Pretty,
-    Raw,
-}
 
 enum Phase {
     Idle,
@@ -117,12 +108,7 @@ pub fn grpc_status_name(code: i64) -> &'static str {
 pub struct Exchange {
     phase: Phase,
     section: Section,
-    body_view: BodyView,
-    body: Entity<EditorState>,
-    /// The body as received, and re-indented when that is possible. Both are kept so switching views does
-    /// not parse again.
-    raw_text: String,
-    pretty_text: Option<String>,
+    body: Entity<BodyPane>,
     /// The body as bytes, when it is an image or other data rather than text.
     binary: Option<BinaryBody>,
     /// What saving the body to a file came to, shown beside the button until the next response.
@@ -130,29 +116,26 @@ pub struct Exchange {
     live_scroll: ScrollHandle,
     follow_tail: bool,
     /// The live messages that are open, by id.
-    live_open: HashSet<String>,
+    live_open: OpenRows,
+    live_search: LogSearch,
 }
 
 impl Exchange {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let body = cx.new(|cx| {
-            let mut state =
-                EditorState::new(window, cx).language(Syntax::Plain.language()).line_number(true).soft_wrap(true);
-            state.set_readonly(true, cx);
-            state
-        });
+        let body = cx.new(|cx| BodyPane::new(window, cx));
         Self {
             phase: Phase::Idle,
             section: Section::Body,
-            body_view: BodyView::Pretty,
             body,
-            raw_text: String::new(),
-            pretty_text: None,
             binary: None,
             saved_note: None,
             live_scroll: ScrollHandle::new(),
             follow_tail: false,
-            live_open: HashSet::new(),
+            live_open: OpenRows::default(),
+            live_search: LogSearch::new(window, cx, |this, cx| {
+                this.live_open.highlight(&this.live_search.query(cx), cx);
+                cx.notify();
+            }),
         }
     }
 
@@ -177,7 +160,7 @@ impl Exchange {
     ) -> Option<u16> {
         self.binary = None;
         self.saved_note = None;
-        let (syntax, status) = match HttpResponse::from_value(result, encoding) {
+        let (raw, pretty, syntax, status) = match HttpResponse::from_value(result, encoding) {
             Some(response) => {
                 let content_type = response.content_type().unwrap_or_default().to_owned();
                 // An image is shown as an image even when its bytes happen to be text (SVG aside, which
@@ -201,22 +184,20 @@ impl Exchange {
                         other => other,
                     }
                 };
-                self.raw_text = response.display_body_raw();
-                self.pretty_text = (syntax == Syntax::Json).then(|| pretty_json(&response.body)).flatten();
+                let raw = response.display_body_raw();
+                let pretty = (syntax == Syntax::Json).then(|| pretty_json(&response.body)).flatten();
                 let status = response.status;
                 self.phase = Phase::Http(response);
-                (syntax, Some(status))
+                (raw, pretty, syntax, Some(status))
             }
             None => {
-                self.raw_text = serde_json::to_string(result).unwrap_or_default();
-                self.pretty_text = serde_json::to_string_pretty(result).ok();
                 self.phase = Phase::Raw;
-                (Syntax::Json, None)
+                let raw = serde_json::to_string(result).unwrap_or_default();
+                (raw, serde_json::to_string_pretty(result).ok(), Syntax::Json, None)
             }
         };
         self.section = Section::Body;
-        self.body.update(cx, |state, cx| state.set_highlighter(syntax.language(), cx));
-        self.show_body(window, cx);
+        self.body.update(cx, |body, cx| body.set(raw, pretty, syntax, window, cx));
         cx.notify();
         status
     }
@@ -291,28 +272,9 @@ impl Exchange {
             metadata,
             messages: responses.len(),
         });
-        self.raw_text = text;
-        self.pretty_text = None;
         self.section = Section::Body;
-        self.body.update(cx, |state, cx| state.set_highlighter(Syntax::Json.language(), cx));
-        self.show_body(window, cx);
+        self.body.update(cx, |body, cx| body.set(text, None, Syntax::Json, window, cx));
         cx.notify();
-    }
-
-    fn show_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = match (self.body_view, &self.pretty_text) {
-            (BodyView::Pretty, Some(pretty)) => pretty.clone(),
-            _ => self.raw_text.clone(),
-        };
-        self.body.update(cx, |state, cx| state.set_value(text, window, cx));
-    }
-
-    fn set_body_view(&mut self, view: BodyView, window: &mut Window, cx: &mut Context<Self>) {
-        if self.body_view != view {
-            self.body_view = view;
-            self.show_body(window, cx);
-            cx.notify();
-        }
     }
 
     fn tabs(&self, response: &HttpResponse, cx: &mut Context<Self>) -> TabBar {
@@ -341,42 +303,15 @@ impl Exchange {
         tag.child(if reason.is_empty() { response.status.to_string() } else { format!("{} {reason}", response.status) })
     }
 
-    /// The Pretty/Raw choice and Copy, shown above a body.
-    fn render_body_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_pretty = self.pretty_text.is_some();
-        h_flex()
-            .flex_none()
-            .px_3()
-            .py_2()
-            .gap_2()
-            .when(has_pretty, |this| {
-                this.child(
-                    TabBar::new("body-view")
-                        .segmented()
-                        .small()
-                        .selected_index(if self.body_view == BodyView::Pretty { 0 } else { 1 })
-                        .on_click(cx.listener(|this, ix: &usize, window, cx| {
-                            this.set_body_view(if *ix == 0 { BodyView::Pretty } else { BodyView::Raw }, window, cx)
-                        }))
-                        .child(Tab::new().label("Pretty"))
-                        .child(Tab::new().label("Raw")),
-                )
-            })
-            .child(div().flex_1())
-            .child(Button::new("copy-body").ghost().small().icon(IconName::Copy).label("Copy").on_click(cx.listener(
-                |this, _, _, cx| {
-                    let text = this.body.read(cx).value().to_string();
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                },
-            )))
+    fn render_body(&self) -> gpui_kit::AnyElement {
+        self.body.clone().into_any_element()
     }
 
-    fn render_body(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        v_flex()
-            .size_full()
-            .child(self.render_body_toolbar(cx))
-            .child(div().flex_1().min_h_0().child(Editor::new(&self.body).bordered(false).h_full()))
-            .into_any_element()
+    /// The search button of a single response: it opens the body's own find.
+    fn find_button(&self, enabled: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        search_button("find-in-body")
+            .disabled(!enabled)
+            .on_click(cx.listener(|this, _, _, cx| this.body.update(cx, |body, cx| body.find(cx))))
     }
 
     fn save_binary(&mut self, cx: &mut Context<Self>) {
@@ -438,7 +373,7 @@ impl Exchange {
                     format!("{} of data that can't be shown as text.", response.body_size_label()),
                 ),
                 Section::Body if response.size_bytes == 0 => page::empty("Empty body", "The response has no body."),
-                Section::Body => self.render_body(cx),
+                Section::Body => self.render_body(),
                 Section::Headers => v_flex()
                     .id("response-headers")
                     .overflow_y_scroll()
@@ -482,6 +417,10 @@ impl Exchange {
                     .into_any_element(),
             };
 
+        let can_find = self.section == Section::Body
+            && self.binary.is_none()
+            && !response.is_binary
+            && response.size_bytes != 0;
         v_flex()
             .size_full()
             .child(
@@ -497,7 +436,9 @@ impl Exchange {
                             .text_color(theme.muted_foreground)
                             .child(format!("{} ms", response.duration_ms)),
                     )
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(response.body_size_label())),
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(response.body_size_label()))
+                    .child(div().flex_1())
+                    .child(self.find_button(can_find, cx)),
             )
             .children(response.script_errors.iter().enumerate().map(|(ix, error)| {
                 div().px_3().pt_2().child(
@@ -511,75 +452,30 @@ impl Exchange {
 }
 
 impl Exchange {
-    /// One message of a live call: a line that opens to the whole message.
+    /// One message of a live call: the shared log row, which opens to the whole message.
     fn render_live_row(&self, entry: &LiveEntry, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme().clone();
-        let open = self.live_open.contains(&entry.id);
-        let compact = serde_json::from_str::<Value>(&entry.data)
-            .ok()
-            .and_then(|value| serde_json::to_string(&value).ok())
-            .unwrap_or_else(|| entry.data.split_whitespace().collect::<Vec<_>>().join(" "));
-        let chevron = Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
-            .small()
-            .text_color(theme.muted_foreground);
-        let direction = Icon::new(if entry.sent { IconName::ArrowRight } else { IconName::ArrowLeft })
-            .small()
-            .text_color(theme.muted_foreground);
+        let row = LogRow {
+            id: entry.id.clone(),
+            ts: entry.ts,
+            tag: if entry.sent { "Sent" } else { "Received" }.to_owned(),
+            outline: entry.sent,
+            way: Some(if entry.sent { Way::Sent } else { Way::Received }),
+            note: None,
+            data: entry.data.clone(),
+        };
         let id = entry.id.clone();
-        let row = h_flex()
-            .id(gpui_kit::ElementId::Name(format!("live-row-{}", entry.id).into()))
-            .w_full()
-            .gap_3()
-            .px_3()
-            .py_2()
-            .items_center()
-            .text_sm()
-            .cursor_pointer()
-            .hover(|style| style.bg(theme.muted))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if !this.live_open.remove(&id) {
-                    this.live_open.insert(id.clone());
-                }
+        log_row(
+            &row,
+            self.live_open.get(&entry.id),
+            cx.listener(move |this, _, window, cx| {
+                let Phase::GrpcLive(live) = &this.phase else { return };
+                let Some(entry) = live.entries.iter().find(|entry| entry.id == id) else { return };
+                let query = this.live_search.query(cx);
+                this.live_open.toggle(&id, &entry.data, &query, window, cx);
                 cx.notify();
-            }))
-            .child(div().size_4().flex_none().child(chevron))
-            .child(div().size_4().flex_none().child(direction))
-            .child(div().w_20().flex_none().child(if entry.sent {
-                Tag::secondary().small().outline().child("Sent")
-            } else {
-                Tag::secondary().small().child("Received")
-            }))
-            .child(div().w_20().flex_none().text_xs().text_color(theme.muted_foreground).child(clock_utc(entry.ts)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_xs()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_color(theme.muted_foreground)
-                    .child(compact),
-            );
-        let mut block = v_flex().w_full().border_b_1().border_color(theme.border).child(row);
-        if open {
-            block = block.child(
-                div().px_4().pb_3().child(
-                    div()
-                        .w_full()
-                        .p_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.muted)
-                        .text_xs()
-                        .font_family(theme.mono_font_family.clone())
-                        .child(entry.data.clone()),
-                ),
-            );
-        }
-        block.into_any_element()
+            }),
+            cx,
+        )
     }
 
     fn render_live(&mut self, live: &LiveCall, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -598,6 +494,14 @@ impl Exchange {
             Tag::success().child("OK")
         } else {
             Tag::danger().child(grpc_status_name(live.code))
+        };
+        let needle = self.live_search.needle(cx);
+        let shown: Vec<&LiveEntry> =
+            live.entries.iter().filter(|entry| found(needle.as_deref(), &[&entry.data])).collect();
+        let search_bar = if self.section == Section::Headers {
+            None
+        } else {
+            self.live_search.bar(shown.len(), live.entries.len(), cx)
         };
         let content = match self.section {
             Section::Headers if live.metadata.is_empty() => {
@@ -621,12 +525,13 @@ impl Exchange {
             _ if live.entries.is_empty() => {
                 page::empty(if live.running { "Waiting for messages" } else { "No messages" }, "Messages appear here as they are sent and received.")
             }
+            _ if shown.is_empty() => nothing_found(),
             _ => v_flex()
                 .id("grpc-live-log")
                 .track_scroll(&self.live_scroll)
                 .overflow_y_scroll()
                 .size_full()
-                .children(live.entries.iter().map(|entry| self.render_live_row(entry, cx)))
+                .children(shown.into_iter().map(|entry| self.render_live_row(entry, cx)))
                 .into_any_element(),
         };
         v_flex()
@@ -639,7 +544,14 @@ impl Exchange {
                     .gap_3()
                     .child(tag)
                     .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{received} received · {sent} sent")))
-                    .child(div().text_sm().text_color(theme.muted_foreground).child("times in UTC")),
+                    .child(div().text_sm().text_color(theme.muted_foreground).child("times in UTC"))
+                    .child(div().flex_1())
+                    .child(search_button("search-log").disabled(self.section == Section::Headers).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.live_search.toggle(window, cx);
+                            cx.notify();
+                        }),
+                    )),
             )
             .when(!live.running && !ok && !live.message.is_empty(), |this| {
                 this.child(div().px_3().pt_2().child(
@@ -660,6 +572,7 @@ impl Exchange {
                         .child(Tab::new().label(format!("Metadata ({})", live.metadata.len()))),
                 ),
             )
+            .children(search_bar.map(|bar| div().flex_none().pt_2().child(bar)))
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }
@@ -691,7 +604,7 @@ impl Exchange {
                 if ok { "No messages" } else { "No response" },
                 if ok { "The call finished without a message." } else { "The call failed before a message arrived." },
             ),
-            _ => self.render_body(cx),
+            _ => self.render_body(),
         };
         v_flex()
             .size_full()
@@ -706,7 +619,9 @@ impl Exchange {
                     .child(div().text_sm().text_color(theme.muted_foreground).child(match reply.messages {
                         1 => "1 message".to_owned(),
                         n => format!("{n} messages"),
-                    })),
+                    }))
+                    .child(div().flex_1())
+                    .child(self.find_button(self.section == Section::Body && reply.messages != 0, cx)),
             )
             .when(!ok && !reply.message.is_empty(), |this| {
                 this.child(div().px_3().pt_2().child(
@@ -751,7 +666,11 @@ impl Render for Exchange {
                 self.phase = Phase::Http(response);
                 element
             }
-            Phase::Raw => self.render_body(cx),
+            Phase::Raw => v_flex()
+                .size_full()
+                .child(h_flex().flex_none().px_3().pt_2().child(div().flex_1()).child(self.find_button(true, cx)))
+                .child(div().flex_1().min_h_0().child(self.render_body()))
+                .into_any_element(),
             Phase::GrpcLive(_) => {
                 let Phase::GrpcLive(live) = std::mem::replace(&mut self.phase, Phase::Idle) else { unreachable!() };
                 let element = self.render_live(&live, cx);

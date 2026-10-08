@@ -54,6 +54,8 @@ fn status_of(running: bool, port: u16, error: Option<String>, params: &Value) ->
     out.insert("running".to_string(), json!(running));
     out.insert("port".to_string(), json!(port));
     out.insert("error".to_string(), json!(error));
+    // Whether the listener speaks HTTPS: the toggle is on and the CA it needs is loaded.
+    out.insert("https".to_string(), json!(load_settings().tls_enabled() && crate::certificates::is_ca_loaded()));
     echo_workspace(params, &mut out);
     Value::Object(out)
 }

@@ -4,7 +4,7 @@
 
 use crate::kernel::CommandRegistry;
 
-/// Register every engine command except `engine.shutdown`, which belongs to the process (`runtime::host`).
+/// Register every engine command except `engine.shutdown` and `engine.companions`, which belong to the process (`runtime::host`).
 pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::workspace::blob::register(registry);
     crate::importexport::register(registry);
@@ -20,18 +20,22 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::graphql::register(registry);
     crate::soap::register(registry);
     crate::grpc::register(registry);
+    crate::sse::register(registry);
+    crate::socketio::register(registry);
+    crate::mcp::register(registry);
     crate::applications::register(registry);
     crate::gitops::register(registry);
     crate::websocket::register(registry);
     crate::capture::register(registry);
     crate::vault::register(registry);
+    crate::updates::register(registry);
 }
 
 /// The protocol commands no module has registered.
 pub fn unregistered_commands(registry: &CommandRegistry) -> Vec<&'static str> {
     crate::protocol::schema::command_names()
         .into_iter()
-        .filter(|name| *name != "engine.shutdown" && !registry.is_registered(name))
+        .filter(|name| *name != "engine.shutdown" && *name != "engine.companions" && !registry.is_registered(name))
         .collect()
 }
 

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::{
     git_lock::workspace_lock,
     git_sync_ops::{fetch_remote_head, perform_git_pull},
-    remote::{ensure_owner, git_net, workspace_auth},
+    remote::{Need, ensure_access, git_net, workspace_auth},
     sync_state::{emit, get_sync_config, get_sync_meta, save_sync_meta, set_state, sync_meta_value},
 };
 use crate::utils::{id::now_ms, json::str_of};
@@ -26,7 +26,7 @@ pub async fn sync_push(ws_id: &str) -> Value {
     emit(ws_id);
 
     let _guard = workspace_lock(ws_id).lock_owned().await;
-    let pushed = match ensure_owner(ws_id).await {
+    let pushed = match ensure_access(ws_id, Need::Push).await {
         Ok(()) => git_net(ws_id, &["push", "origin", &format!("HEAD:{}", str_of(&config, "branch"))]).await,
         Err(e) => Err(e),
     };
@@ -64,7 +64,7 @@ pub async fn sync_pull(ws_id: &str) -> Value {
     emit(ws_id);
 
     let _guard = workspace_lock(ws_id).lock_owned().await;
-    let pulled = match ensure_owner(ws_id).await {
+    let pulled = match ensure_access(ws_id, Need::Pull).await {
         Ok(()) => perform_git_pull(ws_id, str_of(&config, "branch")).await,
         Err(e) => Err(e),
     };

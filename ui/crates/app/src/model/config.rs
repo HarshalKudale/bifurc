@@ -45,6 +45,9 @@ pub struct SyncConfig {
     pub remote: String,
     /// `owner/name` on the host, when the engine knows it.
     pub repo: Option<String>,
+    /// The repository is someone else's and the workspace's account may only read it: what the remote gets
+    /// comes in, and what is changed here stays on this device.
+    pub read_only: bool,
 }
 
 /// What the mocks tree shows for a mock rule. The whole rule is loaded by id when its tab opens.
@@ -87,6 +90,8 @@ pub struct EngineSettings {
     pub tls_enabled: bool,
     /// Anonymous usage analytics are not turned off.
     pub telemetry_enabled: bool,
+    /// The engine looks for a newer version once a day.
+    pub update_check_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,9 +146,9 @@ pub struct RequestStub {
     pub deleted: bool,
 }
 
+/// A folder of the request tree. It holds requests of any type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FolderInfo {
-    pub kind: RequestKind,
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
@@ -167,6 +172,12 @@ pub struct ConfigSnapshot {
     pub deleted_rules: Vec<DeletedRule>,
     pub settings: EngineSettings,
 }
+
+/// The array of the request tree's folders in `config.get`.
+const REQUEST_FOLDERS_KEY: &str = "requestFolders";
+
+/// The `kind` of `folder.add` / `folder.rename` / `folder.delete` for a folder of the request tree.
+pub const REQUEST_FOLDER_KIND: &str = "request";
 
 fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
@@ -196,6 +207,7 @@ impl ConfigSnapshot {
                     Some(SyncConfig {
                         remote: non_empty(s, "remote")?,
                         repo: non_empty(s, "repo"),
+                        read_only: s.get("access").and_then(Value::as_str) == Some("read"),
                     })
                 });
                 let account = w.get("account").and_then(AccountInfo::from_value);
@@ -254,11 +266,12 @@ impl ConfigSnapshot {
                     deleted: is_deleted(stub),
                 });
             }
-            for folder in array(config, kind.folders_key()) {
-                let (Some(id), Some(name)) = (text(folder, "id"), text(folder, "name")) else { continue };
-                let parent_id = non_empty(folder, "parentId");
-                folders.push(FolderInfo { kind, id, name, parent_id, deleted: is_deleted(folder) });
-            }
+        }
+        // One tree of folders for every request type.
+        for folder in array(config, REQUEST_FOLDERS_KEY) {
+            let (Some(id), Some(name)) = (text(folder, "id"), text(folder, "name")) else { continue };
+            let parent_id = non_empty(folder, "parentId");
+            folders.push(FolderInfo { id, name, parent_id, deleted: is_deleted(folder) });
         }
 
         let port = |key: &str| config.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
@@ -319,6 +332,7 @@ impl ConfigSnapshot {
                 minimize_to_tray: flag("minimizeToTray"),
                 tls_enabled: flag("tlsEnabled"),
                 telemetry_enabled: config.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true),
+                update_check_enabled: config.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true),
             },
         })
     }
@@ -350,16 +364,16 @@ impl ConfigSnapshot {
         self.environments.iter().find(|e| e.is_global())
     }
 
-    pub fn folder(&self, kind: RequestKind, id: &str) -> Option<&FolderInfo> {
-        self.folders.iter().find(|f| f.kind == kind && f.id == id)
+    pub fn folder(&self, id: &str) -> Option<&FolderInfo> {
+        self.folders.iter().find(|f| f.id == id)
     }
 
-    /// The folders requests of `kind` are kept in. Each request type has its own. A deleted folder is not
-    /// one something can be kept in.
-    pub fn request_folder_rows(&self, kind: RequestKind) -> Vec<FolderRow<'_>> {
+    /// The folders requests are kept in, whatever their type. A deleted folder is not one something can be
+    /// kept in.
+    pub fn request_folder_rows(&self) -> Vec<FolderRow<'_>> {
         self.folders
             .iter()
-            .filter(|f| f.kind == kind && !f.deleted)
+            .filter(|f| !f.deleted)
             .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
             .collect()
     }
@@ -375,7 +389,9 @@ impl ConfigSnapshot {
 
 fn stub_target(kind: RequestKind, stub: &Value) -> String {
     match kind {
-        RequestKind::Rest | RequestKind::WebSocket => text(stub, "url").unwrap_or_default(),
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => {
+            text(stub, "url").unwrap_or_default()
+        }
         RequestKind::GraphQl | RequestKind::Soap => text(stub, "endpointUrl").unwrap_or_default(),
         RequestKind::Grpc => {
             let address = text(stub, "serverAddress").unwrap_or_default();
@@ -410,12 +426,20 @@ mod tests {
                 {"id": "r1", "name": "List users", "method": "GET", "url": "{{HOST}}/users", "folderId": "f1"},
                 {"id": "r2", "name": "Ping", "method": "POST", "url": "/ping"},
             ],
-            "requestFolders": [{"id": "f1", "name": "Users", "parentId": null}],
+            "requestFolders": [
+                {"id": "f1", "name": "Users", "parentId": null},
+                {"id": "wf", "name": "Live", "parentId": ""},
+                {"id": "ef", "name": "Streams", "parentId": "wf"},
+                {"id": "if", "name": "Realtime", "parentId": ""},
+                {"id": "mf", "name": "Servers", "parentId": ""},
+            ],
             "wsConnections": [{"id": "s1", "name": "Echo", "url": "wss://echo.test", "folderId": "wf"}],
-            "wsFolders": [{"id": "wf", "name": "Live", "parentId": ""}],
             "grpcRequests": [{"id": "g1", "name": "Say hi", "serverAddress": "localhost:50051",
                               "serviceName": "Greeter", "methodName": "SayHello"}],
             "graphqlRequests": [{"id": "q1", "name": "Me", "endpointUrl": "https://gql.test"}],
+            "sseRequests": [{"id": "e1", "name": "Feed", "url": "https://sse.test/events", "method": "GET", "folderId": "ef"}],
+            "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
+            "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
         })
     }
 
@@ -431,8 +455,44 @@ mod tests {
                 (RequestKind::GraphQl, "q1"),
                 (RequestKind::Grpc, "g1"),
                 (RequestKind::WebSocket, "s1"),
+                (RequestKind::Sse, "e1"),
+                (RequestKind::SocketIo, "i1"),
+                (RequestKind::Mcp, "m1"),
             ]
         );
+    }
+
+    #[test]
+    fn an_mcp_request_is_listed_like_any_other_request_in_the_request_folders() {
+        let c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let tools = c.request(RequestKind::Mcp, "m1").unwrap();
+        assert_eq!(tools.name, "Tools");
+        // Its target is the command that starts the server, or the server's address.
+        assert_eq!(tools.target, "npx my-server");
+        assert_eq!(tools.folder_id.as_deref(), Some("mf"));
+        assert_eq!(c.folder("mf").unwrap().parent_id, None);
+    }
+
+    #[test]
+    fn a_socketio_request_is_listed_like_any_other_request_in_the_request_folders() {
+        let c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let chat = c.request(RequestKind::SocketIo, "i1").unwrap();
+        assert_eq!(chat.name, "Chat");
+        assert_eq!(chat.target, "https://io.test");
+        assert_eq!(chat.folder_id.as_deref(), Some("if"));
+        assert_eq!(c.folder("if").unwrap().parent_id, None);
+    }
+
+    #[test]
+    fn an_sse_request_is_listed_like_any_other_request_in_the_request_folders() {
+        let c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let sse = c.request(RequestKind::Sse, "e1").unwrap();
+        assert_eq!(sse.name, "Feed");
+        assert_eq!(sse.target, "https://sse.test/events");
+        assert_eq!(sse.folder_id.as_deref(), Some("ef"));
+        // Its folder is in the folder a WebSocket is in: the folders are every type's.
+        assert_eq!(c.folder("ef").unwrap().parent_id.as_deref(), Some("wf"));
+        assert_eq!(c.request_folder_rows().len(), 5);
     }
 
     #[test]
@@ -457,8 +517,8 @@ mod tests {
     fn empty_ids_for_root_level_items_read_as_none() {
         let c = ConfigSnapshot::from_value(&sample()).unwrap();
         assert_eq!(c.request(RequestKind::Rest, "r2").unwrap().folder_id, None);
-        assert_eq!(c.folder(RequestKind::Rest, "f1").unwrap().parent_id, None);
-        assert_eq!(c.folder(RequestKind::WebSocket, "wf").unwrap().parent_id, None);
+        assert_eq!(c.folder("f1").unwrap().parent_id, None);
+        assert_eq!(c.folder("wf").unwrap().parent_id, None);
     }
 
     #[test]
@@ -467,6 +527,21 @@ mod tests {
         let names: Vec<_> = c.selectable_environments().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["Staging"]);
         assert_eq!(c.active_environment().unwrap().variables[0].key, "HOST");
+    }
+
+    #[test]
+    fn a_workspace_is_read_only_when_its_account_may_only_read_the_repository() {
+        let workspace = |sync: Value| {
+            let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W", "syncConfig": sync }] });
+            ConfigSnapshot::from_value(&config).unwrap().workspaces[0].clone()
+        };
+        let read_only = |sync: Value| workspace(sync).sync.map(|sync| sync.read_only);
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team", "access": "read" })), Some(true));
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team", "access": "write" })), Some(false));
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team", "access": "owner" })), Some(false));
+        // A remote assigned before access was recorded is its owner's.
+        assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team" })), Some(false));
+        assert_eq!(read_only(Value::Null), None);
     }
 
     #[test]

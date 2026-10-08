@@ -366,7 +366,7 @@ pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let id = account_id(ctx, &need(ctx.args.positional(2), "account login")?)?;
             let result = refused(ctx.request("account.repos", json!({ "accountId": id }))?)?;
             let rows: Vec<Value> = result.get("repos").and_then(Value::as_array).cloned().unwrap_or_default();
-            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["fullName", "private", "workspaceId"])))
+            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["fullName", "private", "access", "workspaceId"])))
         }
         other => Err(unknown_verb("account", other)),
     }

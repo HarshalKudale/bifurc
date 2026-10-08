@@ -13,11 +13,15 @@ pub mod error;
 pub mod format;
 pub mod health;
 pub mod locate;
+pub mod mcp;
 pub mod prompt;
 pub mod protocol;
 pub mod requests;
 pub mod session;
+pub mod socketio;
+pub mod stream;
 pub mod supervisor;
+pub mod update;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod usage;
