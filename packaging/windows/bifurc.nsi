@@ -3,7 +3,8 @@
 ;
 ; Running it asks nothing: one small borderless window (logo, title, status line, progress bar) installs
 ; into the per-user folder, starts Bifurc and closes. `/S` still installs silently and `/D=<dir>` still picks
-; the folder. The window is the installer's own progress page, restyled in InstallShow.
+; the folder. `/CHANNEL=<name>` is how a package manager that runs this installer says so (winget):
+; the name is kept in `install-channel`, and Bifurc then points at that package manager for its updates. The window is the installer's own progress page, restyled in InstallShow.
 ;
 ; makensis /DVERSION=0.4.0 /DSTAGE=<staged folder> /DOUT=<setup.exe> /DICON=<icon.ico> bifurc.nsi
 
@@ -197,6 +198,16 @@ Section "Install"
   File /r "${STAGE}\*.*"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
+  ; Kept from one install to the next: an update run by hand leaves the package manager's name where it is.
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/CHANNEL=" $1
+  ${IfNot} ${Errors}
+    FileOpen $2 "$INSTDIR\install-channel" w
+    FileWrite $2 "$1"
+    FileClose $2
+  ${EndIf}
+
   ${SetStatus} "Adding shortcuts..."
   CreateShortcut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\bifurc-ui.exe"
   CreateShortcut "$DESKTOP\${APP}.lnk" "$INSTDIR\bifurc-ui.exe"
@@ -242,6 +253,7 @@ Section "Uninstall"
   Delete "$INSTDIR\bifurc-tray.exe"
   Delete "$INSTDIR\bifurc-engine.exe"
   Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\install-channel"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR\bin"
   RMDir /r "$INSTDIR\runtime"

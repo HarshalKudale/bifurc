@@ -72,6 +72,11 @@ impl AppSettings {
         self.0.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true)
     }
 
+    /// `false` only when the user turned the daily look for a newer version off.
+    pub fn update_check_enabled(&self) -> bool {
+        self.0.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true)
+    }
+
     /// The terms of service were accepted on this data directory.
     pub fn terms_accepted(&self) -> bool {
         self.0.get("termsAcceptedAt").is_some_and(|at| !at.is_null())

@@ -413,6 +413,7 @@ impl WorkspaceHost {
             desktop.start();
         }
         crate::analytics::start(opts.transport.kind().as_str());
+        crate::updates::start();
 
         Ok(Self {
             opts,
@@ -446,6 +447,7 @@ impl WorkspaceHost {
         crate::gitops::stop_all_auto_sync();
         crate::capture::flush_capture();
         crate::analytics::stop().await;
+        crate::updates::stop();
         self.sweeper.abort();
         bind_forward_proxy(None);
         bind_edge(None);

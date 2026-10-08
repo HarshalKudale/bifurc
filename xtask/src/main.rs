@@ -16,14 +16,13 @@
 //! | `zip`      | windows  | `Bifurc-<version>-win-<arch>.zip`, the staged folder as it is             |
 //! | `winget`   | windows  | `manifests/winget/…`, the three files a winget-pkgs pull request holds    |
 //! | `scoop`    | windows  | `manifests/scoop/bifurc.json`                                             |
-//! | `choco`    | windows  | `manifests/chocolatey/…`, and `bifurc.<version>.nupkg` when `choco` is here |
 //! | `appimage` | linux    | `Bifurc-<version>-<arch>.AppImage`                                        |
 //! | `deb`      | linux    | `bifurc_<version>_<arch>.deb`                                             |
 //! | `tarball`  | linux    | `Bifurc-<version>-linux-<arch>.tar.gz`, the staged folder as it is        |
 //! | `aur`      | linux    | `manifests/aur/…`: `PKGBUILD`, `.SRCINFO`, `bifurc.install`               |
 //!
 //! A manifest names the file a package manager downloads and its hash, so its target builds that file too:
-//! `winget` and `choco` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
+//! `winget` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
 //! name on the GitHub release `--release-tag` names, in `GITHUB_REPOSITORY` (default: this repository).
 //!
 //! Every package is the same folder (`release/desktop/<platform>-unpacked`) in a different wrapper:
@@ -40,6 +39,10 @@
 //! `ui/crates/engine-client/src/sidecar.rs` and `ui/crates/cli/src/main.rs` look for exactly these paths
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
+//!
+//! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "nsis"}`): how the
+//! engine knows how this copy is updated (`packages/engine-rust/src/updates/channel.rs`). The staged folder
+//! itself has none, and is a build.
 
 use std::{
     env, fs,
@@ -74,13 +77,13 @@ fn scoop_arch() -> &'static str {
 }
 
 /// Every target of each platform, in the order they are made: a manifest after the file it describes.
-const WINDOWS_TARGETS: [&str; 6] = ["nsis", "msix", "zip", "winget", "scoop", "choco"];
+const WINDOWS_TARGETS: [&str; 5] = ["nsis", "msix", "zip", "winget", "scoop"];
 const LINUX_TARGETS: [&str; 4] = ["appimage", "deb", "tarball", "aur"];
 
 /// The package a manifest's target describes, which is built with it.
 fn needs(target: &str) -> Option<&'static str> {
     match target {
-        "winget" | "choco" => Some("nsis"),
+        "winget" => Some("nsis"),
         "scoop" => Some("zip"),
         "aur" => Some("tarball"),
         _ => None,
@@ -193,19 +196,18 @@ fn run() -> Result<()> {
     let staged = stage(&ctx)?;
     let mut made = vec![staged.clone()];
     if wanted("nsis") {
+        mark(&staged, "nsis")?;
         let installer = package_nsis(&ctx, &staged)?;
         made.push(installer.clone());
         if wanted("winget") {
             made.push(manifest_winget(&ctx, &installer)?);
-        }
-        if wanted("choco") {
-            made.push(manifest_choco(&ctx, &installer)?);
         }
     }
     if wanted("msix") {
         made.push(package_msix(&ctx, &staged)?);
     }
     if wanted("zip") {
+        mark(&staged, "zip")?;
         let zip = package_zip(&ctx, &staged)?;
         made.push(zip.clone());
         if wanted("scoop") {
@@ -225,6 +227,7 @@ fn run() -> Result<()> {
             made.push(manifest_aur(&ctx, &tarball)?);
         }
     }
+    let _ = fs::remove_file(install_marker(&staged));
     println!("\nBifurc {VERSION} (manifests download from {}):", ctx.asset_url(Path::new("")).trim_end_matches('/'));
     for file in made {
         println!("  {}", file.strip_prefix(&ctx.repo).unwrap_or(&file).display());
@@ -287,6 +290,15 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 
 fn write_file(path: &Path, text: &str) -> Result<()> {
     fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn install_marker(app: &Path) -> PathBuf {
+    app.join("resources").join("install.json")
+}
+
+/// Says in the app folder `app` which package it is in.
+fn mark(app: &Path, package: &str) -> Result<()> {
+    write_file(&install_marker(app), &format!("{{\"package\": \"{package}\"}}\n"))
 }
 
 #[cfg(unix)]
@@ -558,6 +570,7 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let layout = ctx.out_dir.join("msix-layout");
     empty_dir(&layout)?;
     copy_dir(staged, &layout)?;
+    mark(&layout, "msix")?;
     // The icons are indexed from a folder of their own, so indexing never reads file names in the layout as
     // resource qualifiers.
     let icons = ctx.out_dir.join("msix-icons");
@@ -602,7 +615,7 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Windows: portable zip, and the manifests of winget, Scoop and Chocolatey
+// Windows: portable zip, and the manifests of winget and Scoop
 // ---------------------------------------------------------------------------------------------------------
 
 /// The staged folder as a zip: what Scoop installs, and a Bifurc that runs from wherever it is unpacked.
@@ -652,30 +665,6 @@ fn manifest_scoop(ctx: &Ctx, zip: &Path) -> Result<PathBuf> {
     let out = dir.join("bifurc.json");
     write_file(&out, &manifest(ctx, "windows/scoop/bifurc.json", &values)?)?;
     Ok(out)
-}
-
-/// The Chocolatey package's source, and the package itself where `choco` is installed to pack it.
-fn manifest_choco(ctx: &Ctx, installer: &Path) -> Result<PathBuf> {
-    let dir = ctx.manifests().join("chocolatey");
-    empty_dir(&dir)?;
-    let (url, hash) = (ctx.asset_url(installer), sha256_of(installer)?);
-    let values = [("URL", url.as_str()), ("SHA256", hash.as_str())];
-    let nuspec = dir.join("bifurc.nuspec");
-    write_file(&nuspec, &manifest(ctx, "windows/chocolatey/bifurc.nuspec", &values)?)?;
-    fs::create_dir_all(dir.join("tools")).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for script in ["chocolateyinstall.ps1", "chocolateyuninstall.ps1"] {
-        write_file(&dir.join("tools").join(script), &manifest(ctx, &format!("windows/chocolatey/{script}"), &values)?)?;
-    }
-    let Some(choco) = on_path("choco") else {
-        println!("choco is not installed: the package source is written, pack it with `choco pack` in {}", dir.display());
-        return Ok(dir);
-    };
-    let out = ctx.out_dir.join(format!("bifurc.{VERSION}.nupkg"));
-    let _ = fs::remove_file(&out);
-    let mut pack = Command::new(choco);
-    pack.arg("pack").arg(&nuspec).arg("--outputdirectory").arg(&ctx.out_dir).current_dir(&dir);
-    exec(pack, true)?;
-    if out.exists() { Ok(out) } else { Err(format!("choco pack did not write {}", out.display())) }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -729,6 +718,7 @@ fn package_deb(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let usr = root.join("usr");
     let lib = usr.join("lib").join("bifurc");
     copy_dir(staged, &lib)?;
+    mark(&lib, "deb")?;
     symlink("../lib/bifurc/bin/bifurc", &usr.join("bin").join("bifurc"))?;
     symlink("../lib/bifurc/bin/bifurc-mcp", &usr.join("bin").join("bifurc-mcp"))?;
     let share = usr.join("share");
@@ -766,6 +756,7 @@ fn package_tarball(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     empty_dir(&parent)?;
     let name = format!("bifurc-{VERSION}");
     copy_dir(staged, &parent.join(&name))?;
+    mark(&parent.join(&name), "tarball")?;
     write_file(
         &parent.join(&name).join("bifurc.desktop"),
         &template(ctx, "linux/bifurc.desktop", &[("EXEC", "/usr/lib/bifurc/bifurc-ui")])?,
@@ -816,6 +807,7 @@ fn package_appimage(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let app_dir = ctx.out_dir.join("Bifurc.AppDir");
     empty_dir(&app_dir)?;
     copy_dir(staged, &app_dir.join("usr").join("lib").join("bifurc"))?;
+    mark(&app_dir.join("usr").join("lib").join("bifurc"), "appimage")?;
     // Rebuilding the same version must still replace what an earlier build of it unpacked.
     let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let build_id = format!("{VERSION}-{millis:x}");
