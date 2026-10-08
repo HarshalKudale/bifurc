@@ -2,11 +2,10 @@
 //! platform. Never a payload, a name, a URL or a path: the only identifier is a random id made for this data
 //! directory.
 //!
-//! Two kinds of event describe commands, and both come only from commands a client sends:
-//! - what [`events::describe`] makes of a command that succeeded (`mock created`, `request sent`), sent within
-//!   [`EVENTS_EVERY`];
-//! - one `command used` per (command, client, outcome) with a count, every [`TALLIES_EVERY`] flushes, so a
-//!   client that polls does not become an event per call.
+//! A command a client sends becomes at most one event ([`events::finished`]), sent within [`EVENTS_EVERY`]:
+//! - what [`events::describe`] makes of it when it succeeds (`mock created`, `request sent`);
+//! - its own name (`request.parseCurl`) when it succeeds and nothing describes it;
+//! - `command failed`, with its name and the error code, when it fails.
 //!
 //! Nothing is sent before the terms of service and the privacy policy were accepted on this data directory:
 //! accepting them is what allows analytics, so they begin with the acceptance ([`resume`]) and are on from
@@ -19,7 +18,7 @@
 
 pub mod events;
 
-use std::{collections::HashMap, sync::LazyLock, time::Duration};
+use std::{sync::LazyLock, time::Duration};
 
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -37,8 +36,6 @@ use crate::{
 
 const DEFAULT_HOST: &str = "https://us.i.posthog.com";
 const EVENTS_EVERY: Duration = Duration::from_secs(60);
-/// The command tallies go out with every tenth flush.
-const TALLIES_EVERY: u32 = 10;
 /// What an engine that cannot reach PostHog keeps; the oldest events go first.
 const MAX_QUEUED: usize = 500;
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -53,14 +50,6 @@ struct Target {
     install_id: String,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct Tally {
-    command: String,
-    client: String,
-    /// `ok`, or the error code.
-    outcome: String,
-}
-
 /// An event waiting to be sent.
 struct Queued {
     replaces: Option<String>,
@@ -73,7 +62,6 @@ struct State {
     target: Option<Target>,
     /// The transport of the engine that is running, from [`start`] until [`stop`].
     transport: Option<String>,
-    tallies: HashMap<Tally, u64>,
     queue: Vec<Queued>,
     flusher: Option<tokio::task::JoinHandle<()>>,
 }
@@ -167,19 +155,6 @@ fn event(target: &Target, name: &str, properties: Value) -> Value {
     json!({ "event": name, "distinct_id": target.install_id, "properties": merged(&common, &properties) })
 }
 
-fn command_events(target: &Target, tallies: &HashMap<Tally, u64>) -> Vec<Value> {
-    tallies
-        .iter()
-        .map(|(tally, count)| {
-            event(
-                target,
-                "command used",
-                json!({ "command": tally.command, "client": tally.client, "outcome": tally.outcome, "count": count }),
-            )
-        })
-        .collect()
-}
-
 async fn send(target: &Target, batch: Vec<Value>) -> Result<(), String> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::Client::builder().timeout(SEND_TIMEOUT).build().map_err(|e| e.to_string())?;
@@ -254,27 +229,14 @@ fn begin() {
         }
         let mut tick = tokio::time::interval(EVENTS_EVERY);
         tick.tick().await;
-        let mut flushes = 0u32;
         loop {
             tick.tick().await;
-            flushes += 1;
-            flush(flushes % TALLIES_EVERY == 0).await;
+            flush().await;
         }
     });
     let mut state = STATE.lock();
     state.target = Some(target);
     state.flusher = Some(flusher);
-}
-
-/// Count one finished command, if it is something a user does. `command` must be a registered command and
-/// `client` a known client name, so that nothing a caller made up is ever sent.
-pub fn record_command(command: &str, client: &str, outcome: &str) {
-    let mut state = STATE.lock();
-    if state.target.is_none() || !events::is_user_action(command) {
-        return;
-    }
-    let tally = Tally { command: command.to_string(), client: client.to_string(), outcome: outcome.to_string() };
-    *state.tallies.entry(tally).or_default() += 1;
 }
 
 fn enqueue(queue: &mut Vec<Queued>, item: Queued) {
@@ -293,29 +255,27 @@ pub fn describe(action: &str, payload: &Value) -> Option<events::Event> {
     events::describe(action, payload)
 }
 
-/// Queue the event of a command that succeeded with `result`.
-pub fn record_event(mut described: events::Event, action: &str, client: &str, result: &Value) {
-    if !events::complete(&mut described, action, result) {
-        return;
-    }
+/// Queue the one event of a finished command, if it has one. `described` is what [`describe`] said before the
+/// command ran, and `result` what it answered: its data, or its error code. `action` must be a registered
+/// command and `client` a known client name, so that nothing a caller made up is ever sent.
+pub fn record_command(described: Option<events::Event>, action: &str, client: &str, result: Result<&Value, &str>) {
     let mut state = STATE.lock();
     let Some(target) = &state.target else { return };
-    described.properties.insert("client".into(), json!(client));
-    let mut body = event(target, &described.name, Value::Object(described.properties));
+    let Some(mut finished) = events::finished(described, action, result) else { return };
+    finished.properties.insert("client".into(), json!(client));
+    let mut body = event(target, &finished.name, Value::Object(finished.properties));
     body["timestamp"] = json!(iso_string(now_ms()));
-    enqueue(&mut state.queue, Queued { replaces: described.replaces, event: body });
+    enqueue(&mut state.queue, Queued { replaces: finished.replaces, event: body });
 }
 
-/// Send the queued events, and the command tallies too if `with_tallies`. What could not be sent is kept for
-/// the next flush.
-pub async fn flush(with_tallies: bool) {
-    let (target, queue, tallies) = {
+/// Send the queued events. What could not be sent is kept for the next flush.
+pub async fn flush() {
+    let (target, queue) = {
         let mut state = STATE.lock();
         let Some(target) = state.target.clone() else { return };
-        let tallies = if with_tallies { std::mem::take(&mut state.tallies) } else { HashMap::new() };
-        (target, std::mem::take(&mut state.queue), tallies)
+        (target, std::mem::take(&mut state.queue))
     };
-    if queue.is_empty() && tallies.is_empty() {
+    if queue.is_empty() {
         return;
     }
     if opted_out() {
@@ -323,13 +283,9 @@ pub async fn flush(with_tallies: bool) {
         STATE.lock().target = None;
         return;
     }
-    let mut batch: Vec<Value> = queue.iter().map(|queued| queued.event.clone()).collect();
-    batch.extend(command_events(&target, &tallies));
+    let batch: Vec<Value> = queue.iter().map(|queued| queued.event.clone()).collect();
     if send(&target, batch).await.is_err() {
         let mut state = STATE.lock();
-        for (tally, count) in tallies {
-            *state.tallies.entry(tally).or_default() += count;
-        }
         let newer = std::mem::replace(&mut state.queue, queue);
         for item in newer {
             enqueue(&mut state.queue, item);
@@ -343,11 +299,10 @@ pub async fn stop() {
     if let Some(flusher) = flusher {
         flusher.abort();
     }
-    let _ = tokio::time::timeout(SHUTDOWN_FLUSH, flush(true)).await;
+    let _ = tokio::time::timeout(SHUTDOWN_FLUSH, flush()).await;
     let mut state = STATE.lock();
     state.target = None;
     state.transport = None;
-    state.tallies.clear();
     state.queue.clear();
 }
 
@@ -382,34 +337,19 @@ mod tests {
     }
 
     #[test]
-    fn a_command_event_carries_only_names_and_a_count() {
+    fn an_event_carries_the_install_and_nothing_about_the_person() {
         let target = Target { key: "phc_test".into(), host: DEFAULT_HOST.into(), install_id: "install-1".into() };
-        let tally = Tally { command: "request.send".into(), client: "cli".into(), outcome: "ok".into() };
-        let events = command_events(&target, &HashMap::from([(tally, 3)]));
+        let sent = event(&target, "request.parseCurl", json!({ "client": "cli" }));
 
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["event"], "command used");
-        assert_eq!(events[0]["distinct_id"], "install-1");
-        let properties = events[0]["properties"].as_object().unwrap();
+        assert_eq!(sent["event"], "request.parseCurl");
+        assert_eq!(sent["distinct_id"], "install-1");
+        let properties = sent["properties"].as_object().unwrap();
         let mut keys: Vec<&str> = properties.keys().map(String::as_str).collect();
         keys.sort_unstable();
         assert_eq!(
             keys,
-            [
-                "$geoip_disable",
-                "$lib",
-                "$process_person_profile",
-                "arch",
-                "client",
-                "command",
-                "count",
-                "engine_version",
-                "os",
-                "outcome"
-            ]
+            ["$geoip_disable", "$lib", "$process_person_profile", "arch", "client", "engine_version", "os"]
         );
-        assert_eq!(properties["command"], "request.send");
-        assert_eq!(properties["count"], 3);
         assert_eq!(properties["$process_person_profile"], false);
     }
 
