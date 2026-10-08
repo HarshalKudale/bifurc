@@ -88,7 +88,7 @@ fn needs(target: &str) -> Option<&'static str> {
 }
 
 const DEFAULT_REPOSITORY: &str = "HarshalKudale/bifurc";
-const HOMEPAGE: &str = "https://bifurc.harshalkudale.com";
+const HOMEPAGE: &str = "https://bifurc.app";
 const PUBLISHER: &str = "Harshal Kudale";
 /// A package's maintainer field wants an address; this one reaches the maintainer through GitHub.
 const MAINTAINER_EMAIL: &str = "HarshalKudale@users.noreply.github.com";
