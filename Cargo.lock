@@ -229,7 +229,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "bifurc-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bifurc-protocol",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-engine"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bifurc-cli",
  "rmcp",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-protocol"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3398,7 +3398,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "sha2",
 ]
