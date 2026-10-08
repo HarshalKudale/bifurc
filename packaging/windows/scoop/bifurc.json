@@ -12,7 +12,7 @@
             "hash": "{{SHA256}}"
         }
     },
-    "bin": ["bin\\bifurc.exe", "bin\\bifurc-mcp.exe"],
+    "bin": ["bin\\bifurc.exe"],
     "shortcuts": [
         [
             "bifurc-ui.exe",
