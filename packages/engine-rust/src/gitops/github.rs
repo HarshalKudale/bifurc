@@ -1,5 +1,5 @@
 //! The GitHub calls the engine makes: the device sign-in, who a token belongs to, and the repositories that
-//! person owns.
+//! person owns or was given access to.
 //!
 //! Sign-in is the OAuth device flow: it needs a client id and no secret, so it works from a desktop app. The
 //! id comes from `BIFURC_GITHUB_CLIENT_ID` (when the engine runs, else when it was built) or from
@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::{
+    features::team_sync,
     utils::json::{array_of, bool_of, str_of},
     workspace::settings::load_settings,
 };
@@ -229,6 +230,8 @@ pub struct Repo {
     pub name: String,
     pub owner_id: u64,
     pub owner_login: String,
+    /// Whether the person asking may push to it, where GitHub said (`permissions.push`).
+    pub can_push: Option<bool>,
     pub private: bool,
     pub description: String,
     pub clone_url: String,
@@ -249,6 +252,7 @@ impl Repo {
             name: str_of(value, "name").to_string(),
             owner_id: value.pointer("/owner/id").and_then(Value::as_u64)?,
             owner_login: value.pointer("/owner/login").and_then(Value::as_str).unwrap_or_default().to_string(),
+            can_push: value.pointer("/permissions/push").and_then(Value::as_bool),
             private: bool_of(value, "private", false),
             description: str_of(value, "description").to_string(),
             clone_url: str_of(value, "clone_url").to_string(),
@@ -264,21 +268,23 @@ impl Repo {
 
     pub fn public(&self) -> Value {
         json!({
-            "fullName": self.full_name, "name": self.name, "private": self.private,
+            "fullName": self.full_name, "name": self.name, "owner": self.owner_login, "private": self.private,
             "description": self.description, "url": self.html_url, "updatedAt": self.updated_at,
             "isWorkspace": self.is_workspace,
         })
     }
 }
 
-/// The repositories the signed-in person owns themselves, most recently updated first. Ones they were only
-/// given access to are not listed: a workspace is used by its owner alone.
-pub async fn list_owned_repos(token: &str) -> Result<Vec<Repo>, String> {
+/// The repositories the signed-in person can have a workspace in, most recently updated first. With team
+/// sync those are the ones they own and the ones they were given access to, as a collaborator or through an
+/// organization; without it only the ones they own themselves, a workspace being its owner's alone.
+pub async fn list_repos(token: &str) -> Result<Vec<Repo>, String> {
     const PER_PAGE: usize = 100;
     const MAX_PAGES: usize = 10;
+    let affiliation = if team_sync() { "owner,collaborator,organization_member" } else { "owner" };
     let mut repos = Vec::new();
     for page in 1..=MAX_PAGES {
-        let path = format!("/user/repos?affiliation=owner&sort=updated&per_page={PER_PAGE}&page={page}");
+        let path = format!("/user/repos?affiliation={affiliation}&sort=updated&per_page={PER_PAGE}&page={page}");
         let (status, body) = api(reqwest::Method::GET, token, &path, None).await?;
         let Some(items) = body.as_array().filter(|_| status == 200) else { return Err(api_error(status, &body)) };
         repos.extend(items.iter().filter_map(Repo::from_value));
