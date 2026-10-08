@@ -31,6 +31,7 @@ pub mod services;
 pub mod soap;
 pub mod socketio;
 pub mod transport;
+pub mod updates;
 pub mod utils;
 pub mod vault;
 pub mod websocket;

@@ -362,6 +362,7 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         "minimizeToTray": raw.get("minimizeToTray").cloned().unwrap_or(Value::Null),
         "tlsEnabled": settings.tls_enabled(),
         "telemetryEnabled": settings.telemetry_enabled(),
+        "updateCheckEnabled": settings.update_check_enabled(),
         "tlsCaCertPath": settings.tls_ca_cert_path(),
         "tlsCaKeyPath": settings.tls_ca_key_path(),
         "workspaces": workspaces,

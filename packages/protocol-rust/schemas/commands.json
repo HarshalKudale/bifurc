@@ -554,6 +554,9 @@
     "telemetryEnabled": {
      "type": "boolean"
     },
+    "updateCheckEnabled": {
+     "type": "boolean"
+    },
     "tlsCaCertPath": {
      "type": [
       "string",
@@ -2807,6 +2810,29 @@
      "type": "boolean"
     }
    },
+   "additionalProperties": false
+  },
+  "update.status": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "update.check": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "update.skip": {
+   "type": "object",
+   "properties": {
+    "version": {
+     "type": "string",
+     "minLength": 1
+    }
+   },
+   "required": [
+    "version"
+   ],
    "additionalProperties": false
   },
   "capture.list": {

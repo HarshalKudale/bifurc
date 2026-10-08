@@ -1308,6 +1308,24 @@
    "extra": true
   }
  },
+ "update.check": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "update.skip": {
+  "valid": {
+   "version": "0.6.0"
+  },
+  "invalid": {}
+ },
+ "update.status": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "vault.changePassphrase": {
   "valid": {
    "workspaceId": "x",
