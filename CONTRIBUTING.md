@@ -47,4 +47,4 @@ By submitting a contribution, you confirm that:
 
 ## Need help?
 
-Open an issue or contact **bifurc@harshalkudale.com**.
+Open an issue or contact **contact@bifurc.app**.
