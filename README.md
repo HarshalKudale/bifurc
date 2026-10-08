@@ -1,5 +1,5 @@
 # Bifurc
-[![Website](https://img.shields.io/badge/Website-Bifurc-4F46E5?logo=googlechrome&logoColor=white)](https://bifurc.harshalkudale.com/)
+[![Website](https://img.shields.io/badge/Website-Bifurc-4F46E5?logo=googlechrome&logoColor=white)](https://bifurc.app/)
 [![Tests](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml/badge.svg)](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml)
 [![Latest Release](https://img.shields.io/github/v/release/HarshalKudale/bifurc?display_name=tag&sort=semver)](https://github.com/HarshalKudale/bifurc/releases/latest)
 [![GitHub Downloads](https://img.shields.io/github/downloads/HarshalKudale/bifurc/total)](https://github.com/HarshalKudale/bifurc/releases)

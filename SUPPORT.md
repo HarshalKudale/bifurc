@@ -23,4 +23,4 @@ If you need:
 - larger-team licensing
 - direct commercial distribution rights
 
-contact the author at **bifurc@harshalkudale.com**.
+contact the author at **contact@bifurc.app**.

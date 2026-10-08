@@ -14,9 +14,9 @@ pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
 /// Where the terms of service a first run asks the user to accept are published.
-pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.harshalkudale.com/tos";
+pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.app/tos";
 /// Where the privacy policy a first run asks the user to accept is published.
-pub const PRIVACY_POLICY_URL: &str = "https://bifurc.harshalkudale.com/privacy";
+pub const PRIVACY_POLICY_URL: &str = "https://bifurc.app/privacy";
 
 /// The settings object. Read fields through the accessors; mutate through [`AppSettings::set`] or
 /// [`AppSettings::as_value_mut`].
