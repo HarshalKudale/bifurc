@@ -5,7 +5,7 @@ members = ["crates/engine-client", "crates/app", "crates/tray", "crates/cli"]
 [workspace.package]
 version = "0.5.0"
 edition = "2024"
-license = "SEE LICENSE IN LICENSE"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 authors = ["Harshal Kudale"]
 
 [profile.release]
