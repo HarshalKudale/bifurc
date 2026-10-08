@@ -3,7 +3,7 @@
 [![Tests](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml/badge.svg)](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml)
 [![Latest Release](https://img.shields.io/github/v/release/HarshalKudale/bifurc?display_name=tag&sort=semver)](https://github.com/HarshalKudale/bifurc/releases/latest)
 [![GitHub Downloads](https://img.shields.io/github/downloads/HarshalKudale/bifurc/total)](https://github.com/HarshalKudale/bifurc/releases)
-[![License](https://img.shields.io/github/license/HarshalKudale/bifurc)](https://github.com/HarshalKudale/bifurc/blob/master/LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/HarshalKudale/bifurc?style=flat)](https://github.com/HarshalKudale/bifurc/stargazers)
 
 **Bifurc is a desktop API development workspace for localhost routing, capture, mocking, protocol testing, and git-backed configuration.**
@@ -102,8 +102,8 @@ cargo test --workspace --manifest-path ui/Cargo.toml    # UI
 
 ## Licensing
 
-Bifurc is **free for individual developers and teams of up to 10 users**.
+Bifurc is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
-You may use it, fork it publicly, and contribute pull requests under the repository license. Commercial products, enterprise/private-fork usage, and organizations beyond the free community grant require written permission and a paid license from the author.
+You may read, build, run, and modify the code for personal, non-commercial use. You may not resell it, repackage it, or use it to build commercial products or generate profit. The source is public so you can verify what the app does.
 
-See [LICENSE](LICENSE) for the full terms.
+See [LICENSE](LICENSE) for the full terms. Questions: contact@bifurc.app.

@@ -5,6 +5,7 @@ pub mod audit;
 pub mod capture;
 pub mod environments;
 pub mod healthbar;
+pub mod licenses;
 pub mod mappings;
 pub mod mocks;
 pub mod proxy_rules;
