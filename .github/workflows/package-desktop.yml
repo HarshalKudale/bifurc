@@ -26,8 +26,17 @@ on:
         required: false
         type: string
 
+# Every artifact is attested (SLSA build provenance) so anyone can prove it came out of this workflow:
+#   gh attestation verify <file> --repo <owner>/<repo>
+# `id-token` and `attestations` are what signing the attestation needs; a caller must grant them too.
 permissions:
   contents: read
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
 
 jobs:
   windows:
@@ -42,6 +51,8 @@ jobs:
           workspaces: |
             .
             ui
+          shared-key: release
+          cache-on-failure: true
 
       # The Windows SDK (makeappx, makepri) and Chocolatey are on the runner image; NSIS no longer is.
       - name: Install NSIS
@@ -59,6 +70,14 @@ jobs:
           BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
           BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
         run: cargo xtask package ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/desktop/*-setup.exe
+            release/desktop/*.msix
+            release/desktop/*.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -83,6 +102,8 @@ jobs:
           workspaces: |
             .
             ui
+          shared-key: release
+          cache-on-failure: true
 
       # dpkg-dev reads the .deb's dependencies from the executables; it comes with build-essential.
       - name: Install GPUI's build dependencies
@@ -98,6 +119,14 @@ jobs:
           BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
           BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
         run: cargo xtask package ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/desktop/*.AppImage
+            release/desktop/*.deb
+            release/desktop/*.tar.gz
 
       # `.SRCINFO` is a hidden file, and it is one of the three the AUR package is.
       - uses: actions/upload-artifact@v4
