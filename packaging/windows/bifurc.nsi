@@ -176,6 +176,31 @@ Function InstallShow
   SendMessage $8 0x2001 0 ${BAR_TRACK}
 FunctionEnd
 
+; The Store package and this installer both put a `bifurc` command on the user's PATH, and the Store's alias
+; wins, so with both installed the command runs whichever is older. They also share the user's workspaces. So
+; this installer refuses to run beside the Store package; the person removes one first. The package registers
+; itself under the user's `AppModel\Repository\Packages`, named <identity>_<version>_<arch>__<publisher id>.
+!define STORE_PACKAGE_PREFIX "HarshalKudale.Bifurc_"
+Function .onInit
+  StrCpy $R0 0
+  ${Do}
+    EnumRegKey $R1 HKCU "Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages" $R0
+    ${If} $R1 == ""
+      ${Break}
+    ${EndIf}
+    StrCpy $R2 $R1 21
+    ${If} $R2 == "${STORE_PACKAGE_PREFIX}"
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "${APP} is already installed from the Microsoft Store.$\r$\n$\r$\nTwo copies would fight over the $\"bifurc$\" command. Uninstall the Store version (Settings > Apps), then run this installer again."
+      ${EndIf}
+      ; 3: another copy of the app is already installed (winget reports an installer's exit code as it is).
+      SetErrorLevel 3
+      Abort
+    ${EndIf}
+    IntOp $R0 $R0 + 1
+  ${Loop}
+FunctionEnd
+
 ; A running engine holds bifurc-engine.exe and the tray helper open, and the interface holds itself. Stopping the
 ; engine closes the interfaces attached to it; `--no-start` keeps the command from starting one to stop.
 !macro StopBifurc

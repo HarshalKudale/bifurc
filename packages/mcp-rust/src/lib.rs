@@ -14,7 +14,7 @@ pub const USAGE: &str = "Usage: bifurc-mcp [options]
 
 The Bifurc MCP server: the commands of the bifurc command line as tools for an AI agent, over stdio.
 It talks to the Bifurc engine that serves a data directory and starts one in the background if none is
-running, as bifurc does. Register it with an MCP host as a stdio server whose command is: bifurc-mcp
+running, as bifurc does. Register it with an MCP host as a stdio server whose command is `bifurc` with the single argument --mcp
 
 The everyday tools are listed to the agent; it finds the others with search_tools and runs them with
 call_tool. There is no tool that deletes, reads a secret, signs in or stops the engine.

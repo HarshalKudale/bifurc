@@ -5,6 +5,10 @@
 //! it finds the CLI the package laid out, runs it with the same arguments and streams, tells it where the
 //! packaged engine is, and exits with its code. It decides nothing about the engine.
 //!
+//! `bifurc --mcp`, on its own, starts the MCP server instead of the CLI. The server is a binary of its own
+//! (`packages/mcp-rust`) that a package keeps out of `PATH`: a Store package can alias one command, and a second
+//! application only for an alias is refused as headless. So the one command is the way to it.
+//!
 //! An installer also uses it to put its own folder on the user's `PATH` (`--register-path`) and to take it
 //! off again (`--unregister-path`), because that folder is the one thing this executable always knows.
 
@@ -16,6 +20,9 @@ use std::{
 
 /// The Rust CLI inside an install, relative to the folder above `bin/`; the engine is at that folder's top.
 const PACKAGED_CLI: &str = "resources/bifurc-cli";
+const PACKAGED_MCP: &str = "resources/bifurc-mcp";
+/// The flag that selects the MCP server. It stands alone: the server takes no options through this command.
+const MCP_FLAG: &str = "--mcp";
 const PACKAGED_ENGINE: &str = "bifurc-engine";
 
 fn main() -> ExitCode {
@@ -35,10 +42,19 @@ fn main() -> ExitCode {
         }
     }
 
-    let Some((cli, engine)) = locate(&bin_dir, &exe) else {
+    let mcp = args.first().is_some_and(|arg| arg == MCP_FLAG);
+    if mcp && args.len() > 1 {
+        eprintln!("bifurc: {MCP_FLAG} starts the MCP server and cannot be combined with other options or commands");
+        return ExitCode::from(2);
+    }
+    // The MCP server takes no options through this command.
+    let (packaged, built, package, args) =
+        if mcp { (PACKAGED_MCP, "bifurc-mcp", "bifurc-mcp", Vec::new()) } else { (PACKAGED_CLI, "bifurc", "bifurc-cli", args) };
+
+    let Some((cli, engine)) = locate(&bin_dir, &exe, packaged, built) else {
         eprintln!(
-            "bifurc: could not find the CLI ({PACKAGED_CLI} beside this command, or a bifurc build in a target/ above it). \
-             Reinstall Bifurc, or build it with `cargo build -p bifurc-cli` at the repository root."
+            "bifurc: could not find {packaged} beside this command, or a {built} build in a target/ above it. \
+             Reinstall Bifurc, or build it with `cargo build -p {package}` at the repository root."
         );
         return ExitCode::FAILURE;
     };
@@ -54,10 +70,10 @@ fn main() -> ExitCode {
 /// The CLI to run and, for an install, the engine it should start: the installed layout first (this executable
 /// is in `bin/`, under the folder that holds `resources/`), then the newest `bifurc` build in a `target/` above
 /// a checkout's launcher. That build finds its own engine; the launcher itself is skipped.
-fn locate(bin_dir: &Path, this: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+fn locate(bin_dir: &Path, this: &Path, packaged: &str, built: &str) -> Option<(PathBuf, Option<PathBuf>)> {
     let suffix = env::consts::EXE_SUFFIX;
     if let Some(root) = bin_dir.parent() {
-        let cli = root.join(format!("{PACKAGED_CLI}{suffix}"));
+        let cli = root.join(format!("{packaged}{suffix}"));
         if cli.is_file() {
             return Some((cli, Some(root.join(format!("{PACKAGED_ENGINE}{suffix}")))));
         }
@@ -67,7 +83,7 @@ fn locate(bin_dir: &Path, this: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
         .ancestors()
         // Only the repository root: `ui/target` holds launchers of this very kind, not the CLI.
         .filter(|dir| dir.join("packages").join("cli-rust").is_dir())
-        .flat_map(|dir| ["release", "debug"].map(|profile| dir.join("target").join(profile).join(format!("bifurc{suffix}"))))
+        .flat_map(|dir| ["release", "debug"].map(|profile| dir.join("target").join(profile).join(format!("{built}{suffix}"))))
         .filter(|candidate| candidate.is_file() && candidate.canonicalize().ok() != this)
         .filter_map(|candidate| Some((std::fs::metadata(&candidate).ok()?.modified().ok()?, candidate)))
         .max_by_key(|(modified, _)| *modified)

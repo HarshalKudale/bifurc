@@ -32,7 +32,7 @@
 //! bifurc-engine[.exe]  the engine
 //! bifurc-tray.exe      the engine's tray icon (Windows)
 //! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
-//! bin/bifurc-mcp[.exe] the `bifurc-mcp` command: the MCP server (`packages/mcp-rust`), on PATH beside it
+//! resources/bifurc-mcp[.exe]  the MCP server (`packages/mcp-rust`), started by `bifurc --mcp`; not on PATH
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
 //! ```
 //!
@@ -469,11 +469,11 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
     // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli-rust/src/locate.rs`).
-    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"), true)?, &dir.join("bin").join(format!("bifurc-mcp{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-mcp{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"), true)?, &dir.join(format!("bifurc-engine{EXE}")))?;
     copy_file(&ctx.repo.join("build").join("icon.png"), &dir.join("resources").join("icon.png"))?;
     copy_file(&ctx.repo.join("LICENSE"), &dir.join("LICENSE"))?;
-    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("bin/bifurc-mcp{EXE}"), format!("resources/bifurc-cli{EXE}")] {
+    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("resources/bifurc-mcp{EXE}"), format!("resources/bifurc-cli{EXE}")] {
         make_executable(&dir.join(file))?;
     }
     smoke_test(&dir)?;
@@ -489,7 +489,7 @@ fn smoke_test(dir: &Path) -> Result<()> {
         Ok(out) => return Err(format!("the staged CLI does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged CLI does not run:\n{e}")),
     }
-    let mcp = Command::new(dir.join("bin").join(format!("bifurc-mcp{EXE}"))).arg("--version").output();
+    let mcp = Command::new(dir.join("resources").join(format!("bifurc-mcp{EXE}"))).arg("--version").output();
     match mcp {
         Ok(out) if out.status.success() => {}
         Ok(out) => return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
@@ -677,7 +677,7 @@ fn staged_executables(dir: &Path) -> [PathBuf; 5] {
         dir.join("bifurc-ui"),
         dir.join("bifurc-engine"),
         dir.join("bin").join("bifurc"),
-        dir.join("bin").join("bifurc-mcp"),
+        dir.join("resources").join("bifurc-mcp"),
         dir.join("resources").join("bifurc-cli"),
     ]
 }
@@ -720,7 +720,6 @@ fn package_deb(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     copy_dir(staged, &lib)?;
     mark(&lib, "deb")?;
     symlink("../lib/bifurc/bin/bifurc", &usr.join("bin").join("bifurc"))?;
-    symlink("../lib/bifurc/bin/bifurc-mcp", &usr.join("bin").join("bifurc-mcp"))?;
     let share = usr.join("share");
     fs::create_dir_all(share.join("applications")).map_err(|e| format!("{}: {e}", share.display()))?;
     write_file(
