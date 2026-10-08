@@ -300,11 +300,8 @@ impl Session {
             let described = crate::analytics::describe(&action, &payload);
             let result = registry.invoke(&action, payload, ctx).await;
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
-                let outcome = result.as_ref().err().map_or("ok", |error| error.code.as_str());
-                crate::analytics::record_command(&action, &client, outcome);
-                if let (Some(described), Ok(data)) = (described, &result) {
-                    crate::analytics::record_event(described, &action, &client, data);
-                }
+                let outcome = result.as_ref().map_err(|error| error.code.as_str());
+                crate::analytics::record_command(described, &action, &client, outcome);
             }
             let reply = match result {
                 Ok(data) => success(&id, data),
