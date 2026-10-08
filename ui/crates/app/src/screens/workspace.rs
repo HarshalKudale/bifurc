@@ -67,6 +67,8 @@ struct SyncInfo {
     progress: Option<String>,
     /// The login of the account that owns the workspace: its repository's owner once it has one.
     owner: Option<String>,
+    /// What the workspace's account may do with the repository: `owner`, `write` or `read`.
+    access: Option<String>,
 }
 
 impl SyncInfo {
@@ -80,6 +82,7 @@ impl SyncInfo {
             last_pulled: time("lastPulledAt"),
             progress: text("progressMessage"),
             owner: value.pointer("/owner/login").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
+            access: text("access"),
         }
     }
 
@@ -114,7 +117,8 @@ pub struct WorkspaceScreen {
     name: Entity<InputState>,
     /// The workspace the inputs were filled for, and the name they were filled with.
     shown: (String, String),
-    /// The account and remote the sync state was read for; a publish or a sign-in changes them.
+    /// The account and remote the sync state was read for, with the access to the remote; a publish, a
+    /// sign-in or a change of access on GitHub changes them.
     link: (Option<String>, Option<String>),
     sync: SyncInfo,
     formats: Vec<(String, Vec<Format>)>,
@@ -179,7 +183,7 @@ impl WorkspaceScreen {
         let current = (workspace.id.clone(), workspace.name.clone());
         let link = (
             workspace.account.as_ref().map(|a| format!("{}:{}", a.id, a.signed_in)),
-            workspace.sync.as_ref().map(|s| s.remote.clone()),
+            workspace.sync.as_ref().map(|s| format!("{}:{}", s.remote, s.read_only)),
         );
         if self.link != link {
             self.link = link;
@@ -464,8 +468,37 @@ impl WorkspaceScreen {
                 "Owner",
                 format!("@{owner}"),
                 false,
-                Some("The account that owns the workspace's repository. Only the owner can import it or sync it."),
+                Some(if setup.team_sync {
+                    "The account that owns the workspace's repository. Whoever it shares the repository with on \
+                     GitHub can import the workspace, and sync it if they were given write access."
+                } else {
+                    "The account that owns the workspace's repository. Only the owner can import it or sync it."
+                }),
             ));
+        }
+        // Said only where it is not the owner's own: what someone else gave this account.
+        match sync.access.as_deref().filter(|_| workspace.sync.is_some()) {
+            Some("read") => {
+                account_group = account_group.item(Self::fact(
+                    "Access",
+                    "Read-only".to_owned(),
+                    false,
+                    Some(
+                        "Your account may read the repository and not push to it. What it gets is pulled, and what \
+                         you change is saved on this device only. Access is checked again every few minutes, and \
+                         whenever you pull.",
+                    ),
+                ));
+            }
+            Some("write") => {
+                account_group = account_group.item(Self::fact(
+                    "Access",
+                    "Read and write".to_owned(),
+                    false,
+                    Some("Your account was given write access to the repository, so the workspace syncs both ways."),
+                ));
+            }
+            _ => {}
         }
         if let Some(account) = signed_out {
             let model = model.clone();
@@ -551,6 +584,7 @@ impl WorkspaceScreen {
             _ => "Idle",
         };
         let working = sync.is_working();
+        let read_only = config.read_only;
         let (pull, push) = (this.clone(), this.clone());
         let status_group = SettingGroup::new().title("Status").item(SettingItem::render(move |options, _, cx| {
             let theme = cx.theme().clone();
@@ -587,7 +621,7 @@ impl WorkspaceScreen {
                                 .with_size(options.size())
                                 .icon(IconName::ArrowUp)
                                 .label("Push")
-                                .disabled(working)
+                                .disabled(working || read_only)
                                 .on_click(move |_, _, cx| {
                                     push.update(cx, |this, cx| this.run_sync("sync.push", "Couldn't push.", cx)).ok();
                                 }),
@@ -611,14 +645,22 @@ impl WorkspaceScreen {
         let deleted = git.files.values().filter(|s| **s == FileState::Deleted).count();
         let unpushed = git.has_remote && git.ahead;
         let busy = self.model.read(cx).is_publishing() || self.sync.is_working();
+        let read_only = self.model.read(cx).is_read_only();
         let progress = self.sync.progress.clone().filter(|_| self.sync.is_working());
         let count = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
         let mut summary = match (waiting, unpushed) {
+            (0, _) if read_only => "Nothing was changed here.".to_owned(),
+            (n, _) if read_only => format!("{} saved on this device only.", count(n, "change is", "changes are")),
             (0, true) => "Everything is committed. Commits are waiting to be pushed.".to_owned(),
             (0, false) => "Everything is synced.".to_owned(),
             (n, _) => format!("{} not synced yet.", count(n, "item is", "items are")),
         };
-        if deleted > 0 {
+        if deleted > 0 && read_only {
+            summary.push_str(&format!(
+                " {} be reverted where it was deleted.",
+                count(deleted, "deletion can", "deletions can")
+            ));
+        } else if deleted > 0 {
             summary.push_str(&format!(
                 " {} to be confirmed or reverted where it was deleted.",
                 count(deleted, "deletion waits", "deletions wait")
@@ -645,12 +687,15 @@ impl WorkspaceScreen {
                             .icon(IconName::Github)
                             .label("Sync all")
                             .loading(busy)
-                            .disabled(busy || (waiting == 0 && !unpushed))
+                            .disabled(busy || read_only || (waiting == 0 && !unpushed))
                             .on_click(move |_, _, cx| model.update(cx, |model, cx| model.sync_all(cx))),
                     )
             }))
             .footer(move |_, _| {
-                if has_remote {
+                if read_only {
+                    "This workspace is read-only: your account has read access to its repository. Ask the owner \
+                     for write access to sync what you change."
+                } else if has_remote {
                     "Each new or changed item gets a commit of its own, then all of them are pushed together."
                 } else {
                     "Each new or changed item gets a commit of its own. Nothing leaves this computer until the \
@@ -857,5 +902,7 @@ mod tests {
         assert_eq!((info.last_pushed, info.last_pulled), (Some(5), None));
         assert_eq!(info.progress.as_deref(), Some("Fetching"));
         assert!(!SyncInfo::from_value(&json!({})).is_working());
+        assert_eq!(info.access, None);
+        assert_eq!(SyncInfo::from_value(&json!({ "access": "read" })).access.as_deref(), Some("read"));
     }
 }

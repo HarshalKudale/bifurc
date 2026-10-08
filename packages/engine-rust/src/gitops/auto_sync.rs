@@ -9,13 +9,20 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 use super::{
+    remote::{refresh_access, workspace_access},
     status_tracker::invalidate_cache,
     sync_manager::{get_remote_head, sync_pull},
     sync_state::get_sync_config,
 };
-use crate::runtime::{entity_status::emit_entity_status, instances::notify_config_changed};
+use crate::{
+    features::team_sync,
+    runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
+};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
+/// How many looks at the remote pass between two questions to GitHub about what the account may do with a
+/// repository that is someone else's: five minutes' worth. Access given or taken there shows by then.
+const ACCESS_CHECK_EVERY: u32 = 30;
 
 struct Poller {
     task: JoinHandle<()>,
@@ -49,11 +56,18 @@ pub fn start_auto_sync(ws_id: &str) {
         tokio::spawn(async move {
             // The first look pulls too: the remote may have moved while the engine was not running.
             let mut ticker = tokio::time::interval(POLL_INTERVAL);
+            let mut ticks: u32 = 0;
             loop {
                 ticker.tick().await;
                 if get_sync_config(&ws_id).is_none() {
                     stop_auto_sync(&ws_id);
                     return;
+                }
+                // The owner's access does not change; anyone else's is what the owner last made it.
+                ticks = ticks.wrapping_add(1);
+                let shared = workspace_access(&ws_id).is_some_and(|access| access != "owner");
+                if shared && team_sync() && ticks % ACCESS_CHECK_EVERY == 0 {
+                    let _ = refresh_access(&ws_id).await;
                 }
                 // Unreadable while offline or signed out: looked at again on the next tick.
                 let Some(head) = get_remote_head(&ws_id).await else { continue };
