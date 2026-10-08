@@ -8,12 +8,16 @@ pub mod explorer;
 pub mod git;
 pub mod http;
 pub mod kind;
+pub mod mcp;
 pub mod media;
 pub mod snippet;
 pub mod socket;
+pub mod socketio;
+pub mod stream;
 pub mod traffic;
 pub mod tree;
 pub mod trust;
+pub mod update;
 pub mod variables;
 pub mod vault;
 

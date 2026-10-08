@@ -11,16 +11,6 @@ You can support the project by:
 - sending pull requests
 - sharing the tool with other developers
 
-## Commercial and enterprise support
+## Licensing questions
 
-Bifurc is free for individual developers and teams of up to 10 users.
-
-If you need:
-
-- commercial usage rights
-- enterprise rollout
-- private-fork/internal deployment rights
-- larger-team licensing
-- direct commercial distribution rights
-
-contact the author at **bifurc@harshalkudale.com**.
+Bifurc is under the PolyForm Noncommercial License 1.0.0. If you are unsure whether your use is non-commercial, or want a commercial license, or want a separate agreement (for example to embed or redistribute it), contact the author at **contact@bifurc.app**.

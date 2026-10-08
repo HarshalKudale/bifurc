@@ -254,7 +254,7 @@ impl FolderRunner {
         self.model
             .read(cx)
             .config()
-            .folder(RequestKind::Rest, &self.folder_id)
+            .folder(&self.folder_id)
             .map(|folder| folder.name.clone())
             .unwrap_or_default()
             .into()

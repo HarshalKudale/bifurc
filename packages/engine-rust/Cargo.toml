@@ -54,6 +54,8 @@ flate2 = "1"
 brotli = "8"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 serde_yaml_ng = "0.10"
+# The local index of a workspace's request tree and mock tree.
+rusqlite = { version = "0.40", features = ["bundled"] }
 # The sandbox for request scripts, tests and proxy rule scripts.
 rquickjs = "0.14"
 
@@ -67,10 +69,22 @@ protox = "0.9"
 http = "1"
 bytes = "1"
 
+# MCP client: the official SDK speaks the protocol; the engine supplies the program and the HTTP client.
+rmcp = { version = "3.5", default-features = false, features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+    "reqwest-tls-no-provider",
+] }
+# Starts an MCP server program so that it ends with everything it started.
+process-wrap = { version = "10", features = ["tokio1"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+# The type process-wrap takes creation flags as.
+windows = { version = "0.62", features = ["Win32_System_Threading"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

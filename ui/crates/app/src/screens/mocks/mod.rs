@@ -37,12 +37,12 @@ use crate::{
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
         },
-        entity_bar, page, tab_strip,
+        entity_bar, page, tab_strip, tree_drag,
     },
     engine::{call, call_in, failure, patch_entity},
     model::{
         git::FileState,
-        tree::{FolderRow, ItemRow, TreeKey, TreeNode, build_tree, folder_path},
+        tree::{FolderRow, ItemRow, Moved, TreeKey, TreeNode, build_tree, can_move, folder_path},
     },
     panels::host::{HostPanel, PartView},
     preferences::Preferences,
@@ -83,6 +83,8 @@ pub struct MocksScreen {
     /// Folders the user has opened, by tree key, so a rebuild does not collapse them.
     expanded: HashSet<String>,
     selected: Option<String>,
+    /// The tree row being dragged, while a drag is on.
+    dragging: Option<TreeKey>,
     tabs: Vec<OpenTab>,
     active: Option<usize>,
     tab_scroll: VirtualListScrollHandle,
@@ -148,6 +150,7 @@ impl MocksScreen {
             tree,
             expanded: HashSet::new(),
             selected: None,
+            dragging: None,
             tabs: Vec::new(),
             active: None,
             tab_scroll: VirtualListScrollHandle::new(),
@@ -616,6 +619,55 @@ impl MocksScreen {
         );
     }
 
+    /// A tree row was picked up. Pressing a folder row opened or closed it before the press turned into a
+    /// drag: it is put back as it was.
+    fn drag_started(&mut self, key: TreeKey, cx: &mut Context<Self>) {
+        if matches!(key, TreeKey::Folder(_)) {
+            let id = key.encode();
+            if !self.expanded.remove(&id) {
+                self.expanded.insert(id);
+            }
+            self.rebuild(cx);
+        }
+        self.dragging = Some(key);
+        cx.notify();
+    }
+
+    /// A row was dropped on a folder, or on the top level: it is put there. The folder is opened, so the
+    /// row is seen landing. A mock that is open is moved by its own next write, so the tab and the file
+    /// cannot disagree about where it is.
+    fn move_node(&mut self, key: TreeKey, folder: Option<String>, cx: &mut Context<Self>) {
+        self.dragging = None;
+        if let Some(id) = &folder {
+            self.expanded.insert(TreeKey::Folder(id.clone()).encode());
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let workspace_id = model.workspace_id().to_owned();
+        match key {
+            TreeKey::Folder(id) => {
+                let payload = json!({ "kind": "mock", "id": id, "parentId": folder, "workspaceId": workspace_id });
+                call(&client, cx, "folder.move", payload, |this, outcome, cx| {
+                    if let Some(message) = failure(&outcome) {
+                        this.report("Couldn't move the folder.", message, cx);
+                    }
+                });
+            }
+            TreeKey::Item(id) => {
+                if let Some(tab) = self.tabs.iter().find(|tab| tab.key == TabKey::Saved(id.clone())) {
+                    return tab.editor.clone().update(cx, |editor, cx| editor.set_folder(folder, cx));
+                }
+                let mut patch = Map::new();
+                patch.insert("folderId".into(), json!(folder));
+                patch_entity(&client, cx, &workspace_id, "mocks", &id, patch, |this, outcome, cx| {
+                    if let Err(message) = outcome {
+                        this.report("Couldn't move the mock.", message, cx);
+                    }
+                });
+            }
+        }
+    }
+
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
         let (what, consequence) = match &key {
@@ -652,6 +704,20 @@ impl MocksScreen {
         let config = self.model.read(cx).config();
         let has_mocks = !config.mocks.is_empty() || !config.mock_folders.is_empty();
         let filtering = !self.filter.read(cx).value().trim().is_empty();
+        // A folder that is in a folder can be dragged out to the top level.
+        let top_level =
+            self.dragging.as_ref().filter(|dragged| accepts(self.model.read(cx), dragged, None)).map(|_| {
+                let (drop_model, drop_view) = (self.model.clone(), this.clone());
+                tree_drag::top_level_target(
+                    "mock-tree-top-level",
+                    move |dragged: &TreeKey, cx| accepts(drop_model.read(cx), dragged, None),
+                    move |dragged: &TreeKey, _, cx| {
+                        let key = dragged.clone();
+                        drop_view.update(cx, |this, cx| this.move_node(key, None, cx)).ok();
+                    },
+                    cx,
+                )
+            });
 
         let body = if !has_mocks {
             page::empty("No mocks yet", "Use + to create the first one.")
@@ -683,6 +749,7 @@ impl MocksScreen {
                     ),
             )
             .child(div().flex_1().min_h_0().child(body))
+            .children(top_level)
     }
 
     fn render_tab_strip(&self, tree_open: bool, window: &Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -769,6 +836,27 @@ fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
         TreeKey::Folder(id) => config.mock_folders.iter().any(|f| f.id == *id && f.deleted),
         TreeKey::Item(id) => config.mock(id).is_some_and(|m| m.deleted),
     }
+}
+
+/// The folder a drop on this row goes to: the folder itself, or the folder the mock is in.
+fn drop_folder(model: &AppModel, key: &TreeKey) -> Option<String> {
+    match key {
+        TreeKey::Folder(id) => Some(id.clone()),
+        TreeKey::Item(id) => model.config().mock(id).and_then(|m| m.folder_id.clone()),
+    }
+}
+
+/// Whether the dragged mock or folder can be put in `folder`, or at the top level with `None`.
+fn accepts(model: &AppModel, dragged: &TreeKey, folder: Option<&str>) -> bool {
+    let config = model.config();
+    let moved = match dragged {
+        TreeKey::Folder(id) => Moved::Folder(id),
+        TreeKey::Item(id) => match config.mock(id) {
+            Some(mock) => Moved::Item { folder: mock.folder_id.as_deref() },
+            None => return false,
+        },
+    };
+    can_move(&config.mock_folder_rows(), moved, folder)
 }
 
 fn context_menu(
@@ -878,12 +966,14 @@ fn render_row(
         None => div().into_any_element(),
     };
 
-    let open = match key {
-        Some(TreeKey::Item(id)) => Some(id),
+    let open = match &key {
+        Some(TreeKey::Item(id)) => Some(id.clone()),
         _ => None,
     };
+    let folder = key.as_ref().and_then(|key| drop_folder(model.read(cx), key));
+    let (drag_view, drop_view, drop_model) = (view.clone(), view.clone(), model.clone());
     let view = view.clone();
-    ListItem::new(ix)
+    let row = ListItem::new(ix)
         .selected(selected)
         .pl(rems(0.5 + entry.depth() as f32 * 1.0))
         .py_1()
@@ -901,7 +991,7 @@ fn render_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
-                        .child(label),
+                        .child(label.clone()),
                 )
                 .children(pending.then(|| div().flex_none().text_xs().text_color(theme.warning).child("●")))
                 .children(toggle.map(|toggle| div().flex_none().pr_2().child(toggle))),
@@ -910,12 +1000,38 @@ fn render_row(
             if let Some(id) = open.clone() {
                 view.update(cx, |this, cx| this.open_mock(&id, window, cx)).ok();
             }
-        })
+        });
+    // A row dropped on a mock goes to the folder that mock is in.
+    let row = match folder {
+        Some(folder) => {
+            let target = folder.clone();
+            tree_drag::drop_target(
+                row,
+                move |dragged: &TreeKey, cx| accepts(drop_model.read(cx), dragged, Some(&target)),
+                move |dragged: &TreeKey, _, cx| {
+                    let (key, folder) = (dragged.clone(), Some(folder.clone()));
+                    drop_view.update(cx, |this, cx| this.move_node(key, folder, cx)).ok();
+                },
+            )
+        }
+        None => row,
+    };
+    // What is deleted stays where it is until it is reverted.
+    match key.filter(|_| !deleted) {
+        Some(key) => tree_drag::draggable(row, key, label, move |key: &TreeKey, cx| {
+            let key = key.clone();
+            drag_view.update(cx, |this, cx| this.drag_started(key, cx)).ok();
+        }),
+        None => row,
+    }
 }
 
 impl Render for MocksScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
+        if !cx.has_active_drag() {
+            self.dragging = None;
+        }
         let curl = self.active_curl().cloned();
         let body = if self.tabs.is_empty() {
             page::empty_with_action(

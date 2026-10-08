@@ -1,7 +1,8 @@
 //! The config snapshot (`config.get`): the app settings joined with the active workspace's entities.
 //!
-//! Mocks, mappings and environments are read in full. The request-like kinds are listed from their names
-//! index — a client opens one with `entity.load` — so the snapshot stays small.
+//! Mocks, mappings and environments are read in full. The requests, of every type, are listed from the index of
+//! the request tree — a client opens one with `entity.load` — so the snapshot stays small. `requestFolders`
+//! are that tree's folders, whatever the types of the requests in them; `mockFolders` are the mock tree's.
 
 use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
@@ -14,11 +15,12 @@ use super::{
         ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity, read_entity_stubs, read_names_index, write_entity, write_flat_entity,
     },
     settings::{DEFAULT_COMPANION_PORT, DEFAULT_FORWARD_PROXY_PORT, load_settings, save_settings},
+    tree::{self, Scope},
 };
 use crate::{
     env::effective_environment_id,
     utils::{
-        id::{generate_id, now_ms},
+        id::generate_id,
         json::{array_of, opt_str, str_of, truthy},
     },
 };
@@ -90,14 +92,6 @@ fn stub_field<'a>(names: &'a Map<String, Value>, stub: &'a EntityStub, field: &s
     name_field(names, &stub.id, field).or_else(|| stub.deleted.as_ref().and_then(|record| opt_str(record, field)))
 }
 
-fn stub_base(stub: &EntityStub, ws_id: &str) -> Map<String, Value> {
-    let mut out = Map::new();
-    out.insert("id".into(), json!(stub.id));
-    out.insert("folderId".into(), json!(stub.folder_id));
-    out.insert("workspaceId".into(), json!(ws_id));
-    out
-}
-
 /// `entity`, marked as deleted here with the deletion not yet confirmed or reverted.
 fn marked_deleted(entity: Value) -> Value {
     let mut out = entity.as_object().cloned().unwrap_or_default();
@@ -105,13 +99,12 @@ fn marked_deleted(entity: Value) -> Value {
     Value::Object(out)
 }
 
-fn stub_done(out: Map<String, Value>, stub: &EntityStub) -> Value {
-    if stub.deleted.is_some() { marked_deleted(Value::Object(out)) } else { Value::Object(out) }
-}
-
 /// A kind's folders, then the deleted ones that still hold something waiting.
 fn folders(ws_id: &str, kind: &str) -> Value {
-    let mut all = auto_sync_fs_directories(ws_id, kind, generate_id).folders;
+    let mut all = match Scope::of_kind(kind) {
+        Some(scope) => tree::folders(ws_id, scope).iter().map(|folder| tree::folder_value(folder, ws_id)).collect(),
+        None => auto_sync_fs_directories(ws_id, kind, generate_id).folders,
+    };
     all.extend(pending_folders(ws_id, kind).into_iter().map(marked_deleted));
     Value::Array(all)
 }
@@ -158,16 +151,11 @@ pub fn load_config() -> Value {
         environments.insert(0, global);
     }
 
-    let request_stubs = read_entity_stubs(ws_id, "requests");
-    let socket_stubs = read_entity_stubs(ws_id, "sockets");
     let rule_stubs = read_entity_stubs(ws_id, "rules");
-    let request_names = names_or_bootstrap(ws_id, "requests", &request_stubs);
-    let socket_names = names_or_bootstrap(ws_id, "sockets", &socket_stubs);
     let rule_names = names_or_bootstrap(ws_id, "rules", &rule_stubs);
 
     let mock_folders = folders(ws_id, "mocks");
     let request_folders = folders(ws_id, "requests");
-    let ws_folders = folders(ws_id, "sockets");
     let rule_folders = folders(ws_id, "rules");
 
     let active_env = effective_environment_id(&environments, settings.stored_environment_id(ws_id).as_deref());
@@ -253,50 +241,42 @@ pub fn load_config() -> Value {
         })
     }));
 
-    let requests: Vec<Value> = request_stubs
-        .iter()
-        .map(|s| {
-            let mut out = stub_base(s, ws_id);
-            out.insert("name".into(), json!(stub_field(&request_names, s, "name").unwrap_or("")));
-            out.insert("method".into(), json!(stub_field(&request_names, s, "method").unwrap_or("GET")));
-            out.insert("url".into(), json!(stub_field(&request_names, s, "url").unwrap_or("")));
-            out.insert("headers".into(), json!({}));
-            out.insert("body".into(), json!(""));
-            out.insert("createdAt".into(), json!(0));
-            stub_done(out, s)
-        })
-        .collect();
-
-    let ws_connections: Vec<Value> = socket_stubs
-        .iter()
-        .map(|s| {
-            let mut out = stub_base(s, ws_id);
-            out.insert("name".into(), json!(stub_field(&socket_names, s, "name").unwrap_or("")));
-            out.insert("url".into(), json!(stub_field(&socket_names, s, "url").unwrap_or("")));
-            out.insert("headers".into(), json!({}));
-            out.insert("createdAt".into(), json!(0));
-            stub_done(out, s)
-        })
-        .collect();
-
-    // GraphQL, gRPC and SOAP requests: listed from the names index, with the fields a listing shows.
+    // The requests of one type, listed from the request tree's index with the fields a listing shows, then
+    // those of them that are deleted here and waiting.
+    let request_entries = tree::entries(ws_id, Scope::Requests);
     let listed = |kind: &str, fields: &[&str], rest: Value| -> Vec<Value> {
-        let names = read_names_index(ws_id, kind);
-        read_entity_stubs(ws_id, kind)
+        let ty = tree::type_of_kind(kind).unwrap_or_default();
+        let shape = |id: &str, folder_id: Option<&str>, details: &Value| -> Map<String, Value> {
+            let mut out = Map::new();
+            out.insert("id".into(), json!(id));
+            out.insert("type".into(), json!(ty));
+            out.insert("folderId".into(), json!(folder_id));
+            out.insert("workspaceId".into(), json!(ws_id));
+            out.insert("name".into(), json!(str_of(details, "name")));
+            for field in fields {
+                let default = if *field == "method" { "GET" } else { "" };
+                out.insert((*field).into(), json!(opt_str(details, field).unwrap_or(default)));
+            }
+            for (key, value) in rest.as_object().into_iter().flatten() {
+                out.insert(key.clone(), value.clone());
+            }
+            out
+        };
+        let mut all: Vec<Value> = request_entries
             .iter()
-            .map(|s| {
-                let mut out = stub_base(s, ws_id);
-                out.insert("name".into(), json!(stub_field(&names, s, "name").unwrap_or("")));
-                for field in fields {
-                    out.insert((*field).into(), json!(stub_field(&names, s, field).unwrap_or("")));
-                }
-                for (key, value) in rest.as_object().into_iter().flatten() {
-                    out.insert(key.clone(), value.clone());
-                }
-                stub_done(out, s)
-            })
-            .collect()
+            .filter(|entry| entry.ty == ty)
+            .map(|entry| Value::Object(shape(&entry.id, entry.folder_id.as_deref(), &entry.details)))
+            .collect();
+        for record in get_pending_deletions(ws_id, kind) {
+            let id = str_of(&record, "id");
+            if !request_entries.iter().any(|entry| entry.id == id) {
+                all.push(marked_deleted(Value::Object(shape(id, opt_str(&record, "folderId"), &record))));
+            }
+        }
+        all
     };
+    let requests = listed("requests", &["method", "url"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
+    let ws_connections = listed("sockets", &["url"], json!({ "headers": {}, "createdAt": 0 }));
     let graphql_requests = listed(
         "graphqlRequests",
         &["endpointUrl"],
@@ -310,6 +290,18 @@ pub fn load_config() -> Value {
             "streamingType": "unary", "createdAt": 0,
         }),
     );
+    let sse_requests = listed(
+        "sseRequests",
+        &["url", "method"],
+        json!({ "headers": {}, "body": "", "createdAt": 0 }),
+    );
+    let socketio_requests = listed(
+        "socketioRequests",
+        &["url", "namespace"],
+        json!({ "headers": {}, "path": "", "auth": "", "createdAt": 0 }),
+    );
+    let mcp_requests =
+        listed("mcpRequests", &["url", "transport"], json!({ "headers": {}, "createdAt": 0 }));
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 
@@ -324,17 +316,16 @@ pub fn load_config() -> Value {
         "wsConnections": ws_connections,
         "mockFolders": mock_folders,
         "requestFolders": request_folders,
-        "wsFolders": ws_folders,
         "environments": all_environments,
         "graphqlRequests": graphql_requests,
         "graphqlSchemas": [],
-        "graphqlRequestFolders": folders(ws_id, "graphqlRequests"),
         "grpcRequests": grpc_requests,
         "protoFiles": read_all_entities(ws_id, "protoFiles"),
-        "grpcRequestFolders": folders(ws_id, "grpcRequests"),
+        "sseRequests": sse_requests,
+        "socketioRequests": socketio_requests,
+        "mcpRequests": mcp_requests,
         "soapRequests": soap_requests,
         "savedWsdls": [],
-        "soapRequestFolders": folders(ws_id, "soapRequests"),
     });
     if let (Some(snapshot), Value::Object(entities)) = (snapshot.as_object_mut(), entities) {
         snapshot.extend(entities);
@@ -371,6 +362,7 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         "minimizeToTray": raw.get("minimizeToTray").cloned().unwrap_or(Value::Null),
         "tlsEnabled": settings.tls_enabled(),
         "telemetryEnabled": settings.telemetry_enabled(),
+        "updateCheckEnabled": settings.update_check_enabled(),
         "tlsCaCertPath": settings.tls_ca_cert_path(),
         "tlsCaKeyPath": settings.tls_ca_key_path(),
         "workspaces": workspaces,
@@ -428,18 +420,13 @@ pub fn save_config(cfg: &Value) -> std::io::Result<()> {
     let ws_id = str_of(cfg, "activeWorkspaceId");
     let pending_mock_ids: Vec<String> =
         get_pending_deletions(ws_id, "mocks").iter().map(|p| str_of(p, "id").to_string()).collect();
-    let mock_folders = array_of(cfg, "mockFolders");
     for mock in array_of(cfg, "mocks") {
         let id = str_of(mock, "id");
         if str_of(mock, "workspaceId") != ws_id || pending_mock_ids.iter().any(|p| p == id) || truthy(mock, "deleted")
         {
             continue;
         }
-        let folder_name = opt_str(mock, "folderId")
-            .filter(|f| !f.is_empty())
-            .and_then(|folder_id| mock_folders.iter().find(|f| str_of(f, "id") == folder_id))
-            .map(|f| str_of(f, "name"));
-        write_entity(ws_id, "mocks", id, mock, folder_name)?;
+        write_entity(ws_id, "mocks", id, mock, opt_str(mock, "folderId"))?;
     }
     for kind in ["mappings", "environments"] {
         for entity in array_of(cfg, kind) {
@@ -457,17 +444,15 @@ mod tests {
     use super::*;
     use crate::{
         testing::scratch_data_root,
-        workspace::fs::{sync_enabled_set, upsert_name_entry, write_entity},
+        workspace::fs::{sync_enabled_set, write_entity},
     };
 
     #[test]
-    fn the_snapshot_lists_requests_from_the_names_index_and_reads_mocks_in_full() {
+    fn the_snapshot_lists_requests_from_the_index_and_reads_mocks_in_full() {
         let root = scratch_data_root();
         let ws = root.ws_id;
         let request = json!({ "id": "r1", "name": "Ping", "method": "POST", "url": "http://a/ping", "body": "big" });
         write_entity(ws, "requests", "r1", &request, None).unwrap();
-        upsert_name_entry(ws, "requests", "r1", json!({ "name": "Ping", "method": "POST", "url": "http://a/ping" }))
-            .unwrap();
         let mock = json!({ "id": "m1", "name": "M", "method": "GET", "urlPattern": "/x", "responseBody": "{}" });
         write_entity(ws, "mocks", "m1", &mock, None).unwrap();
         sync_enabled_set(ws, "mocks", "m1", true).unwrap();

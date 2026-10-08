@@ -290,6 +290,12 @@
    "curlCommand": "curl http://x"
   }
  },
+ "engine.companions": {
+  "valid": {},
+  "invalid": {
+   "now": true
+  }
+ },
  "engine.shutdown": {
   "valid": {},
   "invalid": {
@@ -384,6 +390,18 @@
   },
   "invalid": {
    "kind": "mocks"
+  }
+ },
+ "entity.search": {
+  "valid": {
+   "workspaceId": "ws1",
+   "scope": "requests",
+   "query": "users"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "scope": "rules",
+   "query": "users"
   }
  },
  "entity.setEnabled": {
@@ -754,6 +772,74 @@
    "blobId": "blob_test"
   }
  },
+ "mcp.call": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "type": "tool",
+   "name": "echo",
+   "arguments": {
+    "text": "hello",
+    "count": "2"
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "type": "macro",
+   "name": "echo"
+  }
+ },
+ "mcp.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "mcp.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "transport": "stdio",
+   "url": "npx -y @modelcontextprotocol/server-everything",
+   "headers": {
+    "API_KEY": "k"
+   }
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "transport": "carrier-pigeon",
+   "url": "x"
+  }
+ },
+ "mcp.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "mcp.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "mcp.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "proxy.status": {
   "valid": {
    "workspaceId": "ws1"
@@ -1025,6 +1111,126 @@
    }
   }
  },
+ "socketio.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "socketio.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "url": "https://example.test",
+   "namespace": "/chat",
+   "auth": "{\"token\":\"abc\"}"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "url": 5
+  }
+ },
+ "socketio.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "socketio.emit": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "event": "chat message",
+   "args": "[\"hello\"]",
+   "ack": true
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  }
+ },
+ "socketio.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "socketio.listen": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "listeners": [
+    "message"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1",
+   "listeners": "message"
+  }
+ },
+ "socketio.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "connectionId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "sse.clearMessages": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "sse.connect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "url": "https://example.test/events",
+   "method": "GET"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1",
+   "url": 5
+  }
+ },
+ "sse.disconnect": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "sse.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "sse.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "streamId": "tab-1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "sync.all": {
   "valid": {
    "workspaceId": "ws1"
@@ -1097,6 +1303,24 @@
   "invalid": {}
  },
  "tls.removeCert": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "update.check": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "update.skip": {
+  "valid": {
+   "version": "0.6.0"
+  },
+  "invalid": {}
+ },
+ "update.status": {
   "valid": {},
   "invalid": {
    "extra": true
