@@ -767,7 +767,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "account_repos",
             words: &["account", "repos"],
-            summary: "List the repositories a signed-in GitHub account owns.",
+            summary: "List the repositories a signed-in GitHub account owns or was given access to.",
             details: "",
             effect: Effect::Runs,
             upfront: false,

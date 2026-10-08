@@ -14,7 +14,7 @@ use super::{
     git_lock::workspace_lock,
     git_sync_ops::perform_git_pull,
     publish_service::{PublishOptions, commit_paths},
-    remote::{ensure_owner, git_net},
+    remote::{Need, ensure_access, git_net},
     status_tracker::{get_workspace_sync_status, invalidate_cache},
     sync_state::{emit, get_sync_config, get_sync_meta, save_sync_meta, set_state, sync_meta_value},
 };
@@ -94,10 +94,12 @@ async fn sync_locked(ws_id: &str) -> Result<Value, GitError> {
     let initialized = !is_repo(ws_id);
     init_workspace_repo(ws_id).await?;
 
-    // The commits go on top of what the remote has now, so the one push at the end is never behind it.
+    // The commits go on top of what the remote has now, so the one push at the end is never behind it. An
+    // account that may not push commits nothing: a commit that cannot leave would part the workspace from
+    // its remote.
     let remote = get_sync_config(ws_id).filter(|c| truthy(c, "remote"));
     if let Some(config) = &remote {
-        ensure_owner(ws_id).await?;
+        ensure_access(ws_id, Need::Push).await?;
         if perform_git_pull(ws_id, str_of(config, "branch")).await.is_ok_and(|pulled| pulled.updated) {
             notify_config_changed();
         }
