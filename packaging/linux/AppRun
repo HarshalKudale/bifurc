@@ -36,7 +36,6 @@ if [ ! -f "$INSTALLED/.complete" ]; then
 
   mkdir -p "$HOME/.local/bin"
   ln -sfn "$INSTALLED/bin/bifurc" "$HOME/.local/bin/bifurc"
-  ln -sfn "$INSTALLED/bin/bifurc-mcp" "$HOME/.local/bin/bifurc-mcp"
 
   # A launcher entry with the icon, pointing back at the image. Only when run as an AppImage.
   if [ -n "$APPIMAGE" ]; then

@@ -38,17 +38,17 @@ On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it b
 
 ### MCP server
 
-`bifurc-mcp` gives an AI agent the commands of the `bifurc` CLI as tools, over stdio. It is installed on `PATH`
-beside `bifurc`, talks to the same engine and starts one if none is running. Register it with an MCP host as a
-stdio server whose command is `bifurc-mcp`, for example:
+`bifurc --mcp` gives an AI agent the commands of the `bifurc` CLI as tools, over stdio. `--mcp` must be the only
+argument. It talks to the same engine and starts one if none is running. Register it with an MCP host as a stdio
+server whose command is `bifurc` with the argument `--mcp`, for example:
 
 ```json
-{ "mcpServers": { "bifurc": { "command": "bifurc-mcp" } } }
+{ "mcpServers": { "bifurc": { "command": "bifurc", "args": ["--mcp"] } } }
 ```
 
 The everyday tools (send a request, list requests, mocks and mappings, create a mock or a mapping) are listed to
 the agent; it finds the others with `search_tools`, reads one with `describe_tool` and runs it with `call_tool`.
-`bifurc-mcp --all-tools` lists every tool instead, for a host that searches tools itself. Like the CLI it cannot
+The `bifurc-mcp` binary itself (`cargo dev:mcp`) also takes `--all-tools`, which lists every tool instead, for a host that searches tools itself. Like the CLI it cannot
 delete anything, read a secret, sign in or stop the engine.
 
 

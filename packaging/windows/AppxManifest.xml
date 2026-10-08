@@ -48,24 +48,5 @@
         </uap3:Extension>
       </Extensions>
     </Application>
-    <!-- A package may declare the appExecutionAlias extension only once per application, so the MCP server
-         command is an application of its own, kept out of the Start menu. -->
-    <Application Id="BifurcMcp" Executable="bin\bifurc-mcp.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements
-       AppListEntry="none"
-       BackgroundColor="transparent"
-       DisplayName="Bifurc MCP server"
-       Square150x150Logo="assets\Square150x150Logo.png"
-       Square44x44Logo="assets\Square44x44Logo.png"
-       Description="Bifurc MCP server">
-      </uap:VisualElements>
-      <Extensions>
-        <uap3:Extension Category="windows.appExecutionAlias" Executable="bin\bifurc-mcp.exe" EntryPoint="Windows.FullTrustApplication">
-          <uap3:AppExecutionAlias>
-            <desktop:ExecutionAlias Alias="bifurc-mcp.exe" />
-          </uap3:AppExecutionAlias>
-        </uap3:Extension>
-      </Extensions>
-    </Application>
   </Applications>
 </Package>
