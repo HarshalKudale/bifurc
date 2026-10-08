@@ -188,7 +188,7 @@ GitHub sign-in, per workspace; only needed to sync with a remote.
 
   list
   login                                  Shows a code to enter on GitHub, then waits
-  repos <login>                          Repositories the account owns
+  repos <login>                          Repositories the account owns or was given access to
 
 Signing out removes the account's workspaces from this device; it is done in the desktop app.";
 

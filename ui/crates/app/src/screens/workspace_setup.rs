@@ -3,7 +3,8 @@
 //!
 //! The steps are the same wherever it is shown. Git is checked first, because without it a workspace is plain
 //! files. Signing in to GitHub is optional and belongs to the workspace being made: it is only needed to sync
-//! with a remote. Then the workspace is either created here or imported from a repository the account owns.
+//! with a remote. Then the workspace is either created here or imported from a repository the account owns
+//! or, with team sync, one it was given access to.
 //! Every rule (who may import what, what may be pushed where) is the engine's; this view sends commands and
 //! shows what came back.
 
@@ -70,6 +71,10 @@ struct Login {
 struct Repo {
     full_name: String,
     private: bool,
+    /// Someone else's, which the account was given access to.
+    shared: bool,
+    /// Shared for reading only: the workspace imported from it is read-only.
+    read_only: bool,
     /// The workspace on this device that is already connected to it.
     workspace_id: Option<String>,
 }
@@ -90,9 +95,13 @@ fn repos_from(value: &Value) -> Vec<Repo> {
             repos
                 .iter()
                 .filter_map(|repo| {
+                    // An engine that says nothing about access lists only what the account owns.
+                    let access = repo.get("access").and_then(Value::as_str).unwrap_or("owner");
                     Some(Repo {
                         full_name: repo.get("fullName")?.as_str()?.to_owned(),
                         private: repo.get("private").and_then(Value::as_bool).unwrap_or(false),
+                        shared: access != "owner",
+                        read_only: access == "read",
                         workspace_id: repo.get("workspaceId").and_then(Value::as_str).map(str::to_owned),
                     })
                 })
@@ -492,7 +501,9 @@ impl WorkspaceSetup {
         let theme = cx.theme().clone();
         let setup = self.model.read(cx).setup().clone();
         let needs_account = self.mode == Mode::Import || !matches!(self.purpose, Purpose::First | Purpose::Add);
-        let help = if needs_account {
+        let help = if needs_account && setup.team_sync {
+            "The workspace syncs as this account, with the access the account has to its repository on GitHub."
+        } else if needs_account {
             "The workspace syncs as this account. Only the account that owns a workspace can use it."
         } else {
             "Optional. Only needed to sync this workspace with a remote repository; it can be added later."
@@ -633,7 +644,8 @@ impl WorkspaceSetup {
             .into_any_element()
     }
 
-    /// The account's own repositories. One that is already a workspace here cannot be imported twice.
+    /// The repositories the account can import from: its own and, with team sync, the ones shared with it.
+    /// One that is already a workspace here cannot be imported twice.
     fn render_repos(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let muted = |text: &'static str| div().text_sm().text_color(theme.muted_foreground).child(text);
@@ -671,7 +683,13 @@ impl WorkspaceSetup {
             Repos::Ready(repos) => repos,
         };
         if repos.is_empty() {
-            return muted("This account owns no repositories yet.").into_any_element();
+            let team_sync = self.model.read(cx).setup().team_sync;
+            return muted(if team_sync {
+                "This account has no repositories yet, of its own or shared with it."
+            } else {
+                "This account owns no repositories yet."
+            })
+            .into_any_element();
         }
         let filter = self.filter.read(cx).value().trim().to_lowercase();
         let rows: Vec<AnyElement> = repos
@@ -698,6 +716,10 @@ impl WorkspaceSetup {
                                     .child(repo.full_name.clone()),
                             )
                             .when(repo.private, |this| this.child(Tag::secondary().small().child("Private")))
+                            .when(repo.shared && !repo.read_only, |this| {
+                                this.child(Tag::secondary().small().child("Shared"))
+                            })
+                            .when(repo.read_only, |this| this.child(Tag::warning().small().child("Read-only")))
                             .when(here, |this| this.child(Tag::secondary().small().child("On this device"))),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -708,6 +730,9 @@ impl WorkspaceSetup {
                     .into_any_element()
             })
             .collect();
+        // Said before the import, not found out after it.
+        let selected_read_only =
+            repos.iter().any(|repo| repo.read_only && self.selected_repo.as_deref() == Some(repo.full_name.as_str()));
         v_flex()
             .gap_2()
             .child(div().text_sm().font_medium().child("Repository"))
@@ -724,6 +749,12 @@ impl WorkspaceSetup {
                     .gap_1()
                     .children(rows),
             )
+            .when(selected_read_only, |this| {
+                this.child(muted(
+                    "Your account has read access to this repository, so the workspace will be read-only here: \
+                     you get what the repository gets, and what you change stays on this device.",
+                ))
+            })
             .into_any_element()
     }
 
@@ -787,7 +818,10 @@ impl WorkspaceSetup {
             (_, Mode::New) => 8.,
             // The label, the filter and the list, which grows with its rows up to where it scrolls.
             (_, Mode::Import) => match &self.repos {
-                Repos::Ready(repos) if !repos.is_empty() => 7. + (repos.len() as f32 * 2.25).min(14.),
+                Repos::Ready(repos) if !repos.is_empty() => {
+                    let note = if repos.iter().any(|repo| repo.read_only) { 3. } else { 0. };
+                    7. + (repos.len() as f32 * 2.25).min(14.) + note
+                }
                 _ => 3.,
             },
         };
@@ -904,5 +938,17 @@ mod tests {
         assert_eq!(repos.len(), 2);
         assert_eq!((repos[0].private, repos[0].workspace_id.as_deref()), (true, Some("w1")));
         assert_eq!(repos[1].workspace_id, None);
+        assert!(!repos[0].shared && !repos[0].read_only);
+    }
+
+    #[test]
+    fn repositories_shared_with_the_account_say_what_it_may_do_with_them() {
+        let repos = repos_from(&json!({ "ok": true, "repos": [
+            { "fullName": "eve/own", "access": "owner" },
+            { "fullName": "octo/team", "access": "write" },
+            { "fullName": "octo/docs", "access": "read" },
+        ]}));
+        let flags: Vec<(bool, bool)> = repos.iter().map(|repo| (repo.shared, repo.read_only)).collect();
+        assert_eq!(flags, [(false, false), (true, false), (true, true)]);
     }
 }
