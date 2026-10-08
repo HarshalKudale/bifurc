@@ -114,7 +114,6 @@ jobs:
             release-assets/*.exe
             release-assets/*.msix
             release-assets/*.zip
-            release-assets/*.nupkg
             release-assets/bifurc.json
             release-assets/*.AppImage
             release-assets/*.deb
