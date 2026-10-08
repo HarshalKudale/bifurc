@@ -79,6 +79,8 @@ pub struct EntityBar {
     /// The entity's file against the last commit; `None` when it has no file to compare.
     pub git: Option<FileState>,
     pub has_remote: bool,
+    /// The workspace is read-only: what is saved stays on this device, and nothing is synced.
+    pub read_only: bool,
     /// A sync or a revert is in flight.
     pub busy: bool,
     /// The entity is in a tab that can be closed.
@@ -97,6 +99,7 @@ impl EntityBar {
             draft: saved_id.is_none(),
             git: saved_id.and_then(|id| git.entity_state(id)),
             has_remote: git.has_remote,
+            read_only: model.is_read_only(),
             busy: model.is_publishing(),
             deletable: true,
             ..Self::default()
@@ -117,6 +120,9 @@ impl EntityBar {
             return ("Saving…".into(), false);
         }
         let text = match self.git {
+            Some(FileState::New | FileState::Modified | FileState::Deleted) if self.read_only => {
+                "Saved on this device. The workspace is read-only."
+            }
             Some(FileState::New) => "Saved. Not synced yet.",
             Some(FileState::Modified) | Some(FileState::Deleted) => "Saved. Changes not synced.",
             Some(FileState::Clean) => "Saved and synced.",
@@ -176,7 +182,11 @@ pub fn entity_bar<V: 'static>(
     let (status, is_problem) = bar.status();
     let pending = matches!(bar.git, Some(FileState::New | FileState::Modified | FileState::Deleted));
     let settled = !bar.draft && !bar.busy && !bar.saving && !bar.unsaved;
-    let sync_tooltip = if bar.has_remote { "Commit this version and push it" } else { "Commit this version" };
+    let sync_tooltip = match (bar.read_only, bar.has_remote) {
+        (true, _) => "Read-only workspace: your account has read access to its repository",
+        (false, true) => "Commit this version and push it",
+        (false, false) => "Commit this version",
+    };
 
     h_flex()
         .flex_none()
@@ -222,7 +232,7 @@ pub fn entity_bar<V: 'static>(
                 .label("Sync")
                 .tooltip(sync_tooltip)
                 .loading(bar.busy)
-                .disabled(!settled || !pending)
+                .disabled(!settled || !pending || bar.read_only)
                 .on_click(listener(&on, EntityAction::Sync, cx)),
         )
         .when(bar.closable, |this| {

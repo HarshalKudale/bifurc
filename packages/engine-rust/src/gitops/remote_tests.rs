@@ -1,4 +1,4 @@
-//! Tests of sign-in, import, publish and the owner rules, against a stand-in for GitHub whose repositories are
+//! Tests of sign-in, import, publish and the owner and access rules, against a stand-in for GitHub whose repositories are
 //! bare repositories in a temporary directory. Skipped when git is missing.
 
 use std::{
@@ -17,8 +17,10 @@ use tokio::{
 use super::{
     auto_sync, get_sync_config, get_workspace_git_state, get_workspace_sync_status,
     github::{Endpoints, set_test_endpoints},
+    remote::forget_access,
 };
 use crate::{
+    features::set_test_team_sync,
     kernel::{CommandContext, CommandRegistry},
     register_all::register_all_engine_commands,
     testing::{ScratchRoot, scratch_data_root},
@@ -45,15 +47,31 @@ fn user_of(token: &str) -> Option<(u64, &'static str)> {
 struct Hub {
     /// `owner/name` -> (owner id, bare repository).
     repos: HashMap<String, (u64, PathBuf)>,
+    /// `owner/name` -> the people it is shared with, each with whether they may push.
+    collaborators: HashMap<String, HashMap<u64, bool>>,
     root: PathBuf,
     /// Whether the user has typed the device code yet.
     granted: bool,
 }
 
-fn repo_json(full_name: &str, owner_id: u64, path: &Path) -> Value {
+impl Hub {
+    fn shared_with(&self, full_name: &str, user: u64) -> Option<bool> {
+        self.collaborators.get(full_name).and_then(|people| people.get(&user)).copied()
+    }
+
+    /// The repository as `viewer` is shown it: with what they may do with it.
+    fn repo_json(&self, full_name: &str, viewer: u64) -> Option<Value> {
+        let (owner, dir) = self.repos.get(full_name)?;
+        let push = *owner == viewer || self.shared_with(full_name, viewer) == Some(true);
+        Some(repo_json(full_name, *owner, dir, push))
+    }
+}
+
+fn repo_json(full_name: &str, owner_id: u64, path: &Path, push: bool) -> Value {
     json!({
         "full_name": full_name, "name": full_name.rsplit('/').next().unwrap(),
         "owner": { "id": owner_id, "login": full_name.split('/').next().unwrap() },
+        "permissions": { "pull": true, "push": push },
         "private": true, "description": "", "clone_url": path.to_string_lossy(), "html_url": "",
         "default_branch": "main", "updated_at": "2026-01-01T00:00:00Z", "topics": [],
     })
@@ -86,16 +104,18 @@ async fn answer(hub: &Arc<Mutex<Hub>>, method: &str, path: &str, token: &str, bo
             std::fs::create_dir_all(&dir).unwrap();
             git_in(&dir, &["init", "--bare"]).await.unwrap();
             hub.lock().repos.insert(full_name.clone(), (id, dir.clone()));
-            (201, repo_json(&full_name, id, &dir))
+            (201, repo_json(&full_name, id, &dir, true))
         }
         ("GET", path) if path.starts_with("/user/repos") => {
             let Some((id, _)) = user else { return (401, json!({ "message": "Bad credentials" })) };
+            // What is listed is what was asked for: the person's own, and what they were given access to.
+            let shared = path.contains("collaborator");
+            let hub = hub.lock();
             let mut repos: Vec<Value> = hub
-                .lock()
                 .repos
                 .iter()
-                .filter(|(_, (owner, _))| *owner == id)
-                .map(|(name, (owner, dir))| repo_json(name, *owner, dir))
+                .filter(|(name, (owner, _))| *owner == id || (shared && hub.shared_with(name, id).is_some()))
+                .filter_map(|(name, _)| hub.repo_json(name, id))
                 .collect();
             repos.sort_by_key(|repo| repo["full_name"].as_str().unwrap().to_string());
             (200, Value::Array(repos))
@@ -110,10 +130,12 @@ async fn answer(hub: &Arc<Mutex<Hub>>, method: &str, path: &str, token: &str, bo
                 Err(_) => (404, json!({ "message": "Not Found" })),
             }
         }
-        ("GET", path) if path.starts_with("/repos/") => match hub.lock().repos.get(&path["/repos/".len()..]) {
-            Some((owner, dir)) if user.is_some() => (200, repo_json(&path["/repos/".len()..], *owner, dir)),
-            _ => (404, json!({ "message": "Not Found" })),
-        },
+        ("GET", path) if path.starts_with("/repos/") => {
+            match user.and_then(|(id, _)| hub.lock().repo_json(&path["/repos/".len()..], id)) {
+                Some(repo) => (200, repo),
+                None => (404, json!({ "message": "Not Found" })),
+            }
+        }
         ("PUT", _) => (200, json!({})),
         _ => (404, json!({ "message": "Not Found" })),
     }
@@ -205,6 +227,24 @@ impl Engine {
     async fn call(&self, action: &str, payload: Value) -> Value {
         let ctx = CommandContext::internal(self.registry.clone());
         self.registry.invoke(action, payload, ctx).await.unwrap_or_else(|e| panic!("{action} failed: {e:?}"))
+    }
+}
+
+/// Team sync switched for a test, and back to what the build ships when the test is over. Made after the
+/// scratch root, so that it is undone while the test still has its turn.
+struct TeamSync;
+
+impl TeamSync {
+    fn set(on: bool) -> TeamSync {
+        set_test_team_sync(Some(on));
+        forget_access();
+        TeamSync
+    }
+}
+
+impl Drop for TeamSync {
+    fn drop(&mut self) {
+        set_test_team_sync(None);
     }
 }
 
@@ -556,12 +596,13 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
 }
 
 #[tokio::test]
-async fn only_the_owner_imports_a_workspace_and_nothing_local_is_replaced() {
+async fn without_team_sync_only_the_owner_imports_a_workspace_and_nothing_local_is_replaced() {
     if !check_git_installed().await {
         return;
     }
     let root = scratch_data_root();
     let guard = start_hub().await;
+    let _owner_only = TeamSync::set(false);
     let engine = Engine::new();
     let octo = sign_in(42, "octo");
     let eve = sign_in(7, "eve");
@@ -577,6 +618,8 @@ async fn only_the_owner_imports_a_workspace_and_nothing_local_is_replaced() {
     seed_remote(&guard, "octo/code", 42, None).await;
     seed_remote(&guard, "octo/other-tool", 42, Some(json!({ "id": "x", "folders": [] }))).await;
     seed_remote(&guard, "octo/notes", 42, workspace_file("../escape")).await;
+    // Sharing a repository on GitHub shares no workspace while team sync is off.
+    guard.hub.lock().collaborators.entry("octo/team".into()).or_default().insert(7, true);
 
     // The listing shows an account only what it owns.
     let repos = engine.call("account.repos", json!({ "accountId": eve })).await;
@@ -622,6 +665,7 @@ async fn only_the_owner_imports_a_workspace_and_nothing_local_is_replaced() {
     assert_eq!(settings.active_workspace_id(), "remote-ws");
     assert_eq!(settings.workspace("remote-ws").unwrap()["accountId"], octo);
     assert_eq!(get_sync_config("remote-ws").unwrap()["repo"], "octo/team");
+    assert_eq!(get_sync_config("remote-ws").unwrap()["access"], "owner");
     assert_eq!(
         run(&ws_dir("remote-ws"), &["config", "user.email"]).await.trim(),
         format!("42+octo@users.noreply.{HOST}")
@@ -718,4 +762,176 @@ async fn a_workspace_of_plain_files_becomes_a_repository_and_is_synced_whole() {
     assert!(run(&bare, &["show", "main:mocks/m1.json"]).await.contains("Mock"));
     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["status"], "idle");
     auto_sync::stop_all_auto_sync();
+}
+
+#[tokio::test]
+async fn a_shared_workspace_is_imported_and_synced_with_the_access_github_gives() {
+    if !check_git_installed().await {
+        return;
+    }
+    let root = scratch_data_root();
+    let guard = start_hub().await;
+    let _team = TeamSync::set(true);
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let eve = sign_in(7, "eve");
+    let ws = "remote-ws";
+
+    seed_remote(&guard, "octo/team", 42, workspace_file(ws)).await;
+    seed_remote(&guard, "octo/other", 42, workspace_file("other-ws")).await;
+    seed_remote(&guard, "octo/mine", 42, workspace_file("mine-ws")).await;
+    seed_remote(&guard, "eve/own", 7, workspace_file("eve-ws")).await;
+    let share = |repo: &str, push: bool| {
+        guard.hub.lock().collaborators.entry(repo.to_string()).or_default().insert(7, push);
+    };
+    share("octo/team", false);
+    let bare = guard.hub.lock().repos["octo/team"].1.clone();
+    let refuse = |result: Value, needle: &str| {
+        assert_eq!(result["ok"], false, "{result}");
+        assert!(result["error"].as_str().unwrap().contains(needle), "{result}");
+    };
+
+    // The listing shows what the account owns and what it was given access to, with what it may do there.
+    assert_eq!(engine.call("setup.getState", json!({})).await["teamSync"], true);
+    let repos = engine.call("account.repos", json!({ "accountId": eve })).await;
+    let listed: Vec<(&str, &str, &str)> = repos["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["fullName"].as_str().unwrap(), r["owner"].as_str().unwrap(), r["access"].as_str().unwrap()))
+        .collect();
+    assert_eq!(listed, [("eve/own", "eve", "owner"), ("octo/team", "octo", "read")]);
+
+    // Someone the repository is shared with imports the workspace, as themselves.
+    let imported = engine.call("workspace.import", json!({ "accountId": eve, "repo": "octo/team" })).await;
+    assert_eq!(imported["ok"], true, "{imported}");
+    auto_sync::stop_all_auto_sync();
+    assert_eq!(imported["workspace"]["syncConfig"]["access"], "read");
+    assert_eq!(load_settings().workspace(ws).unwrap()["accountId"], eve);
+    let state = engine.call("sync.getState", json!({ "workspaceId": ws })).await;
+    assert_eq!(
+        (state["access"].as_str(), state["owner"]["login"].as_str(), state["account"]["login"].as_str()),
+        (Some("read"), Some("octo"), Some("eve"))
+    );
+    let config = engine.call("config.get", json!({})).await;
+    let listed = config["workspaces"].as_array().unwrap().iter().find(|w| w["id"] == ws).unwrap().clone();
+    assert_eq!(listed["syncConfig"]["access"], "read");
+
+    // With read access the workspace is read-only: what is changed here is saved here, and no way of
+    // syncing commits or pushes any of it.
+    let first = run(&bare, &["rev-parse", "main"]).await;
+    write_entity(ws, "requests", "r2", &request("r2", "Second"), None).unwrap();
+    std::fs::remove_file(ws_dir(ws).join("requests/r1.json")).unwrap();
+    engine.call("sync.getEntityStatus", json!({ "workspaceId": ws })).await;
+    let paths = json!({ "workspaceId": ws, "paths": ["requests/r2.json"] });
+    for (action, payload) in [
+        ("entity.publish", paths.clone()),
+        ("git.sync", paths),
+        ("folder.publish", json!({ "workspaceId": ws, "kind": "requests", "folderName": "" })),
+        ("sync.all", json!({ "workspaceId": ws })),
+        ("sync.push", json!({ "workspaceId": ws })),
+        ("entity.confirmDelete", json!({ "workspaceId": ws, "kind": "requests", "id": "r1" })),
+    ] {
+        let refused = engine.call(action, payload).await;
+        assert_eq!(refused["ok"], false, "{action}: {refused}");
+        let error = refused["error"].as_str().unwrap();
+        assert!(error.contains("read-only") && error.contains("@octo"), "{action}: {refused}");
+    }
+    assert_eq!(run(&ws_dir(ws), &["rev-parse", "HEAD"]).await, first, "nothing is committed");
+    assert_eq!(run(&bare, &["rev-parse", "main"]).await, first, "nothing is pushed");
+    crate::workspace::status_cache::invalidate_cache(ws);
+    let status = get_workspace_sync_status(ws).await;
+    assert_eq!(
+        (status["requests/r2.json"].as_str(), status["requests/r1.json"].as_str()),
+        (Some("new"), Some("deleted"))
+    );
+    // What does not reach the remote still works: a deletion made here is taken back.
+    let reverted =
+        engine.call("entity.revertDelete", json!({ "workspaceId": ws, "kind": "requests", "id": "r1" })).await;
+    assert_eq!(reverted["ok"], true, "{reverted}");
+    assert!(ws_dir(ws).join("requests/r1.json").exists());
+
+    // What the remote gets still comes in, under what was changed here.
+    let other = root.dir.path().join("other-device");
+    run(root.dir.path(), &["clone", "--branch", "main", &bare.to_string_lossy(), &other.to_string_lossy()]).await;
+    run(&other, &["config", "user.email", "o@example.com"]).await;
+    run(&other, &["config", "user.name", "Other"]).await;
+    let push_from_other = |id: &'static str, name: &'static str| {
+        let other = other.clone();
+        async move {
+            run(&other, &["pull", "origin", "main"]).await;
+            let file = other.join(format!("requests/{id}.json"));
+            std::fs::write(file, serde_json::to_string_pretty(&request(id, name)).unwrap()).unwrap();
+            run(&other, &["add", "-A"]).await;
+            run(&other, &["commit", "-m", "create request"]).await;
+            run(&other, &["push", "origin", "HEAD:main"]).await;
+        }
+    };
+    push_from_other("r9", "Nine").await;
+    let pulled = engine.call("sync.pull", json!({ "workspaceId": ws })).await;
+    assert_eq!((pulled["ok"].as_bool(), pulled["updated"].as_bool()), (Some(true), Some(true)), "{pulled}");
+    assert_eq!(run(&ws_dir(ws), &["rev-parse", "HEAD"]).await, run(&bare, &["rev-parse", "main"]).await);
+    assert!(ws_dir(ws).join("requests/r9.json").exists() && ws_dir(ws).join("requests/r2.json").exists());
+
+    // Write access given on GitHub is found by the next pull asked for, and then the workspace syncs.
+    share("octo/team", true);
+    engine.call("sync.pull", json!({ "workspaceId": ws })).await;
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["access"], "write");
+    let pushed = engine.call("entity.publish", json!({ "workspaceId": ws, "paths": ["requests/r2.json"] })).await;
+    assert_eq!(pushed["ok"], true, "{pushed}");
+    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
+    assert_eq!(
+        run(&bare, &["log", "-1", "--format=%ae", "main"]).await.trim(),
+        format!("7+eve@users.noreply.{HOST}")
+    );
+
+    // Taken away again, it is gone at the next thing that would push: nothing waits for a cache to lapse.
+    share("octo/team", false);
+    write_entity(ws, "requests", "r3", &request("r3", "Third"), None).unwrap();
+    let synced = run(&bare, &["rev-parse", "main"]).await;
+    refuse(engine.call("sync.all", json!({ "workspaceId": ws })).await, "read-only");
+    assert_eq!(run(&ws_dir(ws), &["rev-parse", "HEAD"]).await, synced);
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["access"], "read");
+
+    // The switch: with team sync off the same data is the owner's alone again. Nothing shared is listed
+    // or imported, and the workspace that was shared neither pushes nor pulls.
+    share("octo/other", true);
+    set_test_team_sync(Some(false));
+    assert_eq!(engine.call("setup.getState", json!({})).await["teamSync"], false);
+    let repos = engine.call("account.repos", json!({ "accountId": eve })).await;
+    let names: Vec<&str> = repos["repos"].as_array().unwrap().iter().map(|r| r["fullName"].as_str().unwrap()).collect();
+    assert_eq!(names, ["eve/own"]);
+    let blocked = engine.call("workspace.import", json!({ "accountId": eve, "repo": "octo/other" })).await;
+    assert_eq!(blocked["reason"], "notOwner", "{blocked}");
+    push_from_other("r10", "Ten").await;
+    refuse(engine.call("sync.pull", json!({ "workspaceId": ws })).await, "Only its owner can sync it");
+    refuse(engine.call("sync.push", json!({ "workspaceId": ws })).await, "Only its owner can sync it");
+    assert!(!ws_dir(ws).join("requests/r10.json").exists());
+    // Switched back on, it carries on from where it was.
+    set_test_team_sync(Some(true));
+    let pulled = engine.call("sync.pull", json!({ "workspaceId": ws })).await;
+    assert_eq!(pulled["updated"], true, "{pulled}");
+    assert!(ws_dir(ws).join("requests/r10.json").exists());
+    // Someone given write access from the start syncs from the start.
+    let other_ws = engine.call("workspace.import", json!({ "accountId": eve, "repo": "octo/other" })).await;
+    assert_eq!(other_ws["workspace"]["syncConfig"]["access"], "write", "{other_ws}");
+    auto_sync::stop_all_auto_sync();
+
+    // A workspace of the version before this one has no access in its settings. It is its owner's, syncs
+    // as it did, and has the access written down the first time GitHub is asked.
+    let mine = engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/mine" })).await;
+    assert_eq!(mine["ok"], true, "{mine}");
+    auto_sync::stop_all_auto_sync();
+    let mut settings = load_settings();
+    settings.workspace_mut("mine-ws").unwrap()["syncConfig"].as_object_mut().unwrap().remove("access");
+    crate::workspace::settings::save_settings(&settings).unwrap();
+    forget_access();
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": "mine-ws" })).await["access"], Value::Null);
+    write_entity("mine-ws", "requests", "r2", &request("r2", "Second"), None).unwrap();
+    let pushed =
+        engine.call("entity.publish", json!({ "workspaceId": "mine-ws", "paths": ["requests/r2.json"] })).await;
+    assert_eq!(pushed["ok"], true, "{pushed}");
+    let mine_bare = guard.hub.lock().repos["octo/mine"].1.clone();
+    assert_eq!(run(&mine_bare, &["rev-parse", "main"]).await, run(&ws_dir("mine-ws"), &["rev-parse", "HEAD"]).await);
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": "mine-ws" })).await["access"], "owner");
 }

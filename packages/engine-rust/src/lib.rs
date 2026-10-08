@@ -10,6 +10,7 @@ pub mod applications;
 pub mod capture;
 pub mod certificates;
 pub mod env;
+pub mod features;
 pub mod fileops;
 pub mod gitops;
 pub mod graphql;

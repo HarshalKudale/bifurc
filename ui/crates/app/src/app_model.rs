@@ -76,6 +76,9 @@ impl ProxyStatus {
     }
 }
 
+/// What a read-only workspace says when it is asked to sync.
+pub const READ_ONLY_NOTICE: &str = "This workspace is read-only: your account has read access to its repository.      Your changes are saved on this device. Ask the owner for write access to sync them.";
+
 /// What the engine says about this machine and its accounts (`setup.getState`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetupState {
@@ -85,6 +88,8 @@ pub struct SetupState {
     pub git_installed: bool,
     /// This build can sign in to GitHub.
     pub sign_in_available: bool,
+    /// A workspace is used by everyone its repository is shared with, not by its owner alone.
+    pub team_sync: bool,
     pub accounts: Vec<AccountInfo>,
     /// Where the terms of service are published.
     pub terms_of_service_url: String,
@@ -107,6 +112,7 @@ impl SetupState {
             known: true,
             git_installed: flag("gitInstalled"),
             sign_in_available: flag("signInAvailable"),
+            team_sync: flag("teamSync"),
             terms_of_service_url: value.get("termsOfServiceUrl").and_then(Value::as_str).unwrap_or_default().to_owned(),
             terms_accepted: flag("termsAccepted"),
             privacy_policy_url: value.get("privacyPolicyUrl").and_then(Value::as_str).unwrap_or_default().to_owned(),
@@ -333,6 +339,20 @@ impl AppModel {
 
     pub fn is_publishing(&self) -> bool {
         self.publishing
+    }
+
+    /// The workspace in front is read-only: its account may read its repository and not push to it, so what
+    /// is changed here is saved here and nothing of it is synced.
+    pub fn is_read_only(&self) -> bool {
+        self.config.active_workspace().and_then(|workspace| workspace.sync.as_ref()).is_some_and(|sync| sync.read_only)
+    }
+
+    /// Says why nothing is synced, when the workspace is read-only. Returns whether it is.
+    fn refuse_read_only(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.is_read_only() {
+            cx.emit(ModelEvent::Notice(READ_ONLY_NOTICE.to_owned()));
+        }
+        self.is_read_only()
     }
 
     fn listen(&mut self, cx: &mut Context<Self>) {
@@ -625,7 +645,7 @@ impl AppModel {
 
     /// Commits `paths` (and pushes, when the workspace has a remote).
     pub fn publish(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        if self.publishing {
+        if self.publishing || self.refuse_read_only(cx) {
             return;
         }
         self.publishing = true;
@@ -658,7 +678,7 @@ impl AppModel {
     /// Syncs everything in the workspace that was never synced: the engine commits each new or changed item
     /// in a commit of its own, then pushes when there is a remote. Progress arrives as `event.sync.status`.
     pub fn sync_all(&mut self, cx: &mut Context<Self>) {
-        if self.publishing {
+        if self.publishing || self.refuse_read_only(cx) {
             return;
         }
         self.publishing = true;
@@ -742,7 +762,8 @@ impl AppModel {
     }
 
     fn resolve_delete(&mut self, target: Deleted, revert: bool, cx: &mut Context<Self>) {
-        if self.publishing {
+        // Confirming a delete syncs it; taking one back does not.
+        if self.publishing || (!revert && self.refuse_read_only(cx)) {
             return;
         }
         self.publishing = true;
