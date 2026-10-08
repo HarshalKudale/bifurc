@@ -29,6 +29,7 @@ Engine
   engine restart                         Stop it and start it again; the interfaces reconnect
   engine status                          Where it runs, without opening a session
   status                                 Engine, proxy and active workspace
+  update [check]                         Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
@@ -202,6 +203,15 @@ const ENGINE: &str = "Usage: bifurc engine <verb>
   restart                                Stop it and start it again; the interfaces reconnect
   status                                 Where it runs, without opening a session";
 
+const UPDATE: &str = "Usage: bifurc update [<verb>]
+
+The engine reads the list of releases once a day and knows how this copy was installed. Nothing is installed
+from here: a Store install is updated by the Store, a package manager's by its own command, and any other by
+the file this names.
+
+  status                                 What the engine last found (the default)
+  check                                  Ask now";
+
 /// The name a command group is dispatched and documented under, whichever way it was spelled.
 pub fn canonical_group(group: &str) -> &str {
     match group {
@@ -233,6 +243,7 @@ pub fn group_usage(group: &str) -> Option<&'static str> {
         "account" => ACCOUNT,
         "services" => SERVICES,
         "engine" => ENGINE,
+        "update" => UPDATE,
         _ => return None,
     })
 }
