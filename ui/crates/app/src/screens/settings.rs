@@ -22,8 +22,8 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Axis, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, div,
+    App, AppContext as _, Axis, ClipboardItem, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Window, div,
 };
 use serde_json::{Value, json};
 
@@ -31,14 +31,14 @@ use crate::{
     app_model::{AppModel, ModelEvent, ProxyStatus},
     components::{certificate::Certificate, dialogs::confirm_danger},
     engine::{call, call_in, failure},
-    model::config::AccountInfo,
+    model::{config::AccountInfo, update::UpdateAction},
     preferences::Preferences,
     screens::workspace_setup::{Purpose, open_setup_dialog},
     theme,
 };
 
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
-const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc/releases";
+const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc-releases/releases";
 
 /// A workspace that syncs as an account, and what it holds that its repository does not.
 #[derive(Debug, Clone, PartialEq)]
@@ -725,6 +725,43 @@ impl SettingsScreen {
                 }),
             )
         };
+        let (update_read, update_write) = (self.model.clone(), self.model.clone());
+        let mut updates = SettingGroup::new().title("Updates").item(self.update_item());
+        if let Some(available) = self.available_update_item(cx) {
+            updates = updates.item(available);
+        }
+        let updates = updates
+            .item(
+                SettingItem::new(
+                    "Check for updates automatically",
+                    SettingField::switch(
+                        move |cx: &App| update_read.read(cx).config().settings.update_check_enabled,
+                        move |value: bool, cx: &mut App| {
+                            update_write.update(cx, |model, cx| {
+                                model.update_settings(json!({ "updateCheckEnabled": value }), cx)
+                            })
+                        },
+                    ),
+                )
+                .description("Once a day. The request carries this app's version and nothing else.")
+                .keywords(["update", "automatic", "network"]),
+            )
+            .item(
+                SettingItem::new(
+                    "Releases",
+                    SettingField::render(|_, _, _| {
+                        Link::new("releases-link").href(RELEASES_URL).child("github.com/HarshalKudale/bifurc-releases")
+                    }),
+                )
+                .description("Every version, with its downloads.")
+                .layout(Axis::Horizontal),
+            )
+            .item(SettingItem::new(
+                "Source",
+                SettingField::render(|_, _, _| {
+                    Link::new("repository-link").href(REPOSITORY_URL).child("github.com/HarshalKudale/bifurc")
+                }),
+            ));
         let origin = if engine.started_here() { "Started by this app" } else { "Already running" };
         SettingPage::new("About").icon(IconName::Info).groups(vec![
             SettingGroup::new().title("Bifurc").items(vec![
@@ -775,28 +812,119 @@ impl SettingsScreen {
                     .layout(Axis::Horizontal),
                 )
                 .footer(|_, _| "Turning analytics back on applies when the engine next starts."),
-            SettingGroup::new()
-                .title("Updates")
-                .item(
-                    SettingItem::new(
-                        "Releases",
-                        SettingField::render(|_, _, _| {
-                            Link::new("releases-link")
-                                .href(RELEASES_URL)
-                                .child("github.com/HarshalKudale/bifurc/releases")
-                        }),
-                    )
-                    .description("New versions are published on GitHub.")
-                    .layout(Axis::Horizontal),
-                )
-                .item(SettingItem::new(
-                    "Source",
-                    SettingField::render(|_, _, _| {
-                        Link::new("repository-link").href(REPOSITORY_URL).child("github.com/HarshalKudale/bifurc")
-                    }),
-                ))
-                .footer(|_, _| "This app does not update itself yet. Download a new version from the releases page."),
+            updates,
         ])
+    }
+
+    /// The installed version, what the engine last found, and the button that has it look now.
+    fn update_item(&self) -> SettingItem {
+        let model = self.model.clone();
+        SettingItem::render(move |options, _, cx| {
+            let theme = cx.theme().clone();
+            let status = model.read(cx).update().clone();
+            let check_model = model.clone();
+            let state = match (&status.available, status.checked) {
+                (Some(update), _) => Tag::warning().child(format!("Version {} available", update.version)),
+                (None, true) => Tag::success().child("Up to date"),
+                (None, false) => Tag::secondary().child("Not checked yet"),
+            };
+            let unsupported = status.unsupported.then_some("This version is no longer supported.");
+            let failure = status.error.as_ref().map(|error| format!("Couldn't check for updates. {error}"));
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                        .child(div().text_xs().text_color(theme.muted_foreground).child(status.channel_note()))
+                        .children(unsupported.map(|text| div().text_xs().text_color(theme.warning).child(text)))
+                        .children(failure.map(|text| div().text_xs().text_color(theme.danger).child(text))),
+                )
+                .child(state)
+                .child(
+                    Button::new("check-for-update")
+                        .with_size(options.size())
+                        .label("Check now")
+                        .loading(status.checking)
+                        .disabled(status.checking)
+                        .on_click(move |_, _, cx| check_model.update(cx, |model, cx| model.check_for_update(cx))),
+                )
+        })
+        .keywords(["update", "upgrade", "version", "release", "latest"])
+    }
+
+    /// The newer version, when there is one: what it brings, the order to install in, and the way this install
+    /// gets it.
+    fn available_update_item(&self, cx: &App) -> Option<SettingItem> {
+        let status = self.model.read(cx).update().clone();
+        let (update, action) = (status.available?, status.action?);
+        let model = self.model.clone();
+        let item = SettingItem::render(move |options, _, cx| {
+            let theme = cx.theme().clone();
+            let security = update.critical.then(|| "It fixes a security problem.".to_owned());
+            let notes = [update.summary.clone(), update.steps(), security];
+            let get = match &action {
+                UpdateAction::Store(url) => {
+                    Link::new("update-store").href(url.clone()).child("Open Microsoft Store").into_any_element()
+                }
+                UpdateAction::Download(url) => Link::new("update-download")
+                    .href(url.clone())
+                    .child(format!("Download {}", update.next()))
+                    .into_any_element(),
+                UpdateAction::Command(command) => {
+                    let copied = command.clone();
+                    h_flex()
+                        .gap_2()
+                        .child(div().font_family(theme.mono_font_family.clone()).child(command.clone()))
+                        .child(
+                            Button::new("copy-update-command")
+                                .with_size(options.size())
+                                .icon(IconName::Copy)
+                                .label("Copy")
+                                .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))),
+                        )
+                        .into_any_element()
+                }
+            };
+            let skip = if update.critical {
+                None
+            } else if update.skipped {
+                Some(div().text_xs().text_color(theme.muted_foreground).child("Skipped").into_any_element())
+            } else {
+                let (skip_model, version) = (model.clone(), update.version.clone());
+                Some(
+                    Button::new("skip-update")
+                        .ghost()
+                        .with_size(options.size())
+                        .label("Skip this version")
+                        .on_click(move |_, _, cx| skip_model.update(cx, |model, cx| model.skip_update(&version, cx)))
+                        .into_any_element(),
+                )
+            };
+            let changes = update
+                .notes_url
+                .clone()
+                .map(|url| Link::new("update-notes").href(url).child("What changed").into_any_element());
+            h_flex()
+                .w_full()
+                .gap_3()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(format!("Version {}", update.version))
+                        .children(
+                            notes.into_iter().flatten().map(|note| div().text_xs().text_color(theme.muted_foreground).child(note)),
+                        ),
+                )
+                .children(changes)
+                .children(skip)
+                .child(get)
+        })
+        .keywords(["update", "upgrade", "download", "install"]);
+        Some(item)
     }
 }
 

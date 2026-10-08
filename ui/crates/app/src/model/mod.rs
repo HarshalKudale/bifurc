@@ -17,6 +17,7 @@ pub mod stream;
 pub mod traffic;
 pub mod tree;
 pub mod trust;
+pub mod update;
 pub mod variables;
 pub mod vault;
 

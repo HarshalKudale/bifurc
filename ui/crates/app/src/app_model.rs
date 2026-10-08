@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{EngineSession, call, describe, failure},
-    model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, vault::VaultInfo},
+    model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, update::UpdateStatus, vault::VaultInfo},
 };
 
 /// Wire names of the engine events the UI listens to.
@@ -20,9 +20,10 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 23] = [
+const EVENTS: [&str; 24] = [
     "event.account.changed",
     "event.companions.changed",
+    "event.update.changed",
     "event.engine.stopping",
     "event.ui.activate",
     "event.entity.changed",
@@ -185,6 +186,8 @@ pub struct AppModel {
     proxy: ProxyStatus,
     reverse_proxy: ProxyStatus,
     setup: SetupState,
+    /// What the engine knows about newer versions.
+    update: UpdateStatus,
     /// The engine is being stopped and started again; its connection closing is expected.
     restarting_engine: bool,
     load: Load,
@@ -207,6 +210,7 @@ impl AppModel {
             proxy: ProxyStatus::default(),
             reverse_proxy: ProxyStatus::default(),
             setup: SetupState::default(),
+            update: UpdateStatus::default(),
             restarting_engine: false,
             load: Load::Loading,
             refreshing: false,
@@ -217,7 +221,55 @@ impl AppModel {
         model.listen(cx);
         model.refresh(cx);
         model.refresh_setup(cx);
+        model.refresh_update(cx);
         model
+    }
+
+    pub fn update(&self) -> &UpdateStatus {
+        &self.update
+    }
+
+    /// Re-reads what the engine last found about newer versions. It asks nobody: the engine looks once a day.
+    pub fn refresh_update(&mut self, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.status", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.update = UpdateStatus::from_value(&value);
+                cx.notify();
+            }
+        });
+    }
+
+    /// Has the engine read the list of releases now.
+    pub fn check_for_update(&mut self, cx: &mut Context<Self>) {
+        if self.update.checking {
+            return;
+        }
+        self.update.checking = true;
+        cx.notify();
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.check", json!({}), |this, outcome, cx| {
+            match outcome {
+                Ok(value) => this.update = UpdateStatus::from_value(&value),
+                Err(error) => {
+                    this.update.checking = false;
+                    cx.emit(ModelEvent::Notice(format!("Couldn't check for updates. {}", describe(&error))));
+                }
+            }
+            cx.notify();
+        });
+    }
+
+    /// Stops announcing `version`; a newer one is announced again.
+    pub fn skip_update(&mut self, version: &str, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.skip", json!({ "version": version }), |this, outcome, cx| match outcome {
+            Ok(value) => {
+                this.update = UpdateStatus::from_value(&value);
+                cx.notify();
+            }
+            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't skip the version. {}", describe(&error)))),
+        });
     }
 
     pub fn setup(&self) -> &SetupState {
@@ -347,6 +399,10 @@ impl AppModel {
                     cx.emit(ModelEvent::AccountChanged(event.payload));
                 }
                 "event.companions.changed" => cx.emit(ModelEvent::CompanionsChanged),
+                "event.update.changed" => {
+                    self.update = UpdateStatus::from_value(&event.payload);
+                    cx.notify();
+                }
                 "event.server.error" => self.refresh_proxy(cx),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
@@ -523,6 +579,7 @@ impl AppModel {
                         this.refresh(cx);
                         this.refresh_setup(cx);
                         cx.emit(ModelEvent::EngineRestarted);
+                        this.refresh_update(cx);
                     }
                     Err(message) => {
                         // The old connection is closed whatever happened, so nothing is live now.
