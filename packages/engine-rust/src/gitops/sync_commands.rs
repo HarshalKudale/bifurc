@@ -8,7 +8,7 @@ use super::{
     delete_commands::reconcile_deletions,
     git_ops::{discard_changes, get_file_diff, get_file_history, sync_changes},
     git_state::get_workspace_git_state,
-    remote::workspace_owner,
+    remote::{refresh_access, workspace_access, workspace_owner},
     status_tracker::get_workspace_sync_status,
     sync_all::sync_workspace,
     sync_manager::{get_remote_head, sync_push},
@@ -61,8 +61,12 @@ async fn before_and_after(commit: &str, ws_id: &str, rel_path: &str) -> Value {
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("sync.push", |params, _| async move { Ok(sync_push(str_of(&params, "workspaceId")).await) });
 
+    // A pull asked for by hand also asks GitHub again what the account may do with the repository, so access
+    // that was given or taken since shows without waiting. A failure to ask is the pull's to report.
     registry.register("sync.pull", |params, _| async move {
-        Ok(pull_and_announce(str_of(&params, "workspaceId")).await)
+        let ws_id = str_of(&params, "workspaceId");
+        let _ = refresh_access(ws_id).await;
+        Ok(pull_and_announce(ws_id).await)
     });
 
     // Everything in the workspace that was never synced, an entity to a commit, then one push. A workspace
@@ -77,12 +81,14 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(result)
     });
 
-    // How a sync is going, plus who the workspace syncs as, who owns it and where its remote is.
+    // How a sync is going, plus who the workspace syncs as, who owns it and what that account may do with
+    // its repository (`access`: `owner`, `write`, or `read` for a workspace that is read-only here).
     registry.register_sync("sync.getState", |params, _| {
         let ws_id = str_of(&params, "workspaceId");
         let mut state = get_sync_state(ws_id);
         state["account"] = workspace_account(ws_id).map_or(Value::Null, |account| account.public());
         state["owner"] = workspace_owner(ws_id);
+        state["access"] = json!(workspace_access(ws_id));
         state["gitTracked"] = json!(is_repo(ws_id));
         Ok(state)
     });
