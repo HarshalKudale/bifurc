@@ -102,10 +102,9 @@ release (`--release-tag`, in `GITHUB_REPOSITORY`) and that file's SHA-256:
 | -------- | ------ | ----- | ------------- |
 | winget | `winget` | `winget/manifests/h/HarshalKudale/Bifurc/<version>/*.yaml` | A pull request to `microsoft/winget-pkgs` with that folder. |
 | Scoop | `scoop` | `scoop/bifurc.json` | A file of a bucket; `scoop install <url of the file>` works without one. |
-| Chocolatey | `choco` | `chocolatey/` (`bifurc.nuspec`, `tools/`), and `bifurc.<version>.nupkg` when `choco` is installed | `choco push` of the `.nupkg`. |
 | AUR | `aur` | `aur/PKGBUILD`, `.SRCINFO`, `bifurc.install` | A commit to the `bifurc-bin` AUR repository. |
 
-A manifest's target builds the file it describes too (`winget` and `choco` the installer, `scoop` the zip, `aur` the
+A manifest's target builds the file it describes too (`winget` the installer, `scoop` the zip, `aur` the
 tarball). None of them is published by a workflow: a release attaches them, and submitting one is done by hand.
 
 The AppImage does not run the app from inside the image: the engine outlives the window, and the image's files are
@@ -156,7 +155,7 @@ what it built.
     data can be saved to a file. **Save as request** and **Save as mock** create the entity and open it.
     **Pause** stops the engine recording for this workspace until **Resume**: what passes meanwhile is not kept.
   - **Settings**: Appearance (theme, text size; kept by this client only), Proxy, HTTPS (interception and the
-    root certificate: generate, remove) and About (versions, and a link to the releases page).
+    root certificate: generate, remove) and About (versions, whether a newer one exists and how this install gets it).
 - **Requests** are one tree. REST, GraphQL, gRPC, SOAP and **WebSocket** requests live in their own folders,
   are created from the command palette or the keys below, and are edited the same way as REST ones. A WebSocket
   is just another request type: its stream shows in the Response panel, and the connection belongs to the
@@ -214,7 +213,8 @@ Everything else the palette lists has a command but no key.
   generate and remove the root certificate).
 - The audit log. The runner has no history of past runs, no report export, and runs REST folders only.
 - Schema explorers for GraphQL, gRPC and SOAP.
-- An updater: Settings only links to the releases page.
+- Installing an update: the app says that a newer version exists and how this install gets it (Settings →
+  About, and the footer), and leaves the installing to the Store, the package manager or the downloaded file.
 - Saving the dock layout between runs (the sidebar state and the theme are kept).
 - A tray icon on Linux, so there the engine stops when its last interface closes.
 - The engine is not stopped if the UI is killed rather than closed; `bifurc engine stop` stops it.

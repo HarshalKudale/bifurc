@@ -8,6 +8,11 @@ name: Publish release to public repo
 # still adds its own source archives to every release, but this repository holds nothing but a README and
 # issue templates, so they contain no Bifurc source.
 #
+# The update manifest (updates/v1/stable.json in the public repository, served at
+# https://bifurc.app/updates/v1/stable.json) is what a running Bifurc reads to learn of a newer version. Every
+# release copied here that is not a prerelease is added to it, with the address and hash of each file. The
+# stores and package managers are not touched: update-channel.yml records what each of them has.
+#
 # Needs the secret PUBLIC_RELEASES_TOKEN: a fine-grained personal access token for the public repository
 # with "Contents: read and write". The workflow's own token cannot write to another repository.
 on:
@@ -21,6 +26,23 @@ on:
         description: "Tag to mark as the public repo's latest release (default: the highest of the tags above)"
         required: false
         type: string
+      summary:
+        description: "One line on what the latest release brings, shown where the app announces it"
+        required: false
+        type: string
+      min_direct_from:
+        description: "Oldest version that may update to the latest release in one step (default: any)"
+        required: false
+        type: string
+      minimum_supported:
+        description: "Oldest version still supported; older installs are told so (default: unchanged)"
+        required: false
+        type: string
+      critical:
+        description: "The latest release fixes a security problem"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -31,11 +53,16 @@ concurrency:
 
 env:
   PUBLIC_REPO: HarshalKudale/bifurc-releases
+  MANIFEST_PATH: updates/v1/stable.json
 
 jobs:
   replicate:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Replicate the releases
         shell: bash
         # What was typed into the form reaches the script as data, never as part of it.
@@ -83,7 +110,7 @@ jobs:
 
             # Only what a person installs from: the Windows installer and portable zip, and the Linux .deb,
             # AppImage and tarball. Everything else on the private release stays there: the Store .msix,
-            # the winget, Scoop and Chocolatey packages and manifests (useless to download by hand), and
+            # the winget and Scoop manifests (useless to download by hand), and
             # the "Source code" archives GitHub generates (never downloaded here, they are not assets).
             GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets" \
               --pattern '*-setup.exe' \
@@ -143,3 +170,62 @@ jobs:
             for tag in $tags; do echo "- $tag"; done
             if [ -n "$latest" ]; then echo ""; echo "Latest: $latest"; fi
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "$latest" > "$RUNNER_TEMP/latest.txt"
+
+      # After the files are public, so the manifest never names a download that is not there yet.
+      - name: Add the releases to the update manifest
+        shell: bash
+        env:
+          INPUT_TAGS: ${{ inputs.tags }}
+          INPUT_SUMMARY: ${{ inputs.summary }}
+          INPUT_MIN_DIRECT_FROM: ${{ inputs.min_direct_from }}
+          INPUT_MINIMUM_SUPPORTED: ${{ inputs.minimum_supported }}
+          INPUT_CRITICAL: ${{ inputs.critical }}
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          manifest="$RUNNER_TEMP/stable.json"
+          sha="$(gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" --jq .sha 2>/dev/null || true)"
+          if [ -n "$sha" ]; then
+            gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" -H "Accept: application/vnd.github.raw+json" > "$manifest"
+          else
+            : > "$manifest"
+          fi
+
+          latest="$(cat "$RUNNER_TEMP/latest.txt")"
+          added=()
+          for tag in $(echo "$INPUT_TAGS" | tr ',' ' '); do
+            work="$RUNNER_TEMP/$tag"
+            # A prerelease is not a version an install is offered, and neither is a tag that is not a version.
+            [ "$(jq -r '.isPrerelease' "$work/release.json")" = "true" ] && continue
+            [[ "${tag#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+
+            args=(--manifest "$manifest" --version "${tag#v}" --tag "$tag" --repo "$PUBLIC_REPO" --assets "$work/assets")
+            # What was typed into the form describes the latest release, not the older ones copied with it.
+            if [ "$tag" = "$latest" ]; then
+              [ -n "$INPUT_SUMMARY" ] && args+=(--summary "$INPUT_SUMMARY")
+              [ -n "$INPUT_MIN_DIRECT_FROM" ] && args+=(--min-direct-from "$INPUT_MIN_DIRECT_FROM")
+              [ -n "$INPUT_MINIMUM_SUPPORTED" ] && args+=(--minimum-supported "$INPUT_MINIMUM_SUPPORTED")
+              [ "$INPUT_CRITICAL" = "true" ] && args+=(--critical)
+            fi
+
+            status=0
+            python3 .github/scripts/update_manifest.py release "${args[@]}" || status=$?
+            case "$status" in
+              0) added+=("$tag") ;;
+              # None of the files an install is replaced by: a release from before them.
+              3) echo "::notice::$tag is not in the update manifest: it has none of the files an install updates to." ;;
+              *) exit "$status" ;;
+            esac
+          done
+
+          if [ "${#added[@]}" -eq 0 ]; then
+            echo "Nothing to add to the update manifest."
+            exit 0
+          fi
+
+          fields=(-f message="Update manifest: ${added[*]}" -f content="$(base64 -w0 "$manifest")")
+          [ -n "$sha" ] && fields+=(-f sha="$sha")
+          gh api --method PUT "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" "${fields[@]}" > /dev/null
+          echo "Update manifest: ${added[*]}" >> "$GITHUB_STEP_SUMMARY"

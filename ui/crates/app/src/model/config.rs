@@ -87,6 +87,8 @@ pub struct EngineSettings {
     pub tls_enabled: bool,
     /// Anonymous usage analytics are not turned off.
     pub telemetry_enabled: bool,
+    /// The engine looks for a newer version once a day.
+    pub update_check_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -326,6 +328,7 @@ impl ConfigSnapshot {
                 minimize_to_tray: flag("minimizeToTray"),
                 tls_enabled: flag("tlsEnabled"),
                 telemetry_enabled: config.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true),
+                update_check_enabled: config.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true),
             },
         })
     }
