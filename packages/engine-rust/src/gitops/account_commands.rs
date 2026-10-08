@@ -8,12 +8,13 @@ use super::{
     git_state::get_workspace_git_state,
     github,
     login::{cancel_login, login_status, start_login},
-    remote::{flag_if_rejected, import_workspace, publish_workspace, remove_workspaces, workspace_for_repo},
+    remote::{flag_if_rejected, import_workspace, listed_repo, publish_workspace, remove_workspaces},
     status_tracker::get_workspace_sync_status,
     sync_all::{sync_workspace, track_untracked_workspaces},
     sync_state::get_sync_config,
 };
 use crate::{
+    features::team_sync,
     kernel::{CommandRegistry, bus},
     protocol::EngineError,
     runtime::{
@@ -63,6 +64,7 @@ pub fn register(registry: &mut CommandRegistry) {
             "gitInstalled": version.is_some(),
             "gitVersion": version,
             "signInAvailable": github::client_id().is_some(),
+            "teamSync": team_sync(),
             "host": github::host(),
             "needsWorkspace": settings.workspaces().is_empty(),
             "accounts": public_accounts(),
@@ -194,23 +196,18 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(json!({ "ok": true, "removedWorkspaces": removed }))
     });
 
-    // The repositories the account owns, each with whether it is already a workspace on this device.
+    // The repositories the account can have a workspace in: the ones it owns and, with team sync, the ones
+    // it was given access to. Each with what the account may do with it (`access`) and whether it is already
+    // a workspace on this device.
     registry.register("account.repos", |params, _| async move {
         let id = str_of(&params, "accountId");
         let account = find_account(id).ok_or_else(|| EngineError::not_found("That account is not on this device."))?;
-        let Some(token) = account.token else {
+        let Some(token) = account.token.clone() else {
             return Ok(json!({ "ok": false, "error": format!("Sign in to GitHub as {} again first.", account.login) }));
         };
-        match github::list_owned_repos(&token).await {
+        match github::list_repos(&token).await {
             Ok(repos) => {
-                let repos: Vec<Value> = repos
-                    .iter()
-                    .map(|repo| {
-                        let mut listed = repo.public();
-                        listed["workspaceId"] = json!(workspace_for_repo(&repo.full_name));
-                        listed
-                    })
-                    .collect();
+                let repos: Vec<Value> = repos.iter().map(|repo| listed_repo(repo, &account)).collect();
                 Ok(json!({ "ok": true, "repos": repos }))
             }
             Err(message) => Ok(json!({ "ok": false, "error": flag_if_rejected(id, message) })),
