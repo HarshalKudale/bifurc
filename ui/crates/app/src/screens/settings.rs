@@ -8,6 +8,7 @@
 //!   command, and what the page shows is what the engine reports back. The only things done on this computer
 //!   are the ones the engine cannot reach: restarting its process, and trusting its certificate.
 //! - **About** says what is running.
+//! - **Licenses** carries the notices the libraries and assets Bifurc ships require.
 //!
 //! The screen is the kit's `Settings` component: pages in its own sidebar, groups of items, searchable.
 
@@ -936,6 +937,7 @@ impl Render for SettingsScreen {
             self.servers_page(cx),
             self.https_page(),
             self.about_page(cx),
+            super::licenses::page(),
         ];
         div()
             .size_full()

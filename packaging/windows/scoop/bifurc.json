@@ -3,7 +3,7 @@
     "description": "{{SUMMARY}}",
     "homepage": "{{HOMEPAGE}}",
     "license": {
-        "identifier": "Proprietary",
+        "identifier": "PolyForm-Noncommercial-1.0.0",
         "url": "{{LICENSE_URL}}"
     },
     "architecture": {
